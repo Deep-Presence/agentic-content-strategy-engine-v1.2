@@ -12,7 +12,7 @@ class GeminiEngine(SearchEngine):
     engine_name = "gemini"
 
     def __init__(self, model: Optional[str] = None) -> None:
-        super().__init__(model=model or "gemini-2.0-flash")
+        super().__init__(model=model or settings.gap_analysis_gemini_engine_model)
 
     async def search(self, query_text: str, query_id: Optional[str] = None) -> PlatformResult:
         def _run() -> tuple[str, List[str]]:

@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 from core.models.gap_analysis import GapAnalysisInput, SemanticUnit
 from core.config.settings import settings
 
-_CONTENT_ENGINE_ROOT = Path(__file__).resolve().parents[2]
+_CONTENT_ENGINE_ROOT = Path(__file__).resolve().parents[3]  # content-strategy-engine/
 
 
 def _ensure_output_dir(company_slug: str) -> Path:

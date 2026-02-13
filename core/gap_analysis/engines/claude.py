@@ -33,7 +33,7 @@ class ClaudeEngine(SearchEngine):
     engine_name = "claude"
 
     def __init__(self, model: Optional[str] = None) -> None:
-        super().__init__(model=model or "claude-3-5-sonnet-20240620")
+        super().__init__(model=model or settings.gap_analysis_claude_engine_model)
 
     async def search(self, query_text: str, query_id: Optional[str] = None) -> PlatformResult:
         def _run() -> tuple[str, List[str]]:

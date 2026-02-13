@@ -35,12 +35,12 @@ def _collect_embedding_points(
             if match.embedding:
                 points.append(match.embedding)
                 labels.append("citation")
-                hover.append(c.url)
+                hover.append(str(c.url))
     for unit in company_units:
         if unit.embedding:
             points.append(unit.embedding)
             labels.append("company")
-            hover.append(unit.url or "company")
+            hover.append(str(unit.url) if unit.url else "company")
     return np.array(points), labels, hover
 
 

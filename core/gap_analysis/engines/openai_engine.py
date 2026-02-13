@@ -31,7 +31,7 @@ class OpenAIEngine(SearchEngine):
     engine_name = "openai"
 
     def __init__(self, model: Optional[str] = None) -> None:
-        super().__init__(model=model or "gpt-4o")
+        super().__init__(model=model or settings.gap_analysis_openai_engine_model)
 
     async def search(self, query_text: str, query_id: Optional[str] = None) -> PlatformResult:
         def _run() -> tuple[str, List[str]]:
@@ -52,14 +52,11 @@ class OpenAIEngine(SearchEngine):
                 output = getattr(response, "output", None) or []
                 return _extract_openai_output(output)
             except Exception:
-                response = client.chat.completions.create(
+                response = client.responses.create(
                     model=self.model,
-                    messages=[{"role": "user", "content": query_text}],
+                    input=query_text,
                 )
-                content = ""
-                if response.choices:
-                    msg = response.choices[0].message
-                    content = getattr(msg, "content", None) or ""
+                content = getattr(response, "output_text", None) or ""
                 return content, []
 
         response_text, citations = await asyncio.to_thread(_run)

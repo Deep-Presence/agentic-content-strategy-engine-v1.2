@@ -54,16 +54,23 @@ def _extract_paragraphs(html: str) -> Tuple[List[str], StructuralSignals]:
         if text and len(text) >= 50:
             paragraphs.append(text)
 
-    has_headers = bool(soup.find_all(["h1", "h2", "h3"]))
-    has_lists = bool(soup.find_all(["ul", "ol"]))
+    header_count = len(soup.find_all(["h1", "h2", "h3", "h4"]))
+    list_item_count = len(soup.find_all("li"))
     word_count = sum(len(p.split()) for p in paragraphs)
-    has_numbers = bool(re.search(r"\d", " ".join(paragraphs)))
+    all_text = " ".join(paragraphs)
+    stat_count = len(re.findall(r"\d+\.?\d*\s*%|\$\d+|\d{2,}", all_text))
+    citation_count = len(soup.find_all("a", href=True))
 
     signals = StructuralSignals(
         word_count=word_count,
-        has_headers=has_headers,
-        has_lists=has_lists,
-        has_numbers=has_numbers,
+        paragraph_count=len(paragraphs),
+        header_count=header_count,
+        list_item_count=list_item_count,
+        stat_count=stat_count,
+        citation_count=citation_count,
+        has_headers=header_count > 0,
+        has_lists=list_item_count > 0,
+        has_numbers=stat_count > 0,
     )
     return paragraphs, signals
 

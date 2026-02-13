@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     gap_analysis_max_crawl_pages: int = 50
     gap_analysis_max_crawl_depth: int = 2
 
+    # Gap Analysis – Models
+    gap_analysis_query_gen_model: str = "gpt-4o"
+    gap_analysis_report_model: str = "gpt-4o"
+    gap_analysis_openai_engine_model: str = "gpt-5.2-2025-12-11"
+    gap_analysis_claude_engine_model: str = "claude-sonnet-4-5-20250929"
+    gap_analysis_gemini_engine_model: str = "gemini-3-flash-preview"
+
     # Supabase – primary env vars
     supabase_url: str | None = None
     supabase_service_role_key: str | None = None

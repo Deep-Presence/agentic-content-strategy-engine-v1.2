@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+
 from core.models.gap_analysis import GapAnalysisInput, GeneratedQuery, QueryCluster
 from core.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 _CONTENT_ENGINE_ROOT = Path(__file__).resolve().parents[3]  # content-strategy-engine/
 _DEFAULT_TAXONOMY_PATH = (
@@ -16,6 +22,48 @@ _DEFAULT_TAXONOMY_PATH = (
     / "cps_model"
     / "b2b_queries_180.json"
 )
+
+
+# ---------------------------------------------------------------------------
+# Embedding helpers (self-contained to avoid cross-step import)
+# ---------------------------------------------------------------------------
+
+
+def _embed_texts(texts: List[str]) -> List[List[float]]:
+    """Embed a list of texts using OpenAI embeddings API."""
+    if not texts:
+        return []
+    api_key = settings.openai_api_key
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set.")
+    model = settings.embedding_model
+    if not model:
+        raise RuntimeError("EMBEDDING_MODEL is not set.")
+
+    from openai import OpenAI
+
+    client = OpenAI(api_key=api_key)
+    batch_size = 64
+    embeddings: List[List[float]] = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        response = client.embeddings.create(model=model, input=batch)
+        embeddings.extend([row.embedding for row in response.data])
+    return embeddings
+
+
+def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
+    a = np.array(vec_a, dtype=float)
+    b = np.array(vec_b, dtype=float)
+    if np.linalg.norm(a) == 0.0 or np.linalg.norm(b) == 0.0:
+        return 0.0
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+
+# ---------------------------------------------------------------------------
+# File helpers
+# ---------------------------------------------------------------------------
+
 
 def _resolve_virtual_path(vpath: str) -> Path:
     p = (vpath or "").strip()
@@ -42,25 +90,61 @@ def _load_taxonomy(path: Optional[Path]) -> List[QueryCluster]:
     return [QueryCluster(**c) for c in clusters]
 
 
-def _build_prompt(
-    company_context: str,
-    persona_context: str,
-    style_guide: str,
-    clusters: List[QueryCluster],
-    max_queries: int,
-) -> str:
-    clusters_payload = [
-        {
-            "cluster_id": c.cluster_id,
-            "cluster_name": c.cluster_name,
-            "intent": c.intent,
-            "citation_behavior": c.citation_behavior,
-            "buyer_stage": c.buyer_stage,
-        }
-        for c in clusters
-    ]
-    return f"""
-You are an expert B2B researcher. Generate buyer queries that reflect the personas and company context.
+# ---------------------------------------------------------------------------
+# LLM call
+# ---------------------------------------------------------------------------
+
+
+def _extract_json(text: str) -> Dict[str, Any]:
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise RuntimeError("LLM response did not contain JSON payload.")
+    raw = match.group(0)
+    # LLM responses often contain control characters inside JSON strings
+    raw = raw.replace("\r\n", "\\n").replace("\r", "\\n")
+    raw = re.sub(r"[\x00-\x1f](?<![\n\t])", "", raw)
+    return json.loads(raw, strict=False)
+
+
+def _call_openai(prompt: str, model: str) -> str:
+    from openai import OpenAI
+
+    api_key = settings.openai_api_key
+    if not api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. Add it to .env.local to enable query generation."
+        )
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        input=prompt,
+    )
+    return getattr(response, "output_text", None) or ""
+
+
+# ---------------------------------------------------------------------------
+# Pass 1: Seed generation with improved prompt
+# ---------------------------------------------------------------------------
+
+
+_QUERY_GEN_PROMPT = """You are a search behavior expert for B2B buyers. Generate realistic search queries \
+that a real person in this role would type into Google, Gemini, Claude, ChatGPT, or Perplexity.
+
+PERSONA (condensed):
+{persona_condensed}
+
+COMPANY being analyzed:
+- Name: {company_name}
+- Domain: {company_domain}
+- Category: {company_category}
+- Key competitors: {competitor_names}
+
+QUERY CLUSTER TAXONOMY:
+Each cluster has an intent pattern and expected citation behavior. Your queries MUST match \
+the intent and buyer stage of the cluster they belong to.
+
+{clusters_with_citation_behavior}
+
 
 Return JSON only, no prose. Format:
 {{
@@ -81,44 +165,293 @@ Constraints:
 - Each query must be unique and actionable
 - Use natural language a real buyer would use
 
-Company context:
-{company_context}
+────────────────────────────────────────────────
+CRITICAL — Brand / Company Name Usage Rules:
+────────────────────────────────────────────────
 
-Persona context:
-{persona_context}
+By default, queries must NOT contain any specific company or product brand names.
+Instead, use the generic category term (e.g., "expense management software", "no-code website builder",
+"cap table management tool", "sales intelligence platform", "AI video documentation tool").
 
-Style guide:
-{style_guide}
+Brand names are ONLY permitted in these two situations:
+  1. Branded Evaluation (C8) — queries that are explicit head-to-head comparisons (e.g., "X vs Y vs Z").
+  2. Boundary (C2) — ONLY when the query is specifically about a named product's known limitation
+     or compliance issue (e.g., "What are Carta's limitations for international equity?").
+     Generic boundary questions must stay unbranded (e.g., "What are the risks of managing equity on spreadsheets?").
 
-Cluster taxonomy:
-{json.dumps(clusters_payload, indent=2)}
-""".strip()
+All other clusters (C1, C3, C4, C5, C6, C7, C9) must use category-level language, never brand names.
+
+This rule applies especially to Feature Verification (C9). Even though Feature Verification queries
+ask about specific capabilities, they should be framed at the category level so they capture how
+a real buyer researches features before narrowing to a vendor.
+
+────────────────────────────────────────────
+Per-Cluster Examples (✅ correct / ❌ avoid):
+────────────────────────────────────────────
+
+C1 — Mechanism ("How does X work?"):
+  ✅ "How does automated receipt matching work in expense management?"
+  ✅ "How does a visual CMS work for marketing teams without developer support?"
+  ❌ "How does Ramp automate receipt matching?" (uses brand name)
+
+C2 — Boundary ("What are limits/risks?"):
+  ✅ "What are the limitations of corporate cards for startups scaling internationally?"
+  ✅ "What compliance requirements apply to corporate expense management and reporting?"
+  ✅ "What are Carta's limitations for managing international equity plans?" (brand OK — asking about a specific product's boundary)
+  ❌ "What are Ramp's risks?" (too vague to justify branding)
+
+C3 — Category Comparison ("How does X compare to category Y?"):
+  ✅ "How does modern spend management software compare to traditional expense reporting?"
+  ✅ "What's the difference between template-based website builders and visual development platforms?"
+  ❌ "How does Webflow compare to custom development?" (uses brand name)
+
+C4 — Decision Criteria ("How to choose / What to look for?"):
+  ✅ "What factors should startups consider when choosing a corporate card provider?"
+  ✅ "What criteria matter most when selecting a website builder for B2B SaaS?"
+  ❌ "What should I consider before choosing Ramp?" (uses brand name)
+
+C5 — Definition ("What is X?"):
+  ✅ "What is spend management and why does it matter for growing companies?"
+  ✅ "What does buyer intent data mean in B2B prospecting?"
+  ❌ "What is Ramp?" (brand-centric definition)
+
+C6 — Problem/Awareness ("How can I solve problem?"):
+  ✅ "How can I reduce the time my team spends on expense reports?"
+  ✅ "How can I create product demo videos without a video production team?"
+  ❌ "How can Ramp help me reduce expense report time?" (uses brand name)
+
+C7 — Best-of/Consideration ("Best X for Y"):
+  ✅ "Best expense management software for startups in 2025"
+  ✅ "Best AI tools for creating product documentation"
+  ❌ "Best alternatives to Ramp for expense management" (uses brand name — that belongs in C8)
+
+C8 — Branded Evaluation ("X vs Y vs Z"):
+  ✅ "Ramp vs Brex vs Divvy comparison" (brand names required here)
+  ✅ "Webflow vs Squarespace vs Wix for business websites"
+  ✅ "Apollo alternatives for B2B prospecting"
+  ❌ "How does expense management software compare?" (too generic — that belongs in C3)
+
+C9 — Feature Verification ("Does X have Y?"):
+  ✅ "Does expense management software typically integrate with QuickBooks and NetSuite?"
+  ✅ "Can no-code website builders handle e-commerce and online stores?"
+  ✅ "Do cap table management tools support international employees and global equity?"
+  ✅ "Can AI documentation tools generate written guides from screen recordings?"
+  ✅ "Do sales intelligence platforms provide verified mobile phone numbers?"
+  ✅ "Does spend management software offer virtual cards for employee spending?"
+  ❌ "Does Ramp integrate with QuickBooks and NetSuite?" (uses brand name)
+  ❌ "Does Webflow support custom code?" (uses brand name)
+  ❌ "Can Carta model waterfall scenarios?" (uses brand name)
+
+The rationale for C9: Real buyers often search for feature capabilities at the category level first
+("Can expense software integrate with NetSuite?") before narrowing to a specific vendor.
+Category-level feature queries also surface more diverse citations (comparison articles, buyer guides,
+feature roundups) rather than just one vendor's help docs.
+
+Do Not Include or Use Emojies in your response.
+────────────────────────────────────────────
+"""
 
 
-def _extract_json(text: str) -> Dict[str, Any]:
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        raise RuntimeError("LLM response did not contain JSON payload.")
-    return json.loads(match.group(0))
+def _build_seed_prompt(
+    company_context: str,
+    persona_context: str,
+    style_guide: str,
+    clusters: List[QueryCluster],
+    max_queries: int,
+    company_name: str,
+    company_domain: Optional[str],
+) -> str:
+    """Build the improved seed generation prompt."""
+    clusters_payload = []
+    for c in clusters:
+        entry = f"- {c.cluster_id} ({c.cluster_name}): intent={c.intent or 'N/A'}, "
+        entry += f"buyer_stage={c.buyer_stage or 'N/A'}"
+        if c.citation_behavior:
+            entry += f", citation_behavior={c.citation_behavior}"
+        clusters_payload.append(entry)
 
+    # Extract competitor names from company context (best effort)
+    competitor_names = "N/A"
+    if company_context:
+        # Look for common patterns
+        for line in company_context.split("\n"):
+            lower = line.lower()
+            if any(kw in lower for kw in ("competitor", "rival", "alternative", "vs")):
+                competitor_names = line.strip()[:200]
+                break
 
-def _call_openai(prompt: str, model: str) -> str:
-    from openai import OpenAI
+    category = company_domain or "B2B SaaS"
 
-    api_key = settings.openai_api_key
-    if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. Add it to .env.local to enable query generation."
-        )
-    client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
+    return _QUERY_GEN_PROMPT.format(
+        persona_condensed=persona_context[:3000] if persona_context else "No persona provided.",
+        company_name=company_name,
+        company_name_lower=company_name.lower(),
+        company_domain=company_domain or "N/A",
+        company_category=category,
+        competitor_names=competitor_names,
+        clusters_with_citation_behavior="\n".join(clusters_payload),
+        max_queries=max_queries,
     )
-    if not response.choices:
-        return ""
-    msg = response.choices[0].message
-    return getattr(msg, "content", None) or ""
+
+
+# ---------------------------------------------------------------------------
+# Pass 2: Semantic deduplication
+# ---------------------------------------------------------------------------
+
+
+def _deduplicate_queries(
+    queries: List[GeneratedQuery],
+    threshold: float = 0.85,
+) -> List[GeneratedQuery]:
+    """Remove semantically redundant queries within each cluster."""
+    if not queries:
+        return queries
+
+    # Group by cluster
+    cluster_groups: Dict[str, List[GeneratedQuery]] = defaultdict(list)
+    for q in queries:
+        cluster_groups[q.cluster_id].append(q)
+
+    # Embed all query texts at once
+    all_texts = [q.query_text for q in queries]
+    all_embeddings = _embed_texts(all_texts)
+
+    # Map query_id -> embedding
+    emb_lookup: Dict[str, List[float]] = {}
+    for q, emb in zip(queries, all_embeddings):
+        emb_lookup[q.query_id] = emb
+
+    # Greedy selection per cluster
+    kept: List[GeneratedQuery] = []
+    for cluster_id, cluster_queries in cluster_groups.items():
+        selected: List[GeneratedQuery] = []
+        selected_embs: List[List[float]] = []
+        for q in cluster_queries:
+            emb = emb_lookup.get(q.query_id)
+            if emb is None:
+                continue
+            if not selected_embs:
+                selected.append(q)
+                selected_embs.append(emb)
+                continue
+            max_sim = max(_cosine_similarity(emb, s) for s in selected_embs)
+            if max_sim < threshold:
+                selected.append(q)
+                selected_embs.append(emb)
+        kept.extend(selected)
+
+    logger.info(
+        "Dedup: %d queries -> %d queries (threshold=%.2f)",
+        len(queries), len(kept), threshold,
+    )
+    return kept
+
+
+# ---------------------------------------------------------------------------
+# Pass 3: Coverage validation
+# ---------------------------------------------------------------------------
+
+
+def _validate_coverage(
+    queries: List[GeneratedQuery],
+    clusters: List[QueryCluster],
+    max_queries: int,
+    company_context: str,
+    persona_context: str,
+    style_guide: str,
+    model: str,
+) -> List[GeneratedQuery]:
+    """Ensure balanced cluster distribution; generate fill-ins for underrepresented clusters."""
+    if not queries or not clusters:
+        return queries
+
+    cluster_count = len(clusters)
+    min_per_cluster = max(2, max_queries // cluster_count)
+    max_per_cluster = int(max_queries * 0.3)
+
+    # Count queries per cluster
+    counts: Dict[str, int] = defaultdict(int)
+    for q in queries:
+        counts[q.cluster_id] += 1
+
+    # Trim overrepresented clusters
+    trimmed: List[GeneratedQuery] = []
+    cluster_added: Dict[str, int] = defaultdict(int)
+    for q in queries:
+        if cluster_added[q.cluster_id] < max_per_cluster:
+            trimmed.append(q)
+            cluster_added[q.cluster_id] += 1
+    queries = trimmed
+
+    # Identify underrepresented clusters
+    recount: Dict[str, int] = defaultdict(int)
+    for q in queries:
+        recount[q.cluster_id] += 1
+
+    underrep = []
+    for c in clusters:
+        current = recount.get(c.cluster_id, 0)
+        if current < min_per_cluster:
+            needed = min_per_cluster - current
+            underrep.append((c, needed))
+
+    if not underrep:
+        logger.info("Coverage OK: all clusters have >= %d queries.", min_per_cluster)
+        return queries
+
+    # Generate targeted fill-in queries for underrepresented clusters
+    logger.info(
+        "Generating fill-ins for %d underrepresented clusters.", len(underrep),
+    )
+
+    fill_descriptions = []
+    total_fill = 0
+    for cluster, needed in underrep:
+        fill_descriptions.append(
+            f"- {cluster.cluster_id} ({cluster.cluster_name}): "
+            f"intent={cluster.intent or 'N/A'}, "
+            f"buyer_stage={cluster.buyer_stage or 'N/A'}, "
+            f"need {needed} more queries"
+        )
+        total_fill += needed
+
+    fill_prompt = f"""Generate exactly {total_fill} additional search queries to fill gaps in cluster coverage.
+
+These clusters need more queries:
+{chr(10).join(fill_descriptions)}
+
+Use natural buyer language. Return JSON only: {{ "queries": [ ... ] }}
+Each query needs: cluster_id, cluster_name, query_text, buyer_stage, persona_tag ("icp").
+
+Context:
+{company_context[:2000]}
+{persona_context[:1000]}"""
+
+    try:
+        response_text = _call_openai(fill_prompt, model)
+        payload = _extract_json(response_text)
+        raw_fill = payload.get("queries", [])
+        start_idx = len(queries) + 1
+        for i, q in enumerate(raw_fill, start=start_idx):
+            queries.append(
+                GeneratedQuery(
+                    query_id=q.get("query_id") or f"q_fill_{i}",
+                    cluster_id=q.get("cluster_id") or "",
+                    cluster_name=q.get("cluster_name") or "",
+                    query_text=q.get("query_text") or "",
+                    buyer_stage=q.get("buyer_stage"),
+                    persona_tag=q.get("persona_tag"),
+                )
+            )
+    except Exception as e:
+        logger.warning("Fill-in query generation failed: %s", e)
+
+    return queries
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 
 
 def generate_queries(
@@ -132,15 +465,20 @@ def generate_queries(
         _read_text(p) for p in input_data.persona_paths if p
     )
     style_guide = _read_text(input_data.style_guide_path)
-    prompt = _build_prompt(
+
+    model_name = model or settings.gap_analysis_query_gen_model
+
+    # Pass 1: Seed generation with improved prompt
+    prompt = _build_seed_prompt(
         company_context=company_context,
         persona_context=persona_context,
         style_guide=style_guide,
         clusters=clusters,
         max_queries=input_data.max_queries,
+        company_name=input_data.company_name,
+        company_domain=input_data.domain,
     )
 
-    model_name = model or "gpt-4o"
     response_text = _call_openai(prompt, model_name)
     payload = _extract_json(response_text)
     raw_queries = payload.get("queries", [])
@@ -149,7 +487,7 @@ def generate_queries(
     for index, q in enumerate(raw_queries, start=1):
         generated.append(
             GeneratedQuery(
-                query_id=q.get("query_id") or f"q_{index}",
+                query_id=f"q_{index}",
                 cluster_id=q.get("cluster_id") or "",
                 cluster_name=q.get("cluster_name") or "",
                 query_text=q.get("query_text") or "",
@@ -157,4 +495,26 @@ def generate_queries(
                 persona_tag=q.get("persona_tag"),
             )
         )
+
+    logger.info("Pass 1 (seed): generated %d queries.", len(generated))
+
+    # Pass 2: Semantic deduplication
+    generated = _deduplicate_queries(generated, threshold=0.85)
+
+    # Pass 3: Coverage validation
+    generated = _validate_coverage(
+        queries=generated,
+        clusters=clusters,
+        max_queries=input_data.max_queries,
+        company_context=company_context,
+        persona_context=persona_context,
+        style_guide=style_guide,
+        model=model_name,
+    )
+
+    # Re-assign sequential query IDs
+    for i, q in enumerate(generated, start=1):
+        q.query_id = f"q_{i}"
+
+    logger.info("Final query count: %d", len(generated))
     return generated

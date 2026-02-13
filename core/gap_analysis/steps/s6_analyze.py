@@ -9,6 +9,8 @@ from scipy.stats import ttest_ind
 from core.models.gap_analysis import (
     AnalysisResult,
     CentroidResult,
+    CitationExemplar,
+    ClusterContentSpec,
     EnrichedCitation,
     GeneratedQuery,
     QueryGap,
@@ -37,28 +39,60 @@ def compute_gap_analysis(
     query_lookup = {q.query_id: q for q in queries}
     cluster_lookup = _cluster_map(queries)
 
+    # Pre-index citations by query_id for O(1) lookups
+    citations_by_query: Dict[str, List[EnrichedCitation]] = defaultdict(list)
+    for citation in enriched:
+        if citation.query_id:
+            citations_by_query[citation.query_id].append(citation)
+
     query_to_citation_sims: Dict[str, List[float]] = defaultdict(list)
     query_to_company_best: Dict[str, float] = {}
+    query_to_best_unit: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
+    query_to_exemplars: Dict[str, List[CitationExemplar]] = defaultdict(list)
+
     for query in queries:
         if not query.embedding:
             continue
-        # citation similarities
-        for citation in enriched:
-            if citation.query_id != query.query_id:
-                continue
+
+        # Citation similarities + exemplar collection
+        for citation in citations_by_query.get(query.query_id, []):
             for match in citation.best_paragraphs:
                 if match.embedding:
-                    query_to_citation_sims[query.query_id].append(
-                        _cosine_similarity(query.embedding, match.embedding)
+                    sim = _cosine_similarity(query.embedding, match.embedding)
+                    query_to_citation_sims[query.query_id].append(sim)
+                    query_to_exemplars[query.query_id].append(
+                        CitationExemplar(
+                            similarity=round(sim, 4),
+                            domain=citation.domain,
+                            url=str(citation.url),
+                            snippet=(match.paragraph[:300] if match.paragraph else None),
+                            structural_signals=citation.structural_signals,
+                            authority_type=(
+                                citation.structural_signals.authority_type
+                                if citation.structural_signals
+                                else None
+                            ),
+                        )
                     )
-        # company best similarity
+
+        # Company best similarity — track unit ID and text
         best_sim = 0.0
+        best_unit_id: Optional[str] = None
+        best_unit_text: Optional[str] = None
         for unit in company_units:
             if unit.embedding:
                 sim = _cosine_similarity(query.embedding, unit.embedding)
                 if sim > best_sim:
                     best_sim = sim
+                    best_unit_id = unit.unit_id
+                    best_unit_text = unit.text[:200] if unit.text else None
         query_to_company_best[query.query_id] = best_sim
+        query_to_best_unit[query.query_id] = (best_unit_id, best_unit_text)
+
+    # Sort and keep top-3 exemplars per query
+    for qid in query_to_exemplars:
+        query_to_exemplars[qid].sort(key=lambda e: e.similarity, reverse=True)
+        query_to_exemplars[qid] = query_to_exemplars[qid][:3]
 
     gaps: List[QueryGap] = []
     citation_sims_all: List[float] = []
@@ -74,16 +108,20 @@ def compute_gap_analysis(
             interpretation = "gap_to_close"
         elif gap <= -0.05:
             interpretation = "company_wins"
+
+        unit_id, unit_text = query_to_best_unit.get(query_id, (None, None))
         gaps.append(
             QueryGap(
                 query_id=query_id,
                 cluster_name=cluster_lookup.get(query_id),
                 query_text=query_lookup[query_id].query_text,
-                best_company_unit=None,
+                best_company_unit=unit_id,
+                best_company_unit_text=unit_text,
                 best_company_similarity=best_company,
                 avg_citation_similarity=avg_citation,
                 gap=gap,
                 interpretation=interpretation,
+                top_cited_exemplars=query_to_exemplars.get(query_id, []),
             )
         )
         citation_sims_all.extend(sims)
@@ -132,6 +170,7 @@ def compute_gap_analysis(
         )
 
     citation_patterns = _citation_patterns(enriched)
+    cluster_specs = _compute_cluster_specs(enriched, queries, gaps)
     decision_metrics = {
         "total_queries": len(queries),
         "total_citations": len(enriched),
@@ -145,6 +184,7 @@ def compute_gap_analysis(
         gaps=gaps,
         citation_patterns=citation_patterns,
         decision_metrics=decision_metrics,
+        cluster_specs=cluster_specs,
     )
 
 
@@ -189,3 +229,103 @@ def _citation_patterns(enriched: List[EnrichedCitation]) -> Dict[str, Dict[str, 
         "authority_types": dict(authority_counts),
         "content_types": dict(content_type_counts),
     }
+
+
+def _compute_cluster_specs(
+    enriched: List[EnrichedCitation],
+    queries: List[GeneratedQuery],
+    gaps: List[QueryGap],
+) -> List[ClusterContentSpec]:
+    """Aggregate citation structural signals per cluster into content specs."""
+
+    # Group citations by cluster
+    cluster_citations: Dict[str, List[EnrichedCitation]] = defaultdict(list)
+    for citation in enriched:
+        cluster = citation.cluster_name
+        if cluster:
+            cluster_citations[cluster].append(citation)
+
+    # Query count per cluster
+    cluster_query_counts: Dict[str, int] = Counter()
+    cluster_ids: Dict[str, str] = {}
+    for q in queries:
+        cluster_query_counts[q.cluster_name] += 1
+        if q.cluster_name not in cluster_ids:
+            cluster_ids[q.cluster_name] = q.cluster_id
+
+    # Avg citation similarity per cluster (from gaps)
+    cluster_citation_sims: Dict[str, List[float]] = defaultdict(list)
+    for g in gaps:
+        if g.cluster_name and g.avg_citation_similarity is not None:
+            cluster_citation_sims[g.cluster_name].append(g.avg_citation_similarity)
+
+    specs: List[ClusterContentSpec] = []
+    for cluster_name, citations in cluster_citations.items():
+        # Word count range
+        word_counts = [
+            c.structural_signals.word_count
+            for c in citations
+            if c.structural_signals and c.structural_signals.word_count > 0
+        ]
+        word_count_range = (
+            [int(min(word_counts)), int(max(word_counts))] if word_counts else [0, 0]
+        )
+
+        # Authority signals distribution
+        authority_signals: Dict[str, int] = Counter()
+        for c in citations:
+            if c.structural_signals and c.structural_signals.authority_type:
+                authority_signals[c.structural_signals.authority_type] += 1
+
+        # Structural rates
+        total = len(citations)
+        has_header = sum(
+            1 for c in citations if c.structural_signals and c.structural_signals.header_count > 0
+        )
+        has_list = sum(
+            1 for c in citations if c.structural_signals and c.structural_signals.list_item_count > 0
+        )
+        has_stat = sum(
+            1 for c in citations if c.structural_signals and c.structural_signals.stat_count > 0
+        )
+        has_cite = sum(
+            1 for c in citations if c.structural_signals and c.structural_signals.citation_count > 0
+        )
+
+        structural_rates: Dict[str, float] = {}
+        if total > 0:
+            structural_rates = {
+                "headers": round(has_header / total, 2),
+                "lists": round(has_list / total, 2),
+                "stats": round(has_stat / total, 2),
+                "citations": round(has_cite / total, 2),
+            }
+
+        # Required elements: rate >= 0.8
+        required_elements: List[str] = [
+            name for name, rate in structural_rates.items() if rate >= 0.8
+        ]
+
+        # Min similarity threshold: mean - 0.5 * std
+        sims = cluster_citation_sims.get(cluster_name, [])
+        min_sim_threshold: Optional[float] = None
+        if sims:
+            mean_sim = float(np.mean(sims))
+            std_sim = float(np.std(sims))
+            min_sim_threshold = round(mean_sim - 0.5 * std_sim, 4)
+
+        specs.append(
+            ClusterContentSpec(
+                cluster_id=cluster_ids.get(cluster_name),
+                cluster_name=cluster_name,
+                query_count=cluster_query_counts.get(cluster_name, 0),
+                word_count_range=word_count_range,
+                min_similarity_threshold=min_sim_threshold,
+                required_elements=required_elements,
+                authority_signals=dict(authority_signals),
+                structural_rates=structural_rates,
+                total_citations_analyzed=total,
+            )
+        )
+
+    return specs

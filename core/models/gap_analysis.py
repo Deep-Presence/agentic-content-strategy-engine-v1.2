@@ -98,11 +98,27 @@ class PlatformResult(BaseModel):
 
 class StructuralSignals(BaseModel):
     word_count: int = 0
+    paragraph_count: int = 0
+    header_count: int = 0
+    list_item_count: int = 0
+    stat_count: int = 0
+    citation_count: int = 0
     has_headers: bool = False
     has_lists: bool = False
     has_numbers: bool = False
     authority_type: Optional[str] = None
     content_type: Optional[str] = None
+
+
+class CitationExemplar(BaseModel):
+    """A top-scoring cited page for a specific query."""
+
+    similarity: float
+    domain: Optional[str] = None
+    url: str
+    snippet: Optional[str] = None
+    structural_signals: Optional[StructuralSignals] = None
+    authority_type: Optional[str] = None
 
 
 class ParagraphMatch(BaseModel):
@@ -147,10 +163,26 @@ class QueryGap(BaseModel):
     cluster_name: Optional[str] = None
     query_text: str
     best_company_unit: Optional[str] = None
+    best_company_unit_text: Optional[str] = None
     best_company_similarity: Optional[float] = None
     avg_citation_similarity: Optional[float] = None
     gap: Optional[float] = None
     interpretation: Optional[str] = None
+    top_cited_exemplars: List[CitationExemplar] = Field(default_factory=list)
+
+
+class ClusterContentSpec(BaseModel):
+    """Per-cluster content specification derived from citation analysis."""
+
+    cluster_id: Optional[str] = None
+    cluster_name: str
+    query_count: int = 0
+    word_count_range: List[int] = Field(default_factory=lambda: [0, 0])
+    min_similarity_threshold: Optional[float] = None
+    required_elements: List[str] = Field(default_factory=list)
+    authority_signals: Dict[str, int] = Field(default_factory=dict)
+    structural_rates: Dict[str, float] = Field(default_factory=dict)
+    total_citations_analyzed: int = 0
 
 
 class AnalysisResult(BaseModel):
@@ -160,6 +192,7 @@ class AnalysisResult(BaseModel):
     gaps: List[QueryGap] = Field(default_factory=list)
     citation_patterns: Dict[str, Any] = Field(default_factory=dict)
     decision_metrics: Dict[str, Any] = Field(default_factory=dict)
+    cluster_specs: List[ClusterContentSpec] = Field(default_factory=list)
 
 
 class GapReport(BaseModel):
