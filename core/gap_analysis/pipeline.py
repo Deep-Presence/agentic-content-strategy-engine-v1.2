@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from pathlib import Path
 from typing import List, Optional
 
 from core.gap_analysis.steps.s1_embed_assets import embed_company_assets
+from core.shared_tools.chroma_client import collection_exists, get_all_embeddings
+
+logger = logging.getLogger(__name__)
 from core.gap_analysis.steps.s2_generate_queries import generate_queries
 from core.gap_analysis.steps.s3_search_platforms import (
     save_platform_results,
@@ -65,6 +69,26 @@ def run_gap_analysis(
         company_units = _load_json_list(
             artifact_dir / "company_embeddings.json", SemanticUnit
         )
+        # Hydrate embeddings from ChromaDB if JSON has no raw vectors
+        if not any(u.embedding for u in company_units):
+            if collection_exists(slug):
+                embedding_map = get_all_embeddings(slug)
+                hydrated = 0
+                for unit in company_units:
+                    if unit.unit_id in embedding_map:
+                        unit.embedding = embedding_map[unit.unit_id]
+                        hydrated += 1
+                logger.info(
+                    "Hydrated %d/%d unit embeddings from ChromaDB.",
+                    hydrated,
+                    len(company_units),
+                )
+            else:
+                logger.warning(
+                    "No ChromaDB collection found for '%s' and JSON has no embeddings. "
+                    "S6/S7 may produce degraded results.",
+                    slug,
+                )
     else:
         company_units = embed_company_assets(input_data)
 
@@ -118,7 +142,7 @@ def run_gap_analysis(
             EnrichedCitation,
         )
     else:
-        queries, enriched = embed_all(queries, enriched)
+        queries, enriched = embed_all(queries, enriched, company_slug=slug)
         save_embeddings(queries, enriched, artifact_dir / "embeddings")
 
     # Step 6: analyze

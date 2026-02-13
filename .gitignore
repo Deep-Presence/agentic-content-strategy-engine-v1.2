@@ -26,10 +26,12 @@ venv/
 artifacts/_logs/*.log
 
 # Artifact outputs (generated at runtime, not source code)
-artifacts/gap_analysis/
+artifacts/gap_analysis/*
 artifacts/company_context/*.md
 artifacts/personas/*.md
 artifacts/style_guides/*.md
+
+artifacts/chroma_db/*
 
 # Misc
 misc/

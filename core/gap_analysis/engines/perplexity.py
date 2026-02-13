@@ -26,7 +26,13 @@ class PerplexityEngine(SearchEngine):
             client = Perplexity(api_key=api_key)
             completion = client.chat.completions.create(
                 model=self.model,
-                messages=[{"role": "user", "content": query_text}],
+                messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful research assistant. Provide accurate, well-researched answers with citations to your sources. Always cite the sources you use.",
+                },
+                {"role": "user", "content": query_text},
+            ],
                 stream=False,
             )
             content = ""

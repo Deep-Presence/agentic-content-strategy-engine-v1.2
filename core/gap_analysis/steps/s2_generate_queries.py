@@ -96,14 +96,66 @@ def _load_taxonomy(path: Optional[Path]) -> List[QueryCluster]:
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
+    """Extract and parse JSON from LLM response text.
+
+    Handles common LLM issues: truncated output, trailing commas,
+    markdown fences, and control characters.
+    """
+    # Strip markdown code fences if present
+    text = re.sub(r"```(?:json)?\s*", "", text)
+
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         raise RuntimeError("LLM response did not contain JSON payload.")
     raw = match.group(0)
-    # LLM responses often contain control characters inside JSON strings
-    raw = raw.replace("\r\n", "\\n").replace("\r", "\\n")
-    raw = re.sub(r"[\x00-\x1f](?<![\n\t])", "", raw)
-    return json.loads(raw, strict=False)
+
+    # Clean control characters (preserve \n and \t)
+    raw = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw)
+
+    # Remove trailing commas before } or ] (common LLM mistake)
+    raw = re.sub(r",\s*([}\]])", r"\1", raw)
+
+    # First attempt: parse as-is
+    try:
+        return json.loads(raw, strict=False)
+    except json.JSONDecodeError:
+        pass
+
+    # Second attempt: repair truncated JSON by closing open brackets
+    repaired = _repair_truncated_json(raw)
+    try:
+        return json.loads(repaired, strict=False)
+    except json.JSONDecodeError as exc:
+        logger.error("JSON parse failed even after repair. Error: %s", exc)
+        raise RuntimeError(f"Failed to parse LLM JSON: {exc}") from exc
+
+
+def _repair_truncated_json(raw: str) -> str:
+    """Attempt to repair truncated JSON by closing open structures.
+
+    When the LLM output is cut off by max_output_tokens, the JSON
+    ends mid-stream. This tries to salvage the valid portion.
+    """
+    # Find the last complete entry (last valid }, or ])
+    # Try trimming from the end to find a parseable prefix
+    # Look for the last complete object in a "queries" array
+    last_complete = raw.rfind("}")
+    while last_complete > 0:
+        candidate = raw[:last_complete + 1]
+        # Count open/close braces and brackets
+        open_braces = candidate.count("{") - candidate.count("}")
+        open_brackets = candidate.count("[") - candidate.count("]")
+        # Close them
+        suffix = "]" * open_brackets + "}" * open_braces
+        # Remove any trailing comma before our suffix
+        candidate = re.sub(r",\s*$", "", candidate)
+        try:
+            return json.loads(candidate + suffix, strict=False) and (candidate + suffix)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        last_complete = raw.rfind("}", 0, last_complete)
+
+    return raw
 
 
 def _call_openai(prompt: str, model: str) -> str:
@@ -118,6 +170,8 @@ def _call_openai(prompt: str, model: str) -> str:
     response = client.responses.create(
         model=model,
         input=prompt,
+        reasoning={"effort": "medium"},
+        max_output_tokens=16384,
     )
     return getattr(response, "output_text", None) or ""
 

@@ -68,12 +68,16 @@ class Settings(BaseSettings):
     aeo_agent_invoke_timeout_s: int = 900
 
     # Gap Analysis
-    gap_analysis_max_crawl_pages: int = 50
-    gap_analysis_max_crawl_depth: int = 2
+    gap_analysis_max_crawl_pages: int = 500
+    gap_analysis_max_crawl_depth: int = 4
+
+    # ChromaDB (local vector store for gap analysis embeddings)
+    chroma_persist_dir: str = "artifacts/chroma_db"
+    chroma_collection_prefix: str = "gap_company"
 
     # Gap Analysis – Models
-    gap_analysis_query_gen_model: str = "gpt-4o"
-    gap_analysis_report_model: str = "gpt-4o"
+    gap_analysis_query_gen_model: str = "gpt-5.2-2025-12-11"
+    gap_analysis_report_model: str = "gpt-5.2-2025-12-11"
     gap_analysis_openai_engine_model: str = "gpt-5.2-2025-12-11"
     gap_analysis_claude_engine_model: str = "claude-sonnet-4-5-20250929"
     gap_analysis_gemini_engine_model: str = "gemini-3-flash-preview"

@@ -1,8 +1,84 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, HttpUrl
+
+
+# ---------------------------------------------------------------------------
+# Site-Tree Discovery Models
+# ---------------------------------------------------------------------------
+
+
+class DiscoverySource(str, Enum):
+    """How a URL was discovered during site crawling."""
+
+    SITEMAP = "sitemap"
+    SITEMAP_INDEX = "sitemap_index"
+    ROBOTS_TXT = "robots_txt"
+    BFS_CRAWL = "bfs_crawl"
+    CANONICAL = "canonical"
+    HREFLANG = "hreflang"
+    RSS_FEED = "rss_feed"
+    SEED_URL = "seed_url"
+    REDIRECT = "redirect"
+
+
+class DiscoveredPage(BaseModel):
+    """Flat representation of a single discovered page."""
+
+    url: str
+    normalized_url: str
+    title: Optional[str] = None
+    h1: Optional[str] = None
+    meta_description: Optional[str] = None
+    status_code: Optional[int] = None
+    content_type: Optional[str] = None
+    discovery_source: DiscoverySource
+    depth: int = 0
+    parent_url: Optional[str] = None
+    canonical_url: Optional[str] = None
+    hreflang_alternates: Dict[str, str] = Field(default_factory=dict)
+    last_modified: Optional[str] = None
+    change_frequency: Optional[str] = None
+    priority: Optional[float] = None
+    word_count: Optional[int] = None
+    has_content: bool = True
+
+
+class SiteTreeNode(BaseModel):
+    """Tree node for hierarchical site structure."""
+
+    url: str
+    title: Optional[str] = None
+    path_segment: str = ""
+    discovery_source: DiscoverySource = DiscoverySource.BFS_CRAWL
+    depth: int = 0
+    status_code: Optional[int] = None
+    children: List[SiteTreeNode] = Field(default_factory=list)
+    page_count_below: int = 0
+
+
+class SiteDiscoveryResult(BaseModel):
+    """Complete output of the site-tree discovery process."""
+
+    domain: str
+    base_url: str
+    total_pages_discovered: int = 0
+    discovery_stats: Dict[str, int] = Field(default_factory=dict)
+    pages: List[DiscoveredPage] = Field(default_factory=list)
+    site_tree: Optional[SiteTreeNode] = None
+    sitemaps_found: List[str] = Field(default_factory=list)
+    rss_feeds_found: List[str] = Field(default_factory=list)
+    robots_txt_raw: Optional[str] = None
+    crawl_duration_seconds: float = 0.0
+    errors: List[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Gap Analysis Pipeline Models
+# ---------------------------------------------------------------------------
 
 
 class GapAnalysisInput(BaseModel):
@@ -56,8 +132,10 @@ class SemanticUnit(BaseModel):
     title: Optional[str] = None
     text: str
     embedding: Optional[List[float]] = None
+    embedding_id: Optional[str] = None
     char_count: int = 0
     word_count: int = 0
+    discovery_source: Optional[str] = None
 
 
 class QueryCluster(BaseModel):
@@ -124,6 +202,7 @@ class CitationExemplar(BaseModel):
 class ParagraphMatch(BaseModel):
     paragraph: str
     embedding: Optional[List[float]] = None
+    embedding_id: Optional[str] = None
     similarity: Optional[float] = None
 
 

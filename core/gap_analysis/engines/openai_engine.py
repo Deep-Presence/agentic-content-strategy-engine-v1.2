@@ -46,8 +46,18 @@ class OpenAIEngine(SearchEngine):
             try:
                 response = client.responses.create(
                     model=self.model,
-                    input=query_text,
+                    reasoning={"effort": "low"},
+                    max_output_tokens=4096,  # Increased for detailed responses with citations
                     tools=[{"type": "web_search"}],
+                    tool_choice={"type": "web_search"},
+                    include=["web_search_call.action.sources"],
+                    input=[
+                        {
+                            "role": "system",
+                            "content": "You are a helpful research assistant. Search the web to answer queries accurately. Always cite your sources with proper references.",
+                        },
+                        {"role": "user", "content": query_text},
+                    ],
                 )
                 output = getattr(response, "output", None) or []
                 return _extract_openai_output(output)

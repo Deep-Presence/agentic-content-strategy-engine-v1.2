@@ -81,6 +81,11 @@ def _fetch_html(url: str) -> Optional[str]:
             resp = client.get(url)
             if resp.status_code >= 400:
                 return None
+            # Skip non-HTML responses (PDFs, images, etc.) — binary content
+            # parsed as HTML produces garbage paragraphs that break embeddings.
+            content_type = resp.headers.get("content-type", "")
+            if "text/html" not in content_type.lower():
+                return None
             return resp.text
         except Exception:
             return None
