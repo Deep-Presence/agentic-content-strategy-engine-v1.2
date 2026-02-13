@@ -1,0 +1,38 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+.DS_Store
+
+# Environment files (secrets)
+.env.local
+.env.test.local
+.env
+
+# Virtual environments
+venv/
+.venv/
+
+# IDE
+.cursor/
+.vscode/
+.idea/
+
+# Artifacts logs (keep structure, ignore content)
+artifacts/_logs/*.log
+
+# Artifact outputs (generated at runtime, not source code)
+artifacts/gap_analysis/
+artifacts/company_context/*.md
+artifacts/personas/*.md
+artifacts/style_guides/*.md
+
+# Misc
+misc/
+
+CLAUDE.md
+RESTRUCTURING_ANALYSIS.md

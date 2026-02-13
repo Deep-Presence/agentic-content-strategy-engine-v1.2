@@ -1,0 +1,45 @@
+[project]
+name = "content-strategy-engine"
+version = "0.1.0"
+description = "Deep Presence Content Strategy Engine — Research, Gap Analysis & Content Generation pipelines"
+requires-python = ">=3.12"
+readme = "docs/PROJECT_STATE.md"
+
+dependencies = [
+    "pydantic>=2.5,<3",
+    "pydantic-settings>=2.0,<3",
+    "python-dotenv>=1.0,<2",
+    "requests>=2.31,<3",
+    "praw>=7.7,<8",
+    "langgraph>=0.2",
+    "langchain-google-genai>=2.0",
+    "perplexityai>=0.2",
+    "deepagents",
+    "openai",
+    "anthropic",
+    "plotly",
+    "beautifulsoup4",
+    "numpy",
+    "scikit-learn",
+    "umap-learn",
+    "scipy",
+    "httpx",
+    "playwright",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.setuptools.packages.find]
+include = ["core*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
