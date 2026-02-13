@@ -18,6 +18,9 @@ from core.models.gap_analysis import (
     SpaResult,
 )
 
+TOP_N_CITATIONS = 5   # Max citations per query (ranked by best paragraph similarity)
+TOP_K_PARAGRAPHS = 3  # Max paragraphs per citation URL
+
 
 def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
     a = np.array(vec_a, dtype=float)
@@ -29,6 +32,25 @@ def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
 
 def _cluster_map(queries: List[GeneratedQuery]) -> Dict[str, str]:
     return {q.query_id: q.cluster_name for q in queries}
+
+
+def _select_top_citations(
+    citations: List[EnrichedCitation],
+    query_embedding: List[float],
+    top_n: int = TOP_N_CITATIONS,
+    top_k: int = TOP_K_PARAGRAPHS,
+) -> List[EnrichedCitation]:
+    """Rank citations by their best paragraph's similarity to query, return top-N."""
+    scored: List[Tuple[float, EnrichedCitation]] = []
+    for citation in citations:
+        best_sim = 0.0
+        for match in citation.best_paragraphs[:top_k]:
+            if match.embedding:
+                sim = _cosine_similarity(query_embedding, match.embedding)
+                best_sim = max(best_sim, sim)
+        scored.append((best_sim, citation))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored[:top_n]]
 
 
 def compute_gap_analysis(
@@ -54,9 +76,13 @@ def compute_gap_analysis(
         if not query.embedding:
             continue
 
-        # Citation similarities + exemplar collection
-        for citation in citations_by_query.get(query.query_id, []):
-            for match in citation.best_paragraphs:
+        # Citation similarities + exemplar collection (top-N citations, top-K paragraphs)
+        top_citations = _select_top_citations(
+            citations_by_query.get(query.query_id, []),
+            query.embedding,
+        )
+        for citation in top_citations:
+            for match in citation.best_paragraphs[:TOP_K_PARAGRAPHS]:
                 if match.embedding:
                     sim = _cosine_similarity(query.embedding, match.embedding)
                     query_to_citation_sims[query.query_id].append(sim)
@@ -134,6 +160,24 @@ def compute_gap_analysis(
         "company_similarity_median": float(np.median(company_sims_all)) if company_sims_all else 0.0,
     }
 
+    # Per-cluster proximity breakdown
+    cluster_sims: Dict[str, List[float]] = defaultdict(list)
+    for query_id, sims in query_to_citation_sims.items():
+        cluster = cluster_lookup.get(query_id, "unknown")
+        cluster_sims[cluster].extend(sims)
+
+    proximity_stats["per_cluster"] = {
+        cluster: {
+            "mean": float(np.mean(s)),
+            "std": float(np.std(s)),
+            "min": float(np.min(s)),
+            "max": float(np.max(s)),
+            "count": len(s),
+        }
+        for cluster, s in cluster_sims.items()
+        if s
+    }
+
     spa_results: List[SpaResult] = []
     if citation_sims_all and company_sims_all:
         stat = ttest_ind(citation_sims_all, company_sims_all, equal_var=False)
@@ -206,7 +250,7 @@ def _collect_citation_embeddings(
         if query_id and query_lookup.get(query_id, None):
             if query_lookup[query_id].cluster_name != cluster_name:
                 continue
-        for match in citation.best_paragraphs:
+        for match in citation.best_paragraphs[:TOP_K_PARAGRAPHS]:
             if match.embedding:
                 embeddings.append(match.embedding)
     return embeddings

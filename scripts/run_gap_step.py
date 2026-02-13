@@ -59,6 +59,7 @@ from core.models.gap_analysis import (
     PlatformResult,
     SemanticUnit,
 )
+from core.shared_tools.chroma_client import collection_exists, get_all_embeddings
 
 
 def _company_slug(args: argparse.Namespace) -> str:
@@ -104,6 +105,24 @@ def _build_input(args: argparse.Namespace) -> GapAnalysisInput:
     if getattr(args, "max_crawl_depth", None) is not None:
         kwargs["max_crawl_depth"] = args.max_crawl_depth
     return GapAnalysisInput(**kwargs)
+
+
+def _load_company_units_with_embeddings(artifact_dir: Path) -> list[SemanticUnit]:
+    """Load company units from JSON and hydrate embeddings from ChromaDB."""
+    company_units = _load_json_list(artifact_dir / "company_embeddings.json", SemanticUnit)
+    if not any(u.embedding for u in company_units):
+        slug = artifact_dir.name
+        if collection_exists(slug):
+            embedding_map = get_all_embeddings(slug)
+            hydrated = 0
+            for unit in company_units:
+                if unit.unit_id in embedding_map:
+                    unit.embedding = embedding_map[unit.unit_id]
+                    hydrated += 1
+            print(f"  Hydrated {hydrated}/{len(company_units)} unit embeddings from ChromaDB.")
+        else:
+            print(f"  WARNING: No ChromaDB collection found for '{slug}' and JSON has no embeddings.")
+    return company_units
 
 
 def run_step_1(args: argparse.Namespace, artifact_dir: Path, input_data: GapAnalysisInput) -> None:
@@ -194,7 +213,7 @@ def run_step_5(args: argparse.Namespace, artifact_dir: Path, input_data: GapAnal
 
 def run_step_6(args: argparse.Namespace, artifact_dir: Path, input_data: GapAnalysisInput) -> None:
     """Compute gap analysis."""
-    company_units = _load_json_list(artifact_dir / "company_embeddings.json", SemanticUnit)
+    company_units = _load_company_units_with_embeddings(artifact_dir)
     queries = _load_json_list(
         artifact_dir / "embeddings" / "queries_with_embeddings.json",
         GeneratedQuery,
@@ -220,7 +239,7 @@ def run_step_6(args: argparse.Namespace, artifact_dir: Path, input_data: GapAnal
 
 def run_step_7(args: argparse.Namespace, artifact_dir: Path, input_data: GapAnalysisInput) -> None:
     """Generate visualizations."""
-    company_units = _load_json_list(artifact_dir / "company_embeddings.json", SemanticUnit)
+    company_units = _load_company_units_with_embeddings(artifact_dir)
     queries = _load_json_list(
         artifact_dir / "embeddings" / "queries_with_embeddings.json",
         GeneratedQuery,
