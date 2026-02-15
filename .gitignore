@@ -27,6 +27,7 @@ artifacts/_logs/*.log
 
 # Artifact outputs (generated at runtime, not source code)
 artifacts/gap_analysis/*
+artifacts/content/*
 artifacts/company_context/*.md
 artifacts/personas/*.md
 artifacts/style_guides/*.md

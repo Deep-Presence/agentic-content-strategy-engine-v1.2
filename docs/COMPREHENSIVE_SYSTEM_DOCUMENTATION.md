@@ -33,7 +33,14 @@
    - 6.8 [Step 8 — Generate Report](#68-step-8--generate-report)
    - 6.9 [LLM Engine Abstraction](#69-llm-engine-abstraction)
    - 6.10 [Data Flow Between Steps](#610-data-flow-between-steps)
-7. [Pipeline 3: Content Generation Engine (Planned)](#7-pipeline-3-content-generation-engine-planned)
+7. [Pipeline 3: Content Generation Engine](#7-pipeline-3-content-generation-engine)
+   - 7.1 [Stage 1 — Strategic Planner](#71-stage-1--strategic-planner)
+   - 7.2 [Stage 2 — Content Workers (Orchestrator-Workers)](#72-stage-2--content-workers-orchestrator-workers)
+   - 7.3 [Stage 3 — Evaluator-Optimizer Loop](#73-stage-3--evaluator-optimizer-loop)
+   - 7.4 [Stage 4 — Human Review (LangGraph HITL)](#74-stage-4--human-review-langgraph-hitl)
+   - 7.5 [Langfuse Tracing Architecture](#75-langfuse-tracing-architecture)
+   - 7.6 [Artifact Structure](#76-artifact-structure)
+   - 7.7 [Utility Modules](#77-utility-modules)
 8. [Reddit Human-in-the-Loop Monitor](#8-reddit-human-in-the-loop-monitor)
 9. [Storage Architecture](#9-storage-architecture)
    - 9.1 [Filesystem Layer (Source of Truth)](#91-filesystem-layer-source-of-truth)
@@ -66,7 +73,7 @@ The **Content Strategy Engine** is a multi-agent AI platform that automates the 
 
 2. **Gap Analysis Pipeline** (implemented) — An 8-step data pipeline that embeds a company's web content, generates buyer-intent search queries, searches four AI platforms (ChatGPT, Claude, Perplexity, Google AI Overview), enriches the citations those platforms return, embeds everything into a shared vector space, computes semantic proximity analysis (SPA), generates interactive visualizations, and produces a gap report with actionable content recommendations.
 
-3. **Content Generation Engine** (planned) — Will consume the outputs of Pipelines 1 and 2 to automatically generate optimized content pieces that close the identified citation gaps.
+3. **Content Generation Engine** (implemented) — A 4-stage async pipeline that consumes the outputs of Pipelines 1 and 2 to automatically generate optimized content pieces that close the identified citation gaps. Uses Orchestrator-Workers pattern for parallel content production and Evaluator-Optimizer pattern for automated QA, with LangGraph HITL for human review.
 
 Additionally, a **Reddit Human-in-the-Loop Monitor** (implemented) monitors subreddits for threads matching a company's ICP persona, drafts contextual replies, and sends notifications via Slack/Discord.
 
@@ -87,7 +94,7 @@ Traditional SEO optimizes for Google's link-based ranking. But the rise of AI-po
 This system answers three questions:
 1. **"Who are we, who are our customers, and how should we write?"** → Research Artifacts Pipeline
 2. **"Where are we being cited vs. where are we invisible in AI search?"** → Gap Analysis Pipeline
-3. **"What content should we create to fill those gaps?"** → Content Generation Engine (planned)
+3. **"What content should we create to fill those gaps?"** → Content Generation Engine (implemented)
 
 ### The Value Chain
 
@@ -101,8 +108,8 @@ Company Website + Internal Docs
     (Embed company content → Generate buyer queries → Search AI platforms
      → Analyze citation patterns → Identify semantic gaps → Recommend content)
         ↓
-    Content Generation (planned)
-    (Create optimized content that AI models will cite)
+    Content Generation Engine
+    (4-stage: Planner → Workers → Evaluator → HITL Review)
         ↓
     Publication + Monitoring
     (Publish → Monitor Reddit for opportunities → Repeat)
@@ -121,7 +128,7 @@ Company Website + Internal Docs
 │  ┌──────────────────┐   ┌───────────────────┐   ┌─────────────────────┐  │
 │  │   Pipeline 1:    │   │   Pipeline 2:     │   │   Pipeline 3:       │  │
 │  │   Research       │──▶│   Gap Analysis    │──▶│   Content Generation│  │
-│  │   Artifacts      │   │   (8-step)        │   │   (planned)         │  │
+│  │   Artifacts      │   │   (8-step)        │   │   (4-stage)         │  │
 │  └────────┬─────────┘   └────────┬──────────┘   └─────────────────────┘  │
 │           │                      │                                       │
 │           ▼                      ▼                                       │
@@ -162,6 +169,7 @@ Company Website + Internal Docs
 | **Web Crawling** | Playwright, httpx, BeautifulSoup4 | Site crawling and HTML extraction |
 | **Reddit** | PRAW (read-only) | Subreddit monitoring |
 | **Notifications** | Slack Block Kit, Discord Webhooks | Alert delivery |
+| **Observability** | Langfuse v3.14+ | LLM tracing, scoring, cost tracking |
 
 ---
 
@@ -236,8 +244,36 @@ content-strategy-engine/
 │   │       ├── s7_visualize.py            # Plotly HTML visualizations
 │   │       └── s8_generate_report.py      # LLM-generated gap report + generation specs
 │   │
-│   ├── content_engine/                    # Pipeline 3: Content Generation (FUTURE — empty)
-│   │   └── __init__.py
+│   ├── content_engine/                    # Pipeline 3: Content Generation Engine
+│   │   ├── __init__.py
+│   │   ├── pipeline.py                    # Top-level async orchestrator (4-stage)
+│   │   ├── planner.py                     # Stage 1: Strategic Planner (Sonnet 4.5)
+│   │   ├── tracing.py                     # Langfuse instrumentation (lazy singleton)
+│   │   ├── utils.py                       # safe_parse, retry, token estimation
+│   │   ├── graph.py                       # Stage 4: LangGraph HITL review
+│   │   ├── workers/
+│   │   │   ├── __init__.py
+│   │   │   ├── dispatcher.py              # Semaphore-controlled parallel dispatch
+│   │   │   ├── outliner.py                # Step 1: Outline generation (Sonnet)
+│   │   │   ├── drafter.py                 # Step 2: Content drafting (Sonnet)
+│   │   │   ├── fact_enricher.py           # Step 3: Perplexity fact verification
+│   │   │   └── formatter.py              # Step 4: Style formatting (Haiku)
+│   │   ├── evaluator/
+│   │   │   ├── __init__.py
+│   │   │   ├── loop.py                    # Eval-optimize orchestrator (max 2 cycles)
+│   │   │   ├── structural.py              # 8 deterministic structural checks
+│   │   │   ├── semantic.py                # Embedding proximity evaluation
+│   │   │   ├── style_judge.py             # LLM-as-judge style evaluation (Haiku)
+│   │   │   └── factual_judge.py           # LLM-as-judge factual grounding (Sonnet)
+│   │   └── prompts/
+│   │       ├── __init__.py
+│   │       ├── planner_prompts.py
+│   │       ├── outliner_prompts.py
+│   │       ├── drafter_prompts.py
+│   │       ├── enricher_prompts.py
+│   │       ├── formatter_prompts.py
+│   │       ├── style_judge_prompts.py
+│   │       └── factual_judge_prompts.py
 │   │
 │   ├── reddit_hil/                        # Reddit Human-in-the-Loop Monitor
 │   │   ├── __init__.py                    # Exports: fetch_new_threads
@@ -1028,41 +1064,260 @@ GapAnalysisInput
 
 ---
 
-## 7. Pipeline 3: Content Generation Engine (Planned)
+## 7. Pipeline 3: Content Generation Engine
 
-**Status:** Not yet implemented. Only an empty `core/content_engine/__init__.py` exists.
+**Status:** Implemented (v1.0). Branch: `feat/content-engine-v1.0.0`. 57/57 tests passing.
 
-**Planned Architecture (from CLAUDE.md):**
+**Architecture:** 4-stage async pipeline using two Anthropic agent patterns:
+- **Orchestrator-Workers** — parallel content production with semaphore-controlled concurrency
+- **Evaluator-Optimizer** — 4-dimension quality gate with automated revision cycles
 
 ```
-Planner Agent
-    ↓
-  Identifies topics/prompts from research + gap analysis
-    ↓
-  Spawns Sub-Agentic Systems (one per content brief)
-    ↓
-  Each sub-system:
-    ┌─────────────────────┐
-    │  Planner-Manager     │
-    │    ↓                 │
-    │  Worker Agents       │  (research, write, cite)
-    │    ↓                 │
-    │  Evaluator Agent     │  (quality + citation probability)
-    │    ↓                 │
-    │  Citation Score Check│
-    └─────────────────────┘
-    ↓
-  Publish (if score passes threshold)
+┌──────────────────────────────────────────────────────────────────────┐
+│  [1/4] Strategic Planner (Sonnet 4.5)                                │
+│    Input: gap report + generation spec + company context + personas  │
+│    Output: List[ContentBrief] — prioritized content assignments      │
+└──────────────────┬───────────────────────────────────────────────────┘
+                   │ spawns N worker chains (asyncio.Semaphore)
+                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  [2/4] Content Workers (parallel)                                    │
+│    Per brief: Outliner (Sonnet) → Drafter (Sonnet) →                 │
+│               Fact Enricher (Perplexity sonar-pro) →                 │
+│               Formatter (Haiku 4.5)                                  │
+│    Output: List[FormattedContent]                                    │
+└──────────────────┬───────────────────────────────────────────────────┘
+                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  [3/4] Evaluator-Optimizer Loop (max 2 revision cycles)              │
+│    4 dimensions in parallel: Structural (code) + Semantic (embed)    │
+│                               + Style (Haiku judge) + Factual        │
+│                                 (Sonnet judge)                       │
+│    Failed → compile feedback → revise → re-evaluate                  │
+│    Output: List[FormattedContent] + RevisionHistory                  │
+└──────────────────┬───────────────────────────────────────────────────┘
+                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  [4/4] Human Review (LangGraph HITL)                                 │
+│    interrupt() → approve / edit / reject per piece                   │
+│    auto_approve flag skips interrupt                                  │
+│    Output: List[ContentPiece] with status + final markdown           │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-**Expected Input:**
+**Entry Point:** `core/content_engine/pipeline.py` → `run_content_generation(input_data)`
+**CLI:** `scripts/run_content_engine.py`
+
+**Input:**
 - `generation_spec.json` from Pipeline 2 (cluster content specs)
+- `gap_report.json` from Pipeline 2 (prioritized content recommendations)
 - Research artifacts from Pipeline 1 (company context, personas, style guide)
-- Gap report from Pipeline 2 (prioritized content recommendations)
+- `analysis.json` from Pipeline 2 (semantic analysis data)
 
-**Expected Output:**
-- Optimized content pieces stored in `/artifacts/content/`
-- Each piece evaluated against citation probability thresholds
+**Output:**
+- Content pieces in `artifacts/content/{slug}/content/brief-{N}/final.md`
+- Run metadata in `artifacts/content/{slug}/run_metadata.json`
+- Per-brief artifacts: `outline.json`, `draft.md`, `enriched.md`, `formatted.md`, `eval_history.json`
+
+### 7.1 Stage 1 — Strategic Planner
+
+**File:** `core/content_engine/planner.py`
+**Prompts:** `core/content_engine/prompts/planner_prompts.py`
+
+```python
+async def plan_content(
+    input_data: ContentGenerationInput,
+    company_context_md: str,
+    style_guide_md: str,
+    persona_mds: List[str],
+    gap_report_json: dict,
+    generation_spec_json: dict,
+    analysis_json: dict,
+    session_id: str = "",
+) -> PlannerOutput
+```
+
+- **Model:** Sonnet 4.5 via `AsyncAnthropic` (raw SDK)
+- **Pattern:** Single LLM call with structured JSON output
+- **Context window guard:** `truncate_to_token_limit()` applied to company context and personas
+- **JSON parsing:** `safe_parse()` with code fence extraction and trailing comma cleanup
+- **Output:** `PlannerOutput` with `List[ContentBrief]` — each brief includes `word_count_range`, `structural_targets`, `target_queries`, `key_topics`, `key_angles`
+- **Tracing:** Langfuse generation logged under `planner` trace
+
+### 7.2 Stage 2 — Content Workers (Orchestrator-Workers)
+
+**Dispatcher:** `core/content_engine/workers/dispatcher.py`
+
+```python
+async def dispatch_workers(
+    briefs: List[ContentBrief],
+    input_data: ContentGenerationInput,
+    style_guide_md: str,
+    company_context_md: str,
+    max_concurrent: int = 3,
+    session_id: str = "",
+    artifact_dir: Path = Path("."),
+) -> List[FormattedContent]
+```
+
+Uses `asyncio.Semaphore(max_concurrent)` + `asyncio.gather(return_exceptions=True)`. Failing one worker does NOT cancel the batch.
+
+**Worker Chain (4 steps per brief):**
+
+| Step | File | Model | Function | Output |
+|------|------|-------|----------|--------|
+| 1. Outline | `workers/outliner.py` | Sonnet 4.5 | `generate_outline()` | `ContentOutline` |
+| 2. Draft | `workers/drafter.py` | Sonnet 4.5 | `generate_draft()` | `ContentDraft` |
+| 3. Enrich | `workers/fact_enricher.py` | Perplexity sonar-pro | `enrich_with_facts()` | `EnrichedDraft` |
+| 4. Format | `workers/formatter.py` | Haiku 4.5 | `format_content()` | `FormattedContent` |
+
+**Each step:**
+- Has its own prompt file in `core/content_engine/prompts/`
+- Logs a Langfuse span under the worker trace
+- Persists intermediate artifact to disk (`outline.json`, `draft.md`, `enriched.md`, `formatted.md`)
+
+**Fact Enricher:** Uses httpx to call Perplexity API directly. Gracefully skips if `PERPLEXITY_API_KEY` not set (returns draft unchanged). Detects added citations via regex.
+
+**Formatter:** Uses `_count_structural_elements(markdown)` for word count, header count, list count, stat count, and citation count using regex patterns.
+
+**Drafter also provides:** `revise_draft()` — used during evaluator revision cycles to incorporate feedback.
+
+**CLI Progress:**
+```
+  [2/4] Content Workers .......
+         Worker #1: Outlining "409A Valuation..."
+         Worker #1: Drafting "409A Valuation..."
+         Worker #2: Outlining "ASC 718 Explained..."
+         Worker #1: DONE (2,847 words, 8 headers, 12 citations)
+         Workers complete: 10/10 briefs ............ 142.5s
+```
+
+### 7.3 Stage 3 — Evaluator-Optimizer Loop
+
+**Orchestrator:** `core/content_engine/evaluator/loop.py`
+
+```python
+async def evaluate_and_optimize(
+    content: FormattedContent,
+    brief: ContentBrief,
+    company_context_md: str,
+    style_guide_md: str,
+    input_data: ContentGenerationInput,
+    max_cycles: int = 2,
+    session_id: str = "",
+    artifact_dir: Path = Path("."),
+) -> tuple[FormattedContent, RevisionHistory]
+```
+
+**4 Evaluation Dimensions (run in parallel via `asyncio.gather`):**
+
+| Dimension | File | Type | Model | Threshold |
+|-----------|------|------|-------|-----------|
+| Structural | `evaluator/structural.py` | Deterministic (Python) | None | >= 0.8 |
+| Semantic | `evaluator/semantic.py` | Embedding proximity | OpenAI text-embedding-3-large | >= 0.65 |
+| Style | `evaluator/style_judge.py` | LLM-as-Judge | Haiku 4.5 | >= 0.7 |
+| Factual | `evaluator/factual_judge.py` | LLM-as-Judge | Sonnet 4.5 | >= 0.7 |
+
+**Structural Evaluator (8 checks):**
+1. Word count within `word_count_range`
+2. Header count >= `structural_targets.min_headers`
+3. List count >= `structural_targets.min_lists`
+4. Citation count >= `structural_targets.min_citations`
+5. At least 1 statistic present
+6. Heading hierarchy valid (no H4 before H2)
+7. No empty sections (heading with < 30 chars before next heading)
+8. Required elements present (from brief)
+
+Score = passed_checks / total_checks. Passes if >= 0.8.
+
+**Semantic Evaluator:** Embeds content via `async_embed_texts()` (reuses `core/shared_tools/async_embedding_client.py`), computes cosine similarity against target query embeddings.
+
+**Style Judge:** Evaluates tone consistency, terminology alignment, readability, authority signals against the style guide. Returns JSON with `score` (0-1) and `feedback`.
+
+**Factual Judge:** Evaluates claim accuracy, source quality, recency, completeness. Returns JSON with `score` (0-1) and `feedback`.
+
+**Revision Logic:**
+1. If any dimension fails → compile feedback from all failed dimensions
+2. Re-run: `revise_draft()` → `enrich_with_facts()` → `format_content()` (skip Outliner)
+3. Re-evaluate all 4 dimensions
+4. If still failing after `max_cycles` → flag for HITL with eval results attached
+5. Early exit when `max_revision_cycles=0` (skip evaluator entirely)
+
+### 7.4 Stage 4 — Human Review (LangGraph HITL)
+
+**File:** `core/content_engine/graph.py`
+
+```python
+def build_content_review_graph() -> CompiledGraph
+async def run_content_review(
+    formatted_contents: List[FormattedContent],
+    briefs: List[ContentBrief],
+    revision_histories: List[RevisionHistory],
+    session_id: str = "",
+    artifact_dir: Path = Path("."),
+) -> List[ContentPiece]
+```
+
+**Graph nodes:** `present_content` → `approval_gate` (interrupt) → `route` → `finalize` / `apply_edits` / END
+
+**Resume tokens:** `{"approval_decision": "approve"|"edit"|"reject", "editor_notes": "..."}`
+
+**`auto_approve` flag** skips interrupt (same pattern as research pipeline). Approved content saved to `final.md`.
+
+### 7.5 Langfuse Tracing Architecture
+
+**File:** `core/content_engine/tracing.py`
+
+Lazy singleton `Langfuse` client — returns None if not configured (no-op when `LANGFUSE_PUBLIC_KEY` not set).
+
+**Hierarchy:**
+```
+Session: content-gen-{slug}-{timestamp}
+  └── Trace: planner              (Stage 1)
+  │     └── Generation: plan_content
+  └── Trace: worker/{brief_id}    (Stage 2, per brief)
+  │     └── Span: outliner → Generation
+  │     └── Span: drafter → Generation
+  │     └── Span: fact_enricher → Generation(s)
+  │     └── Span: formatter → Generation
+  └── Trace: evaluator/{brief_id} (Stage 3, per brief)
+  │     └── Span: structural_check (score attached)
+  │     └── Span: semantic_check (score attached)
+  │     └── Span: style_judge → Generation (score attached)
+  │     └── Span: factual_judge → Generation (score attached)
+  │     └── Span: revision_cycle_{n} (if needed)
+  └── Trace: review/{brief_id}    (Stage 4)
+        └── Span: human_decision (score attached)
+```
+
+**Helper functions:** `create_session()`, `create_trace()`, `log_generation()`, `create_span()`, `end_span()`, `log_score()`, `flush()`
+
+### 7.6 Artifact Structure
+
+```
+artifacts/content/{company-slug}/
+├── briefs.json                    # PlannerOutput (all briefs)
+├── content/
+│   └── brief-{N}/
+│       ├── outline.json           # ContentOutline
+│       ├── draft.md               # Raw draft markdown
+│       ├── enriched.md            # Fact-enriched markdown
+│       ├── formatted.md           # Style-formatted markdown
+│       ├── eval_history.json      # RevisionHistory
+│       └── final.md               # Approved content
+└── run_metadata.json              # ContentGenerationOutput
+```
+
+### 7.7 Utility Modules
+
+**File:** `core/content_engine/utils.py`
+
+| Function | Purpose |
+|----------|---------|
+| `safe_parse(text, model_cls)` | Extract JSON from LLM response (code fences, trailing commas) → Pydantic model |
+| `_retry_async_anthropic(fn, max_retries, base_delay)` | Provider-agnostic retry with jittered exponential backoff (Anthropic + OpenAI errors) |
+| `_estimate_tokens(text)` | Approximate token count (chars / 3.5) |
+| `truncate_to_token_limit(text, max_tokens)` | Pre-flight context window guard — truncates by paragraph |
 
 ---
 
@@ -1428,6 +1683,56 @@ GapReport:           report_md, report_json, generation_spec_md, generation_spec
                      visualization_paths
 ```
 
+### Content Generation Models (`core/models/content_generation.py`)
+
+**Input Model:**
+```
+ContentGenerationInput: company_name, domain, company_context_path, persona_paths,
+                        style_guide_path, gap_report_json_path, generation_spec_json_path,
+                        analysis_json_path, max_briefs (10), max_concurrent_workers (3),
+                        max_revision_cycles (2), auto_approve (False), skip_stages ([])
+```
+
+**Stage 1 Models:**
+```
+TargetQuery:       query_text, cluster_name, embedding (optional)
+StructuralTargets: header_rate, list_rate, stat_rate, citation_rate,
+                   min_headers (3), min_lists (1), min_citations (2)
+ContentBrief:      brief_id, title, target_queries, target_cluster, content_format,
+                   funnel_stage, channel, priority_score, word_count_range (Tuple[int,int]),
+                   structural_targets (StructuralTargets), key_topics, key_angles,
+                   competitor_exemplars, semantic_threshold (0.65)
+PlannerOutput:     briefs: List[ContentBrief], planning_metadata: Dict
+```
+
+**Stage 2 Models:**
+```
+OutlineSection:    heading, level (2), key_points, target_word_count (300)
+ContentOutline:    brief_id, title, sections: List[OutlineSection], total_target_words
+ContentDraft:      brief_id, title, markdown, word_count
+EnrichedDraft:     brief_id, title, markdown, word_count, facts_added: List[Dict]
+FormattedContent:  brief_id, title, markdown, word_count, header_count, list_count,
+                   stat_count, citation_count
+```
+
+**Stage 3 Models:**
+```
+DimensionResult:   dimension ("structural"|"semantic"|"style"|"factual"),
+                   passed, score (0-1), feedback, details: Dict
+EvalResult:        brief_id, cycle, dimensions: List[DimensionResult],
+                   overall_passed, overall_score
+RevisionHistory:   brief_id, cycles: List[EvalResult], final_passed
+```
+
+**Stage 4 Models:**
+```
+ContentStatus:     Enum: PENDING, APPROVED, EDITED, REJECTED
+ContentPiece:      brief_id, title, status (ContentStatus), final_markdown,
+                   eval_summary: Dict, human_notes, artifact_path
+ContentGenerationOutput: company_slug, total_briefs, total_approved, total_rejected,
+                        pieces: List[ContentPiece], run_metadata: Dict
+```
+
 ### Reddit HIL Models (`core/models/reddit_hil.py`)
 ```
 RedditMonitorInput:  company_name, company_slug, company_context_path, icp_persona_path,
@@ -1525,6 +1830,27 @@ DraftNotification:   thread, fit_score (0.0-1.0), why_match, draft_markdown, met
 | `DISCORD_WEBHOOK_URL` | `""` | Discord notifications |
 | `BRAVE_SEARCH_API_KEY` | — | Alternative search (unused currently) |
 | `GOOGLE_API_KEY_REDDIT_HIL` | — | Reddit monitor Gemini key |
+
+#### Content Generation Engine
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CONTENT_ENGINE_PLANNER_MODEL` | `claude-sonnet-4-5-20250929` | Strategic planner model |
+| `CONTENT_ENGINE_WORKER_MODEL` | `claude-sonnet-4-5-20250929` | Outliner + drafter model |
+| `CONTENT_ENGINE_FORMATTER_MODEL` | `claude-haiku-4-5-20251001` | Formatter model |
+| `CONTENT_ENGINE_STYLE_JUDGE_MODEL` | `claude-haiku-4-5-20251001` | Style judge model |
+| `CONTENT_ENGINE_FACTUAL_JUDGE_MODEL` | `claude-sonnet-4-5-20250929` | Factual judge model |
+| `CONTENT_ENGINE_FACT_ENRICHER_MODEL` | `sonar-pro` | Perplexity fact enricher model |
+| `CONTENT_ENGINE_MAX_CONCURRENT_WORKERS` | `3` | Max parallel worker chains |
+| `CONTENT_ENGINE_MAX_REVISION_CYCLES` | `2` | Max eval-revise cycles |
+
+#### Observability (Langfuse)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `LANGFUSE_PUBLIC_KEY` | — | Langfuse project public key |
+| `LANGFUSE_SECRET_KEY` | — | Langfuse project secret key |
+| `LANGFUSE_HOST` | `https://cloud.langfuse.com` | Langfuse server URL |
 
 #### Computed Properties
 
@@ -1630,6 +1956,62 @@ Removes embedding vectors from JSON for smaller file sizes:
 ```bash
 python scripts/strip_embeddings_from_json.py \
   --input artifacts/gap_analysis/ramp/company_embeddings.json
+```
+
+### Content Generation Scripts
+
+#### `scripts/run_content_engine.py`
+```bash
+python scripts/run_content_engine.py \
+  --company-name "Carta" --domain carta.com \
+  --company-context-path artifacts/company_context/carta.md \
+  --persona-path artifacts/personas/carta__persona-icp.md \
+  --style-guide-path artifacts/style_guides/carta.md \
+  --gap-slug carta \
+  --max-briefs 5 --max-workers 3 --max-revisions 2 \
+  --auto-approve \
+  --skip-stage 3   # Skip evaluator loop
+```
+
+**Arguments:**
+| Flag | Description |
+|------|-------------|
+| `--company-name` | Company name (required) |
+| `--domain` | Company domain (required) |
+| `--company-context-path` | Path to company context markdown |
+| `--persona-path` | Path(s) to persona markdown (repeatable) |
+| `--style-guide-path` | Path to style guide markdown |
+| `--gap-slug` | Company slug for auto-discovering gap analysis artifacts |
+| `--gap-report-json` | Path to gap report JSON (overrides --gap-slug) |
+| `--generation-spec-json` | Path to generation spec JSON (overrides --gap-slug) |
+| `--analysis-json` | Path to analysis JSON (overrides --gap-slug) |
+| `--max-briefs` | Maximum content briefs to generate (default: 10) |
+| `--max-workers` | Max concurrent worker chains (default: 3) |
+| `--max-revisions` | Max evaluator revision cycles (default: 2) |
+| `--auto-approve` | Auto-approve all content (skip HITL) |
+| `--skip-stage` | Stage numbers to skip (repeatable: 1, 2, 3, 4) |
+
+**Pattern:** Constructs `ContentGenerationInput`, calls `asyncio.run(run_content_generation(input_data))`.
+
+**`--gap-slug` auto-discovery:** When provided, automatically resolves:
+- `artifacts/gap_analysis/{slug}/gap_report.json`
+- `artifacts/gap_analysis/{slug}/generation_spec.json`
+- `artifacts/gap_analysis/{slug}/analysis.json`
+
+**CLI Output:**
+```
+────────────────────────────────────────────────
+  Content Generation Pipeline — carta
+────────────────────────────────────────────────
+
+  [1/4] Strategic Planner .................. 32.1s (5 briefs)
+  [2/4] Content Workers .................... 142.5s (5/5 briefs)
+  [3/4] Evaluator Loop ..................... 89.4s (4/5 passed)
+  [4/4] Human Review ....................... 0.0s (auto-approved)
+
+────────────────────────────────────────────────
+  Done — 264.0s total | 5 approved, 0 rejected
+────────────────────────────────────────────────
 ```
 
 ---
@@ -1745,19 +2127,59 @@ All access scoped through `is_company_member()` — tenant isolation across all 
 
 ## 15. Testing — Current State & Gaps
 
-### Current State: ZERO TEST COVERAGE
+### Current State
 
 ```
 tests/
-├── conftest.py              # 1-line stub: `# pytest configuration & shared fixtures`
-├── research/                # Empty
-├── gap_analysis/            # Empty
-└── content_engine/          # Empty
+├── conftest.py                           # Shared fixtures (FakeChromaCollection, mock clients)
+├── shared_tools/
+│   ├── test_async_embedding_client.py    # Async embedding client tests
+│   └── test_async_chroma_client.py       # Async ChromaDB client tests
+├── gap_analysis/
+│   └── steps/
+│       ├── test_s1_embed_assets.py       # Site discovery + embedding tests
+│       ├── test_s2_generate_queries.py   # Query generation tests
+│       ├── test_s4_enrich_citations.py   # Citation enrichment tests (4 known failures)
+│       ├── test_s5_embed_content.py      # Content embedding tests
+│       └── test_s8_generate_report.py    # Report generation tests
+├── gap_analysis/
+│   └── test_pipeline.py                  # Gap analysis pipeline orchestrator tests
+├── research/                             # Empty
+└── content_engine/                       # 57 tests — ALL PASSING
+    ├── __init__.py
+    ├── conftest.py                       # Shared fixtures (sample_brief, mock_anthropic, etc.)
+    ├── test_models.py                    # 28 tests — Pydantic model validation
+    ├── test_planner.py                   # 2 tests — Strategic planner
+    ├── test_outliner.py                  # 1 test — Outline generation
+    ├── test_drafter.py                   # 1 test — Draft generation
+    ├── test_fact_enricher.py             # 2 tests — Fact enrichment + skip
+    ├── test_formatter.py                 # 6 tests — Structural counting + format
+    ├── test_dispatcher.py                # 2 tests — Parallel dispatch + failure handling
+    ├── test_structural.py                # 8 tests — All structural checks
+    ├── test_evaluator.py                 # 2 tests — Full eval loop + revision
+    ├── test_graph.py                     # 3 tests — LangGraph HITL
+    └── test_integration.py              # 2 tests — Full pipeline + skip stages
 ```
 
-There are **no test files** in the entire project.
+**Test counts:** 150 total tests. 146 passing, 4 known failures (s4 mock regression in gap analysis).
 
-### Required Test Coverage (per CLAUDE.md)
+### Content Engine Test Coverage (57/57 passing)
+
+| Test File | Count | What's Tested |
+|-----------|-------|---------------|
+| `test_models.py` | 28 | All 15 Pydantic models — defaults, validation, serialization |
+| `test_planner.py` | 2 | Plan content with mocked Anthropic, JSON parsing |
+| `test_outliner.py` | 1 | Outline generation with mocked Anthropic |
+| `test_drafter.py` | 1 | Draft generation with mocked Anthropic |
+| `test_fact_enricher.py` | 2 | Enrichment with mocked Perplexity + skip when no API key |
+| `test_formatter.py` | 6 | `_count_structural_elements()` for headers/lists/stats/citations + format |
+| `test_dispatcher.py` | 2 | Single brief dispatch + `return_exceptions=True` failure handling |
+| `test_structural.py` | 8 | All 8 structural checks individually |
+| `test_evaluator.py` | 2 | All-pass scenario + revision-triggered scenario |
+| `test_graph.py` | 3 | Graph compilation, auto-approve, `run_content_review()` |
+| `test_integration.py` | 2 | Full pipeline (auto-approve) + skip stages |
+
+### Remaining Test Gaps
 
 #### Research Pipeline Tests
 - [ ] Company research agent invocation (mock Perplexity + Gemini)
@@ -1765,45 +2187,24 @@ There are **no test files** in the entire project.
 - [ ] Style guide research agent invocation (mock APIs)
 - [ ] Full 3-stage pipeline orchestration (company → persona → style)
 - [ ] Approval flow: approve / revise / reject paths (all 3 branches)
-- [ ] Artifact file I/O: draft creation, promotion to final
-- [ ] Cross-stage context passing (company path feeds into persona input)
-- [ ] `--auto-approve` flag bypasses interrupt
-- [ ] `--overwrite` flag behavior
-- [ ] Supabase mirroring (mock Supabase client)
 
-#### Gap Analysis Tests
-- [ ] All 8 steps independently (mock API calls, verify outputs)
-- [ ] Step-to-step data flow and dependency validation
-- [ ] ChromaDB embedding hydration
-- [ ] Platform search result aggregation (mock all 4 engines)
-- [ ] Citation enrichment (mock HTTP fetches)
-- [ ] SPA computation correctness (synthetic data)
-- [ ] Visualization generation (verify HTML output)
-- [ ] Report generation (verify Markdown structure)
-- [ ] Skip-step functionality
+#### Gap Analysis Tests (partial coverage)
+- [ ] Steps s3, s6, s7 tests
+- [ ] Step-to-step data flow validation
 - [ ] Platform subset selection
+- [ ] Fix 4 known s4 test failures
 
 #### Reddit HIL Tests
 - [ ] PRAW read-only enforcement
 - [ ] Thread ranking and filtering
-- [ ] Keyword extraction from persona
-- [ ] LLM drafting (mock Gemini)
 - [ ] Webhook delivery (mock Slack/Discord)
-- [ ] Dedup cache persistence
 
-#### CLI Script Tests
-- [ ] Argument parsing and validation
-- [ ] Default value behavior
-- [ ] Exit codes and error handling
-
-#### Required Fixtures
-- [ ] Sample HTML content (for parsing tests)
-- [ ] Mock API responses (Perplexity, Gemini, Claude, OpenAI)
-- [ ] Sample artifact Markdown files
-- [ ] Sample JSON fixtures (queries, embeddings, citations, analysis)
-- [ ] Mock Supabase client
-- [ ] Mock ChromaDB client
-- [ ] Temporary directory fixtures
+#### Content Engine Tests (covered, potential additions)
+- [ ] Semantic evaluator with real embeddings
+- [ ] Style judge prompt quality
+- [ ] Factual judge prompt quality
+- [ ] Multi-brief concurrent dispatch stress test
+- [ ] LangGraph edit flow (non-auto-approve path)
 
 ---
 
@@ -1978,17 +2379,56 @@ scripts/* ← User entry points
 
 **Tradeoff:** Vendor lock-in to Supabase. RLS policies add query overhead. Self-hosted option available but adds ops complexity.
 
+### Decision 9: Orchestrator-Workers + Evaluator-Optimizer for Content Engine
+
+**Choice:** Two-pattern architecture: Orchestrator-Workers for parallel content production (semaphore-controlled), Evaluator-Optimizer for automated QA with 4 evaluation dimensions.
+
+**Rationale:**
+- Orchestrator-Workers enables parallel brief processing with controlled concurrency
+- Evaluator-Optimizer provides automated quality gate without manual review
+- 4 dimensions (structural, semantic, style, factual) cover all quality aspects
+- Max 2 revision cycles balance quality vs. cost
+- `asyncio.gather(return_exceptions=True)` ensures one failing brief doesn't cancel the batch
+
+**Tradeoff:** Multiple LLM calls per brief (~$0.50-1.00 per brief). Revision cycles add latency. LLM judges may have inconsistent scoring.
+
+### Decision 10: Raw AsyncAnthropic SDK for Content Engine (No LangChain)
+
+**Choice:** Use `AsyncAnthropic` SDK directly for all content engine LLM calls. No LangChain wrappers.
+
+**Rationale:**
+- Consistent with gap analysis pattern (raw SDK clients)
+- Fine-grained control over structured JSON output parsing
+- Direct access to usage metrics for cost tracking
+- Simpler debugging (no wrapper abstraction layers)
+- Custom retry logic with `_retry_async_anthropic()` handles provider-specific errors
+
+**Tradeoff:** More boilerplate per LLM call. No LangChain ecosystem integrations. Must handle JSON parsing and retry logic manually.
+
+### Decision 11: Langfuse for Observability (Not LangSmith)
+
+**Choice:** Langfuse for tracing and observability of content generation pipeline.
+
+**Rationale:**
+- Open-source with self-hosting option
+- Session → Trace → Span → Generation hierarchy fits pipeline stages
+- Score tracking for eval dimensions
+- Cost tracking per generation
+- Graceful no-op when not configured (no hard dependency)
+
+**Tradeoff:** Separate from LangGraph ecosystem (which integrates with LangSmith). Requires additional API keys.
+
 ---
 
 ## 18. Known Vulnerabilities, Flaws & Technical Debt
 
 ### Critical Issues
 
-#### 1. ZERO TEST COVERAGE
-**Severity:** Critical
-**Description:** The entire codebase has no automated tests. The `tests/` directory contains only an empty `conftest.py` stub.
-**Impact:** No regression protection. Any refactoring or feature addition could silently break existing functionality. No CI/CD quality gate.
-**Recommendation:** Implement tests in priority order: (1) approval flow branches, (2) cross-stage context passing, (3) gap analysis data flow, (4) CLI argument parsing.
+#### 1. PARTIAL TEST COVERAGE (Improved from Zero)
+**Severity:** Medium (downgraded from Critical — 2026-02-15)
+**Description:** 150 total tests. Content engine has 57/57 passing. Gap analysis has partial coverage (s1, s2, s4, s5, s8, pipeline). Research pipeline and Reddit HIL have zero tests. 4 known failures in s4 tests.
+**Impact:** Content engine has regression protection. Research pipeline and Reddit HIL remain unprotected.
+**Recommendation:** Add tests for research pipeline (approval flows) and Reddit HIL (webhook delivery). Fix 4 s4 mock regressions.
 
 #### 2. InMemoryStore — Agent Memory Not Persistent
 **Severity:** High
@@ -2115,6 +2555,7 @@ scripts/* ← User entry points
 | Style Guide Research Agent | ✅ Functional | Medium — bugs fixed, awaiting approvals |
 | Research Pipeline Orchestrator | ✅ Functional | High — cross-stage wiring works |
 | Gap Analysis (8 steps) | ✅ Production | High — complete for Ramp, Carta |
+| Content Generation Engine | ✅ Implemented | Medium — 57 tests passing, awaiting live smoke test |
 | Reddit HIL Monitor | ✅ Functional | Medium — tested with Ramp |
 | Supabase Schema | ✅ Production | High — 4 migrations, RLS, HNSW |
 | Supabase Mirror | ✅ Functional | Medium — works but no SQLAlchemy ORM |
@@ -2124,55 +2565,15 @@ scripts/* ← User entry points
 
 | Priority | Component | Description | Dependencies |
 |----------|-----------|-------------|--------------|
-| 1 | **Content Generation Engine** | Planner → Sub-Agents → Evaluator → Publish | Pipeline 1 + 2 outputs |
+| 1 | **Content Engine v1.1** | HITL timeout, --offline flag, cost budget cap | Content Engine v1.0 |
 | 2 | **FastAPI Backend** | REST API + WebSocket pipeline events | All core modules |
 | 3 | **SQLAlchemy ORM** | Replace raw Supabase client with ORM | Supabase schema |
 | 4 | **Frontend** | Web UI for artifact review, gap visualization, pipeline management | FastAPI backend |
-| 5 | **Comprehensive Tests** | pytest + pytest-asyncio, mock all APIs | Existing codebase |
+| 5 | **Comprehensive Tests** | Research pipeline + Reddit HIL tests | Existing codebase |
 | 6 | **Persistent Agent Store** | Replace InMemoryStore with durable storage | DeepAgents integration |
 | 7 | **Cloud Storage Backends** | S3/GCS/Supabase Storage implementations | StorageBackend interface |
 | 8 | **Structured Logging** | JSON logging with correlation IDs | logging_config.py |
 | 9 | **CI/CD Pipeline** | Automated tests, linting, deployment | Tests + Docker |
-
-### Content Generation Engine — Planned Design
-
-```
-Input:
-  ├── generation_spec.json (from Pipeline 2 — per-cluster content specs)
-  ├── gap_report.json (prioritized content recommendations)
-  ├── Research artifacts (company context, personas, style guide)
-  └── Cluster content specs (word count, structure, authority signals)
-
-Architecture:
-  ┌───────────────────┐
-  │  Planner Agent     │  Analyzes gap report + generation specs
-  │  (strategic)       │  Identifies top-priority content pieces
-  └────────┬──────────┘
-           │ spawns N sub-systems (one per content brief)
-           ▼
-  ┌───────────────────┐
-  │  Sub-Agent System  │ × N
-  │  ┌──────────────┐ │
-  │  │Planner-Manager│ │  Plans content structure + research needs
-  │  └──────┬───────┘ │
-  │         ▼         │
-  │  ┌──────────────┐ │
-  │  │Worker Agents  │ │  Research + write sections + add citations
-  │  └──────┬───────┘ │
-  │         ▼         │
-  │  ┌──────────────┐ │
-  │  │Evaluator     │ │  Quality check + citation probability score
-  │  └──────┬───────┘ │
-  │         ▼         │
-  │  Citation Score    │  Must exceed threshold (from cluster_spec)
-  │  Check → Pass/Fail │
-  └───────────────────┘
-           │
-           ▼
-  ┌───────────────────┐
-  │  Publisher          │  Write to artifacts/content/{slug}/
-  └───────────────────┘
-```
 
 ---
 
@@ -2193,6 +2594,15 @@ Architecture:
 | Gap: Gemini Search Engine | Gemini | `GOOGLE_API_KEY_GAP_ANALYSIS` | `gemini-3-flash-preview` |
 | Gap: Perplexity Search Engine | Sonar | `PERPLEXITY_API_KEY` | `sonar-pro` |
 | Reddit HIL Monitor | Gemini | `GOOGLE_API_KEY_REDDIT_HIL` | `gemini-3-flash-preview` |
+| Content Engine: Planner | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
+| Content Engine: Outliner | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
+| Content Engine: Drafter | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
+| Content Engine: Fact Enricher | Perplexity | `PERPLEXITY_API_KEY` | `sonar-pro` |
+| Content Engine: Formatter | Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
+| Content Engine: Style Judge | Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
+| Content Engine: Factual Judge | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
+| Content Engine: Semantic Eval | OpenAI | `OPENAI_API_KEY` | `text-embedding-3-large` |
+| Content Engine: Tracing | Langfuse | `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` | — |
 
 ---
 
@@ -2215,6 +2625,7 @@ slug = company_name.lower().replace(" ", "-")
 | Secondary Persona 2 | `artifacts/personas/{slug}__persona-3.draft.md` | `artifacts/personas/{slug}__persona-3.md` |
 | Style Guide | `artifacts/style_guides/{slug}.draft.md` | `artifacts/style_guides/{slug}.md` |
 | Gap Analysis | `artifacts/gap_analysis/{slug}/` (directory) | All step outputs in subdirectory |
+| Content Engine | `artifacts/content/{slug}/` (directory) | briefs.json, run_metadata.json, content/brief-{N}/ |
 
 ### Gap Analysis Directory Structure
 ```
@@ -2287,11 +2698,31 @@ from core.research.graphs.company_research import build_graph
 from core.gap_analysis.pipeline import run_gap_analysis
 from core.shared_tools.embedding_client import embed_texts
 from core.shared_tools.chroma_client import upsert_embeddings
+from core.content_engine.pipeline import run_content_generation
+from core.models.content_generation import ContentGenerationInput, ContentBrief, FormattedContent
 ```
+
+---
+
+## Changelog
+
+| Date | Section | Change | Task ID |
+|------|---------|--------|---------|
+| 2026-02-15 | §7 | Complete rewrite — Content Generation Engine implemented (4-stage pipeline) | T-CG-all |
+| 2026-02-15 | §4 | Added content_engine/ directory tree (30+ files) | T-CG-all |
+| 2026-02-15 | §10 | Added Content Generation Models (15 Pydantic models) | T-CG-1 |
+| 2026-02-15 | §11 | Added Content Engine + Langfuse env vars (11 new settings) | T-CG-3 |
+| 2026-02-15 | §12 | Added scripts/run_content_engine.py CLI reference | T-CG-all |
+| 2026-02-15 | §15 | Updated test coverage: 150 total tests, 57 content engine tests | T-CG-32/33 |
+| 2026-02-15 | §17 | Added Decisions 9-11 (Orchestrator-Workers, Raw SDK, Langfuse) | D-CG-1/2 |
+| 2026-02-15 | §18 | Downgraded test coverage from Critical to Medium | T-CG-32/33 |
+| 2026-02-15 | §20 | Moved Content Engine to "Built", updated roadmap | T-CG-all |
+| 2026-02-15 | §A | Added 9 content engine rows to Model & API Key Matrix | T-CG-all |
+| 2026-02-15 | §B | Added content engine artifact naming convention | T-CG-all |
 
 ---
 
 *End of Comprehensive System Documentation*
 *Generated: 2026-02-15*
-*Total codebase files analyzed: ~60+*
-*Total lines of documentation: ~1800+*
+*Total codebase files analyzed: ~90+*
+*Total lines of documentation: ~2700+*

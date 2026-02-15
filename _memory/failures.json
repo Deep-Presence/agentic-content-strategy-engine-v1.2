@@ -8,5 +8,15 @@
     "lesson": "Always seed BFS with base_url regardless of seed_urls. Major sites use Cloudflare — need headless browser fallback for reliable crawling.",
     "files_affected": ["core/gap_analysis/steps/s1_embed_assets.py"],
     "recurrence_prevention": "base_url is now always in priority_queue. Playwright fallback handles CF-protected sites automatically."
+  },
+  {
+    "id": "F2",
+    "timestamp": "2026-02-15",
+    "what_broke": "Langfuse tracing errors: 'Langfuse' object has no attribute 'trace' — all tracing silently failed during live pipeline run",
+    "root_cause": "tracing.py was written for Langfuse v2 API (lf.trace(), target.generation(), target.span()) but langfuse 3.14.1 was installed. v3 removed these methods entirely.",
+    "fix_applied": "Rewrote tracing.py to use v3 SDK API: lf.trace() → lf.start_span() + span.update_trace(session_id=...), target.generation() → target.start_generation() + gen.end(), target.span() → target.start_span(), usage= → usage_details=, span.end(**kwargs) → span.update(**kwargs) then span.end().",
+    "lesson": "Always verify SDK API against installed version, not docs that may describe a different version. Langfuse v3 is a breaking change from v2. Also note: start_generation is already deprecated in 3.14.1 in favor of start_observation(as_type='generation').",
+    "files_affected": ["core/content_engine/tracing.py"],
+    "recurrence_prevention": "v3 API is now used throughout. Monitor for start_observation migration when upgrading langfuse."
   }
 ]

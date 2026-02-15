@@ -1,9 +1,15 @@
 {
-  "sprint": "v3-async",
-  "sprint_goal": "Make gap analysis pipeline async-first for ~5x speedup",
-  "constraints": ["Backward compatibility with existing artifacts", "No new dependencies except pytest-asyncio"],
-  "active_branches": [],
-  "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass"],
+  "sprint": "content-engine-v1",
+  "sprint_goal": "Build Content Generation Engine (Pipeline 3) — 4-stage pipeline consuming research artifacts + gap analysis to auto-generate optimized content",
+  "constraints": ["Backward compatibility with existing artifacts", "No new dependencies except langfuse", "Raw SDK clients for LLM calls (no LangChain wrappers)", "All Pydantic fields must have defaults"],
+  "active_branches": ["feat/content-engine-v1.0.0"],
+  "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "langfuse 3.14.1 installed"],
   "current_clients": ["Ramp", "Carta"],
-  "key_files_in_flux": ["core/gap_analysis/steps/s1_embed_assets.py"]
+  "key_files_in_flux": [
+    "core/content_engine/pipeline.py",
+    "core/content_engine/planner.py",
+    "core/content_engine/workers/dispatcher.py",
+    "core/content_engine/evaluator/loop.py",
+    "core/content_engine/graph.py"
+  ]
 }

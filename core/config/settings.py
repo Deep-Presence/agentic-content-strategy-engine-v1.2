@@ -101,6 +101,23 @@ class Settings(BaseSettings):
     slack_webhook_url: str = ""
     discord_webhook_url: str = ""
 
+    # Content Generation Engine – Models
+    content_engine_planner_model: str = "claude-sonnet-4-5-20250929"
+    content_engine_worker_model: str = "claude-sonnet-4-5-20250929"
+    content_engine_formatter_model: str = "claude-haiku-4-5-20251001"
+    content_engine_style_judge_model: str = "claude-haiku-4-5-20251001"
+    content_engine_factual_judge_model: str = "claude-sonnet-4-5-20250929"
+    content_engine_fact_enricher_model: str = "sonar-pro"
+
+    # Content Generation Engine – Concurrency
+    content_engine_max_concurrent_workers: int = 3
+    content_engine_max_revision_cycles: int = 2
+
+    # Langfuse (observability)
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_host: str = "https://us.cloud.langfuse.com"
+
     # Legacy / optional
     tavily_api_key_company_context: str | None = None
 

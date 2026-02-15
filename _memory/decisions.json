@@ -28,5 +28,31 @@
     "outcome": "Implementation complete. Awaiting live test on carta.com.",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CG-1",
+    "timestamp": "2026-02-15",
+    "task": "Content Generation Engine architecture",
+    "approach": "4-stage async pipeline: Strategic Planner (Sonnet) → Orchestrator-Workers (Sonnet/Haiku/Perplexity) → Evaluator-Optimizer (4 dimensions, 2 revision cycles) → LangGraph HITL. Raw AsyncAnthropic SDK, semaphore concurrency, Langfuse tracing.",
+    "rationale": "Follows two proven Anthropic patterns: Orchestrator-Workers for parallel content production, Evaluator-Optimizer for automated QA. Reuses existing async/semaphore patterns from gap analysis. LangGraph HITL matches research pipeline pattern.",
+    "alternatives_rejected": [
+      "LangChain wrappers (inconsistent with gap analysis, hides control)",
+      "CrewAI multi-agent (over-engineering, deterministic chain sufficient)",
+      "Single monolithic LLM call (no quality control, no parallelism)"
+    ],
+    "outcome": "Full implementation complete. 57/57 tests passing. 30+ files created across core/content_engine/, tests/content_engine/, scripts/.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CG-2",
+    "timestamp": "2026-02-15",
+    "task": "Codex review findings incorporated into content engine plan",
+    "approach": "Incorporated 8 critical findings from Codex o3 review: return_exceptions=True in gather, safe_parse() for LLM JSON, retry for Anthropic errors, context window guard, directory creation, early exit for max_revision_cycles=0, StructuralTargets model, word_count_range tuple.",
+    "rationale": "Codex identified real edge cases and alignment issues with the architecture doc that would have caused bugs in production.",
+    "alternatives_rejected": [],
+    "outcome": "All 8 findings implemented in the codebase.",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]
