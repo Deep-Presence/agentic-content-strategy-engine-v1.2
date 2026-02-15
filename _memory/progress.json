@@ -1,0 +1,148 @@
+{
+  "current_sprint": "v3-async",
+  "last_updated": "2026-02-15",
+  "completed": [
+    {
+      "id": "T-async-1",
+      "task": "Shared async utilities (async_embedding_client, async_chroma_client)",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "core/shared_tools/async_embedding_client.py",
+        "core/shared_tools/async_chroma_client.py",
+        "tests/conftest.py",
+        "tests/shared_tools/test_async_embedding_client.py",
+        "tests/shared_tools/test_async_chroma_client.py",
+        "requirements.txt"
+      ]
+    },
+    {
+      "id": "T-async-2",
+      "task": "s4_enrich_citations.py async conversion (biggest bottleneck ~33min → ~2min)",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "core/gap_analysis/steps/s4_enrich_citations.py",
+        "tests/gap_analysis/steps/test_s4_enrich_citations.py"
+      ]
+    },
+    {
+      "id": "T-async-3",
+      "task": "s1_embed_assets.py async conversion (second biggest bottleneck ~16min → ~3min)",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "core/gap_analysis/steps/s1_embed_assets.py",
+        "tests/gap_analysis/steps/test_s1_embed_assets.py"
+      ]
+    },
+    {
+      "id": "T-async-4",
+      "task": "s2_generate_queries.py async conversion",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "core/gap_analysis/steps/s2_generate_queries.py",
+        "tests/gap_analysis/steps/test_s2_generate_queries.py"
+      ]
+    },
+    {
+      "id": "T-async-5",
+      "task": "s5_embed_content.py async conversion with parallel query+citation embedding",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "core/gap_analysis/steps/s5_embed_content.py",
+        "tests/gap_analysis/steps/test_s5_embed_content.py"
+      ]
+    },
+    {
+      "id": "T-async-6",
+      "task": "s8_generate_report.py async conversion",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "core/gap_analysis/steps/s8_generate_report.py",
+        "tests/gap_analysis/steps/test_s8_generate_report.py"
+      ]
+    },
+    {
+      "id": "T-async-7",
+      "task": "pipeline.py async orchestrator with per-step timing",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "core/gap_analysis/pipeline.py",
+        "scripts/run_gap_analysis.py",
+        "tests/gap_analysis/test_pipeline.py"
+      ]
+    },
+    {
+      "id": "T-async-8",
+      "task": "CLI progress logging for pipeline orchestrator",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "core/gap_analysis/pipeline.py"
+      ]
+    },
+    {
+      "id": "T-async-9",
+      "task": "Resolve Vertex AI Search wrapped URLs in s4_enrich_citations",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "core/gap_analysis/steps/s4_enrich_citations.py"
+      ]
+    },
+    {
+      "id": "T-async-10",
+      "task": "Fix run_gap_step.py for async compatibility (asyncio.run wrappers)",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "scripts/run_gap_step.py"
+      ]
+    },
+    {
+      "id": "T-async-11",
+      "task": "Fix BFS base_url seeding — always add base_url to priority_queue",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "core/gap_analysis/steps/s1_embed_assets.py"
+      ]
+    },
+    {
+      "id": "T-async-12",
+      "task": "Playwright + Wayback Machine 3-tier fallback for Cloudflare-protected sites",
+      "sprint": "v3-async",
+      "status": "done",
+      "completed_at": "2026-02-15",
+      "files_changed": [
+        "core/gap_analysis/steps/s1_embed_assets.py"
+      ]
+    }
+  ],
+  "in_progress": [],
+  "pending": [
+    {
+      "id": "T-async-13",
+      "task": "Test Playwright fallback on carta.com (run step 1)",
+      "sprint": "v3-async",
+      "status": "pending"
+    }
+  ],
+  "blocked": []
+}

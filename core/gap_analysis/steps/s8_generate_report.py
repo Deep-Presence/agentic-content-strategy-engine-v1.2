@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from openai import AsyncOpenAI
+
 from core.models.gap_analysis import (
     AnalysisResult,
     ClusterContentSpec,
@@ -17,16 +19,14 @@ from core.models.gap_analysis import (
 from core.config.settings import settings
 
 
-def _call_openai(prompt: str, model: str) -> str:
-    from openai import OpenAI
-
+async def _call_openai(prompt: str, model: str) -> str:
     api_key = settings.openai_api_key
     if not api_key:
         raise RuntimeError(
             "OPENAI_API_KEY is not set. Add it to .env.local to enable report generation."
         )
-    client = OpenAI(api_key=api_key)
-    response = client.responses.create(
+    client = AsyncOpenAI(api_key=api_key)
+    response = await client.responses.create(
         model=model,
         input=prompt,
     )
@@ -282,7 +282,7 @@ ANALYSIS DATA:
 # ---------------------------------------------------------------------------
 
 
-def generate_gap_report(
+async def generate_gap_report(
     analysis: AnalysisResult,
     queries: List[GeneratedQuery],
     citations: List[EnrichedCitation],
@@ -297,7 +297,7 @@ def generate_gap_report(
     # Phase B: LLM generates executive summary + recommendations
     llm_prompt = _build_llm_summary_prompt(analysis)
     try:
-        llm_response = _call_openai(llm_prompt, model_name)
+        llm_response = await _call_openai(llm_prompt, model_name)
         llm_payload = _extract_json(llm_response)
         executive_summary = llm_payload.get("executive_summary", "")
         recommendations = llm_payload.get("recommendations", [])

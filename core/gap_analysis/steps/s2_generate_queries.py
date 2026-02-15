@@ -9,8 +9,11 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from openai import AsyncOpenAI
+
 from core.models.gap_analysis import GapAnalysisInput, GeneratedQuery, QueryCluster
 from core.config.settings import settings
+from core.shared_tools.async_embedding_client import async_embed_texts
 
 logger = logging.getLogger(__name__)
 
@@ -29,27 +32,7 @@ _DEFAULT_TAXONOMY_PATH = (
 # ---------------------------------------------------------------------------
 
 
-def _embed_texts(texts: List[str]) -> List[List[float]]:
-    """Embed a list of texts using OpenAI embeddings API."""
-    if not texts:
-        return []
-    api_key = settings.openai_api_key
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set.")
-    model = settings.embedding_model
-    if not model:
-        raise RuntimeError("EMBEDDING_MODEL is not set.")
-
-    from openai import OpenAI
-
-    client = OpenAI(api_key=api_key)
-    batch_size = 64
-    embeddings: List[List[float]] = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i : i + batch_size]
-        response = client.embeddings.create(model=model, input=batch)
-        embeddings.extend([row.embedding for row in response.data])
-    return embeddings
+# _embed_texts replaced by async_embed_texts from shared utilities
 
 
 def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
@@ -158,16 +141,14 @@ def _repair_truncated_json(raw: str) -> str:
     return raw
 
 
-def _call_openai(prompt: str, model: str) -> str:
-    from openai import OpenAI
-
+async def _call_openai(prompt: str, model: str) -> str:
     api_key = settings.openai_api_key
     if not api_key:
         raise RuntimeError(
             "OPENAI_API_KEY is not set. Add it to .env.local to enable query generation."
         )
-    client = OpenAI(api_key=api_key)
-    response = client.responses.create(
+    client = AsyncOpenAI(api_key=api_key)
+    response = await client.responses.create(
         model=model,
         input=prompt,
         reasoning={"effort": "medium"},
@@ -353,7 +334,7 @@ def _build_seed_prompt(
 # ---------------------------------------------------------------------------
 
 
-def _deduplicate_queries(
+async def _deduplicate_queries(
     queries: List[GeneratedQuery],
     threshold: float = 0.85,
 ) -> List[GeneratedQuery]:
@@ -366,9 +347,9 @@ def _deduplicate_queries(
     for q in queries:
         cluster_groups[q.cluster_id].append(q)
 
-    # Embed all query texts at once
+    # Embed all query texts at once using async
     all_texts = [q.query_text for q in queries]
-    all_embeddings = _embed_texts(all_texts)
+    all_embeddings = await async_embed_texts(all_texts)
 
     # Map query_id -> embedding
     emb_lookup: Dict[str, List[float]] = {}
@@ -406,7 +387,7 @@ def _deduplicate_queries(
 # ---------------------------------------------------------------------------
 
 
-def _validate_coverage(
+async def _validate_coverage(
     queries: List[GeneratedQuery],
     clusters: List[QueryCluster],
     max_queries: int,
@@ -482,7 +463,7 @@ Context:
 {persona_context[:1000]}"""
 
     try:
-        response_text = _call_openai(fill_prompt, model)
+        response_text = await _call_openai(fill_prompt, model)
         payload = _extract_json(response_text)
         raw_fill = payload.get("queries", [])
         start_idx = len(queries) + 1
@@ -508,7 +489,7 @@ Context:
 # ---------------------------------------------------------------------------
 
 
-def generate_queries(
+async def generate_queries(
     input_data: GapAnalysisInput,
     taxonomy_path: Optional[Path] = None,
     model: Optional[str] = None,
@@ -533,7 +514,7 @@ def generate_queries(
         company_domain=input_data.domain,
     )
 
-    response_text = _call_openai(prompt, model_name)
+    response_text = await _call_openai(prompt, model_name)
     payload = _extract_json(response_text)
     raw_queries = payload.get("queries", [])
 
@@ -553,10 +534,10 @@ def generate_queries(
     logger.info("Pass 1 (seed): generated %d queries.", len(generated))
 
     # Pass 2: Semantic deduplication
-    generated = _deduplicate_queries(generated, threshold=0.85)
+    generated = await _deduplicate_queries(generated, threshold=0.85)
 
     # Pass 3: Coverage validation
-    generated = _validate_coverage(
+    generated = await _validate_coverage(
         queries=generated,
         clusters=clusters,
         max_queries=input_data.max_queries,

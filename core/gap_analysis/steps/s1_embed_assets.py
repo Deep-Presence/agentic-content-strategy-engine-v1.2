@@ -1,6 +1,6 @@
 """Step 1 — Crawl company website, extract text, chunk, embed, store in ChromaDB.
 
-Comprehensive site-tree discovery + embedding pipeline.
+Async-first comprehensive site-tree discovery + embedding pipeline.
 Discovers ALL pages via:
   Phase 1: robots.txt -> Sitemap directives
   Phase 2: Sitemap XML parsing (recursive, handles sitemap indexes)
@@ -14,6 +14,7 @@ Outputs:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -22,7 +23,7 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
@@ -38,8 +39,11 @@ from core.models.gap_analysis import (
     SiteDiscoveryResult,
     SiteTreeNode,
 )
-from core.shared_tools.chroma_client import delete_company_collection, upsert_embeddings
-from core.shared_tools.embedding_client import embed_texts
+from core.shared_tools.async_chroma_client import (
+    async_delete_company_collection,
+    async_upsert_embeddings,
+)
+from core.shared_tools.async_embedding_client import async_embed_texts
 
 logger = logging.getLogger(__name__)
 
@@ -119,14 +123,16 @@ def _should_skip_url(url: str) -> bool:
     return any(path_lower.endswith(ext) for ext in _SKIP_EXTENSIONS)
 
 
-def _build_robot_parser(base_url: str) -> Tuple[RobotFileParser, Optional[str]]:
+async def _build_robot_parser(
+    base_url: str, client: httpx.AsyncClient
+) -> Tuple[RobotFileParser, Optional[str]]:
     """Build robot parser AND return the raw robots.txt content."""
     parsed = urlparse(base_url)
     robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
     rp = RobotFileParser()
     raw_robots: Optional[str] = None
     try:
-        resp = httpx.get(robots_url, timeout=15, follow_redirects=True)
+        resp = await client.get(robots_url, timeout=15)
         if resp.status_code < 400:
             raw_robots = resp.text
             rp.parse(raw_robots.splitlines())
@@ -162,10 +168,10 @@ def _extract_sitemaps_from_robots(raw_robots: Optional[str]) -> List[str]:
 # ===========================================================================
 
 
-def _fetch_xml(url: str, client: httpx.Client) -> Optional[ET.Element]:
+async def _fetch_xml(url: str, client: httpx.AsyncClient) -> Optional[ET.Element]:
     """Fetch and parse an XML URL, return root element or None."""
     try:
-        resp = client.get(url, timeout=20)
+        resp = await client.get(url, timeout=20)
         if resp.status_code >= 400:
             return None
         content = resp.text
@@ -177,9 +183,9 @@ def _fetch_xml(url: str, client: httpx.Client) -> Optional[ET.Element]:
         return None
 
 
-def _parse_sitemaps_recursive(
+async def _parse_sitemaps_recursive(
     sitemap_urls: List[str],
-    client: httpx.Client,
+    client: httpx.AsyncClient,
     domain: str,
     max_urls: int = 10_000,
 ) -> Tuple[List[DiscoveredPage], List[str]]:
@@ -195,7 +201,7 @@ def _parse_sitemaps_recursive(
             continue
         visited_sitemaps.add(sitemap_url)
 
-        root = _fetch_xml(sitemap_url, client)
+        root = await _fetch_xml(sitemap_url, client)
         if root is None:
             continue
 
@@ -224,7 +230,7 @@ def _parse_sitemaps_recursive(
             for url_el in root.findall("url"):
                 _extract_sitemap_url(url_el, discovered, domain, ns=None)
 
-        time.sleep(0.1)
+        await asyncio.sleep(0.1)
 
     return discovered, all_sitemaps
 
@@ -288,14 +294,14 @@ def _discover_feeds_from_html(html: str, base_url: str) -> List[str]:
     return feeds
 
 
-def _parse_rss_feed(
+async def _parse_rss_feed(
     feed_url: str,
-    client: httpx.Client,
+    client: httpx.AsyncClient,
     domain: str,
 ) -> List[DiscoveredPage]:
     """Parse RSS/Atom feed and extract article URLs."""
     discovered: List[DiscoveredPage] = []
-    root = _fetch_xml(feed_url, client)
+    root = await _fetch_xml(feed_url, client)
     if root is None:
         return discovered
 
@@ -395,6 +401,101 @@ def _extract_page_metadata(html: str) -> Dict[str, Optional[str | int]]:
         "meta_description": meta_desc,
         "word_count": wc,
     }
+
+
+# ===========================================================================
+# Cloudflare / Playwright / Wayback fallback helpers
+# ===========================================================================
+
+_WAYBACK_PREFIX_RE = re.compile(r"https?://web\.archive\.org/web/\d+id_/")
+
+
+def _is_cloudflare_challenge(html: str, status_code: int) -> bool:
+    """Detect Cloudflare JS challenge pages."""
+    if status_code == 403:
+        return True
+    if not html:
+        return False
+    lower = html[:5000].lower()
+    return any(m in lower for m in (
+        "just a moment",
+        "cf-browser-verification",
+        "challenge-platform",
+        "cf_chl_opt",
+    ))
+
+
+async def _init_playwright_browser() -> Optional[Tuple[Any, Any]]:
+    """Lazily launch headless Chromium. Returns (browser, pw_instance) or None."""
+    try:
+        from playwright.async_api import async_playwright
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(headless=True)
+        logger.info("[SiteDiscovery] Playwright browser launched for Cloudflare bypass.")
+        return browser, pw
+    except ImportError:
+        logger.warning(
+            "[SiteDiscovery] playwright not installed. "
+            "Run: pip install playwright && playwright install chromium"
+        )
+        return None
+    except Exception as e:
+        logger.warning("[SiteDiscovery] Playwright launch failed: %s", e)
+        return None
+
+
+async def _fetch_with_playwright(
+    url: str, browser: Any, semaphore: asyncio.Semaphore,
+) -> Optional[Tuple[str, str, int]]:
+    """Fetch a page with headless Chromium. Returns (url, html, status) or None."""
+    async with semaphore:
+        page = None
+        try:
+            page = await browser.new_page()
+            resp = await page.goto(url, wait_until="networkidle", timeout=30000)
+            if resp is None:
+                return None
+            status = resp.status
+            html = await page.content()
+            if _is_cloudflare_challenge(html, status):
+                # Wait for challenge to resolve, then re-check
+                await page.wait_for_timeout(6000)
+                html = await page.content()
+                if _is_cloudflare_challenge(html, status):
+                    return None
+            return (url, html, status)
+        except Exception as e:
+            logger.debug("[Playwright] %s: %s", url, e)
+            return None
+        finally:
+            if page:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+
+
+async def _fetch_from_wayback(
+    url: str, client: httpx.AsyncClient,
+) -> Optional[Tuple[str, str, int]]:
+    """Fetch latest Wayback Machine snapshot. Returns (url, html, 200) or None."""
+    try:
+        wb_url = f"https://web.archive.org/web/2id_/{url}"
+        resp = await client.get(wb_url, timeout=25)
+        if resp.status_code >= 400:
+            return None
+        ct = resp.headers.get("content-type", "")
+        if "text/html" not in ct.lower():
+            return None
+        html = resp.text or ""
+        if not html.strip():
+            return None
+        # Strip residual Wayback URL rewriting from links
+        html = _WAYBACK_PREFIX_RE.sub("", html)
+        return (url, html, 200)
+    except Exception as e:
+        logger.debug("[Wayback] %s: %s", url, e)
+        return None
 
 
 # ===========================================================================
@@ -508,14 +609,14 @@ def _build_site_tree(pages: List[DiscoveredPage], base_url: str) -> SiteTreeNode
 # ===========================================================================
 
 
-def discover_site_tree(
+async def discover_site_tree(
     domain: str,
     seed_urls: List[str],
     max_pages: int = 500,
     max_depth: int = 5,
     respect_robots: bool = True,
 ) -> Tuple[SiteDiscoveryResult, List[Tuple[str, str]]]:
-    """Comprehensive site-tree discovery.
+    """Async comprehensive site-tree discovery.
 
     Returns:
         SiteDiscoveryResult with full discovery metadata (flat + tree).
@@ -538,17 +639,18 @@ def discover_site_tree(
             return True
         return False
 
-    with httpx.Client(
+    async with httpx.AsyncClient(
         timeout=20,
         follow_redirects=True,
         headers={"User-Agent": "ContentStrategyBot/1.0 (gap-analysis)"},
+        limits=httpx.Limits(max_connections=30, max_keepalive_connections=10),
     ) as client:
 
         # -------------------------------------------------------------------
         # Phase 1: robots.txt
         # -------------------------------------------------------------------
         logger.info("[SiteDiscovery] Phase 1: Fetching robots.txt for %s", domain)
-        rp, raw_robots = _build_robot_parser(base_url)
+        rp, raw_robots = await _build_robot_parser(base_url, client)
         robots_sitemaps = _extract_sitemaps_from_robots(raw_robots)
         logger.info(
             "[SiteDiscovery] Found %d sitemap(s) in robots.txt", len(robots_sitemaps)
@@ -566,7 +668,7 @@ def discover_site_tree(
             if candidate not in sitemap_candidates:
                 sitemap_candidates.append(candidate)
 
-        sitemap_pages, all_sitemaps = _parse_sitemaps_recursive(
+        sitemap_pages, all_sitemaps = await _parse_sitemaps_recursive(
             sitemap_candidates, client, domain, max_urls=max_pages * 2
         )
         for page in sitemap_pages:
@@ -585,12 +687,12 @@ def discover_site_tree(
 
         for feed_path in _COMMON_FEED_PATHS:
             feed_url = f"{parsed_base.scheme}://{parsed_base.netloc}{feed_path}"
-            feed_pages = _parse_rss_feed(feed_url, client, domain)
+            feed_pages = await _parse_rss_feed(feed_url, client, domain)
             if feed_pages:
                 rss_feeds_found.append(feed_url)
                 for page in feed_pages:
                     _register(page)
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
 
         logger.info(
             "[SiteDiscovery] RSS feeds found: %d, total URLs so far: %d",
@@ -603,8 +705,6 @@ def discover_site_tree(
         # -------------------------------------------------------------------
         logger.info("[SiteDiscovery] Phase 4: BFS crawling")
 
-        # Build seed path prefixes for prioritization.
-        # E.g. seed "https://ramp.com/blog" → prefix "/blog"
         seed_prefixes: List[str] = []
         for surl in seed_urls:
             path = urlparse(_normalize_url(surl)).path.rstrip("/")
@@ -616,19 +716,19 @@ def discover_site_tree(
         )
 
         def _matches_seed_prefix(url: str) -> bool:
-            """Return True if url's path starts with any seed URL prefix."""
             path = urlparse(url).path.rstrip("/")
             return any(path.startswith(pfx) for pfx in seed_prefixes) if seed_prefixes else False
 
-        # Split sitemap URLs into priority (matches seed paths) and rest.
         priority_queue: List[Tuple[str, int, Optional[str]]] = []
         rest_queue: List[Tuple[str, int, Optional[str]]] = []
 
-        # Seed URLs themselves go first.
+        # Always start BFS from base_url (fallback when sitemaps/RSS find nothing)
+        priority_queue.append((_normalize_url(base_url), 0, None))
         for url in seed_urls:
-            priority_queue.append((_normalize_url(url), 0, None))
+            normalized = _normalize_url(url)
+            if normalized != _normalize_url(base_url):
+                priority_queue.append((normalized, 0, None))
 
-        # Sort sitemap/RSS URLs: those matching seed prefixes get priority.
         for norm_url in list(registry.keys()):
             if not _should_skip_url(norm_url):
                 if _matches_seed_prefix(norm_url):
@@ -646,133 +746,208 @@ def discover_site_tree(
 
         visited_crawl: Set[str] = set()
         crawl_count = 0
+        semaphore = asyncio.Semaphore(10)
 
-        while bfs_queue and crawl_count < max_pages:
-            url, depth, parent_url = bfs_queue.pop(0)
-            url = _normalize_url(url)
+        # Fallback state for Cloudflare-protected sites
+        pw_semaphore = asyncio.Semaphore(3)
+        _pw: Dict[str, Any] = {
+            "browser": None, "mgr": None,
+            "site_blocked": False, "available": True,
+        }
 
-            if url in visited_crawl or depth > max_depth:
-                continue
-            if _should_skip_url(url):
-                continue
-            if respect_robots and not rp.can_fetch("*", url):
-                visited_crawl.add(url)
-                continue
+        async def _crawl_one(
+            url: str, depth: int, parent_url: Optional[str],
+        ) -> Optional[Tuple[str, str, int, dict, Optional[str], Dict[str, str]]]:
+            """Fetch a single page. Fallback chain: httpx -> Playwright -> Wayback."""
+            html: Optional[str] = None
+            status_code: int = 0
 
-            visited_crawl.add(url)
+            # --- Tier 1: httpx (skip if site is known Cloudflare-blocked) ---
+            if not _pw["site_blocked"]:
+                async with semaphore:
+                    try:
+                        resp = await client.get(url)
+                        status_code = resp.status_code
+                        content_type = resp.headers.get("content-type", "")
 
-            try:
-                resp = client.get(url)
-                status_code = resp.status_code
+                        if status_code < 400 and "text/html" in content_type.lower():
+                            html = resp.text or ""
+                            if not _is_cloudflare_challenge(html, status_code):
+                                metadata = _extract_page_metadata(html)
+                                canonical = _extract_canonical(html, url)
+                                hreflang = _extract_hreflang(html, url)
+                                return (url, html, status_code, metadata, canonical, hreflang)
+                    except Exception as e:
+                        errors.append(f"Crawl error for {url}: {e}")
 
-                if status_code >= 400:
-                    _register(DiscoveredPage(
+                logger.info("[BFS] httpx blocked for %s (status=%d), trying fallbacks", url, status_code)
+
+            # --- Tier 2: Playwright ---
+            if _pw["available"]:
+                if _pw["browser"] is None:
+                    result = await _init_playwright_browser()
+                    if result is not None:
+                        _pw["browser"], _pw["mgr"] = result
+                    else:
+                        _pw["available"] = False
+
+                if _pw["browser"] is not None:
+                    pw_result = await _fetch_with_playwright(url, _pw["browser"], pw_semaphore)
+                    if pw_result is not None:
+                        _, html, status_code = pw_result
+                        if not _pw["site_blocked"]:
+                            _pw["site_blocked"] = True
+                            logger.info(
+                                "[SiteDiscovery] Cloudflare detected — switching to Playwright for all pages."
+                            )
+                        metadata = _extract_page_metadata(html)
+                        canonical = _extract_canonical(html, url)
+                        hreflang = _extract_hreflang(html, url)
+                        return (url, html, status_code, metadata, canonical, hreflang)
+
+            # --- Tier 3: Wayback Machine ---
+            wb_result = await _fetch_from_wayback(url, client)
+            if wb_result is not None:
+                _, html, status_code = wb_result
+                metadata = _extract_page_metadata(html)
+                canonical = _extract_canonical(html, url)
+                hreflang = _extract_hreflang(html, url)
+                return (url, html, status_code, metadata, canonical, hreflang)
+
+            return None
+
+        try:
+            while bfs_queue and crawl_count < max_pages:
+                # Pop a batch for concurrent fetching
+                batch: List[Tuple[str, int, Optional[str]]] = []
+                while bfs_queue and len(batch) < 10:
+                    url, depth, parent_url = bfs_queue.pop(0)
+                    url = _normalize_url(url)
+
+                    if url in visited_crawl or depth > max_depth:
+                        continue
+                    if _should_skip_url(url):
+                        continue
+                    if respect_robots and not rp.can_fetch("*", url):
+                        visited_crawl.add(url)
+                        continue
+
+                    visited_crawl.add(url)
+                    batch.append((url, depth, parent_url))
+
+                if not batch:
+                    continue
+
+                # Fetch batch concurrently
+                tasks = [_crawl_one(url, depth, parent_url) for url, depth, parent_url in batch]
+                results = await asyncio.gather(*tasks)
+
+                for (url, depth, parent_url), result in zip(batch, results):
+                    if result is None:
+                        _register(DiscoveredPage(
+                            url=url,
+                            normalized_url=url,
+                            status_code=0,
+                            discovery_source=DiscoverySource.BFS_CRAWL,
+                            depth=depth,
+                            parent_url=parent_url,
+                            has_content=False,
+                        ))
+                        continue
+
+                    fetched_url, html, status_code, metadata, canonical, hreflang = result
+                    crawl_count += 1
+
+                    page = DiscoveredPage(
                         url=url,
                         normalized_url=url,
+                        title=metadata["title"],
+                        h1=metadata["h1"],
+                        meta_description=metadata["meta_description"],
+                        word_count=metadata["word_count"],
                         status_code=status_code,
+                        content_type="text/html",
                         discovery_source=DiscoverySource.BFS_CRAWL,
                         depth=depth,
                         parent_url=parent_url,
-                        has_content=False,
-                    ))
-                    continue
+                        canonical_url=canonical,
+                        hreflang_alternates=hreflang,
+                        has_content=True,
+                    )
 
-                content_type = resp.headers.get("content-type", "")
-                if "text/html" not in content_type.lower():
-                    continue
+                    if url in registry:
+                        existing = registry[url]
+                        existing.title = metadata["title"] or existing.title
+                        existing.h1 = metadata["h1"]
+                        existing.meta_description = metadata["meta_description"]
+                        existing.word_count = metadata["word_count"]
+                        existing.status_code = status_code
+                        existing.content_type = "text/html"
+                        existing.canonical_url = canonical
+                        existing.hreflang_alternates = hreflang or existing.hreflang_alternates
+                        existing.has_content = True
+                    else:
+                        _register(page)
 
-                html = resp.text or ""
-                crawl_count += 1
+                    pages_with_html.append((url, html))
 
-            except Exception as e:
-                errors.append(f"Crawl error for {url}: {e}")
-                continue
+                    if canonical and canonical != url and _same_host(canonical, domain):
+                        _register(DiscoveredPage(
+                            url=canonical,
+                            normalized_url=canonical,
+                            discovery_source=DiscoverySource.CANONICAL,
+                            depth=depth,
+                            parent_url=url,
+                        ))
 
-            metadata = _extract_page_metadata(html)
-            canonical = _extract_canonical(html, url)
-            hreflang = _extract_hreflang(html, url)
+                    for lang, alt_url in hreflang.items():
+                        alt_normalized = _normalize_url(alt_url)
+                        if _same_host(alt_normalized, domain):
+                            _register(DiscoveredPage(
+                                url=alt_url,
+                                normalized_url=alt_normalized,
+                                discovery_source=DiscoverySource.HREFLANG,
+                                depth=depth,
+                                parent_url=url,
+                            ))
 
-            page = DiscoveredPage(
-                url=url,
-                normalized_url=url,
-                title=metadata["title"],
-                h1=metadata["h1"],
-                meta_description=metadata["meta_description"],
-                word_count=metadata["word_count"],
-                status_code=status_code,
-                content_type=content_type,
-                discovery_source=DiscoverySource.BFS_CRAWL,
-                depth=depth,
-                parent_url=parent_url,
-                canonical_url=canonical,
-                hreflang_alternates=hreflang,
-                has_content=True,
-            )
+                    page_feeds = _discover_feeds_from_html(html, url)
+                    for page_feed_url in page_feeds:
+                        if page_feed_url not in rss_feeds_found:
+                            feed_pages = await _parse_rss_feed(page_feed_url, client, domain)
+                            if feed_pages:
+                                rss_feeds_found.append(page_feed_url)
+                                for fp in feed_pages:
+                                    _register(fp)
 
-            if url in registry:
-                existing = registry[url]
-                existing.title = metadata["title"] or existing.title
-                existing.h1 = metadata["h1"]
-                existing.meta_description = metadata["meta_description"]
-                existing.word_count = metadata["word_count"]
-                existing.status_code = status_code
-                existing.content_type = content_type
-                existing.canonical_url = canonical
-                existing.hreflang_alternates = hreflang or existing.hreflang_alternates
-                existing.has_content = True
-            else:
-                _register(page)
+                    if depth < max_depth:
+                        for link in _extract_links_enhanced(html, url, domain):
+                            if link not in visited_crawl:
+                                entry = (link, depth + 1, url)
+                                if _matches_seed_prefix(link):
+                                    bfs_queue.insert(0, entry)
+                                else:
+                                    bfs_queue.append(entry)
 
-            pages_with_html.append((url, html))
-
-            # Register canonical as a separate discovery if different
-            if canonical and canonical != url and _same_host(canonical, domain):
-                _register(DiscoveredPage(
-                    url=canonical,
-                    normalized_url=canonical,
-                    discovery_source=DiscoverySource.CANONICAL,
-                    depth=depth,
-                    parent_url=url,
-                ))
-
-            # Register hreflang alternates
-            for lang, alt_url in hreflang.items():
-                alt_normalized = _normalize_url(alt_url)
-                if _same_host(alt_normalized, domain):
-                    _register(DiscoveredPage(
-                        url=alt_url,
-                        normalized_url=alt_normalized,
-                        discovery_source=DiscoverySource.HREFLANG,
-                        depth=depth,
-                        parent_url=url,
-                    ))
-
-            # Discover RSS feeds from this page's HTML
-            page_feeds = _discover_feeds_from_html(html, url)
-            for page_feed_url in page_feeds:
-                if page_feed_url not in rss_feeds_found:
-                    feed_pages = _parse_rss_feed(page_feed_url, client, domain)
-                    if feed_pages:
-                        rss_feeds_found.append(page_feed_url)
-                        for fp in feed_pages:
-                            _register(fp)
-
-            # Enqueue child links for BFS (priority links go to front)
-            if depth < max_depth:
-                for link in _extract_links_enhanced(html, url, domain):
-                    if link not in visited_crawl:
-                        entry = (link, depth + 1, url)
-                        if _matches_seed_prefix(link):
-                            bfs_queue.insert(0, entry)
-                        else:
-                            bfs_queue.append(entry)
-
-            time.sleep(0.2)
+                await asyncio.sleep(0.1)
+        finally:
+            # Clean up Playwright browser if it was initialized
+            if _pw["browser"] is not None:
+                try:
+                    await _pw["browser"].close()
+                except Exception:
+                    pass
+            if _pw["mgr"] is not None:
+                try:
+                    await _pw["mgr"].stop()
+                except Exception:
+                    pass
 
         logger.info(
-            "[SiteDiscovery] BFS crawled %d pages. Total discovered: %d",
+            "[SiteDiscovery] BFS crawled %d pages. Total discovered: %d%s",
             crawl_count,
             len(registry),
+            " (Playwright bypass used)" if _pw["site_blocked"] else "",
         )
 
     # -------------------------------------------------------------------
@@ -847,14 +1022,14 @@ def build_semantic_units(
 # ===========================================================================
 
 
-def crawl_company_assets(
+async def crawl_company_assets(
     domain: str,
     seed_urls: List[str],
     max_pages: int,
     max_depth: int,
 ) -> List[Tuple[str, str]]:
     """Legacy entry point — returns just the (url, html) pairs."""
-    _, pages_with_html = discover_site_tree(
+    _, pages_with_html = await discover_site_tree(
         domain=domain,
         seed_urls=seed_urls,
         max_pages=max_pages,
@@ -868,8 +1043,8 @@ def crawl_company_assets(
 # ===========================================================================
 
 
-def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUnit]:
-    """Crawl, chunk, embed, and store company assets.
+async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUnit]:
+    """Crawl, chunk, embed, and store company assets (async).
 
     Uses multi-phase discovery (sitemap + RSS + BFS) and stores
     embeddings in ChromaDB. JSON artifacts are lightweight (IDs only).
@@ -884,7 +1059,7 @@ def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUnit]:
     seed_urls = [str(u) for u in input_data.seed_urls]
 
     # --- Full site-tree discovery ---
-    discovery_result, pages_with_html = discover_site_tree(
+    discovery_result, pages_with_html = await discover_site_tree(
         domain=input_data.domain or "",
         seed_urls=seed_urls,
         max_pages=max_pages,
@@ -943,16 +1118,16 @@ def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUnit]:
     discovery_lookup = {_normalize_url(p.url): p for p in discovery_result.pages}
     units = build_semantic_units(pages_with_html, discovery_lookup=discovery_lookup)
 
-    # --- Embed ---
+    # --- Embed (async) ---
     texts = [u.text for u in units]
-    embeddings = embed_texts(texts)
+    embeddings = await async_embed_texts(texts)
     for unit, embedding in zip(units, embeddings):
         unit.embedding = embedding
         unit.embedding_id = f"{company_slug}__{unit.unit_id}"
 
-    # --- Store in ChromaDB (clear old data first for idempotent re-runs) ---
-    delete_company_collection(company_slug)
-    upsert_embeddings(
+    # --- Store in ChromaDB (async, clear old data first for idempotent re-runs) ---
+    await async_delete_company_collection(company_slug)
+    await async_upsert_embeddings(
         company_slug=company_slug,
         unit_ids=[u.unit_id for u in units],
         texts=texts,

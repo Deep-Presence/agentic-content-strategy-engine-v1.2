@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -11,7 +12,8 @@ import numpy as np
 
 from core.models.gap_analysis import EnrichedCitation, GeneratedQuery, ParagraphMatch
 from core.config.settings import settings
-from core.shared_tools.chroma_client import upsert_citation_embeddings
+from core.shared_tools.async_chroma_client import async_upsert_citation_embeddings
+from core.shared_tools.async_embedding_client import async_embed_texts
 
 logger = logging.getLogger(__name__)
 
@@ -130,69 +132,7 @@ def _truncate_text(text: str) -> str:
     return cut
 
 
-def _embed_texts(texts: List[str]) -> List[List[float]]:
-    """Embed texts in bulk using count-based batching (256 texts/batch).
-
-    Each text is hard-truncated to _MAX_CHARS_PER_TEXT before embedding.
-    On batch failure, retries one-by-one with zero-vector fallback.
-    """
-    if not texts:
-        return []
-    api_key = settings.openai_api_key
-    if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. Add it to .env.local to enable embeddings."
-        )
-    model = settings.embedding_model
-    if not model:
-        raise RuntimeError("EMBEDDING_MODEL is not set. Add it to .env.local.")
-
-    from openai import OpenAI
-
-    client = OpenAI(api_key=api_key)
-
-    safe_texts = [_truncate_text(t) for t in texts]
-
-    embeddings: List[List[float]] = []
-    total = len(safe_texts)
-    total_batches = (total + _BATCH_SIZE - 1) // _BATCH_SIZE
-
-    for i in range(0, total, _BATCH_SIZE):
-        batch = safe_texts[i : i + _BATCH_SIZE]
-        batch_num = i // _BATCH_SIZE + 1
-        logger.info(
-            "Embedding batch %d/%d (%d texts)...",
-            batch_num, total_batches, len(batch),
-        )
-        try:
-            response = client.embeddings.create(model=model, input=batch)
-            embeddings.extend([row.embedding for row in response.data])
-        except Exception as exc:
-            if len(batch) == 1:
-                logger.error(
-                    "Embedding failed for text (%d chars): %s",
-                    len(batch[0]), exc,
-                )
-                embeddings.append([0.0] * 3072)
-                continue
-            logger.warning(
-                "Batch embedding failed (%d texts), retrying one-by-one: %s",
-                len(batch), exc,
-            )
-            for single_text in batch:
-                try:
-                    resp = client.embeddings.create(
-                        model=model, input=[single_text]
-                    )
-                    embeddings.extend([row.embedding for row in resp.data])
-                except Exception as single_exc:
-                    logger.error(
-                        "Skipping un-embeddable text (%d chars): %s",
-                        len(single_text), single_exc,
-                    )
-                    embeddings.append([0.0] * 3072)
-
-    return embeddings
+# _embed_texts replaced by async_embed_texts from shared utilities
 
 
 # ---------------------------------------------------------------------------
@@ -213,11 +153,11 @@ def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
 # ---------------------------------------------------------------------------
 
 
-def embed_queries(
+async def embed_queries(
     queries: List[GeneratedQuery],
 ) -> List[GeneratedQuery]:
     texts = [q.query_text for q in queries]
-    embeddings = _embed_texts(texts)
+    embeddings = await async_embed_texts(texts)
     for q, emb in zip(queries, embeddings):
         q.embedding = emb
     return queries
@@ -250,7 +190,7 @@ class _CitationWork:
         self.anchor_text_idx: int = -1
 
 
-def embed_enriched_citations(
+async def embed_enriched_citations(
     citations: List[EnrichedCitation],
     query_lookup: Optional[Dict[str, GeneratedQuery]] = None,
     company_slug: Optional[str] = None,
@@ -330,7 +270,7 @@ def embed_enriched_citations(
     # ------------------------------------------------------------------
     # Phase 2: Bulk embed all unique texts in one call
     # ------------------------------------------------------------------
-    all_embeddings = _embed_texts(unique_texts)
+    all_embeddings = await async_embed_texts(unique_texts)
 
     logger.info("Phase 2 complete: embedded %d texts.", len(all_embeddings))
 
@@ -388,7 +328,7 @@ def embed_enriched_citations(
             "(deduplicated from %d total best-paragraphs).",
             len(dedup_ids), total_best,
         )
-        upsert_citation_embeddings(
+        await async_upsert_citation_embeddings(
             company_slug=company_slug,
             embedding_ids=dedup_ids,
             documents=dedup_docs,
@@ -419,16 +359,20 @@ def save_embeddings(
     )
 
 
-def embed_all(
+async def embed_all(
     queries: List[GeneratedQuery],
     citations: List[EnrichedCitation],
     company_slug: Optional[str] = None,
     top_k: int = 3,
 ) -> Tuple[List[GeneratedQuery], List[EnrichedCitation]]:
     query_lookup = {q.query_id: q for q in queries}
-    return embed_queries(queries), embed_enriched_citations(
-        citations,
-        query_lookup=query_lookup,
-        company_slug=company_slug,
-        top_k=top_k,
+    q_result, c_result = await asyncio.gather(
+        embed_queries(queries),
+        embed_enriched_citations(
+            citations,
+            query_lookup=query_lookup,
+            company_slug=company_slug,
+            top_k=top_k,
+        ),
     )
+    return q_result, c_result

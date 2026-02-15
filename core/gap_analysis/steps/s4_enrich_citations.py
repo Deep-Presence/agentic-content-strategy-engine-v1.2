@@ -1,6 +1,13 @@
+"""Step 4 — Crawl cited URLs, extract text & structural signals, produce EnrichedCitation objects.
+
+Async-first: uses httpx.AsyncClient with Semaphore-based concurrency control.
+URL deduplication ensures each unique URL is fetched only once.
+"""
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -15,6 +22,8 @@ from core.models.gap_analysis import (
     PlatformResult,
     StructuralSignals,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _infer_authority_type(domain: str) -> str:
@@ -75,61 +84,141 @@ def _extract_paragraphs(html: str) -> Tuple[List[str], StructuralSignals]:
     return paragraphs, signals
 
 
-def _fetch_html(url: str) -> Optional[str]:
-    with httpx.Client(timeout=20, follow_redirects=True) as client:
+async def _fetch_html(
+    url: str,
+    client: httpx.AsyncClient | None = None,
+    semaphore: asyncio.Semaphore | None = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Fetch HTML from a URL asynchronously.
+
+    Args:
+        url: The URL to fetch.
+        client: Shared httpx.AsyncClient instance.
+        semaphore: Optional semaphore for concurrency control.
+
+    Returns:
+        Tuple of (html, resolved_url). resolved_url is the final URL after
+        any redirects (e.g. Vertex AI Search wrappers → real destination).
+        Both are None on error/non-HTML response.
+    """
+    async def _do_fetch() -> Tuple[Optional[str], Optional[str]]:
         try:
-            resp = client.get(url)
+            target = client or httpx.AsyncClient(timeout=20, follow_redirects=True)
+            resp = await target.get(url)
             if resp.status_code >= 400:
-                return None
-            # Skip non-HTML responses (PDFs, images, etc.) — binary content
-            # parsed as HTML produces garbage paragraphs that break embeddings.
+                return None, None
             content_type = resp.headers.get("content-type", "")
             if "text/html" not in content_type.lower():
-                return None
-            return resp.text
+                return None, None
+            return resp.text, str(resp.url)
         except Exception:
-            return None
+            return None, None
+
+    if semaphore:
+        async with semaphore:
+            return await _do_fetch()
+    return await _do_fetch()
 
 
-def enrich_citations(
+async def enrich_citations(
     results: List[PlatformResult],
     query_lookup: Optional[Dict[str, GeneratedQuery]] = None,
+    concurrency: int = 20,
 ) -> List[EnrichedCitation]:
-    enriched: List[EnrichedCitation] = []
-    seen: Dict[str, EnrichedCitation] = {}
+    """Enrich citations by fetching HTML and extracting structural signals.
+
+    Async-first: fetches URLs concurrently with semaphore-based throttling.
+    Deduplicates URLs so each is fetched only once.
+    Preserves original citation ordering.
+
+    Args:
+        results: Platform search results containing citations.
+        query_lookup: Optional mapping of query_id -> GeneratedQuery for cluster info.
+        concurrency: Maximum number of concurrent HTTP requests.
+
+    Returns:
+        List of EnrichedCitation objects in the same order as input citations.
+    """
+    if not results:
+        return []
+
+    # Collect all unique URLs while preserving input order
+    citation_entries: List[Tuple[int, str, dict]] = []
+    seen_urls: set[str] = set()
 
     for result in results:
         for citation in result.citations:
             url = str(citation.url)
-            if url in seen:
+            if url in seen_urls:
                 continue
-            html = _fetch_html(url)
-            if not html:
-                continue
-            paragraphs, signals = _extract_paragraphs(html)
-            domain = urlparse(url).netloc
-            signals.authority_type = _infer_authority_type(domain)
-            signals.content_type = _infer_content_type(url)
+            seen_urls.add(url)
+            citation_entries.append((
+                len(citation_entries),
+                url,
+                {
+                    "title": citation.title,
+                    "snippet": citation.snippet,
+                    "query_id": result.query_id,
+                    "engine": result.engine,
+                },
+            ))
 
-            cluster_name = None
-            query_id = result.query_id
-            if query_lookup and query_id in query_lookup:
-                cluster_name = query_lookup[query_id].cluster_name
+    if not citation_entries:
+        return []
 
-            enriched_item = EnrichedCitation(
-                url=url,
+    # Fetch all unique URLs concurrently with connection limits (Codex)
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async with httpx.AsyncClient(
+        timeout=20,
+        follow_redirects=True,
+        limits=httpx.Limits(max_connections=30, max_keepalive_connections=10),
+    ) as client:
+        fetch_tasks = [
+            _fetch_html(url, client=client, semaphore=semaphore)
+            for _, url, _ in citation_entries
+        ]
+        fetch_results = await asyncio.gather(*fetch_tasks)
+
+    # Build enriched citations preserving original order
+    enriched: List[EnrichedCitation] = []
+    resolved_count = 0
+    for (idx, original_url, meta), (html, resolved_url) in zip(citation_entries, fetch_results):
+        if not html:
+            continue
+        # Use resolved URL (after redirects) instead of wrapper URLs
+        # (e.g. vertexaisearch.cloud.google.com → actual destination)
+        final_url = resolved_url or original_url
+        if final_url != original_url:
+            resolved_count += 1
+        paragraphs, signals = _extract_paragraphs(html)
+        domain = urlparse(final_url).netloc
+        signals.authority_type = _infer_authority_type(domain)
+        signals.content_type = _infer_content_type(final_url)
+
+        cluster_name = None
+        query_id = meta["query_id"]
+        if query_lookup and query_id in query_lookup:
+            cluster_name = query_lookup[query_id].cluster_name
+
+        enriched.append(
+            EnrichedCitation(
+                url=final_url,
                 domain=domain,
-                title=citation.title,
+                title=meta["title"],
                 query_id=query_id,
                 cluster_name=cluster_name,
-                engine=result.engine,
-                anchor_text=citation.snippet or citation.title,
+                engine=meta["engine"],
+                anchor_text=meta["snippet"] or meta["title"],
                 paragraphs=paragraphs,
                 best_paragraphs=[],
                 structural_signals=signals,
             )
-            seen[url] = enriched_item
-            enriched.append(enriched_item)
+        )
+
+    logger.info("Enriched %d citations from %d unique URLs.", len(enriched), len(citation_entries))
+    if resolved_count:
+        logger.info("Resolved %d redirect URLs to final destinations.", resolved_count)
     return enriched
 
 

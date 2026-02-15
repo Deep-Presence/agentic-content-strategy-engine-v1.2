@@ -1,0 +1,9 @@
+{
+  "sprint": "v3-async",
+  "sprint_goal": "Make gap analysis pipeline async-first for ~5x speedup",
+  "constraints": ["Backward compatibility with existing artifacts", "No new dependencies except pytest-asyncio"],
+  "active_branches": [],
+  "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass"],
+  "current_clients": ["Ramp", "Carta"],
+  "key_files_in_flux": ["core/gap_analysis/steps/s1_embed_assets.py"]
+}

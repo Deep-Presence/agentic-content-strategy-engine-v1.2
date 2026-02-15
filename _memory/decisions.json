@@ -1,0 +1,32 @@
+[
+  {
+    "id": "D-async-1",
+    "timestamp": "2026-02-15",
+    "task": "Async-first pipeline conversion approach",
+    "approach": "Convert all I/O-bound steps to async using AsyncOpenAI, httpx.AsyncClient, asyncio.to_thread for ChromaDB",
+    "rationale": "Pipeline was ~57 min worst case due to sequential HTTP calls. Async with semaphore-based concurrency provides ~5x speedup with minimal architecture changes.",
+    "alternatives_rejected": [
+      "aiohttp + aiolimiter (adds inconsistent second HTTP client)",
+      "anyio wrapping for ChromaDB (over-engineering, asyncio.to_thread works fine)",
+      "async-stdlib.bounded_gather (over-engineering for BFS crawl)"
+    ],
+    "outcome": "All 7 tasks complete. 58 tests passing. Expected ~57min → ~11min pipeline time.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-async-2",
+    "timestamp": "2026-02-15",
+    "task": "Cloudflare bypass strategy for s1 crawler",
+    "approach": "3-tier fallback chain in _crawl_one: httpx (fast) → Playwright headless Chromium (CF bypass) → Wayback Machine (last resort). Site-level flag skips httpx after first CF detection.",
+    "rationale": "Cloudflare-protected sites (carta.com) return 403 to all httpx requests. Playwright is already in requirements.txt. Wayback Machine provides historical content as last resort.",
+    "alternatives_rejected": [
+      "cloudscraper library (fragile, constantly breaks as CF updates)",
+      "Proxy rotation (cost, complexity, still blocked by JS challenge)",
+      "Skip CF-protected sites (unacceptable — Carta is a client)"
+    ],
+    "outcome": "Implementation complete. Awaiting live test on carta.com.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  }
+]

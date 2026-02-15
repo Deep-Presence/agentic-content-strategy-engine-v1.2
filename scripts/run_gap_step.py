@@ -59,7 +59,7 @@ from core.models.gap_analysis import (
     PlatformResult,
     SemanticUnit,
 )
-from core.shared_tools.chroma_client import collection_exists, get_all_embeddings
+from core.shared_tools.async_chroma_client import async_collection_exists, async_get_all_embeddings
 
 
 def _company_slug(args: argparse.Namespace) -> str:
@@ -112,8 +112,8 @@ def _load_company_units_with_embeddings(artifact_dir: Path) -> list[SemanticUnit
     company_units = _load_json_list(artifact_dir / "company_embeddings.json", SemanticUnit)
     if not any(u.embedding for u in company_units):
         slug = artifact_dir.name
-        if collection_exists(slug):
-            embedding_map = get_all_embeddings(slug)
+        if asyncio.run(async_collection_exists(slug)):
+            embedding_map = asyncio.run(async_get_all_embeddings(slug))
             hydrated = 0
             for unit in company_units:
                 if unit.unit_id in embedding_map:
@@ -130,7 +130,7 @@ def run_step_1(args: argparse.Namespace, artifact_dir: Path, input_data: GapAnal
     if not input_data.domain:
         raise ValueError("Step 1 requires --domain (e.g. ramp.com)")
     print("Step 1: Crawling & embedding company website...")
-    units = embed_company_assets(input_data)
+    units = asyncio.run(embed_company_assets(input_data))
     urls = {str(u.url) for u in units if u.url}
     print(f"\n  Output: {artifact_dir / 'company_embeddings.json'}")
     print(f"  Semantic units: {len(units)}")
@@ -144,7 +144,7 @@ def run_step_1(args: argparse.Namespace, artifact_dir: Path, input_data: GapAnal
 def run_step_2(args: argparse.Namespace, artifact_dir: Path, input_data: GapAnalysisInput) -> None:
     """Generate buyer queries (3-pass)."""
     print("Step 2: Generating buyer queries...")
-    queries = generate_queries(input_data)
+    queries = asyncio.run(generate_queries(input_data))
     (artifact_dir / "queries.json").write_text(
         json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
         encoding="utf-8",
@@ -184,7 +184,7 @@ def run_step_4(args: argparse.Namespace, artifact_dir: Path, input_data: GapAnal
                 if line.strip():
                     platform_results.append(PlatformResult(**json.loads(line)))
     print("Step 4: Enriching citations (fetching cited pages)...")
-    enriched = enrich_citations(platform_results, query_lookup=query_lookup)
+    enriched = asyncio.run(enrich_citations(platform_results, query_lookup=query_lookup))
     out_path = artifact_dir / "enriched_citations.json"
     save_enriched_citations(enriched, out_path)
     domains = {}
@@ -202,7 +202,7 @@ def run_step_5(args: argparse.Namespace, artifact_dir: Path, input_data: GapAnal
     enriched = _load_json_list(artifact_dir / "enriched_citations.json", EnrichedCitation)
     company_slug = artifact_dir.name
     print("Step 5: Embedding queries and citation paragraphs...")
-    queries, enriched = embed_all(queries, enriched, company_slug=company_slug)
+    queries, enriched = asyncio.run(embed_all(queries, enriched, company_slug=company_slug))
     out_dir = artifact_dir / "embeddings"
     save_embeddings(queries, enriched, out_dir)
     with_emb = sum(1 for c in enriched if c.best_paragraphs)
@@ -279,7 +279,7 @@ def run_step_8(args: argparse.Namespace, artifact_dir: Path, input_data: GapAnal
         (artifact_dir / "visualizations" / "visualization_paths.json").read_text(encoding="utf-8")
     )
     print("Step 8: Generating gap report + generation spec...")
-    report = generate_gap_report(analysis, queries, enriched)
+    report = asyncio.run(generate_gap_report(analysis, queries, enriched))
     report.visualization_paths = list(viz_paths.values()) if isinstance(viz_paths, dict) else viz_paths
     save_report(report, artifact_dir)
     print(f"\n  Output: {artifact_dir / 'gap_report.md'}")

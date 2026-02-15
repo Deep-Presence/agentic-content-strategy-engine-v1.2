@@ -1,0 +1,12 @@
+[
+  {
+    "id": "F1",
+    "timestamp": "2026-02-15",
+    "what_broke": "Carta company_embeddings.json was empty (0 semantic units) — BFS crawl returned nothing",
+    "root_cause": "Two issues: (1) BFS queue never seeded with base_url when no seed_urls provided — only sitemap/RSS pages were added but sitemaps returned 403. (2) carta.com is behind Cloudflare JS challenge — all httpx requests return 403 regardless of User-Agent.",
+    "fix_applied": "(1) Always append base_url to priority_queue. (2) Added 3-tier fallback: httpx → Playwright headless Chromium → Wayback Machine. Site-level flag skips httpx after first CF detection.",
+    "lesson": "Always seed BFS with base_url regardless of seed_urls. Major sites use Cloudflare — need headless browser fallback for reliable crawling.",
+    "files_affected": ["core/gap_analysis/steps/s1_embed_assets.py"],
+    "recurrence_prevention": "base_url is now always in priority_queue. Playwright fallback handles CF-protected sites automatically."
+  }
+]
