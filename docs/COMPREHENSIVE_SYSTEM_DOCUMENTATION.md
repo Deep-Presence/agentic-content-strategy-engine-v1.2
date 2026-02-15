@@ -1850,7 +1850,7 @@ DraftNotification:   thread, fit_score (0.0-1.0), why_match, draft_markdown, met
 |----------|---------|---------|
 | `LANGFUSE_PUBLIC_KEY` | — | Langfuse project public key |
 | `LANGFUSE_SECRET_KEY` | — | Langfuse project secret key |
-| `LANGFUSE_HOST` | `https://cloud.langfuse.com` | Langfuse server URL |
+| `LANGFUSE_HOST` | `https://us.cloud.langfuse.com` | Langfuse server URL |
 
 #### Computed Properties
 
