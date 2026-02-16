@@ -2,8 +2,8 @@
 
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
-> **Stack:** Python 3.12 · LangGraph · DeepAgents · FastAPI (planned) · SQLAlchemy (planned) · Pydantic v2
-> **Document Date:** 2026-02-15
+> **Stack:** Python 3.12 · LangGraph · DeepAgents · FastAPI · Pydantic v2 · Langfuse v3
+> **Document Date:** 2026-02-16
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -59,9 +59,16 @@
 18. [Known Vulnerabilities, Flaws & Technical Debt](#18-known-vulnerabilities-flaws--technical-debt)
 19. [Security Considerations](#19-security-considerations)
 20. [Scope & Roadmap](#20-scope--roadmap)
-21. [Appendix A: Model & API Key Matrix](#appendix-a-model--api-key-matrix)
-22. [Appendix B: Artifact Naming Conventions](#appendix-b-artifact-naming-conventions)
-23. [Appendix C: Code Standards & Conventions](#appendix-c-code-standards--conventions)
+21. [REST API Layer (FastAPI)](#21-rest-api-layer-fastapi)
+    - 21.1 [Application Factory & Lifecycle](#211-application-factory--lifecycle)
+    - 21.2 [API Endpoints Reference](#212-api-endpoints-reference)
+    - 21.3 [TaskStore — JSON-Backed Persistence](#213-taskstore--json-backed-persistence)
+    - 21.4 [EventBus — SSE Streaming](#214-eventbus--sse-streaming)
+    - 21.5 [HITL Approval Flow via API](#215-hitl-approval-flow-via-api)
+    - 21.6 [Design Choices & Rationale](#216-design-choices--rationale)
+22. [Appendix A: Model & API Key Matrix](#appendix-a-model--api-key-matrix)
+23. [Appendix B: Artifact Naming Conventions](#appendix-b-artifact-naming-conventions)
+24. [Appendix C: Code Standards & Conventions](#appendix-c-code-standards--conventions)
 
 ---
 
@@ -77,7 +84,7 @@ The **Content Strategy Engine** is a multi-agent AI platform that automates the 
 
 Additionally, a **Reddit Human-in-the-Loop Monitor** (implemented) monitors subreddits for threads matching a company's ICP persona, drafts contextual replies, and sends notifications via Slack/Discord.
 
-The system is designed as a **CLI-first platform** (no API server yet), with all business logic in a `core/` Python package. Artifacts are persisted to the local filesystem as the source of truth, with optional versioned mirroring to Supabase. The codebase is structured for eventual deployment behind a FastAPI server with a frontend.
+The system exposes both a **CLI** and a **FastAPI REST API** (implemented 2026-02-16). All business logic lives in a `core/` Python package. The API layer (`api/`) wraps all three pipelines with async task runners, SSE event streaming for real-time progress, and HITL approval endpoints. Task state is persisted via a JSON-backed TaskStore. Artifacts are persisted to the local filesystem as the source of truth, with optional versioned mirroring to Supabase. LLM observability is provided by Langfuse v3 tracing throughout the content generation pipeline.
 
 **Current production clients analyzed:** Ramp (corporate spend management) and Carta (equity management platform).
 
@@ -125,17 +132,25 @@ Company Website + Internal Docs
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                        CONTENT STRATEGY ENGINE                           │
 │                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │  FastAPI REST API (api/)                                           │  │
+│  │  • POST /api/v1/{pipeline}/start   • GET /tasks/{id}/events (SSE) │  │
+│  │  • POST /{pipeline}/{id}/approve   • GET /api/v1/artifacts/...    │  │
+│  │  • TaskStore (JSON-backed)         • EventBus (pub/sub SSE)       │  │
+│  └────────────────────┬───────────────────────────────────────────────┘  │
+│                       │ asyncio.create_task()                            │
+│                       ▼                                                  │
 │  ┌──────────────────┐   ┌───────────────────┐   ┌─────────────────────┐  │
 │  │   Pipeline 1:    │   │   Pipeline 2:     │   │   Pipeline 3:       │  │
 │  │   Research       │──▶│   Gap Analysis    │──▶│   Content Generation│  │
 │  │   Artifacts      │   │   (8-step)        │   │   (4-stage)         │  │
-│  └────────┬─────────┘   └────────┬──────────┘   └─────────────────────┘  │
-│           │                      │                                       │
-│           ▼                      ▼                                       │
-│  ┌─────────────────────────────────────────┐                             │
-│  │           Artifact Storage               │                            │
-│  │  Filesystem (SoT) ◀──▶ Supabase Mirror  │                             │
-│  │  ChromaDB (vectors)                      │                            │
+│  └────────┬─────────┘   └────────┬──────────┘   └──────────┬──────────┘  │
+│           │                      │                          │            │
+│           ▼                      ▼                          ▼            │
+│  ┌─────────────────────────────────────────┐  ┌───────────────────────┐  │
+│  │           Artifact Storage               │  │  Langfuse v3         │  │
+│  │  Filesystem (SoT) ◀──▶ Supabase Mirror  │  │  (LLM Observability) │  │
+│  │  ChromaDB (vectors)                      │  └───────────────────────┘  │
 │  └─────────────────────────────────────────┘                             │
 │                                                                          │
 │  ┌─────────────────┐                                                     │
@@ -156,6 +171,7 @@ Company Website + Internal Docs
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
 | **Language** | Python 3.12+ | All business logic |
+| **API Framework** | FastAPI + Uvicorn | REST API with async task runners, SSE, HITL endpoints |
 | **Agent Framework** | DeepAgents | LLM agent creation with tool-use, backends, memory |
 | **Orchestration** | LangGraph v0.2+ | State machine graphs with interrupt-based human-in-the-loop |
 | **Data Validation** | Pydantic v2 | Input/output schemas, settings management |
@@ -293,7 +309,34 @@ content-strategy-engine/
 │   └── shared_tools/                      # Cross-pipeline utilities
 │       ├── __init__.py
 │       ├── embedding_client.py            # embed_texts() — OpenAI text-embedding-3-large wrapper (42 lines)
+│       ├── async_embedding_client.py      # async_embed_texts() — Async variant with batching
+│       ├── async_chroma_client.py         # Async ChromaDB wrappers (asyncio.to_thread)
 │       └── chroma_client.py               # ChromaDB persistent client with company/citation collections (184 lines)
+│
+├── api/                                   # *** FastAPI REST API LAYER ***
+│   ├── __init__.py
+│   ├── app.py                             # App factory (lifespan, middleware, routers)
+│   ├── config.py                          # ApiSettings (CORS, port, max concurrency)
+│   ├── dependencies.py                    # Dependency injection (get_task_store, get_event_bus)
+│   ├── exceptions.py                      # Global exception handlers (TaskNotFound, TaskConflict, PipelineError)
+│   ├── routers/
+│   │   ├── __init__.py
+│   │   ├── health.py                      # GET /health, /readiness
+│   │   ├── gap_analysis.py                # POST /start, GET /{run_id}/status
+│   │   ├── research.py                    # POST /start, GET /status, POST /approve
+│   │   ├── content.py                     # POST /start, GET /status, POST /approve
+│   │   ├── events.py                      # GET /tasks/{task_id}/events (SSE streaming)
+│   │   ├── artifacts.py                   # GET /artifacts/companies, /{type}/{slug}
+│   │   └── tasks.py                       # GET /tasks, /{task_id}, POST /{task_id}/cancel
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   └── common.py                      # Pydantic request/response models
+│   └── tasks/
+│       ├── __init__.py
+│       ├── models.py                      # PipelineTask, TaskStatus, ApprovalRecord
+│       ├── store.py                       # TaskStore (JSON-backed + in-memory + slug locks)
+│       ├── event_bus.py                   # EventBus (pub/sub for SSE, event history)
+│       └── runner.py                      # Background task wrappers for all 3 pipelines
 │
 ├── scripts/                               # CLI entry points (all use argparse)
 │   ├── run_company_research.py            # Standalone company research (74 lines)
@@ -303,7 +346,8 @@ content-strategy-engine/
 │   ├── run_gap_analysis.py                # Full 8-step gap analysis (74 lines)
 │   ├── run_gap_step.py                    # Individual gap step runner for debugging (340 lines)
 │   ├── resolve_vertexai_redirects.py      # Utility: resolve Vertex AI redirect URLs (140 lines)
-│   └── strip_embeddings_from_json.py      # Utility: remove embedding vectors from JSON (67 lines)
+│   ├── strip_embeddings_from_json.py      # Utility: remove embedding vectors from JSON (67 lines)
+│   └── run_server.py                     # FastAPI server entry point (uvicorn)
 │
 ├── artifacts/                             # Persisted agent outputs (SOURCE OF TRUTH)
 │   ├── company_context/                   # {slug}.md, {slug}.draft.md
@@ -349,11 +393,25 @@ content-strategy-engine/
 │       ├── 20251227120000_artifact_versions.sql        # Versioning table + RLS
 │       └── 20260207120000_rls_enums_hnsw.sql           # HNSW indexes + 13 enums + 20 RLS policies
 │
-├── tests/                                 # ⚠️ EMPTY — No tests implemented
-│   ├── conftest.py                        # 1-line stub: `# pytest configuration & shared fixtures`
-│   ├── research/                          # Empty
-│   ├── gap_analysis/                      # Empty
-│   └── content_engine/                    # Empty
+├── tests/                                 # Test suite (276 tests)
+│   ├── conftest.py                        # Shared fixtures (FakeChromaCollection, mock clients)
+│   ├── shared_tools/                      # Async embedding + ChromaDB client tests
+│   ├── gap_analysis/                      # Pipeline + step tests (s1, s2, s4, s5, s8)
+│   ├── content_engine/                    # 57 tests — full coverage
+│   ├── api/                               # 126 tests — FastAPI integration tests
+│   │   ├── conftest.py                    # TestClient, mock stores, fixtures
+│   │   ├── test_health.py
+│   │   ├── test_gap_analysis.py
+│   │   ├── test_research.py
+│   │   ├── test_content.py
+│   │   ├── test_events.py
+│   │   ├── test_artifacts.py
+│   │   ├── test_tasks.py
+│   │   ├── test_store.py
+│   │   ├── test_event_bus.py
+│   │   ├── test_runner.py
+│   │   └── ...
+│   └── research/                          # Empty
 │
 ├── docs/
 │   ├── PROJECT_STATE.md                   # Architecture overview + current state (updated 2026-02-12)
@@ -1268,29 +1326,40 @@ async def run_content_review(
 
 **File:** `core/content_engine/tracing.py`
 
-Lazy singleton `Langfuse` client — returns None if not configured (no-op when `LANGFUSE_PUBLIC_KEY` not set).
+**SDK Version:** Langfuse v3.14+ (v3 API — **breaking change from v2**, migrated 2026-02-16)
 
-**Hierarchy:**
+Lazy singleton `Langfuse` client — returns None if not configured (no-op when `LANGFUSE_PUBLIC_KEY` not set). All tracing functions catch exceptions internally and return None, so Langfuse unavailability never crashes the pipeline.
+
+**v2 → v3 Migration (Breaking Changes Applied):**
+
+| v2 API (removed) | v3 API (current) |
+|---|---|
+| `lf.trace()` | `lf.start_span()` + `span.update_trace(session_id=...)` |
+| `target.generation()` | `target.start_generation()` + `gen.end()` |
+| `target.span()` | `target.start_span()` |
+| `usage=` parameter | `usage_details=` parameter |
+| `span.end(**kwargs)` | `span.update(**kwargs)` then `span.end()` |
+
+**Note:** `start_generation()` is already deprecated in 3.14.1 in favor of `start_observation(as_type='generation')`. Current code uses `start_generation()` — monitor for future migration.
+
+**Hierarchy (v3 — Span-based, not Trace-based):**
 ```
-Session: content-gen-{slug}-{timestamp}
-  └── Trace: planner              (Stage 1)
-  │     └── Generation: plan_content
-  └── Trace: worker/{brief_id}    (Stage 2, per brief)
-  │     └── Span: outliner → Generation
-  │     └── Span: drafter → Generation
-  │     └── Span: fact_enricher → Generation(s)
-  │     └── Span: formatter → Generation
-  └── Trace: evaluator/{brief_id} (Stage 3, per brief)
-  │     └── Span: structural_check (score attached)
-  │     └── Span: semantic_check (score attached)
-  │     └── Span: style_judge → Generation (score attached)
-  │     └── Span: factual_judge → Generation (score attached)
-  │     └── Span: revision_cycle_{n} (if needed)
-  └── Trace: review/{brief_id}    (Stage 4)
-        └── Span: human_decision (score attached)
+Session: content-gen-{slug}-{timestamp}     (implicit — created when trace references session_id)
+  └── Root Span: content-pipeline/{slug}    (acts as trace via update_trace())
+        ├── Stage Span: stage/1-planner
+        │     └── Span: planner → Generation: plan_content
+        ├── Stage Span: stage/2-workers
+        │     ├── Span: Worker #1 → outliner/drafter/fact_enricher/formatter
+        │     └── Span: Worker #2 → ...
+        ├── Stage Span: stage/3-evaluator
+        │     └── Span: evaluator/{brief_id} → eval_cycle_0 / revision_cycle_1 / ...
+        └── Stage Span: stage/4-review
+              └── Span: Review: {title} → Score: human_decision
 ```
 
-**Helper functions:** `create_session()`, `create_trace()`, `log_generation()`, `create_span()`, `end_span()`, `log_score()`, `flush()`
+**Key difference from v2:** In v3, there is no `lf.trace()` method. Instead, a root span is created with `lf.start_span()`, then `span.update_trace(session_id=..., tags=..., user_id=...)` promotes it to function as the trace. Child spans and generations nest under this root span.
+
+**Helper functions:** `create_session()`, `create_pipeline_trace()`, `log_generation()`, `create_span()`, `end_span()`, `update_trace_output()`, `log_score()`, `flush()`
 
 ### 7.6 Artifact Structure
 
@@ -1852,6 +1921,16 @@ DraftNotification:   thread, fit_score (0.0-1.0), why_match, draft_markdown, met
 | `LANGFUSE_SECRET_KEY` | — | Langfuse project secret key |
 | `LANGFUSE_HOST` | `https://us.cloud.langfuse.com` | Langfuse server URL |
 
+#### FastAPI API Server
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `API_CORS_ORIGINS` | `["http://localhost:3000","http://localhost:3001"]` | Allowed CORS origins (JSON array) |
+| `API_PREFIX` | `/api/v1` | API route prefix |
+| `API_MAX_CONCURRENT_PIPELINES` | `3` | Global semaphore cap for concurrent pipeline runs |
+
+**Note:** API settings live in `api/config.py` as a separate `ApiSettings(BaseSettings)` class with `env_prefix="API_"`. All overridable via `API_*` environment variables.
+
 #### Computed Properties
 
 ```python
@@ -1992,6 +2071,17 @@ python scripts/run_content_engine.py \
 | `--skip-stage` | Stage numbers to skip (repeatable: 1, 2, 3, 4) |
 
 **Pattern:** Constructs `ContentGenerationInput`, calls `asyncio.run(run_content_generation(input_data))`.
+
+#### `scripts/run_server.py` — FastAPI Server
+```bash
+python scripts/run_server.py
+# or directly via uvicorn:
+uvicorn api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
+```
+
+**Default:** `http://localhost:8000`
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
 
 **`--gap-slug` auto-discovery:** When provided, automatically resolves:
 - `artifacts/gap_analysis/{slug}/gap_report.json`
@@ -2161,7 +2251,22 @@ tests/
     └── test_integration.py              # 2 tests — Full pipeline + skip stages
 ```
 
-**Test counts:** 150 total tests. 146 passing, 4 known failures (s4 mock regression in gap analysis).
+**Test counts:** 276 total tests. 272 passing, 4 known failures (s4 mock regression in gap analysis).
+
+### API Test Coverage (126/126 passing — added 2026-02-16)
+
+| Test File | What's Tested |
+|-----------|---------------|
+| `test_health.py` | Health + readiness endpoints, missing API key detection |
+| `test_gap_analysis.py` | Start pipeline, status polling, skip_steps |
+| `test_research.py` | Start pipeline, HITL approval flow (approve/revise/reject) |
+| `test_content.py` | Start pipeline, HITL per-brief approval |
+| `test_events.py` | SSE streaming, Last-Event-ID reconnection, terminal events |
+| `test_artifacts.py` | Company listing, artifact retrieval by type/slug |
+| `test_tasks.py` | Task CRUD, filtering by pipeline/status, cancellation |
+| `test_store.py` | TaskStore persistence, slug locks, approval events, startup recovery |
+| `test_event_bus.py` | Pub/sub, history replay, subscriber lifecycle |
+| `test_runner.py` | Background task wrappers, graph interrupt/resume loop |
 
 ### Content Engine Test Coverage (57/57 passing)
 
@@ -2213,6 +2318,18 @@ tests/
 ### Python Package Dependencies
 
 ```
+fastapi v0.115+
+├── REST API framework (api/app.py)
+├── Dependency injection (api/dependencies.py)
+├── StreamingResponse (SSE events)
+└── Lifespan context manager (shared state)
+
+uvicorn v0.32+
+└── ASGI server for FastAPI (scripts/run_server.py)
+
+python-multipart v0.0.12+
+└── Form data parsing (FastAPI dependency)
+
 pydantic v2.5+
 ├── BaseModel (all 30+ schemas)
 ├── Field validators
@@ -2220,7 +2337,8 @@ pydantic v2.5+
 └── model_copy() for cross-stage wiring
 
 pydantic-settings v2.0+
-└── BaseSettings (core/config/settings.py)
+├── BaseSettings (core/config/settings.py)
+└── BaseSettings (api/config.py — API_* prefix)
 
 langgraph v0.2+
 ├── StateGraph (all research graphs)
@@ -2264,19 +2382,27 @@ Integrations:
 ```
 core/config/settings.py ← Used by everything
         ↓
-core/models/* ← Used by graphs, agents, pipeline, mirror
+core/models/* ← Used by graphs, agents, pipeline, mirror, API schemas
         ↓
-core/shared_tools/* ← Used by gap analysis steps
+core/shared_tools/* ← Used by gap analysis steps + content engine
         ↓
 core/storage/* ← Used by research graphs (mirror after approval)
         ↓
 core/research/agents/* ← Used by research graphs
         ↓
-core/research/graphs/* ← Used by scripts
-core/gap_analysis/* ← Used by scripts
+core/research/graphs/* ← Used by scripts + API runners
+core/gap_analysis/* ← Used by scripts + API runners
+core/content_engine/* ← Used by scripts + API runners
 core/reddit_hil/* ← Used by CLI
         ↓
-scripts/* ← User entry points
+api/tasks/runner.py ← Wraps core pipelines as background tasks
+api/tasks/store.py ← JSON-backed task persistence
+api/tasks/event_bus.py ← SSE pub/sub
+api/routers/* ← REST endpoints
+api/app.py ← FastAPI app factory
+        ↓
+scripts/* ← CLI entry points
+scripts/run_server.py ← API entry point (uvicorn)
 ```
 
 ---
@@ -2418,16 +2544,39 @@ scripts/* ← User entry points
 
 **Tradeoff:** Separate from LangGraph ecosystem (which integrates with LangSmith). Requires additional API keys.
 
+**Update (2026-02-16):** Migrated from Langfuse v2 API to v3 API (breaking change). Key difference: v3 removed `lf.trace()` entirely — now uses `lf.start_span()` + `span.update_trace(session_id=...)` to establish the trace. See §7.5 for full migration details.
+
+### Decision 12: FastAPI Integration Architecture (D-API-1)
+
+**Choice:** Same-repo `api/` package. `asyncio.create_task()` for background pipeline execution. JSON-file-backed `TaskStore`. Server-Sent Events (SSE) for real-time progress. `MemorySaver` checkpointer for LangGraph HITL interrupt/resume.
+
+**Rationale:**
+- **`asyncio.create_task` (not Celery):** Lightweight, no infra deps. Matches existing async-first patterns. All pipeline code is already async — no serialization boundary needed.
+- **JSON-file TaskStore (not SQLite/Redis):** Simple, debuggable, human-readable. Atomic writes via temp-file + `os.replace()`. Sufficient for current scale (single-server, <10 concurrent pipelines).
+- **SSE (not WebSocket):** Simpler protocol, auto-reconnect via `Last-Event-ID` header. One-directional (server→client) is sufficient — client actions use REST endpoints. No connection state management needed.
+- **MemorySaver checkpointer:** Enables LangGraph graph state persistence across interrupt/resume cycles. Required for HITL approval flow where graph pauses and resumes after human decision.
+- **Per-slug locks:** Prevents concurrent pipeline runs for the same company (race condition on shared artifacts).
+- **Global semaphore:** Caps total concurrent pipelines (default: 3) to prevent resource exhaustion.
+
+**Alternatives Rejected:**
+- Celery + Redis — Over-engineering for current scale. Adds infrastructure dependency and serialization complexity.
+- WebSocket for progress — SSE is simpler, auto-reconnects. WebSocket needed only for bidirectional communication.
+- SQLite TaskStore — Unnecessary complexity. JSON files are sufficient and more debuggable.
+
+**Outcome:** 6 phases complete. 126 tests passing. All 3 pipelines wrapped with REST endpoints, SSE events, and HITL approval flow.
+
+**Approved by:** Aryan
+
 ---
 
 ## 18. Known Vulnerabilities, Flaws & Technical Debt
 
 ### Critical Issues
 
-#### 1. PARTIAL TEST COVERAGE (Improved from Zero)
-**Severity:** Medium (downgraded from Critical — 2026-02-15)
-**Description:** 150 total tests. Content engine has 57/57 passing. Gap analysis has partial coverage (s1, s2, s4, s5, s8, pipeline). Research pipeline and Reddit HIL have zero tests. 4 known failures in s4 tests.
-**Impact:** Content engine has regression protection. Research pipeline and Reddit HIL remain unprotected.
+#### 1. PARTIAL TEST COVERAGE (Improved Significantly)
+**Severity:** Medium (downgraded from Critical — 2026-02-15, improved 2026-02-16)
+**Description:** 276 total tests. API layer: 126/126 passing. Content engine: 57/57 passing. Gap analysis: partial coverage (s1, s2, s4, s5, s8, pipeline). Research pipeline and Reddit HIL have zero tests. 4 known failures in s4 tests.
+**Impact:** API layer and content engine have full regression protection. Research pipeline and Reddit HIL remain unprotected.
 **Recommendation:** Add tests for research pipeline (approval flows) and Reddit HIL (webhook delivery). Fix 4 s4 mock regressions.
 
 #### 2. InMemoryStore — Agent Memory Not Persistent
@@ -2492,26 +2641,44 @@ scripts/* ← User entry points
 **Impact:** Mental overhead when reading code. Inconsistent error handling.
 **Recommendation:** Standardize to one pattern (preferably in the agent files, matching persona/style approach).
 
+#### 11. Langfuse v2 API Incompatibility — RESOLVED (2026-02-16)
+**Severity:** ~~High~~ Resolved
+**Description:** `tracing.py` was written for Langfuse v2 API (`lf.trace()`, `target.generation()`, `target.span()`) but Langfuse 3.14.1 was installed. v3 removed these methods entirely, causing all tracing to silently fail with `'Langfuse' object has no attribute 'trace'`.
+**Fix Applied:** Rewrote `tracing.py` to use v3 SDK API. See §7.5 for migration details.
+**Location:** `core/content_engine/tracing.py`
+
+#### 12. TaskStore JSON Persistence — Single-Server Limitation
+**Severity:** Low (current), Medium (for production)
+**Description:** `TaskStore` uses JSON files in `artifacts/_jobs/` for task persistence. Works fine for single-server deployment but does not support multi-server or horizontal scaling.
+**Location:** `api/tasks/store.py`
+**Impact:** Cannot scale API to multiple servers without shared state.
+**Recommendation:** Migrate to Redis or PostgreSQL-backed task store when horizontal scaling is needed.
+
+#### 13. `model_dump(mode='json')` in TaskStore
+**Severity:** Low
+**Description:** TaskStore persistence uses `model_dump(mode='json')` for Pydantic v2 serialization. Works correctly in current Pydantic v2 but should be verified with future Pydantic upgrades.
+**Location:** `api/tasks/store.py`
+
 ### Data Quality & Operational Concerns
 
-#### 11. Vertex AI Redirect URLs
+#### 14. Vertex AI Redirect URLs
 **Description:** The Gemini search engine sometimes returns Vertex AI Search redirect URLs (`vertexaisearch.cloud.google.com/...`) instead of direct URLs. A utility script exists to resolve these, but it's a manual post-processing step.
 **Location:** `scripts/resolve_vertexai_redirects.py`
 **Impact:** Enriched citations may contain unresolvable URLs until manually fixed.
 **Recommendation:** Integrate redirect resolution into Step 4 (enrich citations) automatically.
 
-#### 12. PDF Detection Fragility
+#### 15. PDF Detection Fragility
 **Description:** PDF detection in Step 4 uses basic string matching (`"%PDF-"` signature). Could miss some PDFs or false-positive on text containing the PDF signature.
 **Location:** `core/gap_analysis/steps/s4_enrich_citations.py`
 **Impact:** Some binary content may slip through to embedding, producing garbage vectors.
 **Recommendation:** Use Content-Type headers and more robust binary detection.
 
-#### 13. ChromaDB Not Production-Ready for Multi-Tenant
+#### 16. ChromaDB Not Production-Ready for Multi-Tenant
 **Description:** ChromaDB runs locally with file-based persistence. Not suitable for multi-user production deployment.
 **Impact:** Single-machine limitation. No concurrent access from multiple processes.
 **Recommendation:** Migrate to pgvector (Supabase) for production. ChromaDB remains appropriate for local development.
 
-#### 14. Hardcoded Default Paths in Utility Scripts
+#### 17. Hardcoded Default Paths in Utility Scripts
 **Description:** `resolve_vertexai_redirects.py` defaults input to Ramp's enriched citations path. `strip_embeddings_from_json.py` defaults to Ramp's embeddings path.
 **Impact:** Confusing defaults if used with other companies.
 **Recommendation:** Remove defaults or make them configurable via settings.
@@ -2556,24 +2723,307 @@ scripts/* ← User entry points
 | Research Pipeline Orchestrator | ✅ Functional | High — cross-stage wiring works |
 | Gap Analysis (8 steps) | ✅ Production | High — complete for Ramp, Carta |
 | Content Generation Engine | ✅ Implemented | Medium — 57 tests passing, awaiting live smoke test |
+| **FastAPI REST API** | ✅ Implemented | **High — 126 tests, SSE, HITL, all 3 pipelines** |
 | Reddit HIL Monitor | ✅ Functional | Medium — tested with Ramp |
 | Supabase Schema | ✅ Production | High — 4 migrations, RLS, HNSW |
 | Supabase Mirror | ✅ Functional | Medium — works but no SQLAlchemy ORM |
 | CLI Scripts | ✅ Functional | Medium — works but no error handling |
+| Langfuse Tracing (v3) | ✅ Functional | Medium — content engine traced, v3 API |
 
 ### What's Planned (Future Scope)
 
 | Priority | Component | Description | Dependencies |
 |----------|-----------|-------------|--------------|
 | 1 | **Content Engine v1.1** | HITL timeout, --offline flag, cost budget cap | Content Engine v1.0 |
-| 2 | **FastAPI Backend** | REST API + WebSocket pipeline events | All core modules |
-| 3 | **SQLAlchemy ORM** | Replace raw Supabase client with ORM | Supabase schema |
-| 4 | **Frontend** | Web UI for artifact review, gap visualization, pipeline management | FastAPI backend |
+| 2 | ~~**FastAPI Backend**~~ | ~~REST API + SSE pipeline events~~ | ✅ **Completed 2026-02-16** |
+| 3 | **Frontend** | Web UI for artifact review, gap visualization, pipeline management | FastAPI backend (done) |
+| 4 | **SQLAlchemy ORM** | Replace raw Supabase client with ORM | Supabase schema |
 | 5 | **Comprehensive Tests** | Research pipeline + Reddit HIL tests | Existing codebase |
 | 6 | **Persistent Agent Store** | Replace InMemoryStore with durable storage | DeepAgents integration |
 | 7 | **Cloud Storage Backends** | S3/GCS/Supabase Storage implementations | StorageBackend interface |
 | 8 | **Structured Logging** | JSON logging with correlation IDs | logging_config.py |
 | 9 | **CI/CD Pipeline** | Automated tests, linting, deployment | Tests + Docker |
+| 10 | **Redis/PG TaskStore** | Replace JSON-file TaskStore for multi-server | FastAPI backend |
+
+---
+
+## 21. REST API Layer (FastAPI)
+
+**Status:** Implemented (2026-02-16). 126/126 tests passing. All 3 pipelines wrapped.
+
+**Architecture Decision:** D-API-1 — `asyncio.create_task()` (not Celery), JSON-file TaskStore, SSE for progress, `MemorySaver` checkpointer for HITL. See §17 Decision 12 for full rationale.
+
+### 21.1 Application Factory & Lifecycle
+
+**File:** `api/app.py`
+
+```python
+def create_app() -> FastAPI:
+```
+
+**Startup (lifespan context manager):**
+1. Initialize `EventBus` (in-memory pub/sub for SSE)
+2. Initialize `TaskStore` (JSON-file-backed persistence + semaphore)
+3. Scan disk for orphan tasks — marks stale "running" tasks as `FAILED_RESTART`
+4. Store shared state in `app.state` (accessed via dependency injection)
+
+**Middleware (applied in order):**
+1. `RequestLoggingMiddleware` — logs `METHOD PATH STATUS_CODE DURATION_MS`
+2. `CORSMiddleware` — configurable origins (default: `localhost:3000`, `localhost:3001`), credentials enabled
+
+**Exception Handlers:**
+| Exception | HTTP Status | Error Code |
+|-----------|-------------|------------|
+| `TaskNotFoundError` | 404 | `task_not_found` |
+| `TaskConflictError` | 409 | `task_conflict` |
+| `PipelineError` | 500 | `pipeline_error` |
+
+**Routers (mounted in order):** health, gap_analysis, research, content, events, artifacts, tasks
+
+---
+
+### 21.2 API Endpoints Reference
+
+#### Health & Readiness
+```
+GET  /health                                    → {"status": "ok"}
+GET  /readiness                                 → {"ready": bool, "missing_keys": [...]}
+```
+
+#### Gap Analysis Pipeline
+```
+POST /api/v1/gap-analysis/start                 → 202 Accepted: PipelineRunResponse
+GET  /api/v1/gap-analysis/{run_id}/status       → TaskResponse
+```
+
+**Request Body (`/gap-analysis/start`):**
+```json
+{
+  "input_data": {
+    "company_name": "Ramp",
+    "domain": "ramp.com",
+    "seed_urls": ["https://ramp.com"],
+    "company_slug": "ramp"
+  },
+  "skip_steps": [1, 2]
+}
+```
+
+#### Research Pipeline
+```
+POST /api/v1/research/start                     → 202 Accepted: PipelineRunResponse
+GET  /api/v1/research/{run_id}/status           → TaskResponse
+POST /api/v1/research/{run_id}/approve          → ApprovalResponse
+```
+
+**Request Body (`/research/start`):**
+```json
+{
+  "company": { "company_name": "Ramp", "seed_urls": ["https://ramp.com"], "domain": "ramp.com" },
+  "persona": { "company_name": "Ramp", "domain": "ramp.com" },
+  "style_guide": { "company_name": "Ramp", "domain": "ramp.com" },
+  "auto_approve": false
+}
+```
+
+**Approval Request (`/research/{run_id}/approve`):**
+```json
+{ "decision": "approve|revise|reject", "revision_note": "optional feedback" }
+```
+
+#### Content Generation Pipeline
+```
+POST /api/v1/content/start                      → 202 Accepted: PipelineRunResponse
+GET  /api/v1/content/{run_id}/status            → TaskResponse
+POST /api/v1/content/{run_id}/approve           → ApprovalResponse
+```
+
+**Content Approval (per brief):**
+```json
+{ "brief_id": "brief-1", "decision": "approve|edit|reject", "editor_notes": "optional" }
+```
+
+#### SSE Event Streaming
+```
+GET  /api/v1/tasks/{task_id}/events             → text/event-stream (SSE)
+     Headers: Last-Event-ID (for reconnection replay)
+```
+
+**SSE Event Format:**
+```
+id: 1
+event: pipeline_start
+data: {"pipeline": "gap_analysis"}
+
+id: 2
+event: stage_start
+data: {"stage": "company"}
+
+id: 3
+event: pending_approval
+data: {"stage": "company", "draft_path": "..."}
+
+id: 4
+event: completed
+data: {"pipeline": "gap_analysis"}
+```
+
+**Event Types:**
+
+| Event | When | Data |
+|-------|------|------|
+| `pipeline_start` | Pipeline begins | `{pipeline}` |
+| `stage_start` | Research stage begins | `{stage}` |
+| `stage_complete` | Research stage completes | `{stage}` |
+| `pending_approval` | Graph interrupts for HITL | `{stage, ...interrupt_payload}` |
+| `approval_received` | Human submits decision | `{stage, decision}` |
+| `completed` | Pipeline succeeds | `{pipeline}` |
+| `failed` | Pipeline fails | `{error}` |
+| `cancelled` | Task cancelled by user | `{}` |
+
+#### Task Management
+```
+GET  /api/v1/tasks                              → TaskListResponse (?pipeline=&status=)
+GET  /api/v1/tasks/{task_id}                    → TaskResponse
+POST /api/v1/tasks/{task_id}/cancel             → CancelResponse
+```
+
+#### Artifact Retrieval
+```
+GET  /api/v1/artifacts/companies                → {"companies": ["ramp", "carta"]}
+GET  /api/v1/artifacts/{type}/{slug}            → {"artifact_type", "slug", "files": [...]}
+GET  /api/v1/artifacts/{type}/{slug}/{filename} → File content (JSON/HTML/MD)
+```
+**Artifact types:** `company_context`, `personas`, `style_guides`, `gap_analysis`, `content`
+
+---
+
+### 21.3 TaskStore — JSON-Backed Persistence
+
+**File:** `api/tasks/store.py`
+
+**Architecture:**
+- **In-Memory Dict:** O(1) lookup for active tasks
+- **JSON Files:** Atomic persistence via temp-file + `os.replace()` to `artifacts/_jobs/{task_id}.json`
+- **Slug Locks:** Per-company mutexes prevent concurrent pipeline runs for the same company
+- **Global Semaphore:** Caps concurrent pipelines (default: 3, via `API_MAX_CONCURRENT_PIPELINES`)
+- **Approval Events:** `asyncio.Event`-based blocking/unblocking for HITL
+
+**Task Lifecycle:**
+```
+create_task() → acquire slug lock → RUNNING
+    ↓
+update_task() → RUNNING (progress updates)
+    ↓ (if graph interrupts)
+update_task() → PENDING_APPROVAL (blocked on wait_for_approval())
+    ↓ (human calls /approve)
+submit_approval() → unblocks wait_for_approval()
+    ↓
+update_task() → RUNNING → ... → COMPLETED | FAILED
+    ↓
+release_slug_lock()
+```
+
+**Startup Recovery:** On server restart, `_recover_from_disk()` loads all JSON files. Tasks with status `RUNNING` or `PENDING_APPROVAL` are marked `FAILED_RESTART` (orphan recovery).
+
+**Key Model:**
+```python
+class PipelineTask(BaseModel):
+    task_id: str
+    pipeline: Literal["research", "gap_analysis", "content"]
+    status: TaskStatus  # running | pending_approval | completed | failed | cancelled | failed_restart
+    company_slug: str
+    current_step: Optional[str]
+    progress_pct: Optional[float]
+    created_at: datetime
+    updated_at: datetime
+    result: Optional[Dict[str, Any]]
+    error: Optional[str]
+    approval_payload: Optional[Dict[str, Any]]
+    approval_history: List[ApprovalRecord]
+```
+
+---
+
+### 21.4 EventBus — SSE Streaming
+
+**File:** `api/tasks/event_bus.py`
+
+**Architecture:**
+- **Per-Task History:** `collections.deque(maxlen=100)` — bounded event buffer per task
+- **Per-Task Subscribers:** `List[asyncio.Queue]` — live subscriber queues
+- **Auto-Incrementing IDs:** Per-task counter for `Last-Event-ID` reconnection
+
+**Flow:**
+1. Background runner calls `event_bus.publish(task_id, event_type, data)`
+2. Event stored in history deque + pushed to all active subscriber queues
+3. SSE endpoint (`GET /tasks/{id}/events`) creates subscriber, streams events
+4. On reconnect with `Last-Event-ID`: replays history starting after that ID, then switches to live
+
+**Terminal Events:** `completed`, `failed`, `cancelled` — SSE stream closes after yielding a terminal event.
+
+---
+
+### 21.5 HITL Approval Flow via API
+
+**Research Pipeline (3-stage approval loop):**
+
+```
+Client                          API Server                       LangGraph
+  │                                │                                │
+  │  POST /research/start          │                                │
+  │ ─────────────────────────────▶ │  asyncio.create_task()         │
+  │  ◀ 202 {run_id}               │ ──────────────────────────────▶ │
+  │                                │                                │ graph.invoke()
+  │  GET /tasks/{id}/events (SSE)  │                                │
+  │ ─────────────────────────────▶ │                                │
+  │  ◀ event: pipeline_start       │                                │ ← GraphInterrupt
+  │  ◀ event: stage_start          │  ◀──── interrupt payload ──────│
+  │  ◀ event: pending_approval     │                                │
+  │                                │  wait_for_approval() BLOCKS    │
+  │  (User reviews draft)          │                                │
+  │                                │                                │
+  │  POST /research/{id}/approve   │                                │
+  │    {decision: "approve"}       │                                │
+  │ ─────────────────────────────▶ │  submit_approval() UNBLOCKS   │
+  │                                │ ──────────────────────────────▶ │ Command(resume={...})
+  │  ◀ event: approval_received    │                                │
+  │  ◀ event: stage_complete       │  ◀──── result ────────────────│
+  │  ...next stage...              │                                │
+```
+
+**Content Pipeline (per-brief approval):** Same pattern but the approval endpoint accepts `brief_id` to approve individual content pieces.
+
+**Graph Resume Mechanism:**
+```python
+# Runner detects GraphInterrupt, extracts interrupt payload
+interrupt_values = snapshot.tasks[0].interrupts[0].value
+
+# Publishes pending_approval event, blocks on asyncio.Event
+approval = await task_store.wait_for_approval(task_id)
+
+# Resumes graph with human decision
+result = await asyncio.to_thread(
+    graph.invoke,
+    Command(resume={"approval_decision": decision, "revision_note": note}),
+    config
+)
+```
+
+**Auto-approve:** When `auto_approve: true` in the start request, the graph skips `interrupt()` calls entirely — no HITL pause.
+
+---
+
+### 21.6 Design Choices & Rationale
+
+| Choice | Why | Alternative Rejected |
+|--------|-----|---------------------|
+| `asyncio.create_task()` | No infra deps, matches async codebase | Celery + Redis (over-engineering) |
+| JSON-file TaskStore | Simple, debuggable, atomic writes | SQLite (unnecessary complexity) |
+| SSE (not WebSocket) | Simpler, auto-reconnect via header | WebSocket (bidirectional not needed) |
+| Per-slug locks | Prevent artifact race conditions | No locking (data corruption risk) |
+| `MemorySaver` checkpointer | LangGraph interrupt/resume persistence | Custom state persistence (reinventing) |
+| Startup orphan recovery | Graceful handling of server crashes | Ignore stale tasks (confusing UX) |
 
 ---
 
@@ -2719,10 +3169,22 @@ from core.models.content_generation import ContentGenerationInput, ContentBrief,
 | 2026-02-15 | §20 | Moved Content Engine to "Built", updated roadmap | T-CG-all |
 | 2026-02-15 | §A | Added 9 content engine rows to Model & API Key Matrix | T-CG-all |
 | 2026-02-15 | §B | Added content engine artifact naming convention | T-CG-all |
+| 2026-02-16 | §1 | Updated Executive Summary — no longer CLI-first, FastAPI implemented | D-API-1 |
+| 2026-02-16 | §3 | Added FastAPI + Langfuse to architecture diagram and tech stack table | D-API-1 |
+| 2026-02-16 | §4 | Added api/ directory tree (30+ files), updated tests/ tree, added async shared tools | D-API-1 |
+| 2026-02-16 | §7.5 | Rewrote Langfuse tracing section — v2→v3 migration details, corrected hierarchy | F2 |
+| 2026-02-16 | §11 | Added FastAPI API server env vars (API_CORS_ORIGINS, API_PREFIX, API_MAX_CONCURRENT_PIPELINES) | D-API-1 |
+| 2026-02-16 | §12 | Added scripts/run_server.py entry point | D-API-1 |
+| 2026-02-16 | §15 | Added API test coverage (126 tests), updated total to 276 | D-API-1 |
+| 2026-02-16 | §16 | Added fastapi, uvicorn, python-multipart to dependency graph; updated internal flow | D-API-1 |
+| 2026-02-16 | §17 | Added Decision 12: FastAPI integration architecture (D-API-1); updated Decision 11 with v3 note | D-API-1 |
+| 2026-02-16 | §18 | Added items 15-17 (Langfuse v2 resolved, TaskStore limitations); updated test coverage severity | D-API-1, F2 |
+| 2026-02-16 | §20 | Moved FastAPI from "Planned" to "Built"; added Langfuse tracing to built list | D-API-1 |
+| 2026-02-16 | §21 | **NEW SECTION** — Complete REST API Layer documentation (endpoints, TaskStore, SSE, HITL flow) | D-API-1 |
 
 ---
 
 *End of Comprehensive System Documentation*
-*Generated: 2026-02-15*
-*Total codebase files analyzed: ~90+*
-*Total lines of documentation: ~2700+*
+*Generated: 2026-02-16*
+*Total codebase files analyzed: ~120+*
+*Total lines of documentation: ~3200+*

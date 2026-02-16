@@ -1,6 +1,6 @@
 {
   "current_sprint": "v3-async",
-  "last_updated": "2026-02-15",
+  "last_updated": "2026-02-16",
   "completed": [
     {
       "id": "T-async-1",
@@ -194,6 +194,34 @@
       "task": "Test Playwright fallback on carta.com (run step 1)",
       "sprint": "v3-async",
       "status": "pending"
+    },
+    {
+      "id": "T-api-cleanup-1",
+      "task": "Consolidate duplicated _derive_slug() into shared utility — currently duplicated in gap_analysis.py, research.py, content.py, runner.py",
+      "sprint": "api-v1",
+      "status": "pending",
+      "source": "code review 2026-02-17"
+    },
+    {
+      "id": "T-api-cleanup-2",
+      "task": "Simplify ContentStartRequest like GapAnalysis/Research — replace Dict[str, Any] input_data with typed flat fields (company_name, domain, etc.)",
+      "sprint": "api-v1",
+      "status": "pending",
+      "source": "code review 2026-02-17"
+    },
+    {
+      "id": "T-api-cleanup-3",
+      "task": "Fix sync/async inconsistency — get_research_status and get_content_status use def instead of async def (gap_analysis uses async def)",
+      "sprint": "api-v1",
+      "status": "pending",
+      "source": "code review 2026-02-17"
+    },
+    {
+      "id": "T-api-cleanup-4",
+      "task": "Add runner-level tests for produced_artifacts in research and content runners (only gap_analysis runner has this test currently)",
+      "sprint": "api-v1",
+      "status": "pending",
+      "source": "code review 2026-02-17"
     }
   ],
   "blocked": []

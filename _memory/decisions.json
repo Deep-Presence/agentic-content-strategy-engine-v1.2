@@ -54,5 +54,23 @@
     "outcome": "All 8 findings implemented in the codebase.",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-API-1",
+    "timestamp": "2026-02-16",
+    "task": "FastAPI integration architecture — asyncio.create_task, JSON TaskStore, SSE events, MemorySaver HITL",
+    "approach": "Same-repo api/ package. asyncio.create_task (not Celery), JSON-file-backed TaskStore, SSE for progress, MemorySaver checkpointer for HITL interrupt/resume. pydantic_settings.BaseSettings for env-var config.",
+    "rationale": "Lightweight, no infra deps. JSON files are simple and debuggable. asyncio.create_task matches existing async-first patterns. MemorySaver enables LangGraph checkpoint/resume for HITL approvals.",
+    "alternatives_rejected": [
+      "Celery + Redis (over-engineering for current scale)",
+      "WebSocket for progress (SSE is simpler, auto-reconnect via Last-Event-ID)",
+      "SQLite TaskStore (unnecessary complexity, JSON files are sufficient)"
+    ],
+    "outcome": "6 phases complete. 126 tests passing. All 3 pipelines wrapped with REST endpoints, SSE events, and HITL approval flow.",
+    "reversible": true,
+    "approved_by": "Aryan",
+    "tech_debt_warnings": [
+      "model_dump(mode='json') in TaskStore persistence — works fine in Pydantic v2 but verify with future Pydantic upgrades"
+    ]
   }
 ]

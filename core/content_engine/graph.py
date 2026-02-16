@@ -131,7 +131,7 @@ def _get_decision(state: Dict[str, Any]) -> str:
     return (state.get("approval_decision") or "").lower()
 
 
-def build_content_review_graph():
+def build_content_review_graph(checkpointer=None):
     """Build and compile the LangGraph HITL review state machine."""
     graph = StateGraph(dict)
     graph.add_node("present_content", _present_content)
@@ -154,7 +154,7 @@ def build_content_review_graph():
     )
     graph.add_edge("apply_edits", "approval_gate")  # Loop back for re-review
     graph.add_edge("finalize", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 # ── Convenience runner ──────────────────────────────────────────────

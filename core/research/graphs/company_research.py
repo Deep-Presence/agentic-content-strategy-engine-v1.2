@@ -263,7 +263,7 @@ def _write_and_mirror(state: Dict[str, Any]) -> Dict[str, Any]:
     return {**state, "output_path": target_path, "mirrored": True}
 
 
-def build_graph():
+def build_graph(checkpointer=None):
     graph = StateGraph(dict)
     graph.add_node("agent", _run_agent)
     graph.add_node("write_temp_draft", _write_temp_draft)
@@ -285,4 +285,4 @@ def build_graph():
         },
     )
     graph.add_edge("write_and_mirror", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
