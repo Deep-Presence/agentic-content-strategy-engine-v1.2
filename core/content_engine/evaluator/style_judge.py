@@ -109,7 +109,7 @@ async def evaluate_style(
             "output": response.usage.output_tokens,
         },
     )
-    log_score(trace, "style_alignment", round(score, 4))
+    log_score(span, "style_alignment", round(score, 4))
     end_span(span, output={
         "score": round(score, 4),
         "passed": passed,

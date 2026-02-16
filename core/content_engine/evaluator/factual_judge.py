@@ -112,7 +112,7 @@ async def evaluate_factual(
             "output": response.usage.output_tokens,
         },
     )
-    log_score(trace, "factual_grounding", round(score, 4))
+    log_score(span, "factual_grounding", round(score, 4))
     end_span(span, output={
         "score": round(score, 4),
         "passed": passed,

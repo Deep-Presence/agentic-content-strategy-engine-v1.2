@@ -10,13 +10,18 @@ Uses Langfuse v3 SDK API:
   - span.start_observation(as_type='generation') creates LLM call records
   - span.score() attaches numeric/categorical scores
 
-Hierarchy:
+Hierarchy (single nested tree per pipeline run):
   Session: content-gen-{slug}-{timestamp}
     Pipeline Trace: content-pipeline/{slug}
-      Stage Spans: stage/1-planner | stage/2-workers | stage/3-evaluator | stage/4-review
-    Stage Traces: planner | Worker #1: {title} | evaluator/{brief_id} | review/{brief_id}
-      Observation Spans: outliner | drafter | fact_enricher | formatter | structural_check | ...
-        Generations: the actual LLM calls
+      Stage Span: stage/1-planner
+        Span: planner → Generation: plan_content
+      Stage Span: stage/2-workers
+        Span: Worker #1: {title} → outliner / drafter / fact_enricher / formatter
+        Span: Worker #2: {title} → ...
+      Stage Span: stage/3-evaluator
+        Span: evaluator/{brief_id} → eval_cycle_0 / revision_cycle_1 / ...
+      Stage Span: stage/4-review
+        Span: Review: {title} → score: human_decision
 """
 from __future__ import annotations
 

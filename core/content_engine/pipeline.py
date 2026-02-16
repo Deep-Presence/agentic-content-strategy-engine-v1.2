@@ -204,6 +204,7 @@ async def run_content_generation(
             generation_spec_json=generation_spec_json,
             analysis_json=analysis_json,
             session_id=session_id,
+            parent_span=stage1_span,
         )
         # Persist briefs
         (artifact_dir / "briefs.json").write_text(
@@ -252,6 +253,7 @@ async def run_content_generation(
             max_concurrent=input_data.max_concurrent_workers,
             session_id=session_id,
             artifact_dir=artifact_dir,
+            parent_span=stage2_span,
         )
         end_span(stage2_span, output={
             "completed": len(formatted_contents),
@@ -303,6 +305,7 @@ async def run_content_generation(
                 max_cycles=input_data.max_revision_cycles,
                 session_id=session_id,
                 artifact_dir=artifact_dir,
+                parent_span=stage3_span,
             )
             formatted_contents[i] = optimized
             revision_histories.append(history)
@@ -374,6 +377,7 @@ async def run_content_generation(
             revision_histories=revision_histories,
             session_id=session_id,
             artifact_dir=artifact_dir,
+            parent_span=stage4_span,
         )
         end_span(stage4_span, output={
             "approved": sum(1 for p in pieces if p.status == ContentStatus.APPROVED),

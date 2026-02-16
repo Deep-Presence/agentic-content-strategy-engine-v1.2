@@ -109,6 +109,7 @@ async def evaluate_and_optimize(
     *,
     session_id: str = "",
     artifact_dir: Path = Path("."),
+    parent_span: Optional[object] = None,
 ) -> Tuple[FormattedContent, RevisionHistory]:
     """Run the evaluation-optimization loop for a single content piece.
 
@@ -128,23 +129,33 @@ async def evaluate_and_optimize(
     Returns:
         Tuple of (final FormattedContent, RevisionHistory).
     """
-    trace = create_trace(
-        session_id,
-        f"evaluator/{brief.brief_id}",
-        metadata={
-            "brief_id": brief.brief_id,
-            "max_cycles": max_cycles,
-            "brief_title": brief.title,
-        },
-        input={
-            "brief_id": brief.brief_id,
-            "title": brief.title,
-            "initial_word_count": content.word_count,
-            "max_cycles": max_cycles,
-        },
-        tags=["evaluator", f"brief:{brief.brief_id}"],
-        user_id=input_data.domain,
-    )
+    trace_name = f"evaluator/{brief.brief_id}"
+    trace_metadata = {
+        "brief_id": brief.brief_id,
+        "max_cycles": max_cycles,
+        "brief_title": brief.title,
+    }
+    trace_input = {
+        "brief_id": brief.brief_id,
+        "title": brief.title,
+        "initial_word_count": content.word_count,
+        "max_cycles": max_cycles,
+    }
+    if parent_span is not None:
+        trace = create_span(
+            parent_span, trace_name,
+            metadata=trace_metadata,
+            input=trace_input,
+        )
+    else:
+        trace = create_trace(
+            session_id,
+            trace_name,
+            metadata=trace_metadata,
+            input=trace_input,
+            tags=["evaluator", f"brief:{brief.brief_id}"],
+            user_id=input_data.domain,
+        )
 
     history = RevisionHistory(brief_id=brief.brief_id)
     current_content = content
@@ -193,11 +204,11 @@ async def evaluate_and_optimize(
         # Log per-dimension scores
         for dim in dimensions:
             log_score(
-                trace, f"{dim.dimension}_score", dim.score,
+                cycle_span, f"{dim.dimension}_score", dim.score,
                 comment=f"cycle_{cycle}",
                 metadata={"passed": dim.passed},
             )
-        log_score(trace, "overall_score", round(overall_score, 4), comment=f"cycle_{cycle}")
+        log_score(cycle_span, "overall_score", round(overall_score, 4), comment=f"cycle_{cycle}")
         end_span(cycle_span, output={
             "overall_score": round(overall_score, 4),
             "overall_passed": overall_passed,
@@ -276,7 +287,7 @@ async def evaluate_and_optimize(
 
     # Trace-level output summary
     final_cycle = history.cycles[-1] if history.cycles else None
-    update_trace_output(trace, output={
+    trace_output = {
         "final_passed": history.final_passed,
         "total_cycles": len(history.cycles),
         "final_score": final_cycle.overall_score if final_cycle else 0.0,
@@ -284,7 +295,11 @@ async def evaluate_and_optimize(
             d.dimension: {"score": d.score, "passed": d.passed}
             for d in (final_cycle.dimensions if final_cycle else [])
         },
-    })
-    end_span(trace)
+    }
+    if parent_span is not None:
+        end_span(trace, output=trace_output)
+    else:
+        update_trace_output(trace, output=trace_output)
+        end_span(trace)
 
     return current_content, history

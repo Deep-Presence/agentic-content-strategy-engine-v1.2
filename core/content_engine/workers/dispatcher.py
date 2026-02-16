@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from core.config.settings import settings
 from core.content_engine.pipeline import _brief_dir, _cli_worker_progress
-from core.content_engine.tracing import create_trace, end_span, log_score, update_trace_output
+from core.content_engine.tracing import create_span, create_trace, end_span, log_score, update_trace_output
 from core.content_engine.workers.drafter import generate_draft
 from core.content_engine.workers.fact_enricher import enrich_with_facts
 from core.content_engine.workers.formatter import format_content
@@ -39,6 +39,7 @@ async def _run_worker_chain(
     session_id: str,
     artifact_dir: Path,
     semaphore: asyncio.Semaphore,
+    parent_span: Optional[object] = None,
 ) -> FormattedContent:
     """Run the full 4-step worker chain for a single brief.
 
@@ -57,32 +58,42 @@ async def _run_worker_chain(
     """
     async with semaphore:
         title_short = brief.title[:60]
-        trace = create_trace(
-            session_id,
-            f"Worker #{worker_num}: {title_short}",
-            metadata={
-                "brief_id": brief.brief_id,
-                "worker_num": worker_num,
-                "content_format": brief.content_format,
-                "funnel_stage": brief.funnel_stage,
-            },
-            input={
-                "brief_id": brief.brief_id,
-                "title": brief.title,
-                "content_format": brief.content_format,
-                "funnel_stage": brief.funnel_stage,
-                "word_count_range": list(brief.word_count_range),
-                "target_queries": [q.query_text for q in brief.target_queries],
-                "key_topics": brief.key_topics,
-            },
-            tags=[
-                "worker",
-                f"worker:{worker_num}",
-                f"format:{brief.content_format}",
-                f"funnel:{brief.funnel_stage}",
-            ],
-            user_id=input_data.domain,
-        )
+        trace_name = f"Worker #{worker_num}: {title_short}"
+        trace_metadata = {
+            "brief_id": brief.brief_id,
+            "worker_num": worker_num,
+            "content_format": brief.content_format,
+            "funnel_stage": brief.funnel_stage,
+        }
+        trace_input = {
+            "brief_id": brief.brief_id,
+            "title": brief.title,
+            "content_format": brief.content_format,
+            "funnel_stage": brief.funnel_stage,
+            "word_count_range": list(brief.word_count_range),
+            "target_queries": [q.query_text for q in brief.target_queries],
+            "key_topics": brief.key_topics,
+        }
+        if parent_span is not None:
+            trace = create_span(
+                parent_span, trace_name,
+                metadata=trace_metadata,
+                input=trace_input,
+            )
+        else:
+            trace = create_trace(
+                session_id,
+                trace_name,
+                metadata=trace_metadata,
+                input=trace_input,
+                tags=[
+                    "worker",
+                    f"worker:{worker_num}",
+                    f"format:{brief.content_format}",
+                    f"funnel:{brief.funnel_stage}",
+                ],
+                user_id=input_data.domain,
+            )
         bdir = _brief_dir(artifact_dir, brief.brief_id)
         display_title = title_short + ("..." if len(brief.title) > 60 else "")
 
@@ -138,7 +149,7 @@ async def _run_worker_chain(
             log_score(trace, "word_count", formatted.word_count)
             log_score(trace, "header_count", formatted.header_count)
             log_score(trace, "citation_count", formatted.citation_count)
-            update_trace_output(trace, output={
+            trace_output = {
                 "brief_id": formatted.brief_id,
                 "title": formatted.title,
                 "word_count": formatted.word_count,
@@ -146,8 +157,12 @@ async def _run_worker_chain(
                 "citation_count": formatted.citation_count,
                 "list_count": formatted.list_count,
                 "stat_count": formatted.stat_count,
-            })
-            end_span(trace)
+            }
+            if parent_span is not None:
+                end_span(trace, output=trace_output)
+            else:
+                update_trace_output(trace, output=trace_output)
+                end_span(trace)
 
             return formatted
         except Exception as exc:
@@ -164,6 +179,7 @@ async def dispatch_workers(
     *,
     session_id: str = "",
     artifact_dir: Path = Path("."),
+    parent_span: Optional[object] = None,
 ) -> List[FormattedContent]:
     """Dispatch worker chains in parallel with concurrency control.
 
@@ -194,6 +210,7 @@ async def dispatch_workers(
             session_id=session_id,
             artifact_dir=artifact_dir,
             semaphore=semaphore,
+            parent_span=parent_span,
         )
         for i, brief in enumerate(briefs)
     ]

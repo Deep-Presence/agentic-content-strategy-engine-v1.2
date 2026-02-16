@@ -16,6 +16,7 @@ from core.content_engine.prompts.planner_prompts import (
     build_planner_user_prompt,
 )
 from core.content_engine.tracing import (
+    create_span,
     create_trace,
     end_span,
     log_generation,
@@ -47,7 +48,8 @@ async def plan_content(
     gap_report_json: Dict[str, Any],
     generation_spec_json: Dict[str, Any],
     analysis_json: Dict[str, Any],
-    session_id: str,
+    session_id: str = "",
+    parent_span: Optional[Any] = None,
 ) -> PlannerOutput:
     """Generate content briefs from gap analysis data.
 
@@ -65,18 +67,27 @@ async def plan_content(
         PlannerOutput with prioritized content briefs.
     """
     model = settings.content_engine_planner_model
-    trace = create_trace(
-        session_id,
-        "planner",
-        metadata={"model": model, "max_briefs": input_data.max_briefs},
-        input={
-            "company_name": input_data.company_name,
-            "domain": input_data.domain,
-            "max_briefs": input_data.max_briefs,
-        },
-        tags=["planner", f"model:{model}"],
-        user_id=input_data.domain,
-    )
+    trace_metadata = {"model": model, "max_briefs": input_data.max_briefs}
+    trace_input = {
+        "company_name": input_data.company_name,
+        "domain": input_data.domain,
+        "max_briefs": input_data.max_briefs,
+    }
+    if parent_span is not None:
+        trace = create_span(
+            parent_span, "planner",
+            metadata=trace_metadata,
+            input=trace_input,
+        )
+    else:
+        trace = create_trace(
+            session_id,
+            "planner",
+            metadata=trace_metadata,
+            input=trace_input,
+            tags=["planner", f"model:{model}"],
+            user_id=input_data.domain,
+        )
 
     # Build prompt
     user_prompt = build_planner_user_prompt(
@@ -142,7 +153,7 @@ async def plan_content(
         },
     )
     log_score(trace, "briefs_generated", len(planner_output.briefs))
-    update_trace_output(trace, output={
+    trace_output = {
         "briefs_count": len(planner_output.briefs),
         "brief_ids": [b.brief_id for b in planner_output.briefs],
         "brief_titles": [b.title for b in planner_output.briefs],
@@ -150,8 +161,12 @@ async def plan_content(
             "input": response.usage.input_tokens,
             "output": response.usage.output_tokens,
         },
-    })
-    end_span(trace)
+    }
+    if parent_span is not None:
+        end_span(trace, output=trace_output)
+    else:
+        update_trace_output(trace, output=trace_output)
+        end_span(trace)
 
     logger.info(
         "Planner produced %d briefs (model=%s, tokens=%d+%d)",

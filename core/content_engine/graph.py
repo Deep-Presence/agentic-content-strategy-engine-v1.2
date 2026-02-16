@@ -21,7 +21,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
 from core.content_engine.pipeline import _brief_dir
-from core.content_engine.tracing import create_trace, end_span, log_score, update_trace_output
+from core.content_engine.tracing import create_span, create_trace, end_span, log_score, update_trace_output
 from core.models.content_generation import (
     ContentBrief,
     ContentPiece,
@@ -167,6 +167,7 @@ async def run_content_review(
     *,
     session_id: str = "",
     artifact_dir: Path = Path("."),
+    parent_span: Optional[object] = None,
 ) -> List[ContentPiece]:
     """Run HITL review for all content pieces.
 
@@ -196,22 +197,32 @@ async def run_content_review(
             continue
 
         history = history_map.get(content.brief_id, RevisionHistory(brief_id=content.brief_id))
-        trace = create_trace(
-            session_id,
-            f"Review: {content.title[:60]}",
-            metadata={
-                "brief_id": content.brief_id,
-                "title": content.title,
-            },
-            input={
-                "brief_id": content.brief_id,
-                "title": content.title,
-                "word_count": content.word_count,
-                "eval_passed": history.final_passed,
-                "eval_cycles": len(history.cycles),
-            },
-            tags=["review", f"brief:{content.brief_id}"],
-        )
+        trace_name = f"Review: {content.title[:60]}"
+        trace_metadata = {
+            "brief_id": content.brief_id,
+            "title": content.title,
+        }
+        trace_input = {
+            "brief_id": content.brief_id,
+            "title": content.title,
+            "word_count": content.word_count,
+            "eval_passed": history.final_passed,
+            "eval_cycles": len(history.cycles),
+        }
+        if parent_span is not None:
+            trace = create_span(
+                parent_span, trace_name,
+                metadata=trace_metadata,
+                input=trace_input,
+            )
+        else:
+            trace = create_trace(
+                session_id,
+                trace_name,
+                metadata=trace_metadata,
+                input=trace_input,
+                tags=["review", f"brief:{content.brief_id}"],
+            )
 
         initial_state = {
             "content": content,
@@ -243,11 +254,15 @@ async def run_content_review(
         pieces.append(piece)
 
         log_score(trace, "human_decision", decision or "approve")
-        update_trace_output(trace, output={
+        trace_output = {
             "decision": decision or "approve",
             "status": status.value,
             "artifact_path": final_state.get("artifact_path"),
-        })
-        end_span(trace)
+        }
+        if parent_span is not None:
+            end_span(trace, output=trace_output)
+        else:
+            update_trace_output(trace, output=trace_output)
+            end_span(trace)
 
     return pieces

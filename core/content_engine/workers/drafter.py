@@ -1,3 +1,4 @@
+
 """Drafter worker — Step 2 of the worker chain.
 
 Produces a full markdown draft from a content outline using Sonnet 4.5.

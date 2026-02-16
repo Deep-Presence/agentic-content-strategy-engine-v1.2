@@ -110,7 +110,7 @@ async def evaluate_semantic(
             "Content may not address the target queries closely enough."
         )
 
-    log_score(trace, "semantic_similarity", round(avg_similarity, 4))
+    log_score(span, "semantic_similarity", round(avg_similarity, 4))
     end_span(span, output={
         "avg_similarity": round(avg_similarity, 4),
         "threshold": threshold,

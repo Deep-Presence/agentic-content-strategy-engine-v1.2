@@ -188,7 +188,7 @@ def evaluate_structural(
     overall_passed = score >= 0.8
 
     failed_checks = [name for name, _ in _CHECKS if not results[name]["passed"]]
-    log_score(trace, "structural_score", round(score, 3))
+    log_score(span, "structural_score", round(score, 3))
     end_span(span, output={
         "score": round(score, 3),
         "passed": overall_passed,
