@@ -46,7 +46,15 @@ async def generate_draft(
         ContentDraft with full markdown and word count.
     """
     model = settings.content_engine_worker_model
-    span = create_span(trace, "drafter", metadata={"brief_id": brief.brief_id})
+    span = create_span(
+        trace, "drafter",
+        metadata={"brief_id": brief.brief_id, "model": model},
+        input={
+            "brief_id": brief.brief_id,
+            "title": brief.title,
+            "outline_sections": len(outline.sections),
+        },
+    )
 
     outline_json = json.dumps(outline.model_dump(mode="json"), indent=2)
 
@@ -95,15 +103,16 @@ async def generate_draft(
         trace,
         name="drafter",
         model=model,
-        input_text=user_prompt[:1000],
-        output_text=markdown[:1000],
+        input_text=user_prompt,
+        output_text=markdown,
         parent_span=span,
+        model_parameters={"max_tokens": 8192},
         usage={
             "input": response.usage.input_tokens,
             "output": response.usage.output_tokens,
         },
     )
-    end_span(span, output=f"{word_count} words")
+    end_span(span, output={"word_count": word_count, "brief_id": brief.brief_id})
 
     logger.info("Drafter: %s → %d words", brief.brief_id, word_count)
 
@@ -140,7 +149,15 @@ async def revise_draft(
         Revised ContentDraft.
     """
     model = settings.content_engine_worker_model
-    span = create_span(trace, "revision_drafter", metadata={"brief_id": brief.brief_id})
+    span = create_span(
+        trace, "revision_drafter",
+        metadata={"brief_id": brief.brief_id, "model": model},
+        input={
+            "brief_id": brief.brief_id,
+            "feedback_length": len(feedback),
+            "current_word_count": len(current_markdown.split()),
+        },
+    )
 
     user_prompt = f"""\
 ## Current Draft
@@ -197,15 +214,16 @@ in Markdown.
         trace,
         name="revision_drafter",
         model=model,
-        input_text=user_prompt[:1000],
-        output_text=markdown[:1000],
+        input_text=user_prompt,
+        output_text=markdown,
         parent_span=span,
+        model_parameters={"max_tokens": 8192},
         usage={
             "input": response.usage.input_tokens,
             "output": response.usage.output_tokens,
         },
     )
-    end_span(span, output=f"Revised: {word_count} words")
+    end_span(span, output={"word_count": word_count, "revised": True})
 
     logger.info("Revision Drafter: %s → %d words", brief.brief_id, word_count)
 

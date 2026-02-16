@@ -44,7 +44,15 @@ async def evaluate_style(
         DimensionResult with style evaluation.
     """
     model = settings.content_engine_style_judge_model
-    span = create_span(trace, "style_judge", metadata={"brief_id": content.brief_id})
+    span = create_span(
+        trace, "style_judge",
+        metadata={"brief_id": content.brief_id, "model": model},
+        input={
+            "brief_id": content.brief_id,
+            "content_word_count": content.word_count,
+            "style_guide_length": len(style_guide_md),
+        },
+    )
 
     user_prompt = build_style_judge_user_prompt(
         content_markdown=content.markdown,
@@ -92,16 +100,21 @@ async def evaluate_style(
         trace,
         name="style_judge",
         model=model,
-        input_text=user_prompt[:1000],
-        output_text=raw_text[:500],
+        input_text=user_prompt,
+        output_text=raw_text,
         parent_span=span,
+        model_parameters={"max_tokens": 2048},
         usage={
             "input": response.usage.input_tokens,
             "output": response.usage.output_tokens,
         },
     )
     log_score(trace, "style_alignment", round(score, 4))
-    end_span(span, output=f"score={score:.3f}, passed={passed}")
+    end_span(span, output={
+        "score": round(score, 4),
+        "passed": passed,
+        "criteria_scores": details.get("criteria_scores", {}),
+    })
 
     logger.info(
         "Style Judge: %s → score=%.3f (%s)",

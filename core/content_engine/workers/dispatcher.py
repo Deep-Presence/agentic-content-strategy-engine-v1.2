@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from core.config.settings import settings
 from core.content_engine.pipeline import _brief_dir, _cli_worker_progress
-from core.content_engine.tracing import create_trace, log_score
+from core.content_engine.tracing import create_trace, end_span, log_score, update_trace_output
 from core.content_engine.workers.drafter import generate_draft
 from core.content_engine.workers.fact_enricher import enrich_with_facts
 from core.content_engine.workers.formatter import format_content
@@ -56,67 +56,103 @@ async def _run_worker_chain(
         FormattedContent for this brief.
     """
     async with semaphore:
+        title_short = brief.title[:60]
         trace = create_trace(
             session_id,
-            f"worker/{brief.brief_id}",
-            metadata={"brief_id": brief.brief_id, "worker_num": worker_num},
+            f"Worker #{worker_num}: {title_short}",
+            metadata={
+                "brief_id": brief.brief_id,
+                "worker_num": worker_num,
+                "content_format": brief.content_format,
+                "funnel_stage": brief.funnel_stage,
+            },
+            input={
+                "brief_id": brief.brief_id,
+                "title": brief.title,
+                "content_format": brief.content_format,
+                "funnel_stage": brief.funnel_stage,
+                "word_count_range": list(brief.word_count_range),
+                "target_queries": [q.query_text for q in brief.target_queries],
+                "key_topics": brief.key_topics,
+            },
+            tags=[
+                "worker",
+                f"worker:{worker_num}",
+                f"format:{brief.content_format}",
+                f"funnel:{brief.funnel_stage}",
+            ],
+            user_id=input_data.domain,
         )
         bdir = _brief_dir(artifact_dir, brief.brief_id)
-        title_short = brief.title[:50] + ("..." if len(brief.title) > 50 else "")
+        display_title = title_short + ("..." if len(brief.title) > 60 else "")
 
-        # Step 1: Outline
-        _cli_worker_progress(f"Worker #{worker_num}: Outlining \"{title_short}\"")
-        outline = await generate_outline(
-            brief=brief,
-            company_context_md=company_context_md,
-            trace=trace,
-        )
-        (bdir / "outline.json").write_text(
-            json.dumps(outline.model_dump(mode="json"), indent=2, default=str),
-            encoding="utf-8",
-        )
+        try:
+            # Step 1: Outline
+            _cli_worker_progress(f"Worker #{worker_num}: Outlining \"{display_title}\"")
+            outline = await generate_outline(
+                brief=brief,
+                company_context_md=company_context_md,
+                trace=trace,
+            )
+            (bdir / "outline.json").write_text(
+                json.dumps(outline.model_dump(mode="json"), indent=2, default=str),
+                encoding="utf-8",
+            )
 
-        # Step 2: Draft
-        _cli_worker_progress(f"Worker #{worker_num}: Drafting \"{title_short}\"")
-        draft = await generate_draft(
-            outline=outline,
-            brief=brief,
-            style_guide_md=style_guide_md,
-            company_context_md=company_context_md,
-            trace=trace,
-        )
-        (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
+            # Step 2: Draft
+            _cli_worker_progress(f"Worker #{worker_num}: Drafting \"{display_title}\"")
+            draft = await generate_draft(
+                outline=outline,
+                brief=brief,
+                style_guide_md=style_guide_md,
+                company_context_md=company_context_md,
+                trace=trace,
+            )
+            (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
 
-        # Step 3: Fact Enrichment
-        _cli_worker_progress(f"Worker #{worker_num}: Enriching \"{title_short}\"")
-        enriched = await enrich_with_facts(
-            draft=draft,
-            brief=brief,
-            company_name=input_data.company_name,
-            domain=input_data.domain,
-            trace=trace,
-        )
-        (bdir / "enriched.md").write_text(enriched.markdown, encoding="utf-8")
+            # Step 3: Fact Enrichment
+            _cli_worker_progress(f"Worker #{worker_num}: Enriching \"{display_title}\"")
+            enriched = await enrich_with_facts(
+                draft=draft,
+                brief=brief,
+                company_name=input_data.company_name,
+                domain=input_data.domain,
+                trace=trace,
+            )
+            (bdir / "enriched.md").write_text(enriched.markdown, encoding="utf-8")
 
-        # Step 4: Format
-        _cli_worker_progress(f"Worker #{worker_num}: Formatting \"{title_short}\"")
-        formatted = await format_content(
-            enriched=enriched,
-            style_guide_md=style_guide_md,
-            trace=trace,
-        )
-        (bdir / "formatted.md").write_text(formatted.markdown, encoding="utf-8")
+            # Step 4: Format
+            _cli_worker_progress(f"Worker #{worker_num}: Formatting \"{display_title}\"")
+            formatted = await format_content(
+                enriched=enriched,
+                style_guide_md=style_guide_md,
+                trace=trace,
+            )
+            (bdir / "formatted.md").write_text(formatted.markdown, encoding="utf-8")
 
-        _cli_worker_progress(
-            f"Worker #{worker_num}: DONE ({formatted.word_count:,} words, "
-            f"{formatted.header_count} headers, {formatted.citation_count} citations)"
-        )
+            _cli_worker_progress(
+                f"Worker #{worker_num}: DONE ({formatted.word_count:,} words, "
+                f"{formatted.header_count} headers, {formatted.citation_count} citations)"
+            )
 
-        log_score(trace, "word_count", formatted.word_count)
-        log_score(trace, "header_count", formatted.header_count)
-        log_score(trace, "citation_count", formatted.citation_count)
+            log_score(trace, "word_count", formatted.word_count)
+            log_score(trace, "header_count", formatted.header_count)
+            log_score(trace, "citation_count", formatted.citation_count)
+            update_trace_output(trace, output={
+                "brief_id": formatted.brief_id,
+                "title": formatted.title,
+                "word_count": formatted.word_count,
+                "header_count": formatted.header_count,
+                "citation_count": formatted.citation_count,
+                "list_count": formatted.list_count,
+                "stat_count": formatted.stat_count,
+            })
+            end_span(trace)
 
-        return formatted
+            return formatted
+        except Exception as exc:
+            end_span(trace, level="ERROR", status_message=str(exc)[:500])
+            raise
 
 
 async def dispatch_workers(

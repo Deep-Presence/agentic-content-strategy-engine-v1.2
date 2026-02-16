@@ -43,7 +43,16 @@ async def evaluate_factual(
         DimensionResult with factual evaluation.
     """
     model = settings.content_engine_factual_judge_model
-    span = create_span(trace, "factual_judge", metadata={"brief_id": content.brief_id})
+    span = create_span(
+        trace, "factual_judge",
+        metadata={"brief_id": content.brief_id, "model": model},
+        input={
+            "brief_id": content.brief_id,
+            "content_word_count": content.word_count,
+            "company_name": company_name,
+            "domain": domain,
+        },
+    )
 
     user_prompt = build_factual_judge_user_prompt(
         content_markdown=content.markdown,
@@ -94,16 +103,21 @@ async def evaluate_factual(
         trace,
         name="factual_judge",
         model=model,
-        input_text=user_prompt[:1000],
-        output_text=raw_text[:500],
+        input_text=user_prompt,
+        output_text=raw_text,
         parent_span=span,
+        model_parameters={"max_tokens": 2048},
         usage={
             "input": response.usage.input_tokens,
             "output": response.usage.output_tokens,
         },
     )
     log_score(trace, "factual_grounding", round(score, 4))
-    end_span(span, output=f"score={score:.3f}, passed={passed}")
+    end_span(span, output={
+        "score": round(score, 4),
+        "passed": passed,
+        "flagged_claims": details.get("flagged_claims", []),
+    })
 
     logger.info(
         "Factual Judge: %s → score=%.3f (%s)",

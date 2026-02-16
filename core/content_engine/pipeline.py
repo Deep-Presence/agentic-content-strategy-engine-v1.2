@@ -18,7 +18,14 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from core.config.settings import settings
-from core.content_engine.tracing import create_session, flush
+from core.content_engine.tracing import (
+    create_pipeline_trace,
+    create_session,
+    create_span,
+    end_span,
+    flush,
+    update_trace_output,
+)
 from core.models.content_generation import (
     ContentGenerationInput,
     ContentGenerationOutput,
@@ -146,8 +153,19 @@ async def run_content_generation(
     skip_stages = input_data.skip_stages
     pipeline_start = time.monotonic()
 
-    # Langfuse session
+    # Langfuse session + pipeline trace
     session_id = create_session(slug)
+    pipeline_trace = create_pipeline_trace(
+        session_id,
+        slug,
+        input_data.company_name,
+        metadata={
+            "max_briefs": input_data.max_briefs,
+            "max_revision_cycles": input_data.max_revision_cycles,
+            "skip_stages": skip_stages,
+            "auto_approve": input_data.auto_approve,
+        },
+    )
 
     _cli_header(slug, skip_stages)
 
@@ -161,12 +179,18 @@ async def run_content_generation(
 
     # ── Stage 1: Strategic Planner ──────────────────────────────
     stage_start = time.monotonic()
+    stage1_span = create_span(
+        pipeline_trace, "stage/1-planner",
+        input={"max_briefs": input_data.max_briefs},
+        metadata={"stage": 1, "stage_name": "Strategic Planner"},
+    )
     if 1 in skip_stages:
         briefs_path = artifact_dir / "briefs.json"
         if briefs_path.exists():
             planner_output = PlannerOutput(**json.loads(briefs_path.read_text(encoding="utf-8")))
         else:
             raise RuntimeError("Stage 1 skipped but briefs.json not found.")
+        end_span(stage1_span, output={"skipped": True, "briefs_loaded": len(planner_output.briefs)})
         _cli_stage(1, time.monotonic() - stage_start, skipped=True)
     else:
         from core.content_engine.planner import plan_content
@@ -186,12 +210,21 @@ async def run_content_generation(
             json.dumps(planner_output.model_dump(mode="json"), indent=2, default=str),
             encoding="utf-8",
         )
+        end_span(stage1_span, output={
+            "briefs_count": len(planner_output.briefs),
+            "brief_titles": [b.title for b in planner_output.briefs],
+        })
         _cli_stage(1, time.monotonic() - stage_start, detail=f"{len(planner_output.briefs)} briefs")
 
     briefs = planner_output.briefs[: input_data.max_briefs]
 
     # ── Stage 2: Content Workers ────────────────────────────────
     stage_start = time.monotonic()
+    stage2_span = create_span(
+        pipeline_trace, "stage/2-workers",
+        input={"brief_count": len(briefs)},
+        metadata={"stage": 2, "stage_name": "Content Workers"},
+    )
     if 2 in skip_stages:
         # Load pre-existing formatted content
         formatted_contents: List[FormattedContent] = []
@@ -206,6 +239,7 @@ async def run_content_generation(
                         markdown=fmt_path.read_text(encoding="utf-8"),
                     )
                 )
+        end_span(stage2_span, output={"skipped": True, "loaded": len(formatted_contents)})
         _cli_stage(2, time.monotonic() - stage_start, skipped=True)
     else:
         from core.content_engine.workers.dispatcher import dispatch_workers
@@ -219,6 +253,10 @@ async def run_content_generation(
             session_id=session_id,
             artifact_dir=artifact_dir,
         )
+        end_span(stage2_span, output={
+            "completed": len(formatted_contents),
+            "total": len(briefs),
+        })
         _cli_stage(
             2,
             time.monotonic() - stage_start,
@@ -227,6 +265,14 @@ async def run_content_generation(
 
     # ── Stage 3: Evaluator Loop ─────────────────────────────────
     stage_start = time.monotonic()
+    stage3_span = create_span(
+        pipeline_trace, "stage/3-evaluator",
+        input={
+            "briefs_to_evaluate": len(formatted_contents),
+            "max_cycles": input_data.max_revision_cycles,
+        },
+        metadata={"stage": 3, "stage_name": "Evaluator Loop"},
+    )
     revision_histories: List[RevisionHistory] = []
     if 3 in skip_stages or input_data.max_revision_cycles == 0:
         # Pass through without evaluation
@@ -234,6 +280,7 @@ async def run_content_generation(
             revision_histories.append(
                 RevisionHistory(brief_id=fc.brief_id, final_passed=True)
             )
+        end_span(stage3_span, output={"skipped": True})
         _cli_stage(3, time.monotonic() - stage_start, skipped=True)
     else:
         from core.content_engine.evaluator.loop import evaluate_and_optimize
@@ -267,6 +314,10 @@ async def run_content_generation(
                 json.dumps(history.model_dump(mode="json"), indent=2, default=str),
                 encoding="utf-8",
             )
+        end_span(stage3_span, output={
+            "passed": passed_count,
+            "total": len(formatted_contents),
+        })
         _cli_stage(
             3,
             time.monotonic() - stage_start,
@@ -275,6 +326,11 @@ async def run_content_generation(
 
     # ── Stage 4: Human Review ───────────────────────────────────
     stage_start = time.monotonic()
+    stage4_span = create_span(
+        pipeline_trace, "stage/4-review",
+        input={"pieces_to_review": len(formatted_contents)},
+        metadata={"stage": 4, "stage_name": "Human Review"},
+    )
     pieces: List[ContentPiece] = []
     if 4 in skip_stages:
         # Auto-approve all
@@ -291,6 +347,7 @@ async def run_content_generation(
                     artifact_path=str(final_path),
                 )
             )
+        end_span(stage4_span, output={"skipped": True, "auto_approved": len(pieces)})
         _cli_stage(4, time.monotonic() - stage_start, skipped=True)
     elif input_data.auto_approve:
         for fc in formatted_contents:
@@ -306,6 +363,7 @@ async def run_content_generation(
                     artifact_path=str(final_path),
                 )
             )
+        end_span(stage4_span, output={"auto_approved": len(pieces)})
         _cli_stage(4, time.monotonic() - stage_start, detail="auto-approved")
     else:
         from core.content_engine.graph import run_content_review
@@ -317,6 +375,10 @@ async def run_content_generation(
             session_id=session_id,
             artifact_dir=artifact_dir,
         )
+        end_span(stage4_span, output={
+            "approved": sum(1 for p in pieces if p.status == ContentStatus.APPROVED),
+            "rejected": sum(1 for p in pieces if p.status == ContentStatus.REJECTED),
+        })
         _cli_stage(4, time.monotonic() - stage_start)
 
     # ── Finalize ────────────────────────────────────────────────
@@ -348,6 +410,15 @@ async def run_content_generation(
         total_approved,
         total_rejected,
     )
+
+    # Finalize pipeline trace
+    update_trace_output(pipeline_trace, output={
+        "total_briefs": len(briefs),
+        "total_approved": total_approved,
+        "total_rejected": total_rejected,
+        "total_time_s": round(time.monotonic() - pipeline_start, 1),
+    })
+    end_span(pipeline_trace)
 
     flush()  # Flush Langfuse events
     return output

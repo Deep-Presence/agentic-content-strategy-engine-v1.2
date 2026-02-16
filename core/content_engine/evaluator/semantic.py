@@ -10,6 +10,7 @@ from typing import List, Optional
 
 import numpy as np
 
+from core.config.settings import settings
 from core.content_engine.tracing import create_span, end_span, log_score
 from core.models.content_generation import ContentBrief, DimensionResult, FormattedContent
 from core.shared_tools.async_embedding_client import async_embed_texts
@@ -47,7 +48,20 @@ async def evaluate_semantic(
     Returns:
         DimensionResult with semantic evaluation.
     """
-    span = create_span(trace, "semantic_check", metadata={"brief_id": brief.brief_id})
+    embedding_model = settings.embedding_model
+    span = create_span(
+        trace, "semantic_check",
+        metadata={
+            "brief_id": brief.brief_id,
+            "model": embedding_model,
+        },
+        input={
+            "brief_id": brief.brief_id,
+            "query_count": len(brief.target_queries),
+            "threshold": brief.semantic_threshold,
+            "content_word_count": content.word_count,
+        },
+    )
 
     if not brief.target_queries:
         end_span(span, output="No target queries — skipping")
@@ -97,10 +111,15 @@ async def evaluate_semantic(
         )
 
     log_score(trace, "semantic_similarity", round(avg_similarity, 4))
-    end_span(
-        span,
-        output=f"avg_similarity={avg_similarity:.3f}, threshold={threshold}, passed={passed}",
-    )
+    end_span(span, output={
+        "avg_similarity": round(avg_similarity, 4),
+        "threshold": threshold,
+        "passed": passed,
+        "per_query_similarities": {
+            q.query_text: round(s, 4)
+            for q, s in zip(brief.target_queries, similarities)
+        },
+    })
 
     logger.info(
         "Semantic: %s → avg_sim=%.3f (threshold=%.2f, %s)",

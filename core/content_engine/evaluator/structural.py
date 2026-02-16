@@ -6,8 +6,9 @@ against the brief's targets and thresholds.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
+from core.content_engine.tracing import create_span, end_span, log_score
 from core.models.content_generation import (
     ContentBrief,
     DimensionResult,
@@ -144,6 +145,8 @@ _CHECKS = [
 def evaluate_structural(
     content: FormattedContent,
     brief: ContentBrief,
+    *,
+    trace: Optional[object] = None,
 ) -> DimensionResult:
     """Run all 8 structural checks and return an aggregate result.
 
@@ -152,10 +155,23 @@ def evaluate_structural(
     Args:
         content: The formatted content to evaluate.
         brief: The content brief with targets.
+        trace: Langfuse trace for instrumentation.
 
     Returns:
         DimensionResult with structural evaluation.
     """
+    span = create_span(
+        trace, "structural_check",
+        metadata={"brief_id": content.brief_id},
+        input={
+            "word_count": content.word_count,
+            "header_count": content.header_count,
+            "list_count": content.list_count,
+            "stat_count": content.stat_count,
+            "citation_count": content.citation_count,
+        },
+    )
+
     results = {}
     feedbacks = []
     passed_count = 0
@@ -170,6 +186,16 @@ def evaluate_structural(
 
     score = passed_count / len(_CHECKS) if _CHECKS else 0.0
     overall_passed = score >= 0.8
+
+    failed_checks = [name for name, _ in _CHECKS if not results[name]["passed"]]
+    log_score(trace, "structural_score", round(score, 3))
+    end_span(span, output={
+        "score": round(score, 3),
+        "passed": overall_passed,
+        "passed_checks": passed_count,
+        "total_checks": len(_CHECKS),
+        "failed_checks": failed_checks,
+    })
 
     return DimensionResult(
         dimension="structural",

@@ -31,6 +31,8 @@ Your task: Write a complete article in Markdown following the provided outline e
 7. **Include placeholders for statistics**: Where you need to cite specific data,
    use the format [STAT: description] — the fact enricher will fill these in.
 
+8. **Do Not Exceed 1500 words per article or content**.
+
 ## Output Format
 
 Write the complete article in Markdown. Follow the outline structure exactly

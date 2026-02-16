@@ -17,7 +17,13 @@ from core.content_engine.evaluator.semantic import evaluate_semantic
 from core.content_engine.evaluator.structural import evaluate_structural
 from core.content_engine.evaluator.style_judge import evaluate_style
 from core.content_engine.pipeline import _cli_worker_progress
-from core.content_engine.tracing import create_span, create_trace, end_span, log_score
+from core.content_engine.tracing import (
+    create_span,
+    create_trace,
+    end_span,
+    log_score,
+    update_trace_output,
+)
 from core.content_engine.workers.drafter import revise_draft
 from core.content_engine.workers.fact_enricher import enrich_with_facts
 from core.content_engine.workers.formatter import format_content
@@ -46,8 +52,8 @@ async def _run_all_evaluations(
 ) -> list[DimensionResult]:
     """Run all 4 evaluation dimensions in parallel."""
 
-    # Structural is sync — wrap in a lambda for gather
-    structural_result = evaluate_structural(content, brief)
+    # Structural is sync (no LLM calls)
+    structural_result = evaluate_structural(content, brief, trace=trace)
 
     # Run async evaluations in parallel
     semantic_task = evaluate_semantic(content, brief, trace=trace)
@@ -125,7 +131,19 @@ async def evaluate_and_optimize(
     trace = create_trace(
         session_id,
         f"evaluator/{brief.brief_id}",
-        metadata={"brief_id": brief.brief_id, "max_cycles": max_cycles},
+        metadata={
+            "brief_id": brief.brief_id,
+            "max_cycles": max_cycles,
+            "brief_title": brief.title,
+        },
+        input={
+            "brief_id": brief.brief_id,
+            "title": brief.title,
+            "initial_word_count": content.word_count,
+            "max_cycles": max_cycles,
+        },
+        tags=["evaluator", f"brief:{brief.brief_id}"],
+        user_id=input_data.domain,
     )
 
     history = RevisionHistory(brief_id=brief.brief_id)
@@ -133,7 +151,12 @@ async def evaluate_and_optimize(
 
     for cycle in range(max_cycles + 1):  # +1 because first is initial eval
         cycle_span = create_span(
-            trace, f"eval_cycle_{cycle}", metadata={"cycle": cycle}
+            trace, f"eval_cycle_{cycle}",
+            metadata={"cycle": cycle},
+            input={
+                "word_count": current_content.word_count,
+                "cycle_number": cycle,
+            },
         )
 
         dimensions = await _run_all_evaluations(
@@ -167,8 +190,20 @@ async def evaluate_and_optimize(
         )
         _cli_worker_progress(f"{brief.brief_id}: {dim_summary}")
 
+        # Log per-dimension scores
+        for dim in dimensions:
+            log_score(
+                trace, f"{dim.dimension}_score", dim.score,
+                comment=f"cycle_{cycle}",
+                metadata={"passed": dim.passed},
+            )
         log_score(trace, "overall_score", round(overall_score, 4), comment=f"cycle_{cycle}")
-        end_span(cycle_span, output=f"overall={overall_score:.3f}, passed={overall_passed}")
+        end_span(cycle_span, output={
+            "overall_score": round(overall_score, 4),
+            "overall_passed": overall_passed,
+            "dimension_scores": {d.dimension: d.score for d in dimensions},
+            "dimension_passed": {d.dimension: d.passed for d in dimensions},
+        })
 
         if overall_passed:
             _cli_worker_progress(f"{brief.brief_id}: ALL PASSED (overall: {overall_score:.2f})")
@@ -190,8 +225,15 @@ async def evaluate_and_optimize(
             f"fixing {sum(1 for d in dimensions if not d.passed)} dimensions"
         )
 
+        failed_dims = [d.dimension for d in dimensions if not d.passed]
         revision_span = create_span(
-            trace, f"revision_cycle_{cycle + 1}", metadata={"cycle": cycle + 1}
+            trace, f"revision_cycle_{cycle + 1}",
+            metadata={"cycle": cycle + 1},
+            input={
+                "failed_dimensions": failed_dims,
+                "feedback_length": len(feedback),
+                "current_word_count": current_content.word_count,
+            },
         )
 
         # Re-draft with feedback (skip outliner)
@@ -220,7 +262,10 @@ async def evaluate_and_optimize(
             trace=trace,
         )
 
-        end_span(revision_span, output=f"Revised: {current_content.word_count} words")
+        end_span(revision_span, output={
+            "revised_word_count": current_content.word_count,
+            "revised": True,
+        })
 
     log_score(
         trace,
@@ -228,5 +273,18 @@ async def evaluate_and_optimize(
         len(history.cycles) - 1,
         comment=f"final_passed={history.final_passed}",
     )
+
+    # Trace-level output summary
+    final_cycle = history.cycles[-1] if history.cycles else None
+    update_trace_output(trace, output={
+        "final_passed": history.final_passed,
+        "total_cycles": len(history.cycles),
+        "final_score": final_cycle.overall_score if final_cycle else 0.0,
+        "final_dimensions": {
+            d.dimension: {"score": d.score, "passed": d.passed}
+            for d in (final_cycle.dimensions if final_cycle else [])
+        },
+    })
+    end_span(trace)
 
     return current_content, history

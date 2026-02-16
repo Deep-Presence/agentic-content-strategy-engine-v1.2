@@ -45,7 +45,17 @@ async def enrich_with_facts(
         EnrichedDraft with fact-checked and enriched content.
     """
     model = settings.content_engine_fact_enricher_model
-    span = create_span(trace, "fact_enricher", metadata={"brief_id": brief.brief_id})
+    span = create_span(
+        trace, "fact_enricher",
+        metadata={"brief_id": brief.brief_id, "model": model},
+        input={
+            "brief_id": brief.brief_id,
+            "title": brief.title,
+            "company_name": company_name,
+            "domain": domain,
+            "draft_word_count": draft.word_count,
+        },
+    )
 
     user_prompt = build_enricher_user_prompt(
         draft_markdown=draft.markdown,
@@ -118,15 +128,19 @@ async def enrich_with_facts(
         trace,
         name="fact_enricher",
         model=model,
-        input_text=user_prompt[:1000],
-        output_text=enriched_text[:1000],
+        input_text=user_prompt,
+        output_text=enriched_text,
         parent_span=span,
+        model_parameters={"max_tokens": 8192},
         usage={
             "input": usage_info.get("prompt_tokens", 0),
             "output": usage_info.get("completion_tokens", 0),
         },
     )
-    end_span(span, output=f"{len(facts_added)} facts added, {word_count} words")
+    end_span(span, output={
+        "facts_added": len(facts_added),
+        "word_count": word_count,
+    })
 
     logger.info(
         "Fact Enricher: %s → %d facts added, %d words",

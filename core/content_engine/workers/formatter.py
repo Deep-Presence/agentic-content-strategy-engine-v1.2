@@ -62,7 +62,15 @@ async def format_content(
         FormattedContent with polished markdown and structural counts.
     """
     model = settings.content_engine_formatter_model
-    span = create_span(trace, "formatter", metadata={"brief_id": enriched.brief_id})
+    span = create_span(
+        trace, "formatter",
+        metadata={"brief_id": enriched.brief_id, "model": model},
+        input={
+            "brief_id": enriched.brief_id,
+            "title": enriched.title,
+            "input_word_count": enriched.word_count,
+        },
+    )
 
     user_prompt = build_formatter_user_prompt(
         enriched_markdown=enriched.markdown,
@@ -102,21 +110,22 @@ async def format_content(
         trace,
         name="formatter",
         model=model,
-        input_text=user_prompt[:1000],
-        output_text=markdown[:1000],
+        input_text=user_prompt,
+        output_text=markdown,
         parent_span=span,
+        model_parameters={"max_tokens": 8192},
         usage={
             "input": response.usage.input_tokens,
             "output": response.usage.output_tokens,
         },
     )
-    end_span(
-        span,
-        output=(
-            f"{word_count} words, {counts['header_count']} headers, "
-            f"{counts['citation_count']} citations"
-        ),
-    )
+    end_span(span, output={
+        "word_count": word_count,
+        "header_count": counts["header_count"],
+        "list_count": counts["list_count"],
+        "stat_count": counts["stat_count"],
+        "citation_count": counts["citation_count"],
+    })
 
     logger.info(
         "Formatter: %s → %d words, %d headers, %d citations",

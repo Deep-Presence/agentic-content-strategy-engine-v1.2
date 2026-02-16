@@ -39,7 +39,16 @@ async def generate_outline(
         ContentOutline with sections and word count targets.
     """
     model = settings.content_engine_worker_model
-    span = create_span(trace, "outliner", metadata={"brief_id": brief.brief_id})
+    span = create_span(
+        trace, "outliner",
+        metadata={"brief_id": brief.brief_id, "model": model},
+        input={
+            "brief_id": brief.brief_id,
+            "title": brief.title,
+            "content_format": brief.content_format,
+            "word_count_range": list(brief.word_count_range),
+        },
+    )
 
     user_prompt = build_outliner_user_prompt(
         brief_id=brief.brief_id,
@@ -80,15 +89,20 @@ async def generate_outline(
         trace,
         name="outliner",
         model=model,
-        input_text=user_prompt[:1000],
-        output_text=raw_text[:1000],
+        input_text=user_prompt,
+        output_text=raw_text,
         parent_span=span,
+        model_parameters={"max_tokens": 4096},
         usage={
             "input": response.usage.input_tokens,
             "output": response.usage.output_tokens,
         },
     )
-    end_span(span, output=f"{len(outline.sections)} sections, {outline.total_target_words} words")
+    end_span(span, output={
+        "sections": len(outline.sections),
+        "total_target_words": outline.total_target_words,
+        "section_headings": [s.heading for s in outline.sections],
+    })
 
     logger.info(
         "Outliner: %s → %d sections, %d target words",

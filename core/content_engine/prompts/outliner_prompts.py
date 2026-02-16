@@ -47,7 +47,7 @@ Respond with ONLY valid JSON matching this schema:
 6. **Actionable close**: End with concrete next steps or recommendations.
 
 7. **Word count distribution**: Allocate words proportionally — main content
-   sections should be 250-400 words each. Intro/outro should be shorter (100-200).
+   sections should be 200-300 words each. Intro/outro should be shorter (100-200).
 """
 
 

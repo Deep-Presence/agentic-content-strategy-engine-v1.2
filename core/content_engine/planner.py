@@ -17,8 +17,10 @@ from core.content_engine.prompts.planner_prompts import (
 )
 from core.content_engine.tracing import (
     create_trace,
+    end_span,
     log_generation,
     log_score,
+    update_trace_output,
 )
 from core.content_engine.utils import (
     _retry_async_anthropic,
@@ -63,7 +65,18 @@ async def plan_content(
         PlannerOutput with prioritized content briefs.
     """
     model = settings.content_engine_planner_model
-    trace = create_trace(session_id, "planner", metadata={"model": model})
+    trace = create_trace(
+        session_id,
+        "planner",
+        metadata={"model": model, "max_briefs": input_data.max_briefs},
+        input={
+            "company_name": input_data.company_name,
+            "domain": input_data.domain,
+            "max_briefs": input_data.max_briefs,
+        },
+        tags=["planner", f"model:{model}"],
+        user_id=input_data.domain,
+    )
 
     # Build prompt
     user_prompt = build_planner_user_prompt(
@@ -116,14 +129,29 @@ async def plan_content(
         trace,
         name="plan_content",
         model=model,
-        input_text=user_prompt[:2000],
-        output_text=raw_text[:2000],
+        input_text=user_prompt,
+        output_text=raw_text,
+        metadata={
+            "system_prompt_length": len(PLANNER_SYSTEM_PROMPT),
+            "user_prompt_length": len(user_prompt),
+        },
+        model_parameters={"max_tokens": 8192},
         usage={
             "input": response.usage.input_tokens,
             "output": response.usage.output_tokens,
         },
     )
     log_score(trace, "briefs_generated", len(planner_output.briefs))
+    update_trace_output(trace, output={
+        "briefs_count": len(planner_output.briefs),
+        "brief_ids": [b.brief_id for b in planner_output.briefs],
+        "brief_titles": [b.title for b in planner_output.briefs],
+        "token_usage": {
+            "input": response.usage.input_tokens,
+            "output": response.usage.output_tokens,
+        },
+    })
+    end_span(trace)
 
     logger.info(
         "Planner produced %d briefs (model=%s, tokens=%d+%d)",
