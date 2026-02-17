@@ -1,0 +1,3450 @@
+{
+  "task_id": "d0c5062e-a826-4872-a45e-989462eda8bf",
+  "pipeline": "gap_analysis",
+  "status": "completed",
+  "company_slug": "ramp",
+  "current_step": null,
+  "progress_pct": null,
+  "created_at": "2026-02-16T21:32:31.717761Z",
+  "updated_at": "2026-02-16T23:07:19.011553Z",
+  "result": {
+    "report_md": "## Executive Summary\n\nThe company has a statistically significant citation disadvantage versus what AI search engines most frequently cite (t=7.25, p\u22480), indicating current content is not matching the patterns AI systems reward. Overall similarity to cited sources is notably higher than similarity to the company\u2019s content (0.671 vs 0.572), suggesting a meaningful alignment gap in topic framing and/or page structure. The largest weaknesses concentrate in high-leverage, top-of-funnel \u201cDefinition\u201d ",
+    "report_json": {
+      "executive_summary": "The company has a statistically significant citation disadvantage versus what AI search engines most frequently cite (t=7.25, p\u22480), indicating current content is not matching the patterns AI systems reward. Overall similarity to cited sources is notably higher than similarity to the company\u2019s content (0.671 vs 0.572), suggesting a meaningful alignment gap in topic framing and/or page structure. The largest weaknesses concentrate in high-leverage, top-of-funnel \u201cDefinition\u201d queries (e.g., 3-way matching, spend vs expense management, AP automation workflow), where AI engines prefer tightly structured explainers with clear headers, lists, supporting stats, and citations. The company is relatively closer in \u201cBranded Evaluation\u201d and \u201cDefinition\u201d clusters by proximity, but still missing the specific intents and citation-friendly packaging that push sources into AI answers. To improve standing, the fastest path is to publish a small set of citation-optimized cornerstone pages that mirror the dominant commercial/media authority patterns and required structural elements across Definition, Mechanism, and Category Comparison.",
+      "recommendations": [
+        {
+          "title_idea": "3-Way Matching in Accounts Payable (AP): Definition, How It Works, Examples, and Common Exceptions",
+          "target_cluster": "Definition",
+          "structural_signals": "Use scannable headers (H2/H3) for definition, why it matters, step-by-step process, exceptions; include bulleted/numbered lists; include at least 1\u20133 relevant stats (e.g., invoice error rates/cost of manual AP) and cite commercial/media sources.",
+          "expected_impact": "Addresses the single largest gap (q_25) in the highest-similarity cluster, increasing the likelihood the page is lifted directly into AI-generated definitions. Matching the cluster\u2019s stats+citation pattern should reduce the citation similarity delta and improve inclusion in short-form answer snippets."
+        },
+        {
+          "title_idea": "Spend Management vs Expense Management: Key Differences, Use Cases, and Where AP Automation Fits",
+          "target_cluster": "Definition",
+          "structural_signals": "Clear comparison headers (what it is, who uses it, what it controls, systems involved); include a concise \u201cdifference table\u201d plus lists; add supporting stats and citations from commercial/media reports/benchmarks.",
+          "expected_impact": "Directly closes a major Definition gap (q_21) and supports adjacent comparison intent, improving the company\u2019s ability to be cited for category framing terms AI engines frequently define. A table + cited stats increases extractability for AI answers."
+        },
+        {
+          "title_idea": "AP Automation Workflow Explained: From Invoice Capture to Approval Routing, 3-Way Match, and Payment",
+          "target_cluster": "Definition",
+          "structural_signals": "Headers for each workflow stage; numbered steps; include a simple workflow list/diagram description; include stats (processing time/cost, error reduction) and citations; keep terminology consistent for AI extraction.",
+          "expected_impact": "Targets a high-gap foundational query (q_23) while building internal relevance for related mechanism queries. A stage-based structure makes it easy for AI systems to quote and summarize the workflow accurately."
+        },
+        {
+          "title_idea": "How AP Automation Routes Invoices for Approvals and Payment: Rules, Roles, Escalations, and Audit Trails",
+          "target_cluster": "Mechanism",
+          "structural_signals": "Mechanism-style step-by-step narrative with headers; procedural numbered lists; include citations (commercial/media) to validate best practices; optionally include short examples of routing rules by department/amount.",
+          "expected_impact": "Closes a large mechanism gap (q_4) by explaining \u201chow it works\u201d in the format AI engines prefer to cite for process questions. Strong procedural structure increases the chance of being used for multi-step AI responses."
+        },
+        {
+          "title_idea": "AP Automation Features Checklist: OCR Invoice Capture, PO Matching, and Approval Routing (What to Expect + Requirements)",
+          "target_cluster": "Feature Verification",
+          "structural_signals": "Feature-by-feature headers; checklist-style lists; include stats and citations; add a \u201cverification\u201d section (questions to ask vendors, required integrations, limitations) to match the cluster\u2019s validation intent.",
+          "expected_impact": "Directly targets the verification gap (q_45) and helps the company earn citations when users ask whether tools can perform specific capabilities. A checklist and cited requirements align with AI engines\u2019 preference for confirmable, structured feature claims."
+        }
+      ],
+      "proximity_stats": {
+        "citation_similarity_mean": 0.6706468974795918,
+        "citation_similarity_median": 0.6689850320942025,
+        "company_similarity_mean": 0.5721926693170732,
+        "company_similarity_median": 0.5661400597503987,
+        "per_cluster": {
+          "Mechanism": {
+            "mean": 0.6747581265952902,
+            "std": 0.0892352351542584,
+            "min": 0.44004382687496063,
+            "max": 0.7921292739644816,
+            "count": 75
+          },
+          "Boundary": {
+            "mean": 0.6003440473457047,
+            "std": 0.051142211761623944,
+            "min": 0.49496426145440253,
+            "max": 0.7333640236422928,
+            "count": 75
+          },
+          "Category Comparison": {
+            "mean": 0.6842143398045483,
+            "std": 0.06852311749433124,
+            "min": 0.5524133662068764,
+            "max": 0.8156531596178305,
+            "count": 75
+          },
+          "Decision Criteria": {
+            "mean": 0.6489476025933305,
+            "std": 0.07658674720673905,
+            "min": 0.48521319001411417,
+            "max": 0.8147840848920216,
+            "count": 75
+          },
+          "Definition": {
+            "mean": 0.7632996778042732,
+            "std": 0.07321953513653938,
+            "min": 0.6325465412406676,
+            "max": 0.952386493657063,
+            "count": 75
+          },
+          "Problem/Awareness": {
+            "mean": 0.6659092566770748,
+            "std": 0.05297961752621193,
+            "min": 0.49964802447053536,
+            "max": 0.7684394698716033,
+            "count": 75
+          },
+          "Best-of/Consideration": {
+            "mean": 0.6577870096819166,
+            "std": 0.08159520533061529,
+            "min": 0.4617974112613062,
+            "max": 0.8298876822937381,
+            "count": 75
+          },
+          "Branded Evaluation": {
+            "mean": 0.7328443802147941,
+            "std": 0.06100659081295557,
+            "min": 0.5856378527719419,
+            "max": 0.8443727392984318,
+            "count": 75
+          },
+          "Feature Verification": {
+            "mean": 0.6077176365993938,
+            "std": 0.07015153158751464,
+            "min": 0.3131534036023174,
+            "max": 0.7606059884761689,
+            "count": 75
+          }
+        }
+      },
+      "spa_results": [
+        {
+          "cluster_id": null,
+          "cluster_name": "all",
+          "t_stat": 7.250486923519297,
+          "p_value": 2.500770066257035e-09,
+          "mean_citation_similarity": 0.6706468974795918,
+          "mean_company_similarity": 0.5721926693170732,
+          "effect": "citation_advantage"
+        }
+      ],
+      "gaps": [
+        {
+          "query_id": "q_25",
+          "cluster_name": "Definition",
+          "query_text": "What is 3-way matching in accounts payable?",
+          "best_company_unit": "unit_1837",
+          "best_company_unit_text": "\u201cWe were cutting an average of 30-50 checks per week,\u201d explains Gee. The AP coordinator\u2014who represents one-third of the The Joffrey finance team\u2014devoted an entire working day each week to cutting chec",
+          "best_company_similarity": 0.3925802075407794,
+          "avg_citation_similarity": 0.7955162710768929,
+          "gap": 0.40293606353611355,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8455,
+              "domain": "www.rillion.com",
+              "url": "https://www.rillion.com/blog/learn-ap/3-way-matching/",
+              "snippet": "Three-way matching is an accounts payable (AP) process that verifies the accuracy of payments by comparing three critical documents: the purchase order (PO), the supplier\u2019s invoice, and the order receipts.",
+              "structural_signals": {
+                "word_count": 1586,
+                "paragraph_count": 68,
+                "header_count": 19,
+                "list_item_count": 121,
+                "stat_count": 14,
+                "citation_count": 119,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8437,
+              "domain": "www.paystand.com",
+              "url": "https://www.paystand.com/blog/3-way-matching-in-accounts-payable",
+              "snippet": "Why Three-Way Matching Is Essential in Accounts Payable",
+              "structural_signals": {
+                "word_count": 1592,
+                "paragraph_count": 83,
+                "header_count": 33,
+                "list_item_count": 276,
+                "stat_count": 9,
+                "citation_count": 308,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8437,
+              "domain": "www.paystand.com",
+              "url": "https://www.paystand.com/blog/3-way-matching-in-accounts-payable",
+              "snippet": "Why Three-Way Matching Is Essential in Accounts Payable",
+              "structural_signals": {
+                "word_count": 1592,
+                "paragraph_count": 83,
+                "header_count": 33,
+                "list_item_count": 276,
+                "stat_count": 9,
+                "citation_count": 308,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_21",
+          "cluster_name": "Definition",
+          "query_text": "What is spend management and how is it different from expense management?",
+          "best_company_unit": "unit_1160",
+          "best_company_unit_text": "Learn how to automate your expense policies to control spend in real time. Be honest: does your current expense policy work? If your finance team are chasing employees for receipts and everyone dreads",
+          "best_company_similarity": 0.4733314036220782,
+          "avg_citation_similarity": 0.8483656175507448,
+          "gap": 0.3750342139286666,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.9524,
+              "domain": "www.gep.com",
+              "url": "https://www.gep.com/blog/technology/spend-analysis-vs-spend-management-differences?utm_source=openai",
+              "snippet": "What is the difference between spend management and expense management?",
+              "structural_signals": {
+                "word_count": 4241,
+                "paragraph_count": 123,
+                "header_count": 70,
+                "list_item_count": 581,
+                "stat_count": 19,
+                "citation_count": 603,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.9524,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/spend-trends/expense-management/spend-management",
+              "snippet": "What is the difference between spend management and expense management?",
+              "structural_signals": {
+                "word_count": 5027,
+                "paragraph_count": 104,
+                "header_count": 59,
+                "list_item_count": 56,
+                "stat_count": 18,
+                "citation_count": 115,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.9524,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/spend-trends/expense-management/spend-management",
+              "snippet": "What is the difference between spend management and expense management?",
+              "structural_signals": {
+                "word_count": 5027,
+                "paragraph_count": 104,
+                "header_count": 59,
+                "list_item_count": 56,
+                "stat_count": 18,
+                "citation_count": 115,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_23",
+          "cluster_name": "Definition",
+          "query_text": "What is an AP automation workflow?",
+          "best_company_unit": "unit_486",
+          "best_company_unit_text": "In addition to automation depth , we\u2019ve invested in automation breadth to support non-finance employees. Most employees doing day-to-day finance work don\u2019t actually sit under the Finance function. Yet",
+          "best_company_similarity": 0.5123247782864192,
+          "avg_citation_similarity": 0.7546788063028665,
+          "gap": 0.24235402801644734,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.789,
+              "domain": "www.routable.com",
+              "url": "https://www.routable.com/resources/manual-vs-automated-accounts-payable-process/",
+              "snippet": "The AP workflow process refers to the steps in accounts payable operations, including receiving invoices, verification, approval, and vendor payment. Transitioning from manual to automated accounts payable streamlines this process, enhancing efficiency and reducing errors. Automated AP systems utili",
+              "structural_signals": {
+                "word_count": 2682,
+                "paragraph_count": 79,
+                "header_count": 16,
+                "list_item_count": 84,
+                "stat_count": 13,
+                "citation_count": 83,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7839,
+              "domain": "www.rillion.com",
+              "url": "https://www.rillion.com/blog/what-is-ap-automation/",
+              "snippet": "How does AP automation work? (And what part do you play?)",
+              "structural_signals": {
+                "word_count": 5315,
+                "paragraph_count": 180,
+                "header_count": 51,
+                "list_item_count": 138,
+                "stat_count": 26,
+                "citation_count": 128,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7839,
+              "domain": "www.rillion.com",
+              "url": "https://www.rillion.com/blog/what-is-ap-automation/",
+              "snippet": "How does AP automation work? (And what part do you play?)",
+              "structural_signals": {
+                "word_count": 5315,
+                "paragraph_count": 180,
+                "header_count": 51,
+                "list_item_count": 138,
+                "stat_count": 26,
+                "citation_count": 128,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_4",
+          "cluster_name": "Mechanism",
+          "query_text": "How does AP automation route invoices for approvals and payment?",
+          "best_company_unit": "unit_1842",
+          "best_company_unit_text": "A faster process, real-time visibility, and hours saved Ramp has completely overhauled the previously cumbersome reimbursement and payroll process, which has restored a full work day for Joffrey\u2019s AP ",
+          "best_company_similarity": 0.48624613665671734,
+          "avg_citation_similarity": 0.7284069906909,
+          "gap": 0.24216085403418264,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7635,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/resources/learn/ap-invoice-approval-process/",
+              "snippet": "The Accounts Payable Invoice Approval Process in AP Automation Software",
+              "structural_signals": {
+                "word_count": 2077,
+                "paragraph_count": 49,
+                "header_count": 53,
+                "list_item_count": 270,
+                "stat_count": 28,
+                "citation_count": 320,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7635,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/resources/learn/ap-invoice-approval-process/",
+              "snippet": "The Accounts Payable Invoice Approval Process in AP Automation Software",
+              "structural_signals": {
+                "word_count": 2077,
+                "paragraph_count": 49,
+                "header_count": 53,
+                "list_item_count": 270,
+                "stat_count": 28,
+                "citation_count": 320,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7635,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/resources/learn/ap-invoice-approval-process/",
+              "snippet": "The Accounts Payable Invoice Approval Process in AP Automation Software",
+              "structural_signals": {
+                "word_count": 2077,
+                "paragraph_count": 49,
+                "header_count": 53,
+                "list_item_count": 270,
+                "stat_count": 28,
+                "citation_count": 320,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_11",
+          "cluster_name": "Category Comparison",
+          "query_text": "Spend management software vs traditional expense reporting tools: what\u2019s the difference?",
+          "best_company_unit": "unit_814",
+          "best_company_unit_text": "Action: Use a modern procurement solution to make the buying process smoother. A \u201cfront door\u201d for purchasing makes things simpler for employees across the organization and eases back-end administratio",
+          "best_company_similarity": 0.5454232932483171,
+          "avg_citation_similarity": 0.7281654778869993,
+          "gap": 0.1827421846386822,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7626,
+              "domain": "www.jaggaer.com",
+              "url": "https://www.jaggaer.com/blog/spend-management-vs-expense-management-supply-chain",
+              "snippet": "Spend Management vs Expense Management: Key Differences",
+              "structural_signals": {
+                "word_count": 2346,
+                "paragraph_count": 77,
+                "header_count": 22,
+                "list_item_count": 223,
+                "stat_count": 0,
+                "citation_count": 219,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7539,
+              "domain": "mekari.com",
+              "url": "https://mekari.com/en/blog/expense-vs-spend-management/",
+              "snippet": "The difference between spend management vs expense management",
+              "structural_signals": {
+                "word_count": 1213,
+                "paragraph_count": 69,
+                "header_count": 12,
+                "list_item_count": 128,
+                "stat_count": 10,
+                "citation_count": 211,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7539,
+              "domain": "mekari.com",
+              "url": "https://mekari.com/en/blog/expense-vs-spend-management/",
+              "snippet": "The difference between spend management vs expense management",
+              "structural_signals": {
+                "word_count": 1213,
+                "paragraph_count": 69,
+                "header_count": 12,
+                "list_item_count": 128,
+                "stat_count": 10,
+                "citation_count": 211,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_45",
+          "cluster_name": "Feature Verification",
+          "query_text": "Can AP automation tools do OCR invoice capture, PO matching, and approval routing?",
+          "best_company_unit": "unit_486",
+          "best_company_unit_text": "In addition to automation depth , we\u2019ve invested in automation breadth to support non-finance employees. Most employees doing day-to-day finance work don\u2019t actually sit under the Finance function. Yet",
+          "best_company_similarity": 0.4983058734160457,
+          "avg_citation_similarity": 0.676735570963125,
+          "gap": 0.17842969754707927,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.712,
+              "domain": "www.invoiceocr.co",
+              "url": "https://www.invoiceocr.co/post/best-ap-invoice-processing-software",
+              "snippet": "Automated invoice capture, matching, and approval workflows",
+              "structural_signals": {
+                "word_count": 1593,
+                "paragraph_count": 91,
+                "header_count": 12,
+                "list_item_count": 118,
+                "stat_count": 35,
+                "citation_count": 5,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7115,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/resources/learn/ocr-invoice-processing/",
+              "snippet": "When you start looking into automating your accounts payable workflow, you\u2019ll notice common features across AP software systems: tax form processing, electronic funds transfers, and, of course, OCR invoice processing. It\u2019s all part of the AP process.",
+              "structural_signals": {
+                "word_count": 3725,
+                "paragraph_count": 142,
+                "header_count": 79,
+                "list_item_count": 345,
+                "stat_count": 42,
+                "citation_count": 336,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7095,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/resources/learn/ocr-invoice-processing/",
+              "snippet": "Every automated accounts payable system has OCR invoice processing capabilities. The optical character recognition functionality enables AP software to extract data automatically from digital invoices . OCR eliminates manual data entry to streamline AP workflows.",
+              "structural_signals": {
+                "word_count": 3725,
+                "paragraph_count": 142,
+                "header_count": 79,
+                "list_item_count": 345,
+                "stat_count": 42,
+                "citation_count": 336,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_14",
+          "cluster_name": "Category Comparison",
+          "query_text": "Virtual cards vs physical corporate cards for vendor payments and subscriptions",
+          "best_company_unit": "unit_1251",
+          "best_company_unit_text": "\u201cAs a company our size, we don\u2019t want to issue cards to everyone,\u201d explains Forrest. \u201cIt\u2019s easier for us to issue someone a one-time virtual card with a quick approval when something comes up. It\u2019s be",
+          "best_company_similarity": 0.5585511309238318,
+          "avg_citation_similarity": 0.7317145226162582,
+          "gap": 0.17316339169242645,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8075,
+              "domain": "buvei.com",
+              "url": "https://buvei.com/blog/virtual-vs-physical-corporate-cards-key-differences-explained/",
+              "snippet": "Virtual Cards vs Physical Corporate Cards: Pros and Cons",
+              "structural_signals": {
+                "word_count": 2730,
+                "paragraph_count": 90,
+                "header_count": 62,
+                "list_item_count": 75,
+                "stat_count": 14,
+                "citation_count": 142,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7996,
+              "domain": "buvei.com",
+              "url": "https://buvei.com/blog/virtual-vs-physical-corporate-cards-what-companies-should-choose/",
+              "snippet": "Corporate spending has become increasingly digital, and businesses are now choosing between virtual corporate cards and traditional physical corporate cards to manage expenses, subscriptions, travel, and procurement. Each option serves distinct use cases. Virtual cards offer speed, automation, and e",
+              "structural_signals": {
+                "word_count": 1624,
+                "paragraph_count": 88,
+                "header_count": 75,
+                "list_item_count": 111,
+                "stat_count": 12,
+                "citation_count": 149,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7806,
+              "domain": "www.order.co",
+              "url": "https://www.order.co/blog/purchasing-process/virtual-card-vs-physical-card/",
+              "snippet": "As businesses move away from manual, paper-based processes, the debate over virtual cards vs. physical corporate cards has become a central focus for finance and operations leaders. The shift to digital payments has accelerated, pushing many organizations to consider a virtual-first approach to mana",
+              "structural_signals": {
+                "word_count": 1809,
+                "paragraph_count": 44,
+                "header_count": 35,
+                "list_item_count": 33,
+                "stat_count": 4,
+                "citation_count": 154,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_3",
+          "cluster_name": "Mechanism",
+          "query_text": "How do virtual cards work for vendor subscriptions and one-time purchases?",
+          "best_company_unit": "unit_1251",
+          "best_company_unit_text": "\u201cAs a company our size, we don\u2019t want to issue cards to everyone,\u201d explains Forrest. \u201cIt\u2019s easier for us to issue someone a one-time virtual card with a quick approval when something comes up. It\u2019s be",
+          "best_company_similarity": 0.5459020854974053,
+          "avg_citation_similarity": 0.7190166200547591,
+          "gap": 0.17311453455735382,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7757,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/blog/virtual-credit-card-guide",
+              "snippet": "Do virtual credit cards work for recurring subscriptions?",
+              "structural_signals": {
+                "word_count": 2245,
+                "paragraph_count": 83,
+                "header_count": 35,
+                "list_item_count": 33,
+                "stat_count": 4,
+                "citation_count": 282,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7673,
+              "domain": "stripe.com",
+              "url": "https://stripe.com/in/resources/more/electronic-credit-cards-101-what-they-are-and-how-they-work",
+              "snippet": "Subscriptions: Virtual cards work well for recurring payments, such as software subscriptions and cloud services . You can control how much is charged, and if a subscription auto-renews unexpectedly, you can shut the card down to avoid unwanted charges.",
+              "structural_signals": {
+                "word_count": 2298,
+                "paragraph_count": 70,
+                "header_count": 38,
+                "list_item_count": 377,
+                "stat_count": 3,
+                "citation_count": 333,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7673,
+              "domain": "stripe.com",
+              "url": "https://stripe.com/in/resources/more/electronic-credit-cards-101-what-they-are-and-how-they-work",
+              "snippet": "Subscriptions: Virtual cards work well for recurring payments, such as software subscriptions and cloud services . You can control how much is charged, and if a subscription auto-renews unexpectedly, you can shut the card down to avoid unwanted charges.",
+              "structural_signals": {
+                "word_count": 2298,
+                "paragraph_count": 70,
+                "header_count": 38,
+                "list_item_count": 377,
+                "stat_count": 3,
+                "citation_count": 333,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_34",
+          "cluster_name": "Best-of/Consideration",
+          "query_text": "Best AP automation software for mid-market companies with approval workflows",
+          "best_company_unit": "unit_814",
+          "best_company_unit_text": "Action: Use a modern procurement solution to make the buying process smoother. A \u201cfront door\u201d for purchasing makes things simpler for employees across the organization and eases back-end administratio",
+          "best_company_similarity": 0.4949035515522388,
+          "avg_citation_similarity": 0.6621028477949167,
+          "gap": 0.16719929624267788,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7287,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/ap-automation/?utm_source=openai",
+              "snippet": "Worldwide Accounts Payable Automation Software for Midmarket",
+              "structural_signals": {
+                "word_count": 2737,
+                "paragraph_count": 107,
+                "header_count": 102,
+                "list_item_count": 272,
+                "stat_count": 53,
+                "citation_count": 435,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7221,
+              "domain": "www.rillion.com",
+              "url": "https://www.rillion.com/blog/stampli-alternatives/",
+              "snippet": "Mid-market, multi-entity businesses that want full AP workflows",
+              "structural_signals": {
+                "word_count": 5258,
+                "paragraph_count": 253,
+                "header_count": 64,
+                "list_item_count": 218,
+                "stat_count": 42,
+                "citation_count": 158,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7107,
+              "domain": "www.rillion.com",
+              "url": "https://www.rillion.com/blog/stampli-alternatives/",
+              "snippet": "End-to-end AP Automation for companies with complex needs",
+              "structural_signals": {
+                "word_count": 5258,
+                "paragraph_count": 253,
+                "header_count": 64,
+                "list_item_count": 218,
+                "stat_count": 42,
+                "citation_count": 158,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_13",
+          "cluster_name": "Category Comparison",
+          "query_text": "AP automation platforms vs bill pay inside accounting software: pros and cons",
+          "best_company_unit": "unit_487",
+          "best_company_unit_text": "As finance leaders look to the second half of the year, they need to ask which resourcing strategy will give them the best return\u2014quantitatively and qualitatively. Here\u2019s a simple decision framework: ",
+          "best_company_similarity": 0.4532546570564105,
+          "avg_citation_similarity": 0.6176859626357373,
+          "gap": 0.16443130557932678,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6857,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/blog/tipalti-vs-bill",
+              "snippet": "Let\u2019s compare how each platform approaches AP automation and where key differences may influence your decision.",
+              "structural_signals": {
+                "word_count": 1659,
+                "paragraph_count": 75,
+                "header_count": 20,
+                "list_item_count": 30,
+                "stat_count": 27,
+                "citation_count": 293,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6564,
+              "domain": "www.centime.com",
+              "url": "https://www.centime.com/top-ap-solutions",
+              "snippet": "Everything you need to know about the best accounts payable automation solutions, including the pros, cons, pricing, and target audience for each platform.",
+              "structural_signals": {
+                "word_count": 4715,
+                "paragraph_count": 162,
+                "header_count": 80,
+                "list_item_count": 84,
+                "stat_count": 52,
+                "citation_count": 254,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6436,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/blog/accounts-payable/ap-automation-tools-for-mid-sized-businesses",
+              "snippet": "How to evaluate and compare AP automation platforms",
+              "structural_signals": {
+                "word_count": 3050,
+                "paragraph_count": 120,
+                "header_count": 40,
+                "list_item_count": 57,
+                "stat_count": 30,
+                "citation_count": 307,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_2",
+          "cluster_name": "Mechanism",
+          "query_text": "How does automated receipt matching work in expense management software?",
+          "best_company_unit": "unit_1160",
+          "best_company_unit_text": "Learn how to automate your expense policies to control spend in real time. Be honest: does your current expense policy work? If your finance team are chasing employees for receipts and everyone dreads",
+          "best_company_similarity": 0.587004854320842,
+          "avg_citation_similarity": 0.7437746522957961,
+          "gap": 0.15676979797495405,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7921,
+              "domain": "www.paystand.com",
+              "url": "https://www.paystand.com/blog/receipt-matching-automation",
+              "snippet": "How Receipt Matching Automation Improves Expense Management",
+              "structural_signals": {
+                "word_count": 1524,
+                "paragraph_count": 72,
+                "header_count": 18,
+                "list_item_count": 260,
+                "stat_count": 8,
+                "citation_count": 283,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7921,
+              "domain": "www.paystand.com",
+              "url": "https://www.paystand.com/blog/receipt-matching-automation",
+              "snippet": "How Receipt Matching Automation Improves Expense Management",
+              "structural_signals": {
+                "word_count": 1524,
+                "paragraph_count": 72,
+                "header_count": 18,
+                "list_item_count": 260,
+                "stat_count": 8,
+                "citation_count": 283,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7921,
+              "domain": "www.paystand.com",
+              "url": "https://www.paystand.com/blog/receipt-matching-automation",
+              "snippet": "How Receipt Matching Automation Improves Expense Management",
+              "structural_signals": {
+                "word_count": 1524,
+                "paragraph_count": 72,
+                "header_count": 18,
+                "list_item_count": 260,
+                "stat_count": 8,
+                "citation_count": 283,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_24",
+          "cluster_name": "Definition",
+          "query_text": "What is a virtual card and when should a company use one?",
+          "best_company_unit": "unit_1251",
+          "best_company_unit_text": "\u201cAs a company our size, we don\u2019t want to issue cards to everyone,\u201d explains Forrest. \u201cIt\u2019s easier for us to issue someone a one-time virtual card with a quick approval when something comes up. It\u2019s be",
+          "best_company_similarity": 0.5696933614767673,
+          "avg_citation_similarity": 0.7197912943265773,
+          "gap": 0.15009793284981,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8176,
+              "domain": "www.wexinc.com",
+              "url": "https://www.wexinc.com/resources/blog/advantages-virtual-cards-b2b-payments/",
+              "snippet": "When should businesses consider using virtual cards?",
+              "structural_signals": {
+                "word_count": 6769,
+                "paragraph_count": 237,
+                "header_count": 46,
+                "list_item_count": 219,
+                "stat_count": 16,
+                "citation_count": 239,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7525,
+              "domain": "wallester.com",
+              "url": "https://wallester.com/blog/business-insights/the-complete-guide-to-virtual-cards-for-business",
+              "snippet": "Virtual cards represent a fundamental change in how companies manage payments and control cash flow. They\u2019re digital versions of traditional payment cards, generated instantly through online platforms or mobile apps. Unlike waiting days for physical cards to arrive by post, virtual cards can be crea",
+              "structural_signals": {
+                "word_count": 2734,
+                "paragraph_count": 81,
+                "header_count": 19,
+                "list_item_count": 77,
+                "stat_count": 7,
+                "citation_count": 53,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7505,
+              "domain": "usa.visa.com",
+              "url": "https://usa.visa.com/pay-with-visa/cards/small-business-cards/virtual-cards.html",
+              "snippet": "A virtual card is a digital payment method issued via a website or an app from your financial institution. Companies use virtual cards in a variety of ways, such as paying suppliers, or enabling employees, contractors, and job candidates to pay for expenses through a more secure, easily controlled m",
+              "structural_signals": {
+                "word_count": 371,
+                "paragraph_count": 19,
+                "header_count": 26,
+                "list_item_count": 0,
+                "stat_count": 0,
+                "citation_count": 2,
+                "has_headers": true,
+                "has_lists": false,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_32",
+          "cluster_name": "Best-of/Consideration",
+          "query_text": "Best expense management tools for companies using NetSuite",
+          "best_company_unit": "unit_1828",
+          "best_company_unit_text": "Part of growing sustainably meant reassessing and optimizing inefficient processes, including a manual, time-consuming spend management system. Historically, Beyond granted Chase credit cards to 10 em",
+          "best_company_similarity": 0.5850735373967301,
+          "avg_citation_similarity": 0.7325004392504243,
+          "gap": 0.14742690185369423,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8161,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/blog/netsuite-expense-management/",
+              "snippet": "Top NetSuite expense management solutions include:",
+              "structural_signals": {
+                "word_count": 2264,
+                "paragraph_count": 74,
+                "header_count": 55,
+                "list_item_count": 331,
+                "stat_count": 35,
+                "citation_count": 338,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8003,
+              "domain": "www.zoneandco.com",
+              "url": "https://www.zoneandco.com/articles/streamline-expense-management-with-netsuite",
+              "snippet": "Managing expenses is vital for maintaining financial control, yet many businesses are unknowingly complicating the process by relying on spreadsheets, ad hoc emails and paper receipts. Luckily, if your business uses NetSuite, you already have powerful tools at your disposal that make expense managem",
+              "structural_signals": {
+                "word_count": 3589,
+                "paragraph_count": 50,
+                "header_count": 10,
+                "list_item_count": 58,
+                "stat_count": 0,
+                "citation_count": 126,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8003,
+              "domain": "www.zoneandco.com",
+              "url": "https://www.zoneandco.com/articles/streamline-expense-management-with-netsuite",
+              "snippet": "Managing expenses is vital for maintaining financial control, yet many businesses are unknowingly complicating the process by relying on spreadsheets, ad hoc emails and paper receipts. Luckily, if your business uses NetSuite, you already have powerful tools at your disposal that make expense managem",
+              "structural_signals": {
+                "word_count": 3589,
+                "paragraph_count": 50,
+                "header_count": 10,
+                "list_item_count": 58,
+                "stat_count": 0,
+                "citation_count": 126,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_18",
+          "cluster_name": "Decision Criteria",
+          "query_text": "How to evaluate AP automation tools: approval workflows, GL mapping, controls, audit trail",
+          "best_company_unit": "unit_1025",
+          "best_company_unit_text": "List out must-have features based on current workflows. Evaluate team size, technical skill level, and testing volume. Identify integration needs with CI/CD, bug tracking, and collaboration tools. Che",
+          "best_company_similarity": 0.5464356129272769,
+          "avg_citation_similarity": 0.6887417133921148,
+          "gap": 0.14230610046483783,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7685,
+              "domain": "pathlock.com",
+              "url": "https://pathlock.com/blog/internal-controls/accounts-payable-internal-controls/",
+              "snippet": "Use AP automation tools that offer approval workflows, three- or four-way matching, and duplicate detection.",
+              "structural_signals": {
+                "word_count": 6170,
+                "paragraph_count": 154,
+                "header_count": 74,
+                "list_item_count": 68,
+                "stat_count": 15,
+                "citation_count": 226,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7441,
+              "domain": "www.esker.com",
+              "url": "https://www.esker.com/en-sg/blog/accounts-payable/selecting-right-accounts-payable-ap-automation-software-your-business/",
+              "snippet": "When evaluating AP Automation Software, prioritise the following features:",
+              "structural_signals": {
+                "word_count": 1437,
+                "paragraph_count": 54,
+                "header_count": 10,
+                "list_item_count": 153,
+                "stat_count": 7,
+                "citation_count": 142,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7229,
+              "domain": "www.corpay.com",
+              "url": "https://www.corpay.com/resources/blog/ap-automation-software",
+              "snippet": "With numerous options available, selecting the ideal AP automation software requires careful evaluation. Focus on these key criteria and ask targeted questions during your selection process:",
+              "structural_signals": {
+                "word_count": 5365,
+                "paragraph_count": 144,
+                "header_count": 22,
+                "list_item_count": 158,
+                "stat_count": 48,
+                "citation_count": 138,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_17",
+          "cluster_name": "Decision Criteria",
+          "query_text": "Corporate card provider evaluation checklist for startups and mid-market companies",
+          "best_company_unit": "unit_1247",
+          "best_company_unit_text": "Choosing the right corporate card for your company can have a huge impact on the success of your business, which is why so many companies have been turning to Ramp.com as their Rippling alternative. R",
+          "best_company_similarity": 0.5199572931582496,
+          "avg_citation_similarity": 0.648126774476247,
+          "gap": 0.12816948131799744,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7097,
+              "domain": "blog.miden.co",
+              "url": "https://blog.miden.co/the-smart-checklist-for-finding-your-ideal-card-issuing-provider",
+              "snippet": "Smart Checklist on Choosing an Enterprise Card-Issuing Provider",
+              "structural_signals": {
+                "word_count": 1289,
+                "paragraph_count": 66,
+                "header_count": 25,
+                "list_item_count": 38,
+                "stat_count": 24,
+                "citation_count": 25,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6889,
+              "domain": "cashflowdesk.org",
+              "url": "https://cashflowdesk.org/blog/how-to-choose-the-right-corporate-card-solution",
+              "snippet": "9 factors to consider when choosing a corporate card platform",
+              "structural_signals": {
+                "word_count": 2182,
+                "paragraph_count": 78,
+                "header_count": 38,
+                "list_item_count": 30,
+                "stat_count": 5,
+                "citation_count": 24,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "nonprofit",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "nonprofit"
+            },
+            {
+              "similarity": 0.6889,
+              "domain": "cashflowdesk.org",
+              "url": "https://cashflowdesk.org/blog/how-to-choose-the-right-corporate-card-solution",
+              "snippet": "9 factors to consider when choosing a corporate card platform",
+              "structural_signals": {
+                "word_count": 2182,
+                "paragraph_count": 78,
+                "header_count": 38,
+                "list_item_count": 30,
+                "stat_count": 5,
+                "citation_count": 24,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "nonprofit",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "nonprofit"
+            }
+          ]
+        },
+        {
+          "query_id": "q_16",
+          "cluster_name": "Decision Criteria",
+          "query_text": "What should I look for when choosing spend management software for a growing finance team?",
+          "best_company_unit": "unit_814",
+          "best_company_unit_text": "Action: Use a modern procurement solution to make the buying process smoother. A \u201cfront door\u201d for purchasing makes things simpler for employees across the organization and eases back-end administratio",
+          "best_company_similarity": 0.6231983701118594,
+          "avg_citation_similarity": 0.744074697145924,
+          "gap": 0.12087632703406459,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8148,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/blog/spend-management-software/",
+              "snippet": "What to Look for In Spend Management Software Solutions?",
+              "structural_signals": {
+                "word_count": 1965,
+                "paragraph_count": 46,
+                "header_count": 64,
+                "list_item_count": 273,
+                "stat_count": 27,
+                "citation_count": 326,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8148,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/blog/spend-management-software/",
+              "snippet": "What to Look for In Spend Management Software Solutions?",
+              "structural_signals": {
+                "word_count": 1965,
+                "paragraph_count": 46,
+                "header_count": 64,
+                "list_item_count": 273,
+                "stat_count": 27,
+                "citation_count": 326,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8148,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/blog/spend-management-software/",
+              "snippet": "What to Look for In Spend Management Software Solutions?",
+              "structural_signals": {
+                "word_count": 1965,
+                "paragraph_count": 46,
+                "header_count": 64,
+                "list_item_count": 273,
+                "stat_count": 27,
+                "citation_count": 326,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_15",
+          "cluster_name": "Category Comparison",
+          "query_text": "All-in-one spend platforms vs point solutions (cards + expenses + AP): tradeoffs",
+          "best_company_unit": "unit_1380",
+          "best_company_unit_text": "The system wasn\u2019t working\u2014and what\u2019s more, it was beginning to waste employee talent. \u201cBecause we didn\u2019t have a ton of finance resources, other people were having to set up and take time away from the",
+          "best_company_similarity": 0.5068645918632597,
+          "avg_citation_similarity": 0.6191500269046379,
+          "gap": 0.11228543504137822,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.662,
+              "domain": "www.rho.co",
+              "url": "https://www.rho.co/blog/best-ap-automation-software",
+              "snippet": "Point solution limitations: AP point-solutions make it difficult to establish full control and visibility over spending compared to integrated finance solutions with AP capabilities \u200d",
+              "structural_signals": {
+                "word_count": 6384,
+                "paragraph_count": 323,
+                "header_count": 39,
+                "list_item_count": 197,
+                "stat_count": 59,
+                "citation_count": 97,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.662,
+              "domain": "www.rho.co",
+              "url": "https://www.rho.co/blog/best-ap-automation-software",
+              "snippet": "Point solution limitations: AP point-solutions make it difficult to establish full control and visibility over spending compared to integrated finance solutions with AP capabilities \u200d",
+              "structural_signals": {
+                "word_count": 6384,
+                "paragraph_count": 323,
+                "header_count": 39,
+                "list_item_count": 197,
+                "stat_count": 59,
+                "citation_count": 97,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.662,
+              "domain": "www.rho.co",
+              "url": "https://www.rho.co/blog/best-ap-automation-software",
+              "snippet": "Point solution limitations: AP point-solutions make it difficult to establish full control and visibility over spending compared to integrated finance solutions with AP capabilities \u200d",
+              "structural_signals": {
+                "word_count": 6384,
+                "paragraph_count": 323,
+                "header_count": 39,
+                "list_item_count": 197,
+                "stat_count": 59,
+                "citation_count": 97,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_42",
+          "cluster_name": "Feature Verification",
+          "query_text": "Can spend management software handle multi-entity accounting and intercompany allocations?",
+          "best_company_unit": "unit_701",
+          "best_company_unit_text": "They replaced general expense buckets with Ramp Spend Programs \u2014reusable templates that pre-fill approvals, controls, and accounting details so issuing and requesting funds takes just one click. What ",
+          "best_company_similarity": 0.4623494778972162,
+          "avg_citation_similarity": 0.5674162154926318,
+          "gap": 0.10506673759541557,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6105,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/blog/multi-entity-accounting-software/",
+              "snippet": "With multi-entity accounting software, multi-entity companies , subsidiaries, and divisions can budget, perform end-to-end payables and other accounting process workflows, prepare financial statements, and view entity-level reports and dashboards that roll up into consolidated views for the entire c",
+              "structural_signals": {
+                "word_count": 2011,
+                "paragraph_count": 66,
+                "header_count": 66,
+                "list_item_count": 301,
+                "stat_count": 48,
+                "citation_count": 340,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.595,
+              "domain": "www.ofx.com",
+              "url": "https://www.ofx.com/en-au/blog/multi-entity-management/",
+              "snippet": "Whether you\u2019re dealing with local offices or global branches, managing entities can quickly become complex without the right systems in place. Without visibility and control, it\u2019s easy for budgets to slip, approvals to get delayed, and compliance to become a challenge. Traditional tools often don\u2019t ",
+              "structural_signals": {
+                "word_count": 3428,
+                "paragraph_count": 82,
+                "header_count": 17,
+                "list_item_count": 128,
+                "stat_count": 29,
+                "citation_count": 199,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.5946,
+              "domain": "www.gogravity.com",
+              "url": "https://www.gogravity.com/product/financials/multi-entity-accounting-software",
+              "snippet": "Multi-entity accounting software allows businesses to manage the financial operations of multiple companies, divisions, or subsidiaries within a single system. Gravity Software streamlines processes like consolidations, intercompany transactions, and reporting.",
+              "structural_signals": {
+                "word_count": 1250,
+                "paragraph_count": 68,
+                "header_count": 28,
+                "list_item_count": 100,
+                "stat_count": 8,
+                "citation_count": 167,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_28",
+          "cluster_name": "Problem/Awareness",
+          "query_text": "How can I prevent duplicate SaaS subscriptions and uncontrolled software spend?",
+          "best_company_unit": "unit_695",
+          "best_company_unit_text": "Even legitimate expenses can quickly spiral out of control. For example, duplicate spending (paying for the same product or service twice) can be a major problem for even the top-performing companies.",
+          "best_company_similarity": 0.5930026155002714,
+          "avg_citation_similarity": 0.6976198295919122,
+          "gap": 0.10461721409164071,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.755,
+              "domain": "www.zluri.com",
+              "url": "https://www.zluri.com/blog/strategies-to-reduce-duplicate-saas-subscriptions",
+              "snippet": "Duplicate SaaS subscriptions/apps can have a significant impact on your organization. Apart from wasteful spending and operational inefficiencies, it can also lead to data fragmentation and security risks. Therefore, simplifying SaaS inventory and reducing duplicate subscriptions is essential to ens",
+              "structural_signals": {
+                "word_count": 2499,
+                "paragraph_count": 68,
+                "header_count": 12,
+                "list_item_count": 12,
+                "stat_count": 8,
+                "citation_count": 107,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7321,
+              "domain": "www.zluri.com",
+              "url": "https://www.zluri.com/blog/strategies-to-reduce-duplicate-saas-subscriptions",
+              "snippet": "To simplify this and proactively reduce duplicate SaaS subscriptions /apps, there are a few effective strategies that will empower your IT team to take control of your SaaS landscape, enabling you to utilize your subscriptions for maximum efficiency.",
+              "structural_signals": {
+                "word_count": 2499,
+                "paragraph_count": 68,
+                "header_count": 12,
+                "list_item_count": 12,
+                "stat_count": 8,
+                "citation_count": 107,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7304,
+              "domain": "www.cloudeagle.ai",
+              "url": "https://www.cloudeagle.ai/blogs/reduce-duplicated-saas-subscriptions",
+              "snippet": "By the time these issues surface, organizations have already missed negotiation windows, overpaid for redundant tools, and locked themselves into unnecessary contracts. This is why duplicate SaaS subscriptions quickly become one of the most persistent sources of wasted spend across modern SaaS envir",
+              "structural_signals": {
+                "word_count": 3721,
+                "paragraph_count": 189,
+                "header_count": 79,
+                "list_item_count": 111,
+                "stat_count": 6,
+                "citation_count": 351,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_20",
+          "cluster_name": "Decision Criteria",
+          "query_text": "How to estimate ROI for spend management: time saved, leakage reduction, rewards, close speed",
+          "best_company_unit": "unit_814",
+          "best_company_unit_text": "Action: Use a modern procurement solution to make the buying process smoother. A \u201cfront door\u201d for purchasing makes things simpler for employees across the organization and eases back-end administratio",
+          "best_company_similarity": 0.4952842436058359,
+          "avg_citation_similarity": 0.5966711764999323,
+          "gap": 0.1013869328940964,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6747,
+              "domain": "www.enable.com",
+              "url": "https://www.enable.com/blog/calculating-and-measuring-the-potential-roi-of-supplier-rebates",
+              "snippet": "As a starting point for ROI analysis our experts perform a calculation by identifying the customers current time spent on supplier rebate processes and feed in information such as rebate income, annual rebate deals, and average delay in collecting rebate. Now we have a rough estimate, we then take t",
+              "structural_signals": {
+                "word_count": 2414,
+                "paragraph_count": 53,
+                "header_count": 31,
+                "list_item_count": 15,
+                "stat_count": 50,
+                "citation_count": 271,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6747,
+              "domain": "www.enable.com",
+              "url": "https://www.enable.com/blog/calculating-and-measuring-the-potential-roi-of-supplier-rebates",
+              "snippet": "As a starting point for ROI analysis our experts perform a calculation by identifying the customers current time spent on supplier rebate processes and feed in information such as rebate income, annual rebate deals, and average delay in collecting rebate. Now we have a rough estimate, we then take t",
+              "structural_signals": {
+                "word_count": 2414,
+                "paragraph_count": 53,
+                "header_count": 31,
+                "list_item_count": 15,
+                "stat_count": 50,
+                "citation_count": 271,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6268,
+              "domain": "www.corpay.com",
+              "url": "https://www.corpay.com/resources/blog/business-card-cash-back-return-on-spend",
+              "snippet": "(Rebates + Saved Labor + Eliminated Waste + Working Capital Benefits) \u2013 Program Cost = Return on Spend",
+              "structural_signals": {
+                "word_count": 5825,
+                "paragraph_count": 191,
+                "header_count": 31,
+                "list_item_count": 142,
+                "stat_count": 97,
+                "citation_count": 161,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_6",
+          "cluster_name": "Boundary",
+          "query_text": "What are the risks of relying on corporate cards instead of purchase orders for spend control?",
+          "best_company_unit": "unit_694",
+          "best_company_unit_text": "The best way to ensure responsible spending is to issue cards with preset limits to your employees when needs come up. For instance, give your marketing team a card that is restricted to the ad vendor",
+          "best_company_similarity": 0.5578882218729575,
+          "avg_citation_similarity": 0.6508514795756744,
+          "gap": 0.09296325770271685,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6927,
+              "domain": "use.expensify.com",
+              "url": "https://use.expensify.com/resource-center/guides/corporate-p-card",
+              "snippet": "The potential challenges of corporate p-card implementation",
+              "structural_signals": {
+                "word_count": 1737,
+                "paragraph_count": 102,
+                "header_count": 33,
+                "list_item_count": 144,
+                "stat_count": 17,
+                "citation_count": 99,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6927,
+              "domain": "ziphq.com",
+              "url": "https://ziphq.com/blog/how-to-choose-the-right-corporate-cards-for-procurement",
+              "snippet": "However, P-Cards present challenges in maintaining visibility and control. The lack of approval processes for purchases heightens the risk of fraud and abuse. Accounting teams may find themselves in a scramble for receipts at month-end to account for unauthorized or unmonitored spend.",
+              "structural_signals": {
+                "word_count": 767,
+                "paragraph_count": 22,
+                "header_count": 12,
+                "list_item_count": 0,
+                "stat_count": 0,
+                "citation_count": 347,
+                "has_headers": true,
+                "has_lists": false,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.678,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/blog/sharing-corporate-cards-bad-practice",
+              "snippet": "Imagine your typical department head: they likely have a single corporate card and probably 15\u201320 employees that work under them. What happens when these employees need to make a purchase? Ideally, the manager reviews the request and purchases the item with their corporate card. However, it is more ",
+              "structural_signals": {
+                "word_count": 1321,
+                "paragraph_count": 46,
+                "header_count": 15,
+                "list_item_count": 14,
+                "stat_count": 5,
+                "citation_count": 277,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_37",
+          "cluster_name": "Branded Evaluation",
+          "query_text": "Ramp vs Airbase for spend controls, approvals, and accounting automation",
+          "best_company_unit": "unit_1176",
+          "best_company_unit_text": "Ramp is the only spend management software layer that allows you to scale with seamless bank connections, faster payments, and get real-time cash flow visibility. \u201c Ramp is the only vendor that can se",
+          "best_company_similarity": 0.6411600321215474,
+          "avg_citation_similarity": 0.7329608022635725,
+          "gap": 0.09180077014202515,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.799,
+              "domain": "www.oreateai.com",
+              "url": "https://www.oreateai.com/blog/ramp-vs-airbase-navigating-the-landscape-of-expense-management-solutions/ed86711375276878d7a4712e6ea1e31f",
+              "snippet": "Ultimately, choosing between Ramp and Airbase boils down to specific business needs: if you require straightforward integration primarily revolving around employee expenses tied directly to corporate cards without much fuss about overall spend management complexities\u2014Ramp might be your go-to option.",
+              "structural_signals": {
+                "word_count": 407,
+                "paragraph_count": 12,
+                "header_count": 5,
+                "list_item_count": 7,
+                "stat_count": 9,
+                "citation_count": 38,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.799,
+              "domain": "www.oreateai.com",
+              "url": "https://www.oreateai.com/blog/ramp-vs-airbase-navigating-the-landscape-of-expense-management-solutions/ed86711375276878d7a4712e6ea1e31f",
+              "snippet": "Ultimately, choosing between Ramp and Airbase boils down to specific business needs: if you require straightforward integration primarily revolving around employee expenses tied directly to corporate cards without much fuss about overall spend management complexities\u2014Ramp might be your go-to option.",
+              "structural_signals": {
+                "word_count": 407,
+                "paragraph_count": 12,
+                "header_count": 5,
+                "list_item_count": 7,
+                "stat_count": 9,
+                "citation_count": 38,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7925,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/spend-trends/expense-management/ramp-competitors-and-alternatives",
+              "snippet": "Airbase offers better accounts payable automation than Ramp with stronger accounting software integrations. With Airbase, users can opt to skip unnecessary approvals for bills that match up to their purchase order (PO) number. Ramp does not offer that same level of automation.",
+              "structural_signals": {
+                "word_count": 3540,
+                "paragraph_count": 83,
+                "header_count": 61,
+                "list_item_count": 99,
+                "stat_count": 47,
+                "citation_count": 104,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_41",
+          "cluster_name": "Feature Verification",
+          "query_text": "Do spend management platforms support SSO (SAML) and SCIM user provisioning?",
+          "best_company_unit": "unit_180",
+          "best_company_unit_text": "A strong Okta alternative should cover essential identity and access management (IAM) capabilities: single sign-on (SSO), multi-factor authentication (MFA), user provisioning, and lifecycle management",
+          "best_company_similarity": 0.5087219897046034,
+          "avg_citation_similarity": 0.5955995328488509,
+          "gap": 0.08687754314424756,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7117,
+              "domain": "help.fulcrumapp.com",
+              "url": "https://help.fulcrumapp.com/en/articles/4038490-how-do-i-set-up-single-sign-on-and-user-provisioning",
+              "snippet": "SAML-based SSO and SCIM-based user provisioning streamline user access and management by automating onboarding, offboarding, and role assignments through an organization's identity provider.",
+              "structural_signals": {
+                "word_count": 1060,
+                "paragraph_count": 51,
+                "header_count": 18,
+                "list_item_count": 24,
+                "stat_count": 0,
+                "citation_count": 60,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6647,
+              "domain": "help.fulcrumapp.com",
+              "url": "https://help.fulcrumapp.com/en/articles/4038490-how-do-i-set-up-single-sign-on-and-user-provisioning",
+              "snippet": "SAML Single Sign-On (SSO) and SCIM user provisioning are offered with select plans. Visit our pricing page for details.",
+              "structural_signals": {
+                "word_count": 1060,
+                "paragraph_count": 51,
+                "header_count": 18,
+                "list_item_count": 24,
+                "stat_count": 0,
+                "citation_count": 60,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6146,
+              "domain": "helpcenter.spendesk.com",
+              "url": "https://helpcenter.spendesk.com/en/articles/4207643-log-in-using-saml-sso?utm_source=openai",
+              "snippet": "Customers on SAML SSO can now connect their third-party authentication services (i.e. Okta, Onelogin or Microsoft Azure AD ) to Spendesk and streamline user account management.",
+              "structural_signals": {
+                "word_count": 1252,
+                "paragraph_count": 56,
+                "header_count": 11,
+                "list_item_count": 32,
+                "stat_count": 16,
+                "citation_count": 45,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_8",
+          "cluster_name": "Boundary",
+          "query_text": "What are common failure modes when integrating spend management tools with ERPs (coding errors, duplicates, close delays)?",
+          "best_company_unit": "unit_703",
+          "best_company_unit_text": "Accounting automations result in consistent GL coding so transactions arrive \u201cready to sync\u201d to NetSuite, turning what used to be a multi-day chore into a 1-click close. Visibility into spending trend",
+          "best_company_similarity": 0.47986669067253857,
+          "avg_citation_similarity": 0.5654359704815557,
+          "gap": 0.08556927980901713,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6555,
+              "domain": "www.commport.com",
+              "url": "https://www.commport.com/11-edi-erp-integration-mistakes-that-cost-companies-millions/",
+              "snippet": "The most common mistakes include lack of clear integration objectives, over-customizing the ERP system, inadequate data migration planning, relying on manual processes, and using built-in EDI tools without proper evaluation. These errors can lead to project failures, budget overruns, and operational",
+              "structural_signals": {
+                "word_count": 5472,
+                "paragraph_count": 192,
+                "header_count": 30,
+                "list_item_count": 129,
+                "stat_count": 39,
+                "citation_count": 138,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.5951,
+              "domain": "www.commport.com",
+              "url": "https://www.commport.com/11-edi-erp-integration-mistakes-that-cost-companies-millions/",
+              "snippet": "The financial and operational consequences of EDI ERP integration failures clearly extend far beyond initial implementation costs. Throughout this article, we\u2019ve explored eleven critical mistakes that routinely derail integration projects and cost companies millions. These mistakes \u2013 from unclear ob",
+              "structural_signals": {
+                "word_count": 5472,
+                "paragraph_count": 192,
+                "header_count": 30,
+                "list_item_count": 129,
+                "stat_count": 39,
+                "citation_count": 138,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.5872,
+              "domain": "softwareconnect.com",
+              "url": "https://softwareconnect.com/learn/erp-implementation-failures/",
+              "snippet": "ERP system failures often stem from inadequate planning and a mismatch between the software and an organization\u2019s needs. Insufficient training, resistance to change from employees, and budget overruns further complicate implementations.",
+              "structural_signals": {
+                "word_count": 3208,
+                "paragraph_count": 73,
+                "header_count": 34,
+                "list_item_count": 31,
+                "stat_count": 67,
+                "citation_count": 74,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_7",
+          "cluster_name": "Boundary",
+          "query_text": "What compliance requirements apply to corporate card expense management (SOC 2, PCI, GDPR)?",
+          "best_company_unit": "unit_184",
+          "best_company_unit_text": "Different industries bring different access control needs. Healthcare organizations may require HIPAA compliance and detailed audit trails. Financial institutions might need strong encryption, SOC 2 c",
+          "best_company_similarity": 0.48973700109866797,
+          "avg_citation_similarity": 0.5695241006681507,
+          "gap": 0.07978709956948277,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6279,
+              "domain": "www.strikegraph.com",
+              "url": "https://www.strikegraph.com/blog/pci-dss-vs-soc-2",
+              "snippet": "Compliance requirements: Contracts and vendor management typically drive the need for SOC 2 compliance. An organization typically needs to fulfill a requirement to be compliant with a generally accepted framework, and SOC 2 is the most popular in the United States. Other options are typically ISO 27",
+              "structural_signals": {
+                "word_count": 8589,
+                "paragraph_count": 272,
+                "header_count": 39,
+                "list_item_count": 195,
+                "stat_count": 67,
+                "citation_count": 187,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6274,
+              "domain": "eps.edenred.com",
+              "url": "https://eps.edenred.com/blog/corporate-expense-management",
+              "snippet": "Large organisations face numerous regulatory requirements around financial reporting, data protection, and anti-fraud measures. Your card program's policy framework must support compliance with relevant regulations whilst creating an audit trail that satisfies both internal and external scrutiny.",
+              "structural_signals": {
+                "word_count": 2434,
+                "paragraph_count": 87,
+                "header_count": 32,
+                "list_item_count": 62,
+                "stat_count": 18,
+                "citation_count": 99,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6051,
+              "domain": "www.joomdev.com",
+              "url": "https://www.joomdev.com/pci-dss-and-soc-2-compliance/",
+              "snippet": "It depends on your product. If you\u2019re handling credit card data , PCI DSS is mandatory. SOC 2 , on the other hand, is not legally required but strongly recommended \u2014especially if you\u2019re selling to enterprise clients or managing sensitive user data. Most serious fintechs pursue both as they scale.",
+              "structural_signals": {
+                "word_count": 4519,
+                "paragraph_count": 189,
+                "header_count": 67,
+                "list_item_count": 243,
+                "stat_count": 44,
+                "citation_count": 144,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_10",
+          "cluster_name": "Boundary",
+          "query_text": "Ramp data security and compliance limitations (SOC 2 report, data retention, SSO requirements)",
+          "best_company_unit": "unit_1069",
+          "best_company_unit_text": "Enterprise users may also expect compliance support (e.g. SOC 2, GDPR) and activity tracking. Core functionality should support secure workflows across teams without adding friction or risk. Evaluate ",
+          "best_company_similarity": 0.5190651325595093,
+          "avg_citation_similarity": 0.5965822338252948,
+          "gap": 0.07751710126578559,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6629,
+              "domain": "thedefiant.io",
+              "url": "https://thedefiant.io/news/press-releases/ramp-network-achieves-soc2-type-ii-compliance-the-gold-standard-of-financial-data-security",
+              "snippet": "To achieve SOC 2 compliance, Ramp's crypto on-ramp and off-ramp systems underwent a rigorous and transparent assessment that validates its ability to securely manage its customer's data and system operations. The announcement represents a critical triumph for Ramp. SOC 2 compliance ensures that its ",
+              "structural_signals": {
+                "word_count": 768,
+                "paragraph_count": 18,
+                "header_count": 13,
+                "list_item_count": 29,
+                "stat_count": 7,
+                "citation_count": 81,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6575,
+              "domain": "thedefiant.io",
+              "url": "https://thedefiant.io/news/press-releases/ramp-network-achieves-soc2-type-ii-compliance-the-gold-standard-of-financial-data-security",
+              "snippet": "\"At Ramp, we understand that security is not merely an optional enhancement but an essential requirement, particularly in our industry. Since my tenure at Ramp began, we have prioritized strengthening our commitment to Information Security, with SOC2 Attestation our crowning achievement.For us, secu",
+              "structural_signals": {
+                "word_count": 768,
+                "paragraph_count": 18,
+                "header_count": 13,
+                "list_item_count": 29,
+                "stat_count": 7,
+                "citation_count": 81,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6207,
+              "domain": "rampnetwork.com",
+              "url": "https://rampnetwork.com/blog/securing-the-bridge-between-worlds-ramp-network-achieves-soc-type-2-compliance",
+              "snippet": "Achieving SOC 2 Type II compliance is a significant milestone, but it is not the end of our journey. At Ramp Network, we are committed to maintaining the highest standards of Security and operational excellence. We will continue to invest in our infrastructure, enhance our security measures, and rem",
+              "structural_signals": {
+                "word_count": 1522,
+                "paragraph_count": 38,
+                "header_count": 13,
+                "list_item_count": 12,
+                "stat_count": 16,
+                "citation_count": 59,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_43",
+          "cluster_name": "Feature Verification",
+          "query_text": "Does expense management software typically integrate with NetSuite, QuickBooks, and Xero?",
+          "best_company_unit": "unit_703",
+          "best_company_unit_text": "Accounting automations result in consistent GL coding so transactions arrive \u201cready to sync\u201d to NetSuite, turning what used to be a multi-day chore into a 1-click close. Visibility into spending trend",
+          "best_company_similarity": 0.5150291305333831,
+          "avg_citation_similarity": 0.592261869511345,
+          "gap": 0.0772327389779619,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7606,
+              "domain": "www.fylehq.com",
+              "url": "https://www.fylehq.com/",
+              "snippet": "Yes. Sage Expense Management offers direct, two-way integrations with NetSuite, QuickBooks, Xero, and Sage. This automates your accounting and helps you close your books in record time.",
+              "structural_signals": {
+                "word_count": 1948,
+                "paragraph_count": 93,
+                "header_count": 69,
+                "list_item_count": 53,
+                "stat_count": 8,
+                "citation_count": 222,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7179,
+              "domain": "www.fylehq.com",
+              "url": "https://www.fylehq.com/",
+              "snippet": "Does Sage Expense Management integrate with my accounting software?",
+              "structural_signals": {
+                "word_count": 1948,
+                "paragraph_count": 93,
+                "header_count": 69,
+                "list_item_count": 53,
+                "stat_count": 8,
+                "citation_count": 222,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.683,
+              "domain": "www.fylehq.com",
+              "url": "https://www.fylehq.com/",
+              "snippet": "Seamlessly integrate and sync expense data with NetSuite",
+              "structural_signals": {
+                "word_count": 1948,
+                "paragraph_count": 93,
+                "header_count": 69,
+                "list_item_count": 53,
+                "stat_count": 8,
+                "citation_count": 222,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_12",
+          "cluster_name": "Category Comparison",
+          "query_text": "Corporate cards with controls vs employee reimbursements: which is better for finance teams?",
+          "best_company_unit": "unit_1404",
+          "best_company_unit_text": "\u201cHistorically, we partnered with a bank to offer a corporate credit card service, and it was mostly made available to senior leadership across the company,\u201d said Dmitriy Lavenkin, CFO at Candid. \u201cFor ",
+          "best_company_similarity": 0.651645931299677,
+          "avg_citation_similarity": 0.7243557089791082,
+          "gap": 0.07270977767943121,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8157,
+              "domain": "www.expensein.com",
+              "url": "https://www.expensein.com/blog/business-expenses/corporate-cards-vs-expense-reimbursements-which-is-best-for-your-business-",
+              "snippet": "Corporate Cards vs Expense Reimbursements: Which is Best for Your Business?",
+              "structural_signals": {
+                "word_count": 1854,
+                "paragraph_count": 99,
+                "header_count": 22,
+                "list_item_count": 92,
+                "stat_count": 9,
+                "citation_count": 100,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7923,
+              "domain": "www.zeni.ai",
+              "url": "https://www.zeni.ai/blog/corporate-credit-card-management",
+              "snippet": "Corporate credit cards vs. employee reimbursements",
+              "structural_signals": {
+                "word_count": 1137,
+                "paragraph_count": 38,
+                "header_count": 14,
+                "list_item_count": 7,
+                "stat_count": 38,
+                "citation_count": 159,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7669,
+              "domain": "www.getpluto.com",
+              "url": "https://www.getpluto.com/corporate-card/corporate-card-vs-reimbursement",
+              "snippet": "Companies are always toying between reimbursements and corporate cards when it comes to managing employee spending. Reimbursements give finance teams peace of mind\u2014expenses are reviewed before money leaves the company. But this control comes at the cost of delays, manual work, and frustrated employe",
+              "structural_signals": {
+                "word_count": 2077,
+                "paragraph_count": 104,
+                "header_count": 19,
+                "list_item_count": 36,
+                "stat_count": 12,
+                "citation_count": 108,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_26",
+          "cluster_name": "Problem/Awareness",
+          "query_text": "How can I reduce the time employees spend submitting expense reports?",
+          "best_company_unit": "unit_1160",
+          "best_company_unit_text": "Learn how to automate your expense policies to control spend in real time. Be honest: does your current expense policy work? If your finance team are chasing employees for receipts and everyone dreads",
+          "best_company_similarity": 0.6298819692634738,
+          "avg_citation_similarity": 0.7015116181439501,
+          "gap": 0.0716296488804763,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7387,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/spend-trends/expense-management/automated-expense-reporting",
+              "snippet": "Save time and money with automated expense reporting",
+              "structural_signals": {
+                "word_count": 2624,
+                "paragraph_count": 74,
+                "header_count": 36,
+                "list_item_count": 62,
+                "stat_count": 16,
+                "citation_count": 98,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "research"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7387,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/spend-trends/expense-management/automated-expense-reporting",
+              "snippet": "Save time and money with automated expense reporting",
+              "structural_signals": {
+                "word_count": 2624,
+                "paragraph_count": 74,
+                "header_count": 36,
+                "list_item_count": 62,
+                "stat_count": 16,
+                "citation_count": 98,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "research"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7288,
+              "domain": "www.fylehq.com",
+              "url": "https://www.fylehq.com/blog/automated-expense-reporting",
+              "snippet": "Expense reporting: a chore most employees dread. But what if you could ditch the time-consuming paper trails and manual data entry?",
+              "structural_signals": {
+                "word_count": 1338,
+                "paragraph_count": 90,
+                "header_count": 23,
+                "list_item_count": 43,
+                "stat_count": 7,
+                "citation_count": 259,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_35",
+          "cluster_name": "Best-of/Consideration",
+          "query_text": "Best expense management software for small finance teams (under 5 people)",
+          "best_company_unit": "unit_1266",
+          "best_company_unit_text": "\u201cWe try to reduce monotonous, mundane tasks as much as possible,\u201d says CFO Josh Reeves. \u201cWe try to reduce either keying errors in the accounting system or mis-bucketed expenses. We try to bring the da",
+          "best_company_similarity": 0.5725672671982517,
+          "avg_citation_similarity": 0.6372092982142791,
+          "gap": 0.06464203101602739,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7354,
+              "domain": "www.oysterhr.com",
+              "url": "https://www.oysterhr.com/library/best-expense-management-software-for-small-business",
+              "snippet": "7 best expense management software for small businesses",
+              "structural_signals": {
+                "word_count": 2013,
+                "paragraph_count": 80,
+                "header_count": 59,
+                "list_item_count": 111,
+                "stat_count": 6,
+                "citation_count": 135,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7143,
+              "domain": "www.oysterhr.com",
+              "url": "https://www.oysterhr.com/library/best-expense-management-software-for-small-business",
+              "snippet": "Find the best expense management software for small businesses.",
+              "structural_signals": {
+                "word_count": 2013,
+                "paragraph_count": 80,
+                "header_count": 59,
+                "list_item_count": 111,
+                "stat_count": 6,
+                "citation_count": 135,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6814,
+              "domain": "blog.pleo.io",
+              "url": "https://blog.pleo.io/en/5-tools-for-small-business-expense-management",
+              "snippet": "The best expense management software for small businesses doesn\u2019t just keep track of transactions: it gives you and your team confidence, clarity and control over every pound spent. With the right tools, you can cut down on admin, prevent errors before they happen and make smarter, data-driven decis",
+              "structural_signals": {
+                "word_count": 2368,
+                "paragraph_count": 78,
+                "header_count": 24,
+                "list_item_count": 88,
+                "stat_count": 22,
+                "citation_count": 64,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_19",
+          "cluster_name": "Decision Criteria",
+          "query_text": "Questions to ask during a spend management software demo (finance, IT, security)",
+          "best_company_unit": "unit_814",
+          "best_company_unit_text": "Action: Use a modern procurement solution to make the buying process smoother. A \u201cfront door\u201d for purchasing makes things simpler for employees across the organization and eases back-end administratio",
+          "best_company_similarity": 0.5129290466684409,
+          "avg_citation_similarity": 0.5671236514524352,
+          "gap": 0.054194604783994293,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6504,
+              "domain": "www.spendesk.com",
+              "url": "https://www.spendesk.com/blog/spend-management-checklist/",
+              "snippet": "These are just a few of the questions you need to ask yourself (and answer!) when looking for a new spend management tool. If you\u2019d like to see the entire set of questions, download our checklist .",
+              "structural_signals": {
+                "word_count": 1923,
+                "paragraph_count": 53,
+                "header_count": 15,
+                "list_item_count": 76,
+                "stat_count": 4,
+                "citation_count": 131,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6438,
+              "domain": "www.spendesk.com",
+              "url": "https://www.spendesk.com/blog/spend-management-checklist/",
+              "snippet": "Here are some questions to ask yourself, your team, and your leaders to determine what goals you\u2019d like your spend management tool to help you reach:",
+              "structural_signals": {
+                "word_count": 1923,
+                "paragraph_count": 53,
+                "header_count": 15,
+                "list_item_count": 76,
+                "stat_count": 4,
+                "citation_count": 131,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6088,
+              "domain": "roofr.com",
+              "url": "https://roofr.com/blog/question-to-ask-in-a-software-demo",
+              "snippet": "Hopefully with this list behind you, you can feel empowered in the next software demo you do. These questions are aimed to help you better understand who a company is, the type of support they'll offer you as a customer, any hidden fees they're not telling you about, and whether or not their tool is",
+              "structural_signals": {
+                "word_count": 912,
+                "paragraph_count": 35,
+                "header_count": 20,
+                "list_item_count": 3,
+                "stat_count": 1,
+                "citation_count": 116,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_33",
+          "cluster_name": "Best-of/Consideration",
+          "query_text": "Best corporate cards with virtual cards and spend controls for distributed teams",
+          "best_company_unit": "unit_694",
+          "best_company_unit_text": "The best way to ensure responsible spending is to issue cards with preset limits to your employees when needs come up. For instance, give your marketing team a card that is restricted to the ad vendor",
+          "best_company_similarity": 0.5993553956865605,
+          "avg_citation_similarity": 0.6481571888587587,
+          "gap": 0.04880179317219824,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8299,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/spend-trends/expense-management/ramp-competitors-and-alternatives",
+              "snippet": "Physical and virtual corporate cards with customizable controls",
+              "structural_signals": {
+                "word_count": 3540,
+                "paragraph_count": 83,
+                "header_count": 61,
+                "list_item_count": 99,
+                "stat_count": 47,
+                "citation_count": 104,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.767,
+              "domain": "navan.com",
+              "url": "https://navan.com/blog/brex-alternatives",
+              "snippet": "Corporate cards with built-in policy and spend controls",
+              "structural_signals": {
+                "word_count": 1495,
+                "paragraph_count": 71,
+                "header_count": 25,
+                "list_item_count": 226,
+                "stat_count": 25,
+                "citation_count": 225,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.725,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/business-credit-cards",
+              "snippet": "Virtual cards and role-based controls. Virtual cards improve visibility and control by assigning spending to specific tools or teams. 94% of firms say virtual card transactions are faster, more detailed, and more secure, making them a strong fit for modern finance operations.",
+              "structural_signals": {
+                "word_count": 6363,
+                "paragraph_count": 235,
+                "header_count": 63,
+                "list_item_count": 136,
+                "stat_count": 106,
+                "citation_count": 312,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_22",
+          "cluster_name": "Definition",
+          "query_text": "What are spend controls on corporate cards?",
+          "best_company_unit": "unit_694",
+          "best_company_unit_text": "The best way to ensure responsible spending is to issue cards with preset limits to your employees when needs come up. For instance, give your marketing team a card that is restricted to the ad vendor",
+          "best_company_similarity": 0.6539921537600695,
+          "avg_citation_similarity": 0.6981463997642847,
+          "gap": 0.04415424600421525,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.754,
+              "domain": "www.usbank.com",
+              "url": "https://www.usbank.com/customer-service/knowledge-base/KB0267442.html",
+              "snippet": "Spend Management offers security and flexibility to allow a business the ability to place card controls of their choice on their cards. A business owner and admin(s) can set, view, and manage card limits and restrictions for each user\u2019s card(s). For those on the Pro Plus Spend Management plan, depar",
+              "structural_signals": {
+                "word_count": 2448,
+                "paragraph_count": 53,
+                "header_count": 6,
+                "list_item_count": 335,
+                "stat_count": 10,
+                "citation_count": 229,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7304,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/platform/spend-limits?utm_source=openai",
+              "snippet": "What types of controls are available with spend limits?",
+              "structural_signals": {
+                "word_count": 873,
+                "paragraph_count": 45,
+                "header_count": 37,
+                "list_item_count": 61,
+                "stat_count": 7,
+                "citation_count": 61,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7304,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/platform/spend-limits?utm_source=openai",
+              "snippet": "What types of controls are available with spend limits?",
+              "structural_signals": {
+                "word_count": 873,
+                "paragraph_count": 45,
+                "header_count": 37,
+                "list_item_count": 61,
+                "stat_count": 7,
+                "citation_count": 61,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_31",
+          "cluster_name": "Best-of/Consideration",
+          "query_text": "Best spend management software for startups in 2026",
+          "best_company_unit": "unit_814",
+          "best_company_unit_text": "Action: Use a modern procurement solution to make the buying process smoother. A \u201cfront door\u201d for purchasing makes things simpler for employees across the organization and eases back-end administratio",
+          "best_company_similarity": 0.567529073280031,
+          "avg_citation_similarity": 0.6089652742912042,
+          "gap": 0.04143620101117318,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7571,
+              "domain": "www.payem.co",
+              "url": "https://www.payem.co/blog/best-spend-management-corporate-cards-software-for-small-business-in-the-us",
+              "snippet": "Top 7 Spend Management Platforms for Small Business (2026)",
+              "structural_signals": {
+                "word_count": 1993,
+                "paragraph_count": 138,
+                "header_count": 35,
+                "list_item_count": 218,
+                "stat_count": 61,
+                "citation_count": 83,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7138,
+              "domain": "mercury.com",
+              "url": "https://mercury.com/blog/best-expense-management-software-startups-small-businesses",
+              "snippet": "Best expense management software for startups and SMBs",
+              "structural_signals": {
+                "word_count": 1306,
+                "paragraph_count": 55,
+                "header_count": 27,
+                "list_item_count": 67,
+                "stat_count": 0,
+                "citation_count": 162,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7138,
+              "domain": "mercury.com",
+              "url": "https://mercury.com/blog/best-expense-management-software-startups-small-businesses",
+              "snippet": "Best expense management software for startups and SMBs",
+              "structural_signals": {
+                "word_count": 1306,
+                "paragraph_count": 55,
+                "header_count": 27,
+                "list_item_count": 67,
+                "stat_count": 0,
+                "citation_count": 162,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_44",
+          "cluster_name": "Feature Verification",
+          "query_text": "Do corporate card platforms support merchant category blocking and transaction-level limits?",
+          "best_company_unit": "unit_694",
+          "best_company_unit_text": "The best way to ensure responsible spending is to issue cards with preset limits to your employees when needs come up. For instance, give your marketing team a card that is restricted to the ad vendor",
+          "best_company_similarity": 0.5682476978033615,
+          "avg_citation_similarity": 0.6065749941810166,
+          "gap": 0.038327296377655085,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6538,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/support/manage-your-card?utm_source=openai",
+              "snippet": "Restrict merchants or categories: If your card is a purchasing card, you can block or only allow certain merchants, categories, or merchant category codes here. If you would like to adjust this control for a limit card, navigate to the assigned spend limit.",
+              "structural_signals": {
+                "word_count": 3169,
+                "paragraph_count": 78,
+                "header_count": 27,
+                "list_item_count": 59,
+                "stat_count": 9,
+                "citation_count": 88,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6437,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/blog/corporate-credit-card-limit-for-employees",
+              "snippet": "These limits control employee spending by restricting or allowing specific merchant categories. You can allow travel and meals but block retail, alcohol, or electronics.",
+              "structural_signals": {
+                "word_count": 2403,
+                "paragraph_count": 74,
+                "header_count": 24,
+                "list_item_count": 24,
+                "stat_count": 16,
+                "citation_count": 286,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6437,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/blog/corporate-credit-card-limit-for-employees",
+              "snippet": "These limits control employee spending by restricting or allowing specific merchant categories. You can allow travel and meals but block retail, alcohol, or electronics.",
+              "structural_signals": {
+                "word_count": 2403,
+                "paragraph_count": 74,
+                "header_count": 24,
+                "list_item_count": 24,
+                "stat_count": 16,
+                "citation_count": 286,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_30",
+          "cluster_name": "Problem/Awareness",
+          "query_text": "How can I improve audit readiness for employee spend and vendor payments?",
+          "best_company_unit": "unit_814",
+          "best_company_unit_text": "Action: Use a modern procurement solution to make the buying process smoother. A \u201cfront door\u201d for purchasing makes things simpler for employees across the organization and eases back-end administratio",
+          "best_company_similarity": 0.5661400597503987,
+          "avg_citation_similarity": 0.6008369530043379,
+          "gap": 0.03469689325393921,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6894,
+              "domain": "www.fraxion.biz",
+              "url": "https://www.fraxion.biz/blog/how-a-spend-management-solution-enforces-spending-policy",
+              "snippet": "The key to effective audit preparation is having systems in place that reduce your workload through automation, ensure best practices and provide complete spend visibility. Using a spend management solution , for example, can simplify aspects of your audit with features that enable spend transparenc",
+              "structural_signals": {
+                "word_count": 1316,
+                "paragraph_count": 39,
+                "header_count": 19,
+                "list_item_count": 63,
+                "stat_count": 2,
+                "citation_count": 85,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6696,
+              "domain": "www.fidesic.com",
+              "url": "https://www.fidesic.com/blog/accounts-payable-auditing-readiness-best-practices",
+              "snippet": "Accounts Payable Auditing Readiness Best Practices",
+              "structural_signals": {
+                "word_count": 1447,
+                "paragraph_count": 37,
+                "header_count": 31,
+                "list_item_count": 50,
+                "stat_count": 4,
+                "citation_count": 76,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6519,
+              "domain": "www.concur.com",
+              "url": "https://www.concur.com/blog/article/best-practices-and-checklists-for-efficient-expense-audits",
+              "snippet": "Strengthening internal spend compliance with solutions that audit expenses, automate manual tasks, make processes and employees more efficient, improve control and insights, enforce and simplify policies, and save time and money to help the business move forward faster.",
+              "structural_signals": {
+                "word_count": 2020,
+                "paragraph_count": 74,
+                "header_count": 13,
+                "list_item_count": 182,
+                "stat_count": 8,
+                "citation_count": 179,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_36",
+          "cluster_name": "Branded Evaluation",
+          "query_text": "Ramp vs Brex vs Divvy corporate card and spend management comparison",
+          "best_company_unit": "unit_1247",
+          "best_company_unit_text": "Choosing the right corporate card for your company can have a huge impact on the success of your business, which is why so many companies have been turning to Ramp.com as their Rippling alternative. R",
+          "best_company_similarity": 0.7017476606208586,
+          "avg_citation_similarity": 0.7341951297757822,
+          "gap": 0.03244746915492358,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8038,
+              "domain": "checkthat.ai",
+              "url": "https://checkthat.ai/answers/ramp-vs-brex",
+              "snippet": "Ramp vs Brex in 2026: Which Corporate Card is Best for SMBs?",
+              "structural_signals": {
+                "word_count": 2023,
+                "paragraph_count": 59,
+                "header_count": 30,
+                "list_item_count": 41,
+                "stat_count": 91,
+                "citation_count": 45,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7917,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/blog/brex-vs-bill",
+              "snippet": "If you're looking for a corporate card that goes beyond spend management, Ramp delivers the most complete package. While Brex and BILL each offer strong features, Ramp brings real automation, global flexibility, and deeper finance controls under one roof. Here\u2019s how all three compare across the area",
+              "structural_signals": {
+                "word_count": 3213,
+                "paragraph_count": 93,
+                "header_count": 33,
+                "list_item_count": 20,
+                "stat_count": 37,
+                "citation_count": 296,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7917,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/blog/brex-vs-bill",
+              "snippet": "If you're looking for a corporate card that goes beyond spend management, Ramp delivers the most complete package. While Brex and BILL each offer strong features, Ramp brings real automation, global flexibility, and deeper finance controls under one roof. Here\u2019s how all three compare across the area",
+              "structural_signals": {
+                "word_count": 3213,
+                "paragraph_count": 93,
+                "header_count": 33,
+                "list_item_count": 20,
+                "stat_count": 37,
+                "citation_count": 296,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_9",
+          "cluster_name": "Boundary",
+          "query_text": "Ramp availability and limitations for international subsidiaries and multi-currency spending",
+          "best_company_unit": "unit_1176",
+          "best_company_unit_text": "Ramp is the only spend management software layer that allows you to scale with seamless bank connections, faster payments, and get real-time cash flow visibility. \u201c Ramp is the only vendor that can se",
+          "best_company_similarity": 0.6126995541943596,
+          "avg_citation_similarity": 0.6193264521778478,
+          "gap": 0.006626897983488145,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7334,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/enterprise",
+              "snippet": "Yes. Ramp's enterprise platform is built for global operations, supporting spending across 190+ countries with comprehensive multi-entity and local currency capabilities.",
+              "structural_signals": {
+                "word_count": 5472,
+                "paragraph_count": 148,
+                "header_count": 36,
+                "list_item_count": 33,
+                "stat_count": 87,
+                "citation_count": 334,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6679,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/enterprise",
+              "snippet": "Does Ramp support international and multi-entity operations?",
+              "structural_signals": {
+                "word_count": 5472,
+                "paragraph_count": 148,
+                "header_count": 36,
+                "list_item_count": 33,
+                "stat_count": 87,
+                "citation_count": 334,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6615,
+              "domain": "www.nerdwallet.com",
+              "url": "https://www.nerdwallet.com/business/credit-cards/reviews/ramp-card",
+              "snippet": "Must have most of your operations and corporate spend in the US (although Ramp does support international transactions and will waive all related transaction fees).",
+              "structural_signals": {
+                "word_count": 811,
+                "paragraph_count": 41,
+                "header_count": 11,
+                "list_item_count": 27,
+                "stat_count": 17,
+                "citation_count": 414,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_29",
+          "cluster_name": "Problem/Awareness",
+          "query_text": "How can I speed up month-end close when expenses and invoices come in late?",
+          "best_company_unit": "unit_1817",
+          "best_company_unit_text": "\u201cAs finance and reporting want data faster and faster, they want month-end close faster and faster,\u201d explains Anna. \u201cThose three, four, five-day lags can add up to a lot.\u201d Anna estimates that she pers",
+          "best_company_similarity": 0.6436060616810313,
+          "avg_citation_similarity": 0.6467711822400355,
+          "gap": 0.0031651205590041975,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7367,
+              "domain": "www.zenskar.com",
+              "url": "https://www.zenskar.com/blog/month-end-close-process",
+              "snippet": "What are the best practices to speed up your month-end close?",
+              "structural_signals": {
+                "word_count": 2584,
+                "paragraph_count": 108,
+                "header_count": 44,
+                "list_item_count": 120,
+                "stat_count": 43,
+                "citation_count": 214,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7046,
+              "domain": "tipalti.com",
+              "url": "https://tipalti.com/resources/learn/month-end-close-process/",
+              "snippet": "How can your business improve its month-end close?",
+              "structural_signals": {
+                "word_count": 2929,
+                "paragraph_count": 85,
+                "header_count": 61,
+                "list_item_count": 325,
+                "stat_count": 31,
+                "citation_count": 320,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6828,
+              "domain": "www.getmoss.com",
+              "url": "https://www.getmoss.com/en-gb/finance-guide/month-end-close-best-practices",
+              "snippet": "Another excellent approach to month-end close efficiency is adopting a continuous close approach. In other words, instead of waiting until the end of the month, make it a point to review and reconcile your transactions regularly. This will help you avoid the last-minute crunch and prevent discrepanc",
+              "structural_signals": {
+                "word_count": 2469,
+                "paragraph_count": 76,
+                "header_count": 33,
+                "list_item_count": 71,
+                "stat_count": 10,
+                "citation_count": 123,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_39",
+          "cluster_name": "Branded Evaluation",
+          "query_text": "Ramp vs Bill.com for accounts payable automation and bill payments",
+          "best_company_unit": "unit_1601",
+          "best_company_unit_text": "Ramp has processed 161730 transactions for Bill.com . You might see Bill.com listed on your credit card statement as: Bill.com is a software company that simplifies and automates the financial back-of",
+          "best_company_similarity": 0.7572309025407381,
+          "avg_citation_similarity": 0.7473950013151265,
+          "gap": -0.00983590122561162,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8083,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/blog/top-bill-alternatives",
+              "snippet": "Around 1,800 businesses have chosen Ramp over Bill.com, opting for a solution that prioritizes automation, cost efficiency, and ease of use. For a more detailed comparison, check out our deeper dive into Ramp vs. Bill.com .",
+              "structural_signals": {
+                "word_count": 3565,
+                "paragraph_count": 145,
+                "header_count": 50,
+                "list_item_count": 69,
+                "stat_count": 39,
+                "citation_count": 314,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8066,
+              "domain": "www.hirechore.com",
+              "url": "https://www.hirechore.com/startups/ramp-vs-bill-com-vs-mercury-comparing-ap-ar-automation-tools-for-startups",
+              "snippet": "Ramp vs. Bill.com vs. Mercury: A Detailed Comparison",
+              "structural_signals": {
+                "word_count": 2954,
+                "paragraph_count": 126,
+                "header_count": 63,
+                "list_item_count": 59,
+                "stat_count": 15,
+                "citation_count": 107,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8023,
+              "domain": "ramp.com",
+              "url": "https://ramp.com/blog/top-bill-alternatives",
+              "snippet": "When evaluating Bill.com alternatives, businesses most often make decisions based on cost, automation, and overall spend management. For companies looking to streamline AP workflows, reduce manual work, and optimize spending, Ramp offers a more cost-effective and automation-driven approach.",
+              "structural_signals": {
+                "word_count": 3565,
+                "paragraph_count": 145,
+                "header_count": 50,
+                "list_item_count": 69,
+                "stat_count": 39,
+                "citation_count": 314,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_1",
+          "cluster_name": "Mechanism",
+          "query_text": "How does real-time spend control work on corporate cards?",
+          "best_company_unit": "unit_694",
+          "best_company_unit_text": "The best way to ensure responsible spending is to issue cards with preset limits to your employees when needs come up. For instance, give your marketing team a card that is restricted to the ad vendor",
+          "best_company_similarity": 0.6300703197236097,
+          "avg_citation_similarity": 0.6085057978448215,
+          "gap": -0.021564521878788212,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6901,
+              "domain": "www.vic.ai",
+              "url": "https://www.vic.ai/expense-management-corporate-card",
+              "snippet": "Real-time spend controls: Set spending limits, categories, and expiration dates in real time. \u200d",
+              "structural_signals": {
+                "word_count": 162,
+                "paragraph_count": 13,
+                "header_count": 10,
+                "list_item_count": 12,
+                "stat_count": 1,
+                "citation_count": 131,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6801,
+              "domain": "www.rho.co",
+              "url": "https://www.rho.co/blog/corporate-credit-card-expense-management-software",
+              "snippet": "Businesses can issue corporate cards with built-in, adjustable spending controls. The software captures receipts and automatically posts expenses to the correct GL accounts. Managers can set up cards for single-use or recurring expenses, and track spending in real time. Users can issue virtual or ph",
+              "structural_signals": {
+                "word_count": 8038,
+                "paragraph_count": 329,
+                "header_count": 105,
+                "list_item_count": 187,
+                "stat_count": 79,
+                "citation_count": 141,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6551,
+              "domain": "moreinfo.rho.co",
+              "url": "https://moreinfo.rho.co/spend-management-platform-with-instant-virtual-card-issuance?utm_source=openai",
+              "snippet": "Which corporate card has robust controls and customized spending policies?",
+              "structural_signals": {
+                "word_count": 260,
+                "paragraph_count": 12,
+                "header_count": 1,
+                "list_item_count": 6,
+                "stat_count": 2,
+                "citation_count": 7,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_5",
+          "cluster_name": "Mechanism",
+          "query_text": "How does spend management software sync transactions to NetSuite or QuickBooks?",
+          "best_company_unit": "unit_703",
+          "best_company_unit_text": "Accounting automations result in consistent GL coding so transactions arrive \u201cready to sync\u201d to NetSuite, turning what used to be a multi-day chore into a 1-click close. Visibility into spending trend",
+          "best_company_similarity": 0.6049235441332176,
+          "avg_citation_similarity": 0.5740865720901748,
+          "gap": -0.03083697204304281,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.705,
+              "domain": "use.expensify.com",
+              "url": "https://use.expensify.com/blog/cloud-based-spend-management",
+              "snippet": "How do these tools integrate with accounting systems? Most modern spend management platforms integrate directly with popular accounting systems like QuickBooks, NetSuite, Xero, and Sage Intacct. These integrations automatically sync expense data, eliminating manual data entry and reducing reconcilia",
+              "structural_signals": {
+                "word_count": 4879,
+                "paragraph_count": 187,
+                "header_count": 49,
+                "list_item_count": 126,
+                "stat_count": 28,
+                "citation_count": 125,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7043,
+              "domain": "use.expensify.com",
+              "url": "https://use.expensify.com/blog/cloud-based-spend-management",
+              "snippet": "Most modern spend management platforms integrate directly with popular accounting systems like QuickBooks, NetSuite, Xero, and Sage Intacct. These integrations automatically sync expense data, eliminating manual data entry and reducing reconciliation time.",
+              "structural_signals": {
+                "word_count": 4879,
+                "paragraph_count": 187,
+                "header_count": 49,
+                "list_item_count": 126,
+                "stat_count": 28,
+                "citation_count": 125,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6716,
+              "domain": "use.expensify.com",
+              "url": "https://use.expensify.com/blog/cloud-based-spend-management",
+              "snippet": "Seamless integrations: Plugs directly into QuickBooks , NetSuite , Xero , and Sage Intacct . Your spend data lives where your accounting team needs it, automatically.",
+              "structural_signals": {
+                "word_count": 4879,
+                "paragraph_count": 187,
+                "header_count": 49,
+                "list_item_count": 126,
+                "stat_count": 28,
+                "citation_count": 125,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_38",
+          "cluster_name": "Branded Evaluation",
+          "query_text": "Ramp vs Navan for travel and expense management",
+          "best_company_unit": "unit_1349",
+          "best_company_unit_text": "Navan is a travel-first platform designed to help with trip booking, with a separate expense management suite. Ramp is an all-in-one finance automation tool that saves companies 5% on average and clos",
+          "best_company_similarity": 0.8004112944981021,
+          "avg_citation_similarity": 0.7467407426359601,
+          "gap": -0.05367055186214198,
+          "interpretation": "company_wins",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8444,
+              "domain": "www.trustradius.com",
+              "url": "https://www.trustradius.com/compare-products/navan-vs-ramp-finance-automation-platform",
+              "snippet": "Users of Navan and Ramp utilize these platforms primarily for corporate travel management, but their approach and features have some poignant differences. Navan has been popular across global organizations, widely adopted for its seamless integration with corporate workflow, enabling ease of schedul",
+              "structural_signals": {
+                "word_count": 799,
+                "paragraph_count": 26,
+                "header_count": 12,
+                "list_item_count": 112,
+                "stat_count": 2,
+                "citation_count": 152,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8408,
+              "domain": "www.trustradius.com",
+              "url": "https://www.trustradius.com/compare-products/navan-vs-ramp-finance-automation-platform",
+              "snippet": "Both Navan and Ramp are designed to cater to the needs of organizations requiring robust travel management solutions, yet the scope of integration with other business functions sets them apart. Navan has carved a niche in simplifying and incentivising the travel booking process, directly impacting e",
+              "structural_signals": {
+                "word_count": 799,
+                "paragraph_count": 26,
+                "header_count": 12,
+                "list_item_count": 112,
+                "stat_count": 2,
+                "citation_count": 152,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8164,
+              "domain": "navan.com",
+              "url": "https://navan.com/resources/compare/navan-vs-ramp",
+              "snippet": "Ramp requires that customers use multiple vendors and contracts to patch together a full travel and expense program. Meanwhile, Navan integrates travel and expense management into a single, intuitive platform that companies will never outgrow. That\u2019s why companies like Apptegy made the switch to Nav",
+              "structural_signals": {
+                "word_count": 1211,
+                "paragraph_count": 38,
+                "header_count": 33,
+                "list_item_count": 168,
+                "stat_count": 21,
+                "citation_count": 224,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_40",
+          "cluster_name": "Branded Evaluation",
+          "query_text": "Ramp alternatives for spend management and corporate cards",
+          "best_company_unit": "unit_1176",
+          "best_company_unit_text": "Ramp is the only spend management software layer that allows you to scale with seamless bank connections, faster payments, and get real-time cash flow visibility. \u201c Ramp is the only vendor that can se",
+          "best_company_similarity": 0.7672461927860607,
+          "avg_citation_similarity": 0.7029302250835294,
+          "gap": -0.06431596770253123,
+          "interpretation": "company_wins",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7845,
+              "domain": "www.rho.co",
+              "url": "https://www.rho.co/blog/ramp-alternatives",
+              "snippet": "Ramp is a company that provides spend management solutions, corporate cards, and accounts payable solutions, all designed to save time and money for finance teams. Their platform aims to replace multiple tools with a single, efficient solution. However, Ramp doesn't fit all companies' needs, and som",
+              "structural_signals": {
+                "word_count": 4735,
+                "paragraph_count": 214,
+                "header_count": 34,
+                "list_item_count": 159,
+                "stat_count": 84,
+                "citation_count": 98,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7744,
+              "domain": "www.rho.co",
+              "url": "https://www.rho.co/blog/ramp-vs-mercury",
+              "snippet": "Ramp operates in the spend management, corporate cards, and accounts payable solutions category. Its main value proposition is to save time and money for finance teams by offering a unified platform for corporate cards, bill payments, and accounting. Ramp primarily targets startups, small businesses",
+              "structural_signals": {
+                "word_count": 3663,
+                "paragraph_count": 160,
+                "header_count": 26,
+                "list_item_count": 129,
+                "stat_count": 74,
+                "citation_count": 94,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7595,
+              "domain": "www.getkleercard.com",
+              "url": "https://www.getkleercard.com/blogs/ramp-card-review",
+              "snippet": "The Ramp card represents a fundamental shift in how businesses approach corporate spending and expense management. Launched in 2019, Ramp has quickly established itself as a leading business expense management platform that combines a corporate charge card with comprehensive financial operations sof",
+              "structural_signals": {
+                "word_count": 13932,
+                "paragraph_count": 661,
+                "header_count": 171,
+                "list_item_count": 256,
+                "stat_count": 111,
+                "citation_count": 234,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_27",
+          "cluster_name": "Problem/Awareness",
+          "query_text": "How can finance enforce expense policies without manually reviewing every transaction?",
+          "best_company_unit": "unit_1160",
+          "best_company_unit_text": "Learn how to automate your expense policies to control spend in real time. Be honest: does your current expense policy work? If your finance team are chasing employees for receipts and everyone dreads",
+          "best_company_similarity": 0.7472907197582942,
+          "avg_citation_similarity": 0.6828067004051377,
+          "gap": -0.06448401935315651,
+          "interpretation": "company_wins",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7684,
+              "domain": "www.fylehq.com",
+              "url": "https://www.fylehq.com/blog/expense-compliance-real-time-expense-policy-violation-checks",
+              "snippet": "Enforcing the expense policies of your company can be tricky. Even if employees are made aware of the rules, self-enforcement is not very realistic. As a Finance team , you need a way to enforce these policies in a manner that doesn\u2019t drain your resources.",
+              "structural_signals": {
+                "word_count": 1025,
+                "paragraph_count": 47,
+                "header_count": 19,
+                "list_item_count": 16,
+                "stat_count": 10,
+                "citation_count": 249,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7135,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/spend-trends/expense-management/best-expense-management-software-solution",
+              "snippet": "This shift to preventive controls fundamentally changes how finance teams operate. Instead of reviewing hundreds of routine, compliant transactions, expense tracking software automatically approves in-policy expenses and only surfaces exceptions for human review. A marketing manager booking a flight",
+              "structural_signals": {
+                "word_count": 7687,
+                "paragraph_count": 180,
+                "header_count": 92,
+                "list_item_count": 135,
+                "stat_count": 47,
+                "citation_count": 110,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7116,
+              "domain": "www.expensein.com",
+              "url": "https://www.expensein.com/expense-management/automated-policies",
+              "snippet": "That's exactly where automated policies come into play. Tools like ExpenseIn , with their automated policies, help to closely monitor expenses and enforce rules.",
+              "structural_signals": {
+                "word_count": 1022,
+                "paragraph_count": 56,
+                "header_count": 28,
+                "list_item_count": 52,
+                "stat_count": 4,
+                "citation_count": 89,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        }
+      ],
+      "decision_metrics": {
+        "total_queries": 45,
+        "total_citations": 793,
+        "avg_gap": 0.0984542281625186
+      }
+    },
+    "visualization_paths": [
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/ramp/visualizations/embedding_space.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/ramp/visualizations/gap_heatmap.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/ramp/visualizations/gap_distribution.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/ramp/visualizations/citation_treemap.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/ramp/visualizations/cluster_radar.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/ramp/visualizations/tsne_embedding_space.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/ramp/visualizations/umap_embedding_space.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/ramp/visualizations/tsne_clustered.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/ramp/visualizations/umap_clustered.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/ramp/visualizations/similarity_distribution.html"
+    ],
+    "resolved_artifacts": {
+      "company_context_path": "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/company_context/ramp.md",
+      "persona_paths": [
+        "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/personas/ramp__persona-icp.md"
+      ],
+      "style_guide_path": null
+    },
+    "produced_artifacts": [
+      {
+        "type": "gap_analysis",
+        "slug": "ramp"
+      }
+    ]
+  },
+  "error": null,
+  "approval_payload": null,
+  "approval_history": []
+}
