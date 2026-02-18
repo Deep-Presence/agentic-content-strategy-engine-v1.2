@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     discord_webhook_url: str = ""
 
     # Content Generation Engine – Models
-    content_engine_planner_model: str = "claude-sonnet-4-5-20250929"
+    content_engine_planner_model: str = "claude-opus-4-5-20260218"
     content_engine_worker_model: str = "claude-sonnet-4-5-20250929"
     content_engine_formatter_model: str = "claude-haiku-4-5-20251001"
     content_engine_style_judge_model: str = "claude-haiku-4-5-20251001"
@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     # Content Generation Engine – Concurrency
     content_engine_max_concurrent_workers: int = 3
     content_engine_max_revision_cycles: int = 2
+
+    # Content Generation Engine – Format-aware revision cycles (v2.0)
+    # JSON string mapping content_format enum → max revision cycles
+    content_engine_revision_cycles_by_format: str = (
+        '{"pillar_page": 3, "comparison": 3, "long_blog": 2, "how_to": 2, "short_faq": 1}'
+    )
 
     # Langfuse (observability)
     langfuse_public_key: str | None = None

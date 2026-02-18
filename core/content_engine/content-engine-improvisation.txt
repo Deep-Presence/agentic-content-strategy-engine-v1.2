@@ -1,0 +1,622 @@
+Content Generation Engine (Pipeline) — Full Walkthrough
+Purpose
+Deep Presence helps B2B companies get cited in AI search results (Perplexity, ChatGPT, Claude, Gemini). The content engine is the final, revenue-generating pipeline. It takes everything the system has learned about a company — who they are (Pipeline 1: Research Artifacts) and where they're missing from AI citations (Pipeline 2: Gap Analysis) — and auto-generates optimized content designed to close those citation gaps.
+
+In short: Pipeline 1 answers "Who is this company?", Pipeline 2 answers "Where are they invisible to AI?", and Pipeline 3 answers "What content should they publish to become visible?"
+
+The 4-Stage Pipeline
+
+[Stage 1] Strategic Planner
+     ↓
+[Stage 2] Content Workers (parallel)
+     ↓
+[Stage 3] Evaluator-Optimizer Loop
+     ↓
+[Stage 4] Human-in-the-Loop Review
+Stage 1 — Strategic Planner
+A single Claude Sonnet 4.5 call that reads all outputs from Pipelines 1 and 2:
+
+Company context, persona profiles, style guide (from P1)
+Gap report, generation spec, analysis JSON (from P2)
+It identifies the highest-impact content opportunities — the queries where the company is semantically distant from what AI platforms are citing — and produces prioritized content briefs. Each brief specifies:
+
+Target queries to optimize for
+Content format (long blog, FAQ, pillar page, comparison, how-to)
+Funnel stage, channel, priority score
+Word count range, structural targets (min headers, lists, citations)
+Key topics, angles, and competitor exemplars to learn from
+Stage 2 — Content Workers (Parallel)
+Each brief gets assigned to a worker that runs a 4-step chain concurrently (controlled by an asyncio.Semaphore, default 3 workers):
+
+Step	Model	What it does
+Outliner	Sonnet 4.5	Produces a structured section-by-section outline
+Drafter	Sonnet 4.5	Writes the full article from the outline + style guide
+Fact Enricher	Perplexity sonar-pro	Web-grounds the draft with real citations and statistics
+Formatter	Haiku 4.5	Final polish, counts structural elements (headers, lists, stats, citations)
+Every intermediate artifact is saved to disk for auditability and resumability.
+
+Stage 3 — Evaluator-Optimizer Loop
+Each piece of content goes through a 4-dimensional quality gate:
+
+Dimension	Method	What it checks
+Structural	Deterministic (regex)	Word count in range, enough headers/lists/citations, valid heading hierarchy, no empty sections
+Semantic	Embedding similarity	Content embedding vs. target query embeddings — is the content actually about what it claims?
+Style	LLM-as-Judge (Haiku 4.5)	Alignment with the company's writing style guide
+Factual	LLM-as-Judge (Sonnet 4.5)	Factual accuracy, grounding, flags questionable claims
+If any dimension fails, the system compiles feedback from all failed dimensions, sends it back to the drafter for revision, re-enriches with facts, re-formats, and re-evaluates. This loops up to max_revision_cycles times (default 2).
+
+Stage 4 — Human-in-the-Loop Review
+A LangGraph state machine presents each passing piece of content for human review:
+
+Approve — content is finalized, written as final.md
+Edit — editor notes are stored, content loops back for review
+Reject — content is discarded
+Supports auto_approve mode for batch/CI runs.
+
+Artifacts on Disk
+
+artifacts/content/{company-slug}/
+├── briefs.json                    # All planned briefs (Stage 1)
+├── run_metadata.json              # Final summary
+└── content/
+    └── brief-001/
+        ├── outline.json           # Structured outline
+        ├── draft.md               # Raw draft
+        ├── enriched.md            # Fact-checked draft
+        ├── formatted.md           # Final formatted content
+        ├── eval_history.json      # All evaluation cycles
+        └── final.md               # Approved content
+Observability
+Every LLM call, evaluation score, and revision cycle is traced in Langfuse with a hierarchical span tree — session > pipeline > stage > worker > step > generation. This gives full visibility into token usage, timing, quality scores, and flagged claims.
+
+The Big Picture
+The three pipelines form a closed loop:
+
+Research tells us who the company is and how they write
+Gap Analysis tells us where they're invisible in AI search
+Content Engine generates the exact content needed to fill those gaps — structurally optimized, fact-grounded, style-aligned, and semantically targeted at the queries where the company is currently absent
+The end goal: when someone asks an AI assistant a question relevant to the company's domain, the company gets cited.
+The issue right now is that I have mentioned above the kind of pipeline that we currently follow. It was inspired by the Anthropic orchestrator worker workflow and the agent evaluator workflow.
+
+I'll clarify: the content engine pipeline receives, as context, a gap analysis report that contains information about, say, if there is a given query for a company that exists in some domain. There is a query user persona query related to a product in that domain, or maybe just a user-related user persona query. It basically contains a report on how well our company, or our clients' company, content performs as compared to its cited competitors. There is a query that is run on several platforms, which gives back, in response, its result. So, for that particular query, it includes:
+- the exemplar content of the best cited content or the top three citations that LMM platforms include
+- it talks about the kind of content those top three cited URLs cover
+- what points they cover, what all things, and what is the outline that they cover
+- what all semantic themes do they capture
+- and then it talks about the structural signals of those top three or top five cited sources
+- and it includes the following signals, which are mentioned below
+- For structural signals, it should also include and measure things in the gap report:
+- Average paragraph length
+- Average sentence length
+- Snippet length (characters)
+- Paragraph counts
+- Reading levels (okay, the depth of reading level)
+- Snippet length (words)
+- Bullet point count
+- Header count
+- Factual density
+- Data point counts
+- You know, self-contained ratio
+- has unordered list tags
+- it has definition present
+- it has citationsHas key takeaways, has an explanation present, has table tags, has ordered list tags 
+- Has FAQ sections, 
+- has research references 
+
+So, given the above workflow, I am not even sure right now whether the above workflow is a good workflow or not, but please help me optimize the quality of output that is being produced by our content engine.
+Okay, so I hope you have an understanding of what the system does. Just to clarify, the content engine receives as input:
+- a gap report about which I described earlier
+- a very in-depth research artifact about the company
+- a research artifact on the audience persona research of the company
+- a writing style guide of the company
+Also, the current output produced by the current content engine pipeline does not align well with the writing style guide that is being produced, so also look up to that.
+It receives so many contexts, of course. If, for example, there can be as many as two hundred queries for a company that we might analyze, and then our gap report will contain a JSON schema about the analysis regarding each of those two hundred queries, right? It also has to have a sense of the company context, audience persona, writing style guide, and then that is what it is.
+Please help me improve the quality of output that is being produced and generated by our content engine. Make sure it satisfies the requirements mentioned in the gap report, especially the structural requirements, and ensure that it aligns well with all the writing style guide and structured
+
+
+
+🔬 Deep Presence Content Engine — Critical Analysis & Optimization Plan
+I've read every file: pipeline.py, planner.py, graph.py, utils.py, tracing.py, all 7 prompt files, all 5 worker files, all 4 evaluator files, and the Pydantic models. Here's my honest, surgical assessment of what's wrong and exactly how to fix it.
+
+PART 1: ROOT CAUSE DIAGNOSIS — Why Output Quality Is Poor
+Problem 1: The Gap Report's Richest Data Is Discarded Before It Reaches The Writer
+This is your single biggest problem. Your gap report contains ~20 structural signals per query (paragraph length, sentence length, factual density, bullet counts, reading level, self-contained ratio, FAQ sections, tables, definition presence, etc.), but almost none of this reaches the drafter or outliner.
+
+Here's the information flow and where it breaks:
+
+Gap Report (rich: 20+ signals per query)
+  ↓ planner_prompts.py: build_planner_user_prompt()
+    → Only extracts: gap size, company_sim, citation_sim, cluster_specs (4 fields)
+    → Truncates gap_report_json to 6000 chars
+    → Truncates analysis_json to top 30 gaps
+  ↓ Planner outputs ContentBrief
+    → StructuralTargets model has ONLY: header_rate, list_rate, stat_rate, citation_rate, min_headers, min_lists, min_citations
+    → MISSING: paragraph length, sentence length, reading level, factual density, FAQ presence, table presence, definition presence, snippet length, self-contained ratio, etc.
+  ↓ outliner_prompts.py
+    → Only receives: min_headers, min_lists, min_citations (3 numbers!)
+  ↓ drafter_prompts.py
+    → Receives ZERO structural targets — only the outline JSON and a generic style guide
+  ↓ formatter_prompts.py
+    → Receives ZERO structural intelligence — just "polish formatting"
+Result: Your writer (Sonnet 4.5) has no idea what the exemplar content looks like structurally. It's writing blind. The gap report told you "top-cited content has avg paragraph length of 45 words, reading level Grade 8, 12 bullet points, FAQ section present, definition blocks, self-contained ratio of 0.85" — and none of that reaches the model doing the actual writing.
+
+Problem 2: Style Guide Gets Truncated and Buried, Never Enforced
+The style guide flow:
+
+style_guide_md (full document)
+  ↓ drafter_prompts.py: truncated to 4000 chars, buried under outline
+  ↓ formatter_prompts.py: truncated to 3000 chars, generic "follow these conventions"
+  ↓ style_judge_prompts.py: truncated to 4000 chars for evaluation
+Issues:
+
+Drafter system prompt says "Do Not Exceed 1500 words" — this is hard-coded and contradicts the brief's word_count_range which may be [2500, 4000] for pillar pages. This alone explains many structural failures.
+The style guide is a passive appendix ("if a style guide is provided"), not an active constraint. The drafter system prompt has 8 detailed writing guidelines but none reference the style guide specifically.
+The formatter system prompt has 7 formatting rules, all generic. None say "match the style guide's voice/tone/formatting conventions."
+The style judge evaluates against a truncated guide and uses 4 generic criteria. It never checks the specific rules in the style guide (e.g., "always use Oxford comma", "never use passive voice", "use Title Case for H2s").
+Problem 3: The Drafter Is Under-Specified and Over-Constrained
+The drafter system prompt:
+
+Hard-codes "Do Not Exceed 1500 words per article or content" — this overrides the brief's word count range
+Says "Use real statistics, percentages, benchmarks" but then also says "use [STAT: description] placeholders" — contradictory instructions
+Has no access to competitor exemplar content, even though the brief contains competitor_exemplars URLs
+Has no access to the gap report's structural intelligence
+The user prompt gives the style guide but as a secondary appendix, not as primary writing constraints
+Problem 4: The Outliner Doesn't Know What Good Content Looks Like
+The outliner receives min_headers, min_lists, min_citations — just 3 bare minimums. But the gap report knows:
+
+How many paragraphs top-cited content has
+Average paragraph/sentence length
+Whether FAQ sections, tables, definition blocks, or ordered lists are present
+What the reading level is
+What the factual density is
+The outliner can't design a structurally competitive outline if it doesn't know the structural DNA of content that actually gets cited.
+
+Problem 5: The Evaluator-Optimizer Loop Is Structurally Weak
+Structural evaluator: Checks 8 things, but only basic ones (word count, header count, list count, citation count, heading hierarchy, empty sections, required elements, stat presence). It does NOT check:
+
+Average paragraph length (the gap report measures this!)
+Average sentence length
+Reading level
+Factual density
+FAQ section presence
+Table presence
+Self-contained ratio
+Bullet point count vs. target
+Definition blocks
+Semantic evaluator: Uses embedding similarity against target queries. This is good but uses only first 2000 words. For pillar pages (2500-4000 words), you're dropping the second half.
+
+Style judge: 4 generic criteria (tone, terminology, readability, authority). Doesn't check specific style rules from the guide. Pass threshold is 0.7 — very lenient.
+
+Revision loop: When a dimension fails, it sends feedback to revise_draft() which uses the same DRAFTER_SYSTEM_PROMPT (with the 1500-word cap!). The revision prompt doesn't include the structural targets or gap data. It's just "fix these issues" with the same under-specified context.
+
+Problem 6: The Enricher-Formatter Sequence Is Information-Lossy
+The fact enricher (Perplexity sonar-pro) receives the draft + key topics, but NOT the structural targets. It may add facts that bloat one section while leaving another thin.
+The formatter (Haiku 4.5) is a lightweight model doing a heavyweight job. It receives the enriched content + style guide but with no structural intelligence. It's told to "polish" — not to restructure for citation optimization.
+The formatter's structural counting is regex-based and doesn't match the gap report's signal set (missing: paragraph count, sentence length, reading level, etc.)
+PART 2: OPTIMIZATION RECOMMENDATIONS — Concrete Changes
+Change 1: Expand StructuralTargets to Match Gap Report Signals
+class StructuralTargets(BaseModel):
+    """Cluster-derived structural targets from gap analysis."""
+    # Current fields (keep)
+    header_rate: float = 0.0
+    list_rate: float = 0.0
+    stat_rate: float = 0.0
+    citation_rate: float = 0.0
+    min_headers: int = 3
+    min_lists: int = 1
+    min_citations: int = 2
+    
+    # NEW — from gap report signals
+    target_paragraph_count: Optional[int] = None
+    avg_paragraph_length_words: Optional[int] = None  # e.g., 45
+    avg_sentence_length_words: Optional[int] = None    # e.g., 18
+    target_reading_level: Optional[str] = None          # e.g., "Grade 8"
+    target_factual_density: Optional[float] = None      # e.g., 0.12
+    target_self_contained_ratio: Optional[float] = None # e.g., 0.85
+    has_faq_section: bool = False
+    has_table: bool = False
+    has_definition_blocks: bool = False
+    has_ordered_lists: bool = False
+    has_key_takeaways: bool = False
+    has_research_references: bool = False
+    target_bullet_point_count: Optional[int] = None
+    target_snippet_length_words: Optional[int] = None
+    min_data_points: int = 3
+    
+    # Exemplar intelligence
+    exemplar_outlines: List[str] = Field(default_factory=list)  # structural summaries of top-cited content
+    exemplar_themes: List[str] = Field(default_factory=list)    # semantic themes from exemplars
+Change 2: Rewrite the Planner Prompt to Extract and Forward Full Signal Set
+The planner's build_planner_user_prompt currently truncates and summarizes. Instead:
+
+Pass the full per-query structural signals into the planner prompt (not just gap/sim scores)
+Make the planner output briefs that carry the full structural spec
+Don't truncate gap_report_json to 6000 chars — use per-brief extraction instead
+In the planner system prompt, replace the structural_targets schema with the expanded one above, and add instructions like:
+
+For each brief, extract structural targets from the gap data's top-cited exemplars:
+- Set avg_paragraph_length_words to the median of exemplar paragraph lengths
+- Set has_faq_section = true if any top-3 exemplar has FAQ sections
+- Include exemplar_outlines (structural description of what top-cited content covers)
+- Include exemplar_themes (the semantic themes those citations hit)
+Change 3: Fix the Drafter System Prompt — This Is Your Highest-Impact Change
+Remove the hard-coded 1500-word cap. Rewrite the system prompt to be structurally aware:
+
+DRAFTER_SYSTEM_PROMPT = """\
+You are an expert B2B SaaS content writer. You produce high-quality, authoritative
+content optimized for AI search engine citations (ChatGPT, Perplexity, Claude, Gemini).
+
+## CRITICAL: Follow the structural blueprint EXACTLY
+
+You will receive:
+1. A content outline with section-by-section word targets
+2. Structural targets derived from analysis of top-cited competitor content
+3. A writing style guide — this is your PRIMARY voice/tone reference
+
+Your content must match the structural profile of content that AI engines 
+actually cite. The targets come from analyzing what works.
+
+## Structural Requirements (from the brief)
+
+- Match the target word count range — do NOT default to short content
+- Match the target paragraph length (avg words per paragraph)
+- Match the target sentence length (avg words per sentence)  
+- Match the reading level
+- Include FAQ sections if specified
+- Include definition blocks if specified
+- Include tables if specified
+- Include key takeaways section if specified
+- Hit the bullet/list count target
+- Ensure self-contained paragraphs — each paragraph should make a standalone 
+  claim that can be extracted as a citation without surrounding context
+
+## Writing Style
+
+Your PRIMARY reference for voice, tone, terminology, sentence structure, 
+and formatting conventions is the STYLE GUIDE provided in the user prompt. 
+Internalize it before writing. Every sentence should sound like it was 
+written by this company.
+
+## Citation-Optimization Guidelines
+
+1. Lead with answers: Open each section with the key information first.
+2. Be specific and quantitative: Use concrete numbers, not vague claims.
+3. Self-contained paragraphs: Each paragraph = one extractable citation.
+4. Use [STAT: description] placeholders for statistics you need sourced.
+5. Natural keyword integration of target query phrases.
+6. Structured for scannability: headers, lists, bold key terms.
+"""
+Change 4: Rewrite the Drafter User Prompt to Include Full Structural Intelligence
+def build_drafter_user_prompt(
+    *,
+    brief_id: str,
+    title: str,
+    outline_json: str,
+    style_guide_md: str,
+    company_context_snippet: str,
+    target_queries: list[dict],
+    structural_targets: dict,        # NEW
+    exemplar_outlines: list[str],    # NEW
+    exemplar_themes: list[str],      # NEW
+) -> str:
+
+    # Style guide goes FIRST and PROMINENTLY
+    style_section = ""
+    if style_guide_md:
+        style_section = f"""
+## ⚠️ WRITING STYLE GUIDE (FOLLOW THIS EXACTLY)
+
+This defines the company's voice, tone, terminology, and formatting conventions.
+Every sentence you write must sound like this company wrote it.
+
+{style_guide_md}
+"""
+
+    structural_section = f"""
+## STRUCTURAL BLUEPRINT (match these targets)
+
+These targets come from analyzing the top-cited content for these queries.
+Your content must match this structural profile.
+
+- Word count range: {structural_targets.get('word_count_range', [1200, 2000])}
+- Avg paragraph length: ~{structural_targets.get('avg_paragraph_length_words', 50)} words
+- Avg sentence length: ~{structural_targets.get('avg_sentence_length_words', 18)} words
+- Target reading level: {structural_targets.get('target_reading_level', 'Grade 8-10')}
+- Min headers: {structural_targets.get('min_headers', 3)}
+- Min bullet/list items: {structural_targets.get('min_lists', 5)}
+- Min citations/data points: {structural_targets.get('min_citations', 3)}
+- Include FAQ section: {'Yes' if structural_targets.get('has_faq_section') else 'No'}
+- Include tables: {'Yes' if structural_targets.get('has_table') else 'No'}
+- Include definition blocks: {'Yes' if structural_targets.get('has_definition_blocks') else 'No'}
+- Include key takeaways: {'Yes' if structural_targets.get('has_key_takeaways') else 'No'}
+- Self-contained ratio target: {structural_targets.get('target_self_contained_ratio', 0.8)}
+"""
+
+    exemplar_section = ""
+    if exemplar_outlines:
+        exemplar_section = "\n## WHAT TOP-CITED CONTENT LOOKS LIKE\n\n"
+        exemplar_section += "These are structural summaries of the content that AI engines currently cite for these queries. Match or exceed this quality.\n\n"
+        for i, outline in enumerate(exemplar_outlines, 1):
+            exemplar_section += f"### Exemplar {i}\n{outline}\n\n"
+
+    return f"""\
+{style_section}
+
+{structural_section}
+
+{exemplar_section}
+
+## Content Outline
+
+```json
+{outline_json}
+Target Queries (weave naturally into the content)
+{chr(10).join(f' - "{q.get("query_text", "")}"' for q in target_queries)}
+
+Company Context
+{company_context_snippet[:3000] if company_context_snippet else 'Not provided.'}
+
+Write the complete article following the outline. Match the structural blueprint targets above. Use the company's writing style guide as your PRIMARY voice reference. Include [STAT: description] placeholders where specific statistics should be inserted. """
+
+
+### Change 5: **Expand the Structural Evaluator to Check All Gap Report Signals**
+
+Add these checks to `structural.py`:
+
+```python
+def _check_paragraph_length(content, brief):
+    """Check avg paragraph length matches target."""
+    paragraphs = [p.strip() for p in content.markdown.split('\n\n') if p.strip() and not p.strip().startswith('#')]
+    if not paragraphs:
+        return True, "", {}
+    avg_len = sum(len(p.split()) for p in paragraphs) / len(paragraphs)
+    target = brief.structural_targets.avg_paragraph_length_words
+    if target is None:
+        return True, "", {"avg_paragraph_length": avg_len}
+    tolerance = 0.4  # 40% tolerance
+    passed = abs(avg_len - target) / target <= tolerance
+    feedback = "" if passed else f"Avg paragraph length is {avg_len:.0f} words (target: ~{target}). {'Shorten' if avg_len > target else 'Expand'} paragraphs."
+    return passed, feedback, {"avg_paragraph_length": avg_len, "target": target}
+
+def _check_sentence_length(content, brief):
+    """Check avg sentence length matches target."""
+    import re
+    sentences = re.split(r'[.!?]+', content.markdown)
+    sentences = [s.strip() for s in sentences if len(s.strip().split()) > 3]
+    if not sentences:
+        return True, "", {}
+    avg_len = sum(len(s.split()) for s in sentences) / len(sentences)
+    target = brief.structural_targets.avg_sentence_length_words
+    if target is None:
+        return True, "", {"avg_sentence_length": avg_len}
+    tolerance = 0.35
+    passed = abs(avg_len - target) / target <= tolerance
+    feedback = "" if passed else f"Avg sentence length is {avg_len:.0f} words (target: ~{target})."
+    return passed, feedback, {"avg_sentence_length": avg_len, "target": target}
+
+def _check_faq_section(content, brief):
+    """Check FAQ section presence if required."""
+    if not brief.structural_targets.has_faq_section:
+        return True, "", {}
+    has_faq = bool(re.search(r'#{1,3}\s*(FAQ|Frequently Asked Questions)', content.markdown, re.IGNORECASE))
+    feedback = "" if has_faq else "FAQ section required but not found."
+    return has_faq, feedback, {}
+
+def _check_self_contained_ratio(content, brief):
+    """Check what % of paragraphs are self-contained (make standalone claims)."""
+    target = brief.structural_targets.target_self_contained_ratio
+    if target is None:
+        return True, "", {}
+    paragraphs = [p.strip() for p in content.markdown.split('\n\n') if p.strip() and not p.strip().startswith('#')]
+    if not paragraphs:
+        return True, "", {}
+    # Heuristic: paragraphs starting with pronouns referencing previous context are not self-contained
+    referential_starters = ['this ', 'that ', 'these ', 'those ', 'it ', 'they ', 'such ']
+    self_contained = sum(1 for p in paragraphs if not any(p.lower().startswith(s) for s in referential_starters))
+    ratio = self_contained / len(paragraphs)
+    passed = ratio >= target
+    feedback = "" if passed else f"Self-contained ratio {ratio:.2f} is below target {target}. Reduce referential paragraph openings."
+    return passed, feedback, {"ratio": ratio, "target": target}
+Change 6: Fix the Revision Loop to Include Full Context
+The revise_draft() function currently uses the same generic DRAFTER_SYSTEM_PROMPT. Change it to use a dedicated revision system prompt that includes:
+
+REVISION_SYSTEM_PROMPT = """\
+You are revising a B2B SaaS article based on specific evaluation feedback.
+
+CRITICAL RULES:
+1. Address EVERY piece of feedback listed below
+2. Maintain the style guide's voice and tone throughout
+3. Match the structural targets exactly — these come from analyzing 
+   content that AI engines actually cite
+4. Do not shrink the content — if word count is below target, expand
+5. Ensure every paragraph is self-contained and citation-extractable
+6. Return the COMPLETE revised article in Markdown
+"""
+And the revision user prompt should include the structural targets, not just the feedback string.
+
+Change 7: Make the Style Judge Actually Check Specific Style Rules
+The current style judge prompt is generic. Rewrite it to dynamically extract and check specific rules:
+
+STYLE_JUDGE_SYSTEM_PROMPT = """\
+You are evaluating how well an article follows a SPECIFIC writing style guide.
+
+Your task is NOT to assess general quality. It is to check SPECIFIC COMPLIANCE 
+with the style guide rules.
+
+## Evaluation Method
+
+1. Read the style guide carefully. Extract every concrete rule.
+2. For each rule, check whether the article complies.
+3. Score based on percentage of rules followed.
+
+## Criteria (score 0.0 to 1.0)
+
+1. **Voice & Tone compliance** (0.30): Does every sentence match the specified 
+   tone? Check: formal vs conversational, active vs passive, hedging words, 
+   exclamation marks, contractions usage — whatever the guide specifies.
+2. **Terminology compliance** (0.25): Are the exact terms from the guide used? 
+   Are forbidden terms avoided? Are product names formatted correctly?
+3. **Formatting compliance** (0.25): Does heading capitalization, list formatting, 
+   citation format, paragraph structure match the guide?
+4. **Structural compliance** (0.20): Does section ordering, intro/outro pattern,
+   CTA placement match the guide's structural preferences?
+
+Score >= 0.75 is a pass. For each criterion, cite SPECIFIC passages that violate 
+specific rules from the style guide.
+"""
+Change 8: Don't Truncate the Style Guide — Use It Fully or Summarize It Upstream
+Currently:
+
+Drafter gets style_guide_md[:4000]
+Formatter gets style_guide_md[:3000]
+Style judge gets style_guide_md[:4000]
+With Sonnet 4.5's 200K context window, there's no reason to truncate a style guide. If it's long, send it in full. The truncate_to_token_limit function exists in your utils — use it properly with actual token budgets rather than arbitrary character slicing.
+
+Change 9: Add a Pre-Draft "Exemplar Analysis" Step
+Insert a new step between Outliner and Drafter:
+
+Outliner → [NEW: Exemplar Analyzer] → Drafter → Enricher → Formatter
+The Exemplar Analyzer takes the competitor_exemplars URLs from the brief, fetches them (via Perplexity or web scrape), and produces:
+
+A structural fingerprint of each exemplar
+Key themes/topics covered
+Tone/voice characteristics
+What makes them citation-worthy
+This gets passed to the drafter as "here's what beats you — match or exceed it."
+
+Change 10: Fix the Formatter to Be Structurally Intelligent
+The formatter should not just "polish" — it should be the final structural compliance pass. Give it the structural targets:
+
+def build_formatter_user_prompt(
+    *,
+    enriched_markdown: str,
+    style_guide_md: str,
+    structural_targets: dict,  # NEW
+) -> str:
+    return f"""
+## STRUCTURAL TARGETS (ensure these are met)
+- Word count: {structural_targets.get('word_count_range')}
+- Avg paragraph length: ~{structural_targets.get('avg_paragraph_length_words')} words
+- Has FAQ section: {structural_targets.get('has_faq_section')}
+- Has tables: {structural_targets.get('has_table')}
+- Has key takeaways: {structural_targets.get('has_key_takeaways')}
+- Min headers: {structural_targets.get('min_headers')}
+- Min lists: {structural_targets.get('min_lists')}
+
+## Style Guide
+{style_guide_md}
+
+## Article to Format
+{enriched_markdown}
+
+Format this article to EXACTLY match the structural targets and style guide.
+If structural elements are missing (FAQ section, tables, key takeaways), ADD them.
+This is your last chance to ensure structural compliance before evaluation.
+"""
+Change 11: Use the Outliner to Design Structurally Competitive Content
+The outliner prompt currently has generic "answer-first structure" advice. Rewrite it to use the gap data:
+
+OUTLINER_SYSTEM_PROMPT = """\
+You are designing a content outline that must structurally match or exceed 
+the top-cited content for specific AI search queries.
+
+You will receive:
+1. A content brief with structural targets from gap analysis
+2. Descriptions of what top-cited competitor content looks like
+3. Company context
+
+Your outline must:
+- Hit the target word count with explicit per-section allocations
+- Include FAQ sections if the targets require it
+- Include table sections if the targets require it
+- Include definition blocks if the targets require it
+- Include a key takeaways section if required
+- Distribute bullet points and data points across sections
+- Design for self-contained paragraphs (each section's key points should 
+  be independently citable)
+
+## Output JSON schema
+{... same as before but with added fields:}
+  "sections": [
+    {
+      "heading": "...",
+      "level": 2,
+      "key_points": [...],
+      "target_word_count": 300,
+      "structural_elements": ["bullet_list", "data_point", "definition"],
+      "self_contained_claims": ["claim 1 this section should make", "claim 2"]
+    }
+  ],
+  "has_faq_section": true/false,
+  "has_table_section": true/false,
+  "has_key_takeaways": true/false
+"""
+PART 3: ARCHITECTURE-LEVEL CHANGES
+A. Context Routing Instead of Context Dumping
+Your current pipeline dumps everything into one prompt (company context, personas, gap report, generation spec, analysis JSON). This is noisy. Instead:
+
+Planner gets: full gap report + generation spec + analysis (it needs the big picture)
+Outliner gets: brief + structural targets + exemplar summaries + company context summary (not full)
+Drafter gets: outline + style guide (FULL) + structural targets + exemplar themes + company context summary
+Enricher gets: draft + key topics + domain context (minimal)
+Formatter gets: enriched content + style guide (FULL) + structural targets
+Each stage should get exactly what it needs — no more, no less.
+
+B. Two-Pass Drafting for Long Content
+For pillar pages (2500-4000 words), a single Sonnet call producing 4000 words will degrade in quality. Split into:
+
+Section-by-section drafting (one call per 2-3 sections)
+Coherence pass (one call to ensure transitions and narrative flow)
+C. Parallel Evaluation → Targeted Revision
+Instead of sending all failed feedback back to the drafter:
+
+If only structural fails → use the formatter to restructure (cheaper, faster)
+If only style fails → use a style-specific revision pass
+If only factual fails → re-run enricher with specific claims to verify
+If semantic fails → that's a fundamental content problem → re-outline + re-draft
+D. Increase Revision Cycles for Pillar Pages
+Default max_revision_cycles=2 may not be enough for complex, long-form content. Consider:
+
+short_faq: 1 cycle
+long_blog: 2 cycles
+pillar_page: 3 cycles
+comparison: 2 cycles
+PART 4: PRIORITY-ORDERED ACTION ITEMS
+Priority	Change	Impact	Effort
+P0	Remove 1500-word hard cap from drafter system prompt	Critical — breaks pillar pages	1 min
+P0	Expand StructuralTargets model with all gap signals	Critical — enables everything else	30 min
+P0	Rewrite drafter prompt to include structural targets + full style guide	Critical — main quality lever	1 hr
+P1	Rewrite planner to extract + forward full structural signals	High — populates the new targets	2 hrs
+P1	Rewrite outliner to design structurally competitive outlines	High — blueprint quality	1 hr
+P1	Stop truncating style guide — pass in full	High — style alignment	30 min
+P1	Expand structural evaluator with 6+ new checks	High — catches more issues	2 hrs
+P2	Rewrite style judge to check specific rules	Medium — better style enforcement	1 hr
+P2	Make formatter structurally intelligent	Medium — last-mile compliance	1 hr
+P2	Fix revision loop to include full context	Medium — better revisions	1 hr
+P3	Add exemplar analyzer step	Nice-to-have — competitive intelligence	3 hrs
+P3	Implement two-pass drafting for long content	Nice-to-have — quality for pillar pages	3 hrs
+P3	Targeted revision routing by failed dimension	Nice-to-have — efficiency	2 hrs
+Summary
+The core issue is an information bottleneck: your gap report contains extraordinary structural intelligence about what gets cited, but this intelligence evaporates by the time it reaches the models doing the actual writing. The drafter is writing with a hard-coded 1500-word cap, minimal structural guidance, and a truncated style guide. Fix the information flow (gap report → brief → outliner → drafter → evaluator), remove the word cap, pass the full style guide, and expand the structural evaluator — and your output quality will transform dramatically.
+
+Want me to implement any of these changes directly as code modifications?
+
+
+
+- For structural signals, it should also include and measure things in the gap report:
+- Average paragraph length
+- Average sentence length
+- Snippet length (characters)
+- Paragraph counts
+- Reading levels (okay, the depth of reading level)
+- Snippet length (words)
+- Bullet point count
+- Header count
+- Factual density
+- Data point counts
+- You know, self-contained ratio
+- has unordered list tags
+- it has definition present
+- it has citationsHas key takeaways, has an explanation present, has table tags, has ordered list tags 
+- Has FAQ sections, 
+- has research references 

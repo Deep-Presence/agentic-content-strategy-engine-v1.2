@@ -16,7 +16,7 @@ from core.content_engine.prompts.style_judge_prompts import (
     build_style_judge_user_prompt,
 )
 from core.content_engine.tracing import create_span, end_span, log_generation, log_score
-from core.content_engine.utils import _retry_async_anthropic, safe_parse
+from core.content_engine.utils import _retry_async_anthropic, safe_parse, truncate_to_token_limit
 from core.models.content_generation import DimensionResult, FormattedContent
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,10 @@ async def evaluate_style(
         content_markdown=content.markdown,
         style_guide_md=style_guide_md,
         title=content.title,
+    )
+
+    user_prompt = truncate_to_token_limit(
+        user_prompt, 150_000, label="style_judge_prompt"
     )
 
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)

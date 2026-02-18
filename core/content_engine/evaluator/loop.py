@@ -2,11 +2,14 @@
 
 Runs structural, semantic, style, and factual checks in parallel.
 If any dimension fails, compiles feedback and triggers a revision cycle
-(re-draft → re-enrich → re-format → re-evaluate). Max 2 cycles.
+(re-draft → re-enrich → re-format → re-evaluate).
+
+v2.0: Format-aware revision cycles, early-stop on score plateau.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Optional, Tuple
@@ -99,6 +102,22 @@ def _compile_feedback(dimensions: list[DimensionResult]) -> str:
     return "\n\n".join(feedbacks)
 
 
+def _get_max_cycles(brief: ContentBrief, default: int = 2) -> int:
+    """Look up format-aware max revision cycles from settings.
+
+    Falls back to the explicit default if the content format isn't in the
+    config or the JSON is malformed.
+    """
+    try:
+        cycles_map = json.loads(settings.content_engine_revision_cycles_by_format)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Invalid revision_cycles_by_format config, using default=%d", default)
+        return default
+
+    content_format = getattr(brief, "content_format", None) or ""
+    return cycles_map.get(content_format, default)
+
+
 async def evaluate_and_optimize(
     content: FormattedContent,
     brief: ContentBrief,
@@ -114,7 +133,8 @@ async def evaluate_and_optimize(
     """Run the evaluation-optimization loop for a single content piece.
 
     Evaluates across 4 dimensions. If any fails, revises and re-evaluates
-    up to max_cycles times.
+    up to max_cycles times. Uses format-aware cycle limits and early-stops
+    when score improvement plateaus (<0.02 between cycles).
 
     Args:
         content: Formatted content to evaluate.
@@ -122,17 +142,21 @@ async def evaluate_and_optimize(
         company_context_md: Company context markdown.
         style_guide_md: Style guide markdown.
         input_data: Pipeline input for company details.
-        max_cycles: Maximum revision cycles.
+        max_cycles: Maximum revision cycles (overridden by format-aware config).
         session_id: Langfuse session ID.
         artifact_dir: Root artifact directory.
 
     Returns:
         Tuple of (final FormattedContent, RevisionHistory).
     """
+    # Format-aware revision cycles override the default max_cycles
+    max_cycles = _get_max_cycles(brief, default=max_cycles)
+
     trace_name = f"evaluator/{brief.brief_id}"
     trace_metadata = {
         "brief_id": brief.brief_id,
         "max_cycles": max_cycles,
+        "content_format": getattr(brief, "content_format", ""),
         "brief_title": brief.title,
     }
     trace_input = {
@@ -159,6 +183,7 @@ async def evaluate_and_optimize(
 
     history = RevisionHistory(brief_id=brief.brief_id)
     current_content = content
+    prev_score: Optional[float] = None  # Track for early-stop
 
     for cycle in range(max_cycles + 1):  # +1 because first is initial eval
         cycle_span = create_span(
@@ -221,6 +246,18 @@ async def evaluate_and_optimize(
             history.final_passed = True
             break
 
+        # Early-stop: if score improvement < 0.02 between revision cycles, stop
+        if prev_score is not None and cycle > 0:
+            improvement = overall_score - prev_score
+            if improvement < 0.02:
+                _cli_worker_progress(
+                    f"{brief.brief_id}: Early-stop — score plateau "
+                    f"({prev_score:.4f} → {overall_score:.4f}, Δ={improvement:.4f})"
+                )
+                history.final_passed = False
+                break
+        prev_score = overall_score
+
         # If this was the last allowed cycle, don't revise
         if cycle >= max_cycles:
             _cli_worker_progress(
@@ -266,10 +303,11 @@ async def evaluate_and_optimize(
             trace=trace,
         )
 
-        # Re-format
+        # Re-format (pass brief for structural targets)
         current_content = await format_content(
             enriched=enriched,
             style_guide_md=style_guide_md,
+            brief=brief,
             trace=trace,
         )
 

@@ -16,7 +16,7 @@ from core.content_engine.prompts.outliner_prompts import (
     build_outliner_user_prompt,
 )
 from core.content_engine.tracing import create_span, end_span, log_generation
-from core.content_engine.utils import _retry_async_anthropic, safe_parse
+from core.content_engine.utils import _retry_async_anthropic, safe_parse, truncate_to_token_limit
 from core.models.content_generation import ContentBrief, ContentOutline
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,12 @@ async def generate_outline(
         key_angles=brief.key_angles,
         structural_targets=brief.structural_targets.model_dump(),
         company_context_snippet=company_context_md,
+        exemplar_summaries=[e.model_dump() for e in brief.exemplar_summaries],
+        exemplar_themes=brief.exemplar_themes,
+    )
+
+    user_prompt = truncate_to_token_limit(
+        user_prompt, 150_000, label="outliner_prompt"
     )
 
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)

@@ -94,6 +94,7 @@ async def plan_content(
         company_name=input_data.company_name,
         domain=input_data.domain,
         company_context_md=company_context_md,
+        style_guide_md=style_guide_md,
         gap_report_json=gap_report_json,
         generation_spec_json=generation_spec_json,
         analysis_json=analysis_json,
@@ -112,7 +113,7 @@ async def plan_content(
     async def _call():
         return await client.messages.create(
             model=model,
-            max_tokens=8192,
+            max_tokens=16384,
             system=PLANNER_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
         )
@@ -146,7 +147,7 @@ async def plan_content(
             "system_prompt_length": len(PLANNER_SYSTEM_PROMPT),
             "user_prompt_length": len(user_prompt),
         },
-        model_parameters={"max_tokens": 8192},
+        model_parameters={"max_tokens": 16384},
         usage={
             "input": response.usage.input_tokens,
             "output": response.usage.output_tokens,

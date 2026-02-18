@@ -20,6 +20,7 @@ from core.models.content_generation import (
     DimensionResult,
     EnrichedDraft,
     EvalResult,
+    ExemplarSummary,
     FormattedContent,
     OutlineSection,
     PlannerOutput,
@@ -93,15 +94,109 @@ class TestTargetQuery:
 class TestStructuralTargets:
     def test_defaults(self):
         st = StructuralTargets()
+        # v1.0 fields
         assert st.header_rate == 0.0
+        assert st.list_rate == 0.0
+        assert st.stat_rate == 0.0
+        assert st.citation_rate == 0.0
         assert st.min_headers == 3
         assert st.min_lists == 1
         assert st.min_citations == 2
+        # v2.0 paragraph/sentence targets
+        assert st.min_paragraphs == 8
+        assert st.avg_paragraph_word_count == 80
+        assert st.max_paragraph_word_count == 150
+        assert st.avg_sentence_count_per_paragraph == 3.5
+        # v2.0 granular structural rates
+        assert st.table_rate == 0.0
+        assert st.definition_rate == 0.0
+        assert st.faq_rate == 0.0
+        assert st.code_block_rate == 0.0
+        # v2.0 count targets
+        assert st.min_stats == 2
+        assert st.min_self_contained_claims == 5
+        assert st.min_bullets_per_list == 3
+        # v2.0 authority/content intelligence
+        assert st.dominant_authority_type is None
+        assert st.dominant_content_type is None
+        assert st.avg_word_count == 0
 
     def test_custom_values(self):
         st = StructuralTargets(header_rate=0.05, min_headers=5, min_citations=10)
         assert st.header_rate == 0.05
         assert st.min_citations == 10
+
+    def test_v2_custom_values(self):
+        st = StructuralTargets(
+            min_paragraphs=12,
+            avg_paragraph_word_count=100,
+            faq_rate=0.45,
+            table_rate=0.3,
+            min_stats=5,
+            min_self_contained_claims=8,
+            min_bullets_per_list=5,
+            dominant_authority_type="industry_report",
+            dominant_content_type="how_to_guide",
+            avg_word_count=2500,
+        )
+        assert st.min_paragraphs == 12
+        assert st.avg_paragraph_word_count == 100
+        assert st.faq_rate == 0.45
+        assert st.table_rate == 0.3
+        assert st.min_stats == 5
+        assert st.min_self_contained_claims == 8
+        assert st.min_bullets_per_list == 5
+        assert st.dominant_authority_type == "industry_report"
+        assert st.dominant_content_type == "how_to_guide"
+        assert st.avg_word_count == 2500
+
+    def test_backward_compat_v1_only(self):
+        """v1 JSON (missing v2 fields) deserializes with defaults."""
+        v1_data = {"header_rate": 0.03, "min_headers": 4, "min_lists": 2, "min_citations": 3}
+        st = StructuralTargets(**v1_data)
+        assert st.min_headers == 4
+        assert st.min_paragraphs == 8  # v2 default
+        assert st.faq_rate == 0.0  # v2 default
+
+
+class TestExemplarSummary:
+    def test_defaults(self):
+        es = ExemplarSummary()
+        assert es.url == ""
+        assert es.word_count == 0
+        assert es.header_count == 0
+        assert es.list_item_count == 0
+        assert es.stat_count == 0
+        assert es.citation_count == 0
+        assert es.authority_type == ""
+        assert es.content_type == ""
+        assert es.snippet == ""
+
+    def test_full_construction(self):
+        es = ExemplarSummary(
+            url="https://example.com/409a-guide",
+            word_count=2500,
+            header_count=8,
+            list_item_count=15,
+            stat_count=4,
+            citation_count=6,
+            authority_type="industry_report",
+            content_type="pillar_page",
+            snippet="A 409A valuation is an independent appraisal...",
+        )
+        assert es.url == "https://example.com/409a-guide"
+        assert es.word_count == 2500
+        assert es.authority_type == "industry_report"
+
+    def test_json_round_trip(self):
+        es = ExemplarSummary(
+            url="https://example.com/test",
+            word_count=1200,
+            header_count=5,
+        )
+        data = json.loads(es.model_dump_json())
+        restored = ExemplarSummary(**data)
+        assert restored == es
 
 
 class TestContentBrief:
@@ -113,6 +208,9 @@ class TestContentBrief:
         assert brief.word_count_range == (1200, 2000)
         assert brief.semantic_threshold == 0.65
         assert isinstance(brief.structural_targets, StructuralTargets)
+        # v2.0 exemplar fields default to empty lists
+        assert brief.exemplar_summaries == []
+        assert brief.exemplar_themes == []
 
     def test_word_count_range_tuple(self):
         brief = ContentBrief(
@@ -144,6 +242,15 @@ class TestContentBrief:
             structural_targets=StructuralTargets(min_headers=5),
             key_topics=["409A", "startup equity"],
             competitor_exemplars=["https://example.com/409a"],
+            exemplar_summaries=[
+                ExemplarSummary(
+                    url="https://example.com/409a-guide",
+                    word_count=2500,
+                    header_count=8,
+                    authority_type="industry_report",
+                )
+            ],
+            exemplar_themes=["compliance-focused", "step-by-step"],
         )
         data = json.loads(brief.model_dump_json())
         restored = ContentBrief(**data)
@@ -151,6 +258,20 @@ class TestContentBrief:
         assert restored.word_count_range == (1000, 1500)
         assert restored.structural_targets.min_headers == 5
         assert len(restored.target_queries) == 1
+        assert len(restored.exemplar_summaries) == 1
+        assert restored.exemplar_summaries[0].word_count == 2500
+        assert restored.exemplar_themes == ["compliance-focused", "step-by-step"]
+
+    def test_backward_compat_v1_json(self):
+        """v1 brief JSON (no exemplar fields) deserializes cleanly."""
+        v1_data = {
+            "brief_id": "b-old",
+            "title": "Old Brief",
+            "content_format": "long_blog",
+        }
+        brief = ContentBrief(**v1_data)
+        assert brief.exemplar_summaries == []
+        assert brief.exemplar_themes == []
 
 
 class TestPlannerOutput:
@@ -178,6 +299,18 @@ class TestOutlineSection:
         assert s.level == 2
         assert s.target_word_count == 300
         assert s.key_points == []
+        # v2.0 fields
+        assert s.structural_elements == []
+        assert s.self_contained_claims == 0
+
+    def test_with_structural_elements(self):
+        s = OutlineSection(
+            heading="Process Overview",
+            structural_elements=["bullet_list", "table", "statistics"],
+            self_contained_claims=3,
+        )
+        assert len(s.structural_elements) == 3
+        assert s.self_contained_claims == 3
 
 
 class TestContentOutline:
@@ -192,6 +325,23 @@ class TestContentOutline:
         )
         assert len(outline.sections) == 2
         assert outline.total_target_words == 1500
+        # v2.0 defaults
+        assert outline.has_faq_section is False
+        assert outline.has_table_section is False
+        assert outline.has_key_takeaways is False
+
+    def test_with_structural_flags(self):
+        outline = ContentOutline(
+            brief_id="b-1",
+            title="Comprehensive Guide",
+            sections=[OutlineSection(heading="Intro")],
+            has_faq_section=True,
+            has_table_section=True,
+            has_key_takeaways=True,
+        )
+        assert outline.has_faq_section is True
+        assert outline.has_table_section is True
+        assert outline.has_key_takeaways is True
 
 
 class TestContentDraft:

@@ -54,7 +54,7 @@ Title: {title}
 Company: {company_name} ({domain})
 Topics: {topics_str}
 
-{content_markdown[:8000]}
+{content_markdown}
 
 Evaluate the factual accuracy and grounding of this article.
 Flag any unsupported claims, outdated statistics, or questionable assertions.

@@ -17,6 +17,7 @@ from core.models.content_generation import (
     ContentGenerationInput,
     ContentOutline,
     EnrichedDraft,
+    ExemplarSummary,
     FormattedContent,
     OutlineSection,
     PlannerOutput,
@@ -56,9 +57,35 @@ def sample_brief() -> ContentBrief:
         content_format="long_blog",
         funnel_stage="awareness",
         word_count_range=(1200, 2000),
-        structural_targets=StructuralTargets(min_headers=4, min_lists=2, min_citations=3),
+        structural_targets=StructuralTargets(
+            min_headers=4, min_lists=2, min_citations=3,
+            min_paragraphs=10, faq_rate=0.4, min_stats=3,
+        ),
         key_topics=["409A", "startup equity", "fair market value"],
         key_angles=["compliance requirements", "timing considerations"],
+        exemplar_summaries=[
+            ExemplarSummary(
+                url="https://carta.com/blog/409a-valuations",
+                word_count=2200,
+                header_count=7,
+                list_item_count=12,
+                stat_count=5,
+                citation_count=4,
+                authority_type="industry_report",
+                content_type="long_blog",
+                snippet="A 409A valuation determines the fair market value...",
+            ),
+            ExemplarSummary(
+                url="https://example.com/equity-comp-guide",
+                word_count=1800,
+                header_count=5,
+                list_item_count=8,
+                stat_count=3,
+                authority_type="company_blog",
+                content_type="how_to",
+            ),
+        ],
+        exemplar_themes=["compliance-driven", "step-by-step process", "IRS regulations"],
     )
 
 
@@ -73,27 +100,38 @@ def sample_outline() -> ContentOutline:
                 level=2,
                 key_points=["Definition", "Legal basis"],
                 target_word_count=300,
+                structural_elements=["definition", "statistics"],
+                self_contained_claims=2,
             ),
             OutlineSection(
                 heading="Why Startups Need 409A Valuations",
                 level=2,
                 key_points=["Compliance", "Tax implications"],
                 target_word_count=400,
+                structural_elements=["bullet_list", "statistics"],
+                self_contained_claims=3,
             ),
             OutlineSection(
                 heading="The 409A Valuation Process",
                 level=2,
                 key_points=["Steps", "Timeline", "Providers"],
                 target_word_count=400,
+                structural_elements=["numbered_list", "table"],
+                self_contained_claims=2,
             ),
             OutlineSection(
                 heading="Key Considerations and Timing",
                 level=2,
                 key_points=["When to get one", "Cost factors"],
                 target_word_count=300,
+                structural_elements=["bullet_list"],
+                self_contained_claims=1,
             ),
         ],
         total_target_words=1400,
+        has_faq_section=False,
+        has_table_section=True,
+        has_key_takeaways=False,
     )
 
 

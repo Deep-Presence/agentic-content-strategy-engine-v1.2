@@ -227,17 +227,23 @@ async def run_content_generation(
         metadata={"stage": 2, "stage_name": "Content Workers"},
     )
     if 2 in skip_stages:
-        # Load pre-existing formatted content
+        # Load pre-existing formatted content with structural counts
+        from core.content_engine.workers.formatter import _count_structural_elements
+
         formatted_contents: List[FormattedContent] = []
         for brief in briefs:
             bdir = artifact_dir / "content" / brief.brief_id
             fmt_path = bdir / "formatted.md"
             if fmt_path.exists():
+                markdown = fmt_path.read_text(encoding="utf-8")
+                counts = _count_structural_elements(markdown)
                 formatted_contents.append(
                     FormattedContent(
                         brief_id=brief.brief_id,
                         title=brief.title,
-                        markdown=fmt_path.read_text(encoding="utf-8"),
+                        markdown=markdown,
+                        word_count=len(markdown.split()),
+                        **counts,
                     )
                 )
         end_span(stage2_span, output={"skipped": True, "loaded": len(formatted_contents)})

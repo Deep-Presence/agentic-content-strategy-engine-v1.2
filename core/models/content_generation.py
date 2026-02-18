@@ -51,8 +51,15 @@ class TargetQuery(BaseModel):
 
 
 class StructuralTargets(BaseModel):
-    """Cluster-derived structural targets for content."""
+    """Cluster-derived structural targets for content.
 
+    Original fields capture rates and minimums from gap analysis cluster specs.
+    Extended fields (v2.0) add paragraph/sentence targets, granular structural
+    rates, count targets, and authority/content intelligence — all derived from
+    analyzing what content AI search engines actually cite.
+    """
+
+    # --- Original fields (v1.0) ---
     header_rate: float = 0.0
     list_rate: float = 0.0
     stat_rate: float = 0.0
@@ -60,6 +67,47 @@ class StructuralTargets(BaseModel):
     min_headers: int = 3
     min_lists: int = 1
     min_citations: int = 2
+
+    # --- Paragraph & sentence targets (v2.0) ---
+    min_paragraphs: int = 8
+    avg_paragraph_word_count: int = 80
+    max_paragraph_word_count: int = 150
+    avg_sentence_count_per_paragraph: float = 3.5
+
+    # --- Granular structural rates (v2.0) ---
+    # Fraction of top-cited content that includes these elements
+    table_rate: float = 0.0
+    definition_rate: float = 0.0
+    faq_rate: float = 0.0
+    code_block_rate: float = 0.0
+
+    # --- Count targets (v2.0) ---
+    min_stats: int = 2
+    min_self_contained_claims: int = 5
+    min_bullets_per_list: int = 3
+
+    # --- Authority / content intelligence (v2.0) ---
+    dominant_authority_type: Optional[str] = None
+    dominant_content_type: Optional[str] = None
+    avg_word_count: int = 0
+
+
+class ExemplarSummary(BaseModel):
+    """Structural fingerprint of a top-cited exemplar from gap analysis.
+
+    Each instance represents one URL that AI search engines actually cite
+    for a target query, along with its structural characteristics.
+    """
+
+    url: str = ""
+    word_count: int = 0
+    header_count: int = 0
+    list_item_count: int = 0
+    stat_count: int = 0
+    citation_count: int = 0
+    authority_type: str = ""
+    content_type: str = ""
+    snippet: str = ""
 
 
 class ContentBrief(BaseModel):
@@ -87,6 +135,10 @@ class ContentBrief(BaseModel):
     competitor_exemplars: List[str] = Field(default_factory=list)
     semantic_threshold: float = 0.65
 
+    # --- Exemplar intelligence (v2.0) ---
+    exemplar_summaries: List[ExemplarSummary] = Field(default_factory=list)
+    exemplar_themes: List[str] = Field(default_factory=list)
+
 
 class PlannerOutput(BaseModel):
     """Full output of Stage 1."""
@@ -108,6 +160,11 @@ class OutlineSection(BaseModel):
     key_points: List[str] = Field(default_factory=list)
     target_word_count: int = 300
 
+    # --- Structural elements (v2.0) ---
+    structural_elements: List[str] = Field(default_factory=list)
+    # e.g., ["bullet_list", "table", "definition", "statistics", "data_point"]
+    self_contained_claims: int = 0
+
 
 class ContentOutline(BaseModel):
     """Structured outline produced by the Outliner."""
@@ -116,6 +173,11 @@ class ContentOutline(BaseModel):
     title: str
     sections: List[OutlineSection] = Field(default_factory=list)
     total_target_words: int = 1500
+
+    # --- Structural flags (v2.0) ---
+    has_faq_section: bool = False
+    has_table_section: bool = False
+    has_key_takeaways: bool = False
 
 
 class ContentDraft(BaseModel):

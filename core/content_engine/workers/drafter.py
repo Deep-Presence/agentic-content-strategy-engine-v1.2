@@ -15,6 +15,7 @@ from anthropic import AsyncAnthropic
 from core.config.settings import settings
 from core.content_engine.prompts.drafter_prompts import (
     DRAFTER_SYSTEM_PROMPT,
+    REVISION_SYSTEM_PROMPT,
     build_drafter_user_prompt,
 )
 from core.content_engine.tracing import create_span, end_span, log_generation
@@ -66,6 +67,10 @@ async def generate_draft(
         style_guide_md=style_guide_md,
         company_context_snippet=company_context_md,
         target_queries=[q.model_dump() for q in brief.target_queries],
+        structural_targets=brief.structural_targets.model_dump(),
+        exemplar_summaries=[e.model_dump() for e in brief.exemplar_summaries],
+        exemplar_themes=brief.exemplar_themes,
+        word_count_range=brief.word_count_range,
     )
 
     user_prompt = truncate_to_token_limit(
@@ -160,6 +165,21 @@ async def revise_draft(
         },
     )
 
+    # Build structural targets section for revision
+    st = brief.structural_targets.model_dump()
+    wc_range = brief.word_count_range
+    structural_section = f"""\
+## Structural Blueprint (must be met after revision)
+
+**Word count target: {wc_range[0]}-{wc_range[1]} words**
+- Min headers: {st.get('min_headers', 3)}
+- Min lists: {st.get('min_lists', 1)}
+- Min citations: {st.get('min_citations', 2)}
+- Min stats: {st.get('min_stats', 2)}
+- Min paragraphs: {st.get('min_paragraphs', 8)}
+- Target paragraph length: {st.get('avg_paragraph_word_count', 80)} words avg
+- Min self-contained claims: {st.get('min_self_contained_claims', 5)}"""
+
     user_prompt = f"""\
 ## Current Draft
 
@@ -169,15 +189,17 @@ async def revise_draft(
 
 {feedback}
 
+{structural_section}
+
 ## Target Queries
 {chr(10).join(f'- "{q.query_text}"' for q in brief.target_queries)}
 
 ## Style Guide
-{style_guide_md[:3000] if style_guide_md else 'Not provided.'}
+{style_guide_md if style_guide_md else 'Not provided.'}
 
-Revise the draft to address ALL feedback issues. Maintain the existing structure
-but improve content quality where flagged. Return the complete revised article
-in Markdown.
+Revise the draft to address ALL feedback issues. You CAN add new sections (FAQ, \
+tables, key takeaways) if the feedback requires it. Never shrink below the word \
+count target. Return the complete revised article in Markdown.
 """
 
     user_prompt = truncate_to_token_limit(
@@ -190,7 +212,7 @@ in Markdown.
         return await client.messages.create(
             model=model,
             max_tokens=8192,
-            system=DRAFTER_SYSTEM_PROMPT,
+            system=REVISION_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
         )
 

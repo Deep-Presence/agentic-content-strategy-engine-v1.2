@@ -16,7 +16,7 @@ from core.content_engine.prompts.factual_judge_prompts import (
     build_factual_judge_user_prompt,
 )
 from core.content_engine.tracing import create_span, end_span, log_generation, log_score
-from core.content_engine.utils import _retry_async_anthropic
+from core.content_engine.utils import _retry_async_anthropic, truncate_to_token_limit
 from core.models.content_generation import ContentBrief, DimensionResult, FormattedContent
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,10 @@ async def evaluate_factual(
         company_name=company_name,
         domain=domain,
         key_topics=brief.key_topics,
+    )
+
+    user_prompt = truncate_to_token_limit(
+        user_prompt, 150_000, label="factual_judge_prompt"
     )
 
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)

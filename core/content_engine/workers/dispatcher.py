@@ -137,6 +137,7 @@ async def _run_worker_chain(
             formatted = await format_content(
                 enriched=enriched,
                 style_guide_md=style_guide_md,
+                brief=brief,
                 trace=trace,
             )
             (bdir / "formatted.md").write_text(formatted.markdown, encoding="utf-8")

@@ -16,8 +16,8 @@ from core.content_engine.prompts.formatter_prompts import (
     build_formatter_user_prompt,
 )
 from core.content_engine.tracing import create_span, end_span, log_generation
-from core.content_engine.utils import _retry_async_anthropic
-from core.models.content_generation import EnrichedDraft, FormattedContent
+from core.content_engine.utils import _retry_async_anthropic, truncate_to_token_limit
+from core.models.content_generation import ContentBrief, EnrichedDraft, FormattedContent
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,7 @@ async def format_content(
     enriched: EnrichedDraft,
     style_guide_md: str,
     *,
+    brief: Optional[ContentBrief] = None,
     trace: Optional[object] = None,
 ) -> FormattedContent:
     """Format and polish enriched content using Haiku 4.5.
@@ -56,6 +57,7 @@ async def format_content(
     Args:
         enriched: Enriched draft to format.
         style_guide_md: Company writing style guide.
+        brief: Optional content brief for structural targets.
         trace: Langfuse trace for instrumentation.
 
     Returns:
@@ -75,6 +77,11 @@ async def format_content(
     user_prompt = build_formatter_user_prompt(
         enriched_markdown=enriched.markdown,
         style_guide_md=style_guide_md,
+        structural_targets=brief.structural_targets.model_dump() if brief else None,
+    )
+
+    user_prompt = truncate_to_token_limit(
+        user_prompt, 150_000, label="formatter_prompt"
     )
 
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
