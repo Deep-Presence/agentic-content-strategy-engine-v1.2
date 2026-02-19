@@ -381,6 +381,7 @@ async def run_content_generation(
             formatted_contents=formatted_contents,
             briefs=briefs,
             revision_histories=revision_histories,
+            auto_approve=False,
             session_id=session_id,
             artifact_dir=artifact_dir,
             parent_span=stage4_span,

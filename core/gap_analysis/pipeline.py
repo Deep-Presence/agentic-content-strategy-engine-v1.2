@@ -280,7 +280,7 @@ async def run_gap_analysis(
     else:
         report = await generate_gap_report(analysis, queries, enriched)
         report.visualization_paths = list(visualization_paths.values())
-        save_report(report, artifact_dir)
+        save_report(report, artifact_dir, analysis=analysis)
     logger.info("Step 8 completed: generate_gap_report (%.1fs)", time.monotonic() - step_start)
     _cli_step(8, time.monotonic() - step_start, skipped=8 in skip_steps)
 

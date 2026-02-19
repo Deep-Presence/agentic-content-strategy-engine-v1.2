@@ -5,8 +5,9 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from api.dependencies import get_task_store
+from api.dependencies import get_event_bus, get_task_store
 from api.schemas.common import CancelResponse, TaskListResponse, TaskResponse, TaskSummary
+from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
 from api.tasks.store import TaskStore
 
@@ -63,6 +64,7 @@ def get_task(
 def cancel_task(
     task_id: str,
     task_store: TaskStore = Depends(get_task_store),
+    event_bus: EventBus = Depends(get_event_bus),
 ) -> CancelResponse:
     task = task_store.get_task(task_id)
     if task.status not in _CANCELLABLE_STATES:
@@ -71,7 +73,13 @@ def cancel_task(
             detail=f"Cannot cancel task in {task.status.value} state",
         )
 
+    # Cancel the background asyncio.Task if running
+    task_store.cancel_task_handle(task_id)
+
     task_store.update_task(task_id, status=TaskStatus.CANCELLED)
     task_store.release_slug_lock(task.company_slug)
+
+    # Publish SSE cancelled event so frontend receives it
+    event_bus.publish(task_id, "cancelled", {"reason": "user_cancelled"})
 
     return CancelResponse(run_id=task_id, status="cancelled")

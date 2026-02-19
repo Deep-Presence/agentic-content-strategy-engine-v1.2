@@ -35,7 +35,7 @@ async def start_research(
     slug = _derive_slug(request.company_name)
     task = task_store.create_task("research", slug)
 
-    asyncio.create_task(
+    handle = asyncio.create_task(
         run_research_pipeline_task(
             task_id=task.task_id,
             request=request,
@@ -43,6 +43,7 @@ async def start_research(
             event_bus=event_bus,
         )
     )
+    task_store.register_task_handle(task.task_id, handle)
 
     return PipelineRunResponse(
         run_id=task.task_id,

@@ -86,10 +86,10 @@ def _build_gap_report_md(
     lines.append(f"- **Top Gap Queries:** {', '.join(top_5_ids)}")
     lines.append("")
 
-    # Gap Briefs (top 10)
-    lines.append("## Gap Briefs (Top 10)")
+    # Gap Briefs (top 25 with inline ContentBrief)
+    lines.append("## Gap Briefs (Top 25)")
     lines.append("")
-    for i, gap in enumerate(sorted_gaps[:10], 1):
+    for i, gap in enumerate(sorted_gaps[:25], 1):
         lines.append(f"### {i}. {gap.query_id} — {gap.query_text}")
         lines.append("")
         lines.append(f"- **Cluster:** {gap.cluster_name or 'N/A'}")
@@ -99,6 +99,35 @@ def _build_gap_report_md(
         lines.append(f"- **Avg Citation Similarity:** {gap.avg_citation_similarity or 0:.4f}")
         lines.append(f"- **Gap:** {gap.gap or 0:.4f} ({gap.interpretation})")
         lines.append("")
+
+        # Inline ContentBrief (Phase 3)
+        brief = gap.content_brief
+        if brief:
+            lines.append("**Content Brief:**")
+            lines.append("")
+            lines.append(f"- Target word count: {brief.target_word_count[0]}–{brief.target_word_count[1]}")
+            lines.append(f"- Reading level: {brief.target_reading_level[0]:.1f}–{brief.target_reading_level[1]:.1f}")
+            lines.append(f"- Headers: {brief.recommended_header_count[0]}–{brief.recommended_header_count[1]}")
+            if brief.header_hierarchy:
+                hier = ", ".join(f"{k}: {v}" for k, v in brief.header_hierarchy.items())
+                lines.append(f"- Header hierarchy: {hier}")
+            patterns = []
+            if brief.has_faq_section >= 0.5:
+                patterns.append("FAQ")
+            if brief.has_key_takeaways >= 0.5:
+                patterns.append("Key Takeaways")
+            if brief.has_step_by_step >= 0.5:
+                patterns.append("Step-by-Step")
+            if brief.has_tables >= 0.5:
+                patterns.append("Tables")
+            if patterns:
+                lines.append(f"- Content patterns: {', '.join(patterns)}")
+            if brief.dominant_authority_type:
+                lines.append(f"- Dominant authority: {brief.dominant_authority_type}")
+            if brief.dominant_content_type:
+                lines.append(f"- Dominant content type: {brief.dominant_content_type}")
+            lines.append(f"- Exemplars analyzed: {brief.exemplar_count}")
+            lines.append("")
 
         if gap.top_cited_exemplars:
             lines.append("**Top Cited Exemplars:**")
@@ -120,18 +149,20 @@ def _build_gap_report_md(
                 lines.append(f"  - Authority: {ex.authority_type or 'unknown'}")
             lines.append("")
 
-    # Appendix: all queries table
-    lines.append("## Appendix: All Query Gaps")
-    lines.append("")
-    lines.append("| Query ID | Cluster | Query Text | Gap | Interpretation |")
-    lines.append("|----------|---------|------------|-----|----------------|")
-    for gap in sorted_gaps:
-        text = gap.query_text[:60] + "..." if len(gap.query_text) > 60 else gap.query_text
-        lines.append(
-            f"| {gap.query_id} | {gap.cluster_name or 'N/A'} | {text} | "
-            f"{gap.gap or 0:.4f} | {gap.interpretation} |"
-        )
-    lines.append("")
+    # Appendix: remaining queries table (after top 25)
+    remaining = sorted_gaps[25:]
+    if remaining:
+        lines.append("## Appendix: Remaining Query Gaps")
+        lines.append("")
+        lines.append("| Query ID | Cluster | Query Text | Gap | Interpretation |")
+        lines.append("|----------|---------|------------|-----|----------------|")
+        for gap in remaining:
+            text = gap.query_text[:60] + "..." if len(gap.query_text) > 60 else gap.query_text
+            lines.append(
+                f"| {gap.query_id} | {gap.cluster_name or 'N/A'} | {text} | "
+                f"{gap.gap or 0:.4f} | {gap.interpretation} |"
+            )
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -196,6 +227,25 @@ def _build_generation_spec_md(analysis: AnalysisResult) -> str:
             for name, rate in rates.items():
                 lines.append(f"  - {name}: {rate:.2f}")
         lines.append("")
+
+        # Expanded fields (Phase 3)
+        if spec.avg_word_count > 0:
+            lines.append(f"- **Avg Word Count:** {spec.avg_word_count:.0f}")
+        if spec.avg_paragraph_word_count > 0:
+            lines.append(f"- **Avg Paragraph Word Count:** {spec.avg_paragraph_word_count:.1f}")
+        if spec.faq_rate > 0:
+            lines.append(f"- **FAQ Rate:** {spec.faq_rate:.2f}")
+        if spec.table_rate > 0:
+            lines.append(f"- **Table Rate:** {spec.table_rate:.2f}")
+        if spec.key_takeaways_rate > 0:
+            lines.append(f"- **Key Takeaways Rate:** {spec.key_takeaways_rate:.2f}")
+        if spec.dominant_content_type:
+            lines.append(f"- **Dominant Content Type:** {spec.dominant_content_type}")
+        if spec.dominant_authority_type:
+            lines.append(f"- **Dominant Authority Type:** {spec.dominant_authority_type}")
+        if spec.exemplar_themes:
+            lines.append(f"- **Exemplar Themes:** {', '.join(spec.exemplar_themes[:10])}")
+        lines.append("")
         lines.append("---")
         lines.append("")
 
@@ -225,14 +275,20 @@ def _build_llm_summary_prompt(analysis: AnalysisResult) -> str:
         for g in sorted_gaps[:10]
     ]
 
-    # Cluster specs summary
+    # Cluster specs summary (expanded with Phase 2 fields)
     specs_summary = [
         {
             "cluster_name": s.cluster_name,
             "query_count": s.query_count,
             "word_count_range": s.word_count_range,
+            "avg_word_count": s.avg_word_count,
             "required_elements": s.required_elements,
             "authority_signals": s.authority_signals,
+            "faq_rate": s.faq_rate,
+            "table_rate": s.table_rate,
+            "dominant_content_type": s.dominant_content_type,
+            "dominant_authority_type": s.dominant_authority_type,
+            "exemplar_themes": s.exemplar_themes[:5],
         }
         for s in analysis.cluster_specs
     ]
@@ -351,7 +407,16 @@ async def generate_gap_report(
     )
 
 
-def save_report(report: GapReport, output_dir: Path) -> None:
+def save_report(
+    report: GapReport,
+    output_dir: Path,
+    analysis: Optional[AnalysisResult] = None,
+) -> None:
+    """Save report artifacts to output directory.
+
+    Writes the standard 3-file contract (gap_report, generation_spec, analysis.json)
+    plus the optional Tier 1 gap_analysis_complete.json for full-fidelity output.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     if report.report_md:
         (output_dir / "gap_report.md").write_text(report.report_md, encoding="utf-8")
@@ -365,3 +430,18 @@ def save_report(report: GapReport, output_dir: Path) -> None:
     (output_dir / "generation_spec.json").write_text(
         json.dumps(report.generation_spec_json, indent=2, default=str), encoding="utf-8"
     )
+
+    # Tier 1: Full-fidelity JSON (additive — does NOT replace existing 3-file contract)
+    if analysis:
+        complete = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "analysis": analysis.model_dump(mode="json"),
+            "report": {
+                "executive_summary": report.report_json.get("executive_summary", ""),
+                "recommendations": report.report_json.get("recommendations", []),
+            },
+            "cluster_specs": [s.model_dump(mode="json") for s in analysis.cluster_specs],
+        }
+        (output_dir / "gap_analysis_complete.json").write_text(
+            json.dumps(complete, indent=2, default=str), encoding="utf-8"
+        )

@@ -318,7 +318,7 @@ def mock_embeddings():
     # Return simple unit vectors for testing
     async def _mock_embed(texts, **kwargs):
         import numpy as np
-        return [np.random.default_rng(42 + i).random(3072).tolist() for i in range(len(texts))]
+        return [np.random.default_rng(42 + i).random(1536).tolist() for i in range(len(texts))]
 
     with patch("core.content_engine.evaluator.semantic.async_embed_texts", side_effect=_mock_embed):
         yield

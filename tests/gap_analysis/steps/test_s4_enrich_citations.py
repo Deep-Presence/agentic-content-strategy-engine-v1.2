@@ -58,7 +58,7 @@ class TestAsyncFetchHtml:
 
     @pytest.mark.asyncio
     async def test_returns_html_on_success(self):
-        """Should return HTML content for successful requests."""
+        """Should return (html, resolved_url) tuple for successful requests."""
         mock_response = httpx.Response(
             200,
             text=SIMPLE_HTML,
@@ -70,13 +70,14 @@ class TestAsyncFetchHtml:
 
         from core.gap_analysis.steps.s4_enrich_citations import _fetch_html
 
-        result = await _fetch_html("https://example.com", client=mock_client)
-        assert result is not None
-        assert "Main Title" in result
+        html, resolved_url = await _fetch_html("https://example.com", client=mock_client)
+        assert html is not None
+        assert "Main Title" in html
+        assert resolved_url == "https://example.com"
 
     @pytest.mark.asyncio
     async def test_returns_none_on_404(self):
-        """Should return None for 4xx error responses."""
+        """Should return (None, None) for 4xx error responses."""
         mock_response = httpx.Response(
             404,
             text="Not Found",
@@ -88,12 +89,13 @@ class TestAsyncFetchHtml:
 
         from core.gap_analysis.steps.s4_enrich_citations import _fetch_html
 
-        result = await _fetch_html("https://example.com/missing", client=mock_client)
-        assert result is None
+        html, resolved_url = await _fetch_html("https://example.com/missing", client=mock_client)
+        assert html is None
+        assert resolved_url is None
 
     @pytest.mark.asyncio
     async def test_returns_none_on_non_html(self):
-        """Should return None for non-HTML content (PDFs, images)."""
+        """Should return (None, None) for non-HTML content (PDFs, images)."""
         mock_response = httpx.Response(
             200,
             content=b"%PDF-1.4",
@@ -105,19 +107,21 @@ class TestAsyncFetchHtml:
 
         from core.gap_analysis.steps.s4_enrich_citations import _fetch_html
 
-        result = await _fetch_html("https://example.com/doc.pdf", client=mock_client)
-        assert result is None
+        html, resolved_url = await _fetch_html("https://example.com/doc.pdf", client=mock_client)
+        assert html is None
+        assert resolved_url is None
 
     @pytest.mark.asyncio
     async def test_returns_none_on_exception(self):
-        """Should return None on network errors without crashing."""
+        """Should return (None, None) on network errors without crashing."""
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
 
         from core.gap_analysis.steps.s4_enrich_citations import _fetch_html
 
-        result = await _fetch_html("https://broken.example.com", client=mock_client)
-        assert result is None
+        html, resolved_url = await _fetch_html("https://broken.example.com", client=mock_client)
+        assert html is None
+        assert resolved_url is None
 
 
 # ---------------------------------------------------------------------------

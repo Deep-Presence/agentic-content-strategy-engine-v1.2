@@ -1,0 +1,14 @@
+{
+  "task_id": "1594bbf0-07b7-43e6-92ca-9282a0a47aaf",
+  "pipeline": "research",
+  "status": "failed",
+  "company_slug": "heizen",
+  "current_step": "company",
+  "progress_pct": null,
+  "created_at": "2026-02-18T21:21:25.233087Z",
+  "updated_at": "2026-02-18T21:25:57.795485Z",
+  "result": null,
+  "error": "Type is not msgpack serializable: CompanyResearchInput",
+  "approval_payload": null,
+  "approval_history": []
+}

@@ -1,6 +1,6 @@
 {
   "current_sprint": "v3-async",
-  "last_updated": "2026-02-16",
+  "last_updated": "2026-02-19",
   "completed": [
     {
       "id": "T-async-1",
@@ -188,6 +188,105 @@
     }
   ],
   "in_progress": [],
+  "recently_completed": [
+    {
+      "id": "T-hitl-approval-1",
+      "task": "HITL Approval Flow Fix — backend draft enrichment + frontend 4-button ApprovalGate + draft card",
+      "sprint": "api-v1",
+      "status": "done",
+      "completed_at": "2026-02-19",
+      "summary": "Fixed research pipeline approval panel showing empty content for persona/style_guide stages. Backend: added _enrich_interrupt_with_draft_content() to runner.py that reads draft files from disk and injects artifact_md into interrupt payloads. Frontend: rewrote ApprovalGate from 3 to 4 buttons (Approve, Request Edit, Reject w/ Comments, Reject), added human-readable stage labels in ArtifactPanel, added clickable draft review card to research page.",
+      "test_count": "351 backend tests passed, frontend builds cleanly.",
+      "files_changed": [
+        "api/tasks/runner.py",
+        "dashboard/src/components/approval/ApprovalGate.tsx",
+        "dashboard/src/components/layout/ArtifactPanel.tsx",
+        "dashboard/src/app/research/page.tsx"
+      ]
+    },
+    {
+      "id": "T-review-fix-1",
+      "task": "Codex gpt-5.3 code review — fix all 7 blockers + 12 warnings (API+frontend integration)",
+      "sprint": "api-v1",
+      "status": "done",
+      "completed_at": "2026-02-19",
+      "blockers_fixed": [
+        "B1: HITL lost-wakeup race condition — asyncio.Event replaced with asyncio.Queue in store.py",
+        "B2: Cancel endpoint now cancels asyncio.Task via task handle tracking",
+        "B3: Cancel publishes SSE 'cancelled' event via EventBus",
+        "B4: Content HITL auto_approve parameter wired through graph.py/pipeline.py",
+        "B5: Slug regex validation added to artifact routes (path traversal prevention)",
+        "B6: rehype-sanitize added to MarkdownViewer (XSS prevention)"
+      ],
+      "warnings_fixed": [
+        "W1: Research stage name 'style' → 'style_guide' (runner.py + constants.ts)",
+        "W2: Research reject now stops pipeline progression via early-exit logic",
+        "W3: produced_artifacts built from completed_stages not requested stages",
+        "W4: Interrupt extraction guarded against empty interrupts list",
+        "W5: Frontend handles 'cancelled' and 'failed_restart' terminal states",
+        "W6: SSE heartbeat/keepalive (15s timeout + comment ping)",
+        "W7: Frontend error display — .catch(console.error) instead of swallowed errors",
+        "W8: ContentStartRequest typed with flat fields (company_name, domain, max_briefs, auto_approve)",
+        "W9: getArtifactContent error handling matches apiFetch pattern",
+        "W10: Slug derivation consolidated to _derive_slug() in all runners",
+        "W11: Removed report_md[:500] truncation in gap analysis runner",
+        "W12: brief_id validation in content approve endpoint"
+      ],
+      "test_count": "351 backend tests, 0 failures. Frontend builds cleanly.",
+      "files_changed": [
+        "api/tasks/store.py",
+        "api/tasks/runner.py",
+        "api/tasks/event_bus.py",
+        "api/routers/tasks.py",
+        "api/routers/research.py",
+        "api/routers/gap_analysis.py",
+        "api/routers/content.py",
+        "api/routers/artifacts.py",
+        "api/schemas/common.py",
+        "core/content_engine/graph.py",
+        "core/content_engine/pipeline.py",
+        "tests/api/test_content.py",
+        "dashboard/package.json",
+        "dashboard/src/components/artifacts/MarkdownViewer.tsx",
+        "dashboard/src/components/pipeline/NewPipelineDialog.tsx",
+        "dashboard/src/lib/api.ts",
+        "dashboard/src/lib/constants.ts",
+        "dashboard/src/types/api.ts",
+        "dashboard/src/app/content/page.tsx",
+        "dashboard/src/app/research/page.tsx",
+        "dashboard/src/app/gap-analysis/page.tsx"
+      ]
+    },
+    {
+      "id": "T-SSO-all",
+      "task": "Structural Signal Overhaul — 5-phase upgrade of S4/S6/S8 pipeline",
+      "sprint": "v3-signals",
+      "status": "done",
+      "completed_at": "2026-02-18",
+      "phases": [
+        "Phase -1: Fixed 4 stale S4 tests (_fetch_html contract drift)",
+        "Phase 0: Added trafilatura/textstat deps + _extract_main_content() 3-tier fallback",
+        "Phase 1: Expanded StructuralSignals from 11 to ~45 fields + dual-soup extraction",
+        "Phase 2: Added GapContentBrief model + expanded ClusterContentSpec (12 fields) + S6 logic",
+        "Phase 3: 3-tier output (gap_analysis_complete.json + top-25 inline briefs + enhanced markdown)"
+      ],
+      "test_count": "351 total, 0 failures",
+      "files_changed": [
+        "requirements.txt",
+        "pyproject.toml",
+        "core/models/gap_analysis.py",
+        "core/gap_analysis/steps/s4_enrich_citations.py",
+        "core/gap_analysis/steps/s6_analyze.py",
+        "core/gap_analysis/steps/s8_generate_report.py",
+        "core/gap_analysis/pipeline.py",
+        "tests/gap_analysis/steps/test_s4_enrich_citations.py",
+        "tests/gap_analysis/steps/test_s4_main_content.py",
+        "tests/gap_analysis/steps/test_s4_structural_signals.py",
+        "tests/gap_analysis/steps/test_s6_analyze.py",
+        "tests/gap_analysis/steps/test_s8_generate_report.py"
+      ]
+    }
+  ],
   "pending": [
     {
       "id": "T-async-13",
@@ -199,15 +298,19 @@
       "id": "T-api-cleanup-1",
       "task": "Consolidate duplicated _derive_slug() into shared utility — currently duplicated in gap_analysis.py, research.py, content.py, runner.py",
       "sprint": "api-v1",
-      "status": "pending",
-      "source": "code review 2026-02-17"
+      "status": "done",
+      "completed_at": "2026-02-19",
+      "source": "code review 2026-02-17",
+      "resolved_by": "T-review-fix-1 (W10)"
     },
     {
       "id": "T-api-cleanup-2",
       "task": "Simplify ContentStartRequest like GapAnalysis/Research — replace Dict[str, Any] input_data with typed flat fields (company_name, domain, etc.)",
       "sprint": "api-v1",
-      "status": "pending",
-      "source": "code review 2026-02-17"
+      "status": "done",
+      "completed_at": "2026-02-19",
+      "source": "code review 2026-02-17",
+      "resolved_by": "T-review-fix-1 (W8)"
     },
     {
       "id": "T-api-cleanup-3",
@@ -222,6 +325,27 @@
       "sprint": "api-v1",
       "status": "pending",
       "source": "code review 2026-02-17"
+    },
+    {
+      "id": "T-sso-followup-1",
+      "task": "Add max(1, concurrency) guard in s4_enrich_citations to prevent zero-concurrency edge case",
+      "sprint": "v3-signals",
+      "status": "pending",
+      "source": "Codex review 2026-02-18 (SSO review warning)"
+    },
+    {
+      "id": "T-sso-followup-2",
+      "task": "Add try/except around _cosine_similarity for dimension mismatch resilience in s6_analyze",
+      "sprint": "v3-signals",
+      "status": "pending",
+      "source": "Codex review 2026-02-18 (SSO review warning)"
+    },
+    {
+      "id": "T-sso-followup-3",
+      "task": "Clean up stale test_name field in S8 test fixture (SpaResult uses 'cspa' but Codex flagged as non-standard)",
+      "sprint": "v3-signals",
+      "status": "pending",
+      "source": "Codex review 2026-02-18 (SSO review warning)"
     }
   ],
   "blocked": []

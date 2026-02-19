@@ -68,9 +68,9 @@ function GapAnalysisPageInner() {
     if (liveStatus === "completed") {
       setPageState("complete");
       if (taskId) {
-        getTaskDetail(taskId).then(setCompletedTask).catch(() => {});
+        getTaskDetail(taskId).then(setCompletedTask).catch(console.error);
       }
-    } else if (liveStatus === "failed") {
+    } else if (liveStatus === "failed" || liveStatus === "cancelled") {
       setPageState("failed");
     } else if (liveStatus === "running") {
       setPageState("running");
@@ -85,13 +85,16 @@ function GapAnalysisPageInner() {
           if (task.status === "completed") {
             setPageState("complete");
             setCompletedTask(task);
-          } else if (task.status === "failed") {
+          } else if (task.status === "failed" || task.status === "cancelled" || task.status === "failed_restart") {
             setPageState("failed");
           } else {
             setPageState("running");
           }
         })
-        .catch(() => setPageState("idle"));
+        .catch((err) => {
+          console.error("Failed to fetch task:", err);
+          setPageState("idle");
+        });
     }
   }, [taskIdParam]);
 

@@ -1,0 +1,14 @@
+{
+  "task_id": "a40d85cf-6fc0-473f-9824-be2c7cea926c",
+  "pipeline": "content",
+  "status": "failed",
+  "company_slug": "webflow",
+  "current_step": null,
+  "progress_pct": null,
+  "created_at": "2026-02-19T03:50:33.837873Z",
+  "updated_at": "2026-02-19T03:50:43.824786Z",
+  "result": null,
+  "error": "Error code: 404 - {'type': 'error', 'error': {'type': 'not_found_error', 'message': 'model: claude-opus-4-5-20260218'}, 'request_id': 'req_011CYGkHVLAqM5NtPAGgY3TA'}",
+  "approval_payload": null,
+  "approval_history": []
+}

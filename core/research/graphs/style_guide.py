@@ -37,7 +37,8 @@ def _log_event(event: str, data: Dict[str, Any]) -> None:
 
 
 def _agent(state: Dict[str, Any]) -> Dict[str, Any]:
-    input_data: StyleGuideResearchInput = state["input"]
+    raw = state["input"]
+    input_data = StyleGuideResearchInput(**raw) if isinstance(raw, dict) else raw
     revision_note = state.get("revision_note")
     _log_event("agent_start", {"company_name": input_data.company_name})
     result = run_style_guide_agent(input_data, revision_note=revision_note, use_draft_paths=True)
@@ -49,19 +50,27 @@ def _approval_gate(state: Dict[str, Any]) -> Dict[str, Any]:
     Human-in-the-loop gate. Pause the graph and surface the draft path and notes.
     Resume with {"approval_decision": "approve" | "revise" | "reject", "revision_note": "..."}.
     If state.auto_approve is True, skip interrupt (for testing).
+
+    LangGraph >=1.0: interrupt() returns the resume value on the second execution
+    of this node. We must merge it into state because StateGraph(dict) replaces
+    state with the node's return value.
     """
     if state.get("auto_approve"):
         return {**state, "approval_decision": "approve"}
     agent_result: Dict[str, Any] = state.get("agent_result", {})
     draft_paths: List[str] = agent_result.get("written_paths") or []
     notes = agent_result.get("notes", "")
-    return interrupt(
+    resume_value = interrupt(
         {
             "status": "pending_approval",
             "draft_paths": draft_paths,
             "notes": notes,
         }
     )
+    # Merge resume value into full state to preserve input, agent_result, etc.
+    if isinstance(resume_value, dict):
+        return {**state, **resume_value}
+    return {**state, "approval_decision": str(resume_value)}
 
 
 def _route(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -76,7 +85,8 @@ def _route(state: Dict[str, Any]) -> Dict[str, Any]:
 
 def _write_and_mirror(state: Dict[str, Any]) -> Dict[str, Any]:
     """On approval: promote draft artifacts to permanent path and mirror to Supabase."""
-    input_data: StyleGuideResearchInput = state["input"]
+    raw = state["input"]
+    input_data = StyleGuideResearchInput(**raw) if isinstance(raw, dict) else raw
     agent_result: Dict[str, Any] = state.get("agent_result", {})
     draft_paths: List[str] = agent_result.get("written_paths") or []
 
@@ -111,6 +121,15 @@ def _write_and_mirror(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         if mirror_res:
             mirrored.append(mirror_res)
+
+        # Clean up draft file after promotion
+        draft_disk = (_PROJECT_ROOT / draft_path.lstrip("/")).resolve()
+        if draft_disk.exists():
+            try:
+                draft_disk.unlink()
+                _log_event("draft_cleanup", {"draft_path": draft_path})
+            except Exception as e:
+                _log_event("draft_cleanup_warning", {"error": str(e), "draft_path": draft_path})
 
     return {**state, "written_paths": written_paths, "mirrored": mirrored}
 

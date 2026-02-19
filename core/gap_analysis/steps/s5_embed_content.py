@@ -17,7 +17,7 @@ from core.shared_tools.async_embedding_client import async_embed_texts
 
 logger = logging.getLogger(__name__)
 
-# text-embedding-3-large: 8,191 token limit per text.
+# text-embedding-3-small: 8,191 token limit per text.
 # Worst-case ratio is ~1:1 (binary/special content), so cap at 6,000 chars
 # to guarantee safety even for non-English or noisy text.
 _MAX_CHARS_PER_TEXT = 6_000

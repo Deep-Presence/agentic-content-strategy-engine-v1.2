@@ -59,8 +59,8 @@ function ContentPageInner() {
     if (!taskId) return;
     if (liveStatus === "completed") {
       setPageState("complete");
-      getTaskDetail(taskId).then(setCompletedTask).catch(() => {});
-    } else if (liveStatus === "failed") {
+      getTaskDetail(taskId).then(setCompletedTask).catch(console.error);
+    } else if (liveStatus === "failed" || liveStatus === "cancelled") {
       setPageState("failed");
     } else if (liveStatus === "running" || liveStatus === "pending_approval") {
       setPageState("running");
@@ -75,13 +75,16 @@ function ContentPageInner() {
           if (task.status === "completed") {
             setPageState("complete");
             setCompletedTask(task);
-          } else if (task.status === "failed") {
+          } else if (task.status === "failed" || task.status === "cancelled" || task.status === "failed_restart") {
             setPageState("failed");
           } else {
             setPageState("running");
           }
         })
-        .catch(() => setPageState("idle"));
+        .catch((err) => {
+          console.error("Failed to fetch task:", err);
+          setPageState("idle");
+        });
     }
   }, [taskIdParam]);
 
@@ -104,12 +107,10 @@ function ContentPageInner() {
 
     try {
       const res = await startContent({
-        input_data: {
-          company_name: companyName,
-          domain,
-          max_briefs: maxBriefs,
-          auto_approve: autoApprove,
-        },
+        company_name: companyName,
+        domain,
+        max_briefs: maxBriefs,
+        auto_approve: autoApprove,
       });
       setTaskId(res.run_id);
       setPageState("running");

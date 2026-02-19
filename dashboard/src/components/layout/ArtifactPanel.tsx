@@ -6,6 +6,7 @@ import { X } from "lucide-react";
 import { useArtifactStore } from "@/stores/artifactStore";
 import { MarkdownViewer } from "@/components/artifacts/MarkdownViewer";
 import { ApprovalGate } from "@/components/approval/ApprovalGate";
+import { RESEARCH_STAGES } from "@/lib/constants";
 
 export function ArtifactPanel() {
   const { isOpen, content, close } = useArtifactStore();
@@ -53,7 +54,10 @@ export function ArtifactPanel() {
                 )}
                 <h2 className="font-display text-[1.25rem] text-ink">
                   {content.kind === "markdown" && content.title}
-                  {content.kind === "approval" && `Stage: ${content.stage}`}
+                  {content.kind === "approval" && (() => {
+                    const stageInfo = RESEARCH_STAGES.find(s => s.name === content.stage);
+                    return `Review: ${stageInfo?.label || content.stage}`;
+                  })()}
                   {content.kind === "visualization" && content.title}
                   {content.kind === "json" && content.title}
                 </h2>

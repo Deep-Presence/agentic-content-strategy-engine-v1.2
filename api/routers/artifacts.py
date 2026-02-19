@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List
+
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -76,6 +79,8 @@ def list_artifacts(
     artifacts_root: Path = Depends(get_artifacts_root),
 ) -> Dict[str, Any]:
     """List files for a given artifact type and company slug."""
+    if not _SLUG_PATTERN.match(slug):
+        raise HTTPException(status_code=400, detail="Invalid slug format")
     if artifact_type not in VALID_TYPES:
         raise HTTPException(
             status_code=422, detail=f"Invalid artifact type: {artifact_type}. Valid: {sorted(VALID_TYPES)}"
@@ -130,6 +135,8 @@ def get_artifact_content(
     artifacts_root: Path = Depends(get_artifacts_root),
 ) -> Any:
     """Retrieve artifact file content."""
+    if not _SLUG_PATTERN.match(slug):
+        raise HTTPException(status_code=400, detail="Invalid slug format")
     if artifact_type not in VALID_TYPES:
         raise HTTPException(
             status_code=422, detail=f"Invalid artifact type: {artifact_type}"

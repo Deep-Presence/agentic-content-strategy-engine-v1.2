@@ -26,6 +26,8 @@ umap-learn
 scipy
 httpx
 playwright
+trafilatura>=1.6.0
+textstat>=0.7.0
 
 # Content generation engine
 langfuse>=2.0

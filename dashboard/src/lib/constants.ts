@@ -5,7 +5,7 @@ import type { PipelineType, TaskStatus, SSEEventType } from "@/types/api";
 export const RESEARCH_STAGES = [
   { name: "company", label: "Company Context" },
   { name: "persona", label: "Audience Persona" },
-  { name: "style", label: "Writing Style Guide" }, // backend sends "style" not "style_guide"
+  { name: "style_guide", label: "Writing Style Guide" },
 ] as const;
 
 export const GAP_ANALYSIS_STEPS = [

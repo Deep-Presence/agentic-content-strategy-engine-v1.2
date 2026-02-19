@@ -165,6 +165,7 @@ async def run_content_review(
     briefs: List[ContentBrief],
     revision_histories: List[RevisionHistory],
     *,
+    auto_approve: bool = False,
     session_id: str = "",
     artifact_dir: Path = Path("."),
     parent_span: Optional[object] = None,
@@ -228,7 +229,7 @@ async def run_content_review(
             "content": content,
             "brief": brief,
             "history": history,
-            "auto_approve": True,  # Always auto-approve in v1.0 pipeline
+            "auto_approve": auto_approve,
             "artifact_dir": artifact_dir,
         }
 

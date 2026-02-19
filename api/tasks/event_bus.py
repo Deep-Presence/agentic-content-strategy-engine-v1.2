@@ -89,11 +89,16 @@ class EventBus:
                 if event["type"] in _TERMINAL_TYPES:
                     return
 
-        # Subscribe for live events
+        # Subscribe for live events with heartbeat keepalive
         queue = self.subscribe(task_id)
         try:
             while True:
-                event = await queue.get()
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    # Send SSE comment as keepalive to prevent proxy/browser timeout
+                    yield ": heartbeat\n\n"
+                    continue
                 yield _format_sse(event)
                 if event["type"] in _TERMINAL_TYPES:
                     return

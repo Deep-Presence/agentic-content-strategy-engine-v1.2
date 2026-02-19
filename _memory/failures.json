@@ -18,5 +18,25 @@
     "lesson": "Always verify SDK API against installed version, not docs that may describe a different version. Langfuse v3 is a breaking change from v2. Also note: start_generation is already deprecated in 3.14.1 in favor of start_observation(as_type='generation').",
     "files_affected": ["core/content_engine/tracing.py"],
     "recurrence_prevention": "v3 API is now used throughout. Monitor for start_observation migration when upgrading langfuse."
+  },
+  {
+    "id": "F3",
+    "timestamp": "2026-02-18",
+    "what_broke": "Trafilatura flattens structural HTML elements — ordered_list_count, definition_list_count, table_count all zero",
+    "root_cause": "trafilatura.extract() converts <ol>, <dl>, <details>, <table> into <p> tags in its HTML output. Counting elements on trafilatura output yields 0 for these structural elements.",
+    "fix_applied": "Implemented dual-soup architecture: _extract_main_content() for text (trafilatura), _extract_structural_html() for element counting (semantic-tag-only, no trafilatura). Each path scoped separately.",
+    "lesson": "trafilatura is excellent for text extraction but NOT for structural HTML analysis. Always use original HTML (scoped to semantic tags) for counting structural elements.",
+    "files_affected": ["core/gap_analysis/steps/s4_enrich_citations.py"],
+    "recurrence_prevention": "Dual-soup architecture is now standard. Text extraction and structure counting are separate code paths."
+  },
+  {
+    "id": "F4",
+    "timestamp": "2026-02-18",
+    "what_broke": "textstat.flesch_kincaid_grade() failed with NLTK LookupError — cmudict not found",
+    "root_cause": "textstat internally uses NLTK cmudict for syllable counting. The cmudict corpus was not downloaded, and SSL certificate verification failed when attempting to download.",
+    "fix_applied": "Downloaded cmudict manually with ssl._create_unverified_context workaround. The S4 code wraps textstat calls in try/except with default 0.0 on failure.",
+    "lesson": "textstat depends on NLTK corpora. Ensure cmudict is available in deployment environments. The try/except guard handles graceful degradation.",
+    "files_affected": ["core/gap_analysis/steps/s4_enrich_citations.py"],
+    "recurrence_prevention": "try/except guard around reading_level computation. Non-English text also skips reading level (defaults to 0.0)."
   }
 ]

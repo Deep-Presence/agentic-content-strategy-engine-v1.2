@@ -111,7 +111,8 @@ def _extract_final_markdown(messages: Any) -> str:
 
 
 def _run_agent(state: Dict[str, Any]) -> Dict[str, Any]:
-    input_data: CompanyResearchInput = state["input"]
+    raw = state["input"]
+    input_data = CompanyResearchInput(**raw) if isinstance(raw, dict) else raw
     agent = get_agent()
     seed_urls = "\n".join(str(u) for u in input_data.seed_urls) if input_data.seed_urls else "None provided"
     internal_sources = "\n".join(input_data.internal_sources) if input_data.internal_sources else "None provided"
@@ -180,7 +181,8 @@ Use TOOLS to research and ground the artifact. Read any provided internal source
 
 def _write_temp_draft(state: Dict[str, Any]) -> Dict[str, Any]:
     """Write artifact to a temporary draft path for human review before approval."""
-    input_data: CompanyResearchInput = state["input"]
+    raw = state["input"]
+    input_data = CompanyResearchInput(**raw) if isinstance(raw, dict) else raw
     md_content: str = state["artifact_md"]
 
     slug = input_data.company_name.lower().replace(" ", "-")
@@ -211,16 +213,24 @@ def _approval_gate(state: Dict[str, Any]) -> Dict[str, Any]:
     Pause for human approval. Resume with {"approval_decision": "approve" | "revise" | "reject", "revision_note": "..."}.
     Include artifact_md in payload for resume (needed to write on approve).
     If state.auto_approve is True, skip interrupt (for testing).
+
+    LangGraph >=1.0: interrupt() returns the resume value (Command(resume=...)) on
+    the second execution of this node. We must merge it into state because
+    StateGraph(dict) replaces state with the node's return value.
     """
     if state.get("auto_approve"):
         return {**state, "approval_decision": "approve"}
-    return interrupt(
+    resume_value = interrupt(
         {
             "status": "pending_approval",
             "draft_path": state.get("draft_path"),
             "artifact_md": state.get("artifact_md"),
         }
     )
+    # Merge resume value into full state to preserve input, artifact_md, etc.
+    if isinstance(resume_value, dict):
+        return {**state, **resume_value}
+    return {**state, "approval_decision": str(resume_value)}
 
 
 def _route(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -229,7 +239,8 @@ def _route(state: Dict[str, Any]) -> Dict[str, Any]:
 
 def _write_and_mirror(state: Dict[str, Any]) -> Dict[str, Any]:
     """On approval: write artifact to permanent path and mirror to Supabase."""
-    input_data: CompanyResearchInput = state["input"]
+    raw = state["input"]
+    input_data = CompanyResearchInput(**raw) if isinstance(raw, dict) else raw
     md_content: str = state["artifact_md"]
     draft_path: str = state.get("draft_path", "")
 
@@ -259,6 +270,16 @@ def _write_and_mirror(state: Dict[str, Any]) -> Dict[str, Any]:
         artifact_path=target_path,
         markdown=md_content,
     )
+    # Clean up draft file after promotion
+    if draft_path:
+        draft_disk = (_PROJECT_ROOT / draft_path.lstrip("/")).resolve()
+        if draft_disk.exists():
+            try:
+                draft_disk.unlink()
+                _log_event("draft_cleanup", {"draft_path": draft_path})
+            except Exception as e:
+                _log_event("draft_cleanup_warning", {"error": str(e), "draft_path": draft_path})
+
     _log_event("write_complete", {"target_path": target_path})
     return {**state, "output_path": target_path, "mirrored": True}
 

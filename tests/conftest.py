@@ -128,7 +128,7 @@ def mock_settings():
     """Fixture that patches settings with test values."""
     with patch("core.config.settings.settings") as mock_s:
         mock_s.openai_api_key = "test-api-key"
-        mock_s.embedding_model = "text-embedding-3-large"
+        mock_s.embedding_model = "text-embedding-3-small"
         mock_s.chroma_persist_dir = "/tmp/test_chroma"
         mock_s.chroma_collection_prefix = "test_gap"
         yield mock_s

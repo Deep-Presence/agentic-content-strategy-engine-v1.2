@@ -3,7 +3,7 @@
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
 > **Stack:** Python 3.12 · LangGraph · DeepAgents · FastAPI · Pydantic v2 · Langfuse v3
-> **Document Date:** 2026-02-16
+> **Document Date:** 2026-02-19
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -160,7 +160,7 @@ Company Website + Internal Docs
 │                                                                          │
 │  External Services:                                                      │
 │  • Perplexity (sonar-deep-research)  • Google Gemini (3-flash-preview)   │
-│  • OpenAI (text-embedding-3-large)   • Anthropic Claude (sonnet-4.5)     │
+│  • OpenAI (text-embedding-3-small)   • Anthropic Claude (sonnet-4.5)     │
 │  • Reddit (PRAW read-only)           • Slack / Discord (webhooks)        │
 │  • Supabase (PostgREST + Storage)    • ChromaDB (local vector DB)        │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -177,7 +177,7 @@ Company Website + Internal Docs
 | **Data Validation** | Pydantic v2 | Input/output schemas, settings management |
 | **Web Research** | Perplexity SDK (sonar-deep-research) | Deep web research with citations |
 | **LLM Providers** | Google Gemini, Anthropic Claude, OpenAI GPT | Agent reasoning, query gen, reports |
-| **Embeddings** | OpenAI text-embedding-3-large (3072-dim) | Semantic similarity in gap analysis |
+| **Embeddings** | OpenAI text-embedding-3-small (1536-dim) | Semantic similarity in gap analysis |
 | **Vector Store** | ChromaDB (local, persistent) | Embedding storage and retrieval |
 | **Database** | Supabase (PostgreSQL 17 + pgvector) | Optional artifact mirroring, versioning |
 | **Visualization** | Plotly | Interactive HTML charts (UMAP, t-SNE, heatmaps) |
@@ -308,7 +308,7 @@ content-strategy-engine/
 │   │
 │   └── shared_tools/                      # Cross-pipeline utilities
 │       ├── __init__.py
-│       ├── embedding_client.py            # embed_texts() — OpenAI text-embedding-3-large wrapper (42 lines)
+│       ├── embedding_client.py            # embed_texts() — OpenAI text-embedding-3-small wrapper (42 lines)
 │       ├── async_embedding_client.py      # async_embed_texts() — Async variant with batching
 │       ├── async_chroma_client.py         # Async ChromaDB wrappers (asyncio.to_thread)
 │       └── chroma_client.py               # ChromaDB persistent client with company/citation collections (184 lines)
@@ -803,7 +803,7 @@ The Gap Analysis Pipeline is an 8-step sequential data pipeline (not LangGraph-b
 - Produces `SemanticUnit` objects with url, title, text, char_count, word_count
 
 **Embedding & Storage:**
-- Embeds all texts using OpenAI `text-embedding-3-large` (3072 dimensions)
+- Embeds all texts using OpenAI `text-embedding-3-small` (1536 dimensions)
 - Stores raw embeddings in ChromaDB (indexed by company slug)
 - Saves lightweight JSON with `embedding_id` only (no raw vectors in JSON — saves disk space)
 
@@ -891,26 +891,71 @@ The Gap Analysis Pipeline is an 8-step sequential data pipeline (not LangGraph-b
 
 **File:** `core/gap_analysis/steps/s4_enrich_citations.py`
 
-**Purpose:** For each unique citation URL found in Step 3, fetch the actual HTML page, extract content paragraphs, and classify the content's structural and authority signals.
+**Purpose:** For each unique citation URL found in Step 3, fetch the actual HTML page, extract main content (isolating from nav/footer/sidebar), extract paragraphs, and compute ~45 structural signals across 4 categories.
 
 **Process:**
 1. **De-duplication:** One citation per unique URL (collapsed across all engines and queries)
 2. **HTML Fetching:** Async HTTP GET with 20-second timeout, follows redirects
-3. **Content Extraction:** BeautifulSoup parsing of p, li, h2, h3 tags
-4. **Structural Signal Extraction:**
+3. **Main Content Extraction** (3-tier fallback via `_extract_main_content()`):
+   - **Tier 1:** `trafilatura.extract()` with `output_format='html'` — research-grade content extraction. Used if output > 200 chars.
+   - **Tier 2:** Semantic HTML tags — `<article>`, `<main>`, `[role="main"]`, `.post-content`, `.entry-content`
+   - **Tier 3:** Full page fallback (original behavior)
+4. **Dual-Soup Architecture:** Two separate HTML processing paths:
+   - `_extract_main_content()` → clean text for paragraph extraction (trafilatura strips boilerplate)
+   - `_extract_structural_html()` → semantic-tag-only scoping (no trafilatura) for structure counting (preserves `<ol>`, `<dl>`, `<table>`, `<details>` that trafilatura flattens)
+5. **Structural Signal Extraction (~45 fields across 4 categories):**
+
+**Category A — Text Composition (10 fields):**
 
 | Signal | Measurement |
 |--------|-------------|
-| `word_count` | Total words in extracted content |
-| `paragraph_count` | Number of content paragraphs |
-| `header_count` | Number of H2/H3 headers |
-| `list_item_count` | Number of list items |
-| `stat_count` | Count of numbers/statistics in text |
-| `citation_count` | Count of outbound links |
-| `authority_type` | `.gov` → government, `.edu` → academic, `.org` → nonprofit, else commercial |
-| `content_type` | Inferred: blog, guide, faq, docs, research, case_study |
+| `word_count` | Total words in extracted main content |
+| `main_content_word_count` | Same (main-content-scoped) |
+| `sentence_count` | Sentence count (English-only regex split) |
+| `avg_paragraph_length` | Mean paragraph word count |
+| `median_paragraph_length` | Median paragraph word count |
+| `max_paragraph_word_count` | Longest paragraph word count |
+| `avg_sentence_length` | Mean sentence word count |
+| `avg_sentence_count_per_paragraph` | Sentences per paragraph |
+| `reading_level` | Flesch-Kincaid grade level (via textstat, English only) |
+| `self_contained_ratio` | Ratio of paragraphs that are self-contained (20-150 words, non-referential, contain facts) |
 
-**Output:** `enriched_citations.json` — List of `EnrichedCitation` with paragraphs and structural signals.
+**Category B — Structural Elements (13 fields):**
+
+| Signal | Measurement |
+|--------|-------------|
+| `header_count`, `h1_count`, `h2_count`, `h3_count`, `h4_count` | Per-level header counts |
+| `paragraph_count` | Content paragraph count |
+| `list_item_count`, `ordered_list_count`, `unordered_list_count` | List metrics |
+| `list_block_count`, `bullets_per_list_block`, `min_bullets_per_list` | List block aggregates |
+| `table_count`, `definition_list_count`, `blockquote_count`, `code_block_count` | Element counts |
+
+**Category C — Content Patterns (8 fields):**
+
+| Signal | Measurement |
+|--------|-------------|
+| `has_faq_section` | FAQ heading or `<details>`/`<summary>` detected |
+| `has_definition_opening` | "X is a/an..." opening or `<dl>` present |
+| `has_key_takeaways` | "Key Takeaways"/"Summary" heading detected |
+| `has_toc` | "Table of Contents"/"Contents" heading detected |
+| `has_comparison_table` | "Comparison"/"vs" heading or `<table>` present |
+| `has_step_by_step` | "Step"/"How to" heading with ordered list detected |
+| `has_research_refs` | "According to"/"study"/"research" attribution phrases |
+| `has_expert_quotes` | `<blockquote>` or "says/said" + quotes detected |
+
+**Category D — Factual Density (3 fields):**
+
+| Signal | Measurement |
+|--------|-------------|
+| `data_point_count` | Count of numbers with `%`, `$`, year patterns |
+| `citation_density` | Outbound links per 1000 words |
+| `named_entity_density` | Capitalized multi-word phrases per 1000 words |
+
+**Original 11 fields** (`word_count`, `paragraph_count`, `header_count`, `list_item_count`, `stat_count`, `citation_count`, `has_headers`, `has_lists`, `has_numbers`, `authority_type`, `content_type`) are preserved at the top of `StructuralSignals` for backward compatibility.
+
+**Dependencies added:** `trafilatura>=1.6.0` (content extraction), `textstat>=0.7.0` (Flesch-Kincaid reading level).
+
+**Output:** `enriched_citations.json` — List of `EnrichedCitation` with paragraphs and ~45 structural signals.
 
 ---
 
@@ -929,7 +974,7 @@ The Gap Analysis Pipeline is an 8-step sequential data pipeline (not LangGraph-b
 
 **Phase 2: Bulk Embed**
 - Embed all unique texts via OpenAI in batches of 256
-- On batch failure: retry one-by-one with zero-vector fallback (3072-dim zero vector)
+- On batch failure: retry one-by-one with zero-vector fallback (1536-dim zero vector)
 
 **Phase 3: Score & Select**
 - Compute cosine similarity between anchor text embedding and paragraph embeddings
@@ -971,7 +1016,16 @@ gap = avg_citation_similarity - best_company_similarity
 | gap ≤ -0.05 | `company_wins` — Company outperforms citations |
 
 **4. Citation Exemplars**
-Top-3 cited pages per query with: similarity score, domain, URL, snippet, structural signals, authority type.
+Top-3 cited pages per query with: similarity score, domain, URL, snippet, structural signals (~45 fields), authority type. Exemplars are URL-deduped to prevent single-URL bias. `per_paragraph_word_counts` is stripped from exemplar signals to prevent artifact bloat.
+
+**4b. Per-Query Content Briefs (GapContentBrief)**
+For each query with ≥1 exemplar, `_compute_content_brief(exemplars)` derives a `GapContentBrief`:
+- `target_word_count`, `target_reading_level`, `avg_paragraph_length`, `recommended_header_count` — (min, max) tuples from exemplar ranges
+- `header_hierarchy` — median h2/h3/h4 counts across exemplars
+- Boolean rates: `has_faq_section`, `has_key_takeaways`, `has_step_by_step`, `has_tables`, etc. — fraction of exemplars exhibiting each pattern
+- `target_data_point_density`, `target_citation_density` — median density values
+- `dominant_authority_type`, `dominant_content_type` — most common type via Counter
+- Attached to `QueryGap.content_brief`
 
 **5. SPA (Semantic Proximity Analysis)**
 Per-cluster independent t-test comparing citation similarities vs. company similarities:
@@ -994,6 +1048,11 @@ Per cluster, generates actionable specs for the Content Generation Engine:
 - Structural rates (% with headers, lists, stats, citations)
 - Required elements (elements present in ≥80% of top citations)
 - Min similarity threshold (mean - 0.5 × std for quality gate)
+- **Expanded fields (v3):** `faq_rate`, `table_rate`, `definition_rate`, `code_block_rate`, `key_takeaways_rate` — fraction of citations with each pattern
+- `avg_word_count`, `avg_paragraph_word_count`, `avg_sentence_count_per_paragraph` — aggregate text metrics
+- `min_bullets_per_list` — minimum list items across citations
+- `dominant_content_type`, `dominant_authority_type` — most common types via Counter
+- `exemplar_themes` — top terms via TF-IDF (scikit-learn TfidfVectorizer) on exemplar query texts, wrapped in try/except for empty-vocabulary edge case
 
 **Output:** `analysis.json` — Complete `AnalysisResult` object.
 
@@ -1032,17 +1091,27 @@ Per cluster, generates actionable specs for the Content Generation Engine:
 
 **File:** `core/gap_analysis/steps/s8_generate_report.py`
 
-**Purpose:** Produce the final gap analysis report (Markdown + JSON) and generation specifications.
+**Purpose:** Produce the final gap analysis report (Markdown + JSON), generation specifications, and full-fidelity analysis JSON.
 
-**2-Phase Generation:**
+**3-Tier Output Architecture:**
 
-**Phase A: Programmatic Reports**
-- `gap_report.md` — Summary + top-10 gap briefs with SPA score, proximity stats, per-gap details (cluster, company unit, citation similarities, interpretation, exemplars) + full gaps appendix table
-- `generation_spec.md` — Per-cluster content generation specs (query count, word count range, required elements, authority signals, structural rates, min similarity threshold)
-- JSON versions of both
+**Tier 1: `gap_analysis_complete.json` (Full Fidelity)**
+- Written by `save_report(report, output_dir, analysis=analysis)` when `analysis` is provided
+- Contains: `generated_at` timestamp, full `analysis` (all QueryGaps with GapContentBriefs, all exemplars with enriched signals), all `cluster_specs`, `report_json`, `generation_spec_json`
+- Additive — does NOT replace existing 3-file contract. Content engine's 3-file loading is unchanged.
 
-**Phase B: LLM-Generated Summary**
-- Calls OpenAI (GPT-5.2) with focused prompt
+**Tier 2: JSON Files (Machine-Readable)**
+- `gap_report.json` — Executive summary + recommendations (unchanged contract)
+- `generation_spec.json` — Cluster specs (unchanged contract)
+
+**Tier 3: Markdown Reports (Human-Readable)**
+
+*Phase A: Programmatic Reports*
+- `gap_report.md` — Summary + **top 25 gap briefs** (up from 10) with inline ContentBrief sections showing: target word count, reading level, recommended headers, content patterns (FAQ rate, table rate, key takeaways), dominant authority/content types. Remaining gaps (after 25) go in appendix table.
+- `generation_spec.md` — Per-cluster content specs with expanded fields: FAQ rate, table rate, avg word count, avg paragraph word count, dominant content/authority types, exemplar themes
+
+*Phase B: LLM-Generated Summary*
+- Calls OpenAI (GPT-5.2) with focused prompt including expanded cluster spec context
 - Generates: executive summary + top-5 content recommendations
 - Each recommendation includes: title idea, target cluster, structural signals to match, impact reasoning
 - Prepended to `gap_report.md`
@@ -1054,6 +1123,9 @@ Per cluster, generates actionable specs for the Content Generation Engine:
 | `gap_report.json` | Machine-readable version |
 | `generation_spec.md` | Content specs per cluster for the generation engine |
 | `generation_spec.json` | Machine-readable version |
+| `gap_analysis_complete.json` | Full-fidelity JSON with all ContentBriefs + exemplar signals (when analysis provided) |
+
+**Pipeline Integration:** `pipeline.py` passes `analysis` to `save_report()` at line 283.
 
 ---
 
@@ -1110,6 +1182,7 @@ GapAnalysisInput
   │                                                   │
   └── S8: analysis + queries + citations ──────────▶ gap_report.{md,json}
                                                       generation_spec.{md,json}
+                                                      gap_analysis_complete.json
 ```
 
 **Key Artifact Dependencies:**
@@ -1272,7 +1345,7 @@ async def evaluate_and_optimize(
 | Dimension | File | Type | Model | Threshold |
 |-----------|------|------|-------|-----------|
 | Structural | `evaluator/structural.py` | Deterministic (Python) | None | >= 0.8 |
-| Semantic | `evaluator/semantic.py` | Embedding proximity | OpenAI text-embedding-3-large | >= 0.65 |
+| Semantic | `evaluator/semantic.py` | Embedding proximity | OpenAI text-embedding-3-small | >= 0.65 |
 | Style | `evaluator/style_judge.py` | LLM-as-Judge | Haiku 4.5 | >= 0.7 |
 | Factual | `evaluator/factual_judge.py` | LLM-as-Judge | Sonnet 4.5 | >= 0.7 |
 
@@ -1728,11 +1801,36 @@ GeneratedQuery:      query_id, cluster_id, cluster_name, query_text, buyer_stage
 CitationRef:         url, rank, title, snippet, confidence, source
 PlatformResult:      engine, model, query_id, query_text, response_text,
                      citations: List[CitationRef]
-StructuralSignals:   word_count, paragraph_count, header_count, list_item_count,
+CitationExemplar:    similarity, domain, url, snippet, structural_signals, authority_type
+StructuralSignals:   ~45 fields across 4 categories (all with defaults for backward compat):
+  Original (11):     word_count, paragraph_count, header_count, list_item_count,
                      stat_count, citation_count, has_headers, has_lists, has_numbers,
                      authority_type, content_type
+  Cat A - Text (10): main_content_word_count, sentence_count, avg_paragraph_length,
+                     median_paragraph_length, max_paragraph_word_count, avg_sentence_length,
+                     avg_sentence_count_per_paragraph, reading_level, self_contained_ratio,
+                     per_paragraph_word_counts: List[int]
+  Cat B - Structure (13): h1_count, h2_count, h3_count, h4_count, ordered_list_count,
+                     unordered_list_count, table_count, definition_list_count,
+                     blockquote_count, code_block_count, list_block_count,
+                     bullets_per_list_block, min_bullets_per_list
+  Cat C - Patterns (8): has_faq_section, has_definition_opening, has_key_takeaways,
+                     has_toc, has_comparison_table, has_step_by_step,
+                     has_research_refs, has_expert_quotes
+  Cat D - Density (3): data_point_count, citation_density, named_entity_density
 EnrichedCitation:    url, domain, title, query_id, cluster_name, engine,
                      paragraphs, best_paragraphs, structural_signals
+```
+
+**Content Brief Models:**
+```
+GapContentBrief:     target_word_count: Tuple[int,int], target_reading_level: Tuple[float,float],
+                     avg_paragraph_length: Tuple[int,int], recommended_header_count: Tuple[int,int],
+                     header_hierarchy: Dict[str,int], has_ordered_lists, has_unordered_lists,
+                     has_tables, has_faq_section, has_definition_opening, has_key_takeaways,
+                     has_step_by_step (all float rates), target_data_point_density,
+                     target_citation_density, dominant_authority_type, dominant_content_type,
+                     exemplar_count
 ```
 
 **Analysis Models:**
@@ -1742,10 +1840,16 @@ SpaResult:           cluster_id, cluster_name, t_stat, p_value,
 CentroidResult:      cluster_id, cluster_name, query_centroid, citation_centroid, distance
 QueryGap:            query_id, cluster_name, query_text, best_company_unit,
                      best_company_similarity, avg_citation_similarity, gap, interpretation,
-                     top_cited_exemplars
+                     top_cited_exemplars: List[CitationExemplar],
+                     content_brief: Optional[GapContentBrief]
 ClusterContentSpec:  cluster_id, cluster_name, query_count, word_count_range,
                      min_similarity_threshold, required_elements, authority_signals,
-                     structural_rates, total_citations_analyzed
+                     structural_rates, total_citations_analyzed,
+                     faq_rate, table_rate, definition_rate, code_block_rate,
+                     key_takeaways_rate, avg_word_count, avg_paragraph_word_count,
+                     avg_sentence_count_per_paragraph, min_bullets_per_list,
+                     dominant_content_type, dominant_authority_type,
+                     exemplar_themes: List[str]
 AnalysisResult:      proximity_stats, spa_results, centroids, gaps, citation_patterns,
                      decision_metrics, cluster_specs
 GapReport:           report_md, report_json, generation_spec_md, generation_spec_json,
@@ -1847,7 +1951,7 @@ DraftNotification:   thread, fit_score (0.0-1.0), why_match, draft_markdown, met
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `OPENAI_API_KEY` | — | Embeddings (text-embedding-3-large) + query gen + reports |
+| `OPENAI_API_KEY` | — | Embeddings (text-embedding-3-small) + query gen + reports |
 | `ANTHROPIC_API_KEY` | — | Claude search engine |
 | `GOOGLE_API_KEY_GAP_ANALYSIS` | — | Gemini search engine |
 
@@ -1861,7 +1965,7 @@ DraftNotification:   thread, fit_score (0.0-1.0), why_match, draft_markdown, met
 | `DEEPAGENTS_MODEL` | `claude-sonnet-4-5-20250929` | Default DeepAgent LLM |
 | `PERPLEXITY_DEEP_RESEARCH_MODEL` | `sonar-deep-research` | Perplexity model |
 | `PERPLEXITY_SEARCH_MODEL` | `sonar-pro` | Perplexity search model |
-| `EMBEDDING_MODEL` | `text-embedding-3-large` | Embedding model |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
 | `GAP_ANALYSIS_QUERY_GEN_MODEL` | `gpt-5.2-2025-12-11` | Query generation |
 | `GAP_ANALYSIS_REPORT_MODEL` | `gpt-5.2-2025-12-11` | Report generation |
 | `GAP_ANALYSIS_OPENAI_ENGINE_MODEL` | `gpt-5.2-2025-12-11` | OpenAI search engine |
@@ -2229,9 +2333,12 @@ tests/
 │   └── steps/
 │       ├── test_s1_embed_assets.py       # Site discovery + embedding tests
 │       ├── test_s2_generate_queries.py   # Query generation tests
-│       ├── test_s4_enrich_citations.py   # Citation enrichment tests (4 known failures)
+│       ├── test_s4_enrich_citations.py   # Citation enrichment tests (11 tests — ALL PASSING)
+│       ├── test_s4_main_content.py       # Main content extraction tests (5 tests)
+│       ├── test_s4_structural_signals.py # Expanded structural signals tests (16 tests)
 │       ├── test_s5_embed_content.py      # Content embedding tests
-│       └── test_s8_generate_report.py    # Report generation tests
+│       ├── test_s6_analyze.py            # GapContentBrief + ClusterContentSpec tests (8 tests)
+│       └── test_s8_generate_report.py    # Report generation tests (11 tests incl. Phase 3)
 ├── gap_analysis/
 │   └── test_pipeline.py                  # Gap analysis pipeline orchestrator tests
 ├── research/                             # Empty
@@ -2251,7 +2358,7 @@ tests/
     └── test_integration.py              # 2 tests — Full pipeline + skip stages
 ```
 
-**Test counts:** 276 total tests. 272 passing, 4 known failures (s4 mock regression in gap analysis).
+**Test counts:** 351 total tests. All 351 passing (0 failures). S4 mock regression fixed in Phase -1 of structural signal overhaul.
 
 ### API Test Coverage (126/126 passing — added 2026-02-16)
 
@@ -2362,10 +2469,12 @@ LLM Providers:
 
 Data Processing:
 ├── chromadb v0.5+ → Persistent vector storage (local)
-├── numpy, scipy, scikit-learn → Statistics + cosine similarity
+├── numpy, scipy, scikit-learn → Statistics + cosine similarity + TF-IDF themes
 ├── umap-learn → UMAP dimensionality reduction
 ├── plotly → Interactive HTML visualizations
-├── beautifulsoup4 → HTML content extraction
+├── beautifulsoup4 → HTML structural element extraction
+├── trafilatura v1.6+ → Main content extraction (3-tier fallback in S4)
+├── textstat v0.7+ → Flesch-Kincaid reading level computation (S4)
 └── playwright → Headless browser crawling
 
 Web & HTTP:
@@ -2574,10 +2683,10 @@ scripts/run_server.py ← API entry point (uvicorn)
 ### Critical Issues
 
 #### 1. PARTIAL TEST COVERAGE (Improved Significantly)
-**Severity:** Medium (downgraded from Critical — 2026-02-15, improved 2026-02-16)
-**Description:** 276 total tests. API layer: 126/126 passing. Content engine: 57/57 passing. Gap analysis: partial coverage (s1, s2, s4, s5, s8, pipeline). Research pipeline and Reddit HIL have zero tests. 4 known failures in s4 tests.
-**Impact:** API layer and content engine have full regression protection. Research pipeline and Reddit HIL remain unprotected.
-**Recommendation:** Add tests for research pipeline (approval flows) and Reddit HIL (webhook delivery). Fix 4 s4 mock regressions.
+**Severity:** Medium (downgraded from Critical — 2026-02-15, improved 2026-02-16, updated 2026-02-19)
+**Description:** 351 total tests, all passing. API layer: 126+ passing. Content engine: 57/57 passing. Gap analysis: comprehensive coverage (s1, s2, s4, s5, s6, s8, pipeline). Research pipeline and Reddit HIL have zero tests. S4 test failures fixed (2026-02-18).
+**Impact:** API layer, content engine, and gap analysis have full regression protection. Research pipeline and Reddit HIL remain unprotected.
+**Recommendation:** Add tests for research pipeline (approval flows) and Reddit HIL (webhook delivery).
 
 #### 2. InMemoryStore — Agent Memory Not Persistent
 **Severity:** High
@@ -2604,7 +2713,7 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 #### 5. Embedding Dimension Hardcoded
 **Severity:** Medium
-**Description:** Zero-vector fallback uses hardcoded 3072 dimensions (for text-embedding-3-large). If the embedding model changes, this silently produces wrong-dimension vectors.
+**Description:** Zero-vector fallback uses hardcoded 1536 dimensions (for text-embedding-3-small). If the embedding model changes, this silently produces wrong-dimension vectors.
 **Location:** `core/gap_analysis/steps/s5_embed_content.py` (lines 176, 193)
 **Recommendation:** Derive dimension from model configuration or first successful embedding.
 
@@ -2835,13 +2944,23 @@ POST /api/v1/research/{run_id}/approve          → ApprovalResponse
 ```
 POST /api/v1/content/start                      → 202 Accepted: PipelineRunResponse
 GET  /api/v1/content/{run_id}/status            → TaskResponse
-POST /api/v1/content/{run_id}/approve           → ApprovalResponse
+POST /api/v1/content/{run_id}/approve           → ContentApprovalResponse
 ```
+
+**Content Start Request (typed flat fields):**
+```json
+{ "company_name": "Ramp", "domain": "ramp.com", "max_briefs": 5, "auto_approve": false }
+```
+- `company_name` (required): Company display name
+- `domain` (required): Company domain
+- `max_briefs` (optional, default 5, 1-20): Maximum briefs to generate
+- `auto_approve` (optional, default false): Skip HITL review when true — wired through to content engine's `run_content_review()`
 
 **Content Approval (per brief):**
 ```json
 { "brief_id": "brief-1", "decision": "approve|edit|reject", "editor_notes": "optional" }
 ```
+- `brief_id` is validated against the current `approval_payload.brief_id` — returns 409 on mismatch
 
 #### SSE Event Streaming
 ```
@@ -2887,6 +3006,7 @@ GET  /api/v1/tasks                              → TaskListResponse (?pipeline=
 GET  /api/v1/tasks/{task_id}                    → TaskResponse
 POST /api/v1/tasks/{task_id}/cancel             → CancelResponse
 ```
+- **Cancel** now performs real cancellation: calls `asyncio.Task.cancel()` on the background task handle, publishes SSE `cancelled` event, and sets task status to `cancelled`. Runners catch `asyncio.CancelledError` for clean shutdown.
 
 #### Artifact Retrieval
 ```
@@ -2895,6 +3015,8 @@ GET  /api/v1/artifacts/{type}/{slug}            → {"artifact_type", "slug", "f
 GET  /api/v1/artifacts/{type}/{slug}/{filename} → File content (JSON/HTML/MD)
 ```
 **Artifact types:** `company_context`, `personas`, `style_guides`, `gap_analysis`, `content`
+
+**Slug validation:** Slugs must match `^[a-z0-9][a-z0-9-]*$` (lowercase alphanumeric + hyphens, starting with alphanumeric). Invalid slugs return 400. Additionally, resolved paths are checked for containment within the artifacts root to prevent path traversal.
 
 ---
 
@@ -2907,21 +3029,26 @@ GET  /api/v1/artifacts/{type}/{slug}/{filename} → File content (JSON/HTML/MD)
 - **JSON Files:** Atomic persistence via temp-file + `os.replace()` to `artifacts/_jobs/{task_id}.json`
 - **Slug Locks:** Per-company mutexes prevent concurrent pipeline runs for the same company
 - **Global Semaphore:** Caps concurrent pipelines (default: 3, via `API_MAX_CONCURRENT_PIPELINES`)
-- **Approval Events:** `asyncio.Event`-based blocking/unblocking for HITL
+- **Approval Queues:** `asyncio.Queue(maxsize=1)`-based blocking/unblocking for HITL — prevents lost-wakeup race condition (previously used `asyncio.Event` which could miss signals if `set()` was called before `wait()`)
+- **Task Handle Tracking:** `Dict[str, asyncio.Task]` stores background task handles, enabling real cancellation via `asyncio.Task.cancel()`
 
 **Task Lifecycle:**
 ```
 create_task() → acquire slug lock → RUNNING
     ↓
+register_task_handle() → store asyncio.Task for cancellation support
+    ↓
 update_task() → RUNNING (progress updates)
     ↓ (if graph interrupts)
 update_task() → PENDING_APPROVAL (blocked on wait_for_approval())
     ↓ (human calls /approve)
-submit_approval() → unblocks wait_for_approval()
+submit_approval() → Queue.put_nowait() unblocks wait_for_approval()
     ↓
 update_task() → RUNNING → ... → COMPLETED | FAILED
+    ↓ (or user calls /cancel)
+cancel_task_handle() → asyncio.Task.cancel() + CancelledError caught in runner
     ↓
-release_slug_lock()
+release_slug_lock() + remove_task_handle()
 ```
 
 **Startup Recovery:** On server restart, `_recover_from_disk()` loads all JSON files. Tasks with status `RUNNING` or `PENDING_APPROVAL` are marked `FAILED_RESTART` (orphan recovery).
@@ -2959,6 +3086,7 @@ class PipelineTask(BaseModel):
 2. Event stored in history deque + pushed to all active subscriber queues
 3. SSE endpoint (`GET /tasks/{id}/events`) creates subscriber, streams events
 4. On reconnect with `Last-Event-ID`: replays history starting after that ID, then switches to live
+5. **Heartbeat keepalive:** If no event is published for 15 seconds, the stream yields a SSE comment (`: heartbeat\n\n`) to prevent proxy/browser timeouts
 
 **Terminal Events:** `completed`, `failed`, `cancelled` — SSE stream closes after yielding a terminal event.
 
@@ -2996,10 +3124,11 @@ Client                          API Server                       LangGraph
 
 **Graph Resume Mechanism:**
 ```python
-# Runner detects GraphInterrupt, extracts interrupt payload
-interrupt_values = snapshot.tasks[0].interrupts[0].value
+# Runner detects GraphInterrupt, extracts interrupt payload (guarded)
+interrupt_values = snapshot.tasks[0].interrupts[0].value \
+    if snapshot.tasks and snapshot.tasks[0].interrupts else {}
 
-# Publishes pending_approval event, blocks on asyncio.Event
+# Publishes pending_approval event, blocks on asyncio.Queue
 approval = await task_store.wait_for_approval(task_id)
 
 # Resumes graph with human decision
@@ -3010,7 +3139,9 @@ result = await asyncio.to_thread(
 )
 ```
 
-**Auto-approve:** When `auto_approve: true` in the start request, the graph skips `interrupt()` calls entirely — no HITL pause.
+**Research Pipeline Reject Early-Exit:** When a stage receives a `"reject"` decision, the runner stops pipeline progression. For example, if `company` is rejected, `persona` and `style_guide` stages are skipped. `produced_artifacts` is built from actually completed stages, not requested stages.
+
+**Auto-approve:** When `auto_approve: true` in the start request, the graph skips `interrupt()` calls entirely — no HITL pause. For the content pipeline, `auto_approve` is wired through `pipeline.py` → `graph.py` → `run_content_review(auto_approve=True)`.
 
 ---
 
@@ -3024,6 +3155,11 @@ result = await asyncio.to_thread(
 | Per-slug locks | Prevent artifact race conditions | No locking (data corruption risk) |
 | `MemorySaver` checkpointer | LangGraph interrupt/resume persistence | Custom state persistence (reinventing) |
 | Startup orphan recovery | Graceful handling of server crashes | Ignore stale tasks (confusing UX) |
+| `asyncio.Queue` for approvals | Prevents lost-wakeup race condition; multiple approvals can queue | `asyncio.Event` (set before wait loses signal) |
+| Task handle tracking | Enables real `asyncio.Task.cancel()` on user cancel | Soft-delete only (orphan task keeps running) |
+| 15s SSE heartbeat | Prevents proxy/browser timeout on quiet streams | No keepalive (client disconnects silently) |
+| Slug regex validation | Prevents path traversal in artifact routes | Trust client input (security risk) |
+| `rehype-sanitize` in MarkdownViewer | Prevents XSS from untrusted markdown content | Trust API-served markdown (security risk) |
 
 ---
 
@@ -3036,7 +3172,7 @@ result = await asyncio.to_thread(
 | Style Guide Research Agent | Gemini | `GOOGLE_API_KEY_STYLE_GUIDE_RESEARCH_DEEPAGENT` | `gemini-3-flash-preview` |
 | DeepAgents (default) | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
 | Perplexity Research | Sonar | `PERPLEXITY_API_KEY` | `sonar-deep-research` |
-| Embeddings | OpenAI | `OPENAI_API_KEY` | `text-embedding-3-large` |
+| Embeddings | OpenAI | `OPENAI_API_KEY` | `text-embedding-3-small` |
 | Gap: Query Generation | OpenAI | `OPENAI_API_KEY` | `gpt-5.2-2025-12-11` |
 | Gap: Report Generation | OpenAI | `OPENAI_API_KEY` | `gpt-5.2-2025-12-11` |
 | Gap: OpenAI Search Engine | OpenAI | `OPENAI_API_KEY` | `gpt-5.2-2025-12-11` |
@@ -3051,7 +3187,7 @@ result = await asyncio.to_thread(
 | Content Engine: Formatter | Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
 | Content Engine: Style Judge | Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
 | Content Engine: Factual Judge | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
-| Content Engine: Semantic Eval | OpenAI | `OPENAI_API_KEY` | `text-embedding-3-large` |
+| Content Engine: Semantic Eval | OpenAI | `OPENAI_API_KEY` | `text-embedding-3-small` |
 | Content Engine: Tracing | Langfuse | `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` | — |
 
 ---
@@ -3181,10 +3317,23 @@ from core.models.content_generation import ContentGenerationInput, ContentBrief,
 | 2026-02-16 | §18 | Added items 15-17 (Langfuse v2 resolved, TaskStore limitations); updated test coverage severity | D-API-1, F2 |
 | 2026-02-16 | §20 | Moved FastAPI from "Planned" to "Built"; added Langfuse tracing to built list | D-API-1 |
 | 2026-02-16 | §21 | **NEW SECTION** — Complete REST API Layer documentation (endpoints, TaskStore, SSE, HITL flow) | D-API-1 |
+| 2026-02-18 | §6.4 | Rewrote S4 section — 3-tier main content extraction, dual-soup architecture, ~45 structural signals across 4 categories | T-SSO-all |
+| 2026-02-18 | §6.6 | Added GapContentBrief computation, expanded ClusterContentSpec (12 new fields), URL dedup, TF-IDF themes | T-SSO-all |
+| 2026-02-18 | §6.8 | Rewrote S8 section — 3-tier output architecture, top-25 inline briefs, gap_analysis_complete.json | T-SSO-all |
+| 2026-02-18 | §6.10 | Updated data flow diagram — gap_analysis_complete.json added to S8 output | T-SSO-all |
+| 2026-02-18 | §10 | Expanded StructuralSignals (11→45 fields), added GapContentBrief model, expanded ClusterContentSpec, CitationExemplar | T-SSO-all |
+| 2026-02-18 | §15 | Updated test tree — 4 new test files, 351 total tests (all passing), fixed S4 known failures | T-SSO-all |
+| 2026-02-18 | §16 | Added trafilatura v1.6+ and textstat v0.7+ to dependency graph | T-SSO-all |
+| 2026-02-19 | §21.3 | TaskStore: asyncio.Event→Queue for approvals; added task handle tracking for cancellation | T-review-fix-1 |
+| 2026-02-19 | §21.4 | EventBus: added 15s SSE heartbeat keepalive | T-review-fix-1 |
+| 2026-02-19 | §21.2 | Content router: typed ContentStartRequest, brief_id validation; cancel endpoint cancels task + SSE event; slug regex validation on artifacts | T-review-fix-1 |
+| 2026-02-19 | §21.5 | HITL: guarded interrupt extraction, research reject early-exit, content auto_approve wired through | T-review-fix-1 |
+| 2026-02-19 | §21.6 | Added 5 design choice rows (Queue, task handles, heartbeat, slug validation, rehype-sanitize) | T-review-fix-1 |
+| 2026-02-19 | §18 | Updated test count to 351; all S4 failures resolved | T-review-fix-1 |
 
 ---
 
 *End of Comprehensive System Documentation*
-*Generated: 2026-02-16*
+*Generated: 2026-02-19*
 *Total codebase files analyzed: ~120+*
-*Total lines of documentation: ~3200+*
+*Total lines of documentation: ~3500+*

@@ -35,10 +35,8 @@ class TestStartContent:
         resp = client.post(
             "/api/v1/content/start",
             json={
-                "input_data": {
-                    "company_name": "Ramp",
-                    "domain": "ramp.com",
-                },
+                "company_name": "Ramp",
+                "domain": "ramp.com",
             },
         )
         assert resp.status_code == 202
@@ -51,7 +49,7 @@ class TestStartContent:
     def test_validation_error(self, client: TestClient) -> None:
         resp = client.post(
             "/api/v1/content/start",
-            json={"input_data": {}},
+            json={},
         )
         assert resp.status_code == 422
 
@@ -62,10 +60,8 @@ class TestStartContent:
         resp = client.post(
             "/api/v1/content/start",
             json={
-                "input_data": {
-                    "company_name": "Ramp",
-                    "domain": "ramp.com",
-                },
+                "company_name": "Ramp",
+                "domain": "ramp.com",
             },
         )
         assert resp.status_code == 409
@@ -74,11 +70,9 @@ class TestStartContent:
         resp = client.post(
             "/api/v1/content/start",
             json={
-                "input_data": {
-                    "company_name": "Ramp",
-                    "domain": "ramp.com",
-                    "auto_approve": True,
-                },
+                "company_name": "Ramp",
+                "domain": "ramp.com",
+                "auto_approve": True,
             },
         )
         assert resp.status_code == 202
@@ -100,9 +94,7 @@ class TestContentStatus:
     ) -> None:
         resp = client.post(
             "/api/v1/content/start",
-            json={
-                "input_data": {"company_name": "Ramp", "domain": "ramp.com"},
-            },
+            json={"company_name": "Ramp", "domain": "ramp.com"},
         )
         run_id = resp.json()["run_id"]
         time.sleep(0.3)
@@ -124,7 +116,7 @@ class TestContentApproval:
         task_store.update_task(
             task.task_id,
             status=TaskStatus.PENDING_APPROVAL,
-            approval_payload={"stage": "review", "briefs": []},
+            approval_payload={"stage": "review", "brief_id": "brief-1"},
         )
 
         resp = client.post(
@@ -141,7 +133,7 @@ class TestContentApproval:
         task_store.update_task(
             task.task_id,
             status=TaskStatus.PENDING_APPROVAL,
-            approval_payload={"stage": "review"},
+            approval_payload={"stage": "review", "brief_id": "brief-1"},
         )
 
         resp = client.post(

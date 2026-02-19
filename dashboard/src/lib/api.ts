@@ -132,8 +132,12 @@ export async function getArtifactContent(
 ): Promise<string> {
   const res = await fetch(
     `${API_BASE}/api/v1/artifacts/${type}/${slug}/${filename}`,
+    { headers: { "Content-Type": "application/json" } },
   );
-  if (!res.ok) throw new ApiError(res.status, `Failed to fetch artifact: ${res.statusText}`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(res.status, error.detail);
+  }
   return res.text();
 }
 

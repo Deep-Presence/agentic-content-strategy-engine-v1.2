@@ -6,6 +6,7 @@ import { CheckCircle, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { startResearch, getTaskDetail, ApiError } from "@/lib/api";
 import { useTaskStore } from "@/stores/taskStore";
+import { useArtifactStore } from "@/stores/artifactStore";
 import { useTaskStream } from "@/hooks/useTaskStream";
 import { PipelineProgress } from "@/components/pipeline/PipelineProgress";
 import { StatusBadge } from "@/components/pipeline/StatusBadge";
@@ -27,6 +28,7 @@ function ResearchPageInner() {
   const taskIdParam = searchParams.get("task");
 
   const { liveStatus, liveStep, liveError, approvalPayload } = useTaskStore();
+  const { openApproval } = useArtifactStore();
 
   const [taskId, setTaskId] = useState<string | null>(taskIdParam);
   const [pageState, setPageState] = useState<PageState>(taskIdParam ? "running" : "idle");
@@ -50,9 +52,9 @@ function ResearchPageInner() {
     if (liveStatus === "completed") {
       setPageState("complete");
       if (taskId) {
-        getTaskDetail(taskId).then(setCompletedTask).catch(() => {});
+        getTaskDetail(taskId).then(setCompletedTask).catch(console.error);
       }
-    } else if (liveStatus === "failed") {
+    } else if (liveStatus === "failed" || liveStatus === "cancelled") {
       setPageState("failed");
     } else if (liveStatus === "running" || liveStatus === "pending_approval") {
       setPageState("running");
@@ -66,12 +68,15 @@ function ResearchPageInner() {
         if (task.status === "completed") {
           setPageState("complete");
           setCompletedTask(task);
-        } else if (task.status === "failed") {
+        } else if (task.status === "failed" || task.status === "cancelled" || task.status === "failed_restart") {
           setPageState("failed");
         } else {
           setPageState("running");
         }
-      }).catch(() => setPageState("idle"));
+      }).catch((err) => {
+        console.error("Failed to fetch task:", err);
+        setPageState("idle");
+      });
     }
   }, [taskIdParam]);
 
@@ -255,9 +260,30 @@ function ResearchPageInner() {
               />
             </div>
             {liveStatus === "pending_approval" && (
-              <p className="mt-4 font-body text-[0.875rem] text-clay">
-                Review the draft in the panel on the right and approve, revise, or reject.
-              </p>
+              <button
+                onClick={() => {
+                  if (approvalPayload && taskId) {
+                    openApproval(approvalPayload, taskId, "research");
+                  }
+                }}
+                className="mt-4 w-full text-left p-4 rounded-lg border border-clay/30 bg-clay-light/50 hover:bg-clay-light transition-colors group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full bg-clay animate-pulse" />
+                  <div>
+                    <p className="font-body text-[0.875rem] font-medium text-ink">
+                      Draft ready for review
+                    </p>
+                    <p className="font-mono text-[0.75rem] text-ink-secondary mt-0.5">
+                      {(() => {
+                        const stage = RESEARCH_STAGES.find((s) => s.name === liveStep);
+                        return stage ? stage.label : liveStep;
+                      })()}
+                      {" "}&mdash; Click to open review panel
+                    </p>
+                  </div>
+                </div>
+              </button>
             )}
           </div>
         </div>

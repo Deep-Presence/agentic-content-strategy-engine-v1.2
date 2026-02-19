@@ -98,7 +98,10 @@ class ApprovalRequest(BaseModel):
 class ContentStartRequest(BaseModel):
     """Request body for starting a content generation pipeline."""
 
-    input_data: Dict[str, Any]
+    company_name: str
+    domain: str
+    max_briefs: int = Field(default=5, ge=1, le=20)
+    auto_approve: bool = False
 
 
 class ContentApprovalRequest(BaseModel):

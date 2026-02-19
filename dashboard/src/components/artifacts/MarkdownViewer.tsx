@@ -2,6 +2,7 @@
 
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import React from "react";
 
@@ -17,7 +18,7 @@ export const MarkdownViewer = React.memo(function MarkdownViewer({
   return (
     <div className={className}>
       <ReactMarkdown
-        rehypePlugins={[rehypeRaw]}
+        rehypePlugins={[rehypeRaw, rehypeSanitize]}
         remarkPlugins={[remarkGfm]}
         components={{
           h1: ({ children }) => (

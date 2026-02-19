@@ -29,7 +29,7 @@ def _patch_settings(**overrides):
     """Patch settings with test defaults + any overrides."""
     defaults = {
         "openai_api_key": "test-key",
-        "embedding_model": "text-embedding-3-large",
+        "embedding_model": "text-embedding-3-small",
     }
     defaults.update(overrides)
     mock_s = MagicMock(**defaults)

@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str | None = None
-    embedding_model: str = "text-embedding-3-large"
+    embedding_model: str = "text-embedding-3-small"
 
     # Anthropic / Claude
     anthropic_api_key: str | None = None
@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     discord_webhook_url: str = ""
 
     # Content Generation Engine – Models
-    content_engine_planner_model: str = "claude-opus-4-5-20260218"
+    content_engine_planner_model: str = "claude-opus-4-6"
     content_engine_worker_model: str = "claude-sonnet-4-5-20250929"
     content_engine_formatter_model: str = "claude-haiku-4-5-20251001"
     content_engine_style_judge_model: str = "claude-haiku-4-5-20251001"

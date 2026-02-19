@@ -4,6 +4,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, HttpUrl
+from typing import Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +176,13 @@ class PlatformResult(BaseModel):
 
 
 class StructuralSignals(BaseModel):
+    """Structural signals extracted from a citation's main content.
+
+    Original 11 fields are preserved at the top for backward compatibility.
+    New fields are grouped into 4 categories (A-D), all with defaults.
+    """
+
+    # --- Original fields (backward compat) ---
     word_count: int = 0
     paragraph_count: int = 0
     header_count: int = 0
@@ -186,6 +194,48 @@ class StructuralSignals(BaseModel):
     has_numbers: bool = False
     authority_type: Optional[str] = None
     content_type: Optional[str] = None
+
+    # --- Category A: Text Composition (10 fields) ---
+    main_content_word_count: int = 0
+    sentence_count: int = 0
+    avg_paragraph_length: float = 0.0
+    median_paragraph_length: float = 0.0
+    max_paragraph_word_count: int = 0
+    avg_sentence_length: float = 0.0
+    avg_sentence_count_per_paragraph: float = 0.0
+    reading_level: float = 0.0
+    self_contained_ratio: float = 0.0
+    per_paragraph_word_counts: List[int] = Field(default_factory=list)
+
+    # --- Category B: Structural Elements (13 fields) ---
+    h1_count: int = 0
+    h2_count: int = 0
+    h3_count: int = 0
+    h4_count: int = 0
+    ordered_list_count: int = 0
+    unordered_list_count: int = 0
+    table_count: int = 0
+    definition_list_count: int = 0
+    blockquote_count: int = 0
+    code_block_count: int = 0
+    list_block_count: int = 0
+    bullets_per_list_block: float = 0.0
+    min_bullets_per_list: int = 0
+
+    # --- Category C: Content Patterns (8 fields) ---
+    has_faq_section: bool = False
+    has_definition_opening: bool = False
+    has_key_takeaways: bool = False
+    has_toc: bool = False
+    has_comparison_table: bool = False
+    has_step_by_step: bool = False
+    has_research_refs: bool = False
+    has_expert_quotes: bool = False
+
+    # --- Category D: Factual Density (3 fields) ---
+    data_point_count: int = 0
+    citation_density: float = 0.0
+    named_entity_density: float = 0.0
 
 
 class CitationExemplar(BaseModel):
@@ -237,6 +287,32 @@ class CentroidResult(BaseModel):
     distance: Optional[float] = None
 
 
+class GapContentBrief(BaseModel):
+    """Per-query content brief derived from top-cited exemplar structural signals.
+
+    Named GapContentBrief (not ContentBrief) to avoid collision with
+    content_generation.ContentBrief which is the downstream consumer model.
+    """
+
+    target_word_count: Tuple[int, int] = (0, 0)
+    target_reading_level: Tuple[float, float] = (0.0, 0.0)
+    avg_paragraph_length: Tuple[int, int] = (0, 0)
+    recommended_header_count: Tuple[int, int] = (0, 0)
+    header_hierarchy: Dict[str, int] = Field(default_factory=dict)
+    has_ordered_lists: float = 0.0
+    has_unordered_lists: float = 0.0
+    has_tables: float = 0.0
+    has_faq_section: float = 0.0
+    has_definition_opening: float = 0.0
+    has_key_takeaways: float = 0.0
+    has_step_by_step: float = 0.0
+    target_data_point_density: float = 0.0
+    target_citation_density: float = 0.0
+    dominant_authority_type: Optional[str] = None
+    dominant_content_type: Optional[str] = None
+    exemplar_count: int = 0
+
+
 class QueryGap(BaseModel):
     query_id: str
     cluster_name: Optional[str] = None
@@ -248,6 +324,7 @@ class QueryGap(BaseModel):
     gap: Optional[float] = None
     interpretation: Optional[str] = None
     top_cited_exemplars: List[CitationExemplar] = Field(default_factory=list)
+    content_brief: Optional[GapContentBrief] = None
 
 
 class ClusterContentSpec(BaseModel):
@@ -262,6 +339,20 @@ class ClusterContentSpec(BaseModel):
     authority_signals: Dict[str, int] = Field(default_factory=dict)
     structural_rates: Dict[str, float] = Field(default_factory=dict)
     total_citations_analyzed: int = 0
+
+    # --- Expanded fields (Phase 2) ---
+    faq_rate: float = 0.0
+    table_rate: float = 0.0
+    definition_rate: float = 0.0
+    code_block_rate: float = 0.0
+    key_takeaways_rate: float = 0.0
+    avg_word_count: float = 0.0
+    avg_paragraph_word_count: float = 0.0
+    avg_sentence_count_per_paragraph: float = 0.0
+    min_bullets_per_list: int = 0
+    dominant_content_type: Optional[str] = None
+    dominant_authority_type: Optional[str] = None
+    exemplar_themes: List[str] = Field(default_factory=list)
 
 
 class AnalysisResult(BaseModel):

@@ -106,7 +106,10 @@ export interface GapAnalysisStartRequest {
 }
 
 export interface ContentStartRequest {
-  input_data: Record<string, any>;
+  company_name: string;
+  domain: string;
+  max_briefs?: number;
+  auto_approve?: boolean;
 }
 
 export interface ApprovalRequest {

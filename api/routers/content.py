@@ -33,15 +33,17 @@ async def start_content(
     task_store: TaskStore = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
 ) -> PipelineRunResponse:
-    try:
-        input_data = ContentGenerationInput(**(request.input_data or {}))
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid input_data: {exc}")
+    input_data = ContentGenerationInput(
+        company_name=request.company_name,
+        domain=request.domain,
+        max_briefs=request.max_briefs,
+        auto_approve=request.auto_approve,
+    )
 
     slug = _derive_slug(input_data.company_name)
     task = task_store.create_task("content", slug)
 
-    asyncio.create_task(
+    handle = asyncio.create_task(
         run_content_pipeline_task(
             task_id=task.task_id,
             input_data=input_data,
@@ -49,6 +51,7 @@ async def start_content(
             event_bus=event_bus,
         )
     )
+    task_store.register_task_handle(task.task_id, handle)
 
     return PipelineRunResponse(
         run_id=task.task_id,
@@ -91,6 +94,14 @@ def approve_content(
         raise HTTPException(
             status_code=409,
             detail=f"Task {run_id} is not pending approval (current: {task.status.value})",
+        )
+
+    # Validate brief_id matches current approval payload
+    payload_brief = (task.approval_payload or {}).get("brief_id")
+    if payload_brief and request.brief_id != payload_brief:
+        raise HTTPException(
+            status_code=409,
+            detail=f"brief_id mismatch: expected {payload_brief}, got {request.brief_id}",
         )
 
     task_store.submit_approval(

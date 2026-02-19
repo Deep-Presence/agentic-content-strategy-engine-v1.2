@@ -72,5 +72,48 @@
     "tech_debt_warnings": [
       "model_dump(mode='json') in TaskStore persistence — works fine in Pydantic v2 but verify with future Pydantic upgrades"
     ]
+  },
+  {
+    "id": "D-SSO-1",
+    "timestamp": "2026-02-18",
+    "task": "S4 main content extraction — dual-soup architecture",
+    "approach": "Two separate HTML processing paths: _extract_main_content() uses trafilatura for clean text extraction (paragraphs), _extract_structural_html() uses semantic-tag-only scoping for element counting (preserves ol/dl/table/details).",
+    "rationale": "Trafilatura gives best text quality but flattens structural HTML elements (ol→p, dl→p, details→p). Semantic tags preserve structure for counting. Dual approach gets best of both.",
+    "alternatives_rejected": [
+      "Trafilatura-only (loses structural element counts — ordered_list_count=0, definition_list_count=0)",
+      "BeautifulSoup-only (doesn't handle nav/footer/sidebar contamination well enough)",
+      "Custom content extraction (reinventing what trafilatura already does well)"
+    ],
+    "outcome": "S4 now produces ~45 structural signals. Word counts are realistic (800-3000 vs previous 7-43555). All 351 tests passing.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-SSO-2",
+    "timestamp": "2026-02-18",
+    "task": "GapContentBrief naming and 3-tier output architecture",
+    "approach": "Named GapContentBrief (not ContentBrief) to avoid collision with content_generation.ContentBrief. gap_analysis_complete.json is additive — existing 3-file contract (gap_report.json, generation_spec.json, analysis.json) unchanged.",
+    "rationale": "Content engine's run_content_engine.py (lines 93-106) loads 3 separate JSON files. Breaking this contract would require coordinated changes. New file is a superset for future consumption.",
+    "alternatives_rejected": [
+      "Replace gap_report.json with combined file (breaks content engine loading)",
+      "Name it ContentBrief (collision with downstream model)"
+    ],
+    "outcome": "Both models coexist. 3-file contract preserved. gap_analysis_complete.json available for new consumers.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-EMB-1",
+    "timestamp": "2026-02-19",
+    "task": "Switch embedding model from text-embedding-3-large (3072) to text-embedding-3-small (1536)",
+    "approach": "Changed settings.embedding_model default to text-embedding-3-small. Updated all test fixtures (mock settings, dimension sizes). Updated all documentation references (CLAUDE.md, README.md, COMPREHENSIVE_SYSTEM_DOCUMENTATION.md).",
+    "rationale": "text-embedding-3-small is sufficient for semantic proximity analysis. Halves embedding storage and computation cost (1536 vs 3072 dims). No code changes needed beyond settings default — all code reads settings.embedding_model dynamically.",
+    "alternatives_rejected": [
+      "Keep text-embedding-3-large (unnecessarily expensive for gap analysis cosine similarity)",
+      "Use a different provider (Cohere, Voyage) — would require client changes"
+    ],
+    "outcome": "Embedding model changed. 351 tests passing. All docs updated. Existing artifacts with 3072-dim embeddings will need re-embedding on next pipeline run.",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]

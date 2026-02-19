@@ -53,8 +53,8 @@ class TaskStore:
         self._event_bus = event_bus
         self._slug_locks: Dict[str, str] = {}  # slug -> task_id
         self._semaphore = asyncio.Semaphore(max_concurrent)
-        self._approval_events: Dict[str, asyncio.Event] = {}
-        self._approval_data: Dict[str, Dict[str, Any]] = {}
+        self._approval_queues: Dict[str, asyncio.Queue] = {}
+        self._task_handles: Dict[str, asyncio.Task] = {}  # task_id -> asyncio.Task
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._recover_from_disk()
 
@@ -131,15 +131,37 @@ class TaskStore:
         """Release a per-slug lock."""
         self._slug_locks.pop(slug, None)
 
+    # ── Task Handle Tracking ──────────────────────────────────────────
+
+    def register_task_handle(self, task_id: str, handle: asyncio.Task) -> None:
+        """Register an asyncio.Task handle for cancellation support."""
+        self._task_handles[task_id] = handle
+
+    def cancel_task_handle(self, task_id: str) -> bool:
+        """Cancel the asyncio.Task for a running pipeline. Returns True if cancelled."""
+        handle = self._task_handles.pop(task_id, None)
+        if handle and not handle.done():
+            handle.cancel()
+            return True
+        return False
+
+    def remove_task_handle(self, task_id: str) -> None:
+        """Remove a task handle (called on task completion)."""
+        self._task_handles.pop(task_id, None)
+
     # ── HITL Approval ─────────────────────────────────────────────────
 
     async def wait_for_approval(self, task_id: str) -> Dict[str, Any]:
-        """Block until an approval is submitted for this task."""
-        event = asyncio.Event()
-        self._approval_events[task_id] = event
-        await event.wait()
-        data = self._approval_data.pop(task_id, {"decision": "approve"})
-        self._approval_events.pop(task_id, None)
+        """Block until an approval is submitted for this task.
+
+        Uses asyncio.Queue instead of Event to prevent lost-wakeup:
+        submit_approval can be called before or after wait_for_approval
+        and the message will still be delivered.
+        """
+        if task_id not in self._approval_queues:
+            self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
+        data = await self._approval_queues[task_id].get()
+        self._approval_queues.pop(task_id, None)
         return data
 
     def submit_approval(
@@ -148,17 +170,27 @@ class TaskStore:
         decision: str,
         revision_note: Optional[str] = None,
     ) -> None:
-        """Submit an approval decision, unblocking wait_for_approval."""
+        """Submit an approval decision, unblocking wait_for_approval.
+
+        If the queue doesn't exist yet (wait hasn't started), creates it
+        and puts the data — the waiter will find it when it starts.
+        """
         if task_id not in self._tasks:
             raise TaskNotFoundError(task_id)
 
-        self._approval_data[task_id] = {
-            "decision": decision,
-            "revision_note": revision_note,
-        }
-        event = self._approval_events.get(task_id)
-        if event:
-            event.set()
+        payload = {"decision": decision, "revision_note": revision_note}
+        if task_id not in self._approval_queues:
+            self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
+        try:
+            self._approval_queues[task_id].put_nowait(payload)
+        except asyncio.QueueFull:
+            logger.warning("Approval queue full for task %s — replacing", task_id)
+            # Drain and re-put (only 1 slot)
+            try:
+                self._approval_queues[task_id].get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            self._approval_queues[task_id].put_nowait(payload)
 
     # ── Persistence ───────────────────────────────────────────────────
 

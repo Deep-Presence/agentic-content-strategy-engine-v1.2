@@ -262,7 +262,7 @@ All configuration is managed through environment variables via Pydantic `BaseSet
 | `GOOGLE_API_KEY_COMPANY_DEEPAGENT` | Research | Gemini for company context agent |
 | `GOOGLE_API_KEY_PERSONA_RESEARCH_DEEPAGENT` | Research | Gemini for persona agent |
 | `GOOGLE_API_KEY_STYLE_GUIDE_RESEARCH_DEEPAGENT` | Research | Gemini for style guide agent |
-| `OPENAI_API_KEY` | Gap Analysis | Embeddings (text-embedding-3-large) + search |
+| `OPENAI_API_KEY` | Gap Analysis | Embeddings (text-embedding-3-small) + search |
 | `ANTHROPIC_API_KEY` | Gap Analysis | Claude search platform |
 | `GOOGLE_API_KEY_GAP_ANALYSIS` | Gap Analysis | Gemini search platform |
 
@@ -274,7 +274,7 @@ All configuration is managed through environment variables via Pydantic `BaseSet
 | `GOOGLE_PERSONA_DEEPAGENTS_MODEL` | `gemini-3-flash-preview` | Persona research model |
 | `GOOGLE_STYLE_GUIDE_DEEPAGENTS_MODEL` | `gemini-3-flash-preview` | Style guide research model |
 | `PERPLEXITY_DEEP_RESEARCH_MODEL` | `sonar-deep-research` | Web research model |
-| `EMBEDDING_MODEL` | `text-embedding-3-large` | OpenAI embedding model |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
 | `AEO_AGENT_INVOKE_TIMEOUT_S` | `900` | Agent invoke timeout (seconds) |
 
 ### Optional Services
@@ -352,7 +352,7 @@ When Supabase credentials are configured, approved artifacts are automatically m
 | LLM (Research) | Google Gemini 3 Flash |
 | LLM (Gap Analysis) | Claude, Gemini, GPT-4, Perplexity |
 | Web Research | Perplexity sonar-deep-research |
-| Embeddings | OpenAI text-embedding-3-large |
+| Embeddings | OpenAI text-embedding-3-small |
 | Data Validation | Pydantic v2 |
 | Visualization | Plotly, UMAP, scikit-learn |
 | Web Crawling | Playwright + BeautifulSoup |

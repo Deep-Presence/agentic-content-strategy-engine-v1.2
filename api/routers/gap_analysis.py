@@ -30,7 +30,7 @@ async def start_gap_analysis(
     slug = _derive_slug(body.company_name)
     task = task_store.create_task("gap_analysis", slug)
 
-    asyncio.create_task(
+    handle = asyncio.create_task(
         run_gap_pipeline_task(
             task_id=task.task_id,
             request=body,
@@ -39,6 +39,7 @@ async def start_gap_analysis(
             event_bus=event_bus,
         )
     )
+    task_store.register_task_handle(task.task_id, handle)
 
     return PipelineRunResponse(
         run_id=task.task_id,

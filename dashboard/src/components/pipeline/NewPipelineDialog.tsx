@@ -82,7 +82,8 @@ export function NewPipelineDialog({ isOpen, onClose }: NewPipelineDialogProps) {
         }
         case "content": {
           const res = await startContent({
-            input_data: { company_name: companyName, domain },
+            company_name: companyName,
+            domain,
           });
           runId = res.run_id;
           break;

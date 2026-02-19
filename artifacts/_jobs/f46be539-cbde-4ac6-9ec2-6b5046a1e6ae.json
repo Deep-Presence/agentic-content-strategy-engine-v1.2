@@ -1,0 +1,31 @@
+{
+  "task_id": "f46be539-cbde-4ac6-9ec2-6b5046a1e6ae",
+  "pipeline": "research",
+  "status": "completed",
+  "company_slug": "heizen",
+  "current_step": "style_guide",
+  "progress_pct": null,
+  "created_at": "2026-02-18T22:33:29.061762Z",
+  "updated_at": "2026-02-18T22:47:28.497001Z",
+  "result": {
+    "stage": "complete",
+    "company_output_path": null,
+    "produced_artifacts": [
+      {
+        "type": "company_context",
+        "slug": "heizen"
+      },
+      {
+        "type": "personas",
+        "slug": "heizen"
+      },
+      {
+        "type": "style_guides",
+        "slug": "heizen"
+      }
+    ]
+  },
+  "error": null,
+  "approval_payload": null,
+  "approval_history": []
+}

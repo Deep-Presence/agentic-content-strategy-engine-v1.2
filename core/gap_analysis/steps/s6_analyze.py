@@ -12,10 +12,12 @@ from core.models.gap_analysis import (
     CitationExemplar,
     ClusterContentSpec,
     EnrichedCitation,
+    GapContentBrief,
     GeneratedQuery,
     QueryGap,
     SemanticUnit,
     SpaResult,
+    StructuralSignals,
 )
 
 TOP_N_CITATIONS = 5   # Max citations per query (ranked by best paragraph similarity)
@@ -53,6 +55,92 @@ def _select_top_citations(
     return [c for _, c in scored[:top_n]]
 
 
+def _compute_content_brief(
+    exemplars: List[CitationExemplar],
+) -> Optional[GapContentBrief]:
+    """Compute a content brief from top-cited exemplar structural signals.
+
+    Dedupes exemplars by URL first to prevent single-URL bias (Codex finding #9).
+    Returns None if no exemplars have structural signals.
+    """
+    # Dedupe by URL
+    seen_urls: set[str] = set()
+    unique_exemplars: List[CitationExemplar] = []
+    for ex in exemplars:
+        if ex.url not in seen_urls:
+            seen_urls.add(ex.url)
+            unique_exemplars.append(ex)
+
+    # Filter to those with structural signals
+    with_signals = [e for e in unique_exemplars if e.structural_signals]
+    if not with_signals:
+        return None
+
+    signals_list = [e.structural_signals for e in with_signals]
+    n = len(signals_list)
+
+    def _min_max(values: list) -> tuple:
+        if not values:
+            return (0, 0)
+        return (min(values), max(values))
+
+    word_counts = [s.word_count for s in signals_list if s.word_count > 0]
+    reading_levels = [s.reading_level for s in signals_list if s.reading_level > 0]
+    avg_para_lengths = [int(s.avg_paragraph_length) for s in signals_list if s.avg_paragraph_length > 0]
+    header_counts = [s.header_count for s in signals_list if s.header_count > 0]
+
+    # Header hierarchy: median per level
+    h2s = [s.h2_count for s in signals_list]
+    h3s = [s.h3_count for s in signals_list]
+    header_hierarchy: Dict[str, int] = {}
+    if any(h2s):
+        header_hierarchy["h2"] = int(np.median(h2s))
+    if any(h3s):
+        header_hierarchy["h3"] = int(np.median(h3s))
+
+    # Boolean rates
+    def _rate(field: str) -> float:
+        count = sum(1 for s in signals_list if getattr(s, field, False))
+        return round(count / n, 2)
+
+    # Density averages (true per-1000-word densities, not raw counts)
+    data_point_densities = [
+        s.data_point_count / (s.word_count / 1000)
+        for s in signals_list
+        if s.data_point_count > 0 and s.word_count > 0
+    ]
+    citation_densities = [s.citation_density for s in signals_list if s.citation_density > 0]
+
+    target_dpd = round(float(np.mean(data_point_densities)), 2) if data_point_densities else 0.0
+    target_cd = round(float(np.mean(citation_densities)), 2) if citation_densities else 0.0
+
+    # Dominant types
+    authority_types = Counter(s.authority_type for s in signals_list if s.authority_type)
+    content_types = Counter(s.content_type for s in signals_list if s.content_type)
+
+    return GapContentBrief(
+        target_word_count=_min_max(word_counts),
+        target_reading_level=tuple(
+            round(v, 1) for v in _min_max(reading_levels)
+        ) if reading_levels else (0.0, 0.0),
+        avg_paragraph_length=_min_max(avg_para_lengths),
+        recommended_header_count=_min_max(header_counts),
+        header_hierarchy=header_hierarchy,
+        has_ordered_lists=_rate("ordered_list_count"),
+        has_unordered_lists=_rate("unordered_list_count"),
+        has_tables=_rate("table_count"),
+        has_faq_section=_rate("has_faq_section"),
+        has_definition_opening=_rate("has_definition_opening"),
+        has_key_takeaways=_rate("has_key_takeaways"),
+        has_step_by_step=_rate("has_step_by_step"),
+        target_data_point_density=target_dpd,
+        target_citation_density=target_cd,
+        dominant_authority_type=authority_types.most_common(1)[0][0] if authority_types else None,
+        dominant_content_type=content_types.most_common(1)[0][0] if content_types else None,
+        exemplar_count=n,
+    )
+
+
 def compute_gap_analysis(
     queries: List[GeneratedQuery],
     company_units: List[SemanticUnit],
@@ -86,13 +174,20 @@ def compute_gap_analysis(
                 if match.embedding:
                     sim = _cosine_similarity(query.embedding, match.embedding)
                     query_to_citation_sims[query.query_id].append(sim)
+                    # Strip per_paragraph_word_counts from exemplar signals
+                    # to prevent artifact bloat (Codex finding #11)
+                    exemplar_signals = None
+                    if citation.structural_signals:
+                        sig_data = citation.structural_signals.model_dump()
+                        sig_data["per_paragraph_word_counts"] = []
+                        exemplar_signals = StructuralSignals(**sig_data)
                     query_to_exemplars[query.query_id].append(
                         CitationExemplar(
                             similarity=round(sim, 4),
                             domain=citation.domain,
                             url=str(citation.url),
                             snippet=(match.paragraph[:300] if match.paragraph else None),
-                            structural_signals=citation.structural_signals,
+                            structural_signals=exemplar_signals,
                             authority_type=(
                                 citation.structural_signals.authority_type
                                 if citation.structural_signals
@@ -136,6 +231,8 @@ def compute_gap_analysis(
             interpretation = "company_wins"
 
         unit_id, unit_text = query_to_best_unit.get(query_id, (None, None))
+        exemplars = query_to_exemplars.get(query_id, [])
+        content_brief = _compute_content_brief(exemplars) if exemplars else None
         gaps.append(
             QueryGap(
                 query_id=query_id,
@@ -147,7 +244,8 @@ def compute_gap_analysis(
                 avg_citation_similarity=avg_citation,
                 gap=gap,
                 interpretation=interpretation,
-                top_cited_exemplars=query_to_exemplars.get(query_id, []),
+                top_cited_exemplars=exemplars,
+                content_brief=content_brief,
             )
         )
         citation_sims_all.extend(sims)
@@ -305,36 +403,26 @@ def _compute_cluster_specs(
 
     specs: List[ClusterContentSpec] = []
     for cluster_name, citations in cluster_citations.items():
+        signals_list = [c.structural_signals for c in citations if c.structural_signals]
+        total = len(citations)
+
         # Word count range
-        word_counts = [
-            c.structural_signals.word_count
-            for c in citations
-            if c.structural_signals and c.structural_signals.word_count > 0
-        ]
+        word_counts = [s.word_count for s in signals_list if s.word_count > 0]
         word_count_range = (
             [int(min(word_counts)), int(max(word_counts))] if word_counts else [0, 0]
         )
 
         # Authority signals distribution
         authority_signals: Dict[str, int] = Counter()
-        for c in citations:
-            if c.structural_signals and c.structural_signals.authority_type:
-                authority_signals[c.structural_signals.authority_type] += 1
+        for s in signals_list:
+            if s.authority_type:
+                authority_signals[s.authority_type] += 1
 
-        # Structural rates
-        total = len(citations)
-        has_header = sum(
-            1 for c in citations if c.structural_signals and c.structural_signals.header_count > 0
-        )
-        has_list = sum(
-            1 for c in citations if c.structural_signals and c.structural_signals.list_item_count > 0
-        )
-        has_stat = sum(
-            1 for c in citations if c.structural_signals and c.structural_signals.stat_count > 0
-        )
-        has_cite = sum(
-            1 for c in citations if c.structural_signals and c.structural_signals.citation_count > 0
-        )
+        # Original structural rates (backward compat)
+        has_header = sum(1 for s in signals_list if s.header_count > 0)
+        has_list = sum(1 for s in signals_list if s.list_item_count > 0)
+        has_stat = sum(1 for s in signals_list if s.stat_count > 0)
+        has_cite = sum(1 for s in signals_list if s.citation_count > 0)
 
         structural_rates: Dict[str, float] = {}
         if total > 0:
@@ -358,6 +446,50 @@ def _compute_cluster_specs(
             std_sim = float(np.std(sims))
             min_sim_threshold = round(mean_sim - 0.5 * std_sim, 4)
 
+        # --- Expanded fields (Phase 2) ---
+        def _bool_rate(field: str) -> float:
+            if not signals_list:
+                return 0.0
+            return round(sum(1 for s in signals_list if getattr(s, field, False)) / len(signals_list), 2)
+
+        def _count_rate(field: str) -> float:
+            if not signals_list:
+                return 0.0
+            return round(sum(1 for s in signals_list if getattr(s, field, 0) > 0) / len(signals_list), 2)
+
+        faq_rate = _bool_rate("has_faq_section")
+        table_rate = _count_rate("table_count")
+        definition_rate = _count_rate("definition_list_count")
+        code_block_rate = _count_rate("code_block_count")
+        key_takeaways_rate = _bool_rate("has_key_takeaways")
+
+        avg_word_count = round(float(np.mean(word_counts)), 1) if word_counts else 0.0
+        avg_para_wcs = [s.avg_paragraph_length for s in signals_list if s.avg_paragraph_length > 0]
+        avg_paragraph_word_count = round(float(np.mean(avg_para_wcs)), 1) if avg_para_wcs else 0.0
+        avg_sent_per_para = [s.avg_sentence_count_per_paragraph for s in signals_list if s.avg_sentence_count_per_paragraph > 0]
+        avg_sentence_count_per_paragraph = round(float(np.mean(avg_sent_per_para)), 1) if avg_sent_per_para else 0.0
+
+        bullets_lists = [s.min_bullets_per_list for s in signals_list if s.min_bullets_per_list > 0]
+        min_bullets_per_list = int(np.median(bullets_lists)) if bullets_lists else 0
+
+        # Dominant types
+        content_types = Counter(s.content_type for s in signals_list if s.content_type)
+        authority_type_counter = Counter(s.authority_type for s in signals_list if s.authority_type)
+        dominant_content_type = content_types.most_common(1)[0][0] if content_types else None
+        dominant_authority_type = authority_type_counter.most_common(1)[0][0] if authority_type_counter else None
+
+        # Exemplar themes via TF-IDF (Codex: wrap in try/except for empty vocab)
+        exemplar_themes: List[str] = []
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            all_docs = [" ".join(c.paragraphs[:5]) for c in citations if c.paragraphs]
+            if len(all_docs) >= 2:
+                tfidf = TfidfVectorizer(max_features=20, stop_words="english")
+                tfidf.fit_transform(all_docs)
+                exemplar_themes = list(tfidf.get_feature_names_out()[:10])
+        except Exception:
+            pass  # Empty vocab or other TF-IDF failure — acceptable
+
         specs.append(
             ClusterContentSpec(
                 cluster_id=cluster_ids.get(cluster_name),
@@ -369,6 +501,19 @@ def _compute_cluster_specs(
                 authority_signals=dict(authority_signals),
                 structural_rates=structural_rates,
                 total_citations_analyzed=total,
+                # Expanded fields
+                faq_rate=faq_rate,
+                table_rate=table_rate,
+                definition_rate=definition_rate,
+                code_block_rate=code_block_rate,
+                key_takeaways_rate=key_takeaways_rate,
+                avg_word_count=avg_word_count,
+                avg_paragraph_word_count=avg_paragraph_word_count,
+                avg_sentence_count_per_paragraph=avg_sentence_count_per_paragraph,
+                min_bullets_per_list=min_bullets_per_list,
+                dominant_content_type=dominant_content_type,
+                dominant_authority_type=dominant_authority_type,
+                exemplar_themes=exemplar_themes,
             )
         )
 
