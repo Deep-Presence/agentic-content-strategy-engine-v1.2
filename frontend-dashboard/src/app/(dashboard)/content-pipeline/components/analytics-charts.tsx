@@ -9,6 +9,7 @@ import {
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils/cn';
 import { CONTENT_TYPE_LABELS } from '@/lib/utils/constants';
+import { CITABILITY_TREND_DATA, VELOCITY_TREND_DATA } from '@/lib/data/webflow-fixtures';
 import type { ContentBriefItem } from '@/types/content';
 
 interface AnalyticsChartsProps {
@@ -17,8 +18,8 @@ interface AnalyticsChartsProps {
 }
 
 const TYPE_COLORS: Record<string, string> = {
-  blog: '#788c5d',
-  guide: '#6a9bcc',
+  blog: '#6a9bcc',
+  guide: '#788c5d',
   case_study: '#d97757',
   product_page: '#b0aea5',
 };
@@ -41,22 +42,8 @@ export function AnalyticsCharts({ briefs, className }: AnalyticsChartsProps) {
     }));
   }, [briefs]);
 
-  // Mock trend data (in production, would come from historical data)
-  const trendData = useMemo(() => {
-    const weeks = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8'];
-    return weeks.map((week, i) => ({
-      week,
-      score: 65 + Math.round(Math.random() * 20 + i * 1.5),
-    }));
-  }, []);
-
-  const velocityData = useMemo(() => {
-    const weeks = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8'];
-    return weeks.map((week) => ({
-      week,
-      completed: Math.round(Math.random() * 6 + 3),
-    }));
-  }, []);
+  const trendData = CITABILITY_TREND_DATA;
+  const velocityData = VELOCITY_TREND_DATA;
 
   const clusterData = useMemo(() => {
     const counts: Record<string, number> = {};

@@ -1,6 +1,7 @@
 // Static fixture data for Webflow gap analysis — sourced from backend results.
 // Used to populate the dashboard with real data before live API integration.
 
+import type { ContentBriefItem, Cycle } from '@/types/content';
 import type { GapReport, ClusterSpec, GapBrief } from '@/types/gap-analysis';
 
 export const WEBFLOW_COMPANY = {
@@ -96,8 +97,6 @@ export const WEBFLOW_TASKS = [
 export const WEBFLOW_COMPANIES = ['webflow', 'ramp', 'carta'];
 
 // ─── Content Pipeline typed data (matches ContentBriefItem / Cycle types) ────
-
-import type { ContentBriefItem, Cycle } from '@/types/content';
 
 // 13 real content briefs for Webflow
 // 4 published, 2 review, 1 evaluating, 1 drafting, 1 enriching, 1 approved, 3 suggested

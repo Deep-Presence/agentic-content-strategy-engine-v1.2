@@ -20,10 +20,15 @@ import { BriefStatusBadge } from '../components/brief-status-badge';
 import { ContentTypeBadge } from '../components/content-type-badge';
 import { CitabilityScoreBadge } from '../components/citability-score-badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  WEBFLOW_PIPELINE_BRIEFS,
+  BRIEF_003_CONTENT,
+  BRIEF_003_DRAFT_CONTENT,
+} from '@/lib/data/webflow-fixtures';
 import type { ContentBriefItem } from '@/types/content';
 
-// Mock content for when API is offline
-const MOCK_CONTENT = `<h1>How Do No-Code Builders Compare to Headless CMS and Next.js?</h1>
+// Default content for non-brief-003 briefs
+const DEFAULT_CONTENT = `<h1>How Do No-Code Builders Compare to Headless CMS and Next.js?</h1>
 
 <p>The website building landscape has evolved dramatically over the past few years. Teams now face a critical choice between three distinct approaches: visual no-code builders like Webflow, headless CMS platforms paired with frontend frameworks, and code-first solutions like Next.js.</p>
 
@@ -69,7 +74,7 @@ const MOCK_CONTENT = `<h1>How Do No-Code Builders Compare to Headless CMS and Ne
 
 <p>For marketing-led organizations prioritizing speed and autonomy, no-code builders offer the best balance of capability and accessibility. For engineering-led teams building complex applications, code-first approaches provide necessary flexibility.</p>`;
 
-const MOCK_DRAFT_CONTENT = `<h1>No-Code Builders vs Headless CMS vs Next.js</h1>
+const DEFAULT_DRAFT_CONTENT = `<h1>No-Code Builders vs Headless CMS vs Next.js</h1>
 
 <p>Website building has changed. Teams must choose between no-code builders, headless CMS platforms, and code-first solutions.</p>
 
@@ -86,7 +91,15 @@ const MOCK_DRAFT_CONTENT = `<h1>No-Code Builders vs Headless CMS vs Next.js</h1>
 <h3>Code-First</h3>
 <p>Next.js provides maximum flexibility for developers.</p>`;
 
-const MOCK_EVAL_SCORES = [
+// Brief-003 specific eval scores
+const BRIEF_003_EVAL_SCORES = [
+  { label: 'Structural', score: 0.88, threshold: 0.8 },
+  { label: 'Semantic Proximity', score: 0.72, threshold: 0.65 },
+  { label: 'Style Alignment', score: 0.81, threshold: 0.7 },
+  { label: 'Factual Grounding', score: 0.76, threshold: 0.7 },
+];
+
+const DEFAULT_EVAL_SCORES = [
   { label: 'Structural', score: 0.85, threshold: 0.8 },
   { label: 'Semantic Proximity', score: 0.72, threshold: 0.65 },
   { label: 'Style Alignment', score: 0.78, threshold: 0.7 },
@@ -94,9 +107,9 @@ const MOCK_EVAL_SCORES = [
 ];
 
 const MOCK_EXEMPLARS = [
-  { domain: 'thenewstack.io', similarity: 0.81, snippet: 'A comprehensive comparison of website building approaches for modern development teams...' },
-  { domain: 'beecommerce.pl', similarity: 0.78, snippet: 'No-code platforms have emerged as serious alternatives to traditional development...' },
-  { domain: 'smashingmagazine.com', similarity: 0.74, snippet: 'The headless CMS approach separates content management from the presentation layer...' },
+  { domain: 'agilitycms.com', similarity: 0.88, snippet: 'A headless CMS gives marketing teams the flexibility to manage content without relying on developers for every change...' },
+  { domain: 'storyblok.com', similarity: 0.83, snippet: 'Marketing teams need tools that let them publish faster. Headless CMS platforms provide the API-first architecture...' },
+  { domain: 'contentful.com', similarity: 0.79, snippet: 'The separation of content management from presentation allows teams to deliver consistent experiences across channels...' },
 ];
 
 export default function BriefDetailPage() {
@@ -112,7 +125,13 @@ export default function BriefDetailPage() {
   const [loading, setLoading] = useState(true);
   const [approvalLoading, setApprovalLoading] = useState(false);
 
-  const brief = briefs.find((b) => b.id === briefId);
+  const brief = briefs.find((b) => b.id === briefId)
+    ?? WEBFLOW_PIPELINE_BRIEFS.find((b) => b.id === briefId);
+
+  const isBrief003 = briefId === 'brief-003';
+  const mockContent = isBrief003 ? BRIEF_003_CONTENT : DEFAULT_CONTENT;
+  const mockDraft = isBrief003 ? BRIEF_003_DRAFT_CONTENT : DEFAULT_DRAFT_CONTENT;
+  const activeEvalScores = isBrief003 ? BRIEF_003_EVAL_SCORES : DEFAULT_EVAL_SCORES;
 
   const loadContent = useCallback(async () => {
     setLoading(true);
@@ -122,18 +141,18 @@ export default function BriefDetailPage() {
       const finalContent = await artifacts.getContent<string>('content', slug, `content/${briefId}/final.md`);
       setEditorContent(finalContent);
     } catch {
-      setEditorContent(MOCK_CONTENT);
+      setEditorContent(mockContent);
     }
 
     try {
       const draftContent = await artifacts.getContent<string>('content', slug, `content/${briefId}/draft.md`);
       setPreviousContent(draftContent);
     } catch {
-      setPreviousContent(MOCK_DRAFT_CONTENT);
+      setPreviousContent(mockDraft);
     }
 
     setLoading(false);
-  }, [currentCompany, briefId]);
+  }, [currentCompany, briefId, mockContent, mockDraft]);
 
   useEffect(() => {
     loadContent();
@@ -281,7 +300,14 @@ export default function BriefDetailPage() {
         {/* Intel Panel (right, ~40%) */}
         <div className="w-[380px] shrink-0 border-l border-[var(--border-default)] bg-[var(--bg-secondary)] overflow-y-auto p-4">
           <IntelPanel
-            targetSignals={{
+            targetSignals={isBrief003 ? {
+              word_count_range: [977, 4268],
+              reading_level_range: [13.0, 14.3],
+              header_count_range: [35, 40],
+              h2_count: 3,
+              h3_count: 34,
+              content_patterns: ['FAQ', 'Key Takeaways', 'Step-by-Step', 'Tables'],
+            } : {
               word_count_range: [brief?.target_word_count ? brief.target_word_count - 50 : 1040, brief?.target_word_count ? brief.target_word_count + 50 : 1140],
               reading_level_range: [12.0, 14.6],
               header_count_range: [12, 15],
@@ -292,14 +318,14 @@ export default function BriefDetailPage() {
             currentMetrics={{
               word_count: currentWordCount,
               header_count: currentHeaderCount,
-              reading_level: 13.2,
+              reading_level: isBrief003 ? 13.6 : 13.2,
             }}
-            gapScore={0.244}
+            gapScore={isBrief003 ? 0.2535 : 0.244}
             gapClassification="Significant Gap"
-            evalScores={MOCK_EVAL_SCORES}
+            evalScores={activeEvalScores}
             revisionHistory={[
-              { cycle: 1, scores: MOCK_EVAL_SCORES.map((s) => ({ ...s, score: s.score - 0.15 })), passed: false },
-              { cycle: 2, scores: MOCK_EVAL_SCORES, passed: true },
+              { cycle: 1, scores: activeEvalScores.map((s) => ({ ...s, score: s.score - 0.15 })), passed: false },
+              { cycle: 2, scores: activeEvalScores, passed: true },
             ]}
             exemplars={MOCK_EXEMPLARS}
             briefId={briefId}

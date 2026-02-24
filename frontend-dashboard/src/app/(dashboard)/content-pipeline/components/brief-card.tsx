@@ -40,7 +40,10 @@ export function BriefCard({ brief, compact = false, className }: BriefCardProps)
               {brief.citability_score != null ? (
                 <CitabilityScoreBadge score={brief.citability_score} size="sm" showBar />
               ) : (
-                <span className="text-caption font-sans text-cream-500">CS: --</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-caption font-sans tabular-nums text-cream-500">&mdash;</span>
+                  <div className="flex-1 h-1.5 bg-cream-300 rounded-full overflow-hidden min-w-[60px]" />
+                </div>
               )}
 
               <div className="flex items-center justify-between text-caption font-sans text-cream-600">

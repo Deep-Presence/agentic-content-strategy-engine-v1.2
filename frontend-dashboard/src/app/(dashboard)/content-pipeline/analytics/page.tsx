@@ -1,28 +1,37 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/layout/page-header';
 import { useContentStore } from '@/stores/content-store';
+import { WEBFLOW_PIPELINE_BRIEFS } from '@/lib/data/webflow-fixtures';
 import { AnalyticsCharts } from '../components/analytics-charts';
 
 export default function ContentAnalyticsPage() {
-  const { briefs } = useContentStore();
+  const { briefs, setBriefs } = useContentStore();
+
+  useEffect(() => {
+    if (briefs.length === 0) {
+      setBriefs(WEBFLOW_PIPELINE_BRIEFS);
+    }
+  }, [briefs.length, setBriefs]);
+
+  const activeBriefs = briefs.length > 0 ? briefs : WEBFLOW_PIPELINE_BRIEFS;
 
   const stats = useMemo(() => {
-    const published = briefs.filter((b) => b.status === 'published').length;
-    const inProgress = briefs.filter((b) =>
+    const published = activeBriefs.filter((b) => b.status === 'published').length;
+    const inProgress = activeBriefs.filter((b) =>
       ['research', 'drafting', 'enriching', 'formatting', 'evaluating', 'review'].includes(b.status)
     ).length;
-    const scores = briefs
-      .filter((b) => b.citability_score != null)
+    const publishedScores = activeBriefs
+      .filter((b) => b.status === 'published' && b.citability_score != null)
       .map((b) => b.citability_score as number);
-    const avgScore = scores.length > 0
-      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+    const avgScore = publishedScores.length > 0
+      ? Math.round(publishedScores.reduce((a, b) => a + b, 0) / publishedScores.length)
       : 0;
 
-    return { published, inProgress, avgScore, velocity: '6.5' };
-  }, [briefs]);
+    return { published, inProgress, avgScore, velocity: '3.0' };
+  }, [activeBriefs]);
 
   return (
     <div className="space-y-6">
@@ -76,7 +85,7 @@ export default function ContentAnalyticsPage() {
       </div>
 
       {/* Charts */}
-      <AnalyticsCharts briefs={briefs} />
+      <AnalyticsCharts briefs={activeBriefs} />
     </div>
   );
 }

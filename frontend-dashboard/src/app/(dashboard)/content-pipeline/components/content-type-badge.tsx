@@ -9,8 +9,8 @@ interface ContentTypeBadgeProps {
 }
 
 const TYPE_VARIANTS = {
-  blog: 'green' as const,
-  guide: 'blue' as const,
+  blog: 'blue' as const,
+  guide: 'green' as const,
   case_study: 'terracotta' as const,
   product_page: 'default' as const,
 } as const;
