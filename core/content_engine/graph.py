@@ -169,6 +169,7 @@ async def run_content_review(
     session_id: str = "",
     artifact_dir: Path = Path("."),
     parent_span: Optional[object] = None,
+    checkpointer: Optional[object] = None,
 ) -> List[ContentPiece]:
     """Run HITL review for all content pieces.
 
@@ -179,13 +180,16 @@ async def run_content_review(
         formatted_contents: Content pieces to review.
         briefs: Original briefs.
         revision_histories: Eval histories from Stage 3.
+        auto_approve: Whether to auto-approve all pieces.
         session_id: Langfuse session ID.
         artifact_dir: Root artifact directory.
+        parent_span: Optional Langfuse parent span.
+        checkpointer: Optional LangGraph checkpointer for interrupt/resume support.
 
     Returns:
         List of ContentPiece with final status.
     """
-    graph = build_content_review_graph()
+    graph = build_content_review_graph(checkpointer=checkpointer)
     pieces: List[ContentPiece] = []
 
     brief_map = {b.brief_id: b for b in briefs}
@@ -233,8 +237,9 @@ async def run_content_review(
             "artifact_dir": artifact_dir,
         }
 
-        # Run the graph
-        final_state = graph.invoke(initial_state)
+        # Run the graph (with config if checkpointer is provided)
+        config = {"configurable": {"thread_id": f"content-review-{content.brief_id}"}} if checkpointer else None
+        final_state = graph.invoke(initial_state, config)
 
         status = ContentStatus.APPROVED
         decision = (final_state.get("approval_decision") or "").lower()

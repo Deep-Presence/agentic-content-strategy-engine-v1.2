@@ -190,6 +190,30 @@
   "in_progress": [],
   "recently_completed": [
     {
+      "id": "T-hitl-fix-all",
+      "task": "Fix HITL pipeline — research CLI interrupt handling, content engine HITL integration, approval timeout + history",
+      "sprint": "api-v1",
+      "status": "done",
+      "completed_at": "2026-02-24",
+      "summary": "Fixed the root cause of .draft.md files never being promoted to .md: CLI scripts didn't handle LangGraph >=1.0 __interrupt__ in result dict. Also fixed content engine HITL disconnection from API task runner. Changes: (1) Created shared scripts/_cli_approval.py for interactive terminal approval loop; (2) Fixed all 4 CLI scripts to use MemorySaver checkpointer + interrupt/resume; (3) Replaced dead GraphInterrupt exception catch in pipeline.py with __interrupt__ dict check; (4) Added _cleanup_drafts node on reject path in all 3 research graphs; (5) Fixed hardcoded auto_approve=False in content pipeline; (6) Added content HITL integration in API task runner via _run_content_review_hitl(); (7) Added 24h approval timeout in TaskStore.wait_for_approval(); (8) Added approval history recording in TaskStore.submit_approval().",
+      "test_count": "361 tests passed, 0 failures.",
+      "files_changed": [
+        "scripts/_cli_approval.py",
+        "scripts/run_persona_research.py",
+        "scripts/run_style_guide_research.py",
+        "scripts/run_company_research.py",
+        "scripts/run_pipeline.py",
+        "core/research/graphs/pipeline.py",
+        "core/research/graphs/persona_research.py",
+        "core/research/graphs/style_guide.py",
+        "core/research/graphs/company_research.py",
+        "core/content_engine/pipeline.py",
+        "core/content_engine/graph.py",
+        "api/tasks/runner.py",
+        "api/tasks/store.py"
+      ]
+    },
+    {
       "id": "T-hitl-approval-1",
       "task": "HITL Approval Flow Fix — backend draft enrichment + frontend 4-button ApprovalGate + draft card",
       "sprint": "api-v1",

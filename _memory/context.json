@@ -1,10 +1,10 @@
 {
-  "sprint": "v3-signals",
-  "sprint_goal": "Structural Signal Overhaul — upgrade S4/S6/S8 pipeline quality (enriched structural signals, per-query content briefs, expanded cluster specs, 3-tier output)",
-  "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "Existing 3-file JSON contract preserved (additive only)", "Raw SDK clients for LLM calls (no LangChain wrappers)"],
-  "active_branches": ["feat/content-engine-v1.0.0"],
-  "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "langfuse 3.14.1 installed", "trafilatura 1.6+ installed", "textstat 0.7+ installed"],
+  "sprint": "api-v1",
+  "sprint_goal": "API integration + HITL fix — ensure all pipelines work correctly via both CLI and API paths with proper interrupt/resume handling",
+  "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "Raw SDK clients for LLM calls (no LangChain wrappers)", "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception"],
+  "active_branches": ["feat/front-back"],
+  "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "langfuse 3.14.1 installed", "trafilatura 1.6+ installed", "textstat 0.7+ installed", "LangGraph >=1.0 installed"],
   "current_clients": ["Ramp", "Carta"],
   "key_files_in_flux": [],
-  "last_completed": "T-SSO-all — Structural Signal Overhaul (5 phases, 351 tests passing)"
+  "last_completed": "T-hitl-fix-all — HITL pipeline fix (361 tests passing)"
 }

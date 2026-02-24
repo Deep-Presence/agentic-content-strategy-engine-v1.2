@@ -88,10 +88,12 @@ def approve_research(
             detail=f"Task {run_id} is not pending approval (current: {task.status.value})",
         )
 
+    stage = (task.approval_payload or {}).get("stage")
     task_store.submit_approval(
         run_id,
         decision=request.decision,
         revision_note=request.revision_note,
+        stage=stage,
     )
 
     return ApprovalResponse(

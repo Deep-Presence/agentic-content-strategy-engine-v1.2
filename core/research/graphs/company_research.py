@@ -284,6 +284,21 @@ def _write_and_mirror(state: Dict[str, Any]) -> Dict[str, Any]:
     return {**state, "output_path": target_path, "mirrored": True}
 
 
+def _cleanup_drafts(state: Dict[str, Any]) -> Dict[str, Any]:
+    """On reject: delete orphaned .draft.md files from disk."""
+    draft_path = state.get("draft_path", "")
+    if draft_path:
+        draft_disk = (_PROJECT_ROOT / draft_path.lstrip("/")).resolve()
+        if draft_disk.exists():
+            try:
+                draft_disk.unlink()
+                _log_event("reject_cleanup", {"draft_path": draft_path})
+            except Exception as e:
+                _log_event("reject_cleanup_warning", {"error": str(e), "draft_path": draft_path})
+
+    return {**state, "approval_decision": "reject"}
+
+
 def build_graph(checkpointer=None):
     graph = StateGraph(dict)
     graph.add_node("agent", _run_agent)
@@ -291,6 +306,7 @@ def build_graph(checkpointer=None):
     graph.add_node("approval_gate", _approval_gate)
     graph.add_node("route", _route)
     graph.add_node("write_and_mirror", _write_and_mirror)
+    graph.add_node("cleanup_drafts", _cleanup_drafts)
 
     graph.set_entry_point("agent")
     graph.add_edge("agent", "write_temp_draft")
@@ -302,8 +318,9 @@ def build_graph(checkpointer=None):
         {
             "approve": "write_and_mirror",
             "revise": "agent",
-            "reject": END,
+            "reject": "cleanup_drafts",
         },
     )
     graph.add_edge("write_and_mirror", END)
+    graph.add_edge("cleanup_drafts", END)
     return graph.compile(checkpointer=checkpointer)

@@ -54,6 +54,7 @@ def _enrich_interrupt_with_draft_content(
     interrupt_values["artifact_md"] = "\n\n---\n\n".join(combined) if combined else ""
     if not combined:
         logger.warning("No draft content found for paths: %s", draft_paths)
+        interrupt_values["enrichment_warning"] = f"Draft files not found on disk: {draft_paths}"
 
     return interrupt_values
 
@@ -235,7 +236,7 @@ async def _run_research_stage(
             decision = approval["decision"]
             revision_note = approval.get("revision_note")
 
-            task_store.update_task(task_id, status=TaskStatus.RUNNING, current_step=stage_name)
+            task_store.update_task(task_id, status=TaskStatus.RUNNING, current_step=stage_name, approval_payload=None)
             event_bus.publish(task_id, "approval_received", {"stage": stage_name, "decision": decision})
 
             # Resume the graph with the approval decision
@@ -411,9 +412,12 @@ async def run_content_pipeline_task(
     task_store: TaskStore,
     event_bus: EventBus,
 ) -> None:
-    """Background task wrapper for content generation pipeline."""
+    """Background task wrapper for content generation pipeline.
+
+    Passes task_store and event_bus through to run_content_generation() so
+    Stage 4 can use HITL interrupt/resume when auto_approve is False.
+    """
     from core.content_engine.pipeline import run_content_generation
-    from core.models.content_generation import ContentGenerationInput
 
     slug = _derive_slug(input_data.company_name)
 
@@ -421,7 +425,12 @@ async def run_content_pipeline_task(
         async with task_store.semaphore:
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "content"})
 
-            output = await run_content_generation(input_data=input_data)
+            output = await run_content_generation(
+                input_data=input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+            )
 
             result = {
                 "company_slug": output.company_slug,

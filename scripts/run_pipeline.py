@@ -2,6 +2,9 @@
 """
 Run the content-strategy-engine pipeline: company_research -> persona_research -> style_guide.
 
+Uses run_graph_with_approval() for each stage, which handles LangGraph >=1.0
+interrupt/resume cycle interactively in the terminal.
+
 Requires env vars (see README):
   - GOOGLE_API_KEY_COMPANY_DEEPAGENT
   - GOOGLE_API_KEY_PERSONA_RESEARCH_DEEPAGENT (for persona stage)
@@ -21,10 +24,13 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]  # content-strategy-engine/
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from core.research.graphs.pipeline import run_pipeline
+from core.research.graphs.company_research import build_graph as build_company_graph
+from core.research.graphs.persona_research import build_graph as build_persona_graph
+from core.research.graphs.style_guide import build_graph as build_style_graph
 from core.models.artifacts import CompanyResearchInput
 from core.models.personas import PersonaResearchInput
 from core.models.style_guide import StyleGuideResearchInput
+from scripts._cli_approval import run_graph_with_approval
 
 
 def _parse_args() -> argparse.Namespace:
@@ -63,7 +69,9 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
+    slug = args.company_name.lower().replace(" ", "-")
 
+    # ── Stage 1: Company research ─────────────────────────────────
     company_input = CompanyResearchInput(
         company_id=args.company_id,
         company_name=args.company_name,
@@ -73,57 +81,85 @@ def main() -> int:
         language=args.language,
     )
 
-    persona_input = None
+    print("\n" + "=" * 60)
+    print("  STAGE 1: Company Research")
+    print("=" * 60)
+
+    company_result = run_graph_with_approval(
+        build_graph_fn=build_company_graph,
+        initial_state={"input": company_input, "auto_approve": args.auto_approve},
+        thread_id=f"cli-pipeline-company-{slug}",
+    )
+
+    company_decision = (company_result.get("approval_decision") or "").lower()
+    if company_decision == "reject":
+        print("\nCompany stage rejected — stopping pipeline.")
+        return 0
+
+    company_output_path = company_result.get("output_path")
+    print(f"\nCompany artifact: {company_output_path or '(none)'}")
+
+    # ── Stage 2: Persona research ─────────────────────────────────
+    persona_paths = []
     if args.persona:
         persona_input = PersonaResearchInput(
             company_id=args.company_id,
             company_name=args.company_name,
             domain=args.domain,
+            company_slug=slug,
+            company_context_path=company_output_path,
             max_personas=min(3, max(1, args.max_personas)),
         )
 
-    style_input = None
-    if args.style and persona_input:
+        print("\n" + "=" * 60)
+        print("  STAGE 2: Persona Research")
+        print("=" * 60)
+
+        persona_result = run_graph_with_approval(
+            build_graph_fn=build_persona_graph,
+            initial_state={"input": persona_input, "auto_approve": args.auto_approve},
+            thread_id=f"cli-pipeline-persona-{slug}",
+        )
+
+        persona_decision = (persona_result.get("approval_decision") or "").lower()
+        if persona_decision == "reject":
+            print("\nPersona stage rejected — stopping pipeline.")
+            return 0
+
+        persona_paths = persona_result.get("written_paths") or []
+        print(f"\nPersona artifacts: {persona_paths or '(none)'}")
+
+    # ── Stage 3: Style guide research ─────────────────────────────
+    if args.style and args.persona:
         style_input = StyleGuideResearchInput(
             company_id=args.company_id,
             company_name=args.company_name,
             domain=args.domain,
+            company_slug=slug,
+            company_context_path=company_output_path,
+            persona_paths=persona_paths,
         )
 
-    result = run_pipeline(
-        company_input=company_input,
-        persona_input=persona_input,
-        style_input=style_input,
-        auto_approve=args.auto_approve,
-    )
-
-    stage = result.get("stage", "?")
-    if result.get("status") == "interrupt":
         print("\n" + "=" * 60)
-        print(f"INTERRUPT at stage: {stage}")
+        print("  STAGE 3: Style Guide Research")
         print("=" * 60)
-        values = result.get("values", {})
-        print("\nDraft(s) to review:")
-        if "draft_path" in values:
-            print(f"  Company: {values['draft_path']}")
-        if "draft_paths" in values:
-            for p in values["draft_paths"]:
-                print(f"  - {p}")
-        print(f"\nNotes: {values.get('notes', '')}")
-        print("\nTo resume: use your frontend/API to call the graph with:")
-        print('  {"approval_decision": "approve" | "revise" | "reject", "revision_note": "..."}')
-        print("=" * 60)
-        return 0
+
+        style_result = run_graph_with_approval(
+            build_graph_fn=build_style_graph,
+            initial_state={"input": style_input, "auto_approve": args.auto_approve},
+            thread_id=f"cli-pipeline-style-{slug}",
+        )
+
+        style_decision = (style_result.get("approval_decision") or "").lower()
+        if style_decision == "reject":
+            print("\nStyle guide stage rejected.")
+        else:
+            style_paths = style_result.get("written_paths") or []
+            print(f"\nStyle guide artifacts: {style_paths or '(none)'}")
 
     print("\n" + "=" * 60)
-    print(f"Pipeline complete: {stage}")
+    print("  PIPELINE COMPLETE")
     print("=" * 60)
-    if result.get("company"):
-        print(f"Company output: {result['company'].get('output_path', 'N/A')}")
-    if result.get("personas"):
-        print(f"Persona paths: {result['personas'].get('written_paths', [])}")
-    if result.get("style"):
-        print(f"Style paths: {result['style'].get('written_paths', [])}")
     return 0
 
 

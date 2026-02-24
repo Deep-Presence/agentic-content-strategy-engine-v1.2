@@ -1,5 +1,7 @@
 import json
 import concurrent.futures
+import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from deepagents import create_deep_agent
@@ -9,6 +11,10 @@ from core.research.agents.base import get_backend, get_store
 from core.config.settings import settings
 from core.models.style_guide import StyleGuideResearchInput
 from core.research.tools import perplexity_client
+
+logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]  # content-strategy-engine/
 
 
 def internet_search(query: str, max_results: int = 6, include_raw_content: bool = True) -> str:
@@ -133,6 +139,19 @@ Instructions:
     last_msg = result["messages"][-1]
     raw = last_msg.get("content") if isinstance(last_msg, dict) else getattr(last_msg, "content", "")
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
     except Exception:
-        return {"written_paths": [], "notes": "Non-JSON agent output", "raw": raw}
+        parsed = {"written_paths": [], "notes": "Non-JSON agent output", "raw": raw}
+
+    # Fallback: if agent didn't return written_paths (common with LLM outputs),
+    # scan disk for the expected draft file that the agent was told to write.
+    if not parsed.get("written_paths"):
+        disk_path = _PROJECT_ROOT / target_path.lstrip("/")
+        if disk_path.exists() and disk_path.stat().st_size > 0:
+            logger.info(
+                "Agent didn't return written_paths but file found on disk: %s",
+                target_path,
+            )
+            parsed["written_paths"] = [target_path]
+
+    return parsed

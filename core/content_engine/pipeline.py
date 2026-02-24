@@ -15,7 +15,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from core.config.settings import settings
 from core.content_engine.tracing import (
@@ -27,6 +27,7 @@ from core.content_engine.tracing import (
     update_trace_output,
 )
 from core.models.content_generation import (
+    ContentBrief,
     ContentGenerationInput,
     ContentGenerationOutput,
     ContentPiece,
@@ -134,16 +135,156 @@ def _load_artifact_json(path: Optional[str]) -> dict:
     return {}
 
 
+# ── API HITL helper for Stage 4 ─────────────────────────────────────
+
+
+async def _run_content_review_hitl(
+    formatted_contents: List[FormattedContent],
+    briefs: List[ContentBrief],
+    revision_histories: List[RevisionHistory],
+    artifact_dir: Path,
+    task_id: str,
+    task_store: Any,
+    event_bus: Any,
+    session_id: str = "",
+    parent_span: Optional[object] = None,
+) -> List[ContentPiece]:
+    """Run Stage 4 with HITL interrupt/resume via API task_store.
+
+    Same graph as run_content_review(), but uses MemorySaver checkpointer
+    and the task runner's wait_for_approval/submit_approval pattern so the
+    frontend can drive approve/edit/reject decisions via SSE + REST.
+    """
+    import asyncio
+
+    from langgraph.checkpoint.memory import MemorySaver
+    from langgraph.types import Command
+
+    from core.content_engine.graph import build_content_review_graph
+    from core.content_engine.tracing import create_span, end_span, log_score, update_trace_output
+
+    # Import TaskStatus locally to avoid circular import
+    from api.tasks.models import TaskStatus
+
+    brief_map = {b.brief_id: b for b in briefs}
+    history_map = {h.brief_id: h for h in revision_histories}
+    pieces: List[ContentPiece] = []
+
+    for content in formatted_contents:
+        brief = brief_map.get(content.brief_id)
+        if not brief:
+            logger.warning("No brief found for %s — skipping review", content.brief_id)
+            continue
+
+        history = history_map.get(content.brief_id, RevisionHistory(brief_id=content.brief_id))
+
+        # Each brief gets its own checkpointer and graph instance
+        checkpointer = MemorySaver()
+        graph = build_content_review_graph(checkpointer=checkpointer)
+        thread_id = f"{task_id}-content-review-{content.brief_id}"
+        config = {"configurable": {"thread_id": thread_id}}
+
+        initial_state = {
+            "content": content,
+            "brief": brief,
+            "history": history,
+            "auto_approve": False,
+            "artifact_dir": artifact_dir,
+        }
+
+        event_bus.publish(task_id, "stage_start", {
+            "stage": "content_review",
+            "brief_id": content.brief_id,
+            "title": content.title,
+        })
+        task_store.update_task(task_id, current_step=f"review:{content.brief_id}")
+
+        # First invocation — will hit interrupt() at approval_gate
+        result = await asyncio.to_thread(graph.invoke, initial_state, config)
+
+        # HITL loop
+        while result.get("__interrupt__"):
+            interrupts = result.get("__interrupt__", [])
+            interrupt_val = interrupts[0].value if interrupts and hasattr(interrupts[0], "value") else {}
+
+            task_store.update_task(
+                task_id,
+                status=TaskStatus.PENDING_APPROVAL,
+                approval_payload={
+                    "stage": "content_review",
+                    "brief_id": content.brief_id,
+                    **interrupt_val,
+                },
+            )
+            event_bus.publish(task_id, "pending_approval", {
+                "stage": "content_review",
+                "brief_id": content.brief_id,
+                **interrupt_val,
+            })
+
+            # Wait for human decision
+            approval = await task_store.wait_for_approval(task_id)
+            decision = approval["decision"]
+            editor_notes = approval.get("revision_note", "")
+
+            task_store.update_task(task_id, status=TaskStatus.RUNNING, current_step=f"review:{content.brief_id}", approval_payload=None)
+            event_bus.publish(task_id, "approval_received", {
+                "stage": "content_review",
+                "brief_id": content.brief_id,
+                "decision": decision,
+            })
+
+            resume_value = {"approval_decision": decision}
+            if editor_notes:
+                resume_value["editor_notes"] = editor_notes
+
+            result = await asyncio.to_thread(graph.invoke, Command(resume=resume_value), config)
+
+        # Extract final state
+        status = ContentStatus.APPROVED
+        decision = (result.get("approval_decision") or "").lower()
+        if decision == "reject":
+            status = ContentStatus.REJECTED
+        elif decision == "edit":
+            status = ContentStatus.EDITED
+
+        piece = ContentPiece(
+            brief_id=content.brief_id,
+            title=content.title,
+            status=status,
+            final_markdown=content.markdown,
+            eval_summary=result.get("eval_summary", {}),
+            human_notes=result.get("human_notes"),
+            artifact_path=result.get("artifact_path"),
+        )
+        pieces.append(piece)
+
+        event_bus.publish(task_id, "stage_complete", {
+            "stage": "content_review",
+            "brief_id": content.brief_id,
+            "decision": decision or "approve",
+        })
+
+    return pieces
+
+
 # ── Main pipeline orchestrator ──────────────────────────────────────
 
 
 async def run_content_generation(
     input_data: ContentGenerationInput,
+    *,
+    task_id: Optional[str] = None,
+    task_store: Optional[object] = None,
+    event_bus: Optional[object] = None,
 ) -> ContentGenerationOutput:
     """Run the full 4-stage content generation pipeline.
 
     Args:
         input_data: Pipeline configuration and artifact paths.
+        task_id: Optional task ID for API HITL support.
+        task_store: Optional TaskStore for API HITL approval flow.
+        event_bus: Optional EventBus for SSE progress events.
 
     Returns:
         ContentGenerationOutput with all content pieces and metadata.
@@ -374,14 +515,33 @@ async def run_content_generation(
             )
         end_span(stage4_span, output={"auto_approved": len(pieces)})
         _cli_stage(4, time.monotonic() - stage_start, detail="auto-approved")
+    elif task_store is not None and event_bus is not None and task_id is not None:
+        # API path: use HITL with interrupt/resume per brief
+        pieces = await _run_content_review_hitl(
+            formatted_contents=formatted_contents,
+            briefs=briefs,
+            revision_histories=revision_histories,
+            artifact_dir=artifact_dir,
+            task_id=task_id,
+            task_store=task_store,
+            event_bus=event_bus,
+            session_id=session_id,
+            parent_span=stage4_span,
+        )
+        end_span(stage4_span, output={
+            "approved": sum(1 for p in pieces if p.status == ContentStatus.APPROVED),
+            "rejected": sum(1 for p in pieces if p.status == ContentStatus.REJECTED),
+        })
+        _cli_stage(4, time.monotonic() - stage_start)
     else:
+        # CLI path: synchronous review (blocks on interrupt — only works with auto_approve)
         from core.content_engine.graph import run_content_review
 
         pieces = await run_content_review(
             formatted_contents=formatted_contents,
             briefs=briefs,
             revision_histories=revision_histories,
-            auto_approve=False,
+            auto_approve=input_data.auto_approve,
             session_id=session_id,
             artifact_dir=artifact_dir,
             parent_span=stage4_span,

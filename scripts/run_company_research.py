@@ -11,6 +11,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from core.research.graphs.company_research import build_graph
 from core.models.artifacts import CompanyResearchInput
+from scripts._cli_approval import run_graph_with_approval
 
 
 def _parse_args() -> argparse.Namespace:
@@ -40,13 +41,17 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Overwrite existing artifact file if it already exists.",
     )
+    p.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="Skip the human approval gate (auto-approve draft).",
+    )
     return p.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
 
-    graph = build_graph()
     inp = CompanyResearchInput(
         company_id=args.company_id,
         company_name=args.company_name,
@@ -58,14 +63,34 @@ def main() -> int:
         additional_constraints=args.constraints,
     )
 
-    out = graph.invoke({"input": inp, "overwrite": args.overwrite})
+    slug = inp.company_name.lower().replace(" ", "-")
+    initial_state = {
+        "input": inp,
+        "overwrite": args.overwrite,
+        "auto_approve": args.auto_approve,
+    }
+
+    out = run_graph_with_approval(
+        build_graph_fn=build_graph,
+        initial_state=initial_state,
+        thread_id=f"cli-company-{slug}",
+    )
 
     if not args.no_print:
         print("\n===== RESEARCH RESPONSE (final markdown) =====\n")
         print(out.get("artifact_md", ""))
 
     print("\n===== ARTIFACT WRITTEN TO =====\n")
-    print(out.get("output_path", ""))
+    output_path = out.get("output_path", "")
+    if output_path:
+        print(output_path)
+    else:
+        decision = (out.get("approval_decision") or "").lower()
+        if decision == "reject":
+            print("  (rejected — no artifact written)")
+        else:
+            print("  (none — check agent output for errors)")
+
     return 0
 
 

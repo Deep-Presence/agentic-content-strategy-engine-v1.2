@@ -39,4 +39,38 @@
     "files_affected": ["core/gap_analysis/steps/s4_enrich_citations.py"],
     "recurrence_prevention": "try/except guard around reading_level computation. Non-English text also skips reading level (defaults to 0.0)."
   }
+  ,
+  {
+    "id": "F5",
+    "timestamp": "2026-02-24",
+    "what_broke": "Persona and style guide agents produce .draft.md files that are never promoted to .md — _write_and_mirror() never executes",
+    "root_cause": "Three-part failure chain: (1) CLI scripts called graph.invoke() but never checked result['__interrupt__'] — they printed empty results and exited. (2) core/research/graphs/pipeline.py caught GraphInterrupt exception which is dead code in LangGraph >=1.0 (invoke returns normally with __interrupt__ in dict instead of raising). (3) The API runner was the ONLY path that correctly handled interrupts, but CLI users had no working path.",
+    "fix_applied": "(1) Created scripts/_cli_approval.py shared helper with MemorySaver checkpointer + interactive terminal approval loop. (2) Updated all 4 CLI scripts to use it. (3) Replaced dead GraphInterrupt catch in pipeline.py with __interrupt__ dict check. (4) Added _cleanup_drafts node on reject path in all 3 research graphs to delete orphaned .draft.md files.",
+    "lesson": "LangGraph >=1.0 completely changed the interrupt model — interrupt() no longer raises GraphInterrupt, it returns __interrupt__ in the result dict. Any code catching GraphInterrupt is silently dead. Always verify LangGraph API behavior against the installed version.",
+    "files_affected": [
+      "scripts/_cli_approval.py",
+      "scripts/run_persona_research.py",
+      "scripts/run_style_guide_research.py",
+      "scripts/run_company_research.py",
+      "scripts/run_pipeline.py",
+      "core/research/graphs/pipeline.py",
+      "core/research/graphs/persona_research.py",
+      "core/research/graphs/style_guide.py",
+      "core/research/graphs/company_research.py"
+    ],
+    "recurrence_prevention": "All graph invocations now check result.get('__interrupt__') instead of catching exceptions. Shared _cli_approval.py helper ensures consistent interrupt handling across CLI scripts."
+  },
+  {
+    "id": "F6",
+    "timestamp": "2026-02-24",
+    "what_broke": "Content engine HITL disconnected from API task runner — auto_approve was hardcoded to False in pipeline.py line 384, and run_content_pipeline_task() didn't pass task_store/event_bus for Stage 4 HITL",
+    "root_cause": "Two issues: (1) content pipeline Stage 4 passed auto_approve=input_data.auto_approve to run_content_review() correctly after fix, but before the fix it was hardcoded False. (2) run_content_pipeline_task() called run_content_generation() without passing task_store/event_bus, so the content review graph had no way to pause for API-driven HITL approval.",
+    "fix_applied": "(1) Fixed auto_approve passthrough. (2) Added task_id/task_store/event_bus optional params to run_content_generation(). (3) Added _run_content_review_hitl() function that builds per-brief content review graphs with MemorySaver and uses task_store.wait_for_approval() for interrupt/resume. (4) run_content_pipeline_task() now passes all three params through.",
+    "lesson": "When adding HITL to a new pipeline, ensure the task runner passes task_store and event_bus all the way down to the graph layer. The graph needs the checkpointer, and the runner needs the approval queue.",
+    "files_affected": [
+      "core/content_engine/pipeline.py",
+      "api/tasks/runner.py"
+    ],
+    "recurrence_prevention": "Content pipeline now has explicit task_store/event_bus params. API path uses _run_content_review_hitl() with full HITL support."
+  }
 ]

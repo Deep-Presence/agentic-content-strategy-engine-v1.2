@@ -104,10 +104,14 @@ def approve_content(
             detail=f"brief_id mismatch: expected {payload_brief}, got {request.brief_id}",
         )
 
+    stage = (task.approval_payload or {}).get("stage", "content_review")
+    if request.brief_id:
+        stage = f"{stage}:{request.brief_id}"
     task_store.submit_approval(
         run_id,
         decision=request.decision,
         revision_note=request.editor_notes,
+        stage=stage,
     )
 
     return ContentApprovalResponse(

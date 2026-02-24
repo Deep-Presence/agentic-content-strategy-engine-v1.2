@@ -151,16 +151,36 @@ class TaskStore:
 
     # ── HITL Approval ─────────────────────────────────────────────────
 
-    async def wait_for_approval(self, task_id: str) -> Dict[str, Any]:
+    async def wait_for_approval(
+        self, task_id: str, timeout: float = 86400
+    ) -> Dict[str, Any]:
         """Block until an approval is submitted for this task.
 
         Uses asyncio.Queue instead of Event to prevent lost-wakeup:
         submit_approval can be called before or after wait_for_approval
         and the message will still be delivered.
+
+        Args:
+            task_id: The task to wait for.
+            timeout: Max seconds to wait (default 24h). On timeout, returns
+                     a reject decision so the pipeline doesn't hang forever.
         """
         if task_id not in self._approval_queues:
             self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
-        data = await self._approval_queues[task_id].get()
+        try:
+            data = await asyncio.wait_for(
+                self._approval_queues[task_id].get(), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Approval timed out after %.0fs for task %s — auto-rejecting",
+                timeout,
+                task_id,
+            )
+            data = {
+                "decision": "reject",
+                "revision_note": f"Approval timed out after {int(timeout)}s",
+            }
         self._approval_queues.pop(task_id, None)
         return data
 
@@ -169,14 +189,41 @@ class TaskStore:
         task_id: str,
         decision: str,
         revision_note: Optional[str] = None,
+        stage: Optional[str] = None,
     ) -> None:
         """Submit an approval decision, unblocking wait_for_approval.
 
         If the queue doesn't exist yet (wait hasn't started), creates it
         and puts the data — the waiter will find it when it starts.
+        Also records the decision in the task's approval_history for audit.
         """
+        from api.tasks.models import ApprovalRecord
+
         if task_id not in self._tasks:
             raise TaskNotFoundError(task_id)
+
+        # Record in approval history
+        task = self._tasks[task_id]
+        resolved_stage = (
+            stage
+            or (task.approval_payload or {}).get("stage")
+            or task.current_step
+            or "unknown"
+        )
+        if resolved_stage == "unknown":
+            logger.warning(
+                "Approval for task %s has no stage info — recording as 'unknown'",
+                task_id,
+            )
+        record = ApprovalRecord(
+            task_id=task_id,
+            stage=resolved_stage,
+            decision=decision,
+            revision_note=revision_note,
+        )
+        task.approval_history.append(record)
+        task.updated_at = datetime.now(timezone.utc)
+        self._persist(task)
 
         payload = {"decision": decision, "revision_note": revision_note}
         if task_id not in self._approval_queues:
