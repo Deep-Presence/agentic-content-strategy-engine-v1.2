@@ -125,7 +125,13 @@ export function TiptapEditor({
       StarterKit.configure({
         heading: { levels: [1, 2, 3, 4] },
       }),
-      Highlight.configure({ multicolor: true }),
+      Highlight.extend({
+        addKeyboardShortcuts() {
+          return {
+            'Mod-Shift-h': () => this.editor.commands.toggleHighlight(),
+          };
+        },
+      }).configure({ multicolor: true }),
       Underline,
       Link.configure({
         openOnClick: false,
@@ -241,6 +247,16 @@ export function TiptapEditor({
         'transition-all duration-200',
         className,
       )}
+      onKeyDown={(e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+          e.preventDefault();
+          if (editor.isActive('link')) {
+            removeLink();
+          } else {
+            setShowLinkInput((prev) => !prev);
+          }
+        }
+      }}
     >
       {/* ── Toolbar ── */}
       {editable && (
