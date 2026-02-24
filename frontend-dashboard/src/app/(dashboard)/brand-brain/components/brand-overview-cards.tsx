@@ -10,6 +10,7 @@ interface CompletenessItem {
   label: string;
   status: ItemStatus;
   weight: number;
+  statusLabel?: string;
 }
 
 interface BrandOverviewCardsProps {
@@ -17,6 +18,10 @@ interface BrandOverviewCardsProps {
   personaStatus: ItemStatus;
   styleGuideStatus: ItemStatus;
   hasKnowledgeDocs: boolean;
+  companyContextDate?: string;
+  personaDate?: string;
+  styleGuideDate?: string;
+  knowledgeDocsLabel?: string;
 }
 
 const STATUS_ICONS = {
@@ -25,7 +30,7 @@ const STATUS_ICONS = {
   none: XCircle,
 } as const;
 
-const STATUS_LABELS = {
+const DEFAULT_STATUS_LABELS = {
   approved: 'Generated & Approved',
   draft: 'Draft — Needs Approval',
   none: 'Not started',
@@ -42,15 +47,41 @@ export function BrandOverviewCards({
   personaStatus,
   styleGuideStatus,
   hasKnowledgeDocs,
+  companyContextDate,
+  personaDate,
+  styleGuideDate,
+  knowledgeDocsLabel,
 }: BrandOverviewCardsProps) {
   const items: CompletenessItem[] = [
-    { label: 'Company Context', status: companyContextStatus, weight: 25 },
-    { label: 'ICP Persona', status: personaStatus, weight: 25 },
-    { label: 'Style Guide', status: styleGuideStatus, weight: 25 },
     {
-      label: 'Knowledge Documents',
+      label: 'Company Context',
+      status: companyContextStatus,
+      weight: 25,
+      statusLabel: companyContextStatus === 'approved' && companyContextDate
+        ? `Generated & Approved — ${companyContextDate}`
+        : undefined,
+    },
+    {
+      label: 'ICP Persona',
+      status: personaStatus,
+      weight: 25,
+      statusLabel: personaStatus === 'approved' && personaDate
+        ? `Generated & Approved — ${personaDate}`
+        : undefined,
+    },
+    {
+      label: 'Style Guide',
+      status: styleGuideStatus,
+      weight: 25,
+      statusLabel: styleGuideStatus === 'approved' && styleGuideDate
+        ? `Generated & Approved — ${styleGuideDate}`
+        : undefined,
+    },
+    {
+      label: 'Brand Guidelines',
       status: hasKnowledgeDocs ? 'approved' : 'none',
       weight: 25,
+      statusLabel: hasKnowledgeDocs ? undefined : (knowledgeDocsLabel ?? 'Not uploaded'),
     },
   ];
 
@@ -76,6 +107,7 @@ export function BrandOverviewCards({
       <div className="space-y-2.5">
         {items.map((item) => {
           const Icon = STATUS_ICONS[item.status];
+          const label = item.statusLabel ?? DEFAULT_STATUS_LABELS[item.status];
           return (
             <div key={item.label} className="flex items-center gap-2.5">
               <Icon className={cn('h-4 w-4 shrink-0', STATUS_STYLES[item.status])} />
@@ -88,7 +120,7 @@ export function BrandOverviewCards({
                   STATUS_STYLES[item.status]
                 )}
               >
-                {STATUS_LABELS[item.status]}
+                {label}
               </span>
             </div>
           );

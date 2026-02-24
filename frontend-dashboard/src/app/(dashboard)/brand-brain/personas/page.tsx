@@ -14,6 +14,7 @@ import { PersonaEditor } from '../components/persona-editor';
 import { ResearchTrigger } from '../components/research-trigger';
 import { ResearchProgress } from '../components/research-progress';
 import { ResearchApprovalInline } from '../components/research-approval-inline';
+import { MOCK_PERSONA_ICP, MOCK_PERSONA_SECONDARY } from '../data/mock-artifacts';
 import type { Persona } from '@/types/brand';
 
 export default function PersonasPage() {
@@ -37,46 +38,73 @@ export default function PersonasPage() {
 
   const companyName = currentCompany
     ? currentCompany.charAt(0).toUpperCase() + currentCompany.slice(1)
-    : '';
+    : 'Webflow';
 
   const loadPersonas = useCallback(async () => {
-    if (!currentCompany) return;
-    setLoading(true);
-
-    try {
-      const personaFiles = await artifacts.listFiles('personas', currentCompany);
-      const loadedPersonas: Persona[] = [];
-
-      for (const file of personaFiles.files) {
-        try {
-          const content = await artifacts.getContent<string>(
-            'personas',
-            currentCompany,
-            file
-          );
-          if (content) {
-            loadedPersonas.push({
-              id: file,
-              name: file
-                .replace(`${currentCompany}__`, '')
-                .replace('.md', '')
-                .replace(/-/g, ' '),
-              type: file.includes('icp') ? 'icp' : 'secondary',
-              content: typeof content === 'string' ? content : JSON.stringify(content),
-            });
-          }
-        } catch {
-          // Skip failed files
-        }
-      }
-      setPersonas(loadedPersonas);
-    } catch {
-      // No personas found
-      setPersonas([]);
-    } finally {
+    // If already loaded in store, skip
+    if (personas.length > 0) {
       setLoading(false);
+      return;
     }
-  }, [currentCompany, setPersonas]);
+
+    setLoading(true);
+    let loaded = false;
+
+    if (currentCompany) {
+      try {
+        const personaFiles = await artifacts.listFiles('personas', currentCompany);
+        const loadedPersonas: Persona[] = [];
+
+        for (const file of personaFiles.files) {
+          try {
+            const content = await artifacts.getContent<string>(
+              'personas',
+              currentCompany,
+              file
+            );
+            if (content) {
+              loadedPersonas.push({
+                id: file,
+                name: file
+                  .replace(`${currentCompany}__`, '')
+                  .replace('.md', '')
+                  .replace(/-/g, ' '),
+                type: file.includes('icp') ? 'icp' : 'secondary',
+                content: typeof content === 'string' ? content : JSON.stringify(content),
+              });
+            }
+          } catch {
+            // Skip failed files
+          }
+        }
+        if (loadedPersonas.length > 0) {
+          setPersonas(loadedPersonas);
+          loaded = true;
+        }
+      } catch {
+        // Fall through to mock
+      }
+    }
+
+    if (!loaded) {
+      setPersonas([
+        {
+          id: 'mock-icp-finance',
+          name: 'Finance Director at Mid-Market B2B SaaS',
+          type: 'icp',
+          content: MOCK_PERSONA_ICP,
+        },
+        {
+          id: 'mock-secondary-markops',
+          name: 'Marketing Operations Manager',
+          type: 'secondary',
+          content: MOCK_PERSONA_SECONDARY,
+        },
+      ]);
+    }
+
+    setLoading(false);
+  }, [currentCompany, personas.length, setPersonas]);
 
   useEffect(() => {
     loadPersonas();
@@ -117,7 +145,7 @@ export default function PersonasPage() {
               mode="persona"
               companySlug={currentCompany}
               companyName={companyName}
-              domain={`${currentCompany}.com`}
+              domain={`${currentCompany ?? 'webflow'}.com`}
               onStarted={(runId) => {
                 setResearchRun(runId, 'running', 'persona');
               }}
@@ -190,7 +218,7 @@ export default function PersonasPage() {
               mode="persona"
               companySlug={currentCompany}
               companyName={companyName}
-              domain={`${currentCompany}.com`}
+              domain={`${currentCompany ?? 'webflow'}.com`}
               onStarted={(runId) => {
                 setResearchRun(runId, 'running', 'persona');
               }}

@@ -9,6 +9,7 @@ import {
   Plus,
   ArrowRight,
   Brain,
+  CheckCircle,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
@@ -25,7 +26,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { useAppStore } from '@/stores/app-store';
 import { useBrandStore } from '@/stores/brand-store';
-import { useArtifactFiles } from '@/lib/hooks/use-artifacts';
 import { artifacts } from '@/lib/api/artifacts';
 import { tasks } from '@/lib/api/tasks';
 import { relativeTime } from '@/lib/utils/format';
@@ -36,7 +36,15 @@ import { CreateProjectDialog } from './components/create-project-dialog';
 import { ResearchTrigger } from './components/research-trigger';
 import { ResearchProgress } from './components/research-progress';
 import { ResearchApprovalInline } from './components/research-approval-inline';
-import type { TaskResponse, TaskStatus } from '@/types/common';
+import {
+  MOCK_COMPANY_CONTEXT,
+  MOCK_PERSONA_ICP,
+  MOCK_PERSONA_SECONDARY,
+  MOCK_STYLE_GUIDE,
+  MOCK_PROJECTS,
+  MOCK_RESEARCH_RUNS,
+} from './data/mock-artifacts';
+import type { TaskResponse } from '@/types/common';
 
 type ArtifactStatus = 'none' | 'draft' | 'approved';
 
@@ -52,6 +60,7 @@ export default function BrandBrainPage() {
     styleGuideStatus,
     setStyleGuide,
     projects,
+    setProjects,
     knowledgeDocs,
     activeResearchRunId,
     approvalPayload,
@@ -63,6 +72,7 @@ export default function BrandBrainPage() {
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [loading, setPageLoading] = useState(true);
   const [researchTasks, setResearchTasks] = useState<TaskResponse[]>([]);
+  const [mockResearchRuns, setMockResearchRuns] = useState(MOCK_RESEARCH_RUNS);
   const [approvalStage, setApprovalStage] = useState<string | null>(null);
   const [approvalContent, setApprovalContent] = useState<string>('');
 
@@ -74,95 +84,150 @@ export default function BrandBrainPage() {
 
   const companyName = currentCompany
     ? currentCompany.charAt(0).toUpperCase() + currentCompany.slice(1)
-    : '';
+    : 'Webflow';
 
   const loadData = useCallback(async () => {
-    if (!currentCompany) return;
     setPageLoading(true);
 
     try {
-      // Check company context
-      try {
-        const ctxFiles = await artifacts.listFiles('company_context', currentCompany);
-        if (ctxFiles.files.length > 0) {
-          setCtxStatus('approved');
-          const content = await artifacts.getContent<string>(
-            'company_context',
-            currentCompany,
-            ctxFiles.files[0]
-          );
-          if (content) setCompanyContext(content, 'approved');
-        }
-      } catch {
-        setCtxStatus('none');
-      }
-
-      // Check personas
-      try {
-        const personaFiles = await artifacts.listFiles('personas', currentCompany);
-        if (personaFiles.files.length > 0) {
-          setPersonaStatus('approved');
-          const loadedPersonas = [];
-          for (const file of personaFiles.files) {
-            try {
-              const content = await artifacts.getContent<string>(
-                'personas',
-                currentCompany,
-                file
-              );
-              if (content) {
-                loadedPersonas.push({
-                  id: file,
-                  name: file.replace(`${currentCompany}__`, '').replace('.md', '').replace(/-/g, ' '),
-                  type: file.includes('icp') ? 'icp' as const : 'secondary' as const,
-                  content: typeof content === 'string' ? content : JSON.stringify(content),
-                });
-              }
-            } catch {
-              // Skip failed files
+      // Try loading company context from API
+      let ctxLoaded = false;
+      if (currentCompany) {
+        try {
+          const ctxFiles = await artifacts.listFiles('company_context', currentCompany);
+          if (ctxFiles.files.length > 0) {
+            setCtxStatus('approved');
+            const content = await artifacts.getContent<string>(
+              'company_context',
+              currentCompany,
+              ctxFiles.files[0]
+            );
+            if (content) {
+              setCompanyContext(content, 'approved');
+              ctxLoaded = true;
             }
           }
-          if (loadedPersonas.length > 0) setPersonas(loadedPersonas);
+        } catch {
+          // Fall through to mock data
         }
-      } catch {
-        setPersonaStatus('none');
       }
 
-      // Check style guide
-      try {
-        const sgFiles = await artifacts.listFiles('style_guides', currentCompany);
-        if (sgFiles.files.length > 0) {
-          setSgStatus('approved');
-          const content = await artifacts.getContent<string>(
-            'style_guides',
-            currentCompany,
-            sgFiles.files[0]
-          );
-          if (content) setStyleGuide(typeof content === 'string' ? content : JSON.stringify(content), 'approved');
-        }
-      } catch {
-        setSgStatus('none');
+      // Fallback to mock data for company context
+      if (!ctxLoaded) {
+        setCtxStatus('approved');
+        setCompanyContext(MOCK_COMPANY_CONTEXT, 'approved');
       }
 
-      // Check knowledge docs
+      // Try loading personas from API
+      let personasLoaded = false;
+      if (currentCompany) {
+        try {
+          const personaFiles = await artifacts.listFiles('personas', currentCompany);
+          if (personaFiles.files.length > 0) {
+            setPersonaStatus('approved');
+            const loadedPersonas = [];
+            for (const file of personaFiles.files) {
+              try {
+                const content = await artifacts.getContent<string>(
+                  'personas',
+                  currentCompany,
+                  file
+                );
+                if (content) {
+                  loadedPersonas.push({
+                    id: file,
+                    name: file.replace(`${currentCompany}__`, '').replace('.md', '').replace(/-/g, ' '),
+                    type: file.includes('icp') ? 'icp' as const : 'secondary' as const,
+                    content: typeof content === 'string' ? content : JSON.stringify(content),
+                  });
+                }
+              } catch {
+                // Skip failed files
+              }
+            }
+            if (loadedPersonas.length > 0) {
+              setPersonas(loadedPersonas);
+              personasLoaded = true;
+            }
+          }
+        } catch {
+          // Fall through to mock data
+        }
+      }
+
+      // Fallback to mock personas
+      if (!personasLoaded) {
+        setPersonaStatus('approved');
+        setPersonas([
+          {
+            id: 'mock-icp-finance',
+            name: 'Finance Director at Mid-Market B2B SaaS',
+            type: 'icp',
+            content: MOCK_PERSONA_ICP,
+          },
+          {
+            id: 'mock-secondary-markops',
+            name: 'Marketing Operations Manager',
+            type: 'secondary',
+            content: MOCK_PERSONA_SECONDARY,
+          },
+        ]);
+      }
+
+      // Try loading style guide from API
+      let sgLoaded = false;
+      if (currentCompany) {
+        try {
+          const sgFiles = await artifacts.listFiles('style_guides', currentCompany);
+          if (sgFiles.files.length > 0) {
+            setSgStatus('approved');
+            const content = await artifacts.getContent<string>(
+              'style_guides',
+              currentCompany,
+              sgFiles.files[0]
+            );
+            if (content) {
+              setStyleGuide(typeof content === 'string' ? content : JSON.stringify(content), 'approved');
+              sgLoaded = true;
+            }
+          }
+        } catch {
+          // Fall through to mock data
+        }
+      }
+
+      // Fallback to mock style guide
+      if (!sgLoaded) {
+        setSgStatus('approved');
+        setStyleGuide(MOCK_STYLE_GUIDE, 'approved');
+      }
+
+      // Knowledge docs — not uploaded
       setHasKnowledgeDocs(knowledgeDocs.length > 0);
 
-      // Load recent research tasks
+      // Load mock projects if none exist
+      if (projects.length === 0) {
+        setProjects(MOCK_PROJECTS);
+      }
+
+      // Load recent research tasks from API
       try {
         const taskList = await tasks.list();
         const researchRuns = taskList.tasks
           .filter((t) => t.pipeline === 'research')
           .slice(0, 5);
-        setResearchTasks(researchRuns);
+        if (researchRuns.length > 0) {
+          setResearchTasks(researchRuns);
+        }
       } catch {
-        // Ignore
+        // Use mock research runs (already set)
       }
     } catch {
       toast('Failed to load brand data', 'error');
     } finally {
       setPageLoading(false);
     }
-  }, [currentCompany, knowledgeDocs.length, setCompanyContext, setPersonas, setStyleGuide, toast]);
+  }, [currentCompany, knowledgeDocs.length, projects.length, setCompanyContext, setPersonas, setStyleGuide, setProjects, toast]);
 
   useEffect(() => {
     loadData();
@@ -211,6 +276,10 @@ export default function BrandBrainPage() {
           personaStatus={personaStatus}
           styleGuideStatus={sgStatus}
           hasKnowledgeDocs={hasKnowledgeDocs}
+          companyContextDate="Feb 15"
+          personaDate="Feb 15"
+          styleGuideDate="Feb 16"
+          knowledgeDocsLabel="Not uploaded"
         />
       )}
 
@@ -254,7 +323,7 @@ export default function BrandBrainPage() {
             mode="full"
             companySlug={currentCompany}
             companyName={companyName}
-            domain={`${currentCompany}.com`}
+            domain={`${currentCompany ?? 'webflow'}.com`}
             onStarted={(runId) => {
               setResearchRun(runId, 'running', 'company');
             }}
@@ -336,7 +405,7 @@ export default function BrandBrainPage() {
         </h3>
         {loading ? (
           <Skeleton className="h-40 rounded-md" />
-        ) : researchTasks.length === 0 ? (
+        ) : researchTasks.length === 0 && mockResearchRuns.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center bg-white rounded-md border border-[var(--border-default)]">
             <FlaskConical className="h-8 w-8 text-cream-500 mb-2" />
             <p className="text-body-sm text-cream-600">No research runs yet.</p>
@@ -347,13 +416,15 @@ export default function BrandBrainPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Company</TableHead>
-                  <TableHead>Current Step</TableHead>
+                  <TableHead>Artifact</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Started</TableHead>
+                  <TableHead>Completed</TableHead>
+                  <TableHead>Approval</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {/* Show API tasks first, then mock runs */}
                 {researchTasks.map((task) => (
                   <TableRow key={task.run_id}>
                     <TableCell className="font-medium text-cream-900">
@@ -371,6 +442,44 @@ export default function BrandBrainPage() {
                     </TableCell>
                     <TableCell className="text-cream-600">
                       {relativeTime(task.created_at)}
+                    </TableCell>
+                    <TableCell>—</TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="sm">
+                        View <ArrowRight className="h-3 w-3 ml-1" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {researchTasks.length === 0 && mockResearchRuns.map((run) => (
+                  <TableRow key={run.run_id}>
+                    <TableCell className="font-medium text-cream-900">
+                      {run.company_slug}
+                    </TableCell>
+                    <TableCell className="text-cream-700">
+                      {run.current_step}
+                    </TableCell>
+                    <TableCell>
+                      <Badge className="bg-sage-50 text-sage-500">
+                        Completed {new Date(run.completed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-cream-600 font-sans text-body-sm">
+                      {new Date(run.completed_at).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </TableCell>
+                    <TableCell>
+                      {run.approved ? (
+                        <span className="inline-flex items-center gap-1 text-sage-500 font-sans text-body-sm">
+                          <CheckCircle className="h-3.5 w-3.5" />
+                          Approved
+                        </span>
+                      ) : (
+                        <span className="text-cream-500 font-sans text-body-sm">Pending</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm">

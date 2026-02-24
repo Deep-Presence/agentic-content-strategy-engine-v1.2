@@ -11,6 +11,7 @@ import { StyleGuideViewer } from '../components/style-guide-viewer';
 import { ResearchTrigger } from '../components/research-trigger';
 import { ResearchProgress } from '../components/research-progress';
 import { ResearchApprovalInline } from '../components/research-approval-inline';
+import { MOCK_STYLE_GUIDE } from '../data/mock-artifacts';
 
 export default function StyleGuidePage() {
   const { toast } = useToast();
@@ -30,33 +31,46 @@ export default function StyleGuidePage() {
 
   const companyName = currentCompany
     ? currentCompany.charAt(0).toUpperCase() + currentCompany.slice(1)
-    : '';
+    : 'Webflow';
 
   const loadStyleGuide = useCallback(async () => {
-    if (!currentCompany) return;
     setLoading(true);
 
-    try {
-      const sgFiles = await artifacts.listFiles('style_guides', currentCompany);
-      if (sgFiles.files.length > 0) {
-        const content = await artifacts.getContent<string>(
-          'style_guides',
-          currentCompany,
-          sgFiles.files[0]
-        );
-        if (content) {
-          setStyleGuide(
-            typeof content === 'string' ? content : JSON.stringify(content),
-            'approved'
-          );
-        }
-      }
-    } catch {
-      // No style guide
-    } finally {
+    // If already loaded in store, skip fetch
+    if (styleGuide) {
       setLoading(false);
+      return;
     }
-  }, [currentCompany, setStyleGuide]);
+
+    let loaded = false;
+    if (currentCompany) {
+      try {
+        const sgFiles = await artifacts.listFiles('style_guides', currentCompany);
+        if (sgFiles.files.length > 0) {
+          const content = await artifacts.getContent<string>(
+            'style_guides',
+            currentCompany,
+            sgFiles.files[0]
+          );
+          if (content) {
+            setStyleGuide(
+              typeof content === 'string' ? content : JSON.stringify(content),
+              'approved'
+            );
+            loaded = true;
+          }
+        }
+      } catch {
+        // Fall through to mock
+      }
+    }
+
+    if (!loaded) {
+      setStyleGuide(MOCK_STYLE_GUIDE, 'approved');
+    }
+
+    setLoading(false);
+  }, [currentCompany, styleGuide, setStyleGuide]);
 
   useEffect(() => {
     loadStyleGuide();
@@ -77,7 +91,7 @@ export default function StyleGuidePage() {
               mode="style"
               companySlug={currentCompany}
               companyName={companyName}
-              domain={`${currentCompany}.com`}
+              domain={`${currentCompany ?? 'webflow'}.com`}
               onStarted={(runId) => {
                 setResearchRun(runId, 'running', 'style_guide');
                 setShowTrigger(false);
