@@ -99,7 +99,7 @@ function GapHeatmap({
       ctx.fillStyle = '#4a4840';
       ctx.textAlign = 'right';
       ctx.font = '10px ui-sans-serif, -apple-system, sans-serif';
-      const truncated = query.text.length > 30 ? query.text.slice(0, 30) + '...' : query.text;
+      const truncated = query.text.length > 40 ? query.text.slice(0, 40) + '...' : query.text;
       ctx.fillText(truncated, labelWidth - 8, y + cellHeight / 2 + 3);
 
       // Cells

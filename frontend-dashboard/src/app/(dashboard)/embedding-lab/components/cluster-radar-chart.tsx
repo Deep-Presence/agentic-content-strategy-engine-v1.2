@@ -24,7 +24,7 @@ interface ClusterRadarChartProps {
 
 function ClusterRadarChart({ clusters, clusterColors, className }: ClusterRadarChartProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
-    new Set(clusters.slice(0, 3).map((c) => c.cluster_id)),
+    new Set(['C3', 'C8', 'C9']),
   );
 
   function toggleCluster(id: string) {

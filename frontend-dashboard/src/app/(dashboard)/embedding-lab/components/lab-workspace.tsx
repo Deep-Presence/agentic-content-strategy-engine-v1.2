@@ -33,7 +33,7 @@ function LabWorkspace() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [gapReport, setGapReport] = useState<GapReport | null>(null);
-  const [activeTab, setActiveTab] = useState('embedding');
+  const [activeTab, setActiveTab] = useState('clusters');
 
   // Load data from API with fallback to sample data
   useEffect(() => {
@@ -137,7 +137,7 @@ function LabWorkspace() {
         </div>
       )}
 
-      <Tabs defaultValue="embedding" onValueChange={setActiveTab}>
+      <Tabs defaultValue="clusters" onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="embedding">Embedding Space</TabsTrigger>
           <TabsTrigger value="clusters">Clusters</TabsTrigger>

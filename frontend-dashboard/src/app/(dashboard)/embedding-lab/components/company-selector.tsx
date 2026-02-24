@@ -28,7 +28,11 @@ function CompanySelector({ className }: CompanySelectorProps) {
           ))
         )}
       </Select>
-      <Select value="latest" label="Run">
+      <Select
+        value="latest"
+        onChange={() => {}}
+        label="Run"
+      >
         <option value="latest">Latest</option>
       </Select>
     </div>

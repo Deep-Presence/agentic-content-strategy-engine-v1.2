@@ -189,6 +189,33 @@ export const SAMPLE_CLUSTERS: ClusterSpec[] = [
   },
 ];
 
+const wpxSignals: StructuralSignals = {
+  word_count: 1932,
+  sentence_count: 75,
+  paragraph_count: 75,
+  avg_paragraph_length: 25.8,
+  reading_level: 10.5,
+  self_contained_ratio: 0.82,
+  h1_count: 1,
+  h2_count: 5,
+  h3_count: 8,
+  h4_count: 2,
+  list_count: 49,
+  ordered_list_count: 12,
+  table_count: 0,
+  code_block_count: 0,
+  has_faq_section: false,
+  has_definition_opening: false,
+  has_key_takeaways: false,
+  has_comparison_table: false,
+  has_step_by_step: true,
+  has_research_refs: false,
+  has_expert_quotes: false,
+  data_point_count: 9,
+  citation_density: 0.35,
+  named_entity_density: 0.18,
+};
+
 const sampleSignals: StructuralSignals = {
   word_count: 1090,
   sentence_count: 45,
@@ -244,6 +271,15 @@ const sampleSignals2: StructuralSignals = {
 };
 
 export const SAMPLE_EXEMPLARS: CitationExemplar[] = [
+  {
+    similarity: 0.8002,
+    domain: 'wpx.net',
+    url: 'https://wpx.net/blog/website-builder-comparison-guide',
+    snippet: 'A comprehensive breakdown of modern website builders comparing features, performance benchmarks, and value proposition for different business types and use cases...',
+    structural_signals: wpxSignals,
+    authority_type: 'industry_expert',
+    content_type: 'comparison',
+  },
   {
     similarity: 0.89,
     domain: 'webflow.com',
@@ -397,6 +433,153 @@ export const SAMPLE_GAP_BRIEFS: GapBrief[] = [
     },
     top_exemplars: SAMPLE_EXEMPLARS.slice(1, 4),
   },
+  {
+    query_id: 'q6',
+    query_text: 'How does Webflow\'s visual development engine actually work?',
+    cluster: 'Mechanism',
+    cluster_id: 'C1',
+    gap_score: 0.78,
+    gap_classification: 'significant_gap',
+    best_company_unit: { unit_id: 'u6', similarity: 0.45, snippet: 'Webflow uses a proprietary rendering engine to translate visual design...' },
+    avg_citation_similarity: 0.73,
+    content_brief: {
+      target_word_count: { min: 1400, max: 2000 },
+      target_reading_level: { min: 10, max: 13 },
+      recommended_header_count: 7,
+      header_hierarchy: { h1: 1, h2: 5, h3: 6 },
+      content_patterns: ['step_by_step', 'lists', 'stats'],
+      dominant_authority: 'industry_expert',
+      dominant_content_type: 'guide',
+      exemplars_analyzed: 11,
+    },
+    top_exemplars: SAMPLE_EXEMPLARS.slice(0, 3),
+  },
+  {
+    query_id: 'q7',
+    query_text: 'What are the limitations of no-code website builders?',
+    cluster: 'Boundary',
+    cluster_id: 'C2',
+    gap_score: 0.74,
+    gap_classification: 'significant_gap',
+    best_company_unit: { unit_id: 'u7', similarity: 0.48, snippet: 'No-code platforms have inherent constraints in custom logic and database...' },
+    avg_citation_similarity: 0.70,
+    content_brief: {
+      target_word_count: { min: 1300, max: 1900 },
+      target_reading_level: { min: 10, max: 12 },
+      recommended_header_count: 6,
+      header_hierarchy: { h1: 1, h2: 4, h3: 6 },
+      content_patterns: ['comparison_table', 'lists', 'key_takeaways'],
+      dominant_authority: 'analyst',
+      dominant_content_type: 'comparison',
+      exemplars_analyzed: 9,
+    },
+    top_exemplars: SAMPLE_EXEMPLARS.slice(2, 5),
+  },
+  {
+    query_id: 'q8',
+    query_text: 'Common website performance problems and how to fix them',
+    cluster: 'Problem/Awareness',
+    cluster_id: 'C6',
+    gap_score: 0.66,
+    gap_classification: 'gap_to_close',
+    best_company_unit: { unit_id: 'u8', similarity: 0.56, snippet: 'Website performance bottlenecks often stem from unoptimized images...' },
+    avg_citation_similarity: 0.67,
+    content_brief: {
+      target_word_count: { min: 1500, max: 2200 },
+      target_reading_level: { min: 9, max: 12 },
+      recommended_header_count: 8,
+      header_hierarchy: { h1: 1, h2: 6, h3: 5 },
+      content_patterns: ['step_by_step', 'lists', 'stats'],
+      dominant_authority: 'thought_leader',
+      dominant_content_type: 'blog',
+      exemplars_analyzed: 12,
+    },
+    top_exemplars: SAMPLE_EXEMPLARS.slice(1, 4),
+  },
+  {
+    query_id: 'q9',
+    query_text: 'Does Webflow support custom code and API integrations?',
+    cluster: 'Feature Verification',
+    cluster_id: 'C9',
+    gap_score: 0.71,
+    gap_classification: 'gap_to_close',
+    best_company_unit: { unit_id: 'u9', similarity: 0.52, snippet: 'Webflow allows embedding custom code in head and body sections...' },
+    avg_citation_similarity: 0.69,
+    content_brief: {
+      target_word_count: { min: 1000, max: 1600 },
+      target_reading_level: { min: 10, max: 13 },
+      recommended_header_count: 5,
+      header_hierarchy: { h1: 1, h2: 4, h3: 3 },
+      content_patterns: ['lists', 'step_by_step'],
+      dominant_authority: 'official',
+      dominant_content_type: 'documentation',
+      exemplars_analyzed: 8,
+    },
+    top_exemplars: SAMPLE_EXEMPLARS.slice(0, 3),
+  },
+  {
+    query_id: 'q10',
+    query_text: 'Webflow vs Squarespace vs Wix for small business websites',
+    cluster: 'Category Comparison',
+    cluster_id: 'C3',
+    gap_score: 0.80,
+    gap_classification: 'significant_gap',
+    best_company_unit: { unit_id: 'u10', similarity: 0.40, snippet: 'Small business owners comparing website platforms look for ease of use...' },
+    avg_citation_similarity: 0.76,
+    content_brief: {
+      target_word_count: { min: 1600, max: 2400 },
+      target_reading_level: { min: 9, max: 12 },
+      recommended_header_count: 9,
+      header_hierarchy: { h1: 1, h2: 6, h3: 7 },
+      content_patterns: ['comparison_table', 'faq', 'key_takeaways'],
+      dominant_authority: 'industry_expert',
+      dominant_content_type: 'comparison',
+      exemplars_analyzed: 15,
+    },
+    top_exemplars: SAMPLE_EXEMPLARS.slice(0, 3),
+  },
+  {
+    query_id: 'q11',
+    query_text: 'Is Webflow worth it for freelance web designers?',
+    cluster: 'Branded Evaluation',
+    cluster_id: 'C8',
+    gap_score: 0.58,
+    gap_classification: 'roughly_equal',
+    best_company_unit: { unit_id: 'u11', similarity: 0.65, snippet: 'Freelance designers using Webflow benefit from client billing features...' },
+    avg_citation_similarity: 0.66,
+    content_brief: {
+      target_word_count: { min: 1400, max: 2000 },
+      target_reading_level: { min: 9, max: 12 },
+      recommended_header_count: 7,
+      header_hierarchy: { h1: 1, h2: 5, h3: 5 },
+      content_patterns: ['faq', 'stats', 'comparison_table'],
+      dominant_authority: 'analyst',
+      dominant_content_type: 'review',
+      exemplars_analyzed: 11,
+    },
+    top_exemplars: SAMPLE_EXEMPLARS.slice(2, 5),
+  },
+  {
+    query_id: 'q12',
+    query_text: 'Top 10 no-code platforms for SaaS landing pages',
+    cluster: 'Best-of/Consideration',
+    cluster_id: 'C7',
+    gap_score: 0.63,
+    gap_classification: 'gap_to_close',
+    best_company_unit: { unit_id: 'u12', similarity: 0.59, snippet: 'SaaS companies need landing page tools that support A/B testing...' },
+    avg_citation_similarity: 0.71,
+    content_brief: {
+      target_word_count: { min: 1500, max: 2200 },
+      target_reading_level: { min: 10, max: 12 },
+      recommended_header_count: 8,
+      header_hierarchy: { h1: 1, h2: 7, h3: 5 },
+      content_patterns: ['comparison_table', 'lists', 'faq'],
+      dominant_authority: 'reviewer',
+      dominant_content_type: 'listicle',
+      exemplars_analyzed: 13,
+    },
+    top_exemplars: SAMPLE_EXEMPLARS.slice(1, 4),
+  },
 ];
 
 export interface EmbeddingPoint {
@@ -442,7 +625,7 @@ function generateClusterPoints(
     });
   }
 
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 22; i++) {
     points.push({
       x: centerX + (rand() - 0.5) * 5,
       y: centerY + (rand() - 0.5) * 5,
@@ -455,7 +638,7 @@ function generateClusterPoints(
     });
   }
 
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 6; i++) {
     points.push({
       x: centerX + (rand() - 0.5) * 4 + 1,
       y: centerY + (rand() - 0.5) * 4 + 0.5,
@@ -524,18 +707,41 @@ export const SAMPLE_DOMAIN_CITATIONS: DomainCitation[] = [
   { domain: 'ahrefs.com', count: 5, avgSimilarity: 0.73, authorityType: 'industry_expert' },
 ];
 
-export const SAMPLE_HEATMAP_DATA = SAMPLE_CLUSTERS.flatMap((cluster) =>
-  SAMPLE_GAP_BRIEFS.map((brief) => ({
-    query_id: brief.query_id,
-    query_text: brief.query_text,
-    cluster: cluster.cluster_name,
-    cluster_id: cluster.cluster_id,
-    gap_score: brief.cluster_id === cluster.cluster_id
-      ? brief.gap_score
-      : Math.max(0, brief.gap_score - 0.1 + Math.random() * 0.2),
-    classification: brief.gap_classification,
-  })),
-);
+// Heatmap data: 12 queries × 9 clusters, gap scores in 0–0.32 range
+// Each query's home cluster gets the highest score; related clusters get medium; others get low
+function generateHeatmapData() {
+  const rand = seededRandom(777);
+  const clusterIds = SAMPLE_CLUSTERS.map((c) => c.cluster_id);
+  // Related cluster adjacency (clusters that share thematic overlap)
+  const related: Record<string, string[]> = {
+    C1: ['C5', 'C6'], C2: ['C4', 'C9'], C3: ['C7', 'C8'],
+    C4: ['C2', 'C3'], C5: ['C1', 'C6'], C6: ['C1', 'C5'],
+    C7: ['C3', 'C8'], C8: ['C3', 'C7'], C9: ['C2', 'C1'],
+  };
+
+  return SAMPLE_GAP_BRIEFS.flatMap((brief) =>
+    SAMPLE_CLUSTERS.map((cluster) => {
+      let gap_score: number;
+      if (cluster.cluster_id === brief.cluster_id) {
+        gap_score = 0.20 + rand() * 0.12; // 0.20–0.32 (home cluster)
+      } else if (related[brief.cluster_id]?.includes(cluster.cluster_id)) {
+        gap_score = 0.06 + rand() * 0.09; // 0.06–0.15 (related)
+      } else {
+        gap_score = rand() * 0.05; // 0.00–0.05 (unrelated)
+      }
+      return {
+        query_id: brief.query_id,
+        query_text: brief.query_text,
+        cluster: cluster.cluster_name,
+        cluster_id: cluster.cluster_id,
+        gap_score: Math.round(gap_score * 1000) / 1000,
+        classification: brief.gap_classification,
+      };
+    }),
+  );
+}
+
+export const SAMPLE_HEATMAP_DATA = generateHeatmapData();
 
 export const SAMPLE_SIMILARITY_DATA = [
   { range: '0.0-0.1', count: 2 },
