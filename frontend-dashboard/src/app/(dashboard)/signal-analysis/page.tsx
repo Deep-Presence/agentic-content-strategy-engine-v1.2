@@ -1,14 +1,15 @@
 'use client';
 
+import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Card, CardContent } from '@/components/ui/card';
 import { useAppStore } from '@/stores/app-store';
 import { useArtifactContent } from '@/lib/hooks/use-artifacts';
 import { ResultsOverview } from './components/results-overview';
+import { WEBFLOW_GAP_REPORT } from '@/lib/data/webflow-fixtures';
 import type { GapReport } from '@/types/gap-analysis';
 
 export default function SignalAnalysisPage() {
@@ -16,11 +17,18 @@ export default function SignalAnalysisPage() {
   const currentCompany = useAppStore((s) => s.currentCompany);
   const slug = currentCompany || 'webflow';
 
-  const { data: report, loading, error } = useArtifactContent<GapReport>(
+  const { data: apiReport, loading, error } = useArtifactContent<GapReport>(
     'gap_analysis',
     slug,
     'gap_report.json'
   );
+
+  // Use API data when available, fall back to fixture data for Webflow
+  const report = useMemo(() => {
+    if (apiReport) return apiReport;
+    if (slug === 'webflow' && (error || !loading)) return WEBFLOW_GAP_REPORT;
+    return null;
+  }, [apiReport, slug, error, loading]);
 
   return (
     <div>
@@ -36,28 +44,9 @@ export default function SignalAnalysisPage() {
       />
 
       <div className="mt-6">
-        {loading && <SignalAnalysisSkeleton />}
+        {loading && !report && <SignalAnalysisSkeleton />}
 
-        {error && !loading && (
-          <Card>
-            <CardContent className="p-12 text-center">
-              <Search className="h-12 w-12 text-cream-500 mx-auto mb-4" />
-              <h3 className="font-serif text-heading-3 font-semibold text-cream-950 mb-2">
-                No analysis results yet
-              </h3>
-              <p className="text-body-sm text-cream-600 mb-4 max-w-md mx-auto">
-                Run your first Deep Signal Analysis to understand how AI platforms cite your
-                content and identify visibility gaps.
-              </p>
-              <Button onClick={() => router.push('/signal-analysis/run')}>
-                <Plus className="h-4 w-4" />
-                Run First Analysis
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {report && !loading && (
+        {report && (
           <ResultsOverview report={report} companySlug={slug} />
         )}
       </div>

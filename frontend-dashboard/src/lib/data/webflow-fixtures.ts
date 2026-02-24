@@ -1,6 +1,8 @@
 // Static fixture data for Webflow gap analysis — sourced from backend results.
 // Used to populate the dashboard with real data before live API integration.
 
+import type { GapReport, ClusterSpec, GapBrief } from '@/types/gap-analysis';
+
 export const WEBFLOW_COMPANY = {
   slug: 'webflow',
   name: 'Webflow',
@@ -92,3 +94,324 @@ export const WEBFLOW_TASKS = [
 ];
 
 export const WEBFLOW_COMPANIES = ['webflow', 'ramp', 'carta'];
+
+// ─── Content Pipeline typed data (matches ContentBriefItem / Cycle types) ────
+
+import type { ContentBriefItem, Cycle } from '@/types/content';
+
+// 13 real content briefs for Webflow
+// 4 published, 2 review, 1 evaluating, 1 drafting, 1 enriching, 1 approved, 3 suggested
+// 9 blogs, 4 guides | Published avg citability: (87+82+74+89)/4 = 83%
+export const WEBFLOW_PIPELINE_BRIEFS: ContentBriefItem[] = [
+  {
+    id: 'brief-001',
+    title: 'How Webflow Compares to WordPress for Enterprise Marketing',
+    status: 'published',
+    content_type: 'blog',
+    cluster: 'C3: Category Comparison',
+    target_word_count: 1300,
+    citability_score: 87,
+    cycle_id: 'cycle-1',
+    created_at: '2026-02-08T09:00:00Z',
+    updated_at: '2026-02-12T14:00:00Z',
+  },
+  {
+    id: 'brief-002',
+    title: 'What Is a Design System in the Context of Website Building Tools?',
+    status: 'published',
+    content_type: 'blog',
+    cluster: 'C5: Definition',
+    target_word_count: 950,
+    citability_score: 82,
+    cycle_id: 'cycle-1',
+    created_at: '2026-02-09T10:00:00Z',
+    updated_at: '2026-02-13T11:00:00Z',
+  },
+  {
+    id: 'brief-003',
+    title: 'Headless CMS for Marketing Teams: A Complete Guide',
+    status: 'review',
+    content_type: 'guide',
+    cluster: 'C7: Best-of/Consideration',
+    target_word_count: 1450,
+    citability_score: 78,
+    cycle_id: 'cycle-2',
+    created_at: '2026-02-19T11:00:00Z',
+    updated_at: '2026-02-23T06:00:00Z',
+  },
+  {
+    id: 'brief-004',
+    title: 'No-Code vs Low-Code: Which Approach Wins for Marketing Websites?',
+    status: 'review',
+    content_type: 'blog',
+    cluster: 'C3: Category Comparison',
+    target_word_count: 1200,
+    citability_score: 85,
+    cycle_id: 'cycle-2',
+    created_at: '2026-02-20T08:00:00Z',
+    updated_at: '2026-02-23T09:00:00Z',
+  },
+  {
+    id: 'brief-005',
+    title: 'How Website Builders Handle Core Web Vitals Performance',
+    status: 'evaluating',
+    content_type: 'blog',
+    cluster: 'C1: Mechanism',
+    target_word_count: 1350,
+    cycle_id: 'cycle-3',
+    created_at: '2026-02-22T07:00:00Z',
+    updated_at: '2026-02-23T07:00:00Z',
+  },
+  {
+    id: 'brief-006',
+    title: 'Complete Guide to Website Internationalization Without Code',
+    status: 'drafting',
+    content_type: 'guide',
+    cluster: 'C9: Feature Verification',
+    target_word_count: 1800,
+    cycle_id: 'cycle-3',
+    created_at: '2026-02-22T10:00:00Z',
+    updated_at: '2026-02-23T01:00:00Z',
+  },
+  {
+    id: 'brief-007',
+    title: 'Evaluating Website Platforms for Scalability and Content Velocity',
+    status: 'approved',
+    content_type: 'blog',
+    cluster: 'C4: Decision Criteria',
+    target_word_count: 1100,
+    cycle_id: 'cycle-3',
+    created_at: '2026-02-21T12:00:00Z',
+    updated_at: '2026-02-23T05:00:00Z',
+  },
+  {
+    id: 'brief-008',
+    title: 'Best Enterprise Website Platforms with SSO and Role-Based Access',
+    status: 'suggested',
+    content_type: 'guide',
+    cluster: 'C7: Best-of/Consideration',
+    target_word_count: 1600,
+    created_at: '2026-02-22T16:00:00Z',
+    updated_at: '2026-02-22T16:00:00Z',
+  },
+  {
+    id: 'brief-009',
+    title: 'Product Page Optimization: Features That AI Search Engines Highlight',
+    status: 'published',
+    content_type: 'blog',
+    cluster: 'C9: Feature Verification',
+    target_word_count: 800,
+    citability_score: 74,
+    cycle_id: 'cycle-1',
+    created_at: '2026-02-10T10:00:00Z',
+    updated_at: '2026-02-14T09:00:00Z',
+  },
+  {
+    id: 'brief-010',
+    title: 'When to Choose a Visual Editor vs a Code-First CMS',
+    status: 'suggested',
+    content_type: 'blog',
+    cluster: 'C4: Decision Criteria',
+    target_word_count: 1000,
+    created_at: '2026-02-22T15:00:00Z',
+    updated_at: '2026-02-22T15:00:00Z',
+  },
+  {
+    id: 'brief-011',
+    title: 'How Webflow Handles Dynamic Content and CMS Collections',
+    status: 'published',
+    content_type: 'guide',
+    cluster: 'C8: Branded Evaluation',
+    target_word_count: 1550,
+    citability_score: 89,
+    cycle_id: 'cycle-2',
+    created_at: '2026-02-15T09:00:00Z',
+    updated_at: '2026-02-20T11:00:00Z',
+  },
+  {
+    id: 'brief-012',
+    title: 'What Problems Does No-Code Web Design Solve for Growing Teams?',
+    status: 'enriching',
+    content_type: 'blog',
+    cluster: 'C6: Problem/Awareness',
+    target_word_count: 1050,
+    cycle_id: 'cycle-3',
+    created_at: '2026-02-20T14:00:00Z',
+    updated_at: '2026-02-23T04:00:00Z',
+  },
+  {
+    id: 'brief-013',
+    title: 'Understanding Content Velocity Boundaries in Website Platforms',
+    status: 'suggested',
+    content_type: 'blog',
+    cluster: 'C2: Boundary',
+    target_word_count: 1150,
+    created_at: '2026-02-23T08:00:00Z',
+    updated_at: '2026-02-23T08:00:00Z',
+  },
+];
+
+// Cycle data — Active: 0/4, Past: 1/3 and 3/3
+export const WEBFLOW_ACTIVE_CYCLE: Cycle = {
+  id: 'cycle-3',
+  name: 'Week of Feb 24',
+  start_date: '2026-02-24T00:00:00Z',
+  end_date: '2026-03-02T00:00:00Z',
+  briefs: WEBFLOW_PIPELINE_BRIEFS.filter((b) =>
+    ['brief-005', 'brief-006', 'brief-007', 'brief-012'].includes(b.id)
+  ),
+  completed_count: 0,
+  total_count: 4,
+};
+
+export const WEBFLOW_PAST_CYCLES: Cycle[] = [
+  {
+    id: 'cycle-2',
+    name: 'Week of Feb 17',
+    start_date: '2026-02-17T00:00:00Z',
+    end_date: '2026-02-23T00:00:00Z',
+    briefs: WEBFLOW_PIPELINE_BRIEFS.filter((b) =>
+      ['brief-003', 'brief-004', 'brief-011'].includes(b.id)
+    ),
+    completed_count: 1,
+    total_count: 3,
+  },
+  {
+    id: 'cycle-1',
+    name: 'Week of Feb 10',
+    start_date: '2026-02-10T00:00:00Z',
+    end_date: '2026-02-16T00:00:00Z',
+    briefs: WEBFLOW_PIPELINE_BRIEFS.filter((b) =>
+      ['brief-001', 'brief-002', 'brief-009'].includes(b.id)
+    ),
+    completed_count: 3,
+    total_count: 3,
+  },
+];
+
+// Brief-003 mock content for the Tiptap editor
+export const BRIEF_003_CONTENT = `<h1>Headless CMS for Marketing Teams: A Complete Guide</h1>
+
+<p>Marketing teams today face a fundamental tension: they need to publish content faster than ever, but traditional CMS platforms force them to rely on developers for every layout change, new landing page, or campaign update. Headless CMS architecture offers a way to resolve this tension by separating where content is managed from where it is displayed. For marketing organizations evaluating Webflow against headless alternatives like Contentful, Sanity, or Strapi, the decision hinges on how much control your team needs over both content and presentation without writing code.</p>
+
+<h2>What Makes a CMS "Headless" and Why It Matters</h2>
+
+<p>A headless CMS strips away the front-end rendering layer entirely. Content is stored as structured data, delivered via APIs, and rendered by a separate front-end application built in React, Next.js, or another framework. This architecture gives engineering teams enormous flexibility: they can deliver the same content to websites, mobile apps, digital signage, or any channel that consumes an API. However, that flexibility comes at a cost for marketing teams. Without a visual editing interface, marketers must work through developer-mediated workflows to preview content, adjust page layouts, or experiment with new campaign designs. This handoff introduces delays, creates bottlenecks, and ultimately reduces the content velocity that modern B2B marketing demands.</p>
+
+<h2>How Visual Builders Change the Equation</h2>
+
+<p>Visual-first platforms like Webflow take a fundamentally different approach. Instead of separating content from presentation, they unify them in a design canvas that marketers can use directly. Content editors see exactly how their work will appear on the live site, with the ability to adjust spacing, typography, imagery, and responsive behavior without waiting for a developer sprint. The CMS Collections feature in Webflow provides structured content management similar to a headless CMS, with dynamic templates that pull data into designed layouts, while maintaining the visual editing experience that marketing teams need to move quickly. For teams publishing three or more pieces per week, the compounding time savings of eliminating developer handoffs can mean the difference between hitting and missing quarterly content targets.</p>
+
+<h2>Evaluating the Right Fit for Your Team</h2>
+
+<p>The decision between headless and visual CMS architectures is not purely technical. It depends on team composition, content operations maturity, and integration requirements. Teams with dedicated front-end developers who need to serve content across multiple channels, including native mobile apps, may find headless architecture worth the added complexity. But for marketing-led organizations whose primary channel is the web, a visual builder with CMS capabilities delivers faster time-to-publish, lower total cost of ownership, and greater marketing autonomy. When evaluating platforms, focus on three key metrics: time from brief to published page, number of developer hours required per content piece, and the total number of integrations your workflow requires. These metrics will reveal the true operational cost of each approach far more clearly than feature comparison matrices.</p>`;
+
+export const BRIEF_003_DRAFT_CONTENT = `<h1>Headless CMS for Marketing Teams</h1>
+
+<p>Marketing teams need to publish content quickly, but traditional CMS platforms often require developer involvement. Headless CMS is an alternative approach that separates content management from display.</p>
+
+<h2>What is a Headless CMS?</h2>
+
+<p>A headless CMS delivers content via APIs instead of rendering it directly. This gives flexibility but requires technical resources for the front-end.</p>
+
+<h2>Visual Builders as an Alternative</h2>
+
+<p>Platforms like Webflow combine visual editing with CMS features, eliminating the need for developer handoffs.</p>`;
+
+// Citability Score trend data (deterministic)
+export const CITABILITY_TREND_DATA = [
+  { week: 'Feb 3', score: 68 },
+  { week: 'Feb 10', score: 71 },
+  { week: 'Feb 17', score: 76 },
+  { week: 'Feb 24', score: 79 },
+  { week: 'Mar 3', score: 81 },
+  { week: 'Mar 10', score: 83 },
+  { week: 'Mar 17', score: 85 },
+  { week: 'Mar 24', score: 87 },
+];
+
+// Velocity data (deterministic)
+export const VELOCITY_TREND_DATA = [
+  { week: 'Feb 3', completed: 2 },
+  { week: 'Feb 10', completed: 3 },
+  { week: 'Feb 17', completed: 4 },
+  { week: 'Feb 24', completed: 3 },
+  { week: 'Mar 3', completed: 3 },
+  { week: 'Mar 10', completed: 4 },
+  { week: 'Mar 17', completed: 2 },
+  { week: 'Mar 24', completed: 3 },
+];
+
+// ─── Typed GapReport (adapter from flat fixtures to typed shape) ─────────
+
+function toClusterSpec(c: typeof WEBFLOW_CLUSTERS[number]): ClusterSpec {
+  return {
+    cluster_id: c.id,
+    cluster_name: c.name,
+    query_count: c.queries,
+    citations_analyzed: c.citations,
+    centroid_distance: 0,
+    min_similarity_threshold: 0,
+    word_count_range: { min: Math.round(c.avg_word_count * 0.4), max: Math.round(c.avg_word_count * 2.2) },
+    required_elements: [],
+    structural_rates: {
+      headers: c.headers,
+      lists: c.lists,
+      stats: c.stats,
+      citations: c.citations_rate,
+    },
+    avg_word_count: c.avg_word_count,
+    faq_rate: c.faq_rate,
+    table_rate: c.table_rate,
+    key_takeaways_rate: c.key_takeaways_rate,
+    dominant_content_type: c.dominant_type,
+    dominant_authority_type: 'Industry Expert',
+    exemplar_themes: c.themes,
+  };
+}
+
+function toGapBrief(g: typeof WEBFLOW_TOP_GAPS[number]): GapBrief {
+  return {
+    query_id: g.id,
+    query_text: g.query,
+    cluster: g.cluster,
+    cluster_id: g.cluster_id,
+    gap_score: g.gap,
+    gap_classification: g.classification,
+    best_company_unit: {
+      unit_id: g.id,
+      similarity: g.company_sim,
+      snippet: '',
+    },
+    avg_citation_similarity: g.citation_sim,
+    content_brief: {
+      target_word_count: g.target_words,
+      target_reading_level: g.reading_level,
+      recommended_header_count: g.headers,
+      header_hierarchy: {},
+      content_patterns: g.patterns,
+      dominant_authority: 'Industry Expert',
+      dominant_content_type: 'Guide',
+      exemplars_analyzed: 0,
+    },
+    top_exemplars: [],
+  };
+}
+
+export const WEBFLOW_GAP_REPORT: GapReport = {
+  executive_summary:
+    'Webflow faces significant visibility gaps across AI-powered search platforms. ' +
+    'Competitors are cited 64% more effectively than Webflow content, particularly in ' +
+    'high-intent consideration and comparison queries. The largest gaps exist in Problem/Awareness ' +
+    'and Definition clusters where AI platforms consistently reference competitor resources.',
+  spa_score: {
+    t_statistic: WEBFLOW_SPA_SCORE.score,
+    p_value: WEBFLOW_SPA_SCORE.p_value,
+    citation_advantage: WEBFLOW_SPA_SCORE.mean_citation_similarity,
+    company_advantage: WEBFLOW_SPA_SCORE.mean_company_similarity,
+  },
+  clusters: WEBFLOW_CLUSTERS.map(toClusterSpec),
+  top_gaps: WEBFLOW_TOP_GAPS.map(toGapBrief),
+  total_queries: WEBFLOW_SPA_SCORE.total_queries,
+  total_citations: WEBFLOW_SPA_SCORE.total_citations,
+};

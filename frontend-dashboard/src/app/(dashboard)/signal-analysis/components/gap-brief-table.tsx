@@ -27,6 +27,40 @@ const CLASSIFICATION_BADGE = {
 type SortField = 'gap_score' | 'avg_citation_similarity' | 'best_company_sim' | 'cluster';
 type SortDirection = 'asc' | 'desc';
 
+/**
+ * Returns an inline style for gap score gradient background.
+ * Higher gaps = more intense terracotta/red; lower gaps = subtle or green.
+ */
+function gapScoreStyle(score: number): React.CSSProperties {
+  // Normalize score: typical range is 0.0 – 0.4
+  const intensity = Math.min(score / 0.35, 1);
+
+  if (score >= 0.25) {
+    // High gap — terracotta gradient
+    const alpha = 0.08 + intensity * 0.18;
+    return {
+      background: `rgba(217, 119, 87, ${alpha})`,
+      borderRadius: '6px',
+      padding: '4px 8px',
+    };
+  }
+  if (score >= 0.15) {
+    // Medium gap — warning orange
+    const alpha = 0.06 + intensity * 0.10;
+    return {
+      background: `rgba(232, 146, 109, ${alpha})`,
+      borderRadius: '6px',
+      padding: '4px 8px',
+    };
+  }
+  // Low gap — sage green hint
+  return {
+    background: 'rgba(120, 140, 93, 0.08)',
+    borderRadius: '6px',
+    padding: '4px 8px',
+  };
+}
+
 export function GapBriefTable({
   briefs,
   clusters,
@@ -95,6 +129,12 @@ export function GapBriefTable({
     return result;
   }, [briefs, selectedCluster, classFilter, sortField, sortDir]);
 
+  const countByClass = useMemo(() => {
+    const counts: Record<string, number> = { significant_gap: 0, gap_to_close: 0, roughly_equal: 0, company_wins: 0 };
+    briefs.forEach((b) => { counts[b.gap_classification] = (counts[b.gap_classification] || 0) + 1; });
+    return counts;
+  }, [briefs]);
+
   return (
     <div className={cn('space-y-4', className)}>
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
@@ -102,19 +142,19 @@ export function GapBriefTable({
           <TabsList>
             <TabsTrigger value="all">All ({briefs.length})</TabsTrigger>
             <TabsTrigger value="significant_gap">
-              Significant Gap ({briefs.filter((b) => b.gap_classification === 'significant_gap').length})
+              Significant Gap ({countByClass.significant_gap})
             </TabsTrigger>
             <TabsTrigger value="gap_to_close">
-              Gap to Close ({briefs.filter((b) => b.gap_classification === 'gap_to_close').length})
+              Gap to Close ({countByClass.gap_to_close})
             </TabsTrigger>
             <TabsTrigger value="roughly_equal">
-              Equal ({briefs.filter((b) => b.gap_classification === 'roughly_equal').length})
+              Equal ({countByClass.roughly_equal})
             </TabsTrigger>
             <TabsTrigger value="company_wins">
-              Wins ({briefs.filter((b) => b.gap_classification === 'company_wins').length})
+              Wins ({countByClass.company_wins})
             </TabsTrigger>
           </TabsList>
-          {/* TabsContent not needed - we use filtering instead */}
+          {/* TabsContent not needed — we use filtering instead */}
           <TabsContent value="all"><span /></TabsContent>
           <TabsContent value="significant_gap"><span /></TabsContent>
           <TabsContent value="gap_to_close"><span /></TabsContent>
@@ -150,12 +190,12 @@ export function GapBriefTable({
             <TableHead>Classification</TableHead>
             <TableHead>
               <SortButton field="best_company_sim" current={sortField} direction={sortDir} onClick={toggleSort}>
-                Best Company Sim
+                Company Sim
               </SortButton>
             </TableHead>
             <TableHead>
               <SortButton field="avg_citation_similarity" current={sortField} direction={sortDir} onClick={toggleSort}>
-                Avg Citation Sim
+                Citation Sim
               </SortButton>
             </TableHead>
             <TableHead className="w-12" />
@@ -174,7 +214,7 @@ export function GapBriefTable({
               return (
                 <TableRow
                   key={brief.query_id}
-                  className="cursor-pointer"
+                  className="cursor-pointer hover:bg-cream-100/60"
                   onClick={() => router.push(`/signal-analysis/briefs/${brief.query_id}`)}
                 >
                   <TableCell className="font-sans text-cream-600 tabular-nums">
@@ -188,17 +228,22 @@ export function GapBriefTable({
                   <TableCell>
                     <Badge variant="blue">{brief.cluster}</Badge>
                   </TableCell>
-                  <TableCell className="font-sans tabular-nums font-medium text-cream-950">
-                    {brief.gap_score.toFixed(3)}
+                  <TableCell>
+                    <span
+                      className="font-sans tabular-nums font-semibold text-cream-950 inline-block"
+                      style={gapScoreStyle(brief.gap_score)}
+                    >
+                      {brief.gap_score.toFixed(4)}
+                    </span>
                   </TableCell>
                   <TableCell>
                     <Badge variant={classification.variant}>{classification.label}</Badge>
                   </TableCell>
                   <TableCell className="font-sans tabular-nums text-cream-800">
-                    {brief.best_company_unit.similarity.toFixed(3)}
+                    {brief.best_company_unit.similarity.toFixed(4)}
                   </TableCell>
                   <TableCell className="font-sans tabular-nums text-cream-800">
-                    {brief.avg_citation_similarity.toFixed(3)}
+                    {brief.avg_citation_similarity.toFixed(4)}
                   </TableCell>
                   <TableCell>
                     <ArrowRight className="h-4 w-4 text-cream-500" />
