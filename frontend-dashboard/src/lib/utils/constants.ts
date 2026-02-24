@@ -16,7 +16,7 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { label: 'Command Center', href: '/command-center', icon: LayoutDashboard },
+  { label: 'Mission Control', href: '/command-center', icon: LayoutDashboard },
   { label: 'Deep Signal Analysis', href: '/signal-analysis', icon: Search, section: 'Intelligence' },
   { label: 'Deep Embedding Lab', href: '/embedding-lab', icon: Dna, section: 'Intelligence' },
   { label: 'Content Pipeline', href: '/content-pipeline', icon: FileText, section: 'Content' },
