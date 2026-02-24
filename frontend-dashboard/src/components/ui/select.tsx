@@ -8,7 +8,13 @@ interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
 }
 
 const Select = forwardRef<HTMLSelectElement, SelectProps>(
-  ({ className, label, error, id, children, ...props }, ref) => {
+  ({ className, label, error, id, children, value, onChange, ...props }, ref) => {
+    // Avoid React warning: use defaultValue when no onChange is provided
+    const valueProps = onChange
+      ? { value, onChange }
+      : value !== undefined
+      ? { defaultValue: value }
+      : {};
     const selectId = id || label?.toLowerCase().replace(/\s+/g, '-');
 
     return (
@@ -35,6 +41,7 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(
               className
             )}
             {...props}
+            {...valueProps}
           >
             {children}
           </select>
