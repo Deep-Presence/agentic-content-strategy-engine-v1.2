@@ -20,23 +20,25 @@ _CANCELLABLE_STATES = {TaskStatus.RUNNING, TaskStatus.PENDING_APPROVAL}
 def list_tasks(
     pipeline: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    company_slug: Optional[str] = Query(None),
     task_store: TaskStore = Depends(get_task_store),
 ) -> TaskListResponse:
-    tasks = task_store.list_tasks(pipeline=pipeline, status=status)
-    return TaskListResponse(
-        tasks=[
-            TaskSummary(
-                run_id=t.task_id,
-                pipeline=t.pipeline,
-                status=t.status.value,
-                company_slug=t.company_slug,
-                current_step=t.current_step,
-                created_at=t.created_at,
-                updated_at=t.updated_at,
-            )
-            for t in tasks
-        ]
+    tasks = task_store.list_tasks(
+        pipeline=pipeline, status=status, company_slug=company_slug
     )
+    summaries = [
+        TaskSummary(
+            run_id=t.task_id,
+            pipeline=t.pipeline,
+            status=t.status.value,
+            company_slug=t.company_slug,
+            current_step=t.current_step,
+            created_at=t.created_at,
+            updated_at=t.updated_at,
+        )
+        for t in tasks
+    ]
+    return TaskListResponse(tasks=summaries, total=len(summaries))
 
 
 @router.get("/{task_id}")

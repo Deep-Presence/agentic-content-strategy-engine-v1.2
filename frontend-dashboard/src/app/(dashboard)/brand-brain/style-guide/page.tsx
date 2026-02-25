@@ -88,7 +88,7 @@ export default function StyleGuidePage() {
         actions={
           !showTrigger && !activeResearchRunId ? (
             <ResearchTrigger
-              mode="style"
+              mode="style_guide"
               companySlug={currentCompany}
               companyName={companyName}
               domain={`${currentCompany ?? 'webflow'}.com`}

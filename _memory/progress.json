@@ -1,6 +1,6 @@
 {
-  "current_sprint": "v3-async",
-  "last_updated": "2026-02-19",
+  "current_sprint": "front-back-integration",
+  "last_updated": "2026-02-26",
   "completed": [
     {
       "id": "T-async-1",
@@ -190,6 +190,139 @@
   "in_progress": [],
   "recently_completed": [
     {
+      "id": "T-fb-phase4",
+      "task": "Phase 4 — Brand Brain + Run History: 3 endpoints, service layer, 57 tests, Codex reviewed",
+      "sprint": "front-back-integration",
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "summary": "Final phase of front-back integration sprint. (1) Created api/schemas/brand_data.py with 8 response models (ArtifactContent, PersonaArtifact, ResearchArtifactsResponse, RunHistoryItem, RunHistoryResponse, SPATrendPoint, SPATrendResponse). (2) Created api/services/brand_data_service.py — service layer with artifact reading (approved/draft detection from filesystem), persona scanning with persona- prefix filter (Codex CX-4), run history assembly from TaskStore with status mapping (pending_approval→running, cancelled/failed_restart→failed per Codex finding #4), SPA trend computation, duration formatting, step inference. (3) Created api/routers/brand_data.py — 2 endpoints: GET /research/artifacts, GET /runs with pipeline/status/limit filters. (4) Added GET /trend endpoint to existing gap_data router for SPA score trend chart. (5) Registered brand_data router in app.py. (6) 57 TDD tests covering: slug validation, artifact detection, persona matching, run history sorting/filtering/metrics, SPA trend computation, NaN guards, mapped-status filter behavior. (7) Codex gpt-5.3-codex plan review (11 findings, 2 incorporated: status mapping + limit param) and code review (6 findings, 3 incorporated: status filter fix, persona prefix filter, mapped-status tests).",
+      "test_count": "766 tests passed, 0 failures.",
+      "files_changed": [
+        "api/schemas/brand_data.py",
+        "api/services/brand_data_service.py",
+        "api/routers/brand_data.py",
+        "api/routers/gap_data.py",
+        "api/app.py",
+        "tests/api/test_brand_data.py"
+      ]
+    },
+    {
+      "id": "T-research-tests",
+      "task": "Research pipeline test coverage — zero to comprehensive (109 tests)",
+      "sprint": "front-back-integration",
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "summary": "Added comprehensive test coverage for the entire core/research/ module which previously had ZERO tests. 109 new tests across 9 files covering: agents (base infrastructure, company/persona/style guide agents), tools (Perplexity client), and LangGraph state machines (company/persona/style graphs + pipeline orchestrator). Tests cover: singleton caching, agent construction, HITL approval flows (approve/revise/reject), interrupt/resume with MemorySaver, draft file lifecycle (.draft.md → .md promotion, cleanup on reject), cross-stage context passing (company→persona→style), backend write fallback, empty draft handling, and multi-file draft promotion. All mocked — no real LLM calls. Found and documented DeepAgents FilesystemBackend quirk: read() returns 'System reminder: File exists but has empty contents' for whitespace-only files.",
+      "test_count": "763 tests passed, 0 failures (up from 585).",
+      "files_changed": [
+        "tests/research/__init__.py",
+        "tests/research/conftest.py",
+        "tests/research/agents/__init__.py",
+        "tests/research/agents/test_base.py",
+        "tests/research/agents/test_company_research_agent.py",
+        "tests/research/agents/test_persona_agent.py",
+        "tests/research/agents/test_style_guide_agent.py",
+        "tests/research/tools/__init__.py",
+        "tests/research/tools/test_perplexity_client.py",
+        "tests/research/graphs/__init__.py",
+        "tests/research/graphs/test_company_graph.py",
+        "tests/research/graphs/test_persona_graph.py",
+        "tests/research/graphs/test_style_graph.py",
+        "tests/research/graphs/test_pipeline.py"
+      ]
+    },
+    {
+      "id": "T-fb-phase3",
+      "task": "Phase 3 — Content Briefs + Embedding Projections: 4 GET endpoints, service layer, router, 85 tests",
+      "sprint": "front-back-integration",
+      "status": "done",
+      "completed_at": "2026-02-25",
+      "summary": "Complete Phase 3 of front-back integration plan. (1) Created api/schemas/content_data.py with 12 Pydantic response models (ContentBriefListItem, ContentBriefDetailResponse, StageContentResponse, EmbeddingPoint, EmbeddingProjectionResponse, EvalDimension, EvalCycle, BriefExemplar). (2) Modified core/gap_analysis/steps/s7_visualize.py — added JSON export of 2D UMAP/t-SNE projections alongside existing HTML plots, refactored to compute embeddings once and reuse for both HTML and JSON (no drift). Added _save_embedding_projections(), _plot_typed_from_coords(), _plot_clustered_from_coords(). (3) Created api/services/content_data_service.py — service layer with mtime-based caching, 2-phase status inference (pieces array authoritative, file-based fallback with eval_history.final_passed distinction), content_format→content_type mapping, citability score derivation, path traversal protection via regex. (4) Created api/routers/content_data.py — 3 GET endpoints under /api/v1/companies/{slug}/content/: briefs (list with statuses), briefs/{brief_id} (full detail + eval history + exemplars + available_stages), briefs/{brief_id}/{stage} (stage file content, JSON parsed for outline/eval_history). (5) Added get_embedding_projection() to gap_data_service.py + GET /embeddings endpoint to gap_data router. (6) Registered content_data router in app.py. (7) 73 API tests + 12 s7 projection tests = 85 new tests. Total: 585 passing.",
+      "test_count": "585 tests passed, 0 failures.",
+      "files_changed": [
+        "api/schemas/content_data.py",
+        "api/services/content_data_service.py",
+        "api/services/gap_data_service.py",
+        "api/routers/content_data.py",
+        "api/routers/gap_data.py",
+        "api/app.py",
+        "core/gap_analysis/steps/s7_visualize.py",
+        "tests/api/test_content_data.py",
+        "tests/gap_analysis/steps/test_s7_projections.py"
+      ]
+    },
+    {
+      "id": "T-fb-review-fixes",
+      "task": "Code review critical fixes C1-C4 — login/me endpoints, AuthMiddleware, email validation, .gitignore",
+      "sprint": "front-back-integration",
+      "status": "done",
+      "completed_at": "2026-02-25",
+      "summary": "Fixed 4 critical issues from Phase 1+2 code review. C4: Added artifacts/_auth/ and artifacts/_jobs/ to .gitignore (prevents committing password hashes). C3: Added email-validator dep, switched email fields to EmailStr, added Field(min_length=8, max_length=128) on password fields in LoginRequest and RegisterRequest; updated 25 test passwords to meet new constraint. C2: Registered AuthMiddleware in app.py between RequestLoggingMiddleware and CORSMiddleware. C1: Added POST /api/v1/auth/login (email+password → token+user+company) and GET /api/v1/auth/me (Bearer token → user+company). Login handles company lookup via company_id fallback since UserProfile has no company_slug field.",
+      "test_count": "500 tests passed, 0 failures.",
+      "files_changed": [
+        ".gitignore",
+        "requirements.txt",
+        "api/auth/models.py",
+        "api/app.py",
+        "api/routers/auth.py",
+        "tests/api/test_registration.py",
+        "tests/api/test_auth_endpoints.py"
+      ]
+    },
+    {
+      "id": "T-fb-phase2",
+      "task": "Phase 2 — Gap Analysis Data Endpoints: 6 GET endpoints, service layer, 20+ response models, 61 tests",
+      "sprint": "front-back-integration",
+      "status": "done",
+      "completed_at": "2026-02-25",
+      "summary": "Complete Phase 2 of front-back integration plan. (1) Created api/schemas/gap_data.py with 20+ Pydantic response models matching frontend TypeScript types. (2) Created api/services/gap_data_service.py — service layer with mtime-based caching, file loading with old/new format fallback, 13 helper functions (Pearson correlation, Jaccard similarity, TF-IDF pattern extraction, signal averages/correlations, platform agreement, citation exclusivity). (3) Created api/routers/gap_data.py — 6 GET endpoints under /api/v1/companies/{slug}/gap-analysis/: summary (SPA score, proximity, classifications), queries (paginated, filterable by cluster/classification/search, sortable), clusters (with centroid merge, fingerprints, patterns), signals (averages + correlations + cluster patterns), platforms (per-cluster breakdown, unique domains, agreement matrix, exclusivity), heatmap (cluster×query gap matrix). (4) Backward compatible: handles both gap_analysis_complete.json (new) and analysis.json+gap_report.json (old Ramp format with 11 structural signals). (5) Fixed _pearson() math domain error from floating-point imprecision. (6) Registered gap_data router in app.py.",
+      "test_count": "484 tests passed, 0 failures (before C1-C4 fixes added 16 more → 500).",
+      "files_changed": [
+        "api/routers/gap_data.py",
+        "api/services/gap_data_service.py",
+        "api/schemas/gap_data.py",
+        "api/app.py",
+        "api/dependencies.py",
+        "tests/api/test_gap_data.py"
+      ]
+    },
+    {
+      "id": "T-fb-phase1",
+      "task": "Phase 1 — Foundation: Data models, company profile, auth skeleton, API fixes, frontend type alignment, registration with company dedup",
+      "sprint": "front-back-integration",
+      "status": "done",
+      "completed_at": "2026-02-25",
+      "summary": "Complete Phase 1 of front-back integration plan. (1) Created core/models/organization.py with Company, Product, UserProfile models. (2) Created api/auth/ package: store.py (JSON-file backed auth with password hashing, JWT-like tokens), models.py (Login/Register request/response), middleware.py (grace-mode JWT extraction). (3) Created api/routers/companies.py — GET /api/v1/companies/{slug} with artifact scanning, task history, product list. (4) Added total field + company_slug filter to TaskListResponse. (5) Expanded ContentStartRequest with gap_slug, max_concurrent_workers, max_revision_cycles, skip_stages. (6) Fixed 6 frontend type files (flattened GapAnalysisStartInput, fixed style→style_guide naming). (7) Implemented full registration flow: POST /api/v1/auth/register with domain normalization (multi-part TLD support), company deduplication by root domain, first-user=superuser/subsequent=member, subdomain preservation in additional_domains. (8) Updated UserProfile from name→first_name/last_name with full_name property.",
+      "test_count": "423 tests passed, 0 failures.",
+      "files_changed": [
+        "core/models/organization.py",
+        "api/auth/__init__.py",
+        "api/auth/store.py",
+        "api/auth/models.py",
+        "api/auth/middleware.py",
+        "api/routers/auth.py",
+        "api/routers/companies.py",
+        "api/schemas/company.py",
+        "api/schemas/common.py",
+        "api/routers/tasks.py",
+        "api/routers/content.py",
+        "api/tasks/store.py",
+        "api/dependencies.py",
+        "api/app.py",
+        "tests/api/conftest.py",
+        "tests/api/test_companies.py",
+        "tests/api/test_auth_store.py",
+        "tests/api/test_tasks_extended.py",
+        "tests/api/test_registration.py",
+        "frontend-dashboard/src/types/gap-analysis.ts",
+        "frontend-dashboard/src/types/research.ts",
+        "frontend-dashboard/src/app/(dashboard)/signal-analysis/components/pipeline-trigger-form.tsx",
+        "frontend-dashboard/src/app/(dashboard)/brand-brain/components/research-trigger.tsx",
+        "frontend-dashboard/src/app/(dashboard)/brand-brain/components/research-progress.tsx",
+        "frontend-dashboard/src/app/(dashboard)/brand-brain/style-guide/page.tsx"
+      ]
+    },
+    {
       "id": "T-hitl-fix-all",
       "task": "Fix HITL pipeline — research CLI interrupt handling, content engine HITL integration, approval timeout + history",
       "sprint": "api-v1",
@@ -370,6 +503,98 @@
       "sprint": "v3-signals",
       "status": "pending",
       "source": "Codex review 2026-02-18 (SSO review warning)"
+    },
+    {
+      "id": "T-fb-deferred-C5",
+      "task": "Add allowlist to update_company() — currently allows overwriting id, created_at, slug via **kwargs",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "code review 2026-02-25, .claude/sprints/v1/review-findings-deferred.md"
+    },
+    {
+      "id": "T-fb-deferred-C6",
+      "task": "Fix _CACHE thread safety — non-atomic read-modify-write race in gap_data_service.py under concurrent load",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "code review 2026-02-25, .claude/sprints/v1/review-findings-deferred.md"
+    },
+    {
+      "id": "T-fb-deferred-C7",
+      "task": "Fix _PATTERN_FLAGS has_comparison_table → has_tables mismatch in gap_data_service.py",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "code review 2026-02-25, .claude/sprints/v1/review-findings-deferred.md"
+    },
+    {
+      "id": "T-fb-phase4",
+      "task": "Phase 4 — Brand Brain + Run History endpoints for frontend",
+      "sprint": "front-back-integration",
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-fb-phase4 in recently_completed"
+    },
+    {
+      "id": "T-cx-1",
+      "task": "CRITICAL: Fix symlink path traversal bypass in content stage reader — replace startswith with is_relative_to",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "Codex gpt-5.3 review 2026-02-26 (CX-1)"
+    },
+    {
+      "id": "T-cx-3",
+      "task": "Fix sort by string field crash — getattr(...) or 0 mixes str/int types causing TypeError",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "Codex gpt-5.3 review 2026-02-26 (CX-3)"
+    },
+    {
+      "id": "T-cx-4",
+      "task": "Fix _compute_citability_score crash on overall_score: null — filter None values",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "Codex gpt-5.3 review 2026-02-26 (CX-4)"
+    },
+    {
+      "id": "T-cx-5",
+      "task": "Fix platform similarity TypeError on string values — add isinstance guard",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "Codex gpt-5.3 review 2026-02-26 (CX-5)"
+    },
+    {
+      "id": "T-cx-6",
+      "task": "Fix NaN in enriched citations causing 500 on JSON serialization — add safe_float helper",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "Codex gpt-5.3 review 2026-02-26 (CX-6)"
+    },
+    {
+      "id": "T-cx-7",
+      "task": "Catch ValidationError in /embeddings endpoint for malformed projection points",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "Codex gpt-5.3 review 2026-02-26 (CX-7)"
+    },
+    {
+      "id": "T-cx-8",
+      "task": "Fix JSON stage fallback returning raw string with application/json content_type",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "Codex gpt-5.3 review 2026-02-26 (CX-8)"
+    },
+    {
+      "id": "T-cx-9",
+      "task": "Fix TOCTOU race between is_file() and stat() in both cache loaders",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "Codex gpt-5.3 review 2026-02-26 (CX-9)"
+    },
+    {
+      "id": "T-cx-10",
+      "task": "Add negative tests for: symlink traversal, mixed-type sort, null/NaN payloads, malformed projections",
+      "sprint": "front-back-integration",
+      "status": "pending",
+      "source": "Codex gpt-5.3 review 2026-02-26 (CX-10)"
     }
   ],
   "blocked": []

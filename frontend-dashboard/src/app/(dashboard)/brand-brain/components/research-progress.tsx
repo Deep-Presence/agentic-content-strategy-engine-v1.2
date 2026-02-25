@@ -27,7 +27,7 @@ function getStageStates(events: Array<{ event: string }>): StageState[] {
   const stages: StageState[] = [
     { key: 'company', label: 'Company Context', status: 'waiting' },
     { key: 'persona', label: 'Persona Research', status: 'waiting' },
-    { key: 'style', label: 'Style Guide', status: 'waiting' },
+    { key: 'style_guide', label: 'Style Guide', status: 'waiting' },
   ];
 
   for (const { event } of events) {
@@ -38,9 +38,9 @@ function getStageStates(events: Array<{ event: string }>): StageState[] {
     if (e === 'persona_start') stages[1].status = 'running';
     if (e === 'persona_draft') stages[1].status = 'draft';
     if (e === 'persona_approved') stages[1].status = 'approved';
-    if (e === 'style_start') stages[2].status = 'running';
-    if (e === 'style_draft') stages[2].status = 'draft';
-    if (e === 'style_approved') stages[2].status = 'approved';
+    if (e === 'style_guide_start') stages[2].status = 'running';
+    if (e === 'style_guide_draft') stages[2].status = 'draft';
+    if (e === 'style_guide_approved') stages[2].status = 'approved';
     if (e === 'failed') {
       const running = stages.find((s) => s.status === 'running');
       if (running) running.status = 'failed';
@@ -70,7 +70,7 @@ export function ResearchProgress({
 
   const { events, lastEvent, connected } = useEventStream(runId, {
     onEvent: (event, data) => {
-      if (event === 'company_draft' || event === 'persona_draft' || event === 'style_draft') {
+      if (event === 'company_draft' || event === 'persona_draft' || event === 'style_guide_draft') {
         onDraftReady?.(event.replace('_draft', ''), data);
         setApprovalPayload(data);
       }

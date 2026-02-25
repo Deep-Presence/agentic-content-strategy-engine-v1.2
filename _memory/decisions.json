@@ -103,6 +103,80 @@
     "approved_by": "Aryan"
   },
   {
+    "id": "D-FB-1",
+    "timestamp": "2026-02-25",
+    "task": "Phase 1 auth and data model architecture — JSON-file backed, pre-Supabase",
+    "approach": "JSON-file backed AuthStore for companies+users (artifacts/_auth/), PBKDF2 password hashing, HMAC-signed JWT-like tokens, grace-mode middleware. UserProfile uses first_name/last_name (not single name field). Company model has additional_domains for subdomain tracking.",
+    "rationale": "Simple, no external dependencies, easy to migrate to Supabase later. Grace-mode middleware allows incremental auth rollout without blocking unauthenticated requests. Separate first_name/last_name is standard for user profiles.",
+    "alternatives_rejected": [
+      "bcrypt for password hashing (requires extra C dependency, PBKDF2 is sufficient for v0)",
+      "PyJWT for tokens (over-engineering for v0 — HMAC-signed base64 is simple and replaceable)",
+      "Single name field (harder to personalize UI, less professional)"
+    ],
+    "outcome": "AuthStore working with full CRUD, registration with company dedup, 423 tests passing.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-FB-2",
+    "timestamp": "2026-02-25",
+    "task": "Registration flow — company deduplication by normalized domain",
+    "approach": "normalize_domain() strips protocol/www/path/port, handles multi-part TLDs (.co.uk, .com.au), returns (root_domain, subdomain_or_none). Registration matches by root domain — first user becomes superuser, subsequent users join as member. Subdomains preserved in company.additional_domains.",
+    "rationale": "Domain normalization prevents duplicate companies created from variations (app.ramp.com vs www.ramp.com vs ramp.com). Multi-part TLD handling prevents incorrect root extraction (example.co.uk should not become co.uk). Subdomain preservation captures seed URLs for future crawling.",
+    "alternatives_rejected": [
+      "Email domain verification (deferred — adds friction, not needed for v0)",
+      "Manual company creation only (bad UX, doesn't scale)",
+      "tldextract library (adds dependency for something we can handle with a simple frozenset)"
+    ],
+    "outcome": "Registration endpoint working with 25 TDD tests covering edge cases.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-FB-3",
+    "timestamp": "2026-02-25",
+    "task": "Phase 2 gap data endpoints — URL routing and backward compatibility",
+    "approach": "Separate prefix /api/v1/companies/{slug}/gap-analysis/ (not /api/v1/gap-analysis/) to avoid conflicts with existing /api/v1/gap-analysis/{run_id}/status endpoint. Fallback chain: gap_analysis_complete.json → analysis.json + gap_report.json for backward compatibility with Ramp's old format (11 structural signal fields, no content_brief).",
+    "rationale": "Existing gap analysis endpoints are run-management (start, status, cancel). Data endpoints are resource-oriented (read pre-computed artifacts by company slug). Separate URL namespace keeps concerns clean. Backward compat ensures Ramp's existing data works without re-running the pipeline.",
+    "alternatives_rejected": [
+      "Nest under existing /api/v1/gap-analysis/ prefix (URL collision with run_id paths, confusing semantics)",
+      "Require re-run for old format (bad UX, wastes compute for data that's already valid)",
+      "Single monolithic endpoint returning all data (too large for paginated queries, inflexible)"
+    ],
+    "outcome": "6 endpoints working with both old and new artifact formats. 61 tests covering both formats.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-FB-4",
+    "timestamp": "2026-02-25",
+    "task": "Gap data service — caching and computation strategy",
+    "approach": "Module-level mtime-based cache (max 10 entries, FIFO eviction). All computed metrics (Pearson correlations, Jaccard similarity, signal averages, cluster fingerprints) computed on-the-fly from raw artifacts. Platform engine names mapped to lowercase frontend keys (openai→chatgpt, etc.).",
+    "rationale": "Artifacts are static between pipeline runs, so mtime-based invalidation is simple and correct. On-the-fly computation avoids stale pre-computed caches. Module-level cache handles repeated requests within a session. FIFO is acceptable for small cache size.",
+    "alternatives_rejected": [
+      "Pre-compute metrics at pipeline completion (couples pipeline to API concerns, duplicates work if frontend schema changes)",
+      "Redis cache (over-engineering for single-server deployment)",
+      "No caching (enriched_citations.json can be ~20MB, re-parsing on every request is wasteful)"
+    ],
+    "outcome": "Working with acceptable performance. Known thread-safety issue (C6) deferred to .claude/sprints/v1/.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-FB-5",
+    "timestamp": "2026-02-25",
+    "task": "Phase 1+2 code review — fix C1-C4 immediately, defer C5-C7 + W1-W9 + I1-I8",
+    "approach": "Fix 4 critical issues blocking frontend integration now: C1 (missing login/me endpoints), C2 (AuthMiddleware not registered), C3 (no email/password validation), C4 (auth data not gitignored). Defer remaining 20 issues to .claude/sprints/v1/review-findings-deferred.md.",
+    "rationale": "C1-C4 directly block frontend login flow. C5-C7 are production safety issues that don't block dev work. W1-W9 are improvements that can wait. Deferring non-blocking issues keeps velocity while tracking everything.",
+    "alternatives_rejected": [
+      "Fix all 27 issues now (scope creep, delays frontend integration)",
+      "Only fix C1 (leaves security gaps — auth data would be committed without C4)"
+    ],
+    "outcome": "C1-C4 fixed, 500 tests passing. Deferred issues tracked in .claude/sprints/v1/.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-EMB-1",
     "timestamp": "2026-02-19",
     "task": "Switch embedding model from text-embedding-3-large (3072) to text-embedding-3-small (1536)",

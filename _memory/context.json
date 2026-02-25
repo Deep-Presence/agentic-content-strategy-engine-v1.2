@@ -1,10 +1,15 @@
 {
-  "sprint": "api-v1",
-  "sprint_goal": "API integration + HITL fix — ensure all pipelines work correctly via both CLI and API paths with proper interrupt/resume handling",
-  "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "Raw SDK clients for LLM calls (no LangChain wrappers)", "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception"],
+  "sprint": "front-back-integration",
+  "sprint_goal": "Complete all backend endpoints required by frontend dashboard — 4 phases: ALL COMPLETE",
+  "sprint_status": "COMPLETE — all 4 phases done, 766 tests passing, 0 failures",
+  "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "Raw SDK clients for LLM calls (no LangChain wrappers)", "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception", "Frontend renders its own charts from raw JSON (not iframes)", "No Supabase yet — filesystem artifacts are source of truth", "Company-level endpoints only for now (product-level deferred)", "email-validator required for auth models (EmailStr)", "Password min_length=8, max_length=128 enforced in LoginRequest and RegisterRequest"],
   "active_branches": ["feat/front-back"],
-  "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "langfuse 3.14.1 installed", "trafilatura 1.6+ installed", "textstat 0.7+ installed", "LangGraph >=1.0 installed"],
-  "current_clients": ["Ramp", "Carta"],
+  "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "langfuse 3.14.1 installed", "trafilatura 1.6+ installed", "textstat 0.7+ installed", "LangGraph >=1.0 installed", "email-validator >=2.0 installed"],
+  "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [],
-  "last_completed": "T-hitl-fix-all — HITL pipeline fix (361 tests passing)"
+  "last_completed": "T-fb-phase4 — Phase 4 Brand Brain + Run History complete (766 tests passing)",
+  "deferred_issues_location": ".claude/sprints/v1/review-findings-deferred.md",
+  "test_count": 766,
+  "phases_completed": ["Phase 1 — Foundation (auth, company model, registration)", "Phase 2 — Gap Analysis Data Endpoints (6 endpoints, service layer, 61 tests)", "Code Review C1-C4 fixes (login/me, middleware, validation, gitignore)", "Phase 3 — Content Briefs + Embedding Projections (4 endpoints, 85 tests)", "Phase 4 — Brand Brain + Run History (3 endpoints, 57 tests)"],
+  "phases_remaining": []
 }

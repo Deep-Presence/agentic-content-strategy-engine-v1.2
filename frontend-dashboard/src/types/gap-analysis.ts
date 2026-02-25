@@ -1,11 +1,15 @@
 export interface GapAnalysisStartInput {
-  input_data: {
-    company_name: string;
-    domain: string;
-    seed_urls: string[];
-    company_slug?: string;
-  };
+  company_name: string;
+  domain: string;
+  seed_urls?: string[];
   skip_steps?: number[];
+  max_queries?: number;
+  platforms?: string[];
+  language?: string;
+  region?: string;
+  additional_constraints?: string;
+  max_crawl_pages?: number;
+  max_crawl_depth?: number;
 }
 
 export interface GapBrief {

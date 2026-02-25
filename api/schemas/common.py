@@ -102,6 +102,10 @@ class ContentStartRequest(BaseModel):
     domain: str
     max_briefs: int = Field(default=5, ge=1, le=20)
     auto_approve: bool = False
+    gap_slug: Optional[str] = None
+    max_concurrent_workers: int = Field(default=3, ge=1, le=10)
+    max_revision_cycles: int = Field(default=2, ge=0, le=5)
+    skip_stages: List[int] = Field(default_factory=list)
 
 
 class ContentApprovalRequest(BaseModel):
@@ -148,6 +152,7 @@ class TaskListResponse(BaseModel):
     """Response wrapper for task listing."""
 
     tasks: List[TaskSummary]
+    total: int = 0
 
 
 class CancelResponse(BaseModel):

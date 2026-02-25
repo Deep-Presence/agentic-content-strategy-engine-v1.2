@@ -33,14 +33,16 @@ async def start_content(
     task_store: TaskStore = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
 ) -> PipelineRunResponse:
+    slug = request.gap_slug or _derive_slug(request.company_name)
     input_data = ContentGenerationInput(
         company_name=request.company_name,
         domain=request.domain,
         max_briefs=request.max_briefs,
         auto_approve=request.auto_approve,
+        max_concurrent_workers=request.max_concurrent_workers,
+        max_revision_cycles=request.max_revision_cycles,
+        skip_stages=request.skip_stages,
     )
-
-    slug = _derive_slug(input_data.company_name)
     task = task_store.create_task("content", slug)
 
     handle = asyncio.create_task(

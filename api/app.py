@@ -17,7 +17,9 @@ from api.exceptions import (
     task_conflict_handler,
     task_not_found_handler,
 )
-from api.routers import artifacts, content, events, gap_analysis, health, research, tasks
+from api.auth.middleware import AuthMiddleware
+from api.auth.store import AuthStore
+from api.routers import artifacts, auth, brand_data, companies, content, content_data, events, gap_analysis, gap_data, health, research, tasks
 from api.tasks.event_bus import EventBus
 from api.tasks.store import TaskConflictError, TaskNotFoundError, TaskStore
 
@@ -42,6 +44,8 @@ async def lifespan(app: FastAPI):
         )
     if not hasattr(app.state, "artifacts_root") or app.state.artifacts_root is None:
         app.state.artifacts_root = _PROJECT_ROOT / "artifacts"
+    if not hasattr(app.state, "auth_store") or app.state.auth_store is None:
+        app.state.auth_store = AuthStore(base_dir=app.state.artifacts_root)
 
     logger.info("API started — jobs dir: %s", app.state.task_store._base_dir)
     yield
@@ -75,6 +79,7 @@ def create_app() -> FastAPI:
 
     # Middleware (order matters — outermost first)
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(AuthMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=api_settings.cors_origins,
@@ -90,11 +95,16 @@ def create_app() -> FastAPI:
 
     # Routers
     app.include_router(health.router)
+    app.include_router(auth.router)
+    app.include_router(companies.router)
     app.include_router(gap_analysis.router)
+    app.include_router(gap_data.router)
     app.include_router(events.router)
     app.include_router(artifacts.router)
     app.include_router(research.router)
     app.include_router(content.router)
+    app.include_router(content_data.router)
+    app.include_router(brand_data.router)
     app.include_router(tasks.router)
 
     return app

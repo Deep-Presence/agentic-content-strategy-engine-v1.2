@@ -10,7 +10,7 @@ import { useBrandStore } from '@/stores/brand-store';
 import { ApiError } from '@/lib/api/client';
 import { cn } from '@/lib/utils/cn';
 
-type ResearchMode = 'full' | 'company' | 'persona' | 'style';
+type ResearchMode = 'full' | 'company' | 'persona' | 'style_guide';
 
 interface ResearchTriggerProps {
   mode: ResearchMode;
@@ -25,14 +25,14 @@ const MODE_LABELS: Record<ResearchMode, string> = {
   full: 'Run Full Research',
   company: 'Generate Company Context',
   persona: 'Generate Personas',
-  style: 'Generate Style Guide',
+  style_guide: 'Generate Style Guide',
 };
 
-const MODE_STAGES: Record<ResearchMode, ('company' | 'persona' | 'style')[]> = {
-  full: ['company', 'persona', 'style'],
+const MODE_STAGES: Record<ResearchMode, ('company' | 'persona' | 'style_guide')[]> = {
+  full: ['company', 'persona', 'style_guide'],
   company: ['company'],
   persona: ['persona'],
-  style: ['style'],
+  style_guide: ['style_guide'],
 };
 
 export function ResearchTrigger({

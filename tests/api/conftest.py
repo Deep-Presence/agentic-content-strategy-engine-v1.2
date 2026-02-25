@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from api.app import create_app
+from api.auth.store import AuthStore
 from api.tasks.event_bus import EventBus
 from api.tasks.store import TaskStore
 
@@ -31,11 +32,17 @@ def artifacts_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def app(task_store: TaskStore, event_bus: EventBus, artifacts_root: Path):
+def auth_store(artifacts_root: Path) -> AuthStore:
+    return AuthStore(base_dir=artifacts_root)
+
+
+@pytest.fixture
+def app(task_store: TaskStore, event_bus: EventBus, artifacts_root: Path, auth_store: AuthStore):
     application = create_app()
     application.state.task_store = task_store
     application.state.event_bus = event_bus
     application.state.artifacts_root = artifacts_root
+    application.state.auth_store = auth_store
     return application
 
 

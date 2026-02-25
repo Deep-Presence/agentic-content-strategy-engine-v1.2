@@ -72,5 +72,25 @@
       "api/tasks/runner.py"
     ],
     "recurrence_prevention": "Content pipeline now has explicit task_store/event_bus params. API path uses _run_content_review_hitl() with full HITL support."
+  },
+  {
+    "id": "F7",
+    "timestamp": "2026-02-25",
+    "what_broke": "math domain error in _pearson() — math.sqrt received negative value from floating-point imprecision",
+    "root_cause": "Pearson correlation formula computes `product = (n * sx2 - sx * sx) * (n * sy2 - sy * sy)`. When data values are nearly identical, floating-point cancellation can make the product slightly negative (e.g., -1e-15), causing math.sqrt() to throw ValueError.",
+    "fix_applied": "Added guard: `if product <= 0: return 0.0` before `denom = math.sqrt(product)` in _pearson() function.",
+    "lesson": "Any math.sqrt() call on a computed product should guard against negative values from floating-point imprecision. This is a common issue with variance/covariance calculations.",
+    "files_affected": ["api/services/gap_data_service.py"],
+    "recurrence_prevention": "Guard clause before sqrt. Test with `pytest.approx()` for floating-point comparisons instead of exact equality."
+  },
+  {
+    "id": "F8",
+    "timestamp": "2026-02-25",
+    "what_broke": "25 existing registration tests failed after adding password min_length=8 constraint (C3 fix)",
+    "root_cause": "Existing test_registration.py used short passwords like 'p1', 'pass1', 'pass' in API-level tests. After adding Field(min_length=8) to LoginRequest and RegisterRequest, Pydantic validation rejected these with 422.",
+    "fix_applied": "Updated all API-level test passwords to meet the 8-character minimum: 'p1'→'password01', 'pass1'→'securepass1', 'pass'→'securepass'. Only changed API-level tests (unit tests for AuthStore.register_user() keep short passwords since the constraint is on the API model, not the store).",
+    "lesson": "When adding validation constraints to request models, always check existing test fixtures that use those models. API-level tests hit the validation layer; store-level tests bypass it.",
+    "files_affected": ["tests/api/test_registration.py", "api/auth/models.py"],
+    "recurrence_prevention": "Run full test suite after any validation change. Keep unit tests (store-level) and integration tests (API-level) aware of which layer enforces the constraint."
   }
 ]

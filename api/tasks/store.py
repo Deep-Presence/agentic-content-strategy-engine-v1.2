@@ -102,6 +102,7 @@ class TaskStore:
         self,
         pipeline: Optional[str] = None,
         status: Optional[str] = None,
+        company_slug: Optional[str] = None,
     ) -> List[PipelineTask]:
         """List tasks with optional filters."""
         tasks = list(self._tasks.values())
@@ -109,6 +110,8 @@ class TaskStore:
             tasks = [t for t in tasks if t.pipeline == pipeline]
         if status:
             tasks = [t for t in tasks if t.status.value == status]
+        if company_slug:
+            tasks = [t for t in tasks if t.company_slug == company_slug]
         return tasks
 
     # ── Slug Locks ────────────────────────────────────────────────────

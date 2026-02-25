@@ -47,11 +47,9 @@ export function PipelineTriggerForm() {
     setSubmitting(true);
     try {
       const result = await gapAnalysis.start({
-        input_data: {
-          company_name: companyName.trim(),
-          domain: domain.trim(),
-          seed_urls: seedUrls.filter((u) => u.trim()),
-        },
+        company_name: companyName.trim(),
+        domain: domain.trim(),
+        seed_urls: seedUrls.filter((u) => u.trim()),
         skip_steps: skipSteps.length > 0 ? skipSteps : undefined,
       });
       toast('Pipeline started successfully', 'success');
