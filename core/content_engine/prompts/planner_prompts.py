@@ -147,6 +147,18 @@ Do NOT set style targets in structural_targets — the style guide is applied by
 """
 
 
+_PRODUCT_FOCUS_BLOCK = """\
+
+## Specific Product Focus
+**Product:** {product_name}
+**Product Domain:** {product_domain}
+**Description:** {product_description}
+
+When generating content briefs, focus topics, angles, and target queries on this specific
+product's buyer journey and competitive positioning, not the parent company broadly.
+"""
+
+
 def build_planner_user_prompt(
     *,
     company_name: str,
@@ -158,6 +170,7 @@ def build_planner_user_prompt(
     analysis_json: dict,
     persona_mds: list[str],
     max_briefs: int,
+    product_context_md: str = "",
 ) -> str:
     """Build the user prompt for the planner with all context artifacts.
 
@@ -190,7 +203,7 @@ def build_planner_user_prompt(
 ## Company
 Name: {company_name}
 Domain: {domain}
-
+{product_context_md}
 ## Company Context
 {company_context_md if company_context_md else "Not provided."}
 {style_section}

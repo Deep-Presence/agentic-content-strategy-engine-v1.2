@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
 
 from api.dependencies import get_artifacts_root
 from api.schemas.content_data import (
@@ -27,13 +29,19 @@ router = APIRouter(
 )
 
 
+def _effective(slug: str, product_slug: Optional[str]) -> str:
+    """Compute effective artifact directory slug."""
+    return f"{slug}__{product_slug}" if product_slug else slug
+
+
 @router.get("/briefs", response_model=ContentBriefListResponse)
 def list_briefs(
     slug: str,
     artifacts_root: Path = Depends(get_artifacts_root),
+    product_slug: Optional[str] = Query(None, description="Filter by product slug"),
 ) -> ContentBriefListResponse:
     """List all content briefs with inferred statuses and eval scores."""
-    return get_briefs(artifacts_root, slug)
+    return get_briefs(artifacts_root, _effective(slug, product_slug))
 
 
 @router.get("/briefs/{brief_id}", response_model=ContentBriefDetailResponse)
@@ -41,9 +49,10 @@ def get_brief(
     slug: str,
     brief_id: str,
     artifacts_root: Path = Depends(get_artifacts_root),
+    product_slug: Optional[str] = Query(None, description="Filter by product slug"),
 ) -> ContentBriefDetailResponse:
     """Get full detail for a single content brief."""
-    return get_brief_detail(artifacts_root, slug, brief_id)
+    return get_brief_detail(artifacts_root, _effective(slug, product_slug), brief_id)
 
 
 @router.get("/briefs/{brief_id}/{stage}", response_model=StageContentResponse)
@@ -52,9 +61,12 @@ def get_stage_content(
     brief_id: str,
     stage: str,
     artifacts_root: Path = Depends(get_artifacts_root),
+    product_slug: Optional[str] = Query(None, description="Filter by product slug"),
 ) -> StageContentResponse:
     """Get stage-specific file content for a brief.
 
     Valid stages: outline, draft, enriched, formatted, eval_history, final
     """
-    return get_brief_stage_content(artifacts_root, slug, brief_id, stage)
+    return get_brief_stage_content(
+        artifacts_root, _effective(slug, product_slug), brief_id, stage
+    )

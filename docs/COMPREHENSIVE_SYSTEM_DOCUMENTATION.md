@@ -3,7 +3,7 @@
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
 > **Stack:** Python 3.12 · LangGraph · DeepAgents · FastAPI · Pydantic v2 · Langfuse v3
-> **Document Date:** 2026-02-26
+> **Document Date:** 2026-02-27
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -2402,9 +2402,14 @@ tests/
 │   ├── test_companies.py                  # GET /companies/{slug}, artifact scanning (Phase 1)
 │   ├── test_registration.py               # 25 tests — domain normalization, company dedup, roles (Phase 1)
 │   ├── test_tasks_extended.py             # company_slug filter, total field (Phase 1)
-│   ├── test_gap_data.py                   # 61 tests — all 6+2 gap data endpoints, old/new format (Phase 2+3)
-│   ├── test_content_data.py               # 73 tests — brief list/detail/stage, status inference, eval history (Phase 3)
-│   └── test_brand_data.py                 # 57 tests — artifacts, personas, run history, SPA trend, status mapping (Phase 4)
+│   ├── test_gap_data.py                   # 67 tests — all 8 gap data endpoints + ?product_slug= variants (Phase 2+3+5)
+│   ├── test_content_data.py               # 79 tests — brief list/detail/stage + ?product_slug= variants (Phase 3+5)
+│   ├── test_brand_data.py                 # 57 tests — artifacts, personas, run history, SPA trend, status mapping (Phase 4)
+│   ├── test_products.py                   # 35 tests — product CRUD, slug validation, ownership checks (product-pipeline P1)
+│   ├── test_task_store_product.py         # 16 tests — effective_slug locking, company+product coexistence (product-pipeline P2)
+│   ├── test_gap_analysis_product.py       # 36 tests — RunScope, _resolve_scope, fallback chain, lock conflicts (product-pipeline P3)
+│   ├── test_gap_analysis.py (guard)      # +7 new: TestStartGapAnalysisGuard — dual-sentinel, force_rerun, existing-prefix run_id, product-level dir
+│   └── test_research.py (guard)          # +5 new: TestStartResearchGuard — all-stages, partial stages, draft exclusion, force_rerun
 └── content_engine/                       # 57 tests — ALL PASSING
     ├── __init__.py
     ├── conftest.py                       # Shared fixtures (sample_brief, mock_anthropic, etc.)
@@ -2421,9 +2426,9 @@ tests/
     └── test_integration.py              # 2 tests — Full pipeline + skip stages
 ```
 
-**Test counts:** 766 total tests. All 766 passing (0 failures). Research pipeline coverage added 2026-02-26 (+109 tests). Front-back integration sprint added 343 tests across 4 phases (auth: 62, gap data: 61, C1-C4 fixes: 16, content data: 85, brand data: 57, research: 109). S4 mock regression fixed in Phase -1 of structural signal overhaul.
+**Test counts:** 900 total tests. All 900 passing (0 failures). Research pipeline coverage added 2026-02-26 (+109 tests). Front-back integration sprint added 343 tests across 4 phases. Product-level pipeline sprint added 114 tests across 5 phases (product CRUD: 35, task infra: 16, pipeline wiring: 36, product prompts: 15, data endpoints: 12). Pipeline guard sprint added 12 tests (gap analysis guard: 7, research guard: 5). S4 mock regression fixed in Phase -1 of structural signal overhaul.
 
-### API Test Coverage (305+ tests — 126 base + 179 from front-back sprint)
+### API Test Coverage (431+ tests — 126 base + 179 front-back + 114 product-level + 12 pipeline-guard)
 
 | Test File | What's Tested |
 |-----------|---------------|
@@ -2447,9 +2452,18 @@ tests/
 | `test_registration.py` | 25 | Domain normalization (multi-part TLDs, subdomains, port stripping), company dedup by root domain, first-user=superuser, subdomain preservation in additional_domains, email validation, password min/max length |
 | `test_companies.py` | ~12 | Company profile endpoint, artifact scanning, task history, product list, missing company 404 |
 | `test_tasks_extended.py` | ~5 | `company_slug` filter, `total` field in TaskListResponse |
-| `test_gap_data.py` | 61 | All 8 gap data endpoints (summary, queries, clusters, signals, platforms, heatmap, embeddings, trend), old+new format backward compat, pagination, filtering, sorting, slug validation, Pearson correlation, Jaccard similarity, empty state |
-| `test_content_data.py` | 73 | Brief list with 2-phase status inference, brief detail with eval history, stage content (JSON+markdown), citability score, content_format→content_type mapping, available_stages scanning, slug validation, path traversal protection, empty state |
-| `test_brand_data.py` | 57 | Research artifact detection (approved/draft/none), persona scanning with prefix filter (CX-4), run history with status mapping (running/pending_approval/failed/cancelled), duration formatting (hours+min, min-only, <1m, empty for running), SPA trend computation, NaN guards, gap metric extraction, step inference, limit param, non-persona file exclusion |
+| `test_gap_data.py` | 67 | All 8 gap data endpoints + `?product_slug=` variants (effective slug, missing product dir, all 8 pass no 422), old+new format backward compat, pagination, filtering, sorting, slug validation, Pearson correlation, Jaccard similarity, empty state |
+| `test_content_data.py` | 79 | Brief list/detail/stage + `?product_slug=` variants (effective slug, independent dirs, missing dir 200 empty, brief detail, stage content, company dir without product_slug), 2-phase status inference, eval history, citability score, path traversal protection |
+| `test_brand_data.py` | 57 | Research artifact detection (approved/draft/none), persona scanning with prefix filter (CX-4), run history with status mapping (running/pending_approval/failed/cancelled), duration formatting, SPA trend computation, NaN guards, gap metric extraction, step inference, limit param |
+
+### Product-Level Pipeline Sprint Tests (114 new tests — added 2026-02-26)
+
+| Test File | Count | What's Tested |
+|-----------|-------|---------------|
+| `test_products.py` | 35 | Product CRUD endpoints: create (valid, invalid slug, duplicate, 404 company), get (200, 404), update (name/domain/description, 404), delete (200, 404), ownership check (product.company_id == user.company_id), slug format validation (`^[a-z0-9][a-z0-9-]*$`) |
+| `test_task_store_product.py` | 16 | `create_task(product_slug=...)` uses effective_slug for lock, company-level and product-level locks coexist (both 202), same-product second run conflicts (409), `list_tasks(product_slug=...)` filter, effective_slug stored on task, cancel uses task.effective_slug for teardown |
+| `test_gap_analysis_product.py` | 36 | `_derive_slug()` unit tests, `_resolve_scope()` unit tests (found/not found/no product), `resolve_artifacts()` fallback chain (effective → company → None for context/personas/style), gap analysis start with product_slug (202), company+product coexistence (both 202), same-product conflict (409), `GapAnalysisInput`/`ContentGenerationInput`/`CompanyResearchInput` product fields |
+| `test_s2_product_context.py` | 15 | `_PRODUCT_CONTEXT_BLOCK` constant has all format slots, `_build_seed_prompt()` with product context present/absent, `generate_queries()` prompt capture: contains product block when product_slug+product_name set, no block for company-level, `build_planner_user_prompt()` injects product section after `## Company` |
 
 ### Content Engine Test Coverage (57/57 passing)
 
@@ -2758,6 +2772,35 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 **Approved by:** Aryan
 
+### Decision 13: Pipeline Guard — HTTP 200 Skip for Existing Artifacts (D-GUARD-1)
+
+**Choice:** When `force_rerun=false` (default) and complete artifacts already exist for the requested `effective_slug`, return HTTP 200 with `already_exists=true` instead of launching a new background task.
+
+**Rationale:**
+- Each pipeline run costs $10–60 in LLM+embedding costs
+- User 2 joining an already-analyzed company can accidentally trigger a duplicate run
+- Returning 200 (not 409) is semantically correct — it is not a conflict, the resource already exists
+- Guard fires **before** `task_store.create_task()` so no slug conflict is created
+- Frontend using `already_exists=true` can skip polling and go straight to displaying existing data
+
+**Implementation Details:**
+- **Gap analysis:** Dual-sentinel artifact detection (`gap_analysis_complete.json` OR `analysis.json`) — mirrors `gap_data_service.py` sentinel logic to ensure consistency
+- **Research:** Stage-aware guard — only fires if **all requested stages** have approved artifacts. `.draft.md` personas are excluded (draft ≠ approved)
+- **`run_id` fallback:** When no completed task record found, returns `f"existing-{effective_slug}"` (stable, non-empty, clearly pre-existing) — not pollable for status, returns 404 which is acceptable
+- **`datetime.now(timezone.utc)`** used throughout (not deprecated `datetime.utcnow()`)
+- **`responses={200: {...}}`** added to both route decorators for correct OpenAPI documentation
+
+**Alternatives Rejected:**
+- Returning 409 Conflict — semantically wrong. Duplicate run prevention is a success case, not an error.
+- Always-launch-and-deduplicate — would still create task and lock, causing 409 if concurrent requests race.
+- Cache-aside at service layer (not router) — guard needs `artifacts_root` + `task_store` access; router is the right boundary.
+
+**Tradeoff:** Clients must pass `force_rerun=true` to refresh data for an existing company. Frontends should surface this as a "Re-run analysis" button rather than a default.
+
+**Outcome:** 12 tests added. 900 total tests passing.
+
+**Approved by:** Aryan
+
 ---
 
 ## 18. Known Vulnerabilities, Flaws & Technical Debt
@@ -2963,6 +3006,7 @@ scripts/run_server.py ← API entry point (uvicorn)
 | Content Generation Engine | ✅ Implemented | Medium — 57 tests passing, awaiting live smoke test |
 | **FastAPI REST API (core)** | ✅ Implemented | **High — 126 tests, SSE, HITL, all 3 pipelines** |
 | **API Data Endpoints (front-back)** | ✅ Implemented | **High — 16 endpoints, 179 tests, 4-phase sprint complete** |
+| **Product-Level Pipeline Execution** | ✅ Implemented | **High — product CRUD, effective_slug locking, per-product artifact dirs, product prompts, 114 tests** |
 | **Auth System (v0)** | ✅ Implemented | **Medium — JSON-file backed, grace-mode middleware, pre-Supabase** |
 | Reddit HIL Monitor | ✅ Functional | Medium — tested with Ramp |
 | Supabase Schema | ✅ Production | High — 4 migrations, RLS, HNSW |
@@ -2979,6 +3023,7 @@ scripts/run_server.py ← API entry point (uvicorn)
 | `v3-signals` | `feat/structural-signals` | 2026-02-18 | 75 | 45 structural signals, dual-soup, 3-tier output |
 | `api-v1` | `feat/api` | 2026-02-19 | 126 | FastAPI, SSE, HITL, TaskStore, EventBus |
 | **`front-back-integration`** | **`feat/front-back`** | **2026-02-26** | **343** | **16 data endpoints, auth, company model, service layer, 4 phases** |
+| **`product-level-pipeline`** | **`feat/front-back`** | **2026-02-26** | **114** | **Product CRUD, effective_slug locking, pipeline wiring, product prompts, ?product_slug= on all 11 data endpoints** |
 
 ### What's Planned (Future Scope)
 
@@ -2987,8 +3032,9 @@ scripts/run_server.py ← API entry point (uvicorn)
 | 1 | **Frontend-Backend Integration** | Wire frontend to live endpoints, remove ~2100 lines of fixture data | ✅ Backend complete (front-back sprint) |
 | 2 | **Content Engine v1.1** | HITL timeout, --offline flag, cost budget cap | Content Engine v1.0 |
 | 3 | **Production Hardening** | Fix deferred issues (C5-C7, CX-1 through CX-10), thread-safe caches, rate limiting | front-back sprint |
-| 4 | **Supabase Migration** | Replace JSON AuthStore with Supabase, migrate task persistence | Auth system, Supabase schema |
-| 5 | **SQLAlchemy ORM** | Replace raw Supabase client with ORM | Supabase schema |
+| 4 | **~~Product-Level Pipeline Execution~~** | ~~Model supports it (Company → Products), execution deferred~~ — **DONE in product-level-pipeline sprint** | ✅ Complete |
+| 5 | **Supabase Migration** | Replace JSON AuthStore with Supabase, migrate task persistence | Auth system, Supabase schema |
+| 6 | **SQLAlchemy ORM** | Replace raw Supabase client with ORM | Supabase schema |
 | 6 | **Reddit HIL Tests** | Only untested module (PRAW mocking, webhook delivery) | Existing codebase |
 | 7 | **Persistent Agent Store** | Replace InMemoryStore with durable storage | DeepAgents integration |
 | 8 | **Cloud Storage Backends** | S3/GCS/Supabase Storage implementations | StorageBackend interface |
@@ -3000,7 +3046,7 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 ## 21. REST API Layer (FastAPI)
 
-**Status:** Implemented (2026-02-16), expanded with data endpoints (2026-02-25/26). 766 tests passing. All 3 pipelines wrapped + 16 company-scoped data retrieval endpoints added in `front-back-integration` sprint.
+**Status:** Implemented (2026-02-16), expanded with data endpoints (2026-02-25/26), expanded with product-level support (2026-02-26), pipeline guard added (2026-02-27). 900 tests passing. All 3 pipelines wrapped + 16 company-scoped data retrieval endpoints + product CRUD endpoints + `?product_slug=` on all 11 data endpoints. `force_rerun` guard on `/gap-analysis/start` and `/research/start` prevents duplicate runs when artifacts already exist.
 
 **Architecture Decision:** D-API-1 — `asyncio.create_task()` (not Celery), JSON-file TaskStore, SSE for progress, `MemorySaver` checkpointer for HITL. See §17 Decision 12 for full rationale. Data endpoints added in D-FB-1 through D-FB-5.
 
@@ -3044,26 +3090,48 @@ GET  /readiness                                 → {"ready": bool, "missing_key
 
 #### Gap Analysis Pipeline
 ```
-POST /api/v1/gap-analysis/start                 → 202 Accepted: PipelineRunResponse
+POST /api/v1/gap-analysis/start                 → 202 Accepted (new run) | 200 OK (already_exists)
 GET  /api/v1/gap-analysis/{run_id}/status       → TaskResponse
 ```
 
 **Request Body (`/gap-analysis/start`):**
 ```json
 {
-  "input_data": {
-    "company_name": "Ramp",
-    "domain": "ramp.com",
-    "seed_urls": ["https://ramp.com"],
-    "company_slug": "ramp"
-  },
-  "skip_steps": [1, 2]
+  "company_name": "Ramp",
+  "domain": "ramp.com",
+  "product_slug": "corp-card",
+  "seed_urls": ["https://ramp.com"],
+  "skip_steps": [1, 2],
+  "force_rerun": false
 }
 ```
+- `company_name` (required): Company display name
+- `domain` (required): Company domain
+- `product_slug` (optional): Product slug for product-scoped run; validated via regex (lowercase, no path chars, no leading hyphen)
+- `seed_urls` (optional): Additional URLs to crawl
+- `skip_steps` (optional): Step numbers to skip (1–8)
+- `force_rerun` (optional, default `false`): When `false`, if artifacts already exist for this `effective_slug` the endpoint returns HTTP 200 with `already_exists=true` (no new task created). Pass `true` to force a fresh run.
+
+**Already-Exists Response (HTTP 200):**
+```json
+{
+  "run_id": "task-abc123",
+  "pipeline": "gap_analysis",
+  "company_slug": "ramp",
+  "product_slug": "corp-card",
+  "effective_slug": "ramp__corp-card",
+  "status": "already_exists",
+  "already_exists": true,
+  "message": "Artifacts already exist. Pass force_rerun=true to re-run.",
+  "created_at": "2026-02-26T10:00:00Z"
+}
+```
+- `run_id` is the last completed task's ID (for reference), or `"existing-{effective_slug}"` if no task record exists.
+- **Artifact detection (dual-sentinel):** checks `artifacts/gap_analysis/{effective_slug}/gap_analysis_complete.json` OR `analysis.json`. Mirrors the same logic used by `gap_data_service.py`.
 
 #### Research Pipeline
 ```
-POST /api/v1/research/start                     → 202 Accepted: PipelineRunResponse
+POST /api/v1/research/start                     → 202 Accepted (new run) | 200 OK (already_exists)
 GET  /api/v1/research/{run_id}/status           → TaskResponse
 POST /api/v1/research/{run_id}/approve          → ApprovalResponse
 ```
@@ -3071,10 +3139,34 @@ POST /api/v1/research/{run_id}/approve          → ApprovalResponse
 **Request Body (`/research/start`):**
 ```json
 {
-  "company": { "company_name": "Ramp", "seed_urls": ["https://ramp.com"], "domain": "ramp.com" },
-  "persona": { "company_name": "Ramp", "domain": "ramp.com" },
-  "style_guide": { "company_name": "Ramp", "domain": "ramp.com" },
-  "auto_approve": false
+  "company_name": "Ramp",
+  "domain": "ramp.com",
+  "product_slug": "corp-card",
+  "stages": ["company", "persona", "style_guide"],
+  "auto_approve": false,
+  "max_personas": 3,
+  "force_rerun": false
+}
+```
+- `company_name` (required), `domain` (required)
+- `product_slug` (optional): Product-scoped run
+- `stages` (optional, default all three): Subset of `["company", "persona", "style_guide"]` to run. **The guard only fires if ALL requested stages have approved artifacts.**
+- `auto_approve` (optional, default `false`): Skip HITL review
+- `max_personas` (optional, default 3): Max persona files to generate
+- `force_rerun` (optional, default `false`): When `false`, if all requested stages already have approved artifacts the endpoint returns HTTP 200 with `already_exists=true`. Pass `true` to force a fresh run.
+
+**Guard logic (stage-aware):**
+- `company` stage: checks `artifacts/company_context/{slug}.md`
+- `persona` stage: checks `artifacts/personas/{slug}__persona-*.md` (excludes `.draft.md` files — drafts are NOT considered approved)
+- `style_guide` stage: checks `artifacts/style_guides/{slug}.md`
+- Dual-scope: checks `{effective_slug}` first, falls back to bare `{company_slug}` (product runs reuse company-level artifacts if not overridden)
+
+**Already-Exists Response (HTTP 200):** Same shape as gap analysis already-exists response above, with:
+```json
+{
+  "status": "already_exists",
+  "already_exists": true,
+  "message": "Stages ['company', 'persona', 'style_guide'] already have approved artifacts. Pass force_rerun=true to re-run."
 }
 ```
 
@@ -4033,8 +4125,321 @@ With all 4 phases complete, the backend is ready for the frontend to consume:
 1. **Wire frontend to live endpoints** — Replace ~2,100 lines of fixture data with API calls
 2. **Fix deferred issues** — 23 issues tracked in `.claude/sprints/v1/review-findings-deferred.md` (C5-C7, W1-W9, I1-I8, CX-1 through CX-10)
 3. **Supabase migration** — Replace JSON AuthStore with Supabase Auth, migrate task persistence to PostgreSQL
-4. **Product-level endpoints** — Model supports it (Company → Products), execution deferred
+4. ~~**Product-level endpoints** — Model supports it (Company → Products), execution deferred~~ → **COMPLETE** (see §23)
 5. **Incremental embedding update** — After content approval, update gap analysis embeddings without full re-run
+
+---
+
+## 23. Product-Level Pipeline Execution Sprint — Exhaustive 5-Phase Detail
+
+### 23.1 Sprint Context
+
+**Branch:** `feat/front-back` (continued from front-back sprint)
+**Tests:** 882 total (114 new, up from 768)
+**Goal:** Each product (e.g., Ramp Corporate Card, Ramp Travel, Ramp Reimbursements) can run its own independent pipeline with product-specific artifact directories, lock keys, and LLM prompt context. Company-level runs are entirely unaffected.
+
+**The core problem:** Platform currently runs all pipelines at company level — one run per company, artifacts at `artifacts/gap_analysis/{company_slug}/`. Ramp has multiple distinct products that compete in different AI-search citation contexts. Product-specific queries + product-specific context = better citation gap analysis per product.
+
+**Pre-implementation review:** Codex gpt-5.3-codex reviewed the plan (high reasoning). 6 CRITICAL + 7 WARNING + 4 INFO findings — all CRITICAL and WARNING findings incorporated. Key findings: lock teardown mismatch (4 paths), cross-tenant auth, artifact inheritance ordering, prompt guard condition.
+
+### 23.2 Key Design Decisions
+
+#### D1 — Effective Slug Pattern
+
+Artifact directory slug = `{company_slug}__{product_slug}` (double underscore). Example: `ramp__ramp-corporate-card`.
+
+```python
+def _effective_slug(company_slug: str, product_slug: Optional[str]) -> str:
+    return f"{company_slug}__{product_slug}" if product_slug else company_slug
+```
+
+Double underscore is unambiguous since individual slugs use `[a-z0-9-]` only — no underscores allowed in individual slugs. `_SLUG_PATTERN` in all 3 service files updated to `^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$`.
+
+#### D2 — Research Artifact Inheritance (Fallback Chain)
+
+Product-level runs share company-level research artifacts. Fallback chain (stops at first match):
+1. `artifacts/company_context/{effective_slug}.md` — product-specific research
+2. `artifacts/company_context/{company_slug}.md` — shared company research
+3. `None` — pipeline runs without context
+
+Same chain for personas and style guides. Artifacts snapshotted at run start.
+
+#### D3 — effective_slug Stored on PipelineTask
+
+`PipelineTask.effective_slug: Optional[str] = None` eliminates repeated derivation in all 4 teardown paths:
+- `runner.py gap finally` → `release_slug_lock(task.effective_slug or task.company_slug)`
+- `runner.py content finally` → same
+- `runner.py research finally` → same
+- `tasks.py cancel endpoint` → same
+
+Company-level lock (`"ramp"`) and product-level lock (`"ramp__ramp-corporate-card"`) are **independent** — simultaneous runs allowed.
+
+#### D4 — RunScope Dataclass (Central Resolver)
+
+```python
+@dataclass
+class RunScope:
+    company_slug: str
+    product_slug: Optional[str]
+    effective_slug: str           # artifact dirs + lock key
+    product_name: Optional[str]
+    product_description: Optional[str]
+    product_domain: Optional[str]
+
+def _resolve_scope(company_slug: str, product_slug: Optional[str], auth_store: AuthStore) -> RunScope:
+    ...  # Looks up product from auth_store, builds scope
+```
+
+Used by all 3 pipeline runners at startup. Replaces scattered `if product_slug:` lookups.
+
+#### D5 — Prompt Injection Guard
+
+Product context injected into prompts only when `product_slug AND product_name` both non-null. Empty string `""` for company-level runs — zero prompt drift.
+
+```python
+# s2_generate_queries.py
+product_context: Optional[str] = None
+if input_data.product_slug and input_data.product_name:
+    product_context = _PRODUCT_CONTEXT_BLOCK.format(...)
+
+# planner.py
+product_context_md = ""
+if input_data.product_slug and input_data.product_name:
+    product_context_md = _PRODUCT_FOCUS_BLOCK.format(...)
+```
+
+### 23.3 Phase 1 — Product CRUD (35 tests)
+
+**Goal:** Products can be created, read, updated, deleted. Company profile shows real product artifact status.
+
+#### New models in `core/models/organization.py`
+
+`Product` model added in prior front-back sprint (already existed). Used here.
+
+#### `api/auth/store.py` additions
+
+```python
+def add_product(company_slug: str, product: Product) -> Product
+def get_product(company_slug: str, product_slug: str) -> Optional[Product]
+def update_product(company_slug: str, product_slug: str, **kwargs) -> Product
+def remove_product(company_slug: str, product_slug: str) -> bool
+```
+
+Slug validation: `re.match(r'^[a-z0-9][a-z0-9-]*$', slug)` — 409 on duplicate, 422 on invalid format, 404 if company not found.
+
+#### `api/routers/companies.py` additions
+
+```
+POST   /api/v1/companies/{slug}/products              → create product
+GET    /api/v1/companies/{slug}/products/{product_slug} → get product
+PUT    /api/v1/companies/{slug}/products/{product_slug} → update product
+DELETE /api/v1/companies/{slug}/products/{product_slug} → delete product
+```
+
+Every endpoint verifies `product.company_id == company.id` (cross-tenant ownership check — Codex CRITICAL finding).
+
+#### `api/schemas/company.py` additions
+
+- `ProductCreateRequest` — `name: str`, `slug: str`, `domain: Optional[str] = None`, `description: Optional[str] = None`
+- `ProductUpdateRequest` — all optional
+- `ProductDetailResponse` — full product with `id`, `slug`, `name`, `domain`, `description`, `company_id`, `created_at`, `updated_at`
+
+#### `api/tasks/models.py` additions
+
+```python
+class PipelineTask(BaseModel):
+    product_slug: Optional[str] = None      # NEW — which product (if any)
+    effective_slug: Optional[str] = None    # NEW — lock key + artifact dir slug
+```
+
+### 23.4 Phase 2 — Task Infrastructure (16 tests)
+
+**Goal:** Tasks carry product_slug; locks use effective_slug; company+product runs coexist.
+
+#### `api/tasks/store.py` changes
+
+```python
+def create_task(
+    self,
+    pipeline: str,
+    company_slug: str,
+    product_slug: Optional[str] = None,    # NEW
+) -> PipelineTask:
+    effective = f"{company_slug}__{product_slug}" if product_slug else company_slug
+    self.acquire_slug_lock(effective)       # Lock on effective slug, not bare slug
+    task = PipelineTask(
+        ...,
+        product_slug=product_slug,
+        effective_slug=effective,           # Stored for teardown
+    )
+```
+
+`list_tasks()` gains `product_slug: Optional[str] = None` filter.
+
+Cancel endpoint fixed to `release_slug_lock(task.effective_slug or task.company_slug)`.
+
+#### `api/schemas/common.py` changes
+
+`PipelineRunResponse`, `TaskResponse`, `TaskSummary` all gain `product_slug: Optional[str] = None` and `effective_slug: Optional[str] = None`.
+
+### 23.5 Phase 3 — Pipeline Execution Wiring (36 tests)
+
+**Goal:** `POST /api/v1/gap-analysis/start` with `product_slug` routes the run to the product artifact directory. Research artifacts inherited from company.
+
+#### Core model additions
+
+```python
+# core/models/gap_analysis.py, content_generation.py, artifacts.py
+product_slug: Optional[str] = None
+product_name: Optional[str] = None
+product_description: Optional[str] = None
+```
+
+#### `api/tasks/runner.py` changes
+
+Added `RunScope` dataclass and `_resolve_scope()`. Updated all 3 runners:
+1. Call `_resolve_scope(company_slug, product_slug, auth_store)` at startup
+2. Use `scope.effective_slug` for `create_task()` call (lock key + artifact dir)
+3. Use bare `company_slug` for `resolve_artifacts()` call (inheritance from company)
+4. Populate `product_slug/name/description` fields on input models
+5. Content runner: `gap_slug = request.gap_slug or scope.effective_slug`
+6. `finally:` block in all 3 runners now uses `task.effective_slug or task.company_slug`
+
+#### Research artifact fallback chain (implemented in `resolve_artifacts()`)
+
+```
+effective_slug.md → company_slug.md → None  (company_context)
+effective_slug__persona-*.md → company_slug__persona-*.md → []  (personas)
+effective_slug.md → company_slug.md → None  (style_guide)
+```
+
+### 23.6 Phase 4 — Product Prompts (15 tests)
+
+**Goal:** S2 generates product-focused queries; content planner generates product-focused briefs.
+
+#### `core/gap_analysis/steps/s2_generate_queries.py`
+
+```python
+_PRODUCT_CONTEXT_BLOCK = """\
+
+SPECIFIC PRODUCT SCOPE — This gap analysis targets a single product, not the full company:
+  Product name:        {product_name}
+  Product domain:      {product_domain}
+  Product description: {product_description}
+
+CRITICAL INSTRUCTIONS FOR PRODUCT-SCOPED QUERIES:
+- Treat this PRODUCT as the subject, not the parent company's full portfolio
+- The "category" for these queries is the product's specific niche
+- Apply brand name exclusion rules to the PRODUCT category terms
+- Generate queries that capture buyers researching THIS product's specific use case
+"""
+```
+
+Injected into `_QUERY_GEN_PROMPT` via `{product_context_block}` slot, placed between COMPANY section and QUERY CLUSTER TAXONOMY. Slot defaults to `""` for company-level runs.
+
+#### `core/content_engine/prompts/planner_prompts.py`
+
+```python
+_PRODUCT_FOCUS_BLOCK = """\
+
+## Specific Product Focus
+**Product:** {product_name}
+**Product Domain:** {product_domain}
+**Description:** {product_description}
+
+When generating content briefs, focus topics on this specific product's buyer journey
+and competitive positioning, not the parent company broadly.
+"""
+```
+
+Injected after `## Company` section in `build_planner_user_prompt()` when `product_context_md` param is set.
+
+### 23.7 Phase 5 — Data Endpoints (12 tests)
+
+**Goal:** All 11 read endpoints serve product artifacts via `?product_slug=`; service internals unchanged.
+
+#### Router pattern (gap_data.py, content_data.py)
+
+```python
+def _effective(slug: str, product_slug: Optional[str]) -> str:
+    return f"{slug}__{product_slug}" if product_slug else slug
+
+@router.get("/summary", response_model=GapSummaryResponse)
+def get_gap_summary(
+    slug: str,
+    artifacts_root: Path = Depends(get_artifacts_root),
+    product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+) -> GapSummaryResponse:
+    return get_summary(artifacts_root, _effective(slug, product_slug))
+```
+
+Applied to all 8 gap-data endpoints and all 3 content-data endpoints. Service functions receive the computed effective slug — no changes to service internals.
+
+#### Slug validation pattern (all 3 service files)
+
+```python
+# Before: only bare company slugs
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+# After: also accepts effective slugs like ramp__corporate-card
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
+```
+
+### 23.8 Artifact Directory Structure (Complete)
+
+```
+artifacts/
+├── gap_analysis/
+│   ├── ramp/                              # Company-level (existing)
+│   │   ├── queries.json
+│   │   ├── enriched_citations.json
+│   │   ├── analysis.json / gap_analysis_complete.json
+│   │   ├── gap_report.md / .json
+│   │   ├── generation_spec.md / .json
+│   │   └── visualizations/
+│   └── ramp__ramp-corporate-card/         # Product-level (new)
+│       └── (same structure)
+├── content/
+│   ├── ramp/
+│   └── ramp__ramp-corporate-card/         # Product-level (new)
+│       ├── briefs.json
+│       ├── run_metadata.json
+│       └── content/{brief_id}/
+├── company_context/
+│   ├── ramp.md                            # Company research (shared)
+│   └── ramp__ramp-corporate-card.md       # Product research (optional, not required)
+├── personas/
+│   └── ramp__persona-icp.md              # Always company-level (shared)
+└── style_guides/
+    └── ramp.md                           # Always company-level (shared)
+```
+
+### 23.9 End-to-End Verification
+
+```bash
+# 1. Create product
+POST /api/v1/companies/ramp/products
+{"name": "Ramp Corporate Card", "slug": "ramp-corporate-card", "domain": "ramp.com/corporate-card"}
+
+# 2. Start product-level gap analysis
+POST /api/v1/gap-analysis/start
+{"company_name": "Ramp", "domain": "ramp.com", "product_slug": "ramp-corporate-card"}
+# → artifacts/gap_analysis/ramp__ramp-corporate-card/ created
+# → artifacts/gap_analysis/ramp/ untouched
+# → Research artifacts from artifacts/company_context/ramp.md used (fallback)
+
+# 3. Read product data
+GET /api/v1/companies/ramp/gap-analysis/summary?product_slug=ramp-corporate-card
+# → Returns product-scoped summary
+
+# 4. Concurrent runs don't block each other
+POST /api/v1/gap-analysis/start  {"company_name":"Ramp"}                          → 202
+POST /api/v1/gap-analysis/start  {"company_name":"Ramp", "product_slug":"ramp-corporate-card"} → 202
+
+# 5. Same product second run conflicts
+POST /api/v1/gap-analysis/start  {"company_name":"Ramp", "product_slug":"ramp-corporate-card"} → 202
+POST /api/v1/gap-analysis/start  {"company_name":"Ramp", "product_slug":"ramp-corporate-card"} → 409
+```
 
 ---
 
@@ -4088,10 +4493,21 @@ With all 4 phases complete, the backend is ready for the frontend to consume:
 | 2026-02-26 | §21.2 | Added 16 new company-scoped endpoints: auth (3), company (1), gap data (8), content data (3), brand data (2), with full request/response docs | T-fb-phase1-4 |
 | 2026-02-26 | §21.2 | Added Service Layer Architecture subsection documenting shared caching/validation/error patterns | T-fb-phase1-4 |
 | 2026-02-26 | §22 | **NEW SECTION** — Exhaustive Front-Back Integration Sprint documentation: 4-phase detail, data flows, design choices, Codex reviews, architecture connections | T-fb-phase1-4 |
+| 2026-02-26 | §15 | Updated test counts: 882 total (up from 766), added product-pipeline sprint test files, updated API test coverage header | T-product-pipeline-all |
+| 2026-02-26 | §15 | Added Product-Level Pipeline Sprint Tests table (4 test files, 114 new tests) | T-product-pipeline-all |
+| 2026-02-26 | §20 | Added Product-Level Pipeline Execution to What's Built table, added sprint to Completed Sprints, marked item 4 in What's Planned as DONE | T-product-pipeline-all |
+| 2026-02-26 | §21 | Updated status header — 882 tests, product_slug support on all data endpoints | T-product-pipeline-all |
+| 2026-02-26 | §22.8 | Marked Product-level endpoints item as COMPLETE (→ §23) | T-product-pipeline-all |
+| 2026-02-26 | §23 | **NEW SECTION** — Product-Level Pipeline Execution Sprint: 5-phase detail (CRUD, task infra, wiring, prompts, data endpoints), design decisions, artifact structure, E2E verification | T-product-pipeline-all |
+| 2026-02-27 | §21 | Updated status header — 900 tests, pipeline guard (`force_rerun`) on start endpoints | T-pipeline-guard |
+| 2026-02-27 | §21.2 | Updated gap-analysis start docs: flat-field schema, `force_rerun` field, HTTP 200 already-exists response, dual-sentinel artifact detection logic | T-pipeline-guard |
+| 2026-02-27 | §21.2 | Updated research start docs: flat-field schema, `force_rerun` + `stages` fields, stage-aware guard logic, draft exclusion, dual-scope fallback | T-pipeline-guard |
+| 2026-02-27 | §15 | Updated test count 882→900 (+12 pipeline-guard tests); updated test tree (guard classes in test_gap_analysis.py + test_research.py); updated API test coverage header | T-pipeline-guard |
+| 2026-02-27 | §17 | Added Decision 13: Pipeline Guard — HTTP 200 skip for existing artifacts (D-GUARD-1) | T-pipeline-guard |
 
 ---
 
 *End of Comprehensive System Documentation*
-*Generated: 2026-02-26*
-*Total codebase files analyzed: ~140+*
-*Total lines of documentation: ~4800+*
+*Generated: 2026-02-27*
+*Total codebase files analyzed: ~150+*
+*Total lines of documentation: ~5400+*

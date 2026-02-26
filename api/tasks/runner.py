@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -19,6 +20,52 @@ from core.models.style_guide import StyleGuideResearchInput
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]  # content-strategy-engine/
+
+
+# ── Scope resolution ──────────────────────────────────────────────────
+
+
+@dataclass
+class RunScope:
+    """Resolved scope for a single pipeline run."""
+
+    company_slug: str
+    product_slug: Optional[str]
+    effective_slug: str  # artifact dirs + lock key
+    product_name: Optional[str]
+    product_description: Optional[str]
+    product_domain: Optional[str]
+
+
+def _resolve_scope(
+    company_slug: str,
+    product_slug: Optional[str],
+    auth_store: Optional[Any] = None,
+) -> RunScope:
+    """Resolve a RunScope from company_slug + product_slug.
+
+    Looks up product details from auth_store when product_slug is set.
+    """
+    effective = f"{company_slug}__{product_slug}" if product_slug else company_slug
+    product_name: Optional[str] = None
+    product_description: Optional[str] = None
+    product_domain: Optional[str] = None
+
+    if product_slug and auth_store:
+        product = auth_store.get_product(company_slug, product_slug)
+        if product:
+            product_name = product.name
+            product_description = product.description
+            product_domain = product.domain
+
+    return RunScope(
+        company_slug=company_slug,
+        product_slug=product_slug,
+        effective_slug=effective,
+        product_name=product_name,
+        product_description=product_description,
+        product_domain=product_domain,
+    )
 
 
 def _enrich_interrupt_with_draft_content(
@@ -65,10 +112,21 @@ def _derive_slug(company_name: str, company_slug: Optional[str] = None) -> str:
     return re.sub(r"[^a-z0-9]+", "-", company_name.lower()).strip("-") or company_name.lower()
 
 
-def resolve_artifacts(slug: str, artifacts_root: Path) -> Dict[str, Any]:
+def resolve_artifacts(
+    slug: str,
+    artifacts_root: Path,
+    effective_slug: Optional[str] = None,
+) -> Dict[str, Any]:
     """Auto-discover approved research artifacts for a company slug.
 
     Only resolves final (approved) artifacts — ignores .draft.md files.
+
+    When ``effective_slug`` is provided and differs from ``slug``, applies the
+    product-level fallback chain for each artifact type:
+      1. Artifact scoped to effective_slug (product-specific)
+      2. Artifact scoped to slug (company-level)
+      3. None
+
     Returns a dict with resolved paths and a summary for the API response.
     """
     resolved: Dict[str, Any] = {
@@ -77,24 +135,34 @@ def resolve_artifacts(slug: str, artifacts_root: Path) -> Dict[str, Any]:
         "style_guide_path": None,
     }
 
-    # Company context: artifacts/company_context/{slug}.md
-    company_ctx = artifacts_root / "company_context" / f"{slug}.md"
-    if company_ctx.exists():
-        resolved["company_context_path"] = str(company_ctx)
+    # Build lookup candidates: [effective_slug, slug] if different, else [slug]
+    candidates = [effective_slug, slug] if effective_slug and effective_slug != slug else [slug]
 
-    # Personas: artifacts/personas/{slug}__persona-*.md (exclude .draft.md)
+    # Company context
+    for lookup in candidates:
+        company_ctx = artifacts_root / "company_context" / f"{lookup}.md"
+        if company_ctx.exists():
+            resolved["company_context_path"] = str(company_ctx)
+            break
+
+    # Personas: try effective_slug first, then bare slug
     personas_dir = artifacts_root / "personas"
     if personas_dir.exists():
-        persona_files = sorted(
-            p for p in personas_dir.glob(f"{slug}__persona-*.md")
-            if not p.name.endswith(".draft.md")
-        )
-        resolved["persona_paths"] = [str(p) for p in persona_files]
+        for lookup in candidates:
+            persona_files = sorted(
+                p for p in personas_dir.glob(f"{lookup}__persona-*.md")
+                if not p.name.endswith(".draft.md")
+            )
+            if persona_files:
+                resolved["persona_paths"] = [str(p) for p in persona_files]
+                break
 
-    # Style guide: artifacts/style_guides/{slug}.md
-    style_guide = artifacts_root / "style_guides" / f"{slug}.md"
-    if style_guide.exists():
-        resolved["style_guide_path"] = str(style_guide)
+    # Style guide
+    for lookup in candidates:
+        style_guide = artifacts_root / "style_guides" / f"{lookup}.md"
+        if style_guide.exists():
+            resolved["style_guide_path"] = str(style_guide)
+            break
 
     return resolved
 
@@ -105,26 +173,38 @@ async def run_gap_pipeline_task(
     artifacts_root: Path,
     task_store: TaskStore,
     event_bus: EventBus,
+    auth_store: Optional[Any] = None,
 ) -> None:
     """Background task wrapper for gap analysis pipeline.
 
     Accepts the simplified GapAnalysisStartRequest, auto-resolves research
     artifact paths from disk, and constructs GapAnalysisInput internally.
     """
-    slug = _derive_slug(request.company_name)
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = _resolve_scope(company_slug, product_slug, auth_store)
 
     try:
         async with task_store.semaphore:
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "gap_analysis"})
 
-            # Auto-resolve research artifacts from filesystem
-            resolved = resolve_artifacts(slug, artifacts_root)
+            # Research artifacts: fallback chain (product-specific → company-level)
+            resolved = resolve_artifacts(
+                scope.company_slug,
+                artifacts_root,
+                effective_slug=scope.effective_slug,
+            )
+
+            # S1 domain: use product domain when available (D4 — Replace strategy)
+            domain = request.domain
+            if scope.product_domain:
+                domain = scope.product_domain
 
             input_data = GapAnalysisInput(
                 company_name=request.company_name,
-                domain=request.domain,
-                company_slug=slug,
-                seed_urls=request.seed_urls or [f"https://{request.domain}/"],
+                domain=domain,
+                company_slug=scope.effective_slug,  # artifact dir uses effective slug
+                seed_urls=request.seed_urls or [f"https://{domain}/"],
                 company_context_path=resolved["company_context_path"],
                 persona_paths=resolved["persona_paths"],
                 style_guide_path=resolved["style_guide_path"],
@@ -135,6 +215,9 @@ async def run_gap_pipeline_task(
                 additional_constraints=request.additional_constraints,
                 max_crawl_pages=request.max_crawl_pages,
                 max_crawl_depth=request.max_crawl_depth,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                product_description=scope.product_description,
             )
 
             report = await run_gap_analysis(
@@ -146,7 +229,7 @@ async def run_gap_pipeline_task(
                 "visualization_paths": report.visualization_paths,
                 "resolved_artifacts": resolved,
                 "produced_artifacts": [
-                    {"type": "gap_analysis", "slug": slug},
+                    {"type": "gap_analysis", "slug": scope.effective_slug},
                 ],
             }
             task_store.update_task(
@@ -163,7 +246,7 @@ async def run_gap_pipeline_task(
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
-        task_store.release_slug_lock(slug)
+        task_store.release_slug_lock(scope.effective_slug)
         task_store.remove_task_handle(task_id)
 
 
@@ -271,6 +354,7 @@ async def run_research_pipeline_task(
     request: Any,
     task_store: TaskStore,
     event_bus: EventBus,
+    auth_store: Optional[Any] = None,
 ) -> None:
     """Background task wrapper for research pipeline (company → persona → style).
 
@@ -282,7 +366,10 @@ async def run_research_pipeline_task(
     from core.research.graphs.persona_research import build_graph as build_persona_graph
     from core.research.graphs.style_guide import build_graph as build_style_graph
 
-    slug = _derive_slug(request.company_name)
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = _resolve_scope(company_slug, product_slug, auth_store)
+    slug = scope.effective_slug  # persona/style_guide graphs use this for output paths
     stages = request.stages
     auto_approve = request.auto_approve
 
@@ -399,7 +486,7 @@ async def run_research_pipeline_task(
         task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
-        task_store.release_slug_lock(slug)
+        task_store.release_slug_lock(scope.effective_slug)
         task_store.remove_task_handle(task_id)
 
 
@@ -419,7 +506,9 @@ async def run_content_pipeline_task(
     """
     from core.content_engine.pipeline import run_content_generation
 
-    slug = _derive_slug(input_data.company_name)
+    # Read effective_slug from the persisted task (set by create_task at launch)
+    _task = task_store.get_task(task_id)
+    effective = _task.effective_slug or _task.company_slug or _derive_slug(input_data.company_name)
 
     try:
         async with task_store.semaphore:
@@ -446,7 +535,7 @@ async def run_content_pipeline_task(
                     for p in output.pieces
                 ],
                 "produced_artifacts": [
-                    {"type": "content", "slug": slug},
+                    {"type": "content", "slug": effective},
                 ],
             }
             task_store.update_task(
@@ -461,5 +550,5 @@ async def run_content_pipeline_task(
         task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
-        task_store.release_slug_lock(slug)
+        task_store.release_slug_lock(effective)
         task_store.remove_task_handle(task_id)

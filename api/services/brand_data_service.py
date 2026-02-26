@@ -38,7 +38,8 @@ _CACHE_MAX_ENTRIES = 10
 
 # ── Validation ───────────────────────────────────────────────────────
 
-_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# Accepts bare company slugs ("ramp") and effective product slugs ("ramp__card")
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
 
 
 def _validate_slug(slug: str) -> None:
@@ -444,11 +445,26 @@ def get_spa_trend(
     """
     _validate_slug(slug)
 
-    tasks = task_store.list_tasks(
-        pipeline="gap_analysis",
-        status="completed",
-        company_slug=slug,
-    )
+    # Handle product-level effective slugs (e.g. "ramp__card").
+    # list_tasks() supports filtering by both company_slug and product_slug,
+    # so we split and use both filters to return only the correct scope.
+    if "__" in slug:
+        parts = slug.split("__", 1)
+        tasks = task_store.list_tasks(
+            pipeline="gap_analysis",
+            status="completed",
+            company_slug=parts[0],
+            product_slug=parts[1],
+        )
+    else:
+        # Company-level: explicitly exclude product-scoped runs so product
+        # runs don't pollute the company-level trend chart.
+        all_tasks = task_store.list_tasks(
+            pipeline="gap_analysis",
+            status="completed",
+            company_slug=slug,
+        )
+        tasks = [t for t in all_tasks if t.product_slug is None]
 
     # Sort ascending (oldest first for chart)
     tasks.sort(key=lambda t: t.created_at)

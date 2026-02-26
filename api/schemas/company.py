@@ -7,11 +7,43 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 
+class ProductCreateRequest(BaseModel):
+    """Request body for creating a product."""
+
+    name: str
+    slug: str
+    domain: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ProductUpdateRequest(BaseModel):
+    """Request body for updating a product (all fields optional)."""
+
+    name: Optional[str] = None
+    domain: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ProductDetailResponse(BaseModel):
+    """Full product detail including timestamps."""
+
+    id: str
+    slug: str
+    name: str
+    domain: Optional[str] = None
+    description: Optional[str] = None
+    company_id: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class ProductSummary(BaseModel):
     """Lightweight product info for company profile."""
 
     slug: str
     name: str
+    domain: Optional[str] = None
+    description: Optional[str] = None
     has_research: bool = False
     has_gap_analysis: bool = False
     has_content: bool = False

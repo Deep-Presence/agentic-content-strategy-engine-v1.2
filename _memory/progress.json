@@ -1,6 +1,6 @@
 {
-  "current_sprint": "front-back-integration",
-  "last_updated": "2026-02-26",
+  "current_sprint": "pipeline-guard",
+  "last_updated": "2026-02-27",
   "completed": [
     {
       "id": "T-async-1",
@@ -189,6 +189,107 @@
   ],
   "in_progress": [],
   "recently_completed": [
+    {
+      "id": "T-pipeline-guard",
+      "task": "Pipeline Guard — Existing-company run guard on /gap-analysis/start and /research/start",
+      "sprint": "pipeline-guard",
+      "status": "done",
+      "completed_at": "2026-02-27",
+      "summary": "Added force_rerun: bool = False to GapAnalysisStartRequest and ResearchStartRequest. When force_rerun=False and artifacts already exist, both endpoints return HTTP 200 with already_exists=True (no task created, no slug conflict risk). Gap analysis uses dual-sentinel detection (gap_analysis_complete.json OR analysis.json) mirroring gap_data_service.py. Research uses stage-aware detection: only fires if ALL requested stages have approved artifacts; .draft.md personas excluded; dual-scope fallback (effective_slug → company_slug). run_id falls back to f'existing-{effective_slug}' when no completed task record exists. datetime.now(timezone.utc) throughout. responses={200: ...} on both decorators for OpenAPI. Added already_exists: bool = False and message: Optional[str] = None to PipelineRunResponse (backward-compatible). 12 new tests: TestStartGapAnalysisGuard (7 tests in test_gap_analysis.py) + TestStartResearchGuard (5 tests in test_research.py). Plan reviewed by Codex (2 rounds: gpt-5.3-codex, incorporated all 4 CRITICAL + 6 WARNING findings).",
+      "test_count": "900 tests passed, 0 failures (up from 888 — 12 new tests)",
+      "files_changed": [
+        "api/schemas/common.py",
+        "api/routers/gap_analysis.py",
+        "api/routers/research.py",
+        "tests/api/test_gap_analysis.py",
+        "tests/api/test_research.py"
+      ]
+    },
+    {
+      "id": "T-review-action-items",
+      "task": "Codex/manual review action items — 9 fixes across 10 files (P0–P3)",
+      "sprint": "front-back-integration",
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "summary": "Resolved all 9 action items from combined manual + Codex (gpt-5.3-codex) code review of feat/front-back. (P0) C2/C5: Added _COMPANY_MUTABLE_FIELDS + _PRODUCT_MUTABLE_FIELDS allowlists in auth/store.py — prevents overwriting immutable id/slug/created_at via **kwargs in update_company/update_product. (P0) C1: Documented GRACE MODE auth bypass with explicit comments in all 3 product mutation handlers in routers/companies.py. (P0) H1: Added _PRODUCT_SLUG_RE regex + @field_validator('product_slug') to GapAnalysisStartRequest, ResearchStartRequest, ContentStartRequest in schemas/common.py — rejects '../evil', 'UPPER', 'has space', '-bad-start' at HTTP 422 before any filesystem path is constructed. (P1) H2: Added company_slug: str = '' field to ContentGenerationInput, updated _company_slug() in pipeline.py to prefer input_data.company_slug over derived name, wired company_slug=scope.effective_slug into ContentGenerationInput constructor in routers/content.py — content engine now writes to correct artifact dir for product runs. (P1) M1: Fixed get_spa_trend in brand_data_service.py — company-level path now explicitly filters t.product_slug is None to exclude product-scoped runs; product-level path splits on '__' and uses list_tasks(product_slug=) filter. (P2) M2: Added threading.RLock (reentrant — register_user calls create_user internally) to AuthStore.__init__; wrapped all 7 mutating methods with with self._lock. (P2) M3: Added SSE path exclusion to RequestLoggingMiddleware.dispatch() in app.py — if path.endswith('/events'): return early, preventing BaseHTTPMiddleware stream buffering. (P3) Tests: Added TestProductSlugValidation class (4 tests) to test_gap_analysis_product.py covering negative product_slug validation for all 3 pipeline endpoints. Added 2 trend tests to TestGapDataProductSlug: test_trend_product_slug_returns_product_run + test_trend_company_level_excludes_product_run.",
+      "test_count": "888 tests passed, 0 failures (up from 882 — 6 new tests)",
+      "files_changed": [
+        "api/auth/store.py",
+        "api/schemas/common.py",
+        "core/models/content_generation.py",
+        "core/content_engine/pipeline.py",
+        "api/routers/content.py",
+        "api/services/brand_data_service.py",
+        "api/app.py",
+        "api/routers/companies.py",
+        "tests/api/test_gap_analysis_product.py",
+        "tests/api/test_gap_data.py"
+      ]
+    },
+    {
+      "id": "T-product-pipeline-all",
+      "task": "Product-Level Pipeline Execution — 5-phase sprint (product CRUD, task infra, wiring, prompts, data endpoints)",
+      "sprint": "product-level-pipeline",
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "summary": "Full product-level pipeline execution feature across 5 phases. (1) Phase 1 — Product CRUD: PipelineTask gains product_slug+effective_slug fields, AuthStore gains add/get/update/remove_product() methods, api/schemas/company.py adds ProductCreateRequest/UpdateRequest/DetailResponse, api/routers/companies.py adds POST/GET/PUT/DELETE /companies/{slug}/products endpoints with company_id ownership check; 35 tests (test_products.py). (2) Phase 2 — Task Infrastructure: TaskStore.create_task() gains product_slug param, uses effective_slug as lock key so company+product runs coexist, list_tasks() supports product_slug filter, cancel endpoint uses task.effective_slug for teardown; 16 tests (test_task_store_product.py). (3) Phase 3 — Pipeline Execution Wiring: Added RunScope dataclass + _resolve_scope() helper in runner.py, all 3 runners (gap, content, research) use effective_slug for artifact dirs, company slug for research inheritance, product context fields passed to input models; fallback chain: {effective_slug}.md → {company_slug}.md for context/personas/style; 36 tests (test_gap_analysis_product.py). (4) Phase 4 — Product Prompts: Added _PRODUCT_CONTEXT_BLOCK to s2_generate_queries.py with {product_context_block} slot injected before cluster taxonomy; added _PRODUCT_FOCUS_BLOCK to planner_prompts.py injected after ## Company section; guard condition: only inject when product_slug AND product_name both set — zero drift for company-level runs; 15 tests (test_s2_product_context.py). (5) Phase 5 — Data Endpoints: Added _effective() helper + product_slug query param to all 8 gap_data endpoints and all 3 content_data endpoints; updated _SLUG_PATTERN in all 3 service files from ^[a-z0-9][a-z0-9-]*$ to ^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$ to accept effective slugs; 12 new tests in test_gap_data.py + test_content_data.py.",
+      "test_count": "882 tests passed, 0 failures (up from 768 — 114 new tests across 5 phases)",
+      "files_changed": [
+        "api/tasks/models.py",
+        "api/tasks/store.py",
+        "api/tasks/runner.py",
+        "api/auth/store.py",
+        "api/routers/companies.py",
+        "api/routers/gap_analysis.py",
+        "api/routers/content.py",
+        "api/routers/research.py",
+        "api/routers/gap_data.py",
+        "api/routers/content_data.py",
+        "api/schemas/company.py",
+        "api/schemas/common.py",
+        "api/services/gap_data_service.py",
+        "api/services/content_data_service.py",
+        "api/services/brand_data_service.py",
+        "core/models/gap_analysis.py",
+        "core/models/content_generation.py",
+        "core/models/artifacts.py",
+        "core/gap_analysis/steps/s2_generate_queries.py",
+        "core/content_engine/prompts/planner_prompts.py",
+        "core/content_engine/planner.py",
+        "tests/api/test_products.py",
+        "tests/api/test_task_store_product.py",
+        "tests/api/test_gap_analysis_product.py",
+        "tests/api/test_gap_data.py",
+        "tests/api/test_content_data.py",
+        "tests/gap_analysis/steps/test_s2_product_context.py"
+      ]
+    },
+    {
+      "id": "T-cx-9-c7-c6-cx10",
+      "task": "Fix CX-9 (TOCTOU stat), C7 (dead _PATTERN_FLAGS entry), C6 (_CACHE lock), CX-10 (negative tests)",
+      "sprint": "front-back-integration",
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "summary": "Four remaining service fixes: (1) C7 — removed dead ('has_comparison_table','Tables') entry from _PATTERN_FLAGS in gap_data_service.py; GapContentBrief has has_tables not has_comparison_table. Fixed test fixture _make_gap to use has_tables:0.9, added TestC7HasComparisonTableRemoved with 2 tests. (2) CX-9 — replaced is_file()+unguarded stat() with try/except(FileNotFoundError,OSError) around stat() in both _load_json_cached functions (gap_data_service.py and content_data_service.py); eliminates TOCTOU race window entirely. (3) C6 — added import threading + _CACHE_LOCK=threading.Lock() to both service files; wrapped compound check-evict-insert in with _CACHE_LOCK in both caches. (4) CX-10 — verified all negative-path tests already existed (TestCX1..8 classes in test_gap_data.py + test_content_data.py); 768 tests passing, up from 766.",
+      "test_count": "768 tests passed, 0 failures",
+      "files_changed": [
+        "api/services/gap_data_service.py",
+        "api/services/content_data_service.py",
+        "tests/api/test_gap_data.py"
+      ]
+    },
+    {
+      "id": "T-cx-batch-1-8",
+      "task": "Verified CX-1 through CX-8 already fixed in code (discovered via code audit 2026-02-26)",
+      "sprint": "front-back-integration",
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "summary": "Code audit confirmed all 7 CX bugs from Codex Phase 4 review were already fixed: CX-1 (is_relative_to + symlink check in content_data_service.py:414-419), CX-3 (type-aware sort with _STRING_SORT_FIELDS/_NUMERIC_SORT_FIELDS in gap_data_service.py:765-775), CX-4 (walrus+isinstance filter in _compute_citability_score:205-208), CX-5 (isinstance guard on similarity in get_platforms:897-900), CX-6 (_safe_float helper with math.isfinite in gap_data_service.py:263-270), CX-7 (ValidationError caught → 422 in get_embedding_projection:1027-1033), CX-8 (JSONDecodeError → 422 in get_brief_stage_content:430-434). Remaining: CX-9 (stat() unguarded), CX-10 (tests), C7 (dead _PATTERN_FLAGS entry), C6 (_CACHE lock).",
+      "files_confirmed_fixed": [
+        "api/services/content_data_service.py",
+        "api/services/gap_data_service.py"
+      ]
+    },
     {
       "id": "T-fb-phase4",
       "task": "Phase 4 — Brand Brain + Run History: 3 endpoints, service layer, 57 tests, Codex reviewed",
@@ -508,22 +609,25 @@
       "id": "T-fb-deferred-C5",
       "task": "Add allowlist to update_company() — currently allows overwriting id, created_at, slug via **kwargs",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "code review 2026-02-25, .claude/sprints/v1/review-findings-deferred.md"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-review-action-items (P0 C2/C5)"
     },
     {
       "id": "T-fb-deferred-C6",
       "task": "Fix _CACHE thread safety — non-atomic read-modify-write race in gap_data_service.py under concurrent load",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "code review 2026-02-25, .claude/sprints/v1/review-findings-deferred.md"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-cx-9-c7-c6-cx10"
     },
     {
       "id": "T-fb-deferred-C7",
       "task": "Fix _PATTERN_FLAGS has_comparison_table → has_tables mismatch in gap_data_service.py",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "code review 2026-02-25, .claude/sprints/v1/review-findings-deferred.md"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-cx-9-c7-c6-cx10"
     },
     {
       "id": "T-fb-phase4",
@@ -537,64 +641,73 @@
       "id": "T-cx-1",
       "task": "CRITICAL: Fix symlink path traversal bypass in content stage reader — replace startswith with is_relative_to",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "Codex gpt-5.3 review 2026-02-26 (CX-1)"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-cx-batch-1-8 (already fixed in code)"
     },
     {
       "id": "T-cx-3",
       "task": "Fix sort by string field crash — getattr(...) or 0 mixes str/int types causing TypeError",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "Codex gpt-5.3 review 2026-02-26 (CX-3)"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-cx-batch-1-8 (already fixed in code)"
     },
     {
       "id": "T-cx-4",
       "task": "Fix _compute_citability_score crash on overall_score: null — filter None values",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "Codex gpt-5.3 review 2026-02-26 (CX-4)"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-cx-batch-1-8 (already fixed in code)"
     },
     {
       "id": "T-cx-5",
       "task": "Fix platform similarity TypeError on string values — add isinstance guard",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "Codex gpt-5.3 review 2026-02-26 (CX-5)"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-cx-batch-1-8 (already fixed in code)"
     },
     {
       "id": "T-cx-6",
       "task": "Fix NaN in enriched citations causing 500 on JSON serialization — add safe_float helper",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "Codex gpt-5.3 review 2026-02-26 (CX-6)"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-cx-batch-1-8 (already fixed in code)"
     },
     {
       "id": "T-cx-7",
       "task": "Catch ValidationError in /embeddings endpoint for malformed projection points",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "Codex gpt-5.3 review 2026-02-26 (CX-7)"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-cx-batch-1-8 (already fixed in code)"
     },
     {
       "id": "T-cx-8",
       "task": "Fix JSON stage fallback returning raw string with application/json content_type",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "Codex gpt-5.3 review 2026-02-26 (CX-8)"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-cx-batch-1-8 (already fixed in code)"
     },
     {
       "id": "T-cx-9",
       "task": "Fix TOCTOU race between is_file() and stat() in both cache loaders",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "Codex gpt-5.3 review 2026-02-26 (CX-9)"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-cx-9-c7-c6-cx10"
     },
     {
       "id": "T-cx-10",
       "task": "Add negative tests for: symlink traversal, mixed-type sort, null/NaN payloads, malformed projections",
       "sprint": "front-back-integration",
-      "status": "pending",
-      "source": "Codex gpt-5.3 review 2026-02-26 (CX-10)"
+      "status": "done",
+      "completed_at": "2026-02-26",
+      "resolved_by": "T-cx-9-c7-c6-cx10 (tests already existed; +2 C7 regression tests added)"
     }
   ],
   "blocked": []

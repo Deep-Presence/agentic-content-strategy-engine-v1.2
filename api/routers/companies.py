@@ -10,17 +10,21 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.dependencies import get_artifacts_root, get_auth_store, get_task_store
 from api.schemas.company import (
     CompanyProfileResponse,
     LatestRunSummary,
+    ProductCreateRequest,
+    ProductDetailResponse,
     ProductSummary,
+    ProductUpdateRequest,
     ResearchArtifactSummary,
 )
 from api.auth.store import AuthStore
 from api.tasks.store import TaskStore
+from core.models.organization import Product
 
 logger = logging.getLogger(__name__)
 
@@ -187,13 +191,18 @@ def get_company_profile(
     products: List[ProductSummary] = []
     if company and company.products:
         for p in company.products:
+            effective = f"{slug}__{p.slug}"
             products.append(
                 ProductSummary(
                     slug=p.slug,
                     name=p.name,
-                    has_research=False,  # Product-level artifacts not yet implemented
-                    has_gap_analysis=False,
-                    has_content=False,
+                    domain=p.domain,
+                    description=p.description,
+                    has_research=(
+                        _detect_artifact_status(artifacts_root, "company_context", effective) != "none"
+                    ),
+                    has_gap_analysis=_has_nested_artifacts(artifacts_root, "gap_analysis", effective),
+                    has_content=_has_nested_artifacts(artifacts_root, "content", effective),
                 )
             )
 
@@ -208,3 +217,162 @@ def get_company_profile(
         research_summary=research_summary,
         latest_runs=latest_runs,
     )
+
+
+# ── Product CRUD endpoints ─────────────────────────────────
+
+
+def _get_verified_company(slug: str, auth_store: AuthStore):  # type: ignore[return]
+    """Get company by slug or raise 404."""
+    if not _SLUG_PATTERN.match(slug):
+        raise HTTPException(status_code=400, detail="Invalid company slug format")
+    company = auth_store.get_company_by_slug(slug)
+    if not company:
+        raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
+    return company
+
+
+@router.post("/{slug}/products", response_model=ProductDetailResponse, status_code=201)
+def create_product(
+    slug: str,
+    body: ProductCreateRequest,
+    request: Request,
+    auth_store: AuthStore = Depends(get_auth_store),
+) -> ProductDetailResponse:
+    """Create a new product under a company.
+
+    Requires authentication. The slug must match ^[a-z0-9][a-z0-9-]*$.
+    """
+    if not _SLUG_PATTERN.match(body.slug):
+        raise HTTPException(
+            status_code=422,
+            detail="Product slug must match ^[a-z0-9][a-z0-9-]*$",
+        )
+
+    company = _get_verified_company(slug, auth_store)
+
+    # GRACE MODE (v0): AuthMiddleware does not enforce auth — unauthenticated
+    # requests have user_id=None and pass through the check below unchanged.
+    # This is intentional for the demo deployment. Harden before production.
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        user = auth_store.get_user_by_id(user_id)
+        if user and user.get("company_id") != company.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    product = Product(
+        company_id=company.id,
+        slug=body.slug,
+        name=body.name,
+        domain=body.domain,
+        description=body.description,
+    )
+
+    try:
+        auth_store.add_product(slug, product)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return ProductDetailResponse(
+        id=product.id,
+        slug=product.slug,
+        name=product.name,
+        domain=product.domain,
+        description=product.description,
+        company_id=product.company_id,
+        created_at=product.created_at,
+        updated_at=product.updated_at,
+    )
+
+
+@router.get("/{slug}/products/{product_slug}", response_model=ProductDetailResponse)
+def get_product(
+    slug: str,
+    product_slug: str,
+    auth_store: AuthStore = Depends(get_auth_store),
+) -> ProductDetailResponse:
+    """Get a specific product by slug."""
+    company = _get_verified_company(slug, auth_store)
+    product = auth_store.get_product(slug, product_slug)
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Product '{product_slug}' not found in company '{slug}'",
+        )
+
+    return ProductDetailResponse(
+        id=product.id,
+        slug=product.slug,
+        name=product.name,
+        domain=product.domain,
+        description=product.description,
+        company_id=product.company_id,
+        created_at=product.created_at,
+        updated_at=product.updated_at,
+    )
+
+
+@router.put("/{slug}/products/{product_slug}", response_model=ProductDetailResponse)
+def update_product(
+    slug: str,
+    product_slug: str,
+    body: ProductUpdateRequest,
+    request: Request,
+    auth_store: AuthStore = Depends(get_auth_store),
+) -> ProductDetailResponse:
+    """Update a product's fields (name, domain, description)."""
+    company = _get_verified_company(slug, auth_store)
+
+    # GRACE MODE (v0): AuthMiddleware does not enforce auth — unauthenticated
+    # requests have user_id=None and pass through the check below unchanged.
+    # This is intentional for the demo deployment. Harden before production.
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        user = auth_store.get_user_by_id(user_id)
+        if user and user.get("company_id") != company.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    try:
+        product = auth_store.update_product(slug, product_slug, **updates)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return ProductDetailResponse(
+        id=product.id,
+        slug=product.slug,
+        name=product.name,
+        domain=product.domain,
+        description=product.description,
+        company_id=product.company_id,
+        created_at=product.created_at,
+        updated_at=product.updated_at,
+    )
+
+
+@router.delete("/{slug}/products/{product_slug}")
+def delete_product(
+    slug: str,
+    product_slug: str,
+    request: Request,
+    auth_store: AuthStore = Depends(get_auth_store),
+) -> dict:
+    """Delete a product."""
+    company = _get_verified_company(slug, auth_store)
+
+    # GRACE MODE (v0): AuthMiddleware does not enforce auth — unauthenticated
+    # requests have user_id=None and pass through the check below unchanged.
+    # This is intentional for the demo deployment. Harden before production.
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        user = auth_store.get_user_by_id(user_id)
+        if user and user.get("company_id") != company.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    removed = auth_store.remove_product(slug, product_slug)
+    if not removed:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Product '{product_slug}' not found in company '{slug}'",
+        )
+    return {"deleted": True}

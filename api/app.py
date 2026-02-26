@@ -53,9 +53,17 @@ async def lifespan(app: FastAPI):
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Logs method, path, status code, and duration for every request."""
+    """Logs method, path, status code, and duration for every request.
+
+    SSE endpoints (/events) are excluded: BaseHTTPMiddleware buffers the
+    response body before returning, which would break streaming delivery.
+    """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        # SSE endpoints — pass through without buffering
+        if request.url.path.endswith("/events"):
+            return await call_next(request)
+
         start = time.monotonic()
         response = await call_next(request)
         duration_ms = (time.monotonic() - start) * 1000

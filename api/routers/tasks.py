@@ -21,10 +21,14 @@ def list_tasks(
     pipeline: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     company_slug: Optional[str] = Query(None),
+    product_slug: Optional[str] = Query(None),
     task_store: TaskStore = Depends(get_task_store),
 ) -> TaskListResponse:
     tasks = task_store.list_tasks(
-        pipeline=pipeline, status=status, company_slug=company_slug
+        pipeline=pipeline,
+        status=status,
+        company_slug=company_slug,
+        product_slug=product_slug,
     )
     summaries = [
         TaskSummary(
@@ -32,6 +36,8 @@ def list_tasks(
             pipeline=t.pipeline,
             status=t.status.value,
             company_slug=t.company_slug,
+            product_slug=t.product_slug,
+            effective_slug=t.effective_slug,
             current_step=t.current_step,
             created_at=t.created_at,
             updated_at=t.updated_at,
@@ -51,6 +57,8 @@ def get_task(
         run_id=task.task_id,
         pipeline=task.pipeline,
         company_slug=task.company_slug,
+        product_slug=task.product_slug,
+        effective_slug=task.effective_slug,
         status=task.status.value,
         current_step=task.current_step,
         progress_pct=task.progress_pct,
@@ -79,7 +87,9 @@ def cancel_task(
     task_store.cancel_task_handle(task_id)
 
     task_store.update_task(task_id, status=TaskStatus.CANCELLED)
-    task_store.release_slug_lock(task.company_slug)
+    # Use effective_slug (may be company__product) for correct lock release
+    effective = task.effective_slug or task.company_slug
+    task_store.release_slug_lock(effective)
 
     # Publish SSE cancelled event so frontend receives it
     event_bus.publish(task_id, "cancelled", {"reason": "user_cancelled"})

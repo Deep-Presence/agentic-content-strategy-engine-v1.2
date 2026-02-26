@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -31,15 +32,19 @@ logger = logging.getLogger(__name__)
 
 _CACHE: Dict[Tuple[str, str], Tuple[int, Any]] = {}
 _CACHE_MAX_ENTRIES = 10
+_CACHE_LOCK = threading.Lock()  # C6: protects compound check-evict-insert
 
 
 def _load_json_cached(base_dir: Path, filename: str) -> Optional[Any]:
     """Load and parse a JSON file with mtime-based cache invalidation."""
     file_path = base_dir / filename
-    if not file_path.is_file():
+
+    # CX-9: guard stat() — eliminates TOCTOU between is_file() and stat()
+    try:
+        mtime_ns = file_path.stat().st_mtime_ns
+    except (FileNotFoundError, OSError):
         return None
 
-    mtime_ns = file_path.stat().st_mtime_ns
     cache_key = (str(base_dir), filename)
 
     cached = _CACHE.get(cache_key)
@@ -52,17 +57,19 @@ def _load_json_cached(base_dir: Path, filename: str) -> Optional[Any]:
         logger.warning("Failed to parse %s: %s", file_path, exc)
         return None
 
-    if len(_CACHE) >= _CACHE_MAX_ENTRIES and cache_key not in _CACHE:
-        oldest_key = next(iter(_CACHE))
-        del _CACHE[oldest_key]
-
-    _CACHE[cache_key] = (mtime_ns, data)
+    # C6: lock protects the compound check-evict-insert against concurrent writes
+    with _CACHE_LOCK:
+        if len(_CACHE) >= _CACHE_MAX_ENTRIES and cache_key not in _CACHE:
+            oldest_key = next(iter(_CACHE))
+            del _CACHE[oldest_key]
+        _CACHE[cache_key] = (mtime_ns, data)
     return data
 
 
 # ── Validation ───────────────────────────────────────────────────────
 
-_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# Accepts bare company slugs ("ramp") and effective product slugs ("ramp__card")
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
 _BRIEF_ID_PATTERN = re.compile(r"^brief-\d{1,4}$")
 
 _VALID_STAGES = frozenset(

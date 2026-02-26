@@ -40,6 +40,10 @@ class CompanyResearchInput(BaseModel):
     language: str = "en"
     region: Optional[str] = None
     additional_constraints: Optional[str] = None
+    # Product-level scope (optional — omit for company-level runs)
+    product_slug: Optional[str] = None
+    product_name: Optional[str] = None
+    product_description: Optional[str] = None
 
 
 class CompanyContextArtifact(BaseModel):

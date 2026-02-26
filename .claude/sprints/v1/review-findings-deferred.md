@@ -2,7 +2,7 @@
 
 > **Source:** Comprehensive code review of feat/front-back branch (Phase 1 Auth + Phase 2 Gap Data)
 > **Date:** 2026-02-25
-> **Status:** Deferred — fix before production
+> **Status:** Partially resolved — see individual items below for resolution status
 
 ---
 
@@ -14,17 +14,15 @@
 
 No allowlist on `setattr` — caller can corrupt internal state. Needs an allowlist of mutable fields (`name`, `domain`, `additional_domains`, `products`).
 
-### C6. Module-level `_CACHE` has non-atomic read-modify-write race
+### C6. Module-level `_CACHE` has non-atomic read-modify-write race ✅ RESOLVED 2026-02-26
 
 **File:** `api/services/gap_data_service.py:45-72`
+**Resolution:** Added `import threading` + `_CACHE_LOCK = threading.Lock()` to both `gap_data_service.py` and `content_data_service.py`. Wrapped compound check-evict-insert in `with _CACHE_LOCK:` in both caches. Task: T-cx-9-c7-c6-cx10.
 
-FastAPI runs sync endpoints in a thread pool. The compound operation (check length, delete oldest, insert) is not atomic under concurrent load. Add `threading.Lock` around cache mutations, or switch to `cachetools.TTLCache`.
-
-### C7. `_PATTERN_FLAGS` includes `has_comparison_table` which doesn't exist on `GapContentBrief`
+### C7. `_PATTERN_FLAGS` includes `has_comparison_table` which doesn't exist on `GapContentBrief` ✅ RESOLVED 2026-02-26
 
 **File:** `api/services/gap_data_service.py:190`
-
-Real `GapContentBrief` has `has_tables` not `has_comparison_table`. That flag only exists on `StructuralSignals`. Test fixtures mask this mismatch. Remove `("has_comparison_table", "Tables")` from `_PATTERN_FLAGS` and update test fixtures to use `has_tables: 0.9`.
+**Resolution:** Removed `("has_comparison_table", "Tables")` from `_PATTERN_FLAGS`. Updated test fixture `_make_gap` to use `has_tables: 0.9`. Added 2 regression tests in `TestC7HasComparisonTableRemoved`. Task: T-cx-9-c7-c6-cx10.
 
 ---
 
@@ -109,11 +107,10 @@ Extract to shared utility.
 > **Session:** 019c960a-cd1b-7963-b853-efc8645d5729
 > **Resolved in this session:** C1 (gap_data try/except), H1 (Literal method), H3 (NaN filter)
 
-### CX-1. CRITICAL — Symlink path traversal bypass in content stage reader
+### CX-1. CRITICAL — Symlink path traversal bypass in content stage reader ✅ RESOLVED 2026-02-26
 
 **File:** `api/services/content_data_service.py:408-411`
-**Reproduced:** Yes — symlinked `brief-1 → ../webflow-escape/brief-1` passes `startswith` check.
-**Fix:** Replace `str(resolved).startswith(str(content_root.resolve()))` with `resolved.is_relative_to(content_root.resolve())`. Also reject symlinks on brief_dir.
+**Resolution:** Uses `resolved.is_relative_to(content_root.resolve())` + symlink check. Confirmed already fixed in code via T-cx-batch-1-8 audit.
 
 ### CX-2. HIGH — Corrupted JSON returns empty 200 instead of error (DESIGN DECISION)
 
@@ -121,48 +118,55 @@ Extract to shared utility.
 **Status:** INTENTIONAL — we want graceful degradation when artifacts are in-flight. Logging is sufficient.
 **Disposition:** REJECT — keep current behavior (log warning, return defaults).
 
-### CX-3. MEDIUM — Sort by string field crashes with mixed str/int types
+### CX-3. MEDIUM — Sort by string field crashes with mixed str/int types ✅ RESOLVED 2026-02-26
 
 **File:** `api/services/gap_data_service.py:761`
-**Reproduced:** `sort_by=query_text` with missing `query_text` → `getattr(...) or 0` returns `0` (int) for blank string, but `"abc"` (str) for populated — `TypeError: '<' not supported`.
-**Fix:** Type-aware sort key: `str(getattr(r, sort_by, ""))` for string fields, `float(getattr(r, sort_by, 0) or 0)` for numeric.
+**Resolution:** Type-aware sort with `_STRING_SORT_FIELDS` / `_NUMERIC_SORT_FIELDS` sets. Confirmed already fixed via T-cx-batch-1-8 audit.
 
-### CX-4. MEDIUM — `_compute_citability_score` crashes on `overall_score: null`
+### CX-4. MEDIUM — `_compute_citability_score` crashes on `overall_score: null` ✅ RESOLVED 2026-02-26
 
 **File:** `api/services/content_data_service.py:205-206`
-**Reproduced:** `{'cycles': [{'overall_score': None}]}` → `None * 100` → `TypeError`.
-**Fix:** Filter `None` values: `scores = [c.get("overall_score") for c in cycles]; valid = [s for s in scores if isinstance(s, (int, float))]`.
+**Resolution:** `walrus + isinstance` filter for None values. Confirmed already fixed via T-cx-batch-1-8 audit.
 
-### CX-5. MEDIUM — Platform similarity assumes numeric, crashes on string values
+### CX-5. MEDIUM — Platform similarity assumes numeric, crashes on string values ✅ RESOLVED 2026-02-26
 
 **File:** `api/services/gap_data_service.py:883-886`
-**Reproduced:** `best_paragraphs: [{"similarity": "0.9"}]` → `sum(sims)` mixes int + str → `TypeError`.
-**Fix:** Add `isinstance(sim, (int, float))` guard before `ed["sims"].append(sim)`.
+**Resolution:** `isinstance(sim, (int, float))` guard in `get_platforms`. Confirmed already fixed via T-cx-batch-1-8 audit.
 
-### CX-6. MEDIUM — NaN in enriched citations → 500 on JSON serialization
+### CX-6. MEDIUM — NaN in enriched citations → 500 on JSON serialization ✅ RESOLVED 2026-02-26
 
 **File:** `api/services/gap_data_service.py:278-287, 317-324`
-**Reproduced:** `structural_signals: {"word_count": NaN}` → propagates through averages → `json.dumps(NaN)` → `ValueError`.
-**Fix:** Add `safe_float()` helper: `return val if isinstance(val, (int, float)) and math.isfinite(val) else 0.0`.
+**Resolution:** `_safe_float()` helper using `math.isfinite`. Confirmed already fixed via T-cx-batch-1-8 audit.
 
-### CX-7. MEDIUM — `/embeddings` unhandled `ValidationError` on malformed points
+### CX-7. MEDIUM — `/embeddings` unhandled `ValidationError` on malformed points ✅ RESOLVED 2026-02-26
 
 **File:** `api/services/gap_data_service.py:1013`
-**Reproduced:** `{"x": "abc"}` in projection JSON → `EmbeddingPoint(**p)` → unhandled `ValidationError`.
-**Fix:** Wrap in `try/except ValidationError` → HTTPException(422, "Malformed embedding projection data").
+**Resolution:** `try/except ValidationError` → HTTPException(422). Confirmed already fixed via T-cx-batch-1-8 audit.
 
-### CX-8. MEDIUM — JSON stage fallback returns raw string with `application/json` content_type
+### CX-8. MEDIUM — JSON stage fallback returns raw string with `application/json` content_type ✅ RESOLVED 2026-02-26
 
 **File:** `api/services/content_data_service.py:421-427`
-**Status:** Low risk — only happens with corrupted `outline.json` or `eval_history.json`.
-**Fix:** Return 422 on parse failure instead of falling back to raw string.
+**Resolution:** `JSONDecodeError` → HTTPException(422). Confirmed already fixed via T-cx-batch-1-8 audit.
 
-### CX-9. LOW — TOCTOU race between `is_file()` and `stat()` in cache loaders
+### CX-9. LOW — TOCTOU race between `is_file()` and `stat()` in cache loaders ✅ RESOLVED 2026-02-26
 
 **File:** `gap_data_service.py:58-62`, `content_data_service.py:39-43`
-**Fix:** Wrap `stat()` + `read_text()` in single `try/except (FileNotFoundError, OSError)`.
+**Resolution:** Replaced `is_file()` + unguarded `stat()` with `try/except (FileNotFoundError, OSError)` around stat(). Task: T-cx-9-c7-c6-cx10.
 
-### CX-10. LOW — Test coverage gaps for negative paths
+### CX-10. LOW — Test coverage gaps for negative paths ✅ RESOLVED 2026-02-26
 
 **File:** Multiple test files
-**Fix:** Add tests for: symlink traversal, mixed-type sort keys, null/NaN numeric payloads, malformed projection points.
+**Resolution:** All negative-path tests already existed (TestCX1–8 classes). Added 2 C7 regression tests. Task: T-cx-9-c7-c6-cx10.
+
+---
+
+## Summary of Resolution Status (as of 2026-02-26)
+
+| Finding | Severity | Status |
+|---------|----------|--------|
+| C5 — update_company allowlist | CRITICAL | ⏳ Still deferred |
+| C6 — _CACHE thread safety | CRITICAL | ✅ Fixed (T-cx-9-c7-c6-cx10) |
+| C7 — _PATTERN_FLAGS mismatch | CRITICAL | ✅ Fixed (T-cx-9-c7-c6-cx10) |
+| W1–W9 | WARNING | ⏳ Still deferred |
+| I1–I8 | INFO | ⏳ Still deferred |
+| CX-1–CX-10 | CRITICAL–LOW | ✅ All fixed (T-cx-batch-1-8, T-cx-9-c7-c6-cx10) |

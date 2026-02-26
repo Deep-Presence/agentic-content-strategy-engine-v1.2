@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -123,6 +124,96 @@ class TestStartGapAnalysis:
             },
         )
         assert resp.status_code == 202
+
+
+class TestStartGapAnalysisGuard:
+    """Guard: return 200 already_exists when artifacts exist instead of launching a new run."""
+
+    def _make_sentinel(
+        self,
+        artifacts_root: Path,
+        effective_slug: str,
+        filename: str = "gap_analysis_complete.json",
+    ) -> None:
+        d = artifacts_root / "gap_analysis" / effective_slug
+        d.mkdir(parents=True, exist_ok=True)
+        (d / filename).touch()
+
+    def test_start_returns_already_exists_when_complete_json_present(
+        self, client: TestClient, artifacts_root: Path
+    ) -> None:
+        self._make_sentinel(artifacts_root, "ramp")
+        resp = client.post("/api/v1/gap-analysis/start", json=MINIMAL_PAYLOAD)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["already_exists"] is True
+        assert data["status"] == "already_exists"
+        assert "force_rerun" in data["message"].lower()
+
+    def test_start_returns_already_exists_when_only_analysis_json_present(
+        self, client: TestClient, artifacts_root: Path
+    ) -> None:
+        """Fallback sentinel (s6 output) also triggers the guard."""
+        self._make_sentinel(artifacts_root, "ramp", "analysis.json")
+        resp = client.post("/api/v1/gap-analysis/start", json=MINIMAL_PAYLOAD)
+        assert resp.status_code == 200
+        assert resp.json()["already_exists"] is True
+
+    def test_start_force_rerun_bypasses_guard(
+        self, client: TestClient, artifacts_root: Path, mock_gap_pipeline
+    ) -> None:
+        self._make_sentinel(artifacts_root, "ramp")
+        resp = client.post(
+            "/api/v1/gap-analysis/start",
+            json={**MINIMAL_PAYLOAD, "force_rerun": True},
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["already_exists"] is False
+
+    def test_start_already_exists_includes_last_task_run_id(
+        self, client: TestClient, artifacts_root: Path, task_store: TaskStore
+    ) -> None:
+        self._make_sentinel(artifacts_root, "ramp")
+        task = task_store.create_task("gap_analysis", "ramp")
+        task_store.update_task(task.task_id, status=TaskStatus.COMPLETED)
+        resp = client.post("/api/v1/gap-analysis/start", json=MINIMAL_PAYLOAD)
+        assert resp.status_code == 200
+        assert resp.json()["run_id"] == task.task_id
+
+    def test_start_already_exists_uses_existing_prefix_when_no_task_record(
+        self, client: TestClient, artifacts_root: Path
+    ) -> None:
+        self._make_sentinel(artifacts_root, "ramp", "analysis.json")
+        resp = client.post("/api/v1/gap-analysis/start", json=MINIMAL_PAYLOAD)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["run_id"].startswith("existing-")
+        assert "ramp" in data["run_id"]
+
+    def test_start_new_company_no_artifacts_proceeds_normally(
+        self, client: TestClient, artifacts_root: Path, mock_gap_pipeline
+    ) -> None:
+        resp = client.post(
+            "/api/v1/gap-analysis/start",
+            json={"company_name": "Newco", "domain": "newco.io"},
+        )
+        assert resp.status_code == 202
+        assert resp.json()["already_exists"] is False
+
+    def test_product_level_checks_effective_slug_dir(
+        self, client: TestClient, artifacts_root: Path
+    ) -> None:
+        """Product run must check the effective_slug dir, not the bare company slug."""
+        self._make_sentinel(artifacts_root, "ramp__corp-card", "analysis.json")
+        resp = client.post(
+            "/api/v1/gap-analysis/start",
+            json={**MINIMAL_PAYLOAD, "product_slug": "corp-card"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["already_exists"] is True
+        assert data["product_slug"] == "corp-card"
 
 
 class TestGetGapAnalysisStatus:

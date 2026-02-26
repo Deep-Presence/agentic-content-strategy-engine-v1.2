@@ -15,6 +15,7 @@ import json
 import os
 import re
 import secrets
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -93,6 +94,12 @@ def normalize_domain(raw: str) -> Tuple[str, Optional[str]]:
         return root, subdomain
 
 
+# Allowlists for mutable fields — prevents callers from overwriting immutable
+# identity fields (id, created_at, slug) via **kwargs in update_* methods.
+_COMPANY_MUTABLE_FIELDS: frozenset = frozenset({"name", "domain", "additional_domains"})
+_PRODUCT_MUTABLE_FIELDS: frozenset = frozenset({"name", "domain", "description"})
+
+
 def _derive_slug(name: str) -> str:
     """Derive a URL-safe slug from a company name."""
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -111,6 +118,11 @@ class AuthStore:
         # In-memory cache
         self._companies: Dict[str, Company] = {}
         self._users: Dict[str, Dict[str, Any]] = {}  # keyed by user.id
+
+        # Reentrant mutex: serialises all check-then-mutate-then-save operations.
+        # RLock (not Lock) because register_user calls create_user internally.
+        # Read-only operations do not acquire this lock.
+        self._lock = threading.RLock()
 
         self._load()
 
@@ -167,30 +179,92 @@ class AuthStore:
         products: Optional[List[Product]] = None,
         additional_domains: Optional[List[str]] = None,
     ) -> Company:
-        if slug in self._companies:
-            raise ValueError(f"Company with slug '{slug}' already exists")
-        company = Company(
-            slug=slug,
-            name=name,
-            domain=domain,
-            products=products or [],
-            additional_domains=additional_domains or [],
-        )
-        self._companies[slug] = company
-        self._save_companies()
+        with self._lock:
+            if slug in self._companies:
+                raise ValueError(f"Company with slug '{slug}' already exists")
+            company = Company(
+                slug=slug,
+                name=name,
+                domain=domain,
+                products=products or [],
+                additional_domains=additional_domains or [],
+            )
+            self._companies[slug] = company
+            self._save_companies()
         return company
 
     def update_company(self, slug: str, **kwargs: Any) -> Company:
-        company = self._companies.get(slug)
-        if not company:
-            raise ValueError(f"Company '{slug}' not found")
-        for k, v in kwargs.items():
-            if hasattr(company, k):
-                setattr(company, k, v)
-        company.updated_at = _utcnow()
-        self._companies[slug] = company
-        self._save_companies()
+        with self._lock:
+            company = self._companies.get(slug)
+            if not company:
+                raise ValueError(f"Company '{slug}' not found")
+            for k, v in kwargs.items():
+                if k in _COMPANY_MUTABLE_FIELDS:
+                    setattr(company, k, v)
+            company.updated_at = _utcnow()
+            self._companies[slug] = company
+            self._save_companies()
         return company
+
+    # ── Product operations ────────────────────────────────────
+
+    def add_product(self, company_slug: str, product: "Product") -> "Product":
+        """Add a product to a company."""
+        with self._lock:
+            company = self._companies.get(company_slug)
+            if not company:
+                raise ValueError(f"Company '{company_slug}' not found")
+            for p in company.products:
+                if p.slug == product.slug:
+                    raise ValueError(
+                        f"Product with slug '{product.slug}' already exists in company '{company_slug}'"
+                    )
+            company.products.append(product)
+            company.updated_at = _utcnow()
+            self._save_companies()
+        return product
+
+    def get_product(self, company_slug: str, product_slug: str) -> Optional["Product"]:
+        """Get a product by company slug and product slug."""
+        company = self._companies.get(company_slug)
+        if not company:
+            return None
+        for p in company.products:
+            if p.slug == product_slug:
+                return p
+        return None
+
+    def update_product(self, company_slug: str, product_slug: str, **kwargs: Any) -> "Product":
+        """Update a product's fields (name, domain, description only)."""
+        with self._lock:
+            company = self._companies.get(company_slug)
+            if not company:
+                raise ValueError(f"Company '{company_slug}' not found")
+            for i, p in enumerate(company.products):
+                if p.slug == product_slug:
+                    for k, v in kwargs.items():
+                        if k in _PRODUCT_MUTABLE_FIELDS:
+                            setattr(p, k, v)
+                    p.updated_at = _utcnow()
+                    company.products[i] = p
+                    company.updated_at = _utcnow()
+                    self._save_companies()
+                    return p
+        raise ValueError(f"Product '{product_slug}' not found in company '{company_slug}'")
+
+    def remove_product(self, company_slug: str, product_slug: str) -> bool:
+        """Remove a product from a company. Returns True if removed."""
+        with self._lock:
+            company = self._companies.get(company_slug)
+            if not company:
+                return False
+            original_len = len(company.products)
+            company.products = [p for p in company.products if p.slug != product_slug]
+            if len(company.products) < original_len:
+                company.updated_at = _utcnow()
+                self._save_companies()
+                return True
+        return False
 
     # ── User operations ───────────────────────────────────────
 
@@ -221,20 +295,21 @@ class AuthStore:
         last_name: str = "",
         role: str = "member",
     ) -> UserProfile:
-        if self.get_user_by_email(email):
-            raise ValueError(f"User with email '{email}' already exists")
+        with self._lock:
+            if self.get_user_by_email(email):
+                raise ValueError(f"User with email '{email}' already exists")
 
-        profile = UserProfile(
-            company_id=company_id,
-            email=email,
-            first_name=first_name,
-            last_name=last_name,
-            role=role,
-        )
-        user_data = profile.model_dump(mode="json")
-        user_data["password_hash"] = self._hash_password(password)
-        self._users[profile.id] = user_data
-        self._save_users()
+            profile = UserProfile(
+                company_id=company_id,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                role=role,
+            )
+            user_data = profile.model_dump(mode="json")
+            user_data["password_hash"] = self._hash_password(password)
+            self._users[profile.id] = user_data
+            self._save_users()
         return profile
 
     # ── Registration (company dedup) ───────────────────────────
@@ -255,52 +330,53 @@ class AuthStore:
         - If not, creates a new company and the user becomes 'superuser'
         - Subdomains are saved to company.additional_domains
         """
-        if self.get_user_by_email(email):
-            raise ValueError(f"User with email '{email}' already exists")
+        with self._lock:
+            if self.get_user_by_email(email):
+                raise ValueError(f"User with email '{email}' already exists")
 
-        root_domain, subdomain = normalize_domain(company_domain)
+            root_domain, subdomain = normalize_domain(company_domain)
 
-        # Try to find existing company by root domain
-        existing = self.get_company_by_domain(root_domain)
+            # Try to find existing company by root domain
+            existing = self.get_company_by_domain(root_domain)
 
-        if existing:
-            company = existing
-            role = "member"
-            # Save subdomain if it's new
-            if subdomain and subdomain not in company.additional_domains:
-                company.additional_domains.append(subdomain)
-                company.updated_at = _utcnow()
+            if existing:
+                company = existing
+                role = "member"
+                # Save subdomain if it's new
+                if subdomain and subdomain not in company.additional_domains:
+                    company.additional_domains.append(subdomain)
+                    company.updated_at = _utcnow()
+                    self._save_companies()
+            else:
+                # Create new company
+                slug = _derive_slug(company_name)
+                # Handle slug collision
+                base_slug = slug
+                counter = 1
+                while slug in self._companies:
+                    slug = f"{base_slug}-{counter}"
+                    counter += 1
+
+                additional = [subdomain] if subdomain else []
+                company = Company(
+                    slug=slug,
+                    name=company_name,
+                    domain=root_domain,
+                    additional_domains=additional,
+                )
+                self._companies[slug] = company
                 self._save_companies()
-        else:
-            # Create new company
-            slug = _derive_slug(company_name)
-            # Handle slug collision
-            base_slug = slug
-            counter = 1
-            while slug in self._companies:
-                slug = f"{base_slug}-{counter}"
-                counter += 1
+                role = "superuser"
 
-            additional = [subdomain] if subdomain else []
-            company = Company(
-                slug=slug,
-                name=company_name,
-                domain=root_domain,
-                additional_domains=additional,
+            # Create the user (RLock allows re-entry from this context)
+            user = self.create_user(
+                company_id=company.id,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                password=password,
+                role=role,
             )
-            self._companies[slug] = company
-            self._save_companies()
-            role = "superuser"
-
-        # Create the user
-        user = self.create_user(
-            company_id=company.id,
-            email=email,
-            first_name=first_name,
-            last_name=last_name,
-            password=password,
-            role=role,
-        )
 
         return user, company
 

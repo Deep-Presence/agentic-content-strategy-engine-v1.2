@@ -98,6 +98,14 @@ def _cli_footer(total: float, approved: int, rejected: int) -> None:
 
 
 def _company_slug(input_data: ContentGenerationInput) -> str:
+    """Return the effective artifact slug.
+
+    Prefers input_data.company_slug when set (product-level runs pass
+    scope.effective_slug here). Falls back to deriving from company_name
+    for backward compatibility with direct pipeline invocations.
+    """
+    if input_data.company_slug:
+        return input_data.company_slug
     return re.sub(r"[^a-z0-9]+", "-", input_data.company_name.lower()).strip("-")
 
 

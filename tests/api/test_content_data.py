@@ -1119,3 +1119,82 @@ class TestCX8CorruptedJsonStage:
         )
         resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/eval_history")
         assert resp.status_code == 422
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Phase 5: product_slug query param for all 3 content-data endpoints
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class TestContentDataProductSlug:
+    """?product_slug= query param routes to content/{slug}__{product_slug} dir."""
+
+    def test_briefs_with_product_slug_reads_product_dir(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        briefs = _make_briefs_json(count=2)
+        _setup_content_dir(artifacts_root, slug="ramp__card", briefs_data=briefs)
+
+        r = client.get("/api/v1/companies/ramp/content/briefs?product_slug=card")
+        assert r.status_code == 200
+        assert len(r.json()["briefs"]) == 2
+
+    def test_company_and_product_briefs_independent(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        company_briefs = _make_briefs_json(count=5)
+        product_briefs = _make_briefs_json(count=2)
+        _setup_content_dir(artifacts_root, slug="ramp", briefs_data=company_briefs)
+        _setup_content_dir(artifacts_root, slug="ramp__card", briefs_data=product_briefs)
+
+        r_company = client.get("/api/v1/companies/ramp/content/briefs")
+        r_product = client.get("/api/v1/companies/ramp/content/briefs?product_slug=card")
+
+        assert len(r_company.json()["briefs"]) == 5
+        assert len(r_product.json()["briefs"]) == 2
+
+    def test_missing_product_content_dir_returns_200_empty(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        """Missing product content dir returns 200 with empty briefs list."""
+        r = client.get("/api/v1/companies/ramp/content/briefs?product_slug=nonexistent")
+        assert r.status_code == 200
+        assert r.json()["briefs"] == []
+
+    def test_brief_detail_with_product_slug(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        briefs = _make_briefs_json(count=1)
+        _setup_content_dir(artifacts_root, slug="ramp__card", briefs_data=briefs)
+
+        r = client.get("/api/v1/companies/ramp/content/briefs/brief-0?product_slug=card")
+        assert r.status_code == 200
+        assert r.json()["id"] == "brief-0"
+
+    def test_stage_content_with_product_slug(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        briefs = _make_briefs_json(count=1)
+        _setup_content_dir(
+            artifacts_root,
+            slug="ramp__card",
+            briefs_data=briefs,
+            brief_stages={"brief-0": {"draft.md": "# Product draft content"}},
+        )
+
+        r = client.get(
+            "/api/v1/companies/ramp/content/briefs/brief-0/draft?product_slug=card"
+        )
+        assert r.status_code == 200
+        assert r.json()["content"] == "# Product draft content"
+
+    def test_no_product_slug_uses_company_dir(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        """Without ?product_slug=, endpoint reads company-level dir."""
+        company_briefs = _make_briefs_json(count=3)
+        _setup_content_dir(artifacts_root, slug="ramp", briefs_data=company_briefs)
+
+        r = client.get("/api/v1/companies/ramp/content/briefs")
+        assert r.status_code == 200
+        assert len(r.json()["briefs"]) == 3

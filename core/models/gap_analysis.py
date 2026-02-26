@@ -125,6 +125,16 @@ class GapAnalysisInput(BaseModel):
     max_crawl_depth: Optional[int] = Field(
         default=None, description="Override default crawl depth."
     )
+    # Product-level scope (optional — omit for company-level runs)
+    product_slug: Optional[str] = Field(
+        default=None, description="Product slug for product-level pipeline runs."
+    )
+    product_name: Optional[str] = Field(
+        default=None, description="Product display name for prompt injection."
+    )
+    product_description: Optional[str] = Field(
+        default=None, description="Product description for prompt injection."
+    )
 
 
 class SemanticUnit(BaseModel):

@@ -64,18 +64,32 @@ class TaskStore:
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
-    def create_task(self, pipeline: str, company_slug: str) -> PipelineTask:
-        """Create a new task and acquire slug lock."""
-        self.acquire_slug_lock(company_slug)
+    def create_task(
+        self,
+        pipeline: str,
+        company_slug: str,
+        product_slug: Optional[str] = None,
+    ) -> PipelineTask:
+        """Create a new task and acquire slug lock.
+
+        When product_slug is set, the lock key is ``company_slug__product_slug``
+        so company-level and product-level runs can coexist.
+        """
+        effective = (
+            f"{company_slug}__{product_slug}" if product_slug else company_slug
+        )
+        self.acquire_slug_lock(effective)
 
         task_id = str(uuid.uuid4())
         task = PipelineTask(
             task_id=task_id,
             pipeline=pipeline,
             company_slug=company_slug,
+            product_slug=product_slug,
+            effective_slug=effective,
         )
         self._tasks[task_id] = task
-        self._slug_locks[company_slug] = task_id
+        self._slug_locks[effective] = task_id
         self._persist(task)
         return task
 
@@ -103,6 +117,7 @@ class TaskStore:
         pipeline: Optional[str] = None,
         status: Optional[str] = None,
         company_slug: Optional[str] = None,
+        product_slug: Optional[str] = None,
     ) -> List[PipelineTask]:
         """List tasks with optional filters."""
         tasks = list(self._tasks.values())
@@ -112,6 +127,8 @@ class TaskStore:
             tasks = [t for t in tasks if t.status.value == status]
         if company_slug:
             tasks = [t for t in tasks if t.company_slug == company_slug]
+        if product_slug:
+            tasks = [t for t in tasks if t.product_slug == product_slug]
         return tasks
 
     # ── Slug Locks ────────────────────────────────────────────────────

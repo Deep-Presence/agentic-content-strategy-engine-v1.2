@@ -35,6 +35,14 @@ class ContentGenerationInput(BaseModel):
     max_revision_cycles: int = 2
     auto_approve: bool = False
     skip_stages: List[int] = Field(default_factory=list)
+    # Product-level scope (optional — omit for company-level runs)
+    product_slug: Optional[str] = None
+    product_name: Optional[str] = None
+    product_description: Optional[str] = None
+    # Effective artifact slug — set by API layer to scope output dirs correctly.
+    # When set, overrides the company_name-derived slug for artifact paths.
+    # Empty string means "derive from company_name" (backward-compatible default).
+    company_slug: str = ""
 
 
 # ---------------------------------------------------------------------------

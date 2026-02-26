@@ -162,6 +162,24 @@ async def _call_openai(prompt: str, model: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+_PRODUCT_CONTEXT_BLOCK = """\
+
+SPECIFIC PRODUCT SCOPE — This gap analysis targets a single product, not the full company:
+  Product name:        {product_name}
+  Product domain:      {product_domain}
+  Product description: {product_description}
+
+CRITICAL INSTRUCTIONS FOR PRODUCT-SCOPED QUERIES:
+- Treat this PRODUCT as the subject, not the parent company's full portfolio
+- The "category" for these queries is the product's specific niche (e.g., "corporate spend \
+cards" for Ramp Corporate Card, NOT "expense management software")
+- Apply brand name exclusion rules to the PRODUCT category terms
+- C8 (Branded Evaluation) and C2 (Boundary) queries may use the product name directly
+- Generate queries that capture buyers researching THIS product's specific use case and \
+competitive set, not the parent company's generic category
+"""
+
+
 _QUERY_GEN_PROMPT = """You are a search behavior expert for B2B buyers. Generate realistic search queries \
 that a real person in this role would type into Google, Gemini, Claude, ChatGPT, or Perplexity.
 
@@ -173,7 +191,7 @@ COMPANY being analyzed:
 - Domain: {company_domain}
 - Category: {company_category}
 - Key competitors: {competitor_names}
-
+{product_context_block}
 QUERY CLUSTER TAXONOMY:
 Each cluster has an intent pattern and expected citation behavior. Your queries MUST match \
 the intent and buyer stage of the cluster they belong to.
@@ -295,8 +313,14 @@ def _build_seed_prompt(
     max_queries: int,
     company_name: str,
     company_domain: Optional[str],
+    product_context: Optional[str] = None,
 ) -> str:
-    """Build the improved seed generation prompt."""
+    """Build the improved seed generation prompt.
+
+    When ``product_context`` is provided (non-empty), it is injected between the
+    COMPANY section and QUERY CLUSTER TAXONOMY. For company-level runs it is ``""``
+    so the prompt is identical to before — no drift.
+    """
     clusters_payload = []
     for c in clusters:
         entry = f"- {c.cluster_id} ({c.cluster_name}): intent={c.intent or 'N/A'}, "
@@ -324,6 +348,7 @@ def _build_seed_prompt(
         company_domain=company_domain or "N/A",
         company_category=category,
         competitor_names=competitor_names,
+        product_context_block=product_context or "",
         clusters_with_citation_behavior="\n".join(clusters_payload),
         max_queries=max_queries,
     )
@@ -503,6 +528,15 @@ async def generate_queries(
 
     model_name = model or settings.gap_analysis_query_gen_model
 
+    # Build product context block (empty string for company-level runs — no drift)
+    product_context: Optional[str] = None
+    if input_data.product_slug and input_data.product_name:
+        product_context = _PRODUCT_CONTEXT_BLOCK.format(
+            product_name=input_data.product_name,
+            product_domain=input_data.domain or "N/A",
+            product_description=input_data.product_description or "N/A",
+        )
+
     # Pass 1: Seed generation with improved prompt
     prompt = _build_seed_prompt(
         company_context=company_context,
@@ -512,6 +546,7 @@ async def generate_queries(
         max_queries=input_data.max_queries,
         company_name=input_data.company_name,
         company_domain=input_data.domain,
+        product_context=product_context,
     )
 
     response_text = await _call_openai(prompt, model_name)

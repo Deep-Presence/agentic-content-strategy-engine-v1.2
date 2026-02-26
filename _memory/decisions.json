@@ -177,6 +177,23 @@
     "approved_by": "Aryan"
   },
   {
+    "id": "D-PL-1",
+    "timestamp": "2026-02-26",
+    "task": "Product-level pipeline execution — effective_slug design and prompt injection strategy",
+    "approach": "Double-underscore separator `{company_slug}__{product_slug}` for artifact dirs and lock keys. `effective_slug` stored on `PipelineTask`. Central `RunScope` dataclass + `_resolve_scope()` helper in runner.py. Research artifacts inherit from company slug (ordered fallback chain: effective_slug → company_slug → None). Product prompts injected via `{product_context_block}` slot (empty string for company-level runs). Guard condition: inject only when `product_slug AND product_name` both non-null. `_SLUG_PATTERN` in all 3 service files extended to `^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$` to accept effective slugs.",
+    "rationale": "Double underscore is unambiguous since individual slugs use `[a-z0-9-]` only. Storing effective_slug on PipelineTask eliminates re-derivation in all 4 teardown paths (3 runners + cancel endpoint). Central _resolve_scope() makes product lookup DRY. Inheritance fallback means product runs can leverage company research without re-running it. Empty-string default for product_context_block means zero prompt drift for company-level runs.",
+    "alternatives_rejected": [
+      "Single underscore separator (ambiguous if slug ever contains underscores)",
+      "Separate artifact trees per product without inheritance (duplicates research artifacts, wastes storage)",
+      "Separate prompt files per product level (unnecessary — injection is DRY and safe)",
+      "Compute effective_slug in each of 11 data endpoint handlers (drift risk)"
+    ],
+    "outcome": "All 5 phases complete. 882 tests passing (114 new). Company-level and product-level locks are independent (ramp and ramp__corporate-card can run concurrently). Same product locks properly conflict.",
+    "reversible": true,
+    "approved_by": "Aryan",
+    "codex_review": "Codex gpt-5.3-codex pre-implementation review incorporated 6 CRITICAL + 7 WARNING findings. Key: lock teardown mismatch fixed via task.effective_slug, cross-tenant auth via product.company_id == user.company_id, artifact inheritance explicit ordered chain, prompt guard condition."
+  },
+  {
     "id": "D-EMB-1",
     "timestamp": "2026-02-19",
     "task": "Switch embedding model from text-embedding-3-large (3072) to text-embedding-3-small (1536)",
@@ -189,5 +206,23 @@
     "outcome": "Embedding model changed. 351 tests passing. All docs updated. Existing artifacts with 3072-dim embeddings will need re-embedding on next pipeline run.",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-GUARD-1",
+    "timestamp": "2026-02-27",
+    "task": "Existing-company pipeline guard — prevent duplicate runs for users joining analyzed companies",
+    "approach": "force_rerun: bool = False on GapAnalysisStartRequest + ResearchStartRequest. Guard fires BEFORE task_store.create_task(). Gap analysis: dual-sentinel (gap_analysis_complete.json OR analysis.json). Research: stage-aware _research_stages_exist() checks only requested stages, excludes .draft.md personas. Both return HTTP 200 with already_exists=True, stable run_id (last completed task or f'existing-{effective_slug}').",
+    "rationale": "Dual-sentinel mirrors gap_data_service.py:112 consistency. Stage-aware research guard prevents blocking legitimate partial-stage re-runs (e.g., stages=['persona'] when only company context exists). Guard before create_task avoids triggering 409 slug conflict. f'existing-{effective_slug}' fallback is non-empty and stable so frontend doesn't crash on status polling.",
+    "alternatives_rejected": [
+      "Single-sentinel (gap_analysis_complete.json only) — breaks for companies with only s6 output",
+      "Coarse research guard (any artifact exists) — blocks partial-stage runs (Codex C1)",
+      "Include .draft.md in persona check — false positives (Codex C2)",
+      "list_tasks()[0] for last run — unsorted, cross-scope contamination (Codex C3)",
+      "Empty run_id='' fallback — breaks frontend status polling (Codex C4)"
+    ],
+    "outcome": "12 new tests. 900 tests passing total. Feature 2 (Content-Gap Integration) deferred to future sprint — design preserved in .claude/plans/cozy-twirling-mochi.md.",
+    "reversible": true,
+    "approved_by": "Aryan",
+    "codex_reviews": "2 rounds of Codex gpt-5.3-codex high-reasoning review. Round 1: 5C+7W (scope included Feature 2). Round 2: 4C+6W (Feature 1 only). All criticals incorporated."
   }
 ]

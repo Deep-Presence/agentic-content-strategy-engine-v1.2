@@ -1,10 +1,24 @@
 """Common API response and request schemas."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
+
+# Shared validator for product_slug fields across all pipeline start requests.
+# Rejects path-traversal attempts ("../evil"), uppercase, spaces, etc.
+_PRODUCT_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def _check_product_slug(v: Optional[str]) -> Optional[str]:
+    if v is not None and not _PRODUCT_SLUG_RE.match(v):
+        raise ValueError(
+            "product_slug must match ^[a-z0-9][a-z0-9-]*$ "
+            "(lowercase alphanumeric and hyphens, no leading hyphen)"
+        )
+    return v
 
 
 class PipelineRunResponse(BaseModel):
@@ -13,8 +27,12 @@ class PipelineRunResponse(BaseModel):
     run_id: str
     pipeline: str
     company_slug: str
+    product_slug: Optional[str] = None
+    effective_slug: Optional[str] = None
     status: str
     created_at: datetime
+    already_exists: bool = False
+    message: Optional[str] = None
 
 
 class TaskResponse(BaseModel):
@@ -23,6 +41,8 @@ class TaskResponse(BaseModel):
     run_id: str
     pipeline: str
     company_slug: str
+    product_slug: Optional[str] = None
+    effective_slug: Optional[str] = None
     status: str
     current_step: Optional[str] = None
     progress_pct: Optional[float] = None
@@ -53,7 +73,14 @@ class GapAnalysisStartRequest(BaseModel):
 
     company_name: str
     domain: str
+    product_slug: Optional[str] = None
     seed_urls: List[HttpUrl] = Field(default_factory=list)
+
+    @field_validator("product_slug")
+    @classmethod
+    def _validate_product_slug(cls, v: Optional[str]) -> Optional[str]:
+        return _check_product_slug(v)
+    force_rerun: bool = False
     skip_steps: List[int] = Field(default_factory=list)
     max_queries: int = Field(default=150, ge=10, le=500)
     platforms: List[str] = Field(
@@ -75,7 +102,14 @@ class ResearchStartRequest(BaseModel):
 
     company_name: str
     domain: str
+    product_slug: Optional[str] = None
     seed_urls: List[HttpUrl] = Field(default_factory=list)
+
+    @field_validator("product_slug")
+    @classmethod
+    def _validate_product_slug(cls, v: Optional[str]) -> Optional[str]:
+        return _check_product_slug(v)
+    force_rerun: bool = False
     stages: List[Literal["company", "persona", "style_guide"]] = Field(
         default=["company", "persona", "style_guide"],
         description="Which research stages to run. Order is always company → persona → style_guide.",
@@ -100,7 +134,13 @@ class ContentStartRequest(BaseModel):
 
     company_name: str
     domain: str
+    product_slug: Optional[str] = None
     max_briefs: int = Field(default=5, ge=1, le=20)
+
+    @field_validator("product_slug")
+    @classmethod
+    def _validate_product_slug(cls, v: Optional[str]) -> Optional[str]:
+        return _check_product_slug(v)
     auto_approve: bool = False
     gap_slug: Optional[str] = None
     max_concurrent_workers: int = Field(default=3, ge=1, le=10)
@@ -143,6 +183,8 @@ class TaskSummary(BaseModel):
     pipeline: str
     status: str
     company_slug: str
+    product_slug: Optional[str] = None
+    effective_slug: Optional[str] = None
     current_step: Optional[str] = None
     created_at: datetime
     updated_at: datetime

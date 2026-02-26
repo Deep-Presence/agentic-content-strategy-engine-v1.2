@@ -9,6 +9,7 @@ import json
 import logging
 import math
 import re
+import threading
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -49,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 _CACHE: Dict[Tuple[str, str], Tuple[int, Any]] = {}
 _CACHE_MAX_ENTRIES = 10
+_CACHE_LOCK = threading.Lock()  # C6: protects compound check-evict-insert
 
 
 def _load_json_cached(
@@ -56,10 +58,13 @@ def _load_json_cached(
 ) -> Optional[Any]:
     """Load and parse a JSON file with mtime-based cache invalidation."""
     file_path = artifacts_root / "gap_analysis" / slug / filename
-    if not file_path.is_file():
+
+    # CX-9: guard stat() — eliminates TOCTOU between is_file() and stat()
+    try:
+        mtime_ns = file_path.stat().st_mtime_ns
+    except (FileNotFoundError, OSError):
         return None
 
-    mtime_ns = file_path.stat().st_mtime_ns
     cache_key = (slug, filename)
 
     cached = _CACHE.get(cache_key)
@@ -72,18 +77,19 @@ def _load_json_cached(
         logger.warning("Failed to parse %s: %s", file_path, exc)
         return None
 
-    # Evict oldest if at capacity
-    if len(_CACHE) >= _CACHE_MAX_ENTRIES and cache_key not in _CACHE:
-        oldest_key = next(iter(_CACHE))
-        del _CACHE[oldest_key]
-
-    _CACHE[cache_key] = (mtime_ns, data)
+    # C6: lock protects the compound check-evict-insert against concurrent writes
+    with _CACHE_LOCK:
+        if len(_CACHE) >= _CACHE_MAX_ENTRIES and cache_key not in _CACHE:
+            oldest_key = next(iter(_CACHE))
+            del _CACHE[oldest_key]
+        _CACHE[cache_key] = (mtime_ns, data)
     return data
 
 
 # ── Slug validation ──────────────────────────────────────────────────
 
-_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# Accepts bare company slugs ("ramp") and effective product slugs ("ramp__card")
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
 
 
 def _validate_slug_dir(artifacts_root: Path, slug: str) -> Path:
@@ -196,7 +202,6 @@ _PATTERN_FLAGS = [
     ("has_key_takeaways", "Key Takeaways"),
     ("has_step_by_step", "Step-by-Step"),
     ("has_tables", "Tables"),
-    ("has_comparison_table", "Tables"),
     ("has_definition_opening", "Definition Opening"),
     ("has_research_refs", "Research References"),
     ("has_expert_quotes", "Expert Quotes"),

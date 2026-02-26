@@ -52,7 +52,7 @@ def _make_gap(
             "has_faq_section": 0.7,
             "has_key_takeaways": 0.6,
             "has_step_by_step": 0.2,  # below threshold
-            "has_comparison_table": 0.9,
+            "has_tables": 0.9,        # GapContentBrief field (not has_comparison_table)
             "has_definition_opening": 0.0,
             "has_research_refs": 0.0,
             "has_expert_quotes": 0.0,
@@ -1342,3 +1342,209 @@ class TestCX7MalformedEmbeddingPoints:
 
         resp = client.get(_url("test", "embeddings"), params={"method": "umap"})
         assert resp.status_code == 422
+
+
+class TestC7HasComparisonTableRemoved:
+    """C7: has_comparison_table removed from _PATTERN_FLAGS.
+
+    GapContentBrief has has_tables (float), not has_comparison_table (StructuralSignals bool).
+    Setting only has_comparison_table on a brief should NOT produce a 'Tables' pattern.
+    Setting has_tables >= 0.5 SHOULD produce a 'Tables' pattern.
+    """
+
+    def _setup(self, artifacts_root: Path, brief_overrides: dict) -> dict:
+        """Write a single-gap artifact with custom brief fields and return first query."""
+        data = _make_complete_new_format(num_gaps=1, with_briefs=True)
+        # Overwrite the content_brief of the single gap
+        data["analysis"]["gaps"][0]["content_brief"].update(brief_overrides)
+        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        return data
+
+    def test_has_comparison_table_alone_does_not_produce_tables_pattern(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """has_comparison_table is a StructuralSignals field — not checked in _PATTERN_FLAGS."""
+        data = _make_complete_new_format(num_gaps=1, with_briefs=True)
+        brief = data["analysis"]["gaps"][0]["content_brief"]
+        # Remove has_tables (set to 0), keep only has_comparison_table
+        brief["has_tables"] = 0.0
+        brief["has_comparison_table"] = 0.9
+        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+
+        q = client.get(_url("test", "queries")).json()["queries"][0]
+        assert "Tables" not in q["content_brief"]["content_patterns"]
+
+    def test_has_tables_produces_tables_pattern(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """has_tables >= 0.5 on GapContentBrief should produce 'Tables' pattern."""
+        data = _make_complete_new_format(num_gaps=1, with_briefs=True)
+        data["analysis"]["gaps"][0]["content_brief"]["has_tables"] = 0.9
+        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+
+        q = client.get(_url("test", "queries")).json()["queries"][0]
+        assert "Tables" in q["content_brief"]["content_patterns"]
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Phase 5: product_slug query param for all 8 gap-data endpoints
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+class TestGapDataProductSlug:
+    """?product_slug= query param routes to {slug}__{product_slug} artifact dir."""
+
+    _ENDPOINTS = ["summary", "queries", "clusters", "signals", "platforms", "heatmap"]
+
+    def test_product_slug_reads_product_dir(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        """summary with ?product_slug writes to ramp__card dir, not ramp/."""
+        data = _make_complete_new_format(num_gaps=3)
+        _write_artifact(artifacts_root, "ramp__card", "gap_analysis_complete.json", data)
+
+        r = client.get(_url("ramp", "summary") + "?product_slug=card")
+        assert r.status_code == 200
+        assert r.json()["total_queries"] == 3
+
+    def test_company_level_not_affected_by_product_dir(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        """Company-level slug still reads from ramp/ dir when no product_slug."""
+        company_data = _make_complete_new_format(num_gaps=7)
+        product_data = _make_complete_new_format(num_gaps=3)
+        _write_artifact(artifacts_root, "ramp", "gap_analysis_complete.json", company_data)
+        _write_artifact(artifacts_root, "ramp__card", "gap_analysis_complete.json", product_data)
+
+        r_company = client.get(_url("ramp", "summary"))
+        r_product = client.get(_url("ramp", "summary") + "?product_slug=card")
+
+        assert r_company.json()["total_queries"] == 7
+        assert r_product.json()["total_queries"] == 3
+
+    def test_missing_product_dir_returns_404(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        """?product_slug pointing to nonexistent dir returns 404."""
+        r = client.get(_url("ramp", "summary") + "?product_slug=nonexistent")
+        assert r.status_code == 404
+
+    def test_all_endpoints_accept_product_slug_param(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        """All 7 non-trend endpoints accept ?product_slug= without 422."""
+        data = _make_complete_new_format(num_gaps=3)
+        _write_artifact(artifacts_root, "ramp__card", "gap_analysis_complete.json", data)
+        enriched = _make_enriched(count=5)
+        _write_artifact(artifacts_root, "ramp__card", "enriched_citations.json", enriched)
+
+        for ep in self._ENDPOINTS:
+            url = _url("ramp", ep) + "?product_slug=card"
+            r = client.get(url)
+            # All return either 200 (data found) or 404 (artifact missing) — never 422
+            assert r.status_code in (200, 404), f"{ep}: unexpected {r.status_code}"
+
+    def test_queries_with_product_slug(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        """GET /queries?product_slug= returns queries from product artifact dir."""
+        data = _make_complete_new_format(num_gaps=4)
+        _write_artifact(artifacts_root, "ramp__card", "gap_analysis_complete.json", data)
+
+        r = client.get(_url("ramp", "queries") + "?product_slug=card")
+        assert r.status_code == 200
+        assert r.json()["total"] == 4
+
+    def test_embeddings_with_product_slug(
+        self, client: TestClient, artifacts_root: Path,
+    ) -> None:
+        """GET /embeddings?product_slug= reads from product dir's visualizations/ subdir."""
+        import json
+        viz_dir = artifacts_root / "gap_analysis" / "ramp__card" / "visualizations"
+        viz_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "method": "umap",
+            "points": [{"id": "q1", "x": 0.1, "y": 0.2, "type": "query", "text": "t"}],
+        }
+        (viz_dir / "embedding_projections_umap.json").write_text(
+            json.dumps(data), encoding="utf-8"
+        )
+
+        r = client.get(_url("ramp", "embeddings") + "?product_slug=card")
+        assert r.status_code == 200
+
+    # ── Trend endpoint ─────────────────────────────────────────────────
+
+    def test_trend_product_slug_returns_product_run(
+        self, client: TestClient, task_store,
+    ) -> None:
+        """GET /trend?product_slug=card returns only the product-scoped run."""
+        from api.tasks.models import TaskStatus
+
+        _SPA_RESULT = {
+            "cluster_name": "all",
+            "t_stat": -2.5,
+            "p_value": 0.01,
+            "effect": "medium",
+            "mean_citation_similarity": 0.6,
+            "mean_company_similarity": 0.4,
+        }
+
+        task = task_store.create_task("gap_analysis", "ramp", product_slug="card")
+        task_store.update_task(
+            task.task_id,
+            status=TaskStatus.COMPLETED,
+            result={
+                "report_json": {
+                    "spa_results": [_SPA_RESULT],
+                    "decision_metrics": {"total_queries": 10, "total_citations": 20},
+                }
+            },
+        )
+
+        r = client.get(_url("ramp", "trend") + "?product_slug=card")
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["trend"]) == 1
+        assert body["trend"][0]["run_id"] == task.task_id
+        assert body["trend"][0]["spa_score"] == pytest.approx(-2.5)
+        assert body["trend"][0]["total_queries"] == 10
+
+    def test_trend_company_level_excludes_product_run(
+        self, client: TestClient, task_store,
+    ) -> None:
+        """GET /trend (no product_slug) must NOT include product-scoped runs."""
+        from api.tasks.models import TaskStatus
+
+        _SPA = {
+            "cluster_name": "all",
+            "t_stat": -1.0,
+            "p_value": 0.05,
+            "effect": "small",
+            "mean_citation_similarity": 0.5,
+            "mean_company_similarity": 0.4,
+        }
+        _DM = {"total_queries": 5, "total_citations": 8}
+
+        # Company-level run
+        t_company = task_store.create_task("gap_analysis", "ramp")
+        task_store.update_task(
+            t_company.task_id,
+            status=TaskStatus.COMPLETED,
+            result={"report_json": {"spa_results": [_SPA], "decision_metrics": _DM}},
+        )
+
+        # Product-level run — must NOT appear in company-level trend
+        t_product = task_store.create_task("gap_analysis", "ramp", product_slug="card")
+        task_store.update_task(
+            t_product.task_id,
+            status=TaskStatus.COMPLETED,
+            result={"report_json": {"spa_results": [_SPA], "decision_metrics": _DM}},
+        )
+
+        r = client.get(_url("ramp", "trend"))
+        assert r.status_code == 200
+        run_ids = [pt["run_id"] for pt in r.json()["trend"]]
+        assert t_company.task_id in run_ids
+        assert t_product.task_id not in run_ids, (
+            "Product-scoped run must not appear in company-level trend"
+        )

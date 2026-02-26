@@ -36,6 +36,8 @@ class PipelineTask(BaseModel):
     pipeline: Literal["research", "gap_analysis", "content"]
     status: TaskStatus = TaskStatus.RUNNING
     company_slug: str = ""
+    product_slug: Optional[str] = None
+    effective_slug: Optional[str] = None
     current_step: Optional[str] = None
     progress_pct: Optional[float] = None
     created_at: datetime = Field(
