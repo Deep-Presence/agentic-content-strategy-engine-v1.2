@@ -97,9 +97,23 @@
     - 24.18 [Codex Review Findings — Full Disposition](#2418-codex-review-findings--full-disposition)
     - 24.19 [Files Changed Summary](#2419-files-changed-summary)
     - 24.20 [Deferred Items](#2420-deferred-items)
-25. [Appendix A: Model & API Key Matrix](#appendix-a-model--api-key-matrix)
-26. [Appendix B: Artifact Naming Conventions](#appendix-b-artifact-naming-conventions)
-27. [Appendix C: Code Standards & Conventions](#appendix-c-code-standards--conventions)
+25. [Settings Pages API & Knowledge Doc Upload Sprint](#25-settings-pages-api--knowledge-doc-upload-sprint--exhaustive-implementation-detail)
+    - 25.1 [Sprint Context & Problem Statement](#251-sprint-context--problem-statement)
+    - 25.2 [Feature 1A — User Management](#252-feature-1a--user-management)
+    - 25.3 [Feature 1B — Company Profile Editing](#253-feature-1b--company-profile-editing)
+    - 25.4 [Feature 1C — Pipeline Defaults](#254-feature-1c--pipeline-defaults)
+    - 25.5 [Feature 2A — Knowledge Doc Upload & Storage](#255-feature-2a--knowledge-doc-upload--storage)
+    - 25.6 [Feature 2B — S1 Pipeline Integration](#256-feature-2b--s1-pipeline-integration)
+    - 25.7 [Feature 2C — Embedded Status Tracking](#257-feature-2c--embedded-status-tracking)
+    - 25.8 [Shared Modules Extracted (Review Fixes C2/C3)](#258-shared-modules-extracted-review-fixes-c2c3)
+    - 25.9 [Review Fixes Summary](#259-review-fixes-summary)
+    - 25.10 [Runner Integration — Pipeline Defaults Wiring](#2510-runner-integration--pipeline-defaults-wiring)
+    - 25.11 [New Endpoints Summary](#2511-new-endpoints-summary)
+    - 25.12 [Files Changed Summary](#2512-files-changed-summary)
+    - 25.13 [Deferred Items](#2513-deferred-items)
+26. [Appendix A: Model & API Key Matrix](#appendix-a-model--api-key-matrix)
+27. [Appendix B: Artifact Naming Conventions](#appendix-b-artifact-naming-conventions)
+28. [Appendix C: Code Standards & Conventions](#appendix-c-code-standards--conventions)
 
 ---
 
@@ -117,7 +131,9 @@ Additionally, a **Reddit Human-in-the-Loop Monitor** (implemented) monitors subr
 
 The system exposes both a **CLI** and a **FastAPI REST API** (implemented 2026-02-16, expanded 2026-02-25/26). All business logic lives in a `core/` Python package. The API layer (`api/`) wraps all three pipelines with async task runners, SSE event streaming for real-time progress, and HITL approval endpoints. A **front-back integration sprint** (2026-02-25/26) added 16 company-scoped data retrieval endpoints across 4 phases — authentication, gap analysis data, content brief data, and brand brain/run history — with a 3-module service layer, 50+ response models, and 343 new tests. Task state is persisted via a JSON-backed TaskStore. Artifacts are persisted to the local filesystem as the source of truth, with optional versioned mirroring to Supabase. LLM observability is provided by Langfuse v3 tracing throughout the content generation pipeline.
 
-**766 tests passing, 0 failures.** Full coverage across all pipelines, API endpoints, and data retrieval layers.
+A **Settings Pages API** sprint (2026-02-27) added 11 new endpoints across 3 features — team management, company profile editing, and pipeline defaults — plus a full **Knowledge Document Upload** system (5 endpoints, multipart file upload, text extraction, s1 pipeline integration, embedded status tracking). Shared modules (`core/shared_tools/text_extraction.py`, `core/shared_tools/knowledge_doc_metadata.py`) ensure consistent text extraction and thread-safe metadata coordination between the API service layer and the gap analysis pipeline.
+
+**1029 tests passing, 1 pre-existing failure (PB-39).** Full coverage across all pipelines, API endpoints, data retrieval layers, settings management, and knowledge document upload.
 
 **Current production clients analyzed:** Ramp (corporate spend management), Carta (equity management platform), and Mynd.
 
@@ -252,6 +268,8 @@ content-strategy-engine/
 │   │   │                                  #   EnrichedCitation, SpaResult, CentroidResult, QueryGap,
 │   │   │                                  #   ClusterContentSpec, AnalysisResult, GapReport,
 │   │   │                                  #   DiscoveredPage, SiteTreeNode, SiteDiscoveryResult
+│   │   ├── knowledge_docs.py             # KnowledgeDocument metadata model (upload tracking)
+│   │   ├── organization.py               # CompanyPipelineDefaults model (per-company pipeline overrides)
 │   │   └── reddit_hil.py                 # RedditMonitorInput, RedditThread, DraftNotification
 │   │
 │   ├── research/                          # Pipeline 1: Research Artifacts
@@ -344,44 +362,53 @@ content-strategy-engine/
 │       ├── embedding_client.py            # embed_texts() — OpenAI text-embedding-3-small wrapper (42 lines)
 │       ├── async_embedding_client.py      # async_embed_texts() — Async variant with batching
 │       ├── async_chroma_client.py         # Async ChromaDB wrappers (asyncio.to_thread)
-│       └── chroma_client.py               # ChromaDB persistent client with company/citation collections (184 lines)
+│       ├── chroma_client.py               # ChromaDB persistent client with company/citation collections (184 lines)
+│       ├── text_extraction.py             # extract_text() — canonical text extraction for .md/.txt/.pdf/.docx
+│       └── knowledge_doc_metadata.py      # Shared metadata lock + I/O for knowledge document _metadata.json
 │
 ├── api/                                   # *** FastAPI REST API LAYER ***
 │   ├── __init__.py
-│   ├── app.py                             # App factory (lifespan, middleware, 12 routers)
+│   ├── app.py                             # App factory (lifespan, middleware, 14 routers)
 │   ├── config.py                          # ApiSettings (CORS, port, max concurrency)
 │   ├── dependencies.py                    # Dependency injection (get_task_store, get_event_bus, get_artifacts_root, get_auth_store)
 │   ├── exceptions.py                      # Global exception handlers (TaskNotFound, TaskConflict, PipelineError)
 │   ├── auth/                              # Authentication layer (Phase 1 — pre-Supabase)
 │   │   ├── __init__.py
 │   │   ├── models.py                      # LoginRequest, RegisterRequest, TokenResponse, UserResponse (EmailStr, password validation)
-│   │   ├── store.py                       # AuthStore: JSON-file-backed company+user CRUD, PBKDF2 hashing, HMAC tokens, domain normalization
-│   │   └── middleware.py                  # AuthMiddleware: grace-mode JWT extraction (doesn't block unauth requests)
+│   │   ├── store.py                       # AuthStore: JSON-file-backed CRUD, PBKDF2 hashing, HMAC tokens, domain normalization,
+│   │   │                                  #   update_user(), get/update_pipeline_defaults(), invite management
+│   │   ├── middleware.py                  # AuthMiddleware: default-deny pure ASGI middleware
+│   │   └── dependencies.py               # require_auth, require_role, require_tenant, require_company_access, require_company_member
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   ├── health.py                      # GET /health, /readiness
-│   │   ├── auth.py                        # POST /login, POST /register, GET /me (Phase 1)
+│   │   ├── auth.py                        # POST /login, POST /register, GET /me, POST /invite, POST /join
 │   │   ├── companies.py                   # GET /api/v1/companies/{slug} — company profile (Phase 1)
 │   │   ├── gap_analysis.py                # POST /start, GET /{run_id}/status (pipeline execution)
-│   │   ├── gap_data.py                    # 8 GET endpoints: summary, queries, clusters, signals, platforms, heatmap, embeddings, trend (Phase 2+4)
+│   │   ├── gap_data.py                    # 8 GET endpoints: summary, queries, clusters, signals, platforms, heatmap, embeddings, trend
 │   │   ├── content.py                     # POST /start, GET /status, POST /approve (pipeline execution)
-│   │   ├── content_data.py                # 3 GET endpoints: briefs, briefs/{id}, briefs/{id}/{stage} (Phase 3)
-│   │   ├── brand_data.py                  # 2 GET endpoints: research/artifacts, runs (Phase 4)
+│   │   ├── content_data.py                # 3 GET endpoints: briefs, briefs/{id}, briefs/{id}/{stage}
+│   │   ├── brand_data.py                  # 2 GET endpoints: research/artifacts, runs
 │   │   ├── research.py                    # POST /start, GET /status, POST /approve (pipeline execution)
 │   │   ├── events.py                      # GET /tasks/{task_id}/events (SSE streaming)
 │   │   ├── artifacts.py                   # GET /artifacts/companies, /{type}/{slug}
-│   │   └── tasks.py                       # GET /tasks (+ total + company_slug filter), /{task_id}, POST /{task_id}/cancel
+│   │   ├── tasks.py                       # GET /tasks (+ total + company_slug filter), /{task_id}, POST /{task_id}/cancel
+│   │   ├── settings.py                    # 6 endpoints: GET/PUT team, profile, pipeline-defaults (Settings Pages API)
+│   │   └── knowledge_docs.py             # 5 endpoints: POST upload, GET list/detail/download, DELETE (Knowledge Docs)
 │   ├── schemas/
 │   │   ├── __init__.py
 │   │   ├── common.py                      # Shared request/response models (GapAnalysisStartInput, ResearchStartRequest, etc.)
 │   │   ├── company.py                     # CompanyProfileResponse, ProductSummary, ResearchArtifactSummary (Phase 1)
 │   │   ├── gap_data.py                    # 20+ models: GapSummaryResponse, QueryRow, ClusterSpecResponse, etc. (Phase 2)
 │   │   ├── content_data.py                # 12 models: ContentBriefListItem, EvalCycle, EmbeddingPoint, etc. (Phase 3)
-│   │   └── brand_data.py                  # 8 models: ArtifactContent, PersonaArtifact, RunHistoryItem, SPATrendPoint, etc. (Phase 4)
-│   ├── services/                          # Service layer — business logic for data endpoints (Phase 2-4)
+│   │   ├── brand_data.py                  # 8 models: ArtifactContent, PersonaArtifact, RunHistoryItem, SPATrendPoint, etc. (Phase 4)
+│   │   ├── settings.py                    # TeamMemberResponse, UpdateUserRequest, CompanySettingsResponse, PipelineDefaultsResponse
+│   │   └── knowledge_docs.py             # KnowledgeDocResponse, KnowledgeDocListResponse
+│   ├── services/                          # Service layer — business logic for data endpoints
 │   │   ├── gap_data_service.py            # 13+ functions: mtime cache, Pearson corr, Jaccard sim, TF-IDF, signal avg (Phase 2)
 │   │   ├── content_data_service.py        # 2-phase status inference, citability score, eval history (Phase 3)
-│   │   └── brand_data_service.py          # Artifact detection, persona scanning, run history, SPA trend, status mapping (Phase 4)
+│   │   ├── brand_data_service.py          # Artifact detection, persona scanning, run history, SPA trend, status mapping (Phase 4)
+│   │   └── knowledge_doc_service.py       # Upload, list, get, delete, text extraction for knowledge documents
 │   └── tasks/
 │       ├── __init__.py
 │       ├── models.py                      # PipelineTask, TaskStatus (6 states), ApprovalRecord
@@ -429,6 +456,17 @@ content-strategy-engine/
 │   │   │   ├── visualizations/            # Interactive Plotly HTML charts
 │   │   │   └── site_discovery/            # Crawled pages + site tree
 │   │   └── carta/                         # Same structure
+│   ├── knowledge_docs/                    # Uploaded knowledge documents per company/product
+│   │   └── {effective_slug}/              # e.g., ramp/ or ramp__corporate-card/
+│   │       ├── _metadata.json             # List[KnowledgeDocument] — sidecar metadata
+│   │       ├── {uuid}_{original_name}.md  # Stored files with UUID collision-safe prefix
+│   │       ├── {uuid}_{original_name}.pdf
+│   │       └── ...
+│   ├── _auth/                             # Auth system persistence (JSON-file backed)
+│   │   ├── companies.json                 # Company registry
+│   │   ├── users.json                     # User registry
+│   │   └── settings/                      # Per-company pipeline defaults
+│   │       └── {company_slug}.json        # CompanyPipelineDefaults
 │   ├── chroma_db/                         # ChromaDB persistent vector store
 │   └── _logs/
 │       ├── debug.log                      # Agent debug logging
@@ -858,10 +896,30 @@ The Gap Analysis Pipeline is an 8-step sequential data pipeline (not LangGraph-b
 - Stores raw embeddings in ChromaDB (indexed by company slug)
 - Saves lightweight JSON with `embedding_id` only (no raw vectors in JSON — saves disk space)
 
+**Knowledge Document Integration (Phase 2B — added 2026-02-27):**
+
+After website discovery and chunking, s1 checks for uploaded knowledge documents:
+1. Resolves `knowledge_doc_dir` from `GapAnalysisInput` — path to `artifacts/knowledge_docs/{effective_slug}/`
+2. If the directory exists and contains `_metadata.json`, loads all tracked documents
+3. Extracts text from each file using `core/shared_tools/text_extraction.py` (supports `.md`, `.txt`, `.pdf` via pdfplumber, `.docx` via python-docx)
+4. Chunks extracted text using the same `_chunk_paragraphs()` function (min_words=80, max_words=220)
+5. Creates `SemanticUnit` objects with `discovery_source="knowledge_doc"` and `url=None`
+6. Merges knowledge doc units with website units → embeds all → stores in ChromaDB
+7. After embedding, calls `mark_documents_embedded()` from `core/shared_tools/knowledge_doc_metadata.py` to set `is_embedded=True` and `last_embedded_at` on all processed documents
+
+**Shared module coordination:** Both the upload service (`api/services/knowledge_doc_service.py`) and s1's mark-as-embedded share the **same** `metadata_lock` from `core/shared_tools/knowledge_doc_metadata.py`. This prevents race conditions when a user uploads a document while a pipeline is marking documents as embedded.
+
+**Backward compat:** `knowledge_doc_dir` defaults to `None` in `GapAnalysisInput`. Existing pipelines that don't have knowledge docs produce identical results.
+
+**Runner resolves path with fallback:**
+```
+artifacts/knowledge_docs/{effective_slug}/  →  fallback to  →  artifacts/knowledge_docs/{company_slug}/
+```
+
 **Outputs:**
 | File | Content |
 |------|---------|
-| `company_embeddings.json` | List of SemanticUnit with embedding_ids (no raw vectors) |
+| `company_embeddings.json` | List of SemanticUnit with embedding_ids (no raw vectors) — includes both website and knowledge doc units |
 | `site_discovery/discovered_pages.json` | All discovered URLs with metadata |
 | `site_discovery/site_tree.json` | Hierarchical site structure |
 | `site_discovery/discovery_summary.json` | Discovery statistics |
@@ -1754,6 +1812,72 @@ class StorageBackend(ABC):
 
 **Current Status:** Interface defined but no concrete backend classes implemented yet. The `DeepAgents.FilesystemBackend` is used directly in the research pipeline (separate from this abstraction).
 
+### 9.6 Knowledge Document Storage (Added 2026-02-27)
+
+**Location:** `artifacts/knowledge_docs/{effective_slug}/`
+
+**Storage Layout:**
+```
+artifacts/knowledge_docs/
+├── ramp/                               # Company-level docs
+│   ├── _metadata.json                  # List[KnowledgeDocument] — sidecar tracking
+│   ├── {uuid}_positioning-doc.md       # UUID-prefixed collision-safe filename
+│   └── {uuid}_competitive-analysis.pdf
+├── ramp__corporate-card/               # Product-level docs
+│   ├── _metadata.json
+│   └── {uuid}_product-brief.docx
+└── carta/
+    └── _metadata.json
+```
+
+**`_metadata.json` format:** JSON array of `KnowledgeDocument` objects (from `core/models/knowledge_docs.py`):
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "filename": "positioning-doc.md",
+    "stored_filename": "550e8400-e29b-41d4-a716-446655440000_positioning-doc.md",
+    "content_type": "text/markdown",
+    "file_size_bytes": 2048,
+    "word_count": 350,
+    "uploaded_at": "2026-02-27T10:00:00Z",
+    "uploaded_by": "user-uuid",
+    "company_slug": "ramp",
+    "product_slug": null,
+    "effective_slug": "ramp",
+    "is_embedded": true,
+    "last_embedded_at": "2026-02-27T12:00:00Z"
+  }
+]
+```
+
+**Supported formats:** `.md`, `.txt`, `.pdf`, `.docx` (10MB per file default limit)
+
+**Thread safety:** All metadata reads/writes go through `core/shared_tools/knowledge_doc_metadata.py` which provides a single process-wide `metadata_lock` (threading.Lock). Atomic writes via temp file + `os.replace()`. Both the upload service and s1 pipeline step share this lock.
+
+**Pipeline integration:** Knowledge docs are auto-included in s1's embedding phase. After embedding, `is_embedded` and `last_embedded_at` are updated in `_metadata.json`.
+
+### 9.7 Pipeline Defaults Storage (Added 2026-02-27)
+
+**Location:** `artifacts/_auth/settings/{company_slug}.json`
+
+**Format:** `CompanyPipelineDefaults` model (from `core/models/organization.py`):
+```json
+{
+  "max_crawl_pages": 300,
+  "max_crawl_depth": 3,
+  "max_queries": null,
+  "platforms": null,
+  "max_personas": null,
+  "auto_approve_research": false,
+  "max_briefs": null,
+  "max_revision_cycles": null,
+  "auto_approve_content": false
+}
+```
+
+**Merge strategy:** Request-level values always take precedence. Company defaults fill in `None`/unset fields. Global settings are the final fallback.
+
 ---
 
 ## 10. Data Models — Complete Pydantic v2 Schema Reference
@@ -1827,10 +1951,29 @@ Methods:
 
 ### Gap Analysis Models (`core/models/gap_analysis.py`)
 
+**Knowledge Document Model (`core/models/knowledge_docs.py`) — added 2026-02-27:**
+```
+KnowledgeDocument:   id (UUID str), filename (original), stored_filename (uuid_name on disk),
+                     content_type (MIME), file_size_bytes (default 0), word_count (default 0),
+                     uploaded_at (datetime, default factory), uploaded_by (Optional[str]),
+                     company_slug (default ""), product_slug (Optional[str]),
+                     effective_slug (default ""), is_embedded (bool, default False),
+                     last_embedded_at (Optional[datetime])
+```
+
+**Organization Model (`core/models/organization.py`) — added 2026-02-27:**
+```
+CompanyPipelineDefaults: max_crawl_pages (Optional[int]), max_crawl_depth (Optional[int]),
+                         max_queries (Optional[int]), platforms (Optional[List[str]]),
+                         max_personas (Optional[int]), auto_approve_research (bool = False),
+                         max_briefs (Optional[int]), max_revision_cycles (Optional[int]),
+                         auto_approve_content (bool = False)
+```
+
 **Site Discovery Models:**
 ```
 DiscoverySource:     Enum (SITEMAP, SITEMAP_INDEX, ROBOTS_TXT, BFS_CRAWL, CANONICAL,
-                           HREFLANG, RSS_FEED, SEED_URL, REDIRECT)
+                           HREFLANG, RSS_FEED, SEED_URL, REDIRECT, KNOWLEDGE_DOC)
 DiscoveredPage:      url, title, h1, meta_description, status_code, discovery_source,
                      depth, parent_url, canonical_url, word_count, has_content
 SiteTreeNode:        url, title, path_segment, children, page_count_below
@@ -1840,8 +1983,11 @@ SiteDiscoveryResult: domain, base_url, total_pages, pages, site_tree, crawl_dura
 **Pipeline Models:**
 ```
 GapAnalysisInput:    company_name, domain, seed_urls, max_queries (default 150),
-                     platforms (default: all 4), max_crawl_pages (500), max_crawl_depth (4)
-SemanticUnit:        unit_id, url, title, text, embedding, embedding_id, char/word_count
+                     platforms (default: all 4), max_crawl_pages (500), max_crawl_depth (4),
+                     knowledge_doc_dir (Optional[str], default None) — resolved by runner
+SemanticUnit:        unit_id, url (Optional — None for knowledge docs), title, text,
+                     embedding, embedding_id, char/word_count,
+                     discovery_source (Optional[str] — "knowledge_doc" for uploaded docs)
 QueryCluster:        cluster_id, cluster_name, intent, citation_behavior, buyer_stage
 GeneratedQuery:      query_id, cluster_id, cluster_name, query_text, buyer_stage,
                      persona_tag, embedding
@@ -2431,7 +2577,13 @@ tests/
 │   ├── test_task_store_product.py         # 16 tests — effective_slug locking, company+product coexistence (product-pipeline P2)
 │   ├── test_gap_analysis_product.py       # 36 tests — RunScope, _resolve_scope, fallback chain, lock conflicts (product-pipeline P3)
 │   ├── test_gap_analysis.py (guard)      # +7 new: TestStartGapAnalysisGuard — dual-sentinel, force_rerun, existing-prefix run_id, product-level dir
-│   └── test_research.py (guard)          # +5 new: TestStartResearchGuard — all-stages, partial stages, draft exclusion, force_rerun
+│   ├── test_research.py (guard)          # +5 new: TestStartResearchGuard — all-stages, partial stages, draft exclusion, force_rerun
+│   ├── test_auth_enforcement.py          # 42 tests — auth enforcement: middleware, RBAC, tenant isolation, stream tokens
+│   ├── test_settings_team.py             # 16 tests — team management: list, update role, deactivate, guards
+│   ├── test_settings_profile.py          # 11 tests — company profile: get, update, auth checks
+│   ├── test_settings_pipeline.py         # 12 tests — pipeline defaults: get, update, merge with runner
+│   ├── test_knowledge_docs.py            # 19 tests — upload, list, get, delete, download, oversized, bad extension
+│   └── test_s1_knowledge_docs.py         # (in gap_analysis/) 15 tests — s1 integration: load, chunk, embed, mark status
 └── content_engine/                       # 57 tests — ALL PASSING
     ├── __init__.py
     ├── conftest.py                       # Shared fixtures (sample_brief, mock_anthropic, etc.)
@@ -2448,7 +2600,7 @@ tests/
     └── test_integration.py              # 2 tests — Full pipeline + skip stages
 ```
 
-**Test counts:** 944 total tests. All 944 passing (0 failures). Research pipeline coverage added 2026-02-26 (+109 tests). Front-back integration sprint added 343 tests across 4 phases. Product-level pipeline sprint added 114 tests across 5 phases (product CRUD: 35, task infra: 16, pipeline wiring: 36, product prompts: 15, data endpoints: 12). Pipeline guard sprint added 12 tests (gap analysis guard: 7, research guard: 5). **Route protection sprint added 44 tests** (42 auth enforcement + 2 invite flow). S4 mock regression fixed in Phase -1 of structural signal overhaul.
+**Test counts:** 1029 total tests, 1 pre-existing failure (PB-39). Research pipeline coverage added 2026-02-26 (+109 tests). Front-back integration sprint added 343 tests across 4 phases. Product-level pipeline sprint added 114 tests across 5 phases (product CRUD: 35, task infra: 16, pipeline wiring: 36, product prompts: 15, data endpoints: 12). Pipeline guard sprint added 12 tests (gap analysis guard: 7, research guard: 5). Route protection sprint added 44 tests (42 auth enforcement + 2 invite flow). **Settings + Knowledge Docs sprint added 77 tests** (team: 16, profile: 11, pipeline defaults: 12, knowledge docs: 19, s1 integration: 15, embedded status: 3) + **6 review fixes applied** (C1 DRY, C2 shared text extraction, C3 shared metadata lock, W1 dead import, W3 pipeline defaults wiring, W5 type annotation). S4 mock regression fixed in Phase -1 of structural signal overhaul.
 
 ### API Test Coverage (475+ tests — 126 base + 179 front-back + 114 product-level + 12 pipeline-guard + 44 route-protection)
 
@@ -2837,9 +2989,9 @@ scripts/run_server.py ← API entry point (uvicorn)
 ### Critical Issues
 
 #### 1. PARTIAL TEST COVERAGE (Significantly Improved)
-**Severity:** Low (downgraded from Critical — 2026-02-15, improved 2026-02-16, 2026-02-19, 2026-02-26)
-**Description:** 766 total tests, all passing. Research pipeline: 109 tests. API layer: 305+ tests (126 base + 179 from front-back sprint). Content engine: 57 tests. Gap analysis: comprehensive coverage (s1, s2, s4, s5, s6, s7, s8, pipeline). Reddit HIL still has zero tests. S4 test failures fixed (2026-02-18). Front-back sprint added data endpoint tests across 4 phases with Codex gpt-5.3 reviews.
-**Impact:** All major pipelines and all API endpoints have regression protection. Only Reddit HIL remains unprotected.
+**Severity:** Low (downgraded from Critical — 2026-02-15, improved through 2026-02-27)
+**Description:** 1029 total tests, 1 pre-existing failure (PB-39). Research pipeline: 109 tests. API layer: 380+ tests (126 base + 179 from front-back + 44 route-protection + 77 settings/knowledge docs). Content engine: 57 tests. Gap analysis: comprehensive coverage (s1, s2, s4, s5, s6, s7, s8, pipeline + s1 knowledge doc integration). Reddit HIL still has zero tests. Settings + Knowledge Docs sprint added 77 tests.
+**Impact:** All major pipelines, all API endpoints, settings management, and knowledge document upload have regression protection. Only Reddit HIL remains unprotected.
 **Recommendation:** Add tests for Reddit HIL (webhook delivery, PRAW mocking).
 
 #### 2. InMemoryStore — Agent Memory Not Persistent
@@ -3036,7 +3188,9 @@ scripts/run_server.py ← API entry point (uvicorn)
 | **FastAPI REST API (core)** | ✅ Implemented | **High — 126 tests, SSE, HITL, all 3 pipelines** |
 | **API Data Endpoints (front-back)** | ✅ Implemented | **High — 16 endpoints, 179 tests, 4-phase sprint complete** |
 | **Product-Level Pipeline Execution** | ✅ Implemented | **High — product CRUD, effective_slug locking, per-product artifact dirs, product prompts, 114 tests** |
-| **Auth System (v0)** | ✅ Implemented | **Medium — JSON-file backed, grace-mode middleware, pre-Supabase** |
+| **Auth System (v0)** | ✅ Implemented | **High — default-deny ASGI middleware, RBAC, tenant isolation, invite flow, 952 tests** |
+| **Settings Pages API** | ✅ Implemented | **High — team management, company profile, pipeline defaults, 39 tests** |
+| **Knowledge Doc Upload** | ✅ Implemented | **High — multipart upload, text extraction, s1 integration, embedded status, 37 tests** |
 | Reddit HIL Monitor | ✅ Functional | Medium — tested with Ramp |
 | Supabase Schema | ✅ Production | High — 4 migrations, RLS, HNSW |
 | Supabase Mirror | ✅ Functional | Medium — works but no SQLAlchemy ORM |
@@ -3053,6 +3207,11 @@ scripts/run_server.py ← API entry point (uvicorn)
 | `api-v1` | `feat/api` | 2026-02-19 | 126 | FastAPI, SSE, HITL, TaskStore, EventBus |
 | **`front-back-integration`** | **`feat/front-back`** | **2026-02-26** | **343** | **16 data endpoints, auth, company model, service layer, 4 phases** |
 | **`product-level-pipeline`** | **`feat/front-back`** | **2026-02-26** | **114** | **Product CRUD, effective_slug locking, pipeline wiring, product prompts, ?product_slug= on all 11 data endpoints** |
+| `review-action-items` | `feat/front-back` | 2026-02-26 | 6 | 9 security/correctness fixes from Codex review → 888 total |
+| `pipeline-guard` | `feat/front-back` | 2026-02-27 | 12 | force_rerun guard on /gap-analysis/start + /research/start → 900 total |
+| `route-protection` | `feat/front-back` | 2026-02-27 | 44 | Default-deny ASGI middleware, RBAC, tenant isolation, invite flow, stream tokens → 944 total |
+| `security-fixes` | `feat/front-back` | 2026-02-27 | 8 | 5 CRITICAL review fixes (artifact IDOR, SSE auth, login is_active, invite race) → 952 total |
+| **`settings-knowledge-docs`** | **`feat/front-back`** | **2026-02-27** | **77** | **Settings Pages API (team/profile/pipeline-defaults) + Knowledge Doc Upload (CRUD + s1 integration + embedded status) + 6 review fixes → 1029 total** |
 
 ### What's Planned (Future Scope)
 
@@ -3075,7 +3234,7 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 ## 21. REST API Layer (FastAPI)
 
-**Status:** Implemented (2026-02-16), expanded with data endpoints (2026-02-25/26), expanded with product-level support (2026-02-26), pipeline guard added (2026-02-27), **production-grade route protection added (2026-02-27)**. 944 tests passing. All 3 pipelines wrapped + 16 company-scoped data retrieval endpoints + product CRUD endpoints + `?product_slug=` on all 11 data endpoints. `force_rerun` guard on `/gap-analysis/start` and `/research/start`. Default-deny ASGI middleware with RBAC, tenant isolation, invite flow, and stream tokens (Codex gpt-5.3-codex reviewed — 6 CRITICAL, 10 WARNING, 4 INFO findings incorporated).
+**Status:** Implemented (2026-02-16), expanded with data endpoints (2026-02-25/26), expanded with product-level support (2026-02-26), pipeline guard added (2026-02-27), production-grade route protection added (2026-02-27), **Settings Pages API + Knowledge Doc Upload added (2026-02-27)**. 1029 tests passing, 1 pre-existing failure (PB-39). All 3 pipelines wrapped + 16 company-scoped data retrieval endpoints + product CRUD endpoints + `?product_slug=` on all 11 data endpoints. `force_rerun` guard on `/gap-analysis/start` and `/research/start`. Default-deny ASGI middleware with RBAC, tenant isolation, invite flow, and stream tokens. **14 routers total** including settings (6 endpoints) and knowledge-docs (5 endpoints). Per-company pipeline defaults wired into the gap analysis runner.
 
 **Architecture Decision:** D-API-1 — `asyncio.create_task()` (not Celery), JSON-file TaskStore, SSE for progress, `MemorySaver` checkpointer for HITL. See §17 Decision 12 for full rationale. Data endpoints added in D-FB-1 through D-FB-5.
 
@@ -3105,7 +3264,7 @@ def create_app() -> FastAPI:
 | `TaskConflictError` | 409 | `task_conflict` |
 | `PipelineError` | 500 | `pipeline_error` |
 
-**Routers (mounted in order):** health, auth, companies, gap_analysis, gap_data, events, artifacts, research, content, content_data, brand_data, tasks
+**Routers (mounted in order, 14 total):** health, auth, companies, gap_analysis, gap_data, events, artifacts, research, content, content_data, brand_data, tasks, **settings**, **knowledge_docs**
 
 ---
 
@@ -3688,6 +3847,252 @@ result = await asyncio.to_thread(
 | 15s SSE heartbeat | Prevents proxy/browser timeout on quiet streams | No keepalive (client disconnects silently) |
 | Slug regex validation | Prevents path traversal in artifact routes | Trust client input (security risk) |
 | `rehype-sanitize` in MarkdownViewer | Prevents XSS from untrusted markdown content | Trust API-served markdown (security risk) |
+
+---
+
+## 25. Settings Pages API & Knowledge Doc Upload Sprint — Exhaustive Implementation Detail
+
+**Sprint:** `settings-knowledge-docs` (2026-02-27)
+**Branch:** `feat/front-back`
+**Tests added:** 77 new tests (+ 6 review fixes applied) → 1029 total (1 pre-existing failure)
+**Problem:** Non-technical users need dashboard UI to manage company settings, team members, and pipeline defaults. Clients have internal context (positioning docs, messaging frameworks, competitive analyses) that the pipeline can't access because s1 only crawls public URLs.
+
+### 25.1 Sprint Context & Problem Statement
+
+Two features needed before YC demo readiness:
+
+1. **Settings Pages API** — Backend endpoints for managing team members, company profile, and per-company pipeline defaults (currently all configured via `.env.local` or CLI)
+2. **Knowledge Doc Upload** — Allow clients to upload internal documents (.md, .txt, .pdf, .docx) that get embedded alongside site content in the gap analysis pipeline
+
+**Deferred:** API key configuration (Phase 1D) — pre-YC, we run pipelines on behalf of clients with our own keys.
+
+### 25.2 Feature 1A — User Management
+
+**New/modified files:** `api/auth/store.py` (add `update_user()`), `api/schemas/settings.py` (NEW), `api/routers/settings.py` (NEW), `tests/api/test_settings_team.py` (NEW — 16 tests)
+
+**AuthStore changes:**
+- `_USER_MUTABLE_FIELDS = frozenset({"role", "first_name", "last_name", "is_active"})` — allowlist pattern matching existing `_COMPANY_MUTABLE_FIELDS`
+- `update_user(user_id, **kwargs) → UserProfile` — uses `_lock`, validates field names against allowlist, returns updated user
+- Guards: cannot deactivate self, cannot demote last superuser
+
+**Endpoints:**
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/companies/{slug}/settings/team` | tenant | List team members |
+| PUT | `/companies/{slug}/settings/team/{user_id}` | superuser+tenant | Update role/status |
+
+**Response model (`TeamMemberResponse`):** user_id, email, first_name, last_name, role, is_active, created_at
+
+### 25.3 Feature 1B — Company Profile Editing
+
+**New/modified files:** `api/schemas/settings.py` (extended), `api/routers/settings.py` (extended), `tests/api/test_settings_profile.py` (NEW — 11 tests)
+
+**Endpoints:**
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/companies/{slug}/settings/profile` | tenant | Get company profile for editing |
+| PUT | `/companies/{slug}/settings/profile` | superuser+tenant | Update name, domain, additional_domains |
+
+Delegates to existing `auth_store.update_company()` with `_COMPANY_MUTABLE_FIELDS` allowlist.
+
+### 25.4 Feature 1C — Pipeline Defaults
+
+**New/modified files:** `core/models/organization.py` (NEW), `api/auth/store.py` (add `get/update_pipeline_defaults()`), `api/schemas/settings.py` (extended), `api/routers/settings.py` (extended), `api/tasks/runner.py` (merge defaults), `tests/api/test_settings_pipeline.py` (NEW — 12 tests)
+
+**Model (`CompanyPipelineDefaults` in `core/models/organization.py`):**
+```python
+class CompanyPipelineDefaults(BaseModel):
+    max_crawl_pages: Optional[int] = None
+    max_crawl_depth: Optional[int] = None
+    max_queries: Optional[int] = None
+    platforms: Optional[List[str]] = None
+    max_personas: Optional[int] = None
+    auto_approve_research: bool = False
+    max_briefs: Optional[int] = None
+    max_revision_cycles: Optional[int] = None
+    auto_approve_content: bool = False
+```
+
+**Storage:** `artifacts/_auth/settings/{company_slug}.json` — same file-backed pattern as auth store.
+
+**Runner integration (W3 fix):** When constructing `GapAnalysisInput`, company defaults fill in `None` fields:
+```python
+_defaults = auth_store.get_pipeline_defaults(scope.company_slug)
+max_crawl_pages = request.max_crawl_pages or (_defaults.max_crawl_pages if _defaults else None)
+```
+Only applies to Optional fields (`max_crawl_pages`, `max_crawl_depth`) where `None` clearly means "not set". Non-optional fields like `max_queries` (default 150) pass through directly since we can't distinguish "user sent default" from "user wants default".
+
+**Endpoints:**
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/companies/{slug}/settings/pipeline-defaults` | tenant | Get pipeline defaults |
+| PUT | `/companies/{slug}/settings/pipeline-defaults` | superuser+tenant | Update pipeline defaults |
+
+### 25.5 Feature 2A — Knowledge Doc Upload & Storage
+
+**New/modified files:** `core/models/knowledge_docs.py` (NEW), `api/services/knowledge_doc_service.py` (NEW), `api/schemas/knowledge_docs.py` (NEW), `api/routers/knowledge_docs.py` (NEW), `api/app.py` (register router), `tests/api/test_knowledge_docs.py` (NEW — 19 tests)
+
+**Storage layout:**
+```
+artifacts/knowledge_docs/{effective_slug}/
+├── _metadata.json                   # List[KnowledgeDocument]
+├── {uuid}_{original_name}.md
+├── {uuid}_{original_name}.txt
+└── {uuid}_{original_name}.pdf
+```
+
+**`KnowledgeDocument` model (`core/models/knowledge_docs.py`):**
+- `id`: UUID string
+- `filename`: original filename (sanitized)
+- `stored_filename`: `{uuid}_{sanitized_name}` on disk
+- `content_type`: MIME type from extension mapping
+- `file_size_bytes`, `word_count`: computed on upload
+- `uploaded_at`, `uploaded_by`, `company_slug`, `product_slug`, `effective_slug`
+- `is_embedded: bool = False`, `last_embedded_at: Optional[datetime] = None`
+
+**Supported formats:** `.md`, `.txt`, `.pdf` (pdfplumber), `.docx` (python-docx)
+**Size limit:** 10MB per file (configurable via `DEFAULT_MAX_UPLOAD_BYTES`)
+
+**Validation chain:**
+1. Filename sanitization (`_sanitize_filename()` — strips paths, removes suspicious chars)
+2. Extension whitelist check
+3. Size limit check (after reading content)
+4. Path traversal check (`stored_path.resolve().is_relative_to(doc_dir.resolve())`)
+
+**Endpoints:**
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/companies/{slug}/knowledge-docs` | member+tenant | Upload file (multipart) |
+| GET | `/companies/{slug}/knowledge-docs` | tenant | List docs (with `?product_slug=`) |
+| GET | `/companies/{slug}/knowledge-docs/{doc_id}` | tenant | Get doc metadata |
+| DELETE | `/companies/{slug}/knowledge-docs/{doc_id}` | member+tenant | Delete doc + file |
+| GET | `/companies/{slug}/knowledge-docs/{doc_id}/download` | tenant | Stream file (FileResponse) |
+
+**Cross-product search:** GET detail, DELETE, and download endpoints use `_find_across_product_slugs()` helper — a generic `TypeVar+Callable` helper that first checks the company slug, then scans all `{slug}__*` product subdirectories. This ensures a doc uploaded to `ramp__corporate-card` can be found when queried via the `ramp` company endpoint.
+
+**New dependencies:** `pdfplumber>=0.10`, `python-docx>=1.0`
+
+### 25.6 Feature 2B — S1 Pipeline Integration
+
+**Modified files:** `core/models/gap_analysis.py` (add `DiscoverySource.KNOWLEDGE_DOC`, `knowledge_doc_dir` on `GapAnalysisInput`), `core/gap_analysis/steps/s1_embed_assets.py` (load + chunk + embed knowledge docs), `api/tasks/runner.py` (resolve `knowledge_doc_dir` path), `tests/gap_analysis/steps/test_s1_knowledge_docs.py` (NEW — 15 tests)
+
+**Integration point in `embed_company_assets()`:**
+1. After site discovery + chunking → existing SemanticUnits
+2. If `knowledge_doc_dir` is set → load docs from `_metadata.json` → extract text → chunk via `_chunk_paragraphs()` → create SemanticUnits with `discovery_source="knowledge_doc"` and `url=None`
+3. Merge both lists → embed all → store in ChromaDB
+
+**Text extraction:** Uses canonical `extract_text()` from `core/shared_tools/text_extraction.py` (supports .md, .txt, .pdf via pdfplumber, .docx via python-docx).
+
+**Runner resolves path with product fallback:**
+```
+artifacts/knowledge_docs/{effective_slug}/  →  fallback  →  artifacts/knowledge_docs/{company_slug}/
+```
+
+**Backward compat:** `knowledge_doc_dir` defaults to `None`. Existing pipelines produce identical results.
+
+### 25.7 Feature 2C — Embedded Status Tracking
+
+**Modified files:** `core/gap_analysis/steps/s1_embed_assets.py` (call mark function after embedding), `core/shared_tools/knowledge_doc_metadata.py` (shared `mark_documents_embedded()`)
+
+After embedding completes in s1, calls `mark_documents_embedded(knowledge_doc_dir)` which:
+1. Acquires `metadata_lock`
+2. Re-reads `_metadata.json` inside lock (TOCTOU safe)
+3. Sets `is_embedded=True` and `last_embedded_at=now()` on all documents
+4. Writes atomically via tmp file + `os.replace()`
+
+### 25.8 Shared Modules Extracted (Review Fixes C2/C3)
+
+**C2 Fix — `core/shared_tools/text_extraction.py` (NEW):**
+Canonical `extract_text(file_path: Path) -> str` function. Both `api/services/knowledge_doc_service.py` (upload) and `core/gap_analysis/steps/s1_embed_assets.py` (embed) import from here. Eliminates 25 lines of duplicated PDF/DOCX extraction code.
+
+**C3 Fix — `core/shared_tools/knowledge_doc_metadata.py` (NEW):**
+Single process-wide `metadata_lock = threading.Lock()`. Provides `load_metadata()`, `save_metadata()`, `slug_dir()`, `metadata_path()`, and `mark_documents_embedded()`. Both the service (upload/delete) and s1 (mark-as-embedded) use the **same** lock instance, preventing race conditions when uploading during a pipeline run.
+
+Architecture constraint: `core/` cannot import from `api/`, so shared code lives in `core/shared_tools/`.
+
+### 25.9 Review Fixes Summary
+
+| Fix | Category | What | Detail |
+|-----|----------|------|--------|
+| C1 | DRY | Extracted `_find_across_product_slugs()` | Generic TypeVar+Callable helper; fixed delete missing `subdir.name == slug` check |
+| C2 | Dedup | Created `core/shared_tools/text_extraction.py` | Canonical text extraction shared by service + s1 |
+| C3 | Race condition | Created `core/shared_tools/knowledge_doc_metadata.py` | Same metadata_lock shared by service + s1 |
+| W1 | Dead code | Removed dead import in `settings.py` | `from api.auth.dependencies import require_tenant as _rt` |
+| W3 | Missing wiring | Pipeline defaults → runner | `max_crawl_pages`/`max_crawl_depth` now use company defaults as fallback |
+| W5 | Type safety | Added type annotation to `_doc_to_response` | `doc: KnowledgeDocument` parameter annotation |
+
+### 25.10 Runner Integration — Pipeline Defaults Wiring
+
+In `api/tasks/runner.py::run_gap_pipeline_task()`:
+```python
+_defaults = auth_store.get_pipeline_defaults(scope.company_slug) if auth_store else None
+
+input_data = GapAnalysisInput(
+    ...
+    max_crawl_pages=(
+        request.max_crawl_pages
+        or (_defaults.max_crawl_pages if _defaults else None)
+    ),
+    max_crawl_depth=(
+        request.max_crawl_depth
+        or (_defaults.max_crawl_depth if _defaults else None)
+    ),
+    knowledge_doc_dir=str(knowledge_doc_dir) if knowledge_doc_dir else None,
+    ...
+)
+```
+
+Knowledge doc dir resolution: checks `artifacts/knowledge_docs/{effective_slug}/`, falls back to `artifacts/knowledge_docs/{company_slug}/`.
+
+### 25.11 New Endpoints Summary
+
+| # | Method | Path | Auth | Feature |
+|---|--------|------|------|---------|
+| 1 | GET | `/companies/{slug}/settings/team` | tenant | 1A |
+| 2 | PUT | `/companies/{slug}/settings/team/{user_id}` | superuser+tenant | 1A |
+| 3 | GET | `/companies/{slug}/settings/profile` | tenant | 1B |
+| 4 | PUT | `/companies/{slug}/settings/profile` | superuser+tenant | 1B |
+| 5 | GET | `/companies/{slug}/settings/pipeline-defaults` | tenant | 1C |
+| 6 | PUT | `/companies/{slug}/settings/pipeline-defaults` | superuser+tenant | 1C |
+| 7 | POST | `/companies/{slug}/knowledge-docs` | member+tenant | 2A |
+| 8 | GET | `/companies/{slug}/knowledge-docs` | tenant | 2A |
+| 9 | GET | `/companies/{slug}/knowledge-docs/{doc_id}` | tenant | 2A |
+| 10 | DELETE | `/companies/{slug}/knowledge-docs/{doc_id}` | member+tenant | 2A |
+| 11 | GET | `/companies/{slug}/knowledge-docs/{doc_id}/download` | tenant | 2A |
+
+### 25.12 Files Changed Summary
+
+| File | Action | Lines |
+|------|--------|-------|
+| `core/models/knowledge_docs.py` | NEW | ~35 |
+| `core/models/organization.py` | NEW | ~25 |
+| `core/models/gap_analysis.py` | Modified | +3 (DiscoverySource.KNOWLEDGE_DOC, knowledge_doc_dir field) |
+| `core/shared_tools/text_extraction.py` | NEW | ~47 |
+| `core/shared_tools/knowledge_doc_metadata.py` | NEW | ~97 |
+| `core/gap_analysis/steps/s1_embed_assets.py` | Modified | ~40 lines (knowledge doc loading + shared imports) |
+| `api/auth/store.py` | Modified | +60 (update_user, get/update_pipeline_defaults) |
+| `api/routers/settings.py` | NEW | ~150 |
+| `api/routers/knowledge_docs.py` | NEW | ~180 |
+| `api/schemas/settings.py` | NEW | ~70 |
+| `api/schemas/knowledge_docs.py` | NEW | ~30 |
+| `api/services/knowledge_doc_service.py` | NEW | ~206 |
+| `api/app.py` | Modified | +2 (register routers) |
+| `api/tasks/runner.py` | Modified | +15 (pipeline defaults + knowledge_doc_dir) |
+| `tests/api/test_settings_team.py` | NEW | 16 tests |
+| `tests/api/test_settings_profile.py` | NEW | 11 tests |
+| `tests/api/test_settings_pipeline.py` | NEW | 12 tests |
+| `tests/api/test_knowledge_docs.py` | NEW | 19 tests |
+| `tests/gap_analysis/steps/test_s1_knowledge_docs.py` | NEW | 15 tests |
+
+### 25.13 Deferred Items
+
+| Item | Priority | Description |
+|------|----------|-------------|
+| Phase 1D — API Key Configuration | Future sprint | Encrypted per-company keys, RuntimeConfig passthrough, masked reads |
+| W2: `update_pipeline_defaults` ignores unknown kwargs | Low | Silently ignores via Pydantic — no error for typos |
+| W4: `_save_metadata` doesn't create parent dir | Low | Relies on upload creating it first |
+| W6: No pagination on list endpoints | Medium | Settings team list and knowledge docs list return all items |
+| I1-I5: Minor code quality items | Low | See backlog PB-40 through PB-44 |
 
 ---
 
@@ -5345,10 +5750,21 @@ def test_other_user_cannot_read_test_co_profile(self, other_client, test_company
 | 2026-02-27 | §15 | Updated test count 900→944 (+44 route-protection tests); added route protection test table | T-route-protection |
 | 2026-02-27 | §24 | **NEW SECTION** — Route Protection & Authorization Sprint: exhaustive implementation detail (20 subsections). Pure ASGI middleware architecture, auth dependency chain, registration hardening, invite flow, pipeline tenant isolation, task IDOR fix, stream tokens, JWT enforcement, login timing, threading model, middleware ordering, test migration, 42 new tests, Codex review disposition (6C/10W/4I), files changed, deferred items | T-route-protection |
 | 2026-02-27 | TOC | Added §23 Product-Level Pipeline, §24 Route Protection with full subsection links, renumbered Appendices to §25-§27 | T-route-protection |
+| 2026-02-27 | §1 | Updated Executive Summary — 1029 tests, settings + knowledge doc description | T-settings-knowledge-docs |
+| 2026-02-27 | TOC | Added §25 Settings + Knowledge Docs sprint with 13 subsection links, renumbered Appendices to §26-§28 | T-settings-knowledge-docs |
+| 2026-02-27 | §4 | Added knowledge_docs.py, organization.py to models; text_extraction.py, knowledge_doc_metadata.py to shared_tools; settings.py, knowledge_docs.py to routers/schemas/services; knowledge_docs/ and _auth/settings/ to artifacts | T-settings-knowledge-docs |
+| 2026-02-27 | §6.1 | Added Knowledge Document Integration subsection — loading, chunking, embedding, shared module coordination, runner path resolution | T-settings-knowledge-docs |
+| 2026-02-27 | §9 | Added §9.6 Knowledge Document Storage (layout, _metadata.json format, thread safety) and §9.7 Pipeline Defaults Storage | T-settings-knowledge-docs |
+| 2026-02-27 | §10 | Added KnowledgeDocument model, CompanyPipelineDefaults model, DiscoverySource.KNOWLEDGE_DOC, knowledge_doc_dir on GapAnalysisInput, discovery_source on SemanticUnit | T-settings-knowledge-docs |
+| 2026-02-27 | §15 | Updated test count 944→1029 (+77 settings/knowledge docs + 8 security fixes); added 6 new test files to tree | T-settings-knowledge-docs |
+| 2026-02-27 | §18 | Updated test coverage description to 1029 tests | T-settings-knowledge-docs |
+| 2026-02-27 | §20 | Added Settings Pages API + Knowledge Doc Upload to What's Built; added 5 missing sprints to Completed Sprints table | T-settings-knowledge-docs |
+| 2026-02-27 | §21 | Updated status header — 1029 tests, 14 routers, settings + knowledge docs endpoints | T-settings-knowledge-docs |
+| 2026-02-27 | §25 | **NEW SECTION** — Settings Pages API & Knowledge Doc Upload Sprint: 13 subsections covering team management, company profile, pipeline defaults, file upload, s1 integration, embedded status tracking, shared module extraction, review fixes, runner wiring, endpoint summary, files changed, deferred items | T-settings-knowledge-docs |
 
 ---
 
 *End of Comprehensive System Documentation*
 *Generated: 2026-02-27*
-*Total codebase files analyzed: ~150+*
-*Total lines of documentation: ~5800+*
+*Total codebase files analyzed: ~170+*
+*Total lines of documentation: ~6300+*

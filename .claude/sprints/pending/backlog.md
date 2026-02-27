@@ -1,7 +1,7 @@
 # Pending Backlog
 
 > **Last synced:** 2026-02-27
-> **Total items:** 29
+> **Total items:** 34
 
 ## Critical (Fix Before Production)
 
@@ -283,6 +283,41 @@
 - **Date added:** 2026-02-27
 - **Description:** `tests/api/test_hitl_interrupt_resume.py::TestResumeFlow::test_revise_loops_back_to_agent` — fails on assert not `_has_interrupt(r3)`. Pre-existing, not caused by security fixes.
 - **Files affected:** `tests/api/test_hitl_interrupt_resume.py`
+- **Blocked by:** nothing
+
+### PB-40: Phase 1D — API Key Configuration (deferred by design)
+- **Source:** Settings-knowledge-docs sprint — intentionally deferred
+- **Date added:** 2026-02-27
+- **Description:** Encrypted per-company API keys (OpenAI, Anthropic, Perplexity, Google, Langfuse). RuntimeConfig passthrough (not env override) + encryption at rest (Fernet/KMS) + masked reads. Pre-YC, we run pipelines with our own keys.
+- **Files affected:** `api/auth/store.py`, `api/routers/settings.py`, `api/tasks/runner.py`, new `api/services/api_key_service.py`
+- **Blocked by:** nothing
+
+### PB-41: update_pipeline_defaults silently ignores unknown kwargs (W2)
+- **Source:** Settings-knowledge-docs sprint self-review
+- **Date added:** 2026-02-27
+- **Description:** `update_pipeline_defaults(**kwargs)` passes through Pydantic model_validate which silently drops unknown fields. A typo like `max_crawl_page` (missing 's') is silently ignored.
+- **Files affected:** `api/auth/store.py`
+- **Blocked by:** nothing
+
+### PB-42: _save_metadata doesn't create parent directory (W4)
+- **Source:** Settings-knowledge-docs sprint self-review
+- **Date added:** 2026-02-27
+- **Description:** `save_metadata()` in `knowledge_doc_metadata.py` writes to `_metadata.json` but doesn't create the parent directory. Works because upload creates it first, but `mark_documents_embedded()` could fail if called on a non-existent directory.
+- **Files affected:** `core/shared_tools/knowledge_doc_metadata.py`
+- **Blocked by:** nothing
+
+### PB-43: No pagination on settings team list and knowledge docs list (W6)
+- **Source:** Settings-knowledge-docs sprint self-review
+- **Date added:** 2026-02-27
+- **Description:** GET `/settings/team` and GET `/knowledge-docs` return all items without pagination. Acceptable for small teams/doc counts but won't scale.
+- **Files affected:** `api/routers/settings.py`, `api/routers/knowledge_docs.py`
+- **Blocked by:** nothing
+
+### PB-44: Knowledge doc upload content_type inferred from extension only
+- **Source:** Settings-knowledge-docs sprint self-review
+- **Date added:** 2026-02-27
+- **Description:** MIME type is determined by file extension mapping, not by inspecting actual file content. A renamed `.txt` file with PDF content would be stored with wrong content_type.
+- **Files affected:** `api/services/knowledge_doc_service.py`
 - **Blocked by:** nothing
 
 ---

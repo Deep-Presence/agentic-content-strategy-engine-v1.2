@@ -1,5 +1,5 @@
 {
-  "current_sprint": "security-fixes",
+  "current_sprint": "settings-knowledge-docs",
   "last_updated": "2026-02-27",
   "completed": [
     {
@@ -204,6 +204,36 @@
         "api/auth/store.py",
         "tests/api/test_auth_enforcement.py",
         ".claude/sprints/pending/backlog.md"
+      ]
+    },
+    {
+      "id": "T-settings-knowledge-docs",
+      "task": "Settings Pages API (team/profile/pipeline-defaults) + Knowledge Doc Upload (CRUD + s1 integration + embedded status) + 6 review fixes",
+      "sprint": "settings-knowledge-docs",
+      "status": "done",
+      "completed_at": "2026-02-27",
+      "summary": "Implemented 6 phases: Phase 1A — User Management (AuthStore.update_user with _USER_MUTABLE_FIELDS allowlist, settings router GET/PUT team, 16 tests). Phase 1B — Company Profile (GET/PUT settings/profile delegating to update_company, 11 tests). Phase 1C — Pipeline Defaults (CompanyPipelineDefaults model in core/models/organization.py, get/update_pipeline_defaults in auth store, file-backed in artifacts/_auth/settings/{slug}.json, 12 tests). Phase 2A — Knowledge Doc Upload (KnowledgeDocument model, multipart upload service with sanitization + extension whitelist + size check + path traversal guard, CRUD + download endpoints with _find_across_product_slugs helper, 19 tests). Phase 2B — S1 Integration (load knowledge docs → extract text → chunk → create SemanticUnits with discovery_source=knowledge_doc → embed alongside site content, runner resolves path with product fallback, 15 tests). Phase 2C — Embedded Status (mark_documents_embedded updates is_embedded + last_embedded_at after s1 embed, 3 tests). Review fixes: C1 (DRY _find_across_product_slugs), C2 (shared text_extraction.py), C3 (shared knowledge_doc_metadata.py with single process-wide lock), W1 (dead import), W3 (pipeline defaults wired into runner), W5 (type annotation). New deps: pdfplumber, python-docx.",
+      "test_count": "1029 tests passed (77 new), 1 pre-existing failure (PB-39)",
+      "files_changed": [
+        "core/models/knowledge_docs.py",
+        "core/models/organization.py",
+        "core/models/gap_analysis.py",
+        "core/shared_tools/text_extraction.py",
+        "core/shared_tools/knowledge_doc_metadata.py",
+        "core/gap_analysis/steps/s1_embed_assets.py",
+        "api/auth/store.py",
+        "api/routers/settings.py",
+        "api/routers/knowledge_docs.py",
+        "api/schemas/settings.py",
+        "api/schemas/knowledge_docs.py",
+        "api/services/knowledge_doc_service.py",
+        "api/app.py",
+        "api/tasks/runner.py",
+        "tests/api/test_settings_team.py",
+        "tests/api/test_settings_profile.py",
+        "tests/api/test_settings_pipeline.py",
+        "tests/api/test_knowledge_docs.py",
+        "tests/gap_analysis/steps/test_s1_knowledge_docs.py"
       ]
     },
     {

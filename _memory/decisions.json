@@ -243,5 +243,22 @@
     "reversible": true,
     "approved_by": "Aryan",
     "codex_reviews": "2 rounds of Codex gpt-5.3-codex high-reasoning review. Round 1: 5C+7W (scope included Feature 2). Round 2: 4C+6W (Feature 1 only). All criticals incorporated."
+  },
+  {
+    "id": "D-SETTINGS-1",
+    "timestamp": "2026-02-27",
+    "task": "Settings Pages API + Knowledge Doc Upload — architecture and shared module extraction",
+    "approach": "File-backed settings (artifacts/_auth/settings/{slug}.json) + knowledge docs with _metadata.json sidecar. Shared modules in core/shared_tools/ (text_extraction.py for canonical .md/.txt/.pdf/.docx extraction, knowledge_doc_metadata.py for single process-wide metadata_lock + atomic I/O). Pipeline defaults merge: request > company defaults > global settings. Knowledge docs auto-included in s1 embedding with discovery_source='knowledge_doc'. Runner resolves knowledge_doc_dir with product→company fallback.",
+    "rationale": "File-backed storage continues the existing pattern (auth store, task store). Shared modules prevent code duplication and ensure thread safety between concurrent upload + pipeline execution. core/shared_tools/ is the correct location since core/ cannot import from api/. Auto-include all knowledge docs is simpler UX than per-doc selection.",
+    "alternatives_rejected": [
+      "Redis-backed settings (over-engineering for single-server)",
+      "Per-doc include/exclude toggle (unnecessary complexity — delete docs you don't want)",
+      "Separate lock per metadata file (same process, same GIL — single lock is simpler and sufficient)",
+      "pdfminer instead of pdfplumber (pdfplumber has cleaner API for text extraction)",
+      "Phase 1D API keys in this sprint (deferred — pre-YC we run with our own keys)"
+    ],
+    "outcome": "6 phases + 6 review fixes complete. 1029 tests (77 new). 11 new API endpoints. Shared modules eliminate code duplication and prevent race conditions.",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]
