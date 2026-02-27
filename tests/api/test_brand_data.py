@@ -120,21 +120,22 @@ class TestResearchArtifacts:
 
     # ── Slug validation ──
 
-    def test_invalid_slug_returns_400(self, client: TestClient):
+    def test_invalid_slug_returns_403(self, client: TestClient):
+        # Invalid slug doesn't match authenticated user's company → 403
         resp = client.get(self.URL.format(slug="INVALID!!"))
-        assert resp.status_code == 400
+        assert resp.status_code == 403
 
-    def test_path_traversal_slug_returns_400(self, client: TestClient):
+    def test_path_traversal_slug_returns_error(self, client: TestClient):
         resp = client.get(self.URL.format(slug="../etc"))
-        # FastAPI may return 400 or 404 depending on router parsing
-        assert resp.status_code in (400, 404, 422)
+        # Tenant check or FastAPI parser rejects before handler
+        assert resp.status_code in (400, 403, 404, 422)
 
     # ── Empty state ──
 
     def test_no_artifacts_returns_all_none(
         self, client: TestClient, artifacts_root: Path
     ):
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.status_code == 200
         data = resp.json()
         assert data["company_context"]["status"] == "none"
@@ -147,7 +148,7 @@ class TestResearchArtifacts:
     ):
         # Only personas dir exists
         (artifacts_root / "personas").mkdir(parents=True)
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.status_code == 200
         assert resp.json()["company_context"]["status"] == "none"
 
@@ -157,10 +158,10 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         _write_artifact(
-            artifacts_root / "company_context" / "webflow.md",
+            artifacts_root / "company_context" / "test-co.md",
             "# Webflow Company Context",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.status_code == 200
         data = resp.json()["company_context"]
         assert data["status"] == "approved"
@@ -171,10 +172,10 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         _write_artifact(
-            artifacts_root / "company_context" / "webflow.draft.md",
+            artifacts_root / "company_context" / "test-co.draft.md",
             "# Draft Context",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         data = resp.json()["company_context"]
         assert data["status"] == "draft"
         assert data["content"] == "# Draft Context"
@@ -183,14 +184,14 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         _write_artifact(
-            artifacts_root / "company_context" / "webflow.md",
+            artifacts_root / "company_context" / "test-co.md",
             "# Approved",
         )
         _write_artifact(
-            artifacts_root / "company_context" / "webflow.draft.md",
+            artifacts_root / "company_context" / "test-co.draft.md",
             "# Draft",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         data = resp.json()["company_context"]
         assert data["status"] == "approved"
         assert data["content"] == "# Approved"
@@ -201,10 +202,10 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         _write_artifact(
-            artifacts_root / "personas" / "webflow__persona-icp.md",
+            artifacts_root / "personas" / "test-co__persona-icp.md",
             "# ICP Persona",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
         assert len(personas) == 1
         p = personas[0]
@@ -217,14 +218,14 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         _write_artifact(
-            artifacts_root / "personas" / "webflow__persona-icp.md",
+            artifacts_root / "personas" / "test-co__persona-icp.md",
             "# ICP",
         )
         _write_artifact(
-            artifacts_root / "personas" / "webflow__persona-secondary-sales.md",
+            artifacts_root / "personas" / "test-co__persona-secondary-sales.md",
             "# Secondary Sales",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
         assert len(personas) == 2
         ids = {p["id"] for p in personas}
@@ -235,10 +236,10 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         _write_artifact(
-            artifacts_root / "personas" / "webflow__persona-icp.draft.md",
+            artifacts_root / "personas" / "test-co__persona-icp.draft.md",
             "# Draft Persona",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
         assert len(personas) == 1
         assert personas[0]["status"] == "draft"
@@ -249,14 +250,14 @@ class TestResearchArtifacts:
     ):
         """When both .md and .draft.md exist, approved wins."""
         _write_artifact(
-            artifacts_root / "personas" / "webflow__persona-icp.md",
+            artifacts_root / "personas" / "test-co__persona-icp.md",
             "# Approved Persona",
         )
         _write_artifact(
-            artifacts_root / "personas" / "webflow__persona-icp.draft.md",
+            artifacts_root / "personas" / "test-co__persona-icp.draft.md",
             "# Draft Persona",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
         icp = [p for p in personas if p["id"] == "persona-icp"]
         assert len(icp) == 1
@@ -267,10 +268,10 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         _write_artifact(
-            artifacts_root / "personas" / "webflow__persona-secondary-finance.md",
+            artifacts_root / "personas" / "test-co__persona-secondary-finance.md",
             "# Finance Persona",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
         assert personas[0]["type"] == "secondary"
 
@@ -278,10 +279,10 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         _write_artifact(
-            artifacts_root / "personas" / "webflow__persona-icp.md",
+            artifacts_root / "personas" / "test-co__persona-icp.md",
             "# ICP",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         # Name should be title-cased from id with hyphens as spaces
         name = resp.json()["personas"][0]["name"]
         assert name == "Persona Icp"
@@ -294,7 +295,7 @@ class TestResearchArtifacts:
             artifacts_root / "personas" / "ramp__persona-icp.md",
             "# Ramp ICP",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["personas"] == []
 
     def test_non_persona_files_excluded(
@@ -302,14 +303,14 @@ class TestResearchArtifacts:
     ):
         """Files like {slug}__notes.md should not appear as personas (Codex CX-4)."""
         _write_artifact(
-            artifacts_root / "personas" / "webflow__notes.md",
+            artifacts_root / "personas" / "test-co__notes.md",
             "# Internal notes",
         )
         _write_artifact(
-            artifacts_root / "personas" / "webflow__persona-icp.md",
+            artifacts_root / "personas" / "test-co__persona-icp.md",
             "# ICP",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
         assert len(personas) == 1
         assert personas[0]["id"] == "persona-icp"
@@ -320,10 +321,10 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         _write_artifact(
-            artifacts_root / "style_guides" / "webflow.md",
+            artifacts_root / "style_guides" / "test-co.md",
             "# Style Guide",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         data = resp.json()["style_guide"]
         assert data["status"] == "approved"
         assert data["content"] == "# Style Guide"
@@ -332,10 +333,10 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         _write_artifact(
-            artifacts_root / "style_guides" / "webflow.draft.md",
+            artifacts_root / "style_guides" / "test-co.draft.md",
             "# Draft Guide",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         data = resp.json()["style_guide"]
         assert data["status"] == "draft"
         assert data["content"] == "# Draft Guide"
@@ -345,9 +346,9 @@ class TestResearchArtifacts:
     def test_updated_at_from_file_mtime(
         self, client: TestClient, artifacts_root: Path
     ):
-        path = artifacts_root / "company_context" / "webflow.md"
+        path = artifacts_root / "company_context" / "test-co.md"
         _write_artifact(path, "# Context")
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         updated_at = resp.json()["company_context"]["updated_at"]
         assert updated_at is not None
         # Should be a parseable ISO datetime
@@ -360,22 +361,22 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         _write_artifact(
-            artifacts_root / "company_context" / "webflow.md",
+            artifacts_root / "company_context" / "test-co.md",
             "# Company",
         )
         _write_artifact(
-            artifacts_root / "personas" / "webflow__persona-icp.md",
+            artifacts_root / "personas" / "test-co__persona-icp.md",
             "# ICP",
         )
         _write_artifact(
-            artifacts_root / "personas" / "webflow__persona-secondary-sales.md",
+            artifacts_root / "personas" / "test-co__persona-secondary-sales.md",
             "# Sales",
         )
         _write_artifact(
-            artifacts_root / "style_guides" / "webflow.md",
+            artifacts_root / "style_guides" / "test-co.md",
             "# Style",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.status_code == 200
         data = resp.json()
         assert data["company_context"]["status"] == "approved"
@@ -395,16 +396,17 @@ class TestRunHistory:
 
     # ── Slug validation ──
 
-    def test_invalid_slug_returns_400(self, client: TestClient):
+    def test_invalid_slug_returns_403(self, client: TestClient):
+        # Invalid slug doesn't match authenticated user's company → 403
         resp = client.get(self.URL.format(slug="INVALID!!"))
-        assert resp.status_code == 400
+        assert resp.status_code == 403
 
     # ── Empty state ──
 
     def test_no_tasks_returns_empty(
         self, client: TestClient, task_store: TaskStore
     ):
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.status_code == 200
         data = resp.json()
         assert data["runs"] == []
@@ -414,7 +416,7 @@ class TestRunHistory:
         self, client: TestClient, task_store: TaskStore
     ):
         _create_task(task_store, "gap_analysis", "ramp")
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["total"] == 0
 
     # ── Basic listing ──
@@ -426,11 +428,11 @@ class TestRunHistory:
         _create_task(
             task_store,
             "gap_analysis",
-            "webflow",
+            "test-co",
             status=TaskStatus.COMPLETED,
             result=result,
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         data = resp.json()
         assert data["total"] == 1
         run = data["runs"][0]
@@ -448,11 +450,11 @@ class TestRunHistory:
         _create_task(
             task_store,
             "gap_analysis",
-            "webflow",
+            "test-co",
             status=TaskStatus.FAILED,
             current_step="s4_enrich_citations",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         run = resp.json()["runs"][0]
         assert run["status"] == "failed"
         assert run["spa_score"] == 0.0
@@ -464,11 +466,11 @@ class TestRunHistory:
         _create_task(
             task_store,
             "gap_analysis",
-            "webflow",
+            "test-co",
             status=TaskStatus.RUNNING,
             current_step="s4_enrich_citations",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         run = resp.json()["runs"][0]
         assert run["status"] == "running"
         assert run["steps_completed"] == 4
@@ -479,7 +481,7 @@ class TestRunHistory:
         _create_task(
             task_store,
             "gap_analysis",
-            "webflow",
+            "test-co",
             status=TaskStatus.COMPLETED,
             result=_make_gap_result(spa_t_stat=10.0),
             created_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
@@ -488,13 +490,13 @@ class TestRunHistory:
         _create_task(
             task_store,
             "gap_analysis",
-            "webflow",
+            "test-co",
             status=TaskStatus.COMPLETED,
             result=_make_gap_result(spa_t_stat=15.0),
             created_at=datetime(2026, 2, 18, tzinfo=timezone.utc),
             updated_at=datetime(2026, 2, 18, 4, tzinfo=timezone.utc),
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         runs = resp.json()["runs"]
         assert len(runs) == 2
         # Most recent first
@@ -509,13 +511,13 @@ class TestRunHistory:
         _create_task(
             task_store,
             "gap_analysis",
-            "webflow",
+            "test-co",
             status=TaskStatus.COMPLETED,
             result=_make_gap_result(),
             created_at=datetime(2026, 2, 18, 20, 0, tzinfo=timezone.utc),
             updated_at=datetime(2026, 2, 18, 23, 46, tzinfo=timezone.utc),
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["runs"][0]["duration"] == "3h 46m"
 
     def test_duration_minutes_only(
@@ -524,13 +526,13 @@ class TestRunHistory:
         _create_task(
             task_store,
             "gap_analysis",
-            "webflow",
+            "test-co",
             status=TaskStatus.COMPLETED,
             result=_make_gap_result(),
             created_at=datetime(2026, 2, 18, 20, 0, tzinfo=timezone.utc),
             updated_at=datetime(2026, 2, 18, 20, 23, tzinfo=timezone.utc),
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["runs"][0]["duration"] == "23m"
 
     def test_duration_running_empty_string(
@@ -539,11 +541,11 @@ class TestRunHistory:
         _create_task(
             task_store,
             "gap_analysis",
-            "webflow",
+            "test-co",
             status=TaskStatus.RUNNING,
             current_step="s3_search_platforms",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         run = resp.json()["runs"][0]
         # Running tasks have no meaningful duration yet
         assert run["status"] == "running"
@@ -556,11 +558,11 @@ class TestRunHistory:
         _create_task(
             task_store,
             "gap_analysis",
-            "webflow",
+            "test-co",
             status=TaskStatus.COMPLETED,
             result=_make_gap_result(),
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         run = resp.json()["runs"][0]
         assert run["steps_completed"] == 8
         assert run["total_steps"] == 8
@@ -571,11 +573,11 @@ class TestRunHistory:
         _create_task(
             task_store,
             "gap_analysis",
-            "webflow",
+            "test-co",
             status=TaskStatus.RUNNING,
             current_step="s4_enrich_citations",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         run = resp.json()["runs"][0]
         assert run["steps_completed"] == 4
         assert run["total_steps"] == 8
@@ -586,11 +588,11 @@ class TestRunHistory:
         _create_task(
             task_store,
             "research",
-            "webflow",
+            "test-co",
             status=TaskStatus.COMPLETED,
             result={"stage": "complete"},
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         run = resp.json()["runs"][0]
         assert run["steps_completed"] == 3
         assert run["total_steps"] == 3
@@ -601,11 +603,11 @@ class TestRunHistory:
         _create_task(
             task_store,
             "research",
-            "webflow",
+            "test-co",
             status=TaskStatus.RUNNING,
             current_step="persona",
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         run = resp.json()["runs"][0]
         assert run["steps_completed"] == 2
         assert run["total_steps"] == 3
@@ -616,11 +618,11 @@ class TestRunHistory:
         _create_task(
             task_store,
             "content",
-            "webflow",
+            "test-co",
             status=TaskStatus.COMPLETED,
             result={"total_briefs": 3},
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         run = resp.json()["runs"][0]
         assert run["steps_completed"] == 4
         assert run["total_steps"] == 4
@@ -632,10 +634,10 @@ class TestRunHistory:
     ):
         result = _make_gap_result(spa_t_stat=11.234)
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=result,
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["runs"][0]["spa_score"] == pytest.approx(11.234)
 
     def test_nan_spa_score_returns_zero(
@@ -643,20 +645,20 @@ class TestRunHistory:
     ):
         result = _make_gap_result(spa_t_stat=float("nan"))
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=result,
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["runs"][0]["spa_score"] == 0.0
 
     def test_missing_result_returns_zero_metrics(
         self, client: TestClient, task_store: TaskStore
     ):
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=None,
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         run = resp.json()["runs"][0]
         assert run["spa_score"] == 0.0
         assert run["queries"] == 0
@@ -667,12 +669,12 @@ class TestRunHistory:
     def test_filter_by_pipeline(
         self, client: TestClient, task_store: TaskStore
     ):
-        _create_task(task_store, "gap_analysis", "webflow",
+        _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.COMPLETED, result=_make_gap_result())
-        _create_task(task_store, "research", "webflow",
+        _create_task(task_store, "research", "test-co",
                       status=TaskStatus.COMPLETED, result={"stage": "complete"})
         resp = client.get(
-            self.URL.format(slug="webflow"), params={"pipeline": "gap_analysis"}
+            self.URL.format(slug="test-co"), params={"pipeline": "gap_analysis"}
         )
         data = resp.json()
         assert data["total"] == 1
@@ -681,12 +683,12 @@ class TestRunHistory:
     def test_filter_by_status(
         self, client: TestClient, task_store: TaskStore
     ):
-        _create_task(task_store, "gap_analysis", "webflow",
+        _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.COMPLETED, result=_make_gap_result())
-        _create_task(task_store, "gap_analysis", "webflow",
+        _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.FAILED)
         resp = client.get(
-            self.URL.format(slug="webflow"), params={"status": "completed"}
+            self.URL.format(slug="test-co"), params={"status": "completed"}
         )
         data = resp.json()
         assert data["total"] == 1
@@ -695,14 +697,14 @@ class TestRunHistory:
     def test_filter_pipeline_and_status(
         self, client: TestClient, task_store: TaskStore
     ):
-        _create_task(task_store, "gap_analysis", "webflow",
+        _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.COMPLETED, result=_make_gap_result())
-        _create_task(task_store, "research", "webflow",
+        _create_task(task_store, "research", "test-co",
                       status=TaskStatus.COMPLETED, result={"stage": "complete"})
-        _create_task(task_store, "gap_analysis", "webflow",
+        _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.FAILED)
         resp = client.get(
-            self.URL.format(slug="webflow"),
+            self.URL.format(slug="test-co"),
             params={"pipeline": "gap_analysis", "status": "completed"},
         )
         data = resp.json()
@@ -714,12 +716,12 @@ class TestRunHistory:
         self, client: TestClient, task_store: TaskStore
     ):
         """pending_approval maps to 'running' so ?status=running should include it."""
-        _create_task(task_store, "research", "webflow",
+        _create_task(task_store, "research", "test-co",
                       status=TaskStatus.PENDING_APPROVAL)
-        _create_task(task_store, "gap_analysis", "webflow",
+        _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.RUNNING)
         resp = client.get(
-            self.URL.format(slug="webflow"), params={"status": "running"},
+            self.URL.format(slug="test-co"), params={"status": "running"},
         )
         data = resp.json()
         assert data["total"] == 2
@@ -729,12 +731,12 @@ class TestRunHistory:
         self, client: TestClient, task_store: TaskStore
     ):
         """cancelled maps to 'failed' so ?status=failed should include it."""
-        _create_task(task_store, "gap_analysis", "webflow",
+        _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.CANCELLED)
-        _create_task(task_store, "gap_analysis", "webflow",
+        _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.FAILED)
         resp = client.get(
-            self.URL.format(slug="webflow"), params={"status": "failed"},
+            self.URL.format(slug="test-co"), params={"status": "failed"},
         )
         data = resp.json()
         assert data["total"] == 2
@@ -746,21 +748,26 @@ class TestRunHistory:
         self, client: TestClient, task_store: TaskStore
     ):
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=_make_gap_result(),
         )
-        resp = client.get(self.URL.format(slug="webflow"))
-        assert resp.json()["runs"][0]["company"] == "Webflow"
+        resp = client.get(self.URL.format(slug="test-co"))
+        assert resp.json()["runs"][0]["company"] == "Test Co"
 
     def test_compound_slug_company_name(
         self, client: TestClient, task_store: TaskStore
     ):
+        """Compound slugs with hyphens derive title-cased company name.
+
+        Note: this test reuses the test-co slug (matching the test tenant)
+        and verifies the name derivation for its slug format.
+        """
         _create_task(
-            task_store, "gap_analysis", "ramp-business",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=_make_gap_result(),
         )
-        resp = client.get(self.URL.format(slug="ramp-business"))
-        assert resp.json()["runs"][0]["company"] == "Ramp Business"
+        resp = client.get(self.URL.format(slug="test-co"))
+        assert resp.json()["runs"][0]["company"] == "Test Co"
 
     # ── Started field ──
 
@@ -768,11 +775,11 @@ class TestRunHistory:
         self, client: TestClient, task_store: TaskStore
     ):
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=_make_gap_result(),
             created_at=datetime(2026, 2, 18, 20, 0, tzinfo=timezone.utc),
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         started = resp.json()["runs"][0]["started"]
         dt = datetime.fromisoformat(started)
         assert dt.year == 2026
@@ -791,33 +798,34 @@ class TestSPATrend:
 
     # ── Slug validation ──
 
-    def test_invalid_slug_returns_400(self, client: TestClient):
+    def test_invalid_slug_returns_403(self, client: TestClient):
+        # Invalid slug doesn't match authenticated user's company → 403
         resp = client.get(self.URL.format(slug="INVALID!!"))
-        assert resp.status_code == 400
+        assert resp.status_code == 403
 
     # ── Empty state ──
 
     def test_no_runs_returns_empty_trend(
         self, client: TestClient, task_store: TaskStore
     ):
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.status_code == 200
         assert resp.json()["trend"] == []
 
     def test_no_gap_runs_returns_empty(
         self, client: TestClient, task_store: TaskStore
     ):
-        _create_task(task_store, "research", "webflow",
+        _create_task(task_store, "research", "test-co",
                       status=TaskStatus.COMPLETED, result={"stage": "complete"})
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["trend"] == []
 
     def test_incomplete_gap_runs_excluded(
         self, client: TestClient, task_store: TaskStore
     ):
-        _create_task(task_store, "gap_analysis", "webflow",
+        _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.FAILED)
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["trend"] == []
 
     # ── Single run ──
@@ -830,11 +838,11 @@ class TestSPATrend:
             mean_citation_sim=0.65, mean_company_sim=0.45,
         )
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=result,
             created_at=datetime(2026, 2, 18, tzinfo=timezone.utc),
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         trend = resp.json()["trend"]
         assert len(trend) == 1
         point = trend[0]
@@ -850,18 +858,18 @@ class TestSPATrend:
         self, client: TestClient, task_store: TaskStore
     ):
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=_make_gap_result(spa_t_stat=12.0),
             created_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
             updated_at=datetime(2026, 1, 15, 4, tzinfo=timezone.utc),
         )
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=_make_gap_result(spa_t_stat=15.0),
             created_at=datetime(2026, 2, 18, tzinfo=timezone.utc),
             updated_at=datetime(2026, 2, 18, 4, tzinfo=timezone.utc),
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         trend = resp.json()["trend"]
         assert len(trend) == 2
         # Oldest first (ascending for chart x-axis)
@@ -872,11 +880,11 @@ class TestSPATrend:
         self, client: TestClient, task_store: TaskStore
     ):
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=_make_gap_result(),
             created_at=datetime(2026, 2, 18, tzinfo=timezone.utc),
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         point = resp.json()["trend"][0]
         assert point["run"] == "Feb 18"
 
@@ -887,20 +895,20 @@ class TestSPATrend:
     ):
         result = _make_gap_result(spa_t_stat=float("nan"))
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=result,
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["trend"][0]["spa_score"] == 0.0
 
     def test_missing_report_json_skips_run(
         self, client: TestClient, task_store: TaskStore
     ):
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result={"some_other": "data"},
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         # Run without report_json should be skipped
         assert resp.json()["trend"] == []
 
@@ -908,11 +916,11 @@ class TestSPATrend:
         self, client: TestClient, task_store: TaskStore
     ):
         _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED,
             result={"report_json": {"decision_metrics": {"total_queries": 10}}},
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["trend"] == []
 
     def test_other_slug_excluded(
@@ -922,15 +930,15 @@ class TestSPATrend:
             task_store, "gap_analysis", "ramp",
             status=TaskStatus.COMPLETED, result=_make_gap_result(),
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["trend"] == []
 
     def test_run_id_populated(
         self, client: TestClient, task_store: TaskStore
     ):
         task = _create_task(
-            task_store, "gap_analysis", "webflow",
+            task_store, "gap_analysis", "test-co",
             status=TaskStatus.COMPLETED, result=_make_gap_result(),
         )
-        resp = client.get(self.URL.format(slug="webflow"))
+        resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["trend"][0]["run_id"] == task.task_id

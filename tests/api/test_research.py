@@ -17,8 +17,8 @@ from api.tasks.store import TaskStore
 # ── Minimal valid payload (simplified schema) ──────────────────────
 
 MINIMAL_PAYLOAD = {
-    "company_name": "Ramp",
-    "domain": "ramp.com",
+    "company_name": "Test Co",
+    "domain": "testco.com",
 }
 
 
@@ -47,7 +47,7 @@ class TestStartResearch:
         data = resp.json()
         assert "run_id" in data
         assert data["pipeline"] == "research"
-        assert data["company_slug"] == "ramp"
+        assert data["company_slug"] == "test-co"
         assert data["status"] == "running"
 
     def test_minimal_payload_only_requires_name_and_domain(
@@ -56,28 +56,28 @@ class TestStartResearch:
         """Frontend only needs company_name + domain — everything else has defaults."""
         resp = client.post(
             "/api/v1/research/start",
-            json={"company_name": "Webflow", "domain": "webflow.com"},
+            json={"company_name": "Test Co", "domain": "testco.com"},
         )
         assert resp.status_code == 202
 
     def test_validation_error_missing_company_name(self, client: TestClient) -> None:
         resp = client.post(
             "/api/v1/research/start",
-            json={"domain": "ramp.com"},
+            json={"domain": "testco.com"},
         )
         assert resp.status_code == 422
 
     def test_validation_error_missing_domain(self, client: TestClient) -> None:
         resp = client.post(
             "/api/v1/research/start",
-            json={"company_name": "Ramp"},
+            json={"company_name": "Test Co"},
         )
         assert resp.status_code == 422
 
     def test_slug_conflict(
         self, client: TestClient, task_store: TaskStore, mock_research_runner
     ) -> None:
-        task_store.create_task("research", "ramp")
+        task_store.create_task("research", "test-co")
         resp = client.post("/api/v1/research/start", json=MINIMAL_PAYLOAD)
         assert resp.status_code == 409
 
@@ -85,9 +85,9 @@ class TestStartResearch:
         resp = client.post(
             "/api/v1/research/start",
             json={
-                "company_name": "Ramp",
-                "domain": "ramp.com",
-                "seed_urls": ["https://ramp.com/"],
+                "company_name": "Test Co",
+                "domain": "testco.com",
+                "seed_urls": ["https://testco.com/"],
                 "stages": ["company", "persona", "style_guide"],
                 "auto_approve": True,
                 "max_personas": 2,
@@ -99,8 +99,8 @@ class TestStartResearch:
         resp = client.post(
             "/api/v1/research/start",
             json={
-                "company_name": "Ramp",
-                "domain": "ramp.com",
+                "company_name": "Test Co",
+                "domain": "testco.com",
                 "stages": ["company"],
             },
         )
@@ -120,8 +120,8 @@ class TestStartResearch:
         resp = client.post(
             "/api/v1/research/start",
             json={
-                "company_name": "Ramp",
-                "domain": "ramp.com",
+                "company_name": "Test Co",
+                "domain": "testco.com",
                 "language": "en",
                 "region": "us",
                 "max_personas": 2,
@@ -154,9 +154,9 @@ class TestStartResearchGuard:
     def test_start_returns_already_exists_when_all_default_stages_present(
         self, client: TestClient, artifacts_root: Path
     ) -> None:
-        self._write_company(artifacts_root, "ramp")
-        self._write_persona(artifacts_root, "ramp")
-        self._write_style(artifacts_root, "ramp")
+        self._write_company(artifacts_root, "test-co")
+        self._write_persona(artifacts_root, "test-co")
+        self._write_style(artifacts_root, "test-co")
         resp = client.post("/api/v1/research/start", json=MINIMAL_PAYLOAD)
         assert resp.status_code == 200
         data = resp.json()
@@ -169,7 +169,7 @@ class TestStartResearchGuard:
     ) -> None:
         """stages=["persona"] only triggers guard if persona artifact exists."""
         # Only company context exists — NOT persona
-        self._write_company(artifacts_root, "ramp")
+        self._write_company(artifacts_root, "test-co")
         resp = client.post(
             "/api/v1/research/start",
             json={**MINIMAL_PAYLOAD, "stages": ["persona"]},
@@ -183,9 +183,9 @@ class TestStartResearchGuard:
         self, client: TestClient, artifacts_root: Path, mock_research_runner
     ) -> None:
         """A .draft.md persona file must NOT count as approved — guard must not fire."""
-        self._write_company(artifacts_root, "ramp")
-        self._write_persona(artifacts_root, "ramp", draft=True)  # draft only
-        self._write_style(artifacts_root, "ramp")
+        self._write_company(artifacts_root, "test-co")
+        self._write_persona(artifacts_root, "test-co", draft=True)  # draft only
+        self._write_style(artifacts_root, "test-co")
         resp = client.post("/api/v1/research/start", json=MINIMAL_PAYLOAD)
         # All default stages requested, but persona is only a draft → proceed normally
         assert resp.status_code == 202
@@ -194,9 +194,9 @@ class TestStartResearchGuard:
     def test_start_force_rerun_bypasses_guard(
         self, client: TestClient, artifacts_root: Path, mock_research_runner
     ) -> None:
-        self._write_company(artifacts_root, "ramp")
-        self._write_persona(artifacts_root, "ramp")
-        self._write_style(artifacts_root, "ramp")
+        self._write_company(artifacts_root, "test-co")
+        self._write_persona(artifacts_root, "test-co")
+        self._write_style(artifacts_root, "test-co")
         resp = client.post(
             "/api/v1/research/start",
             json={**MINIMAL_PAYLOAD, "force_rerun": True},
@@ -208,8 +208,8 @@ class TestStartResearchGuard:
         self, client: TestClient, artifacts_root: Path, mock_research_runner
     ) -> None:
         """Company + style exist, but stages=["persona"] requested with no persona artifact → proceed."""
-        self._write_company(artifacts_root, "ramp")
-        self._write_style(artifacts_root, "ramp")
+        self._write_company(artifacts_root, "test-co")
+        self._write_style(artifacts_root, "test-co")
         resp = client.post(
             "/api/v1/research/start",
             json={**MINIMAL_PAYLOAD, "stages": ["persona"]},
@@ -221,12 +221,12 @@ class TestResearchStatus:
     def test_status_after_start(
         self, client: TestClient, task_store: TaskStore
     ) -> None:
-        task = task_store.create_task("research", "ramp")
+        task = task_store.create_task("research", "test-co")
         resp = client.get(f"/api/v1/research/{task.task_id}/status")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "running"
-        assert data["company_slug"] == "ramp"
+        assert data["company_slug"] == "test-co"
 
     def test_completed_status(
         self, client: TestClient, mock_research_runner
@@ -248,7 +248,7 @@ class TestResearchApproval:
     def test_approve_pending_task(
         self, client: TestClient, task_store: TaskStore, event_bus: EventBus
     ) -> None:
-        task = task_store.create_task("research", "ramp")
+        task = task_store.create_task("research", "test-co")
         task_store.update_task(
             task.task_id,
             status=TaskStatus.PENDING_APPROVAL,
@@ -266,7 +266,7 @@ class TestResearchApproval:
     def test_approve_with_revision_note(
         self, client: TestClient, task_store: TaskStore, event_bus: EventBus
     ) -> None:
-        task = task_store.create_task("research", "ramp")
+        task = task_store.create_task("research", "test-co")
         task_store.update_task(
             task.task_id,
             status=TaskStatus.PENDING_APPROVAL,
@@ -290,7 +290,7 @@ class TestResearchApproval:
     def test_approve_non_pending_returns_409(
         self, client: TestClient, task_store: TaskStore
     ) -> None:
-        task = task_store.create_task("research", "ramp")
+        task = task_store.create_task("research", "test-co")
         resp = client.post(
             f"/api/v1/research/{task.task_id}/approve",
             json={"decision": "approve"},

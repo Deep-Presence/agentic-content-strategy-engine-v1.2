@@ -75,9 +75,31 @@
     - 22.6 [Phase 4 — Brand Brain + Run History](#226-phase-4--brand-brain--run-history-2026-02-26-766-tests)
     - 22.7 [Sprint Architecture — How the 4 Phases Connect](#227-sprint-architecture--how-the-4-phases-connect)
     - 22.8 [What's Next](#228-whats-next)
-23. [Appendix A: Model & API Key Matrix](#appendix-a-model--api-key-matrix)
-24. [Appendix B: Artifact Naming Conventions](#appendix-b-artifact-naming-conventions)
-25. [Appendix C: Code Standards & Conventions](#appendix-c-code-standards--conventions)
+23. [Product-Level Pipeline Execution Sprint](#23-product-level-pipeline-execution-sprint--exhaustive-5-phase-detail)
+24. [Route Protection & Authorization Sprint](#24-route-protection--authorization-sprint--exhaustive-implementation-detail)
+    - 24.1 [Problem Statement](#241-problem-statement)
+    - 24.2 [Architecture — Separation of Concerns](#242-architecture--separation-of-concerns)
+    - 24.3 [Pure ASGI Middleware — Why Not BaseHTTPMiddleware](#243-pure-asgi-middleware--why-not-basehttpmiddleware)
+    - 24.4 [Default-Deny & Public Route Whitelist](#244-default-deny--public-route-whitelist)
+    - 24.5 [Token Extraction — Dual-Mode (Header + Query Param)](#245-token-extraction--dual-mode-header--query-param)
+    - 24.6 [Auth Dependency Chain](#246-auth-dependency-chain)
+    - 24.7 [Auth Dependency Usage — Complete Router Map](#247-auth-dependency-usage--complete-router-map)
+    - 24.8 [Registration Hardening (Codex C1)](#248-registration-hardening--closing-the-cross-tenant-attack-codex-c1)
+    - 24.9 [Invite Flow](#249-invite-flow--joining-existing-companies)
+    - 24.10 [Pipeline Tenant Isolation (Codex C2)](#2410-pipeline-tenant-isolation-codex-c2)
+    - 24.11 [Task & SSE Tenant Isolation (Codex C3)](#2411-task--sse-tenant-isolation-codex-c3)
+    - 24.12 [JWT Secret Key Enforcement (Codex W8)](#2412-jwt-secret-key-enforcement-codex-w8)
+    - 24.13 [Login Timing Fix (Codex W7)](#2413-login-timing-fix-codex-w7)
+    - 24.14 [Threading Model — RLock and Mutable Field Allowlists](#2414-threading-model--rlock-and-mutable-field-allowlists)
+    - 24.15 [Middleware Ordering](#2415-middleware-ordering)
+    - 24.16 [Test Migration Strategy](#2416-test-migration-strategy)
+    - 24.17 [New Auth Enforcement Tests](#2417-new-auth-enforcement-tests)
+    - 24.18 [Codex Review Findings — Full Disposition](#2418-codex-review-findings--full-disposition)
+    - 24.19 [Files Changed Summary](#2419-files-changed-summary)
+    - 24.20 [Deferred Items](#2420-deferred-items)
+25. [Appendix A: Model & API Key Matrix](#appendix-a-model--api-key-matrix)
+26. [Appendix B: Artifact Naming Conventions](#appendix-b-artifact-naming-conventions)
+27. [Appendix C: Code Standards & Conventions](#appendix-c-code-standards--conventions)
 
 ---
 
@@ -2426,9 +2448,9 @@ tests/
     └── test_integration.py              # 2 tests — Full pipeline + skip stages
 ```
 
-**Test counts:** 900 total tests. All 900 passing (0 failures). Research pipeline coverage added 2026-02-26 (+109 tests). Front-back integration sprint added 343 tests across 4 phases. Product-level pipeline sprint added 114 tests across 5 phases (product CRUD: 35, task infra: 16, pipeline wiring: 36, product prompts: 15, data endpoints: 12). Pipeline guard sprint added 12 tests (gap analysis guard: 7, research guard: 5). S4 mock regression fixed in Phase -1 of structural signal overhaul.
+**Test counts:** 944 total tests. All 944 passing (0 failures). Research pipeline coverage added 2026-02-26 (+109 tests). Front-back integration sprint added 343 tests across 4 phases. Product-level pipeline sprint added 114 tests across 5 phases (product CRUD: 35, task infra: 16, pipeline wiring: 36, product prompts: 15, data endpoints: 12). Pipeline guard sprint added 12 tests (gap analysis guard: 7, research guard: 5). **Route protection sprint added 44 tests** (42 auth enforcement + 2 invite flow). S4 mock regression fixed in Phase -1 of structural signal overhaul.
 
-### API Test Coverage (431+ tests — 126 base + 179 front-back + 114 product-level + 12 pipeline-guard)
+### API Test Coverage (475+ tests — 126 base + 179 front-back + 114 product-level + 12 pipeline-guard + 44 route-protection)
 
 | Test File | What's Tested |
 |-----------|---------------|
@@ -2464,6 +2486,13 @@ tests/
 | `test_task_store_product.py` | 16 | `create_task(product_slug=...)` uses effective_slug for lock, company-level and product-level locks coexist (both 202), same-product second run conflicts (409), `list_tasks(product_slug=...)` filter, effective_slug stored on task, cancel uses task.effective_slug for teardown |
 | `test_gap_analysis_product.py` | 36 | `_derive_slug()` unit tests, `_resolve_scope()` unit tests (found/not found/no product), `resolve_artifacts()` fallback chain (effective → company → None for context/personas/style), gap analysis start with product_slug (202), company+product coexistence (both 202), same-product conflict (409), `GapAnalysisInput`/`ContentGenerationInput`/`CompanyResearchInput` product fields |
 | `test_s2_product_context.py` | 15 | `_PRODUCT_CONTEXT_BLOCK` constant has all format slots, `_build_seed_prompt()` with product context present/absent, `generate_queries()` prompt capture: contains product block when product_slug+product_name set, no block for company-level, `build_planner_user_prompt()` injects product section after `## Company` |
+
+### Route Protection Sprint Tests (44 new tests — added 2026-02-27)
+
+| Test File | Count | What's Tested |
+|-----------|-------|---------------|
+| `test_auth_enforcement.py` | 42 | Middleware enforcement (public routes, 401 without token, expired/malformed tokens, valid token), deactivated user 401, role-based access (viewer blocked from pipelines/products/invites, member/superuser allowed), tenant isolation (cross-company profile/pipeline/task/gap-data/content-data/artifact access → 403, task auto-filter by company), stream tokens (creation, task ownership, expiry behavior), registration hardening (isolated company, domain-taken 409, invite flow, invite requires superuser), login constant-time behavior |
+| `test_registration.py` | 2 | Invite flow join + invite code single-use (added alongside Phase 3 hardening) |
 
 ### Content Engine Test Coverage (57/57 passing)
 
@@ -3046,7 +3075,7 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 ## 21. REST API Layer (FastAPI)
 
-**Status:** Implemented (2026-02-16), expanded with data endpoints (2026-02-25/26), expanded with product-level support (2026-02-26), pipeline guard added (2026-02-27). 900 tests passing. All 3 pipelines wrapped + 16 company-scoped data retrieval endpoints + product CRUD endpoints + `?product_slug=` on all 11 data endpoints. `force_rerun` guard on `/gap-analysis/start` and `/research/start` prevents duplicate runs when artifacts already exist.
+**Status:** Implemented (2026-02-16), expanded with data endpoints (2026-02-25/26), expanded with product-level support (2026-02-26), pipeline guard added (2026-02-27), **production-grade route protection added (2026-02-27)**. 944 tests passing. All 3 pipelines wrapped + 16 company-scoped data retrieval endpoints + product CRUD endpoints + `?product_slug=` on all 11 data endpoints. `force_rerun` guard on `/gap-analysis/start` and `/research/start`. Default-deny ASGI middleware with RBAC, tenant isolation, invite flow, and stream tokens (Codex gpt-5.3-codex reviewed — 6 CRITICAL, 10 WARNING, 4 INFO findings incorporated).
 
 **Architecture Decision:** D-API-1 — `asyncio.create_task()` (not Celery), JSON-file TaskStore, SSE for progress, `MemorySaver` checkpointer for HITL. See §17 Decision 12 for full rationale. Data endpoints added in D-FB-1 through D-FB-5.
 
@@ -3064,10 +3093,10 @@ def create_app() -> FastAPI:
 3. Scan disk for orphan tasks — marks stale "running" tasks as `FAILED_RESTART`
 4. Store shared state in `app.state` (accessed via dependency injection)
 
-**Middleware (applied in order — outermost first):**
-1. `RequestLoggingMiddleware` — logs `METHOD PATH STATUS_CODE DURATION_MS`
-2. `AuthMiddleware` — grace-mode JWT extraction. Reads `Authorization: Bearer {token}` header, validates HMAC-signed token, injects `request.state.user` and `request.state.company_slug`. Does NOT block unauthenticated requests (grace mode for dev).
-3. `CORSMiddleware` — configurable origins (default: `localhost:3000`, `localhost:3001`), credentials enabled
+**Middleware (applied in order — FastAPI adds in reverse, so last-added = outermost):**
+1. `CORSMiddleware` — outermost. Handles OPTIONS preflight before auth. Configurable origins (default: `localhost:3000`, `localhost:3001`), credentials enabled.
+2. `AuthMiddleware` — **pure ASGI middleware** (not BaseHTTPMiddleware — safe for SSE streaming, Codex W1). **Default-deny** posture: blocks unauthenticated requests to protected routes with 401 JSON. Reads `Authorization: Bearer {token}` header (or `?stream_token=` query param for SSE). If valid, injects `scope["state"]["user_id"]` and `scope["state"]["company_slug"]`. Public path whitelist: `/health`, `/readiness`, `/docs`, `/redoc`, `/openapi.json`, `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/join`.
+3. `RequestLoggingMiddleware` — logs `METHOD PATH STATUS_CODE DURATION_MS`. Returns early for `/events` paths (SSE safe).
 
 **Exception Handlers:**
 | Exception | HTTP Status | Error Code |
@@ -3253,12 +3282,14 @@ GET  /api/v1/artifacts/{type}/{slug}/{filename} → File content (JSON/HTML/MD)
 
 **Slug validation:** Slugs must match `^[a-z0-9][a-z0-9-]*$` (lowercase alphanumeric + hyphens, starting with alphanumeric). Invalid slugs return 400. Additionally, resolved paths are checked for containment within the artifacts root to prevent path traversal.
 
-#### Authentication (Phase 1 — `api/routers/auth.py`, `api/auth/`)
+#### Authentication (`api/routers/auth.py`, `api/auth/`)
 
 ```
-POST /api/v1/auth/register                     → RegisterResponse (201)
-POST /api/v1/auth/login                        → TokenResponse
-GET  /api/v1/auth/me                           → UserResponse (requires Bearer token)
+POST /api/v1/auth/register                     → LoginResponse (201) — public
+POST /api/v1/auth/login                        → LoginResponse — public
+GET  /api/v1/auth/me                           → MeResponse (requires Bearer token)
+POST /api/v1/auth/invite                       → InviteResponse (201) — requires superuser role
+POST /api/v1/auth/join                         → LoginResponse (201) — public (requires valid invite code)
 ```
 
 **Registration (`/register`):**
@@ -3267,28 +3298,45 @@ GET  /api/v1/auth/me                           → UserResponse (requires Bearer
   "email": "aryan@ramp.com",
   "password": "securepass123",
   "first_name": "Aryan",
-  "last_name": "Keshri"
+  "last_name": "Keshri",
+  "company_name": "Ramp",
+  "company_domain": "ramp.com"
 }
 ```
 - `email`: Validated via `EmailStr` (requires `email-validator` package)
 - `password`: `min_length=8, max_length=128` enforced at API model level
-- **Domain normalization:** Extracts root domain from email (strips `www`, handles multi-part TLDs: `.co.uk`, `.com.au`, `.co.jp`). Uses a `frozenset` of 15 multi-part TLDs, not a third-party library.
-- **Company deduplication:** Matches by root domain — first user for a domain creates the company and becomes `superuser`. Subsequent users with same root domain join as `member`.
-- **Subdomain preservation:** If email domain is a subdomain (e.g., `app.ramp.com`), the subdomain is stored in `company.additional_domains` for future crawl seeding.
+- **Domain normalization:** `normalize_domain()` strips protocol/www/path/port, handles multi-part TLDs (frozenset of 15: `.co.uk`, `.com.au`, `.co.jp`, etc.), returns `(root_domain, subdomain_or_none)`.
+- **Isolated company creation (Codex C1):** Registration ALWAYS creates a new company — the first user becomes `superuser`. Domain auto-join was removed to prevent cross-tenant account takeover. If the domain already has a company, returns **409** with message: "A company with this domain already exists. Ask your admin for an invite code."
+- **Subdomain normalization:** `app.ramp.com` normalizes to `ramp.com` — triggers domain-taken 409 if `ramp.com` company exists.
 
 **Login (`/login`):**
 ```json
 { "email": "aryan@ramp.com", "password": "securepass123" }
 ```
-Returns `{ "token": "...", "user": {...}, "company": {...} }`. Token is HMAC-SHA256 signed, base64-encoded, containing `user_id + company_id + expires_at`.
+Returns `{ "access_token": "...", "user": {...}, "company": {...} }`. Token is HMAC-SHA256 signed, base64-encoded, containing `user_id + company_slug + expires_at`.
+- **Timing oracle prevention (Codex W7):** When user not found, a constant-time dummy hash verification (`AuthStore._DUMMY_HASH`) runs before returning 401, preventing timing-based user enumeration.
 
 **Me (`/me`):** Requires `Authorization: Bearer {token}` header. Returns current user profile + company info. Handles `company_id` fallback lookup since `UserProfile` doesn't store `company_slug` directly.
+
+**Invite (`/invite`):** Requires `superuser` role. Creates a single-use invite code (16-char hex) for the user's company. Accepts `role` parameter (`member` or `viewer`, default `member`).
+
+**Join (`/join`):** Public endpoint. Accepts an invite code + user details. Creates the user in the invite's company with the specified role. Invite code is consumed after use — cannot be redeemed twice.
+
+**Auth Dependencies (`api/auth/dependencies.py`):**
+- `require_auth(request, auth_store) → UserProfile`: Looks up user by `request.state.user_id`, checks `is_active`, returns 401 if any check fails
+- `require_role(*roles) → Callable`: Factory returning dependency that calls `require_auth`, then checks `user.role ∈ roles`, returns 403 if not
+- `require_tenant(slug, request) → UserProfile`: Lightweight slug comparison — URL `{slug}` must match token's `company_slug`, returns 403 if mismatch
+- `require_company_access(slug, request, auth_store) → UserProfile`: Store-based tenant check — looks up company, verifies `user.company_id == company.id`
+- `require_company_member(slug, request, auth_store) → UserProfile`: Combined role check (member/superuser) + store-based tenant check for write endpoints
 
 **AuthStore (`api/auth/store.py`):**
 - JSON-file backed: `artifacts/_auth/companies.json`, `artifacts/_auth/users.json`
 - Password hashing: PBKDF2-HMAC-SHA256, 260000 iterations
-- Token signing: HMAC-SHA256 with `JWT_SECRET_KEY` env var (regenerated on restart if not set — W1 deferred issue)
-- Thread-safe: atomic file writes via temp + `os.replace()`
+- Token signing: HMAC-SHA256 with `JWT_SECRET_KEY` env var
+- **JWT_SECRET_KEY enforcement (Codex W8):** `RuntimeError` on startup if env var not set in non-dev/test environments. Auto-generated random key in dev/test only.
+- Thread-safe: `threading.RLock` on all mutating methods + atomic file writes via temp + `os.replace()`
+- Stream tokens: `create_stream_token(user_id, company_slug)` generates 5-minute tokens with `stream_only: true` flag
+- Invite management: `create_invite(company_slug, role)` / `redeem_invite(code, ...)` — single-use codes stored in memory
 
 #### Company Profile (Phase 1 — `api/routers/companies.py`)
 
@@ -3831,21 +3879,49 @@ class UserProfile(BaseModel):
 **AuthStore (`api/auth/store.py`):**
 - JSON-file persistence: `artifacts/_auth/companies.json`, `artifacts/_auth/users.json`
 - Password hashing: PBKDF2-HMAC-SHA256 with 260,000 iterations (not bcrypt — avoids C dependency, PBKDF2 is sufficient for v0)
-- Token format: HMAC-SHA256 signed, base64-encoded payload `{user_id}:{company_id}:{expires_timestamp}`
-- `JWT_SECRET_KEY` env var — regenerated on restart if not set (W1 deferred issue)
+- Token format: HMAC-SHA256 signed, base64-encoded payload `{user_id}:{company_slug}:{expires_timestamp}`
+- `JWT_SECRET_KEY` env var — **required** in non-dev/test environments (`RuntimeError` on startup if missing, Codex W8). Auto-generated in dev/test.
+- Thread-safe: `threading.RLock` on all mutating methods, atomic file writes via temp + `os.replace()`
+- Mutable field allowlists: `_COMPANY_MUTABLE_FIELDS`, `_PRODUCT_MUTABLE_FIELDS` prevent overwriting immutable fields (id, slug, created_at) via update methods
 
-**Registration flow:**
-1. Extract email domain → `normalize_domain()` strips protocol/www/path/port
-2. Handle multi-part TLDs (frozenset of 15: `.co.uk`, `.com.au`, `.co.jp`, etc.) — returns `(root_domain, subdomain_or_none)`
+**Registration flow (hardened — Codex C1):**
+1. Check for duplicate email → `ValueError("already exists")` if found
+2. `normalize_domain(company_domain)` → strips protocol/www/path/port, handles multi-part TLDs (frozenset of 15)
 3. Lookup existing company by root domain
-4. If no match: create company, user becomes `superuser`
-5. If match: user joins as `member`, subdomain (if any) added to `company.additional_domains`
+4. If match: `ValueError("domain_taken")` → 409 with invite message (no auto-join)
+5. If no match: create company + user as `superuser`
 6. Generate token, return user + company data
 
-**AuthMiddleware (`api/auth/middleware.py`):**
-- Grace mode: extracts Bearer token if present, injects `request.state.user` and `request.state.company_slug`
-- Does NOT block unauthenticated requests — all endpoints accessible without auth during development
-- Designed for easy swap to Supabase JWT verification later
+**Invite flow (Codex C1):**
+1. Superuser calls `POST /auth/invite` → `create_invite(company_slug, role="member")` → 16-char hex code
+2. New user calls `POST /auth/join` with invite code + user details
+3. `redeem_invite()` validates code, creates user in the company with the invite's role
+4. Invite code is consumed (single-use) — `ValueError("Invalid or expired")` on re-use
+
+**AuthMiddleware (`api/auth/middleware.py`) — Pure ASGI, Default-Deny:**
+- **Pure ASGI** implementation (not `BaseHTTPMiddleware`) — safe for SSE streaming (Codex W1)
+- **Default-deny** posture: unauthenticated requests to protected routes get 401 JSON immediately
+- Public path whitelist: `/health`, `/readiness`, `/docs*`, `/redoc*`, `/openapi.json`, `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/join`
+- Token extraction: `Authorization: Bearer {token}` header, or `?stream_token={token}` query param for SSE endpoints
+- Stream token validation: tokens with `stream_only: true` rejected for non-SSE endpoints
+- Sets `scope["state"]["user_id"]` and `scope["state"]["company_slug"]` on valid auth
+
+**Auth Dependencies (`api/auth/dependencies.py`):**
+- `require_auth` → full UserProfile lookup + `is_active` check
+- `require_role(*roles)` → factory, calls `require_auth` first, then role check
+- `require_tenant(slug)` → lightweight slug comparison (no store lookup)
+- `require_company_access(slug)` → store-based tenant check (`user.company_id == company.id`)
+- `require_company_member(slug)` → combined role (member/superuser) + store-based tenant check
+
+**Route Protection Summary:**
+| Route Category | Auth Level |
+|---|---|
+| Health, docs, register, login, join | Public (no auth) |
+| Company profile, data endpoints, artifacts | `require_auth` + `require_tenant` |
+| Pipeline /start, /approve | `require_role("member", "superuser")` + tenant validation |
+| Task cancel, stream-token | `require_auth` + task ownership check |
+| Invite creation | `require_role("superuser")` |
+| Product CRUD | `require_role("member", "superuser")` + company access check |
 
 #### Frontend Type Alignment
 
@@ -4443,6 +4519,764 @@ POST /api/v1/gap-analysis/start  {"company_name":"Ramp", "product_slug":"ramp-co
 
 ---
 
+## 24. Route Protection & Authorization Sprint — Exhaustive Implementation Detail
+
+> **Sprint:** `route-protection` (2026-02-27)
+> **Reviewed by:** Codex gpt-5.3-codex with `xhigh` reasoning effort
+> **Findings:** 6 CRITICAL, 10 WARNING, 4 INFO — all CRITICALs incorporated
+> **Test impact:** 900 → 944 tests (+44 new), 0 failures
+> **Plan file:** `.claude/plans/bright-skipping-cupcake.md`
+
+### 24.1 Problem Statement
+
+Before this sprint, the API operated in **grace mode** — the `AuthMiddleware` parsed JWT tokens and populated `request.state` fields, but **never blocked unauthenticated requests**. Every endpoint was publicly accessible to anyone who discovered the API URL. This created six critical vulnerabilities:
+
+1. **No authentication enforcement** — any HTTP client could read all company data, trigger pipelines, and pollute artifacts
+2. **Cross-tenant account takeover via registration** — `register_user()` auto-joined companies by domain without proving ownership (Codex C1)
+3. **Tenant scope was client-controlled** — pipeline `/start` derived slugs from the request body `company_name`, allowing one company to target another's artifacts (Codex C2)
+4. **Task endpoints were IDOR surfaces** — task_id-addressable with no ownership check (Codex C3)
+5. **SSE token leakage** — full bearer tokens in query params for EventSource leak in logs, proxies, and referrer headers (Codex C4)
+6. **Deleted/deactivated users remained authorized** — middleware never checked user existence or `is_active` status per request (Codex C6)
+
+### 24.2 Architecture — Separation of Concerns
+
+**Core design principle:** Middleware handles **authentication** (identity extraction). FastAPI dependencies handle **authorization** (permissions + tenant scoping).
+
+**Why this split:**
+- Middleware operates at the ASGI protocol level — it runs before FastAPI routing, before dependency injection, before path parameter parsing. This makes it the right place for identity extraction and fail-closed default-deny.
+- Authorization depends on route-specific context (which company slug is in the URL, what role is needed, whether this is a read or write operation). FastAPI's `Depends()` system naturally expresses these as composable, type-safe dependencies that receive parsed path parameters.
+- Mixing authorization into middleware would require the middleware to understand URL routing patterns, duplicating FastAPI's router logic. Keeping them separate avoids this coupling.
+
+```
+Request arrives
+  → CORSMiddleware (outermost — handles OPTIONS preflight, never reaches auth)
+  → AuthMiddleware (ASGI — extracts identity, blocks if no valid token)
+      scope["state"]["user_id"] = "uuid-..."
+      scope["state"]["company_slug"] = "ramp"
+  → RequestLoggingMiddleware (logs method/path/status/duration)
+  → FastAPI Router → Endpoint Function
+      → Depends(require_auth)          # looks up UserProfile, checks is_active
+      → Depends(require_role("member")) # checks user.role ∈ allowed
+      → Depends(require_tenant)         # URL slug == token's company_slug
+      → Depends(require_company_access) # UUID comparison via store lookup
+```
+
+### 24.3 Pure ASGI Middleware — Why Not BaseHTTPMiddleware
+
+**File:** `api/auth/middleware.py` (192 lines, full rewrite)
+
+**Design choice — pure ASGI over BaseHTTPMiddleware:**
+
+Starlette's `BaseHTTPMiddleware` wraps the response body in an intermediary, consuming the entire response into memory before sending it. This is incompatible with Server-Sent Events (SSE) streaming because:
+- SSE relies on a never-ending `StreamingResponse` that sends chunks incrementally
+- `BaseHTTPMiddleware` buffers the entire response, preventing the client from receiving events in real-time
+- This was identified as Codex W1 (WARNING) during the security review
+
+A pure ASGI middleware operates directly on the ASGI `scope`/`receive`/`send` protocol:
+```python
+class AuthMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+```
+
+This has zero impact on streaming — the middleware either:
+1. Sends a 401 response directly via raw ASGI `send()` calls (short-circuits before the app runs)
+2. Passes through to `self.app(scope, receive, send)` without intercepting the response stream
+
+**Why `_send_401()` constructs raw ASGI messages:**
+
+When the middleware rejects a request, it must send an HTTP response without delegating to FastAPI. This requires constructing two ASGI messages manually:
+```python
+async def _send_401(send: Send, detail: str, code: str) -> None:
+    body = json.dumps({"detail": detail, "code": code}).encode("utf-8")
+    await send({"type": "http.response.start", "status": 401,
+                "headers": [(b"content-type", b"application/json"),
+                             (b"www-authenticate", b"Bearer"),
+                             (b"content-length", str(len(body)).encode())]})
+    await send({"type": "http.response.body", "body": body})
+```
+
+The response includes `WWW-Authenticate: Bearer` (RFC 6750 compliance), a machine-readable `code` field (e.g., `"missing_token"`, `"invalid_token"`, `"auth_unavailable"`), and a human-readable `detail` field.
+
+**Non-HTTP scope types are passed through immediately:**
+
+```python
+if scope["type"] not in ("http", "websocket"):
+    await self.app(scope, receive, send)
+    return
+```
+
+ASGI servers may send `lifespan` scope types during startup/shutdown. These must never be blocked by auth.
+
+### 24.4 Default-Deny & Public Route Whitelist
+
+**Design choice — default-deny over default-allow:**
+
+The previous grace-mode middleware defaulted to **allow** — it tried to parse tokens but always passed requests through regardless. This is inherently unsafe because:
+- Forgetting to add `Depends(require_auth)` to a new endpoint leaves it wide open
+- A single missed endpoint creates a data exfiltration vector
+- The blast radius of a mistake is "all company data exposed"
+
+Default-deny inverts this: **every route is blocked unless explicitly whitelisted**. The blast radius of a mistake becomes "one endpoint is inaccessible" (a 401 error) — far safer.
+
+**Public path whitelist:**
+
+```python
+_PUBLIC_PATHS: frozenset[str] = frozenset({
+    "/health",
+    "/readiness",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/api/v1/auth/register",
+    "/api/v1/auth/login",
+    "/api/v1/auth/join",
+})
+
+_PUBLIC_PREFIXES: tuple[str, ...] = (
+    "/docs/",   # Swagger sub-resources (CSS, JS, schema)
+    "/redoc/",  # ReDoc sub-resources
+)
+```
+
+**Why `frozenset` for paths and `tuple` for prefixes:**
+- `frozenset` gives O(1) membership testing for exact path matches
+- Prefix matching requires iteration anyway, so `tuple` is sufficient and more memory-efficient than `frozenset` for small collections
+- Both are immutable — they cannot be accidentally modified at runtime
+
+**Why `/api/v1/auth/join` is public:**
+The invite join endpoint must be accessible to unauthenticated users — they don't have an account yet. The invite code itself acts as the authorization credential (single-use, validated in the handler).
+
+### 24.5 Token Extraction — Dual-Mode (Header + Query Param)
+
+**File:** `api/auth/middleware.py`, functions `_extract_token()`, `_extract_token_from_headers()`, `_extract_stream_token_from_query()`
+
+**Design choice — why two extraction modes:**
+
+The browser `EventSource` API (used for SSE) **cannot set custom headers**. It only supports `GET` requests with URL parameters. This means `Authorization: Bearer {token}` headers are impossible for SSE connections from browser clients.
+
+The naive solution — putting the full bearer token in a query parameter — has serious security implications (Codex C4):
+- Query params appear in server access logs
+- They are included in HTTP `Referer` headers sent to third-party resources
+- They may be cached by CDNs and reverse proxies
+- Browser history records the full URL
+
+**Solution — short-lived stream tokens:**
+
+Instead of exposing the bearer token, the system uses a dedicated stream token endpoint:
+1. Client calls `POST /api/v1/tasks/{task_id}/stream-token` with their bearer token in the header
+2. Server returns a 5-minute stream token with `stream_only: true` in the payload
+3. Client opens `EventSource(/api/v1/tasks/{task_id}/events?stream_token=xxx)`
+4. Middleware accepts the stream token only for paths ending in `/events`
+
+```python
+def _extract_token(scope: Scope) -> Optional[str]:
+    headers = scope.get("headers", [])
+    token = _extract_token_from_headers(headers)
+    if token:
+        return token
+    # Fallback: stream_token query param for SSE EventSource endpoints
+    path = scope.get("path", "")
+    if path.endswith("/events"):
+        return _extract_stream_token_from_query(scope.get("query_string", b""))
+    return None
+```
+
+**Why header is checked first:** If both header and query param are present, the header token takes priority. This prevents an attacker from overriding a valid header token with a malicious query param.
+
+**Why query param is only checked for `/events` paths:** If the middleware extracted `stream_token` from any path's query params, an attacker could bypass the header-only requirement for non-SSE endpoints. Restricting query param extraction to `/events` paths ensures stream tokens can only be used where they're needed.
+
+**Stream token scope enforcement in middleware:**
+```python
+if payload.get("stream_only") and not path.endswith("/events"):
+    await _send_401(send, "Stream token cannot be used here", "invalid_token")
+    return
+```
+
+This is defense-in-depth: even if someone extracts a stream token from network traffic, they cannot use it to call data endpoints.
+
+### 24.6 Auth Dependency Chain
+
+**File:** `api/auth/dependencies.py` (138 lines, new file)
+
+Five composable dependencies providing layered authorization. The dependency chain follows Codex I1's recommendation: `require_auth → require_role → require_company_access`.
+
+#### `require_auth` — Base Identity + Active Check
+
+```python
+def require_auth(request: Request, auth_store: AuthStore = Depends(get_auth_store)) -> UserProfile:
+```
+
+**What it does:**
+1. Reads `request.state.user_id` (populated by middleware)
+2. Looks up full user record from AuthStore → 401 if not found (Codex C6: deleted users are caught here)
+3. Builds `UserProfile` via `model_validate()`, excluding `password_hash`
+4. Checks `is_active == True` → 401 `"Account deactivated"` if False
+
+**Why store lookup on every request (Codex C6):**
+The middleware only validates the JWT signature and expiry. It does NOT check whether the user still exists or is active. Without `require_auth`'s store lookup, a deleted user's token would remain valid until expiry (up to 24 hours). The per-request lookup ensures deactivated/deleted users are immediately blocked.
+
+**Why `model_validate({k: v for ... if k != "password_hash"})` instead of direct construction:**
+The user data in the store is a raw dict (not a Pydantic model) because it includes `password_hash` which `UserProfile` doesn't have. Filtering the dict and using `model_validate()` is the cleanest way to construct a valid `UserProfile` without exposing the hash.
+
+#### `require_role(*allowed_roles)` — RBAC Gate
+
+```python
+def require_role(*allowed_roles: str) -> Callable[..., UserProfile]:
+    def _check_role(user: UserProfile = Depends(require_auth)) -> UserProfile:
+        if user.role not in allowed_roles:
+            raise HTTPException(status_code=403, ...)
+        return user
+    return _check_role
+```
+
+**Why a factory function (not a direct dependency):**
+FastAPI's `Depends()` expects a callable. To parameterize which roles are allowed, we need a factory that returns a closure capturing `allowed_roles`. Usage: `Depends(require_role("member", "superuser"))`.
+
+**Why `require_auth` is a dependency of `_check_role` (not called manually):**
+This ensures the full auth chain runs automatically — FastAPI's DI system handles the composition. If `require_auth` raises 401, `_check_role` never executes. No duplicate code.
+
+**Role hierarchy:** Three roles exist — `viewer` (read-only), `member` (read + write + pipeline), `superuser` (all + admin). The system does NOT implement hierarchical role inheritance (superuser doesn't automatically pass a `member` check). Instead, endpoints that accept both explicitly list them: `require_role("member", "superuser")`. This is deliberate — it's simpler, more explicit, and avoids bugs where a role hierarchy change has unintended cascading effects.
+
+#### `require_tenant` — Lightweight Slug Comparison
+
+```python
+def require_tenant(slug: str, request: Request, _user: UserProfile = Depends(require_auth)) -> UserProfile:
+    company_slug = getattr(request.state, "company_slug", None)
+    if not company_slug or slug != company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return _user
+```
+
+**Why this exists separately from `require_company_access`:**
+High-volume read endpoints (gap data — 8 endpoints, content data — 3 endpoints, brand data — 2 endpoints) are called frequently by the frontend. They only need to verify the URL slug matches the authenticated user's company. A full store lookup (`require_company_access`) would add an unnecessary `O(n)` company-by-slug scan on every request.
+
+`require_tenant` compares two strings: the URL path parameter `slug` against `request.state.company_slug` (set by middleware from the token). No store lookup, no UUID comparison. Fast and sufficient for read-only endpoints where the slug is the only tenant identifier in the URL.
+
+**Why it depends on `require_auth` (the `_user` parameter):**
+Even though `require_tenant` doesn't use the user profile directly, it needs `require_auth` to run first to ensure the user exists and is active. The underscore prefix (`_user`) signals this is an unused-by-name dependency.
+
+#### `require_company_access` — UUID-Based Tenant Check (Codex I2)
+
+```python
+def require_company_access(slug: str, user: UserProfile = Depends(require_auth),
+                           auth_store: AuthStore = Depends(get_auth_store)) -> Tuple[UserProfile, Company]:
+    company = auth_store.get_company_by_slug(slug)
+    if not company:
+        raise HTTPException(status_code=404, ...)
+    if user.company_id != company.id:
+        raise HTTPException(status_code=403, ...)
+    return user, company
+```
+
+**Why UUID comparison instead of slug comparison (Codex I2):**
+Slugs are derived from company names and could theoretically collide or be reassigned. UUIDs (`company.id`) are immutable, globally unique, and cryptographically random. Comparing `user.company_id != company.id` is the authoritative tenant check. The store lookup is necessary here because we need the Company object to get its UUID.
+
+**Why it returns `Tuple[UserProfile, Company]`:**
+Write endpoints typically need both the authenticated user and the target company object (e.g., to create a product under the company). Returning both avoids a second store lookup in the endpoint handler.
+
+#### `require_company_member` — Combined Role + Tenant
+
+```python
+def require_company_member(slug: str,
+    user: UserProfile = Depends(require_role("member", "superuser")),
+    auth_store: AuthStore = Depends(get_auth_store)) -> Tuple[UserProfile, Company]:
+```
+
+**Why this exists:**
+Write endpoints (create product, update product, delete product) need both RBAC (member+ role) and tenant isolation (user belongs to company). Without this combined dependency, every write endpoint would need two separate `Depends()` calls plus manual company lookup. `require_company_member` composes them into one dependency.
+
+**Dependency chain when `require_company_member` is used:**
+```
+require_company_member
+  └─ require_role("member", "superuser")
+       └─ require_auth
+            └─ reads request.state.user_id (set by AuthMiddleware)
+```
+
+### 24.7 Auth Dependency Usage — Complete Router Map
+
+| Router | Endpoint | Auth Dependency | Why This Level |
+|--------|----------|-----------------|----------------|
+| **auth** | `POST /register` | None (public) | New users don't have tokens |
+| | `POST /login` | None (public) | Obtaining a token |
+| | `GET /me` | request.state direct | Lightweight self-lookup |
+| | `POST /invite` | `require_role("superuser")` | Only admins can invite |
+| | `POST /join` | None (public) | Invite code is the credential |
+| **companies** | `GET /{slug}` | `require_tenant` | Read-only, slug comparison sufficient |
+| | `POST /{slug}/products` | `require_company_member` | Write: needs role + tenant |
+| | `GET /{slug}/products/{p}` | `require_tenant` | Read-only |
+| | `PUT /{slug}/products/{p}` | `require_company_member` | Write: needs role + tenant |
+| | `DELETE /{slug}/products/{p}` | `require_company_member` | Write: needs role + tenant |
+| **gap_analysis** | `POST /start` | `require_role("member", "superuser")` | Pipeline trigger + body-level tenant check |
+| | `GET /{run_id}/status` | `require_auth` | Task ownership checked in body |
+| **research** | `POST /start` | `require_role("member", "superuser")` | Pipeline trigger + body-level tenant check |
+| | `GET /{run_id}/status` | `require_auth` | Task ownership checked in body |
+| | `POST /{run_id}/approve` | `require_role("member", "superuser")` | HITL approval is a write action |
+| **content** | `POST /start` | `require_role("member", "superuser")` | Pipeline trigger + body-level tenant check |
+| | `GET /{run_id}/status` | `require_auth` | Task ownership checked in body |
+| | `POST /{run_id}/approve` | `require_role("member", "superuser")` | HITL approval is a write action |
+| **gap_data** (8) | All endpoints | `require_tenant` | High-volume reads, slug comparison |
+| **content_data** (3) | All endpoints | `require_tenant` | High-volume reads, slug comparison |
+| **brand_data** (2) | All endpoints | `require_tenant` | High-volume reads, slug comparison |
+| **tasks** | `GET /` | `require_auth` | Auto-filters by company_slug |
+| | `GET /{task_id}` | `require_auth` | Task ownership checked in body |
+| | `POST /{task_id}/cancel` | `require_role("member", "superuser")` | Destructive action |
+| | `POST /{task_id}/stream-token` | `require_auth` | Task ownership checked in body |
+| **artifacts** (3) | All endpoints | `require_auth` | Custom `_slug_belongs_to_user()` logic |
+| **events** | `GET /{task_id}/events` | AuthMiddleware only | SSE — auth via middleware + stream token |
+
+### 24.8 Registration Hardening — Closing the Cross-Tenant Attack (Codex C1)
+
+**File:** `api/auth/store.py`, method `register_user()`
+
+**The vulnerability:** The previous `register_user()` performed domain auto-join: if a company with domain `ramp.com` already existed, any user registering with `company_domain=ramp.com` was automatically added to that company as a `member`. An attacker could:
+1. Discover that `ramp.com` exists (e.g., from public API responses)
+2. Register with `company_domain=ramp.com`
+3. Gain member-level access to all of Ramp's pipeline data, artifacts, and tasks
+
+**The fix — isolated registration:**
+
+```python
+def register_user(self, ..., company_domain: str) -> Tuple[UserProfile, Company]:
+    root_domain, subdomain = normalize_domain(company_domain)
+    existing = self.get_company_by_domain(root_domain)
+    if existing:
+        raise ValueError("domain_taken")
+    # Always creates a new company — user becomes superuser
+```
+
+Now:
+- Registration **always creates a new, isolated company**
+- The registering user becomes `superuser` of that company
+- If the domain is already taken → 409 with message: *"A company with this domain already exists. Ask your admin for an invite code."*
+- Joining an existing company requires an **invite code** from a superuser
+
+**Why not allow domain-based join with email verification?**
+Email verification is a full feature (sending emails, verification tokens, expiry, retry logic) that would delay the security fix. The invite code pattern provides equivalent security with minimal implementation complexity. Email-based invites can be added later as an enhancement.
+
+**Slug collision handling:**
+
+```python
+slug = _derive_slug(company_name)
+base_slug = slug
+counter = 1
+while slug in self._companies:
+    slug = f"{base_slug}-{counter}"
+    counter += 1
+```
+
+If "Ramp" already exists as a company, a second registration for a company named "Ramp" (with a different domain) gets slug `ramp-1`. This prevents slug collisions without requiring unique company names.
+
+### 24.9 Invite Flow — Joining Existing Companies
+
+**Files:** `api/auth/store.py` (methods `create_invite()`, `redeem_invite()`), `api/routers/auth.py` (endpoints)
+
+**Design: simple invite codes (v0)**
+
+```
+Superuser → POST /api/v1/auth/invite {"role": "member"}
+         ← 201 {"invite_code": "a7b3c9e1f2d4a8b6"}
+
+New user  → POST /api/v1/auth/join {"invite_code": "a7b3c9e1f2d4a8b6", "email": "...", ...}
+         ← 201 {"user": {...}, "company": {...}, "token": "..."}
+```
+
+**Why 16-character hex codes (not UUIDs or JWTs):**
+- 16 hex chars = 64 bits of entropy — sufficient for short-lived invite codes
+- Easy to share verbally or via text (no special characters, case-insensitive)
+- `secrets.token_hex(8)` is cryptographically secure
+- Shorter than UUIDs, more readable, adequate security for the threat model
+
+**Why in-memory storage (not persisted to disk):**
+- v0 implementation — invite codes are lost on server restart
+- This is acceptable because: (1) invites are rare operations, (2) a superuser can simply create a new code, (3) the full invite system will be replaced by email-based invites with Supabase Auth later
+- Persisting invite codes to a JSON file would add complexity for a feature that will be replaced
+
+**Single-use enforcement:**
+```python
+def redeem_invite(self, invite_code, ...):
+    invite = invites.get(invite_code)
+    if not invite:
+        raise ValueError("Invalid or expired invite code")
+    # ... create user ...
+    del self._invites[invite_code]  # Single-use
+```
+
+The invite code is deleted immediately after redemption. Attempting to reuse it returns "Invalid or expired invite code."
+
+**Role assignment via invite:**
+The superuser specifies the role when creating the invite (default: `"member"`). The joining user receives exactly that role — they cannot escalate it. The `create_invite` endpoint requires `require_role("superuser")`, preventing members from creating invites.
+
+### 24.10 Pipeline Tenant Isolation (Codex C2)
+
+**Files:** `api/routers/gap_analysis.py`, `api/routers/research.py`, `api/routers/content.py`
+
+**The vulnerability:** Pipeline `/start` endpoints derived the slug from `body.company_name` via `_derive_slug()`. An authenticated user of company A could POST `{"company_name": "Company B"}` and trigger a pipeline that writes artifacts to company B's directory.
+
+**The fix — body slug validated against token slug:**
+
+```python
+@router.post("/start")
+async def start_gap_analysis(body: GapAnalysisStartRequest,
+    http_request: Request,
+    user: UserProfile = Depends(require_role("member", "superuser")),
+    auth_store: AuthStore = Depends(get_auth_store), ...):
+
+    company_slug = getattr(http_request.state, "company_slug", None)
+    derived_slug = _derive_slug(body.company_name)
+    if derived_slug != company_slug:
+        raise HTTPException(403, "Cannot start pipeline for another company")
+```
+
+**Why the body's `company_name` is still accepted (not removed):**
+- Backward compatibility — existing frontend code sends `company_name` in the body
+- The body value is used for display purposes and slug derivation verification
+- The authoritative slug comes from the JWT token (`request.state.company_slug`)
+- The derived slug from the body must MATCH the token slug — otherwise 403
+
+**Why `_derive_slug()` comparison (not direct string comparison on company_name):**
+Company names may differ in casing or punctuation ("Ramp" vs "ramp") but derive to the same slug. The slug comparison normalizes this.
+
+**Parameter naming in research and content routers:**
+
+The `request` parameter name conflicts with FastAPI's auto-injected `Request` when both a Pydantic body model and `Request` are in the function signature. Solution: rename body parameter to `body` and Request to `http_request`:
+
+```python
+async def start_research(body: ResearchStartRequest, http_request: Request, ...):
+```
+
+### 24.11 Task & SSE Tenant Isolation (Codex C3)
+
+**Files:** `api/routers/tasks.py`, `api/routers/events.py`
+
+**The vulnerability:** Tasks are addressable by `task_id` (a UUID). Any authenticated user who guesses or observes a task ID could view another company's task details, cancel their tasks, or stream their SSE events.
+
+**Auto-filtering on `GET /tasks`:**
+
+```python
+@router.get("")
+async def list_tasks(request: Request, user: UserProfile = Depends(require_auth), ...):
+    company_slug = getattr(request.state, "company_slug", None)
+    tasks = task_store.list_tasks(company_slug=company_slug, ...)
+```
+
+Users automatically see only their own company's tasks. No filter parameter needed — the company_slug is injected from the token.
+
+**Ownership check on task detail/cancel/stream-token:**
+
+```python
+task = task_store.get_task(task_id)
+if not task:
+    raise HTTPException(404, ...)
+company_slug = getattr(request.state, "company_slug", None)
+if task.company_slug != company_slug:
+    raise HTTPException(403, "Access denied")
+```
+
+**Why 403 (not 404) for cross-tenant access:**
+Returning 404 would hide the existence of the task — this is sometimes preferred for security. However, the task_id is a random UUID (not guessable), and returning 403 provides better debugging information for legitimate users who might have a stale link. The security benefit of 404-masking is minimal given UUID randomness.
+
+**SSE events endpoint (`GET /{task_id}/events`):**
+This endpoint does NOT use `Depends(require_auth)` because it needs to support stream token authentication from query params. The middleware handles authentication (supporting both Bearer header and `?stream_token=` query param). The endpoint itself performs the ownership check:
+
+```python
+company_slug = getattr(request.state, "company_slug", None)
+if task.company_slug != company_slug:
+    raise HTTPException(403, "Access denied")
+```
+
+### 24.12 JWT Secret Key Enforcement (Codex W8)
+
+**File:** `api/auth/store.py`, `__init__()` method
+
+**The problem:** If `JWT_SECRET_KEY` is not set, the store generated a random secret. On server restart, a new random secret is generated, immediately invalidating ALL existing tokens. Users would be silently logged out, and any in-progress pipeline tasks with SSE connections would lose their stream tokens.
+
+**The fix:**
+
+```python
+secret = os.environ.get("JWT_SECRET_KEY")
+if not secret:
+    env = os.environ.get("ENVIRONMENT", "development")
+    if env not in ("development", "test"):
+        raise RuntimeError("JWT_SECRET_KEY must be set in non-development environments")
+    secret = secrets.token_hex(32)
+```
+
+**Why allow random secrets in dev/test:**
+Developers running `python scripts/run_server.py` locally shouldn't need to configure environment variables for a quick test. The random secret is acceptable for single-session development. Test environments also benefit — each test run gets a fresh secret, preventing cross-test contamination.
+
+**Why `RuntimeError` (not a warning):**
+A warning could be missed in production logs. A hard crash on startup is impossible to miss and prevents the server from running in an insecure state. This follows the "fail loud, fail early" principle.
+
+**Why `ENVIRONMENT` env var (not a Pydantic Settings field):**
+The `ENVIRONMENT` check runs in `AuthStore.__init__()`, which executes before any Pydantic Settings class might be initialized. Using a raw env var avoids a circular dependency.
+
+### 24.13 Login Timing Fix (Codex W7)
+
+**File:** `api/routers/auth.py`, login endpoint
+
+**The vulnerability:** When a user doesn't exist, the login handler returned 401 immediately. When a user exists but the password is wrong, it computed a PBKDF2 hash before returning 401. An attacker could measure response times to determine whether an email is registered — a timing side-channel for user enumeration.
+
+**The fix — constant-time dummy hash:**
+
+```python
+user = auth_store.get_user_by_email(body.email)
+if not user:
+    auth_store.verify_password(body.password, AuthStore._DUMMY_HASH)
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+```
+
+```python
+class AuthStore:
+    _DUMMY_HASH: str = "0" * 32 + ":" + "0" * 64
+```
+
+**Why `_DUMMY_HASH` is a class variable (not generated per-request):**
+Generating a fresh hash per request would add variability. The dummy hash is a fixed string with the same format as real hashes (`salt:hash_hex`). `verify_password()` performs the same PBKDF2 computation (100,000 iterations) regardless of whether the user exists or not.
+
+**Why `hmac.compare_digest()` in `verify_password()`:**
+Even after ensuring both code paths compute a hash, the final comparison must be constant-time. Python's `==` operator short-circuits on the first differing byte. `hmac.compare_digest()` always compares all bytes, preventing micro-timing attacks on the comparison itself.
+
+### 24.14 Threading Model — RLock and Mutable Field Allowlists
+
+**File:** `api/auth/store.py`
+
+**Why `threading.RLock()` (not `threading.Lock()`):**
+
+```python
+self._lock = threading.RLock()
+```
+
+`register_user()` calls `create_user()` internally:
+```python
+def register_user(self, ...):
+    with self._lock:
+        # ... create company ...
+        user = self.create_user(...)  # Also acquires self._lock
+```
+
+`create_user()` also acquires `self._lock`:
+```python
+def create_user(self, ...):
+    with self._lock:
+        # ... check email, create profile, save ...
+```
+
+With a regular `Lock`, this would deadlock — `register_user` holds the lock when calling `create_user`, which tries to acquire the same lock. `RLock` (reentrant lock) allows the same thread to acquire the lock multiple times, preventing the deadlock.
+
+**Why read-only operations don't acquire the lock:**
+
+```python
+def get_company_by_slug(self, slug: str) -> Optional[Company]:
+    return self._companies.get(slug)  # No lock
+```
+
+The in-memory dicts are only mutated under the lock. Python's GIL ensures dict reads are atomic. For a single-worker deployment (which is the current deployment model — Codex W4 deferred), read-without-lock is safe and avoids unnecessary contention.
+
+**Mutable field allowlists:**
+
+```python
+_COMPANY_MUTABLE_FIELDS: frozenset = frozenset({"name", "domain", "additional_domains"})
+_PRODUCT_MUTABLE_FIELDS: frozenset = frozenset({"name", "domain", "description"})
+```
+
+```python
+def update_company(self, slug: str, **kwargs: Any) -> Company:
+    for k, v in kwargs.items():
+        if k in _COMPANY_MUTABLE_FIELDS:
+            setattr(company, k, v)
+```
+
+**Why allowlists (not blocklists):**
+An allowlist is strictly safer — if a new field is added to the model, it's immutable by default until explicitly added to the allowlist. A blocklist approach (`if k not in {"id", "slug", "created_at"}`) would need to be updated every time a new immutable field is added, and forgetting to add it creates a security hole.
+
+**Which fields are immutable and why:**
+- `id` — UUID, permanent identifier, used in foreign key relationships
+- `slug` — used in URL paths and artifact directory names, changing it would orphan artifacts
+- `created_at` — audit trail, must not be tampered with
+
+### 24.15 Middleware Ordering
+
+**File:** `api/app.py`
+
+```python
+app.add_middleware(RequestLoggingMiddleware)  # Added 3rd → innermost
+app.add_middleware(AuthMiddleware)             # Added 2nd → middle
+app.add_middleware(CORSMiddleware, ...)        # Added 1st → outermost
+```
+
+FastAPI (Starlette) wraps middleware in **reverse insertion order** — the last `add_middleware()` call wraps the outermost layer. This means:
+
+**Execution order:** CORSMiddleware → AuthMiddleware → RequestLoggingMiddleware → Router
+
+**Why CORS must be outermost:**
+Browser preflight `OPTIONS` requests include `Origin` and `Access-Control-Request-Method` headers. These requests do NOT include `Authorization` headers. If `AuthMiddleware` ran before `CORSMiddleware`, it would reject all preflight requests with 401, breaking CORS entirely. By running CORSMiddleware first, OPTIONS requests are handled and returned before they ever reach AuthMiddleware.
+
+**Why RequestLoggingMiddleware is innermost:**
+It logs the final status code of the response. If it ran before AuthMiddleware, it would log 401s from the auth middleware, which is correct. But it also needs to see status codes from the actual router handlers. Being innermost ensures it wraps the closest layer to the business logic.
+
+### 24.16 Test Migration Strategy
+
+**Files:** `tests/api/conftest.py` (205 lines, modified), all `tests/api/test_*.py` files
+
+**The challenge:** 900 existing tests were written for the grace-mode middleware — none included auth tokens. Switching to default-deny would break all of them with 401 errors.
+
+**Solution — `_AuthTestClient` with auto-injection:**
+
+```python
+class _AuthTestClient(TestClient):
+    def __init__(self, app: FastAPI, default_headers: dict[str, str], **kwargs):
+        super().__init__(app, headers=default_headers, **kwargs)
+        self._default_auth_headers = default_headers
+
+    def request(self, method: str, url: str, **kwargs):
+        headers = dict(kwargs.pop("headers", None) or {})
+        if "Authorization" not in headers:
+            headers.update(self._default_auth_headers)
+        return super().request(method, url, headers=headers, **kwargs)
+```
+
+**Why a TestClient subclass (not conftest monkey-patching — Codex W10):**
+The original plan considered monkey-patching the `client` fixture's `request` method. This would miss:
+- Custom TestClient fixtures in specific test files (e.g., `artifacts_client`, `app_client`)
+- The `stream()` method used by SSE tests (which `_AuthTestClient` handles via `httpx.Client(headers=...)`)
+- Class-based test clients that override `request()`
+
+The subclass approach is clean, explicit, and handles all request methods automatically via httpx's built-in `headers` propagation.
+
+**Why the `if "Authorization" not in headers` guard:**
+Tests that explicitly provide an `Authorization` header (e.g., to test expired tokens, malformed tokens, or cross-tenant access) must not have their header overwritten.
+
+**Four client fixtures for comprehensive testing:**
+
+| Fixture | Role | Purpose |
+|---------|------|---------|
+| `client` | member @ test-co | Default authenticated client for most tests |
+| `public_client` | None (no token) | Testing 401 enforcement |
+| `viewer_client` | viewer @ test-co | Testing RBAC (403 on write ops) |
+| `superuser_client` | superuser @ test-co | Testing admin operations (invites) |
+
+**Company name alignment in pipeline tests:**
+
+All pipeline tests that POST to `/start` include `company_name` in the body. The tenant isolation check requires `_derive_slug(company_name)` to match the test user's `company_slug` ("test-co"). All test payloads were updated: `"Ramp"` → `"Test Co"`, `"ramp"` → `"test-co"`.
+
+### 24.17 New Auth Enforcement Tests
+
+**File:** `tests/api/test_auth_enforcement.py` (589 lines, 42 tests in 7 classes)
+
+| Class | Tests | What It Validates |
+|-------|-------|-------------------|
+| `TestMiddlewareEnforcement` | 7 | Public routes pass (health, register, login), protected routes 401 without token, 401 with expired token, 401 with malformed token, 200 with valid token |
+| `TestDeactivatedUser` | 2 | `is_active=False` → 401 on task list, 401 on company read. Proves middleware passes valid token but `require_auth` rejects at dependency layer |
+| `TestRoleBasedAccess` | 12 | Viewer cannot start any pipeline, cannot cancel, cannot CRUD products, cannot create invites. Viewer CAN read company profile and gap data. Member and superuser CAN start pipelines |
+| `TestTenantIsolation` | 10 | Cross-company access denied on: company profile, pipeline start, task detail, task cancel, gap data, content data, artifacts, SSE events. Tasks auto-filtered by company. Artifact company list scoped |
+| `TestStreamTokens` | 4 | Stream token endpoint returns token with 300s expiry. Stream token works for SSE. Stream token rejected for non-SSE endpoints. Ownership check on stream token creation |
+| `TestRegistrationHardening` | 4 | Duplicate domain → 409. Separate domains → separate companies. Invite requires superuser. Join with valid invite code works |
+| `TestLoginBehavior` | 1 | Non-existent user → 401 (timing-safe, not blocked by middleware) |
+
+**Cross-tenant test infrastructure:**
+
+```python
+@pytest.fixture
+def other_company(auth_store): ...   # "other-co" / "Other Co" / "other.com"
+@pytest.fixture
+def other_user(auth_store, other_company): ...  # member @ other-co
+@pytest.fixture
+def other_client(app, auth_store, other_company, other_user): ...  # Authenticated for other-co
+@pytest.fixture
+def test_co_task(task_store, test_company): ...  # Task owned by test-co
+@pytest.fixture
+def other_co_task(task_store, other_company): ...  # Task owned by other-co
+```
+
+The bidirectional test pattern proves isolation in both directions:
+```python
+def test_user_cannot_read_other_company_profile(self, client, other_company):
+    resp = client.get("/api/v1/companies/other-co")
+    assert resp.status_code == 403
+
+def test_other_user_cannot_read_test_co_profile(self, other_client, test_company):
+    resp = other_client.get("/api/v1/companies/test-co")
+    assert resp.status_code == 403
+```
+
+### 24.18 Codex Review Findings — Full Disposition
+
+#### CRITICAL (6) — All Incorporated
+
+| # | Finding | Fix | Implementation Location |
+|---|---------|-----|------------------------|
+| C1 | Cross-tenant account takeover via domain auto-join | Registration creates isolated companies; invite flow for joining | `store.py:register_user()`, `auth.py:/invite`, `auth.py:/join` |
+| C2 | Tenant scope client-controlled in `/start` | Body slug validated against token slug | `gap_analysis.py`, `research.py`, `content.py` — all `/start` handlers |
+| C3 | Task IDOR — no ownership check | `task.company_slug == user.company_slug` on all task endpoints | `tasks.py`, `events.py` — all handlers |
+| C4 | Bearer token in SSE query param leaks | Short-lived stream tokens (5min, `stream_only` flag) | `store.py:create_stream_token()`, `middleware.py`, `tasks.py:/stream-token` |
+| C5 | Grace-mode fail-open in production | Full default-deny rewrite | `middleware.py` — complete rewrite |
+| C6 | Deleted users remain authorized | `require_auth` does full store lookup + `is_active` check | `dependencies.py:require_auth()` |
+
+#### WARNING (10) — Incorporated or Deferred
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| W1 | `BaseHTTPMiddleware` risky for SSE | **INCORPORATED** — Pure ASGI middleware |
+| W2 | Middleware ordering | **INCORPORATED** — CORS outermost, verified |
+| W3 | TaskStore race conditions | **DEFERRED** — Pre-existing, single-worker for now |
+| W4 | AuthStore single-worker only | **DEFERRED** — Will address with Supabase migration |
+| W5 | No token revocation/refresh | **PARTIALLY DEFERRED** — Logout not yet added; refresh tokens deferred |
+| W6 | No rate limiting on login/SSE | **DEFERRED** — Backlog item PB-ratelimit |
+| W7 | Login timing side-channel | **INCORPORATED** — `_DUMMY_HASH` constant-time verification |
+| W8 | Secret key auto-generates | **INCORPORATED** — `RuntimeError` in non-dev environments |
+| W9 | `/readiness` discloses API key availability | **DEFERRED** — Low risk for internal API |
+| W10 | Test monkey-patching misses custom clients | **INCORPORATED** — `_AuthTestClient` subclass approach |
+
+#### INFO (4) — Noted
+
+| # | Finding | Disposition |
+|---|---------|-------------|
+| I1 | Standardize dependency chain | **INCORPORATED** — `require_auth → require_role → require_company_access` |
+| I2 | Prefer `company_id` over slugs | **INCORPORATED** — UUID comparison in `require_company_access` |
+| I3 | Structured audit logs | **DEFERRED** — Backlog |
+| I4 | Explicit auth error codes | **INCORPORATED** — `code` field in all 401 responses |
+
+### 24.19 Files Changed Summary
+
+| File | Change | Lines |
+|------|--------|-------|
+| `api/auth/dependencies.py` | **NEW** — 5 auth dependencies | 138 |
+| `api/auth/middleware.py` | **REWRITE** — Pure ASGI, default-deny | 192 |
+| `api/auth/store.py` | MODIFY — Registration hardening, invite flow, stream tokens, JWT enforcement, RLock | ~543 |
+| `api/routers/auth.py` | MODIFY — Login timing fix, invite/join endpoints, domain_taken 409 | ~256 |
+| `api/routers/gap_analysis.py` | MODIFY — Role + tenant deps on /start, auth on /status | ~140 |
+| `api/routers/research.py` | MODIFY — Role + tenant deps, param rename | ~180 |
+| `api/routers/content.py` | MODIFY — Role + tenant deps, param rename | ~200 |
+| `api/routers/tasks.py` | MODIFY — Auth + company filter + stream-token endpoint | ~160 |
+| `api/routers/events.py` | MODIFY — Task ownership check | ~110 |
+| `api/routers/companies.py` | MODIFY — `require_tenant` / `require_company_member` on all | ~200 |
+| `api/routers/gap_data.py` | MODIFY — `require_tenant` on all 8 endpoints | ~350 |
+| `api/routers/content_data.py` | MODIFY — `require_tenant` on all 3 endpoints | ~180 |
+| `api/routers/brand_data.py` | MODIFY — `require_tenant` on both endpoints | ~150 |
+| `api/routers/artifacts.py` | MODIFY — `require_auth` + `_slug_belongs_to_user()` | ~170 |
+| `api/app.py` | MODIFY — Middleware ordering, import changes | 123 |
+| `tests/api/conftest.py` | MODIFY — `_AuthTestClient`, 4 client fixtures | 205 |
+| `tests/api/test_auth_enforcement.py` | **NEW** — 42 auth enforcement tests | 589 |
+| Various `tests/api/test_*.py` | MODIFY — Company name alignment, auth fixture usage | ~20 files |
+
+### 24.20 Deferred Items
+
+| Item | Why Deferred | Backlog ID |
+|------|-------------|------------|
+| Rate limiting on login/SSE | Requires external dependency (slowapi or custom) | PB-ratelimit |
+| Token refresh flow | Low priority — 24h expiry is sufficient for MVP | PB-refresh-tokens |
+| Redis-backed AuthStore | Single-worker deployment for now | PB-multiworker-auth |
+| `/readiness` key disclosure | Low risk for internal API | PB-readiness-disclosure |
+| Structured audit logs | Nice-to-have, not blocking | PB-audit-log |
+| Email-based invites | Simple invite codes sufficient for v0 | — |
+| Logout / token blacklist | Partially implemented (W5), full revocation deferred | — |
+
+---
+
 ## Changelog
 
 | Date | Section | Change | Task ID |
@@ -4504,10 +5338,17 @@ POST /api/v1/gap-analysis/start  {"company_name":"Ramp", "product_slug":"ramp-co
 | 2026-02-27 | §21.2 | Updated research start docs: flat-field schema, `force_rerun` + `stages` fields, stage-aware guard logic, draft exclusion, dual-scope fallback | T-pipeline-guard |
 | 2026-02-27 | §15 | Updated test count 882→900 (+12 pipeline-guard tests); updated test tree (guard classes in test_gap_analysis.py + test_research.py); updated API test coverage header | T-pipeline-guard |
 | 2026-02-27 | §17 | Added Decision 13: Pipeline Guard — HTTP 200 skip for existing artifacts (D-GUARD-1) | T-pipeline-guard |
+| 2026-02-27 | §21 | Updated status header — 944 tests, production-grade route protection (Codex gpt-5.3-codex reviewed) | T-route-protection |
+| 2026-02-27 | §21.1 | Rewrote middleware docs: pure ASGI (not BaseHTTPMiddleware), default-deny, public whitelist, stream token support, corrected middleware ordering | T-route-protection |
+| 2026-02-27 | §21.2 | Rewrote Authentication section: hardened registration (no domain auto-join), invite flow endpoints, auth dependencies module, stream tokens, JWT_SECRET_KEY enforcement, login timing fix | T-route-protection |
+| 2026-02-27 | §21.2 | Rewrote Auth Architecture subsection: replaced grace-mode docs with default-deny ASGI middleware, auth dependency chain, route protection summary table | T-route-protection |
+| 2026-02-27 | §15 | Updated test count 900→944 (+44 route-protection tests); added route protection test table | T-route-protection |
+| 2026-02-27 | §24 | **NEW SECTION** — Route Protection & Authorization Sprint: exhaustive implementation detail (20 subsections). Pure ASGI middleware architecture, auth dependency chain, registration hardening, invite flow, pipeline tenant isolation, task IDOR fix, stream tokens, JWT enforcement, login timing, threading model, middleware ordering, test migration, 42 new tests, Codex review disposition (6C/10W/4I), files changed, deferred items | T-route-protection |
+| 2026-02-27 | TOC | Added §23 Product-Level Pipeline, §24 Route Protection with full subsection links, renumbered Appendices to §25-§27 | T-route-protection |
 
 ---
 
 *End of Comprehensive System Documentation*
 *Generated: 2026-02-27*
 *Total codebase files analyzed: ~150+*
-*Total lines of documentation: ~5400+*
+*Total lines of documentation: ~5800+*

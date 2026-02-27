@@ -1,7 +1,12 @@
-"""SSE events streaming endpoint."""
+"""SSE events streaming endpoint.
+
+Authentication is handled by the ASGI AuthMiddleware which supports
+both Bearer tokens and ``?stream_token=`` query params for SSE.
+Task ownership is verified before streaming begins.
+"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from api.dependencies import get_event_bus, get_task_store
@@ -19,7 +24,12 @@ async def stream_events(
     event_bus: EventBus = Depends(get_event_bus),
 ) -> StreamingResponse:
     # Validate task exists (raises 404 via exception handler if not)
-    task_store.get_task(task_id)
+    task = task_store.get_task(task_id)
+
+    # Tenant isolation: verify the task belongs to the user's company
+    company_slug = getattr(request.state, "company_slug", None)
+    if company_slug and task.company_slug != company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     last_event_id_str = request.headers.get("Last-Event-ID")
     last_event_id: int | None = None

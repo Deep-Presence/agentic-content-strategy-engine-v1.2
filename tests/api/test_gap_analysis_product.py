@@ -42,9 +42,9 @@ def artifacts_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def app_client(app):
-    """Full FastAPI test client reusing the standard conftest app fixture."""
-    yield TestClient(app, raise_server_exceptions=True)
+def app_client(app, auth_headers: dict):
+    """Authenticated FastAPI test client reusing the standard conftest app fixture."""
+    yield TestClient(app, raise_server_exceptions=True, headers=auth_headers)
 
 
 # ---------------------------------------------------------------------------
@@ -228,8 +228,8 @@ class TestGapAnalysisProductStart:
         product_slug: Optional[str] = None,
     ) -> dict:
         body: dict = {
-            "company_name": "Ramp",
-            "domain": "ramp.com",
+            "company_name": "Test Co",
+            "domain": "testco.com",
             "skip_stages": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"],
         }
         if product_slug:
@@ -247,15 +247,15 @@ class TestGapAnalysisProductStart:
     def test_company_level_effective_slug(self, app_client: TestClient) -> None:
         resp = self._start(app_client)
         data = resp.json()
-        assert data["effective_slug"] == "ramp"
+        assert data["effective_slug"] == "test-co"
         assert data["product_slug"] is None
 
     def test_product_level_effective_slug(self, app_client: TestClient) -> None:
         resp = self._start(app_client, product_slug="corporate-card")
         data = resp.json()
-        assert data["effective_slug"] == "ramp__corporate-card"
+        assert data["effective_slug"] == "test-co__corporate-card"
         assert data["product_slug"] == "corporate-card"
-        assert data["company_slug"] == "ramp"
+        assert data["company_slug"] == "test-co"
 
     def test_company_and_product_coexist(self, app_client: TestClient) -> None:
         """Company-level run and product-level run can start simultaneously."""
@@ -265,16 +265,16 @@ class TestGapAnalysisProductStart:
             r1 = app_client.post(
                 "/api/v1/gap-analysis/start",
                 json={
-                    "company_name": "Ramp",
-                    "domain": "ramp.com",
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
                     "skip_stages": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"],
                 },
             )
             r2 = app_client.post(
                 "/api/v1/gap-analysis/start",
                 json={
-                    "company_name": "Ramp",
-                    "domain": "ramp.com",
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
                     "product_slug": "corporate-card",
                     "skip_stages": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"],
                 },
@@ -295,8 +295,8 @@ class TestGapAnalysisProductStart:
             r1 = app_client.post(
                 "/api/v1/gap-analysis/start",
                 json={
-                    "company_name": "Ramp",
-                    "domain": "ramp.com",
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
                     "product_slug": "corporate-card",
                     "skip_stages": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"],
                 },
@@ -304,8 +304,8 @@ class TestGapAnalysisProductStart:
             r2 = app_client.post(
                 "/api/v1/gap-analysis/start",
                 json={
-                    "company_name": "Ramp",
-                    "domain": "ramp.com",
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
                     "product_slug": "corporate-card",
                     "skip_stages": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"],
                 },
@@ -468,8 +468,8 @@ class TestProductSlugValidation:
             return client.post(
                 "/api/v1/gap-analysis/start",
                 json={
-                    "company_name": "Ramp",
-                    "domain": "ramp.com",
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
                     "product_slug": product_slug,
                     "skip_stages": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"],
                 },
@@ -481,7 +481,7 @@ class TestProductSlugValidation:
             return client.post(
                 "/api/v1/research/start",
                 json={
-                    "company_name": "Ramp",
+                    "company_name": "Test Co",
                     "product_slug": product_slug,
                 },
             ).status_code
@@ -492,8 +492,8 @@ class TestProductSlugValidation:
             return client.post(
                 "/api/v1/content/start",
                 json={
-                    "company_name": "Ramp",
-                    "domain": "ramp.com",
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
                     "product_slug": product_slug,
                 },
             ).status_code

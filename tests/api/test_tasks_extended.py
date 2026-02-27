@@ -11,8 +11,9 @@ class TestTaskListTotal:
     """Verify the total field is included in TaskListResponse."""
 
     def test_total_matches_task_count(self, client: TestClient, task_store: TaskStore) -> None:
-        task_store.create_task("gap_analysis", "ramp")
-        task_store.create_task("research", "carta")
+        task_store.create_task("gap_analysis", "test-co")
+        task_store.release_slug_lock("test-co")
+        task_store.create_task("research", "test-co")
 
         resp = client.get("/api/v1/tasks")
         assert resp.status_code == 200
@@ -26,8 +27,9 @@ class TestTaskListTotal:
         assert resp.json()["total"] == 0
 
     def test_total_reflects_filter(self, client: TestClient, task_store: TaskStore) -> None:
-        task_store.create_task("gap_analysis", "ramp")
-        task_store.create_task("research", "carta")
+        task_store.create_task("gap_analysis", "test-co")
+        task_store.release_slug_lock("test-co")
+        task_store.create_task("research", "test-co")
 
         resp = client.get("/api/v1/tasks?pipeline=gap_analysis")
         assert resp.status_code == 200
@@ -39,37 +41,41 @@ class TestTaskListCompanySlugFilter:
     """Verify the company_slug query parameter filters tasks."""
 
     def test_filter_by_company_slug(self, client: TestClient, task_store: TaskStore) -> None:
-        task_store.create_task("gap_analysis", "ramp")
-        task_store.create_task("research", "carta")
+        task_store.create_task("gap_analysis", "test-co")
+        task_store.release_slug_lock("test-co")
+        task_store.create_task("research", "test-co")
 
-        resp = client.get("/api/v1/tasks?company_slug=ramp")
+        resp = client.get("/api/v1/tasks?company_slug=test-co")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] == 1
-        assert data["tasks"][0]["company_slug"] == "ramp"
+        assert data["total"] == 2
+        assert all(t["company_slug"] == "test-co" for t in data["tasks"])
 
-    def test_filter_by_nonexistent_slug_returns_empty(
+    def test_company_slug_query_param_ignored_uses_auth(
         self, client: TestClient, task_store: TaskStore
     ) -> None:
-        task_store.create_task("gap_analysis", "ramp")
+        """company_slug query param is ignored — endpoint auto-filters by auth user's company."""
+        task_store.create_task("gap_analysis", "test-co")
 
+        # Even though we pass company_slug=nonexistent, the endpoint uses the
+        # authenticated user's company_slug (test-co) from request.state
         resp = client.get("/api/v1/tasks?company_slug=nonexistent")
         assert resp.status_code == 200
-        assert resp.json()["total"] == 0
-        assert resp.json()["tasks"] == []
+        assert resp.json()["total"] == 1
 
     def test_combined_filters(self, client: TestClient, task_store: TaskStore) -> None:
-        t1 = task_store.create_task("gap_analysis", "ramp")
+        t1 = task_store.create_task("gap_analysis", "test-co")
         task_store.update_task(t1.task_id, status=TaskStatus.COMPLETED)
-        task_store.release_slug_lock("ramp")
-        task_store.create_task("research", "ramp")
-        task_store.create_task("gap_analysis", "carta")
+        task_store.release_slug_lock("test-co")
+        task_store.create_task("research", "test-co")
+        # Create a task for another company (won't be visible due to auto-filter)
+        task_store.create_task("gap_analysis", "other-co")
 
-        resp = client.get("/api/v1/tasks?company_slug=ramp&pipeline=gap_analysis")
+        resp = client.get("/api/v1/tasks?company_slug=test-co&pipeline=gap_analysis")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 1
-        assert data["tasks"][0]["company_slug"] == "ramp"
+        assert data["tasks"][0]["company_slug"] == "test-co"
         assert data["tasks"][0]["pipeline"] == "gap_analysis"
 
 
@@ -85,11 +91,11 @@ class TestContentStartRequestExpanded:
         resp = client.post(
             "/api/v1/content/start",
             json={
-                "company_name": "TestCo",
+                "company_name": "Test Co",
                 "domain": "testco.com",
                 "max_briefs": 3,
                 "auto_approve": False,
-                "gap_slug": "testco",
+                "gap_slug": "test-co",
                 "max_concurrent_workers": 5,
                 "max_revision_cycles": 1,
                 "skip_stages": [3, 4],
@@ -103,7 +109,7 @@ class TestContentStartRequestExpanded:
         resp = client.post(
             "/api/v1/content/start",
             json={
-                "company_name": "TestCo",
+                "company_name": "Test Co",
                 "domain": "testco.com",
             },
         )

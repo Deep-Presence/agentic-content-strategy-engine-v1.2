@@ -130,7 +130,7 @@ def _make_embedding_projection(
 
 def _setup_content_dir(
     artifacts_root: Path,
-    slug: str = "webflow",
+    slug: str = "test-co",
     briefs_data: Optional[Dict[str, Any]] = None,
     run_metadata: Optional[Dict[str, Any]] = None,
     brief_stages: Optional[Dict[str, Dict[str, str]]] = None,
@@ -170,7 +170,7 @@ def _setup_content_dir(
 
 def _setup_gap_dir(
     artifacts_root: Path,
-    slug: str = "webflow",
+    slug: str = "test-co",
     embedding_projections: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Path:
     """Create gap_analysis/{slug}/visualizations/ with optional projection files."""
@@ -213,7 +213,7 @@ class TestBriefList:
     def test_list_briefs_basic(self, client: TestClient, artifacts_root: Path):
         """Returns brief list with correct structure."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(3))
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 3
@@ -223,7 +223,7 @@ class TestBriefList:
 
     def test_list_briefs_empty_dir(self, client: TestClient, artifacts_root: Path):
         """Returns 200 with empty list when no content dir exists."""
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 0
@@ -231,9 +231,9 @@ class TestBriefList:
 
     def test_list_briefs_no_briefs_json(self, client: TestClient, artifacts_root: Path):
         """Returns 200 empty when content dir exists but no briefs.json."""
-        content_dir = artifacts_root / "content" / "webflow"
+        content_dir = artifacts_root / "content" / "test-co"
         content_dir.mkdir(parents=True)
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.status_code == 200
         assert resp.json()["total"] == 0
 
@@ -245,7 +245,7 @@ class TestBriefList:
                 5, formats=["long_blog", "short_faq", "pillar_page", "comparison", "how_to"]
             ),
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         types = [b["content_type"] for b in resp.json()["briefs"]]
         assert types == ["blog", "blog", "guide", "guide", "guide"]
 
@@ -256,7 +256,7 @@ class TestBriefList:
         briefs = _make_briefs_json(1)
         briefs["briefs"][0]["content_format"] = "unknown_format"
         _setup_content_dir(artifacts_root, briefs_data=briefs)
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["content_type"] == "blog"
 
     def test_list_briefs_word_count_uses_max(self, client: TestClient, artifacts_root: Path):
@@ -264,7 +264,7 @@ class TestBriefList:
         briefs = _make_briefs_json(1)
         briefs["briefs"][0]["word_count_range"] = [800, 1500]
         _setup_content_dir(artifacts_root, briefs_data=briefs)
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["target_word_count"] == 1500
 
     def test_list_briefs_citability_score(self, client: TestClient, artifacts_root: Path):
@@ -274,7 +274,7 @@ class TestBriefList:
             briefs_data=_make_briefs_json(1),
             eval_histories={"brief-0": _make_eval_history(cycles=2, overall_score=0.85)},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         score = resp.json()["briefs"][0]["citability_score"]
         assert score == 85.0
 
@@ -283,7 +283,7 @@ class TestBriefList:
     ):
         """citability_score is null when no eval history exists."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["citability_score"] is None
 
     def test_list_briefs_cycle_id(self, client: TestClient, artifacts_root: Path):
@@ -293,7 +293,7 @@ class TestBriefList:
             briefs_data=_make_briefs_json(1),
             run_metadata=_make_run_metadata(session_id="sess-xyz"),
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["cycle_id"] == "sess-xyz"
 
     def test_list_briefs_cycle_id_null_no_metadata(
@@ -301,13 +301,13 @@ class TestBriefList:
     ):
         """cycle_id is null when no run_metadata exists."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["cycle_id"] is None
 
     def test_list_briefs_status_suggested(self, client: TestClient, artifacts_root: Path):
         """Brief with no stage files has status 'suggested'."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "suggested"
 
     def test_list_briefs_status_from_files(self, client: TestClient, artifacts_root: Path):
@@ -317,7 +317,7 @@ class TestBriefList:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"draft.md": "# Draft"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "drafting"
 
     def test_list_briefs_status_from_pieces(self, client: TestClient, artifacts_root: Path):
@@ -330,7 +330,7 @@ class TestBriefList:
             ]),
             brief_stages={"brief-0": {"draft.md": "# Draft"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "approved"
 
     def test_list_briefs_timestamps_are_strings(
@@ -338,28 +338,28 @@ class TestBriefList:
     ):
         """created_at and updated_at are ISO timestamp strings."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         brief = resp.json()["briefs"][0]
         assert isinstance(brief["created_at"], str)
         assert isinstance(brief["updated_at"], str)
 
     def test_list_briefs_invalid_slug(self, client: TestClient, artifacts_root: Path):
-        """Invalid slug format returns 400."""
+        """Invalid slug doesn't match authenticated user's company → 403."""
         resp = client.get("/api/v1/companies/INVALID_SLUG!/content/briefs")
-        assert resp.status_code == 400
+        assert resp.status_code == 403
 
     def test_list_briefs_cluster_field(self, client: TestClient, artifacts_root: Path):
         """cluster field comes from target_cluster."""
         briefs = _make_briefs_json(1)
         briefs["briefs"][0]["target_cluster"] = "Pricing FAQs"
         _setup_content_dir(artifacts_root, briefs_data=briefs)
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["cluster"] == "Pricing FAQs"
 
     def test_list_briefs_empty_briefs_array(self, client: TestClient, artifacts_root: Path):
         """Returns empty list when briefs array is empty."""
         _setup_content_dir(artifacts_root, briefs_data={"briefs": []})
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["total"] == 0
 
 
@@ -374,7 +374,7 @@ class TestBriefDetail:
     def test_detail_basic(self, client: TestClient, artifacts_root: Path):
         """Returns full brief detail with correct fields."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(2))
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == "brief-0"
@@ -385,20 +385,20 @@ class TestBriefDetail:
     def test_detail_word_count_range(self, client: TestClient, artifacts_root: Path):
         """target_word_count is {min, max} dict in detail view."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         wc = resp.json()["target_word_count"]
         assert wc == {"min": 1000, "max": 2000}
 
     def test_detail_structural_targets(self, client: TestClient, artifacts_root: Path):
         """structural_targets passed through from brief data."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         assert resp.json()["structural_targets"] == {"h2_count": 5, "list_count": 3}
 
     def test_detail_key_topics_and_angles(self, client: TestClient, artifacts_root: Path):
         """key_topics and key_angles populated."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         data = resp.json()
         assert data["key_topics"] == ["topic-0a", "topic-0b"]
         assert data["key_angles"] == ["angle-0"]
@@ -408,7 +408,7 @@ class TestBriefDetail:
         briefs = _make_briefs_json(1)
         briefs["briefs"][0]["priority_score"] = 0.92
         _setup_content_dir(artifacts_root, briefs_data=briefs)
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         assert resp.json()["priority_score"] == 0.92
 
     def test_detail_eval_history(self, client: TestClient, artifacts_root: Path):
@@ -418,7 +418,7 @@ class TestBriefDetail:
             briefs_data=_make_briefs_json(1),
             eval_histories={"brief-0": _make_eval_history(cycles=2)},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         data = resp.json()
         assert len(data["eval_history"]) == 2
         assert data["eval_history"][0]["cycle"] == 1
@@ -428,7 +428,7 @@ class TestBriefDetail:
     def test_detail_exemplars(self, client: TestClient, artifacts_root: Path):
         """exemplars populated from exemplar_summaries."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         exemplars = resp.json()["exemplars"]
         assert len(exemplars) == 1
         assert exemplars[0]["url"] == "https://example.com/article-0"
@@ -445,7 +445,7 @@ class TestBriefDetail:
                 "formatted.md": "# Formatted",
             }},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         stages = resp.json()["available_stages"]
         assert "outline" in stages
         assert "draft" in stages
@@ -455,18 +455,18 @@ class TestBriefDetail:
     def test_detail_nonexistent_brief(self, client: TestClient, artifacts_root: Path):
         """Returns 404 for non-existent brief_id."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-99")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-99")
         assert resp.status_code == 404
 
     def test_detail_no_content_dir(self, client: TestClient, artifacts_root: Path):
         """Returns 404 when content dir doesn't exist."""
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         assert resp.status_code == 404
 
     def test_detail_no_eval_history(self, client: TestClient, artifacts_root: Path):
         """eval_history is empty list when no eval_history.json."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         data = resp.json()
         assert data["eval_history"] == []
         assert data["final_passed"] is False
@@ -479,20 +479,20 @@ class TestBriefDetail:
             briefs_data=_make_briefs_json(1),
             eval_histories={"brief-0": _make_eval_history(cycles=2, overall_score=0.92)},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         assert resp.json()["citability_score"] == 92.0
 
     def test_detail_invalid_brief_id_format(self, client: TestClient, artifacts_root: Path):
         """Returns 400 for invalid brief_id format."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs/invalid-id")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/invalid-id")
         assert resp.status_code == 400
 
     def test_detail_no_briefs_json(self, client: TestClient, artifacts_root: Path):
         """Returns 404 when briefs.json missing."""
-        content_dir = artifacts_root / "content" / "webflow"
+        content_dir = artifacts_root / "content" / "test-co"
         content_dir.mkdir(parents=True)
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0")
         assert resp.status_code == 404
 
 
@@ -511,7 +511,7 @@ class TestBriefStage:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"draft.md": "# My Draft\n\nContent here."}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/draft")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0/draft")
         assert resp.status_code == 200
         data = resp.json()
         assert data["brief_id"] == "brief-0"
@@ -527,7 +527,7 @@ class TestBriefStage:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"outline.json": json.dumps(outline)}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/outline")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0/outline")
         assert resp.status_code == 200
         data = resp.json()
         assert data["content_type"] == "application/json"
@@ -543,7 +543,7 @@ class TestBriefStage:
             eval_histories={"brief-0": eval_data},
         )
         resp = client.get(
-            "/api/v1/companies/webflow/content/briefs/brief-0/eval_history"
+            "/api/v1/companies/test-co/content/briefs/brief-0/eval_history"
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -558,7 +558,7 @@ class TestBriefStage:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"enriched.md": "# Enriched\n\nWith facts."}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/enriched")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0/enriched")
         assert resp.status_code == 200
         assert resp.json()["content_type"] == "text/markdown"
 
@@ -569,7 +569,7 @@ class TestBriefStage:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"formatted.md": "# Formatted"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/formatted")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0/formatted")
         assert resp.status_code == 200
         assert resp.json()["content_type"] == "text/markdown"
 
@@ -580,7 +580,7 @@ class TestBriefStage:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"final.md": "# Final Version"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/final")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0/final")
         assert resp.status_code == 200
         assert "Final Version" in resp.json()["content"]
 
@@ -591,14 +591,14 @@ class TestBriefStage:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"draft.md": "# Draft"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/final")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0/final")
         assert resp.status_code == 404
 
     def test_stage_invalid_stage_name(self, client: TestClient, artifacts_root: Path):
         """Returns 400 for invalid stage name."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
         resp = client.get(
-            "/api/v1/companies/webflow/content/briefs/brief-0/nonexistent"
+            "/api/v1/companies/test-co/content/briefs/brief-0/nonexistent"
         )
         assert resp.status_code == 400
 
@@ -606,7 +606,7 @@ class TestBriefStage:
         """Returns 400 for invalid brief_id format."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
         resp = client.get(
-            "/api/v1/companies/webflow/content/briefs/../../etc/passwd/draft"
+            "/api/v1/companies/test-co/content/briefs/../../etc/passwd/draft"
         )
         # FastAPI may resolve this differently, but the regex check should catch it
         assert resp.status_code in (400, 404, 422)
@@ -623,13 +623,13 @@ class TestEmbeddingProjection:
     def test_embeddings_umap(self, client: TestClient, artifacts_root: Path):
         """Returns UMAP projection with correct structure."""
         # Need gap_analysis dir for slug validation
-        gap_dir = artifacts_root / "gap_analysis" / "webflow"
+        gap_dir = artifacts_root / "gap_analysis" / "test-co"
         gap_dir.mkdir(parents=True)
         _setup_gap_dir(
             artifacts_root,
             embedding_projections={"umap": _make_embedding_projection("umap", 6)},
         )
-        resp = client.get("/api/v1/companies/webflow/gap-analysis/embeddings")
+        resp = client.get("/api/v1/companies/test-co/gap-analysis/embeddings")
         assert resp.status_code == 200
         data = resp.json()
         assert data["method"] == "umap"
@@ -638,27 +638,27 @@ class TestEmbeddingProjection:
 
     def test_embeddings_tsne(self, client: TestClient, artifacts_root: Path):
         """Returns t-SNE projection when method=tsne."""
-        gap_dir = artifacts_root / "gap_analysis" / "webflow"
+        gap_dir = artifacts_root / "gap_analysis" / "test-co"
         gap_dir.mkdir(parents=True)
         _setup_gap_dir(
             artifacts_root,
             embedding_projections={"tsne": _make_embedding_projection("tsne", 4)},
         )
         resp = client.get(
-            "/api/v1/companies/webflow/gap-analysis/embeddings?method=tsne"
+            "/api/v1/companies/test-co/gap-analysis/embeddings?method=tsne"
         )
         assert resp.status_code == 200
         assert resp.json()["method"] == "tsne"
 
     def test_embeddings_point_structure(self, client: TestClient, artifacts_root: Path):
         """Each point has required fields."""
-        gap_dir = artifacts_root / "gap_analysis" / "webflow"
+        gap_dir = artifacts_root / "gap_analysis" / "test-co"
         gap_dir.mkdir(parents=True)
         _setup_gap_dir(
             artifacts_root,
             embedding_projections={"umap": _make_embedding_projection("umap", 3)},
         )
-        resp = client.get("/api/v1/companies/webflow/gap-analysis/embeddings")
+        resp = client.get("/api/v1/companies/test-co/gap-analysis/embeddings")
         point = resp.json()["points"][0]
         assert "x" in point
         assert "y" in point
@@ -670,44 +670,44 @@ class TestEmbeddingProjection:
 
     def test_embeddings_type_lowercase(self, client: TestClient, artifacts_root: Path):
         """Point types are lowercase."""
-        gap_dir = artifacts_root / "gap_analysis" / "webflow"
+        gap_dir = artifacts_root / "gap_analysis" / "test-co"
         gap_dir.mkdir(parents=True)
         _setup_gap_dir(
             artifacts_root,
             embedding_projections={"umap": _make_embedding_projection("umap", 6)},
         )
-        resp = client.get("/api/v1/companies/webflow/gap-analysis/embeddings")
+        resp = client.get("/api/v1/companies/test-co/gap-analysis/embeddings")
         types = {p["type"] for p in resp.json()["points"]}
         assert types <= {"query", "citation", "company"}
 
     def test_embeddings_missing_projection(self, client: TestClient, artifacts_root: Path):
         """Returns 404 when projection file doesn't exist."""
-        gap_dir = artifacts_root / "gap_analysis" / "webflow"
+        gap_dir = artifacts_root / "gap_analysis" / "test-co"
         gap_dir.mkdir(parents=True)
-        resp = client.get("/api/v1/companies/webflow/gap-analysis/embeddings")
+        resp = client.get("/api/v1/companies/test-co/gap-analysis/embeddings")
         assert resp.status_code == 404
 
     def test_embeddings_missing_slug_dir(self, client: TestClient, artifacts_root: Path):
         """Returns 404 when gap_analysis/{slug}/ doesn't exist."""
-        resp = client.get("/api/v1/companies/webflow/gap-analysis/embeddings")
+        resp = client.get("/api/v1/companies/test-co/gap-analysis/embeddings")
         assert resp.status_code == 404
 
     def test_embeddings_invalid_slug(self, client: TestClient, artifacts_root: Path):
-        """Returns 400 for invalid slug format."""
+        """Invalid slug doesn't match authenticated user's company → 403."""
         resp = client.get("/api/v1/companies/INVALID!/gap-analysis/embeddings")
-        assert resp.status_code == 400
+        assert resp.status_code == 403
 
     def test_embeddings_default_method_umap(
         self, client: TestClient, artifacts_root: Path
     ):
         """Default method is umap when not specified."""
-        gap_dir = artifacts_root / "gap_analysis" / "webflow"
+        gap_dir = artifacts_root / "gap_analysis" / "test-co"
         gap_dir.mkdir(parents=True)
         _setup_gap_dir(
             artifacts_root,
             embedding_projections={"umap": _make_embedding_projection("umap", 2)},
         )
-        resp = client.get("/api/v1/companies/webflow/gap-analysis/embeddings")
+        resp = client.get("/api/v1/companies/test-co/gap-analysis/embeddings")
         assert resp.status_code == 200
         assert resp.json()["method"] == "umap"
 
@@ -715,13 +715,13 @@ class TestEmbeddingProjection:
         self, client: TestClient, artifacts_root: Path
     ):
         """point_count equals actual number of points."""
-        gap_dir = artifacts_root / "gap_analysis" / "webflow"
+        gap_dir = artifacts_root / "gap_analysis" / "test-co"
         gap_dir.mkdir(parents=True)
         _setup_gap_dir(
             artifacts_root,
             embedding_projections={"umap": _make_embedding_projection("umap", 10)},
         )
-        resp = client.get("/api/v1/companies/webflow/gap-analysis/embeddings")
+        resp = client.get("/api/v1/companies/test-co/gap-analysis/embeddings")
         data = resp.json()
         assert data["point_count"] == len(data["points"])
 
@@ -737,7 +737,7 @@ class TestStatusInference:
     def test_status_suggested_no_files(self, client: TestClient, artifacts_root: Path):
         """No stage files → suggested."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "suggested"
 
     def test_status_research_outline_only(self, client: TestClient, artifacts_root: Path):
@@ -747,7 +747,7 @@ class TestStatusInference:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"outline.json": '{"sections": []}'}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "research"
 
     def test_status_drafting(self, client: TestClient, artifacts_root: Path):
@@ -757,7 +757,7 @@ class TestStatusInference:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"draft.md": "# Draft"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "drafting"
 
     def test_status_enriching(self, client: TestClient, artifacts_root: Path):
@@ -767,7 +767,7 @@ class TestStatusInference:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"enriched.md": "# Enriched"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "enriching"
 
     def test_status_formatting(self, client: TestClient, artifacts_root: Path):
@@ -777,7 +777,7 @@ class TestStatusInference:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"formatted.md": "# Formatted"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "formatting"
 
     def test_status_evaluating(self, client: TestClient, artifacts_root: Path):
@@ -787,7 +787,7 @@ class TestStatusInference:
             briefs_data=_make_briefs_json(1),
             eval_histories={"brief-0": _make_eval_history(cycles=1, final_passed=False)},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "evaluating"
 
     def test_status_review_eval_passed(self, client: TestClient, artifacts_root: Path):
@@ -797,7 +797,7 @@ class TestStatusInference:
             briefs_data=_make_briefs_json(1),
             eval_histories={"brief-0": _make_eval_history(cycles=2, final_passed=True)},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "review"
 
     def test_status_published_final(self, client: TestClient, artifacts_root: Path):
@@ -807,7 +807,7 @@ class TestStatusInference:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"final.md": "# Final"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "published"
 
     def test_status_piece_approved(self, client: TestClient, artifacts_root: Path):
@@ -819,7 +819,7 @@ class TestStatusInference:
                 {"brief_id": "brief-0", "status": "approved"}
             ]),
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "approved"
 
     def test_status_piece_edited_published(self, client: TestClient, artifacts_root: Path):
@@ -831,7 +831,7 @@ class TestStatusInference:
                 {"brief_id": "brief-0", "status": "edited"}
             ]),
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "published"
 
     def test_status_piece_rejected(self, client: TestClient, artifacts_root: Path):
@@ -843,7 +843,7 @@ class TestStatusInference:
                 {"brief_id": "brief-0", "status": "rejected"}
             ]),
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "rejected"
 
     def test_status_piece_pending_review(self, client: TestClient, artifacts_root: Path):
@@ -855,7 +855,7 @@ class TestStatusInference:
                 {"brief_id": "brief-0", "status": "pending"}
             ]),
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "review"
 
     def test_status_piece_overrides_file(self, client: TestClient, artifacts_root: Path):
@@ -868,7 +868,7 @@ class TestStatusInference:
             ]),
             brief_stages={"brief-0": {"final.md": "# Final"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         # piece says rejected, files say published — piece wins
         assert resp.json()["briefs"][0]["status"] == "rejected"
 
@@ -883,7 +883,7 @@ class TestStatusInference:
                 {"brief_id": "brief-0", "status": "some_new_status"}
             ]),
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "review"
 
 
@@ -899,14 +899,14 @@ class TestSecurity:
         """brief_id with .. is rejected."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
         resp = client.get(
-            "/api/v1/companies/webflow/content/briefs/../../../etc/passwd"
+            "/api/v1/companies/test-co/content/briefs/../../../etc/passwd"
         )
         assert resp.status_code in (400, 404, 422)
 
     def test_brief_id_absolute_path(self, client: TestClient, artifacts_root: Path):
         """brief_id with absolute path is rejected."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs//etc/passwd")
+        resp = client.get("/api/v1/companies/test-co/content/briefs//etc/passwd")
         assert resp.status_code in (400, 404, 422)
 
     def test_slug_with_dots(self, client: TestClient, artifacts_root: Path):
@@ -919,7 +919,7 @@ class TestSecurity:
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
         for bad_id in ["brief", "brief-", "brief-abc", "BRIEF-1", "brief-12345"]:
             resp = client.get(
-                f"/api/v1/companies/webflow/content/briefs/{bad_id}"
+                f"/api/v1/companies/test-co/content/briefs/{bad_id}"
             )
             assert resp.status_code in (400, 404), f"Expected 400/404 for {bad_id}"
 
@@ -935,7 +935,7 @@ class TestBackwardCompat:
     def test_no_run_metadata(self, client: TestClient, artifacts_root: Path):
         """Works without run_metadata.json — cycle_id is null."""
         _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.status_code == 200
         assert resp.json()["briefs"][0]["cycle_id"] is None
 
@@ -949,7 +949,7 @@ class TestBackwardCompat:
                 # brief-1 has no stage files
             },
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         statuses = [b["status"] for b in resp.json()["briefs"]]
         assert statuses[0] == "drafting"
         assert statuses[1] == "suggested"
@@ -957,7 +957,7 @@ class TestBackwardCompat:
     def test_empty_briefs_list(self, client: TestClient, artifacts_root: Path):
         """Empty briefs array returns 200 with empty list."""
         _setup_content_dir(artifacts_root, briefs_data={"briefs": []})
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.status_code == 200
         assert resp.json()["total"] == 0
 
@@ -967,7 +967,7 @@ class TestBackwardCompat:
         """Brief with missing optional fields uses defaults."""
         minimal_brief = {"briefs": [{"brief_id": "brief-0"}]}
         _setup_content_dir(artifacts_root, briefs_data=minimal_brief)
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.status_code == 200
         brief = resp.json()["briefs"][0]
         assert brief["title"] == ""
@@ -982,10 +982,10 @@ class TestBackwardCompat:
             briefs_data=_make_briefs_json(1),
         )
         # Write invalid JSON to eval_history
-        brief_dir = artifacts_root / "content" / "webflow" / "content" / "brief-0"
+        brief_dir = artifacts_root / "content" / "test-co" / "content" / "brief-0"
         brief_dir.mkdir(parents=True, exist_ok=True)
         (brief_dir / "eval_history.json").write_text("not valid json{{{")
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.status_code == 200
         # Should still get the brief, just with evaluating status (file exists but parse fails)
         assert resp.json()["briefs"][0]["status"] == "evaluating"
@@ -998,7 +998,7 @@ class TestBackwardCompat:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"outline.json": json.dumps(outline)}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/outline")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0/outline")
         content = resp.json()["content"]
         assert isinstance(content, dict)  # Not a string
         assert content == outline
@@ -1018,7 +1018,7 @@ class TestCX1SymlinkPathTraversal:
             artifacts_root,
             briefs_data=_make_briefs_json(1),
         )
-        content_dir = artifacts_root / "content" / "webflow"
+        content_dir = artifacts_root / "content" / "test-co"
 
         # Create an outside directory with a file
         outside = artifacts_root / "outside" / "secret"
@@ -1030,7 +1030,7 @@ class TestCX1SymlinkPathTraversal:
         brief_dir.parent.mkdir(parents=True, exist_ok=True)
         brief_dir.symlink_to(outside)
 
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/draft")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0/draft")
         assert resp.status_code == 400
 
     def test_normal_brief_dir_works(self, client: TestClient, artifacts_root: Path):
@@ -1040,7 +1040,7 @@ class TestCX1SymlinkPathTraversal:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"draft.md": "# Normal content"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/draft")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0/draft")
         assert resp.status_code == 200
         assert resp.json()["content"] == "# Normal content"
 
@@ -1072,7 +1072,7 @@ class TestCX4NullCitabilityScore:
             briefs_data=_make_briefs_json(1),
             eval_histories={"brief-0": eval_data},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.status_code == 200
         brief = resp.json()["briefs"][0]
         assert brief["citability_score"] == 85.0  # 0.85 * 100
@@ -1090,7 +1090,7 @@ class TestCX4NullCitabilityScore:
             briefs_data=_make_briefs_json(1),
             eval_histories={"brief-0": eval_data},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs")
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.status_code == 200
         assert resp.json()["briefs"][0]["citability_score"] is None
 
@@ -1105,7 +1105,7 @@ class TestCX8CorruptedJsonStage:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"outline.json": "{ not valid json !!!"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/outline")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0/outline")
         assert resp.status_code == 422
 
     def test_corrupted_eval_history_stage_returns_422(
@@ -1117,7 +1117,7 @@ class TestCX8CorruptedJsonStage:
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"eval_history.json": "broken{{{{"}},
         )
-        resp = client.get("/api/v1/companies/webflow/content/briefs/brief-0/eval_history")
+        resp = client.get("/api/v1/companies/test-co/content/briefs/brief-0/eval_history")
         assert resp.status_code == 422
 
 
@@ -1133,9 +1133,9 @@ class TestContentDataProductSlug:
         self, client: TestClient, artifacts_root: Path,
     ) -> None:
         briefs = _make_briefs_json(count=2)
-        _setup_content_dir(artifacts_root, slug="ramp__card", briefs_data=briefs)
+        _setup_content_dir(artifacts_root, slug="test-co__card", briefs_data=briefs)
 
-        r = client.get("/api/v1/companies/ramp/content/briefs?product_slug=card")
+        r = client.get("/api/v1/companies/test-co/content/briefs?product_slug=card")
         assert r.status_code == 200
         assert len(r.json()["briefs"]) == 2
 
@@ -1144,11 +1144,11 @@ class TestContentDataProductSlug:
     ) -> None:
         company_briefs = _make_briefs_json(count=5)
         product_briefs = _make_briefs_json(count=2)
-        _setup_content_dir(artifacts_root, slug="ramp", briefs_data=company_briefs)
-        _setup_content_dir(artifacts_root, slug="ramp__card", briefs_data=product_briefs)
+        _setup_content_dir(artifacts_root, slug="test-co", briefs_data=company_briefs)
+        _setup_content_dir(artifacts_root, slug="test-co__card", briefs_data=product_briefs)
 
-        r_company = client.get("/api/v1/companies/ramp/content/briefs")
-        r_product = client.get("/api/v1/companies/ramp/content/briefs?product_slug=card")
+        r_company = client.get("/api/v1/companies/test-co/content/briefs")
+        r_product = client.get("/api/v1/companies/test-co/content/briefs?product_slug=card")
 
         assert len(r_company.json()["briefs"]) == 5
         assert len(r_product.json()["briefs"]) == 2
@@ -1157,7 +1157,7 @@ class TestContentDataProductSlug:
         self, client: TestClient, artifacts_root: Path,
     ) -> None:
         """Missing product content dir returns 200 with empty briefs list."""
-        r = client.get("/api/v1/companies/ramp/content/briefs?product_slug=nonexistent")
+        r = client.get("/api/v1/companies/test-co/content/briefs?product_slug=nonexistent")
         assert r.status_code == 200
         assert r.json()["briefs"] == []
 
@@ -1165,9 +1165,9 @@ class TestContentDataProductSlug:
         self, client: TestClient, artifacts_root: Path,
     ) -> None:
         briefs = _make_briefs_json(count=1)
-        _setup_content_dir(artifacts_root, slug="ramp__card", briefs_data=briefs)
+        _setup_content_dir(artifacts_root, slug="test-co__card", briefs_data=briefs)
 
-        r = client.get("/api/v1/companies/ramp/content/briefs/brief-0?product_slug=card")
+        r = client.get("/api/v1/companies/test-co/content/briefs/brief-0?product_slug=card")
         assert r.status_code == 200
         assert r.json()["id"] == "brief-0"
 
@@ -1177,13 +1177,13 @@ class TestContentDataProductSlug:
         briefs = _make_briefs_json(count=1)
         _setup_content_dir(
             artifacts_root,
-            slug="ramp__card",
+            slug="test-co__card",
             briefs_data=briefs,
             brief_stages={"brief-0": {"draft.md": "# Product draft content"}},
         )
 
         r = client.get(
-            "/api/v1/companies/ramp/content/briefs/brief-0/draft?product_slug=card"
+            "/api/v1/companies/test-co/content/briefs/brief-0/draft?product_slug=card"
         )
         assert r.status_code == 200
         assert r.json()["content"] == "# Product draft content"
@@ -1193,8 +1193,8 @@ class TestContentDataProductSlug:
     ) -> None:
         """Without ?product_slug=, endpoint reads company-level dir."""
         company_briefs = _make_briefs_json(count=3)
-        _setup_content_dir(artifacts_root, slug="ramp", briefs_data=company_briefs)
+        _setup_content_dir(artifacts_root, slug="test-co", briefs_data=company_briefs)
 
-        r = client.get("/api/v1/companies/ramp/content/briefs")
+        r = client.get("/api/v1/companies/test-co/content/briefs")
         assert r.status_code == 200
         assert len(r.json()["briefs"]) == 3

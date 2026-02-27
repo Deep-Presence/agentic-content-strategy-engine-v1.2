@@ -208,6 +208,25 @@
     "approved_by": "Aryan"
   },
   {
+    "id": "D-AUTH-1",
+    "timestamp": "2026-02-27",
+    "task": "Route protection & authorization — default-deny middleware, RBAC, tenant isolation, invite flow",
+    "approach": "Pure ASGI middleware (not BaseHTTPMiddleware) for default-deny auth with explicit public path whitelist. FastAPI dependencies for RBAC (require_auth, require_role) and tenant isolation (require_tenant). Registration hardened to create isolated companies only — joining existing companies requires invite codes. Stream tokens (5min, stream_only flag) for SSE EventSource clients. JWT_SECRET_KEY enforcement in non-dev environments.",
+    "rationale": "Codex gpt-5.3-codex review found 6 CRITICAL issues (C1–C6) in the grace-mode auth system: cross-tenant registration, client-controlled tenant scoping, IDOR task endpoints, query-param token leakage, fail-open grace mode, deleted user authorization. All incorporated into this 9-phase implementation. Pure ASGI middleware avoids BaseHTTPMiddleware's known issues with SSE streaming (W1). Dependency-based auth allows per-endpoint role granularity.",
+    "alternatives_rejected": [
+      "Keep BaseHTTPMiddleware (risky for SSE streaming — Codex W1)",
+      "Token-based tenant scoping only (no server-side validation — Codex C2)",
+      "Full bearer tokens as query params for SSE (leaks in logs/referrer — Codex C4)",
+      "Domain-based auto-join registration (cross-tenant account takeover — Codex C1)",
+      "Email-based invite system (over-engineering for v0 — simple codes sufficient)",
+      "Middleware-level role checks (mixes auth + authz concerns, less flexible)"
+    ],
+    "outcome": "944 tests passing. Default-deny on all routes. RBAC enforced. Tenant isolation verified. Invite flow working. Stream tokens for SSE. 42 dedicated auth enforcement tests.",
+    "reversible": true,
+    "approved_by": "Aryan",
+    "codex_review": "Codex gpt-5.3-codex with xhigh reasoning effort. 20 findings: 6 CRITICAL, 10 WARNING, 4 INFO. All CRITICALs and relevant WARNINGs incorporated. Plan at .claude/plans/bright-skipping-cupcake.md."
+  },
+  {
     "id": "D-GUARD-1",
     "timestamp": "2026-02-27",
     "task": "Existing-company pipeline guard — prevent duplicate runs for users joining analyzed companies",

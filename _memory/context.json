@@ -1,16 +1,16 @@
 {
-  "sprint": "pipeline-guard",
-  "sprint_goal": "Prevent duplicate pipeline runs for users joining an already-analyzed company",
-  "sprint_status": "COMPLETE — Feature 1 done, 900 tests passing, 0 failures",
-  "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "Raw SDK clients for LLM calls (no LangChain wrappers)", "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception", "Frontend renders its own charts from raw JSON (not iframes)", "No Supabase yet — filesystem artifacts are source of truth", "email-validator required for auth models (EmailStr)", "Password min_length=8, max_length=128 enforced in LoginRequest and RegisterRequest", "Double-underscore separator for effective slugs: {company}__{product}", "Prompt product context only when product_slug AND product_name both set"],
+  "sprint": "route-protection",
+  "sprint_goal": "Production-grade route protection — default-deny ASGI middleware, RBAC, tenant isolation, invite flow, stream tokens",
+  "sprint_status": "COMPLETE — All 9 phases done, 944 tests passing, 0 failures",
+  "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "Raw SDK clients for LLM calls (no LangChain wrappers)", "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception", "Frontend renders its own charts from raw JSON (not iframes)", "No Supabase yet — filesystem artifacts are source of truth", "email-validator required for auth models (EmailStr)", "Password min_length=8, max_length=128 enforced in LoginRequest and RegisterRequest", "Double-underscore separator for effective slugs: {company}__{product}", "Prompt product context only when product_slug AND product_name both set", "Default-deny middleware — all routes protected unless explicitly whitelisted", "Registration creates isolated companies only — domain auto-join removed (Codex C1)", "JWT_SECRET_KEY required in non-dev/test environments (Codex W8)"],
   "active_branches": ["feat/front-back"],
   "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "langfuse 3.14.1 installed", "trafilatura 1.6+ installed", "textstat 0.7+ installed", "LangGraph >=1.0 installed", "email-validator >=2.0 installed"],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [],
-  "last_completed": "T-pipeline-guard — Existing-company pipeline guard (force_rerun guard on /gap-analysis/start + /research/start, 12 new tests, 900 total)",
+  "last_completed": "T-route-protection — Route protection (9 phases: ASGI middleware, RBAC deps, tenant isolation, invite flow, stream tokens, registration hardening, JWT enforcement, 42 new auth tests, 944 total)",
   "deferred_issues_location": ".claude/sprints/v1/review-findings-deferred.md",
   "deferred_feature2": ".claude/plans/cozy-twirling-mochi.md (Feature 2 — Content-Gap Integration)",
-  "test_count": 900,
+  "test_count": 944,
   "phases_completed": [
     "front-back Phase 1 — Foundation (auth, company model, registration)",
     "front-back Phase 2 — Gap Analysis Data Endpoints (6 endpoints, service layer, 61 tests)",
@@ -22,7 +22,16 @@
     "product-pipeline Phase 3 — Pipeline Execution Wiring (RunScope, _resolve_scope, 36 tests)",
     "product-pipeline Phase 4 — Product Prompts (s2 + planner injection, 15 tests)",
     "product-pipeline Phase 5 — Data Endpoints (product_slug on all 11 endpoints, 12 tests)",
-    "pipeline-guard Feature 1 — Existing-company run guard (force_rerun bool, already_exists response, dual-sentinel, stage-aware research check, 12 tests)"
+    "pipeline-guard Feature 1 — Existing-company run guard (force_rerun bool, already_exists response, dual-sentinel, stage-aware research check, 12 tests)",
+    "route-protection Phase 1 — Auth dependencies module (require_auth, require_role, require_tenant, require_company_access)",
+    "route-protection Phase 2 — Pure ASGI middleware rewrite (default-deny, public whitelist, stream token support)",
+    "route-protection Phase 3 — Registration hardening (domain auto-join removed, invite flow added)",
+    "route-protection Phase 4 — Pipeline tenant isolation (slug validation on all /start endpoints)",
+    "route-protection Phase 5 — Task & SSE tenant isolation (ownership checks, stream tokens)",
+    "route-protection Phase 6 — All other route protection (companies, gap_data, content_data, brand_data, artifacts)",
+    "route-protection Phase 7 — JWT_SECRET_KEY enforcement + login timing fix",
+    "route-protection Phase 8 — Test fixture migration (AuthTestClient, conftest updates)",
+    "route-protection Phase 9 — Auth enforcement tests (42 new tests)"
   ],
   "phases_remaining": []
 }

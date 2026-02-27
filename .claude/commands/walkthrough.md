@@ -17,6 +17,6 @@ Then cover:
 - **What's next** — upcoming tasks and priorities from progress.json
 - **Open questions** — anything needing human input
 
-Format this as a sprint review document and save to `sprints/{current_sprint}/review.md`.
+Format this as a sprint review document and save to `.claude/sprints/v{N}/review.md` (where `v{N}` is the current session's sprint folder — find the highest `vN` in `.claude/sprints/`).
 
 If $ARGUMENTS is provided, scope the walkthrough to that specific topic or file path.

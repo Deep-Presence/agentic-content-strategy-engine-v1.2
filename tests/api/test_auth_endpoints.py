@@ -125,18 +125,18 @@ class TestMe:
         assert data["company"]["slug"] == "acme-corp"
         assert data["company"]["domain"] == "acme.com"
 
-    def test_me_without_token(self, client: TestClient) -> None:
-        resp = client.get("/api/v1/auth/me")
+    def test_me_without_token(self, public_client: TestClient) -> None:
+        resp = public_client.get("/api/v1/auth/me")
         assert resp.status_code == 401
-        assert resp.json()["detail"] == "Not authenticated"
+        assert resp.json()["detail"] == "Missing authentication token"
 
-    def test_me_with_invalid_token(self, client: TestClient) -> None:
-        resp = client.get(
+    def test_me_with_invalid_token(self, public_client: TestClient) -> None:
+        resp = public_client.get(
             "/api/v1/auth/me",
             headers={"Authorization": "Bearer garbage.token"},
         )
         assert resp.status_code == 401
-        assert resp.json()["detail"] == "Not authenticated"
+        assert resp.json()["detail"] == "Invalid or expired token"
 
     def test_me_with_expired_token(self, client: TestClient, auth_store) -> None:
         """Create a token with negative expiry so it's already expired."""

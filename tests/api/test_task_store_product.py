@@ -124,25 +124,25 @@ class TestCancelEndpointEffectiveSlug:
     ) -> None:
         """After cancel, the effective_slug lock is released."""
         from fastapi.testclient import TestClient
-        task = task_store.create_task("gap_analysis", "ramp", product_slug="card")
+        task = task_store.create_task("gap_analysis", "test-co", product_slug="card")
 
         # Confirm lock held
         from api.tasks.store import TaskConflictError
         with pytest.raises(TaskConflictError):
-            task_store.create_task("gap_analysis", "ramp", product_slug="card")
+            task_store.create_task("gap_analysis", "test-co", product_slug="card")
 
         # Cancel via HTTP
         resp = client.post(f"/api/v1/tasks/{task.task_id}/cancel")
         assert resp.status_code == 200
 
         # Lock should be released — new run succeeds
-        t2 = task_store.create_task("gap_analysis", "ramp", product_slug="card")
-        assert t2.effective_slug == "ramp__card"
+        t2 = task_store.create_task("gap_analysis", "test-co", product_slug="card")
+        assert t2.effective_slug == "test-co__card"
 
     def test_cancel_response_includes_product_slug(
         self, client, task_store: TaskStore
     ) -> None:
-        task = task_store.create_task("gap_analysis", "ramp", product_slug="card")
+        task = task_store.create_task("gap_analysis", "test-co", product_slug="card")
         resp = client.post(f"/api/v1/tasks/{task.task_id}/cancel")
         assert resp.status_code == 200
         assert resp.json()["status"] == "cancelled"
@@ -154,8 +154,8 @@ class TestTaskListFilterViaAPI:
     def test_filter_by_product_slug_via_api(
         self, client, task_store: TaskStore
     ) -> None:
-        task_store.create_task("gap_analysis", "ramp")
-        task_store.create_task("gap_analysis", "ramp", product_slug="card")
+        task_store.create_task("gap_analysis", "test-co")
+        task_store.create_task("gap_analysis", "test-co", product_slug="card")
 
         resp = client.get("/api/v1/tasks?product_slug=card")
         assert resp.status_code == 200
@@ -166,9 +166,9 @@ class TestTaskListFilterViaAPI:
     def test_task_summary_includes_effective_slug(
         self, client, task_store: TaskStore
     ) -> None:
-        task_store.create_task("gap_analysis", "ramp", product_slug="card")
+        task_store.create_task("gap_analysis", "test-co", product_slug="card")
         resp = client.get("/api/v1/tasks")
         assert resp.status_code == 200
         t = resp.json()["tasks"][0]
-        assert t["effective_slug"] == "ramp__card"
+        assert t["effective_slug"] == "test-co__card"
         assert t["product_slug"] == "card"

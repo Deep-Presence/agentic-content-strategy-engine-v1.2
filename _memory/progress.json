@@ -1,5 +1,5 @@
 {
-  "current_sprint": "pipeline-guard",
+  "current_sprint": "route-protection",
   "last_updated": "2026-02-27",
   "completed": [
     {
@@ -189,6 +189,40 @@
   ],
   "in_progress": [],
   "recently_completed": [
+    {
+      "id": "T-route-protection",
+      "task": "Route Protection & Authorization — 9-phase production-grade auth enforcement (Codex gpt-5.3-codex reviewed)",
+      "sprint": "route-protection",
+      "status": "done",
+      "completed_at": "2026-02-27",
+      "summary": "Full production-grade route protection implementing all 6 CRITICAL + 10 WARNING findings from Codex review. Phase 1: Created api/auth/dependencies.py with require_auth (UserProfile lookup + is_active check), require_role (dependency factory), require_tenant (slug-based tenant check), require_company_access (store-based), require_company_member (combined role+tenant). Phase 2: Rewrote api/auth/middleware.py as pure ASGI middleware (not BaseHTTPMiddleware) with default-deny posture, explicit public route whitelist, and stream token support for SSE. Phase 3: Hardened registration — removed domain auto-join (Codex C1), registration always creates isolated companies, new users for existing domains get 409 with invite message; added invite flow (POST /auth/invite + POST /auth/join). Phase 4: Pipeline tenant isolation — all /start endpoints validate _derive_slug(body.company_name) matches user's company_slug from token; /status and /approve endpoints verify task.company_slug == user's company_slug. Phase 5: Added POST /tasks/{id}/stream-token endpoint for short-lived (5min) SSE tokens with stream_only flag. Phase 6: Applied Depends(require_auth/require_role/require_tenant) to ALL routers (companies, gap_data, content_data, brand_data, artifacts). Phase 7: JWT_SECRET_KEY enforcement (RuntimeError in non-dev/test envs), login timing fix (constant-time dummy hash for non-existent users). Phase 8: Test fixture migration — AuthTestClient auto-injects auth headers, public_client/viewer_client fixtures, pipeline test payloads aligned to test company. Phase 9: 42 new auth enforcement tests covering middleware, RBAC, tenant isolation, stream tokens, registration hardening, login timing.",
+      "test_count": "944 tests passed, 0 failures (up from 900 — 44 new tests)",
+      "files_changed": [
+        "api/auth/dependencies.py",
+        "api/auth/middleware.py",
+        "api/auth/store.py",
+        "api/routers/auth.py",
+        "api/routers/companies.py",
+        "api/routers/gap_analysis.py",
+        "api/routers/research.py",
+        "api/routers/content.py",
+        "api/routers/tasks.py",
+        "api/routers/events.py",
+        "api/routers/artifacts.py",
+        "api/routers/gap_data.py",
+        "api/routers/content_data.py",
+        "api/routers/brand_data.py",
+        "api/app.py",
+        "tests/api/conftest.py",
+        "tests/api/test_auth_enforcement.py",
+        "tests/api/test_registration.py",
+        "tests/api/test_gap_analysis.py",
+        "tests/api/test_research.py",
+        "tests/api/test_content.py",
+        "tests/api/test_gap_analysis_product.py",
+        "tests/api/test_tasks_extended.py"
+      ]
+    },
     {
       "id": "T-pipeline-guard",
       "task": "Pipeline Guard — Existing-company run guard on /gap-analysis/start and /research/start",

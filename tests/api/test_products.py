@@ -130,32 +130,32 @@ class TestAuthStoreProducts:
 # ── API endpoint tests ─────────────────────────────────────────────────────────
 
 class TestProductCRUDEndpoints:
-    """Tests for POST/GET/PUT/DELETE /api/v1/companies/{slug}/products."""
+    """Tests for POST/GET/PUT/DELETE /api/v1/companies/{slug}/products.
 
-    def test_create_product(self, client: TestClient, auth_store: AuthStore) -> None:
-        auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
+    Uses the ``test_company`` fixture (slug="test-co") which matches
+    the default authenticated test user's company.
+    """
 
-        resp = client.post("/api/v1/companies/ramp/products", json={
+    def test_create_product(self, client: TestClient, test_company) -> None:
+        resp = client.post("/api/v1/companies/test-co/products", json={
             "name": "Corporate Card",
             "slug": "corporate-card",
-            "domain": "ramp.com/card",
+            "domain": "testco.com/card",
             "description": "Spend management",
         })
         assert resp.status_code == 201
         data = resp.json()
         assert data["slug"] == "corporate-card"
         assert data["name"] == "Corporate Card"
-        assert data["domain"] == "ramp.com/card"
+        assert data["domain"] == "testco.com/card"
         assert data["description"] == "Spend management"
         assert "id" in data
         assert "company_id" in data
         assert "created_at" in data
         assert "updated_at" in data
 
-    def test_create_product_minimal(self, client: TestClient, auth_store: AuthStore) -> None:
-        auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-
-        resp = client.post("/api/v1/companies/ramp/products", json={
+    def test_create_product_minimal(self, client: TestClient, test_company) -> None:
+        resp = client.post("/api/v1/companies/test-co/products", json={
             "name": "Travel",
             "slug": "travel",
         })
@@ -164,52 +164,47 @@ class TestProductCRUDEndpoints:
         assert data["domain"] is None
         assert data["description"] is None
 
-    def test_create_product_invalid_slug_format(self, client: TestClient, auth_store: AuthStore) -> None:
-        auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-
+    def test_create_product_invalid_slug_format(self, client: TestClient, test_company) -> None:
         for bad_slug in ["UPPER", "has space", "-bad-start", "bad_underscore"]:
-            resp = client.post("/api/v1/companies/ramp/products", json={
+            resp = client.post("/api/v1/companies/test-co/products", json={
                 "name": "X",
                 "slug": bad_slug,
             })
             assert resp.status_code == 422, f"Expected 422 for slug '{bad_slug}'"
 
-    def test_create_product_duplicate_slug(self, client: TestClient, auth_store: AuthStore) -> None:
-        auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        client.post("/api/v1/companies/ramp/products", json={"name": "Card", "slug": "card"})
+    def test_create_product_duplicate_slug(self, client: TestClient, test_company) -> None:
+        client.post("/api/v1/companies/test-co/products", json={"name": "Card", "slug": "card"})
 
-        resp = client.post("/api/v1/companies/ramp/products", json={"name": "Card2", "slug": "card"})
+        resp = client.post("/api/v1/companies/test-co/products", json={"name": "Card2", "slug": "card"})
         assert resp.status_code == 409
 
-    def test_create_product_company_not_found(self, client: TestClient) -> None:
+    def test_create_product_company_not_found(self, client: TestClient, test_company) -> None:
         resp = client.post("/api/v1/companies/nonexistent/products", json={
             "name": "Card",
             "slug": "card",
         })
         assert resp.status_code == 404
 
-    def test_get_product(self, client: TestClient, auth_store: AuthStore) -> None:
-        auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        client.post("/api/v1/companies/ramp/products", json={"name": "Card", "slug": "card"})
+    def test_get_product(self, client: TestClient, test_company) -> None:
+        client.post("/api/v1/companies/test-co/products", json={"name": "Card", "slug": "card"})
 
-        resp = client.get("/api/v1/companies/ramp/products/card")
+        resp = client.get("/api/v1/companies/test-co/products/card")
         assert resp.status_code == 200
         assert resp.json()["slug"] == "card"
 
-    def test_get_product_not_found(self, client: TestClient, auth_store: AuthStore) -> None:
-        auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        resp = client.get("/api/v1/companies/ramp/products/nonexistent")
+    def test_get_product_not_found(self, client: TestClient, test_company) -> None:
+        resp = client.get("/api/v1/companies/test-co/products/nonexistent")
         assert resp.status_code == 404
 
-    def test_get_product_company_not_found(self, client: TestClient) -> None:
+    def test_get_product_company_not_found(self, client: TestClient, test_company) -> None:
+        # "nonexistent" doesn't match authenticated user's company → 403
         resp = client.get("/api/v1/companies/nonexistent/products/card")
-        assert resp.status_code == 404
+        assert resp.status_code == 403
 
-    def test_update_product(self, client: TestClient, auth_store: AuthStore) -> None:
-        auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        client.post("/api/v1/companies/ramp/products", json={"name": "Card", "slug": "card"})
+    def test_update_product(self, client: TestClient, test_company) -> None:
+        client.post("/api/v1/companies/test-co/products", json={"name": "Card", "slug": "card"})
 
-        resp = client.put("/api/v1/companies/ramp/products/card", json={
+        resp = client.put("/api/v1/companies/test-co/products/card", json={
             "name": "Corporate Card",
             "description": "Updated desc",
         })
@@ -218,40 +213,33 @@ class TestProductCRUDEndpoints:
         assert data["name"] == "Corporate Card"
         assert data["description"] == "Updated desc"
 
-    def test_update_product_partial(self, client: TestClient, auth_store: AuthStore) -> None:
-        auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        client.post("/api/v1/companies/ramp/products", json={
+    def test_update_product_partial(self, client: TestClient, test_company) -> None:
+        client.post("/api/v1/companies/test-co/products", json={
             "name": "Card",
             "slug": "card",
-            "domain": "ramp.com/card",
+            "domain": "testco.com/card",
         })
 
-        resp = client.put("/api/v1/companies/ramp/products/card", json={"name": "New Name"})
+        resp = client.put("/api/v1/companies/test-co/products/card", json={"name": "New Name"})
         assert resp.status_code == 200
-        # domain preserved (partial update doesn't clear it)
-        # NOTE: domain would be None since it's not in the update body — see plan note
-        # The router passes only non-None values from the request body
 
-    def test_update_product_not_found(self, client: TestClient, auth_store: AuthStore) -> None:
-        auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        resp = client.put("/api/v1/companies/ramp/products/nonexistent", json={"name": "X"})
+    def test_update_product_not_found(self, client: TestClient, test_company) -> None:
+        resp = client.put("/api/v1/companies/test-co/products/nonexistent", json={"name": "X"})
         assert resp.status_code == 404
 
-    def test_delete_product(self, client: TestClient, auth_store: AuthStore) -> None:
-        auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        client.post("/api/v1/companies/ramp/products", json={"name": "Card", "slug": "card"})
+    def test_delete_product(self, client: TestClient, test_company) -> None:
+        client.post("/api/v1/companies/test-co/products", json={"name": "Card", "slug": "card"})
 
-        resp = client.delete("/api/v1/companies/ramp/products/card")
+        resp = client.delete("/api/v1/companies/test-co/products/card")
         assert resp.status_code == 200
         assert resp.json()["deleted"] is True
 
         # Verify it's gone
-        resp2 = client.get("/api/v1/companies/ramp/products/card")
+        resp2 = client.get("/api/v1/companies/test-co/products/card")
         assert resp2.status_code == 404
 
-    def test_delete_product_not_found(self, client: TestClient, auth_store: AuthStore) -> None:
-        auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        resp = client.delete("/api/v1/companies/ramp/products/nonexistent")
+    def test_delete_product_not_found(self, client: TestClient, test_company) -> None:
+        resp = client.delete("/api/v1/companies/test-co/products/nonexistent")
         assert resp.status_code == 404
 
     def test_create_product_cross_tenant_blocked(
@@ -302,21 +290,24 @@ class TestProductCRUDEndpoints:
 
 
 class TestProductArtifactStatus:
-    """Tests that company profile reflects real product artifact status."""
+    """Tests that company profile reflects real product artifact status.
+
+    Uses test-co (the authenticated user's company) for all HTTP access.
+    Products are added to the existing test-co company from the fixture.
+    """
 
     def test_product_has_gap_analysis_when_artifacts_exist(
         self, client: TestClient, auth_store: AuthStore, artifacts_root: Path
     ) -> None:
-        company = auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        product = Product(company_id=company.id, slug="card", name="Card")
-        auth_store.add_product("ramp", product)
+        product = Product(company_id="x", slug="card", name="Card")
+        auth_store.add_product("test-co", product)
 
         # Create product-level gap analysis artifacts
-        ga_dir = artifacts_root / "gap_analysis" / "ramp__card"
+        ga_dir = artifacts_root / "gap_analysis" / "test-co__card"
         ga_dir.mkdir(parents=True)
         (ga_dir / "gap_analysis_complete.json").write_text("{}")
 
-        resp = client.get("/api/v1/companies/ramp")
+        resp = client.get("/api/v1/companies/test-co")
         assert resp.status_code == 200
         products = resp.json()["products"]
         assert len(products) == 1
@@ -326,15 +317,14 @@ class TestProductArtifactStatus:
     def test_product_has_content_when_artifacts_exist(
         self, client: TestClient, auth_store: AuthStore, artifacts_root: Path
     ) -> None:
-        company = auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        product = Product(company_id=company.id, slug="travel", name="Travel")
-        auth_store.add_product("ramp", product)
+        product = Product(company_id="x", slug="travel", name="Travel")
+        auth_store.add_product("test-co", product)
 
-        content_dir = artifacts_root / "content" / "ramp__travel"
+        content_dir = artifacts_root / "content" / "test-co__travel"
         content_dir.mkdir(parents=True)
         (content_dir / "briefs.json").write_text("[]")
 
-        resp = client.get("/api/v1/companies/ramp")
+        resp = client.get("/api/v1/companies/test-co")
         assert resp.status_code == 200
         products = resp.json()["products"]
         assert products[0]["has_content"] is True
@@ -342,16 +332,15 @@ class TestProductArtifactStatus:
     def test_product_has_research_when_context_exists(
         self, client: TestClient, auth_store: AuthStore, artifacts_root: Path
     ) -> None:
-        company = auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        product = Product(company_id=company.id, slug="card", name="Card")
-        auth_store.add_product("ramp", product)
+        product = Product(company_id="x", slug="card", name="Card")
+        auth_store.add_product("test-co", product)
 
         # Create product-specific research artifact
         cc_dir = artifacts_root / "company_context"
         cc_dir.mkdir(parents=True)
-        (cc_dir / "ramp__card.md").write_text("# Product Context")
+        (cc_dir / "test-co__card.md").write_text("# Product Context")
 
-        resp = client.get("/api/v1/companies/ramp")
+        resp = client.get("/api/v1/companies/test-co")
         assert resp.status_code == 200
         products = resp.json()["products"]
         assert products[0]["has_research"] is True
@@ -359,11 +348,10 @@ class TestProductArtifactStatus:
     def test_product_with_no_artifacts_shows_false(
         self, client: TestClient, auth_store: AuthStore
     ) -> None:
-        company = auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        product = Product(company_id=company.id, slug="card", name="Card")
-        auth_store.add_product("ramp", product)
+        product = Product(company_id="x", slug="card", name="Card")
+        auth_store.add_product("test-co", product)
 
-        resp = client.get("/api/v1/companies/ramp")
+        resp = client.get("/api/v1/companies/test-co")
         assert resp.status_code == 200
         products = resp.json()["products"]
         assert products[0]["has_gap_analysis"] is False
@@ -373,36 +361,34 @@ class TestProductArtifactStatus:
     def test_product_summary_includes_domain_description(
         self, client: TestClient, auth_store: AuthStore
     ) -> None:
-        company = auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
         product = Product(
-            company_id=company.id,
+            company_id="x",
             slug="card",
             name="Corporate Card",
-            domain="ramp.com/card",
+            domain="testco.com/card",
             description="Spend management",
         )
-        auth_store.add_product("ramp", product)
+        auth_store.add_product("test-co", product)
 
-        resp = client.get("/api/v1/companies/ramp")
+        resp = client.get("/api/v1/companies/test-co")
         assert resp.status_code == 200
         p = resp.json()["products"][0]
-        assert p["domain"] == "ramp.com/card"
+        assert p["domain"] == "testco.com/card"
         assert p["description"] == "Spend management"
 
     def test_company_artifacts_unaffected_by_product_artifacts(
         self, client: TestClient, auth_store: AuthStore, artifacts_root: Path
     ) -> None:
         """Company-level has_gap_analysis only counts company-level artifacts."""
-        company = auth_store.create_company(slug="ramp", name="Ramp", domain="ramp.com")
-        product = Product(company_id=company.id, slug="card", name="Card")
-        auth_store.add_product("ramp", product)
+        product = Product(company_id="x", slug="card", name="Card")
+        auth_store.add_product("test-co", product)
 
         # Only product-level artifact exists, not company-level
-        ga_dir = artifacts_root / "gap_analysis" / "ramp__card"
+        ga_dir = artifacts_root / "gap_analysis" / "test-co__card"
         ga_dir.mkdir(parents=True)
         (ga_dir / "gap_analysis_complete.json").write_text("{}")
 
-        resp = client.get("/api/v1/companies/ramp")
+        resp = client.get("/api/v1/companies/test-co")
         assert resp.status_code == 200
         data = resp.json()
         # Company-level has_gap_analysis should still be False

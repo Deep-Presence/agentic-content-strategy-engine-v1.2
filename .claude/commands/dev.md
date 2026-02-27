@@ -114,7 +114,7 @@ DECISION NEEDED? [Yes/No — if yes, present the decision format from CLAUDE.md]
 - If modifying gap analysis: run with fixture data to verify output quality
 - Check that existing serialized artifacts still load
 
-## Step 8: Update Memory & Documentation
+## Step 8: Update Memory, Documentation & Backlog
 ```json
 // Move task from pending → completed in progress.json
 {
@@ -135,6 +135,11 @@ If anything broke along the way, log it to `_memory/failures.json`.
 - Edit in-place — don't append to the bottom
 - Add a changelog entry at the bottom of the doc
 - Update the document date in the header
+
+**Sync `.claude/sprints/pending/backlog.md`:**
+- If this task resolved a backlog item → mark it `✅ RESOLVED {date}` and move to `## Resolved`
+- If this task produced deferred work (code review items, follow-ups, tech debt) → add new `PB-{N}` entries
+- Update "Last synced" date and "Total items" count
 
 ## Step 9: Brief Summary
 Tell Aryan what you did:

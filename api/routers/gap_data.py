@@ -2,6 +2,8 @@
 
 Serves pre-computed pipeline artifacts for the Signal Analysis dashboard.
 All data is read from ``artifacts/gap_analysis/{slug}/`` JSON files.
+
+All endpoints require authentication and company membership.
 """
 from __future__ import annotations
 
@@ -10,6 +12,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
 
+from api.auth.dependencies import require_tenant
 from api.dependencies import get_artifacts_root, get_task_store
 from api.schemas.brand_data import SPATrendResponse
 from api.schemas.content_data import EmbeddingProjectionResponse
@@ -49,6 +52,7 @@ def get_gap_summary(
     slug: str,
     artifacts_root: Path = Depends(get_artifacts_root),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_tenant),
 ) -> GapSummaryResponse:
     """Executive overview: SPA score, proximity stats, classifications, clusters."""
     return get_summary(artifacts_root, _effective(slug, product_slug))
@@ -66,6 +70,7 @@ def get_gap_queries(
     sort_dir: str = Query("desc", description="Sort direction: asc or desc"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(15, ge=1, le=100, description="Items per page"),
+    _access=Depends(require_tenant),
 ) -> QueryListResponse:
     """Paginated, filterable query list for the Query Intelligence tab."""
     return get_queries(
@@ -86,6 +91,7 @@ def get_gap_clusters(
     slug: str,
     artifacts_root: Path = Depends(get_artifacts_root),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_tenant),
 ) -> ClusterListResponse:
     """Cluster specifications with centroid distances and structural rates."""
     return get_clusters(artifacts_root, _effective(slug, product_slug))
@@ -96,6 +102,7 @@ def get_gap_signals(
     slug: str,
     artifacts_root: Path = Depends(get_artifacts_root),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_tenant),
 ) -> SignalAveragesResponse:
     """Structural signal averages, correlations, and cluster patterns."""
     return get_signals(artifacts_root, _effective(slug, product_slug))
@@ -106,6 +113,7 @@ def get_gap_platforms(
     slug: str,
     artifacts_root: Path = Depends(get_artifacts_root),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_tenant),
 ) -> PlatformListResponse:
     """Per-platform citation breakdown with agreement matrix."""
     return get_platforms(artifacts_root, _effective(slug, product_slug))
@@ -116,6 +124,7 @@ def get_gap_heatmap(
     slug: str,
     artifacts_root: Path = Depends(get_artifacts_root),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_tenant),
 ) -> HeatmapResponse:
     """Gap score heatmap grouped by cluster."""
     return get_heatmap(artifacts_root, _effective(slug, product_slug))
@@ -127,6 +136,7 @@ def get_gap_embeddings(
     artifacts_root: Path = Depends(get_artifacts_root),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
     method: Literal["umap", "tsne"] = Query("umap", description="Projection method: umap or tsne"),
+    _access=Depends(require_tenant),
 ) -> EmbeddingProjectionResponse:
     """2D embedding projections for scatter plot visualization."""
     return get_embedding_projection(
@@ -139,6 +149,7 @@ def get_spa_trend_endpoint(
     slug: str,
     task_store: TaskStore = Depends(get_task_store),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_tenant),
 ) -> SPATrendResponse:
     """SPA score trend across completed gap analysis runs."""
     return get_spa_trend(task_store, _effective(slug, product_slug))

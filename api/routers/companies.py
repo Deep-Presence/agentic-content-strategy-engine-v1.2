@@ -10,8 +10,9 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 
+from api.auth.dependencies import require_company_member, require_tenant
 from api.dependencies import get_artifacts_root, get_auth_store, get_task_store
 from api.schemas.company import (
     CompanyProfileResponse,
@@ -24,7 +25,7 @@ from api.schemas.company import (
 )
 from api.auth.store import AuthStore
 from api.tasks.store import TaskStore
-from core.models.organization import Product
+from core.models.organization import Company, Product, UserProfile
 
 logger = logging.getLogger(__name__)
 
@@ -155,11 +156,11 @@ def get_company_profile(
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_store: AuthStore = Depends(get_auth_store),
     task_store: TaskStore = Depends(get_task_store),
+    _user: UserProfile = Depends(require_tenant),
 ) -> CompanyProfileResponse:
     """Get company profile with artifacts, products, and latest runs.
 
-    If the company exists in the auth store, uses its registered name/domain.
-    Otherwise, infers from filesystem artifacts (slug as name, empty domain).
+    Requires authentication and company membership.
     """
     if not _SLUG_PATTERN.match(slug):
         raise HTTPException(status_code=400, detail="Invalid slug format")
@@ -222,26 +223,16 @@ def get_company_profile(
 # ── Product CRUD endpoints ─────────────────────────────────
 
 
-def _get_verified_company(slug: str, auth_store: AuthStore):  # type: ignore[return]
-    """Get company by slug or raise 404."""
-    if not _SLUG_PATTERN.match(slug):
-        raise HTTPException(status_code=400, detail="Invalid company slug format")
-    company = auth_store.get_company_by_slug(slug)
-    if not company:
-        raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
-    return company
-
-
 @router.post("/{slug}/products", response_model=ProductDetailResponse, status_code=201)
 def create_product(
     slug: str,
     body: ProductCreateRequest,
-    request: Request,
+    auth: tuple[UserProfile, Company] = Depends(require_company_member),
     auth_store: AuthStore = Depends(get_auth_store),
 ) -> ProductDetailResponse:
     """Create a new product under a company.
 
-    Requires authentication. The slug must match ^[a-z0-9][a-z0-9-]*$.
+    Requires member+ role and company membership.
     """
     if not _SLUG_PATTERN.match(body.slug):
         raise HTTPException(
@@ -249,16 +240,7 @@ def create_product(
             detail="Product slug must match ^[a-z0-9][a-z0-9-]*$",
         )
 
-    company = _get_verified_company(slug, auth_store)
-
-    # GRACE MODE (v0): AuthMiddleware does not enforce auth — unauthenticated
-    # requests have user_id=None and pass through the check below unchanged.
-    # This is intentional for the demo deployment. Harden before production.
-    user_id = getattr(request.state, "user_id", None)
-    if user_id:
-        user = auth_store.get_user_by_id(user_id)
-        if user and user.get("company_id") != company.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+    _, company = auth
 
     product = Product(
         company_id=company.id,
@@ -289,10 +271,10 @@ def create_product(
 def get_product(
     slug: str,
     product_slug: str,
+    _user: UserProfile = Depends(require_tenant),
     auth_store: AuthStore = Depends(get_auth_store),
 ) -> ProductDetailResponse:
-    """Get a specific product by slug."""
-    company = _get_verified_company(slug, auth_store)
+    """Get a specific product by slug. Requires company membership."""
     product = auth_store.get_product(slug, product_slug)
     if not product:
         raise HTTPException(
@@ -317,21 +299,10 @@ def update_product(
     slug: str,
     product_slug: str,
     body: ProductUpdateRequest,
-    request: Request,
+    auth: tuple[UserProfile, Company] = Depends(require_company_member),
     auth_store: AuthStore = Depends(get_auth_store),
 ) -> ProductDetailResponse:
-    """Update a product's fields (name, domain, description)."""
-    company = _get_verified_company(slug, auth_store)
-
-    # GRACE MODE (v0): AuthMiddleware does not enforce auth — unauthenticated
-    # requests have user_id=None and pass through the check below unchanged.
-    # This is intentional for the demo deployment. Harden before production.
-    user_id = getattr(request.state, "user_id", None)
-    if user_id:
-        user = auth_store.get_user_by_id(user_id)
-        if user and user.get("company_id") != company.id:
-            raise HTTPException(status_code=403, detail="Access denied")
-
+    """Update a product's fields. Requires member+ role and company membership."""
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     try:
         product = auth_store.update_product(slug, product_slug, **updates)
@@ -354,21 +325,10 @@ def update_product(
 def delete_product(
     slug: str,
     product_slug: str,
-    request: Request,
+    auth: tuple[UserProfile, Company] = Depends(require_company_member),
     auth_store: AuthStore = Depends(get_auth_store),
 ) -> dict:
-    """Delete a product."""
-    company = _get_verified_company(slug, auth_store)
-
-    # GRACE MODE (v0): AuthMiddleware does not enforce auth — unauthenticated
-    # requests have user_id=None and pass through the check below unchanged.
-    # This is intentional for the demo deployment. Harden before production.
-    user_id = getattr(request.state, "user_id", None)
-    if user_id:
-        user = auth_store.get_user_by_id(user_id)
-        if user and user.get("company_id") != company.id:
-            raise HTTPException(status_code=403, detail="Access denied")
-
+    """Delete a product. Requires member+ role and company membership."""
     removed = auth_store.remove_product(slug, product_slug)
     if not removed:
         raise HTTPException(

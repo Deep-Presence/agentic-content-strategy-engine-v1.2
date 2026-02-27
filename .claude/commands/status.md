@@ -4,11 +4,12 @@ You are giving Aryan a comprehensive status report. Read everything, synthesize,
 
 ## Step 1: Load All Memory
 
-Read all four memory files:
+Read all memory files:
 - `_memory/progress.json`
 - `_memory/failures.json`
 - `_memory/decisions.json`
 - `_memory/context.json`
+- `.claude/sprints/pending/backlog.md`
 
 ## Step 2: Present Status Report
 
@@ -55,6 +56,15 @@ RECENT FAILURES (this sprint):
 RECENT DECISIONS:
   D{id}: {task} → {approach} [{approved_by or PENDING}]
   (or "No recent decisions")
+
+───────────────────────────────────────────────
+PENDING BACKLOG:
+  Total items: {count non-resolved items in .claude/sprints/pending/backlog.md}
+  Critical: {count}
+  High: {count}
+  Medium/Low: {count}
+  Last synced: {date from backlog.md header}
+  (or "No backlog file — create one")
 
 ───────────────────────────────────────────────
 CODEBASE HEALTH:

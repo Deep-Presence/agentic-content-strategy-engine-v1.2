@@ -96,10 +96,11 @@ class TestCompanyDeduplication:
         assert company.name == "Ramp"
         assert company.domain == "ramp.com"
 
-    def test_second_user_joins_existing_company_as_member(self, tmp_path: Path) -> None:
+    def test_second_user_same_domain_raises_domain_taken(self, tmp_path: Path) -> None:
+        """Registration no longer auto-joins companies (Codex C1). Same domain = 409."""
         store = AuthStore(base_dir=tmp_path)
 
-        user1, company1 = store.register_user(
+        store.register_user(
             first_name="Aryan",
             last_name="Keshri",
             email="aryan@ramp.com",
@@ -108,70 +109,103 @@ class TestCompanyDeduplication:
             company_domain="ramp.com",
         )
 
-        user2, company2 = store.register_user(
+        with pytest.raises(ValueError, match="domain_taken"):
+            store.register_user(
+                first_name="Jane",
+                last_name="Doe",
+                email="jane@ramp.com",
+                password="pass2",
+                company_name="Ramp",
+                company_domain="ramp.com",
+            )
+
+    def test_subdomain_matches_existing_domain_raises(self, tmp_path: Path) -> None:
+        """app.ramp.com normalizes to ramp.com → domain_taken (Codex C1)."""
+        store = AuthStore(base_dir=tmp_path)
+
+        store.register_user(
+            first_name="A",
+            last_name="K",
+            email="a@ramp.com",
+            password="p1",
+            company_name="Ramp",
+            company_domain="ramp.com",
+        )
+
+        with pytest.raises(ValueError, match="domain_taken"):
+            store.register_user(
+                first_name="B",
+                last_name="L",
+                email="b@ramp.com",
+                password="p2",
+                company_name="Ramp",
+                company_domain="app.ramp.com",
+            )
+
+    def test_www_matches_existing_domain_raises(self, tmp_path: Path) -> None:
+        """www.ramp.com normalizes to ramp.com → domain_taken (Codex C1)."""
+        store = AuthStore(base_dir=tmp_path)
+
+        store.register_user(
+            first_name="A",
+            last_name="K",
+            email="a@ramp.com",
+            password="p1",
+            company_name="Ramp",
+            company_domain="ramp.com",
+        )
+
+        with pytest.raises(ValueError, match="domain_taken"):
+            store.register_user(
+                first_name="B",
+                last_name="L",
+                email="b@ramp.com",
+                password="p2",
+                company_name="Ramp",
+                company_domain="www.ramp.com",
+            )
+
+    def test_invite_flow_joins_existing_company(self, tmp_path: Path) -> None:
+        """Invite code flow: superuser creates invite, new user redeems it."""
+        store = AuthStore(base_dir=tmp_path)
+
+        user1, company = store.register_user(
+            first_name="Aryan",
+            last_name="Keshri",
+            email="aryan@ramp.com",
+            password="pass1",
+            company_name="Ramp",
+            company_domain="ramp.com",
+        )
+
+        # Superuser creates invite
+        invite_code = store.create_invite(company.slug, role="member")
+        assert len(invite_code) == 16  # hex(8 bytes)
+
+        # New user redeems invite
+        user2, company2 = store.redeem_invite(
+            invite_code=invite_code,
             first_name="Jane",
             last_name="Doe",
             email="jane@ramp.com",
             password="pass2",
-            company_name="Ramp",
-            company_domain="ramp.com",
         )
 
-        assert user1.role == "superuser"
         assert user2.role == "member"
-        assert company1.id == company2.id  # Same company
+        assert company2.id == company.id  # Same company
+        assert user1.role == "superuser"
 
-    def test_subdomain_matches_existing_company(self, tmp_path: Path) -> None:
-        """app.ramp.com should match an existing ramp.com company."""
+    def test_invite_code_single_use(self, tmp_path: Path) -> None:
+        """Invite code can only be redeemed once."""
         store = AuthStore(base_dir=tmp_path)
-
-        _, c1 = store.register_user(
-            first_name="A",
-            last_name="K",
-            email="a@ramp.com",
-            password="p1",
-            company_name="Ramp",
-            company_domain="ramp.com",
+        _, company = store.register_user(
+            first_name="A", last_name="K", email="a@co.com",
+            password="pass1", company_name="Co", company_domain="co.com",
         )
-
-        _, c2 = store.register_user(
-            first_name="B",
-            last_name="L",
-            email="b@ramp.com",
-            password="p2",
-            company_name="Ramp",
-            company_domain="app.ramp.com",
-        )
-
-        assert c1.id == c2.id
-        # The subdomain should be saved in additional_domains
-        assert "app.ramp.com" in c2.additional_domains
-
-    def test_www_matches_existing_company(self, tmp_path: Path) -> None:
-        """www.ramp.com should match ramp.com (www stripped, not saved as subdomain)."""
-        store = AuthStore(base_dir=tmp_path)
-
-        _, c1 = store.register_user(
-            first_name="A",
-            last_name="K",
-            email="a@ramp.com",
-            password="p1",
-            company_name="Ramp",
-            company_domain="ramp.com",
-        )
-
-        _, c2 = store.register_user(
-            first_name="B",
-            last_name="L",
-            email="b@ramp.com",
-            password="p2",
-            company_name="Ramp",
-            company_domain="www.ramp.com",
-        )
-
-        assert c1.id == c2.id
-        # www shouldn't be in additional_domains
-        assert "www.ramp.com" not in c2.additional_domains
+        code = store.create_invite(company.slug)
+        store.redeem_invite(code, "B", "L", "b@co.com", "pass2")
+        with pytest.raises(ValueError, match="Invalid or expired"):
+            store.redeem_invite(code, "C", "M", "c@co.com", "pass3")
 
     def test_different_domain_creates_new_company(self, tmp_path: Path) -> None:
         store = AuthStore(base_dir=tmp_path)
@@ -317,8 +351,8 @@ class TestRegistrationEndpoint:
         assert data["company"]["name"] == "Ramp"
         assert data["company"]["domain"] == "ramp.com"
 
-    def test_register_second_user_same_company(self, client: TestClient) -> None:
-        # First user
+    def test_register_same_domain_returns_409(self, client: TestClient) -> None:
+        """Registration with a domain that already exists returns 409 (Codex C1)."""
         client.post(
             "/api/v1/auth/register",
             json={
@@ -331,7 +365,6 @@ class TestRegistrationEndpoint:
             },
         )
 
-        # Second user, same company
         resp = client.post(
             "/api/v1/auth/register",
             json={
@@ -343,9 +376,8 @@ class TestRegistrationEndpoint:
                 "company_domain": "ramp.com",
             },
         )
-        assert resp.status_code == 201
-        data = resp.json()
-        assert data["user"]["role"] == "member"
+        assert resp.status_code == 409
+        assert "invite" in resp.json()["detail"].lower()
 
     def test_register_duplicate_email_409(self, client: TestClient) -> None:
         client.post(
@@ -383,9 +415,9 @@ class TestRegistrationEndpoint:
         )
         assert resp.status_code == 422
 
-    def test_register_subdomain_joins_existing_company(self, client: TestClient) -> None:
-        # First user creates company with ramp.com
-        resp1 = client.post(
+    def test_register_subdomain_returns_409(self, client: TestClient) -> None:
+        """app.ramp.com normalizes to ramp.com → returns 409 (Codex C1)."""
+        client.post(
             "/api/v1/auth/register",
             json={
                 "first_name": "A",
@@ -396,9 +428,7 @@ class TestRegistrationEndpoint:
                 "company_domain": "ramp.com",
             },
         )
-        company_id_1 = resp1.json()["company"]["id"]
 
-        # Second user provides app.ramp.com — should match
         resp2 = client.post(
             "/api/v1/auth/register",
             json={
@@ -410,6 +440,5 @@ class TestRegistrationEndpoint:
                 "company_domain": "app.ramp.com",
             },
         )
-        assert resp2.status_code == 201
-        company_id_2 = resp2.json()["company"]["id"]
-        assert company_id_1 == company_id_2
+        assert resp2.status_code == 409
+        assert "invite" in resp2.json()["detail"].lower()

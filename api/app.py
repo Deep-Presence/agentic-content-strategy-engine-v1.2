@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.types import ASGIApp
 
 from api.config import api_settings
 from api.exceptions import (
@@ -85,7 +86,10 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Middleware (order matters — outermost first)
+    # Middleware — add_middleware wraps in reverse order (last added = outermost).
+    # Execution: CORSMiddleware → AuthMiddleware → RequestLoggingMiddleware → Router
+    # CORS outermost so OPTIONS preflight is handled before auth.
+    # Auth rewritten as pure ASGI middleware (not BaseHTTPMiddleware) for SSE safety.
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(AuthMiddleware)
     app.add_middleware(

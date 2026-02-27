@@ -1,15 +1,22 @@
-"""Task management API endpoints."""
+"""Task management API endpoints.
+
+All endpoints require authentication. Users can only see and manage
+tasks belonging to their own company (auto-filtered by company_slug).
+"""
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from api.dependencies import get_event_bus, get_task_store
+from api.auth.dependencies import require_auth, require_role
+from api.auth.store import AuthStore
+from api.dependencies import get_auth_store, get_event_bus, get_task_store
 from api.schemas.common import CancelResponse, TaskListResponse, TaskResponse, TaskSummary
 from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
 from api.tasks.store import TaskStore
+from core.models.organization import UserProfile
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 
@@ -18,12 +25,15 @@ _CANCELLABLE_STATES = {TaskStatus.RUNNING, TaskStatus.PENDING_APPROVAL}
 
 @router.get("")
 def list_tasks(
+    request: Request,
     pipeline: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
-    company_slug: Optional[str] = Query(None),
     product_slug: Optional[str] = Query(None),
     task_store: TaskStore = Depends(get_task_store),
+    _user: UserProfile = Depends(require_auth),
 ) -> TaskListResponse:
+    # Auto-filter by the authenticated user's company
+    company_slug = getattr(request.state, "company_slug", None)
     tasks = task_store.list_tasks(
         pipeline=pipeline,
         status=status,
@@ -50,9 +60,17 @@ def list_tasks(
 @router.get("/{task_id}")
 def get_task(
     task_id: str,
+    request: Request,
     task_store: TaskStore = Depends(get_task_store),
+    _user: UserProfile = Depends(require_auth),
 ) -> TaskResponse:
     task = task_store.get_task(task_id)
+
+    # Tenant isolation: verify the task belongs to the user's company
+    company_slug = getattr(request.state, "company_slug", None)
+    if task.company_slug != company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     return TaskResponse(
         run_id=task.task_id,
         pipeline=task.pipeline,
@@ -73,10 +91,18 @@ def get_task(
 @router.post("/{task_id}/cancel")
 def cancel_task(
     task_id: str,
+    request: Request,
     task_store: TaskStore = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
+    _user: UserProfile = Depends(require_role("member", "superuser")),
 ) -> CancelResponse:
     task = task_store.get_task(task_id)
+
+    # Tenant isolation: verify the task belongs to the user's company
+    company_slug = getattr(request.state, "company_slug", None)
+    if task.company_slug != company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     if task.status not in _CANCELLABLE_STATES:
         raise HTTPException(
             status_code=409,
@@ -95,3 +121,29 @@ def cancel_task(
     event_bus.publish(task_id, "cancelled", {"reason": "user_cancelled"})
 
     return CancelResponse(run_id=task_id, status="cancelled")
+
+
+@router.post("/{task_id}/stream-token")
+def create_stream_token(
+    task_id: str,
+    request: Request,
+    task_store: TaskStore = Depends(get_task_store),
+    auth_store: AuthStore = Depends(get_auth_store),
+    _user: UserProfile = Depends(require_auth),
+) -> dict:
+    """Create a short-lived stream token for SSE EventSource clients.
+
+    Returns a 5-minute token that can only be used for SSE endpoints.
+    Frontend calls this before opening EventSource, passes the token
+    as ``?stream_token=xxx`` query param (Codex C4).
+    """
+    task = task_store.get_task(task_id)
+
+    # Tenant isolation: verify the task belongs to the user's company
+    company_slug = getattr(request.state, "company_slug", None)
+    if task.company_slug != company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    user_id = getattr(request.state, "user_id", None)
+    token = auth_store.create_stream_token(user_id, company_slug)
+    return {"stream_token": token, "expires_in": 300}

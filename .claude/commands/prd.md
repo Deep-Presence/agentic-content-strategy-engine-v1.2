@@ -2,20 +2,68 @@
 
 You are helping Aryan plan a sprint. Follow this exact process:
 
+## Step 0: Close the Current Sprint (if tasks were completed this session)
+
+Before planning the next sprint, summarize what was accomplished in the CURRENT session.
+
+1. **Determine the current sprint version** — check `.claude/sprints/` for the highest `vN` folder. That's the current session's sprint.
+2. **Write `.claude/sprints/v{N}/summary.md`** with:
+
+```markdown
+# Sprint v{N} — Summary
+
+**Date:** {today}
+**Sprint Goal:** {from context.json or prd.md}
+
+## Completed Tasks
+| Task ID | Description | Tests Added | Files Changed |
+|---------|-------------|-------------|---------------|
+| T-xxx   | ...         | +N tests    | file1, file2  |
+
+## Decisions Made
+- D{id}: {summary}
+
+## Failures Encountered
+- F{id}: {what broke} → {lesson}
+
+## Deferred to Backlog
+- {item}: {reason for deferral}
+
+## Test Count
+- Start of session: {N} tests
+- End of session: {M} tests (+{M-N} new)
+
+## Key Metrics
+- Tasks completed: {N}
+- Tasks deferred: {N}
+- Files changed: {N}
+```
+
+3. **Sync the pending backlog** (`.claude/sprints/pending/backlog.md`):
+   - Mark any items resolved by this session's work with `✅ RESOLVED {date}`
+   - Move resolved items to the `## Resolved` section at the bottom
+   - Add any NEW deferred items from this session (code review findings, descoped features, tech debt)
+   - Update the "Last synced" date and "Total items" count
+   - Assign each new item a `PB-{N}` ID (incrementing from the highest existing)
+
+4. If NO tasks were completed this session, skip to Step 1.
+
 ## Step 1: Load Context
 - Read `_memory/progress.json` — what's done, what's pending
 - Read `_memory/context.json` — current sprint, constraints
 - Read `_memory/failures.json` — patterns to avoid
 - Read `_memory/decisions.json` — constraints from past decisions
+- Read `.claude/sprints/pending/backlog.md` — what's been deferred and could be picked up
 
 ## Step 2: Brainstorm with Aryan
 Ask Aryan:
 1. What's the goal for this sprint?
 2. Any specific files or features to focus on?
 3. Any new constraints or changes?
+4. Any backlog items you want to prioritize? (Show the top items from `backlog.md`)
 
 ## Step 3: Generate Sprint PRD
-Create a sprint PRD at `sprints/{sprint_version}/prd.md` with:
+Create the new sprint folder `.claude/sprints/v{N+1}/` and write `prd.md` with:
 
 ```markdown
 # Sprint {version} — {goal}
@@ -41,6 +89,9 @@ Create a sprint PRD at `sprints/{sprint_version}/prd.md` with:
 ### T2: [Task Name] (5-10 min)
 ...
 
+## Backlog Items Included
+[List any PB-{id} items pulled from .claude/sprints/pending/backlog.md for this sprint]
+
 ## Out of Scope
 [What we're NOT doing this sprint and why]
 
@@ -49,6 +100,8 @@ Create a sprint PRD at `sprints/{sprint_version}/prd.md` with:
 - [ ] _memory/ files updated
 - [ ] No regressions in existing functionality
 - [ ] Walkthrough written for all changes
+- [ ] Sprint summary written to .claude/sprints/v{N}/summary.md
+- [ ] Pending backlog synced
 ```
 
 ## Step 4: Validate

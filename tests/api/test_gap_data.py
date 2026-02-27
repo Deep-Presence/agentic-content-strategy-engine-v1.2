@@ -380,21 +380,24 @@ class TestSlugValidation:
 
     endpoints = ["summary", "queries", "clusters", "signals", "platforms", "heatmap"]
 
-    def test_invalid_slug_returns_400(self, client: TestClient, artifacts_root: Path):
+    def test_invalid_slug_returns_403(self, client: TestClient, artifacts_root: Path):
+        # Invalid slugs don't match the authenticated user's company → 403
         for ep in self.endpoints:
             r = client.get(_url("INVALID_SLUG!", ep))
-            assert r.status_code == 400, f"Expected 400 for {ep}"
+            assert r.status_code == 403, f"Expected 403 for {ep}"
 
-    def test_missing_slug_returns_404(self, client: TestClient, artifacts_root: Path):
+    def test_missing_slug_returns_403(self, client: TestClient, artifacts_root: Path):
+        # Nonexistent slugs don't match the authenticated user's company → 403
         for ep in self.endpoints:
             r = client.get(_url("nonexistent", ep))
-            assert r.status_code == 404, f"Expected 404 for {ep}"
+            assert r.status_code == 403, f"Expected 403 for {ep}"
 
-    def test_slug_with_leading_hyphen_returns_400(
+    def test_slug_with_leading_hyphen_returns_403(
         self, client: TestClient, artifacts_root: Path,
     ):
+        # Invalid slug format doesn't match authenticated user's company → 403
         r = client.get(_url("-bad", "summary"))
-        assert r.status_code == 400
+        assert r.status_code == 403
 
 
 class TestGapSummary:
@@ -404,9 +407,9 @@ class TestGapSummary:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=6)
-        _write_artifact(artifacts_root, "webflow", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        r = client.get(_url("webflow", "summary"))
+        r = client.get(_url("test-co", "summary"))
         assert r.status_code == 200
         body = r.json()
 
@@ -421,9 +424,9 @@ class TestGapSummary:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format()
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "summary")).json()
+        body = client.get(_url("test-co","summary")).json()
         spa = body["spa_score"]
         assert spa["p_value"] == 0.001
         assert spa["mean_citation_similarity"] == 0.52
@@ -435,9 +438,9 @@ class TestGapSummary:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=8)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "summary")).json()
+        body = client.get(_url("test-co","summary")).json()
         counts = body["classification_counts"]
         # 8 gaps with interpretations cycling: sig, gap, eq, win, sig, gap, eq, win
         assert counts["significant_gap"] == 2
@@ -449,9 +452,9 @@ class TestGapSummary:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=4, num_clusters=2)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "summary")).json()
+        body = client.get(_url("test-co","summary")).json()
         perf = body["cluster_performance"]
         assert len(perf) == 2
         assert perf[0]["cluster_name"] == "cluster-0"
@@ -463,10 +466,10 @@ class TestGapSummary:
         """When gap_report.json exists, summary uses it for SPA/proximity."""
         analysis = _make_analysis_old_format()
         report = _make_gap_report(summary="Report summary", num_gaps=3)
-        _write_artifact(artifacts_root, "ramp", "analysis.json", analysis)
-        _write_artifact(artifacts_root, "ramp", "gap_report.json", report)
+        _write_artifact(artifacts_root, "test-co", "analysis.json", analysis)
+        _write_artifact(artifacts_root, "test-co", "gap_report.json", report)
 
-        body = client.get(_url("ramp", "summary")).json()
+        body = client.get(_url("test-co", "summary")).json()
         # Report SPA values should take priority
         assert body["spa_score"]["t_stat"] == -4.0
         assert body["spa_score"]["effect"] == "large"
@@ -477,9 +480,9 @@ class TestGapSummary:
     ):
         """When only analysis.json exists (no complete, no report)."""
         data = _make_analysis_old_format(num_gaps=3)
-        _write_artifact(artifacts_root, "ramp", "analysis.json", data)
+        _write_artifact(artifacts_root, "test-co", "analysis.json", data)
 
-        body = client.get(_url("ramp", "summary")).json()
+        body = client.get(_url("test-co", "summary")).json()
         assert body["spa_score"]["t_stat"] == -2.1
         assert body["total_queries"] == 3
 
@@ -487,9 +490,9 @@ class TestGapSummary:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=0)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "summary")).json()
+        body = client.get(_url("test-co","summary")).json()
         counts = body["classification_counts"]
         assert counts["significant_gap"] == 0
         assert body["total_queries"] == 0
@@ -498,9 +501,9 @@ class TestGapSummary:
         self, client: TestClient, artifacts_root: Path,
     ):
         """Directory exists but no JSON files — returns default values."""
-        (artifacts_root / "gap_analysis" / "empty").mkdir(parents=True)
+        (artifacts_root / "gap_analysis" / "test-co").mkdir(parents=True)
 
-        body = client.get(_url("empty", "summary")).json()
+        body = client.get(_url("test-co", "summary")).json()
         assert body["total_queries"] == 0
         assert body["executive_summary"] == ""
 
@@ -510,9 +513,9 @@ class TestGapQueries:
 
     def test_basic_query_list(self, client: TestClient, artifacts_root: Path):
         data = _make_complete_new_format(num_gaps=5)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "queries")).json()
+        body = client.get(_url("test-co","queries")).json()
         assert body["total"] == 5
         assert body["page"] == 1
         assert body["page_size"] == 15
@@ -521,9 +524,9 @@ class TestGapQueries:
 
     def test_query_fields(self, client: TestClient, artifacts_root: Path):
         data = _make_complete_new_format(num_gaps=1)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "queries")).json()
+        body = client.get(_url("test-co","queries")).json()
         q = body["queries"][0]
         assert "query_id" in q
         assert "query_text" in q
@@ -536,9 +539,9 @@ class TestGapQueries:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=1, with_briefs=True)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        q = client.get(_url("test", "queries")).json()["queries"][0]
+        q = client.get(_url("test-co","queries")).json()["queries"][0]
         brief = q["content_brief"]
         assert brief is not None
         assert brief["target_word_count"] == {"min": 1000, "max": 2000}
@@ -554,16 +557,16 @@ class TestGapQueries:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_analysis_old_format(num_gaps=3)
-        _write_artifact(artifacts_root, "test", "analysis.json", data)
+        _write_artifact(artifacts_root, "test-co", "analysis.json", data)
 
-        q = client.get(_url("test", "queries")).json()["queries"][0]
+        q = client.get(_url("test-co","queries")).json()["queries"][0]
         assert q["content_brief"] is None
 
     def test_query_exemplars(self, client: TestClient, artifacts_root: Path):
         data = _make_complete_new_format(num_gaps=1)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        q = client.get(_url("test", "queries")).json()["queries"][0]
+        q = client.get(_url("test-co","queries")).json()["queries"][0]
         exemplars = q["top_exemplars"]
         assert len(exemplars) == 2
         assert exemplars[0]["similarity"] == 0.85
@@ -575,34 +578,34 @@ class TestGapQueries:
     ):
         data = _make_complete_new_format(num_gaps=2)
         enriched = _make_enriched(count=8)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
 
-        q0 = client.get(_url("test", "queries")).json()["queries"][0]
+        q0 = client.get(_url("test-co","queries")).json()["queries"][0]
         pc = q0["platform_citations"]
         # enriched has 8 citations cycling q0-q4, so q0 gets at least some
         assert isinstance(pc, dict)
 
     def test_pagination(self, client: TestClient, artifacts_root: Path):
         data = _make_complete_new_format(num_gaps=25)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "queries") + "?page=1&page_size=10").json()
+        body = client.get(_url("test-co","queries") + "?page=1&page_size=10").json()
         assert body["total"] == 25
         assert body["total_pages"] == 3
         assert len(body["queries"]) == 10
         assert body["page"] == 1
 
-        body2 = client.get(_url("test", "queries") + "?page=3&page_size=10").json()
+        body2 = client.get(_url("test-co","queries") + "?page=3&page_size=10").json()
         assert len(body2["queries"]) == 5
         assert body2["page"] == 3
 
     def test_filter_by_cluster(self, client: TestClient, artifacts_root: Path):
         data = _make_complete_new_format(num_gaps=10, num_clusters=2)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         body = client.get(
-            _url("test", "queries") + "?cluster=cluster-0"
+            _url("test-co","queries") + "?cluster=cluster-0"
         ).json()
         assert body["total"] == 5
         for q in body["queries"]:
@@ -612,20 +615,20 @@ class TestGapQueries:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=8)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         body = client.get(
-            _url("test", "queries") + "?classification=significant_gap"
+            _url("test-co","queries") + "?classification=significant_gap"
         ).json()
         for q in body["queries"]:
             assert q["classification"] == "significant_gap"
 
     def test_filter_by_search(self, client: TestClient, artifacts_root: Path):
         data = _make_complete_new_format(num_gaps=5)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         body = client.get(
-            _url("test", "queries") + "?search=query+2"
+            _url("test-co","queries") + "?search=query+2"
         ).json()
         assert body["total"] >= 1
         for q in body["queries"]:
@@ -635,10 +638,10 @@ class TestGapQueries:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=5)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         body = client.get(
-            _url("test", "queries") + "?sort_by=gap_score&sort_dir=asc"
+            _url("test-co","queries") + "?sort_by=gap_score&sort_dir=asc"
         ).json()
         scores = [q["gap_score"] for q in body["queries"]]
         assert scores == sorted(scores)
@@ -647,10 +650,10 @@ class TestGapQueries:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=5)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         body = client.get(
-            _url("test", "queries") + "?sort_by=gap_score&sort_dir=desc"
+            _url("test-co","queries") + "?sort_by=gap_score&sort_dir=desc"
         ).json()
         scores = [q["gap_score"] for q in body["queries"]]
         assert scores == sorted(scores, reverse=True)
@@ -660,28 +663,28 @@ class TestGapQueries:
     ):
         """page_size > 100 should be rejected by FastAPI validation."""
         data = _make_complete_new_format(num_gaps=1)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        r = client.get(_url("test", "queries") + "?page_size=200")
+        r = client.get(_url("test-co","queries") + "?page_size=200")
         assert r.status_code == 422
 
     def test_page_zero_rejected(
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=1)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        r = client.get(_url("test", "queries") + "?page=0")
+        r = client.get(_url("test-co","queries") + "?page=0")
         assert r.status_code == 422
 
     def test_combined_filters(
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=20, num_clusters=4)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         body = client.get(
-            _url("test", "queries")
+            _url("test-co","queries")
             + "?cluster=cluster-0&classification=significant_gap&sort_by=gap_score&sort_dir=asc&page_size=5"
         ).json()
         for q in body["queries"]:
@@ -694,16 +697,16 @@ class TestGapClusters:
 
     def test_cluster_list(self, client: TestClient, artifacts_root: Path):
         data = _make_complete_new_format(num_clusters=3)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "clusters")).json()
+        body = client.get(_url("test-co","clusters")).json()
         assert len(body["clusters"]) == 3
 
     def test_cluster_fields(self, client: TestClient, artifacts_root: Path):
         data = _make_complete_new_format(num_clusters=1)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        c = client.get(_url("test", "clusters")).json()["clusters"][0]
+        c = client.get(_url("test-co","clusters")).json()["clusters"][0]
         assert c["cluster_name"] == "cluster-0"
         assert c["query_count"] == 5
         assert c["word_count_range"] == {"min": 800, "max": 2500}
@@ -716,9 +719,9 @@ class TestGapClusters:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_clusters=2)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        clusters = client.get(_url("test", "clusters")).json()["clusters"]
+        clusters = client.get(_url("test-co","clusters")).json()["clusters"]
         assert clusters[0]["centroid_distance"] == pytest.approx(0.1)
         assert clusters[1]["centroid_distance"] == pytest.approx(0.15)
 
@@ -727,18 +730,18 @@ class TestGapClusters:
     ):
         """Old format may not have centroid data."""
         data = _make_analysis_old_format(num_clusters=1)
-        _write_artifact(artifacts_root, "test", "analysis.json", data)
+        _write_artifact(artifacts_root, "test-co", "analysis.json", data)
 
-        c = client.get(_url("test", "clusters")).json()["clusters"][0]
+        c = client.get(_url("test-co","clusters")).json()["clusters"][0]
         assert c["centroid_distance"] is None
 
     def test_cluster_word_count_range_format(
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_clusters=1)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        c = client.get(_url("test", "clusters")).json()["clusters"][0]
+        c = client.get(_url("test-co","clusters")).json()["clusters"][0]
         assert "min" in c["word_count_range"]
         assert "max" in c["word_count_range"]
 
@@ -751,10 +754,10 @@ class TestGapSignals:
     ):
         enriched = _make_enriched(count=10, with_new_signals=True)
         data = _make_complete_new_format(num_clusters=1)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "signals")).json()
+        body = client.get(_url("test-co","signals")).json()
         signals = body["signals"]
         assert len(signals) > 10  # should have many signals from new format
         names = {s["signal"] for s in signals}
@@ -768,10 +771,10 @@ class TestGapSignals:
         """Old format with only 3 known signals — should return only those."""
         enriched = _make_enriched(count=5, with_new_signals=False)
         data = _make_analysis_old_format(num_clusters=1)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
-        _write_artifact(artifacts_root, "test", "analysis.json", data)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "analysis.json", data)
 
-        body = client.get(_url("test", "signals")).json()
+        body = client.get(_url("test-co","signals")).json()
         signals = body["signals"]
         names = {s["signal"] for s in signals}
         # Old format has word_count, paragraph_count, header_count
@@ -786,10 +789,10 @@ class TestGapSignals:
     ):
         enriched = _make_enriched(count=10)
         data = _make_complete_new_format()
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "signals")).json()
+        body = client.get(_url("test-co","signals")).json()
         categories = {s["category"] for s in body["signals"]}
         assert "Text Composition" in categories
         assert "Structural Elements" in categories
@@ -799,10 +802,10 @@ class TestGapSignals:
     ):
         enriched = _make_enriched(count=10, with_similarity=True)
         data = _make_complete_new_format()
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "signals")).json()
+        body = client.get(_url("test-co","signals")).json()
         correlations = body["correlations"]
         assert len(correlations) > 0
         # Should be sorted by absolute correlation descending
@@ -814,10 +817,10 @@ class TestGapSignals:
     ):
         enriched = _make_enriched(count=2, with_similarity=False)
         data = _make_complete_new_format()
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "signals")).json()
+        body = client.get(_url("test-co","signals")).json()
         # Only 2 citations without similarity — not enough for correlation
         assert body["correlations"] == []
 
@@ -826,10 +829,10 @@ class TestGapSignals:
     ):
         enriched = _make_enriched(count=10, cluster_name="cluster-0")
         data = _make_complete_new_format(num_clusters=1)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "signals")).json()
+        body = client.get(_url("test-co","signals")).json()
         patterns = body["cluster_patterns"]
         assert len(patterns) >= 1
         p = patterns[0]
@@ -841,11 +844,11 @@ class TestGapSignals:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_clusters=2)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
         # Need enriched for the endpoint to not error
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", [])
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", [])
 
-        body = client.get(_url("test", "signals")).json()
+        body = client.get(_url("test-co","signals")).json()
         fps = body["cluster_fingerprints"]
         assert len(fps) == 2
         # Values should be between 0 and 1 (normalized)
@@ -857,10 +860,10 @@ class TestGapSignals:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format()
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", [])
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", [])
 
-        body = client.get(_url("test", "signals")).json()
+        body = client.get(_url("test-co","signals")).json()
         assert body["signals"] == []
         assert body["correlations"] == []
 
@@ -870,10 +873,10 @@ class TestGapPlatforms:
 
     def test_platform_list(self, client: TestClient, artifacts_root: Path):
         enriched = _make_enriched(count=12)
-        (artifacts_root / "gap_analysis" / "test").mkdir(parents=True)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
+        (artifacts_root / "gap_analysis" / "test-co").mkdir(parents=True)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
 
-        body = client.get(_url("test", "platforms")).json()
+        body = client.get(_url("test-co","platforms")).json()
         names = {p["name"] for p in body["platforms"]}
         assert "ChatGPT" in names
         assert "Claude" in names
@@ -884,10 +887,10 @@ class TestGapPlatforms:
         self, client: TestClient, artifacts_root: Path,
     ):
         enriched = _make_enriched(count=8, engines=["openai", "claude"])
-        (artifacts_root / "gap_analysis" / "test").mkdir(parents=True)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
+        (artifacts_root / "gap_analysis" / "test-co").mkdir(parents=True)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
 
-        body = client.get(_url("test", "platforms")).json()
+        body = client.get(_url("test-co","platforms")).json()
         totals = {p["name"]: p["total_citations"] for p in body["platforms"]}
         assert totals["ChatGPT"] == 4
         assert totals["Claude"] == 4
@@ -896,10 +899,10 @@ class TestGapPlatforms:
         self, client: TestClient, artifacts_root: Path,
     ):
         enriched = _make_enriched(count=4, engines=["openai"])
-        (artifacts_root / "gap_analysis" / "test").mkdir(parents=True)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
+        (artifacts_root / "gap_analysis" / "test-co").mkdir(parents=True)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
 
-        body = client.get(_url("test", "platforms")).json()
+        body = client.get(_url("test-co","platforms")).json()
         p = body["platforms"][0]
         assert p["unique_domains"] == 4  # each citation has unique domain
 
@@ -907,10 +910,10 @@ class TestGapPlatforms:
         self, client: TestClient, artifacts_root: Path,
     ):
         enriched = _make_enriched(count=8)
-        (artifacts_root / "gap_analysis" / "test").mkdir(parents=True)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
+        (artifacts_root / "gap_analysis" / "test-co").mkdir(parents=True)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
 
-        body = client.get(_url("test", "platforms")).json()
+        body = client.get(_url("test-co","platforms")).json()
         agreement = body["agreement"]
         # Each platform should have 1.0 agreement with itself
         for platform_name, row in agreement.items():
@@ -920,10 +923,10 @@ class TestGapPlatforms:
         self, client: TestClient, artifacts_root: Path,
     ):
         enriched = _make_enriched(count=8, cluster_name="cluster-0")
-        (artifacts_root / "gap_analysis" / "test").mkdir(parents=True)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
+        (artifacts_root / "gap_analysis" / "test-co").mkdir(parents=True)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
 
-        body = client.get(_url("test", "platforms")).json()
+        body = client.get(_url("test-co","platforms")).json()
         excl = body["citation_exclusivity"]
         assert "cluster-0" in excl
         cluster_excl = excl["cluster-0"]
@@ -934,10 +937,10 @@ class TestGapPlatforms:
         self, client: TestClient, artifacts_root: Path,
     ):
         enriched = _make_enriched(count=8, engines=["openai"], cluster_name="cluster-0")
-        (artifacts_root / "gap_analysis" / "test").mkdir(parents=True)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
+        (artifacts_root / "gap_analysis" / "test-co").mkdir(parents=True)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
 
-        body = client.get(_url("test", "platforms")).json()
+        body = client.get(_url("test-co","platforms")).json()
         p = body["platforms"][0]
         assert "cluster-0" in p["per_cluster"]
 
@@ -948,10 +951,10 @@ class TestGapPlatforms:
             {"query_id": "q1", "engine": None, "url": "https://a.com", "domain": "a.com"},
             {"query_id": "q1", "engine": "openai", "url": "https://b.com", "domain": "b.com"},
         ]
-        (artifacts_root / "gap_analysis" / "test").mkdir(parents=True)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
+        (artifacts_root / "gap_analysis" / "test-co").mkdir(parents=True)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
 
-        body = client.get(_url("test", "platforms")).json()
+        body = client.get(_url("test-co","platforms")).json()
         # Only openai/ChatGPT should be present
         names = {p["name"] for p in body["platforms"]}
         assert "ChatGPT" in names
@@ -960,10 +963,10 @@ class TestGapPlatforms:
     def test_platforms_empty_enriched(
         self, client: TestClient, artifacts_root: Path,
     ):
-        (artifacts_root / "gap_analysis" / "test").mkdir(parents=True)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", [])
+        (artifacts_root / "gap_analysis" / "test-co").mkdir(parents=True)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", [])
 
-        body = client.get(_url("test", "platforms")).json()
+        body = client.get(_url("test-co","platforms")).json()
         assert body["platforms"] == []
         assert body["agreement"] == {}
 
@@ -972,10 +975,10 @@ class TestGapPlatforms:
     ):
         """Verify openai -> ChatGPT display name mapping."""
         enriched = _make_enriched(count=4, engines=["openai"])
-        (artifacts_root / "gap_analysis" / "test").mkdir(parents=True)
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
+        (artifacts_root / "gap_analysis" / "test-co").mkdir(parents=True)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
 
-        body = client.get(_url("test", "platforms")).json()
+        body = client.get(_url("test-co","platforms")).json()
         assert body["platforms"][0]["name"] == "ChatGPT"
 
 
@@ -984,9 +987,9 @@ class TestGapHeatmap:
 
     def test_heatmap_structure(self, client: TestClient, artifacts_root: Path):
         data = _make_complete_new_format(num_gaps=6, num_clusters=2)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "heatmap")).json()
+        body = client.get(_url("test-co","heatmap")).json()
         assert len(body["clusters"]) == 2
         assert "min_gap" in body
         assert "max_gap" in body
@@ -995,9 +998,9 @@ class TestGapHeatmap:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=6, num_clusters=3)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "heatmap")).json()
+        body = client.get(_url("test-co","heatmap")).json()
         names = {c["cluster_name"] for c in body["clusters"]}
         assert "cluster-0" in names
         assert "cluster-1" in names
@@ -1007,9 +1010,9 @@ class TestGapHeatmap:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=10, num_clusters=1)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "heatmap")).json()
+        body = client.get(_url("test-co","heatmap")).json()
         c = body["clusters"][0]
         scores = [q["gap_score"] for q in c["queries"]]
         assert scores == sorted(scores, reverse=True)
@@ -1018,9 +1021,9 @@ class TestGapHeatmap:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=5)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "heatmap")).json()
+        body = client.get(_url("test-co","heatmap")).json()
         assert body["min_gap"] <= body["max_gap"]
         # Verify against actual gap values
         all_gaps = [q["gap_score"] for c in body["clusters"] for q in c["queries"]]
@@ -1030,9 +1033,9 @@ class TestGapHeatmap:
 
     def test_heatmap_empty_gaps(self, client: TestClient, artifacts_root: Path):
         data = _make_complete_new_format(num_gaps=0)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "heatmap")).json()
+        body = client.get(_url("test-co","heatmap")).json()
         assert body["clusters"] == []
         assert body["min_gap"] == 0.0
         assert body["max_gap"] == 0.0
@@ -1041,9 +1044,9 @@ class TestGapHeatmap:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_complete_new_format(num_gaps=4, num_clusters=2)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body = client.get(_url("test", "heatmap")).json()
+        body = client.get(_url("test-co","heatmap")).json()
         for c in body["clusters"]:
             queries = c["queries"]
             if queries:
@@ -1061,27 +1064,27 @@ class TestBackwardCompat:
     ):
         """When only analysis.json exists (no gap_analysis_complete.json)."""
         data = _make_analysis_old_format(num_gaps=5)
-        _write_artifact(artifacts_root, "ramp", "analysis.json", data)
+        _write_artifact(artifacts_root, "test-co", "analysis.json", data)
 
         # Summary should work
-        body = client.get(_url("ramp", "summary")).json()
+        body = client.get(_url("test-co", "summary")).json()
         assert body["total_queries"] == 5
 
         # Queries should work
-        body = client.get(_url("ramp", "queries")).json()
+        body = client.get(_url("test-co", "queries")).json()
         assert body["total"] == 5
 
         # Clusters should work
-        body = client.get(_url("ramp", "clusters")).json()
+        body = client.get(_url("test-co", "clusters")).json()
         assert len(body["clusters"]) == 2
 
     def test_no_content_briefs_in_queries(
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_analysis_old_format(num_gaps=3)
-        _write_artifact(artifacts_root, "ramp", "analysis.json", data)
+        _write_artifact(artifacts_root, "test-co", "analysis.json", data)
 
-        body = client.get(_url("ramp", "queries")).json()
+        body = client.get(_url("test-co", "queries")).json()
         for q in body["queries"]:
             assert q["content_brief"] is None
             assert q["patterns"] == []
@@ -1090,9 +1093,9 @@ class TestBackwardCompat:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_analysis_old_format(num_gaps=3)
-        _write_artifact(artifacts_root, "ramp", "analysis.json", data)
+        _write_artifact(artifacts_root, "test-co", "analysis.json", data)
 
-        body = client.get(_url("ramp", "queries")).json()
+        body = client.get(_url("test-co", "queries")).json()
         for q in body["queries"]:
             assert q["top_exemplars"] == []
             assert q["top_domain"] is None
@@ -1101,9 +1104,9 @@ class TestBackwardCompat:
         self, client: TestClient, artifacts_root: Path,
     ):
         data = _make_analysis_old_format(num_gaps=5, num_clusters=2)
-        _write_artifact(artifacts_root, "ramp", "analysis.json", data)
+        _write_artifact(artifacts_root, "test-co", "analysis.json", data)
 
-        body = client.get(_url("ramp", "heatmap")).json()
+        body = client.get(_url("test-co", "heatmap")).json()
         assert len(body["clusters"]) == 2
 
 
@@ -1115,14 +1118,14 @@ class TestCaching:
         from api.services import gap_data_service
 
         data = _make_complete_new_format(num_gaps=3)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         # First call populates cache
-        client.get(_url("test", "summary"))
+        client.get(_url("test-co","summary"))
         assert len(gap_data_service._CACHE) > 0
 
         # Second call uses cache
-        client.get(_url("test", "summary"))
+        client.get(_url("test-co","summary"))
         assert len(gap_data_service._CACHE) > 0
 
     def test_cache_invalidation_on_mtime_change(
@@ -1132,28 +1135,29 @@ class TestCaching:
         from api.services import gap_data_service
 
         data = _make_complete_new_format(num_gaps=2)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        body1 = client.get(_url("test", "summary")).json()
+        body1 = client.get(_url("test-co","summary")).json()
         assert body1["total_queries"] == 2
 
         # Update the file with different data
         data2 = _make_complete_new_format(num_gaps=7)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data2)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data2)
 
-        body2 = client.get(_url("test", "summary")).json()
+        body2 = client.get(_url("test-co","summary")).json()
         assert body2["total_queries"] == 7
 
     def test_cache_eviction(self, client: TestClient, artifacts_root: Path):
         """Cache should evict oldest entry when at capacity."""
         from api.services import gap_data_service
 
-        # Fill cache with more than MAX entries
+        # Fill cache with more than MAX entries via product_slug variants
         for i in range(gap_data_service._CACHE_MAX_ENTRIES + 2):
-            slug = f"slug{i}"
+            product_slug = f"prod{i}"
+            effective_slug = f"test-co__{product_slug}"
             data = _make_complete_new_format(num_gaps=1)
-            _write_artifact(artifacts_root, slug, "gap_analysis_complete.json", data)
-            client.get(_url(slug, "summary"))
+            _write_artifact(artifacts_root, effective_slug, "gap_analysis_complete.json", data)
+            client.get(_url("test-co", "summary") + f"?product_slug={product_slug}")
 
         assert len(gap_data_service._CACHE) <= gap_data_service._CACHE_MAX_ENTRIES
 
@@ -1161,13 +1165,13 @@ class TestCaching:
         self, client: TestClient, artifacts_root: Path,
     ):
         """Corrupted JSON file should be handled gracefully, not crash (C1 fix)."""
-        slug_dir = artifacts_root / "gap_analysis" / "broken"
+        slug_dir = artifacts_root / "gap_analysis" / "test-co"
         slug_dir.mkdir(parents=True, exist_ok=True)
         (slug_dir / "gap_analysis_complete.json").write_text(
             "{ this is not valid json !!!", encoding="utf-8",
         )
 
-        resp = client.get(_url("broken", "summary"))
+        resp = client.get(_url("test-co", "summary"))
         assert resp.status_code == 200
         body = resp.json()
         # Should return defaults rather than 500
@@ -1178,9 +1182,9 @@ class TestCaching:
     ):
         """Invalid projection method should return 422 (H1 Literal validation)."""
         data = _make_complete_new_format(num_gaps=1)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        resp = client.get(_url("test", "embeddings"), params={"method": "pca"})
+        resp = client.get(_url("test-co","embeddings"), params={"method": "pca"})
         assert resp.status_code == 422
 
 
@@ -1195,10 +1199,10 @@ class TestCX3SortByStringField:
     def test_sort_by_classification(self, client: TestClient, artifacts_root: Path):
         """sort_by=classification must not TypeError on mixed string/int."""
         data = _make_complete_new_format(num_gaps=5)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         resp = client.get(
-            _url("test", "queries"),
+            _url("test-co","queries"),
             params={"sort_by": "classification", "sort_dir": "asc"},
         )
         assert resp.status_code == 200
@@ -1209,10 +1213,10 @@ class TestCX3SortByStringField:
     def test_sort_by_query_text(self, client: TestClient, artifacts_root: Path):
         """sort_by=query_text must work with string comparison."""
         data = _make_complete_new_format(num_gaps=3)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         resp = client.get(
-            _url("test", "queries"),
+            _url("test-co","queries"),
             params={"sort_by": "query_text", "sort_dir": "asc"},
         )
         assert resp.status_code == 200
@@ -1222,10 +1226,10 @@ class TestCX3SortByStringField:
     def test_sort_by_cluster_name(self, client: TestClient, artifacts_root: Path):
         """sort_by=cluster_name must work as string sort."""
         data = _make_complete_new_format(num_gaps=4, num_clusters=2)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         resp = client.get(
-            _url("test", "queries"),
+            _url("test-co","queries"),
             params={"sort_by": "cluster_name", "sort_dir": "desc"},
         )
         assert resp.status_code == 200
@@ -1239,7 +1243,7 @@ class TestCX5PlatformStringSimilarity:
     def test_string_similarity_skipped(self, client: TestClient, artifacts_root: Path):
         """Citations with string similarity values should be silently skipped."""
         data = _make_complete_new_format(num_gaps=1)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         enriched = [
             {
@@ -1261,9 +1265,9 @@ class TestCX5PlatformStringSimilarity:
                 "structural_signals": {"word_count": 1200},
             },
         ]
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
 
-        resp = client.get(_url("test", "platforms"))
+        resp = client.get(_url("test-co","platforms"))
         assert resp.status_code == 200
         platforms = resp.json()["platforms"]
         for p in platforms:
@@ -1279,7 +1283,7 @@ class TestCX6NaNInSignals:
     def test_nan_signal_values_filtered(self, client: TestClient, artifacts_root: Path):
         """NaN structural signal values should be silently dropped."""
         data = _make_complete_new_format(num_gaps=1)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         enriched = [
             {
@@ -1309,9 +1313,9 @@ class TestCX6NaNInSignals:
                 },
             },
         ]
-        _write_artifact(artifacts_root, "test", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
 
-        resp = client.get(_url("test", "signals"))
+        resp = client.get(_url("test-co","signals"))
         assert resp.status_code == 200
         signals = resp.json()["signals"]
         for sig in signals:
@@ -1326,10 +1330,10 @@ class TestCX7MalformedEmbeddingPoints:
 
     def test_malformed_points_return_422(self, client: TestClient, artifacts_root: Path):
         """Points with non-numeric x/y should return 422."""
-        viz_dir = artifacts_root / "gap_analysis" / "test" / "visualizations"
+        viz_dir = artifacts_root / "gap_analysis" / "test-co" / "visualizations"
         viz_dir.mkdir(parents=True, exist_ok=True)
         data = _make_complete_new_format(num_gaps=1)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
         malformed = {
             "method": "umap",
@@ -1340,7 +1344,7 @@ class TestCX7MalformedEmbeddingPoints:
             json.dumps(malformed), encoding="utf-8",
         )
 
-        resp = client.get(_url("test", "embeddings"), params={"method": "umap"})
+        resp = client.get(_url("test-co","embeddings"), params={"method": "umap"})
         assert resp.status_code == 422
 
 
@@ -1357,7 +1361,7 @@ class TestC7HasComparisonTableRemoved:
         data = _make_complete_new_format(num_gaps=1, with_briefs=True)
         # Overwrite the content_brief of the single gap
         data["analysis"]["gaps"][0]["content_brief"].update(brief_overrides)
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
         return data
 
     def test_has_comparison_table_alone_does_not_produce_tables_pattern(
@@ -1369,9 +1373,9 @@ class TestC7HasComparisonTableRemoved:
         # Remove has_tables (set to 0), keep only has_comparison_table
         brief["has_tables"] = 0.0
         brief["has_comparison_table"] = 0.9
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        q = client.get(_url("test", "queries")).json()["queries"][0]
+        q = client.get(_url("test-co","queries")).json()["queries"][0]
         assert "Tables" not in q["content_brief"]["content_patterns"]
 
     def test_has_tables_produces_tables_pattern(
@@ -1380,9 +1384,9 @@ class TestC7HasComparisonTableRemoved:
         """has_tables >= 0.5 on GapContentBrief should produce 'Tables' pattern."""
         data = _make_complete_new_format(num_gaps=1, with_briefs=True)
         data["analysis"]["gaps"][0]["content_brief"]["has_tables"] = 0.9
-        _write_artifact(artifacts_root, "test", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
-        q = client.get(_url("test", "queries")).json()["queries"][0]
+        q = client.get(_url("test-co","queries")).json()["queries"][0]
         assert "Tables" in q["content_brief"]["content_patterns"]
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1400,9 +1404,9 @@ class TestGapDataProductSlug:
     ) -> None:
         """summary with ?product_slug writes to ramp__card dir, not ramp/."""
         data = _make_complete_new_format(num_gaps=3)
-        _write_artifact(artifacts_root, "ramp__card", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co__card", "gap_analysis_complete.json", data)
 
-        r = client.get(_url("ramp", "summary") + "?product_slug=card")
+        r = client.get(_url("test-co", "summary") + "?product_slug=card")
         assert r.status_code == 200
         assert r.json()["total_queries"] == 3
 
@@ -1412,11 +1416,11 @@ class TestGapDataProductSlug:
         """Company-level slug still reads from ramp/ dir when no product_slug."""
         company_data = _make_complete_new_format(num_gaps=7)
         product_data = _make_complete_new_format(num_gaps=3)
-        _write_artifact(artifacts_root, "ramp", "gap_analysis_complete.json", company_data)
-        _write_artifact(artifacts_root, "ramp__card", "gap_analysis_complete.json", product_data)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", company_data)
+        _write_artifact(artifacts_root, "test-co__card", "gap_analysis_complete.json", product_data)
 
-        r_company = client.get(_url("ramp", "summary"))
-        r_product = client.get(_url("ramp", "summary") + "?product_slug=card")
+        r_company = client.get(_url("test-co", "summary"))
+        r_product = client.get(_url("test-co", "summary") + "?product_slug=card")
 
         assert r_company.json()["total_queries"] == 7
         assert r_product.json()["total_queries"] == 3
@@ -1425,7 +1429,7 @@ class TestGapDataProductSlug:
         self, client: TestClient, artifacts_root: Path,
     ) -> None:
         """?product_slug pointing to nonexistent dir returns 404."""
-        r = client.get(_url("ramp", "summary") + "?product_slug=nonexistent")
+        r = client.get(_url("test-co", "summary") + "?product_slug=nonexistent")
         assert r.status_code == 404
 
     def test_all_endpoints_accept_product_slug_param(
@@ -1433,12 +1437,12 @@ class TestGapDataProductSlug:
     ) -> None:
         """All 7 non-trend endpoints accept ?product_slug= without 422."""
         data = _make_complete_new_format(num_gaps=3)
-        _write_artifact(artifacts_root, "ramp__card", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co__card", "gap_analysis_complete.json", data)
         enriched = _make_enriched(count=5)
-        _write_artifact(artifacts_root, "ramp__card", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co__card", "enriched_citations.json", enriched)
 
         for ep in self._ENDPOINTS:
-            url = _url("ramp", ep) + "?product_slug=card"
+            url = _url("test-co", ep) + "?product_slug=card"
             r = client.get(url)
             # All return either 200 (data found) or 404 (artifact missing) — never 422
             assert r.status_code in (200, 404), f"{ep}: unexpected {r.status_code}"
@@ -1448,9 +1452,9 @@ class TestGapDataProductSlug:
     ) -> None:
         """GET /queries?product_slug= returns queries from product artifact dir."""
         data = _make_complete_new_format(num_gaps=4)
-        _write_artifact(artifacts_root, "ramp__card", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co__card", "gap_analysis_complete.json", data)
 
-        r = client.get(_url("ramp", "queries") + "?product_slug=card")
+        r = client.get(_url("test-co", "queries") + "?product_slug=card")
         assert r.status_code == 200
         assert r.json()["total"] == 4
 
@@ -1459,7 +1463,7 @@ class TestGapDataProductSlug:
     ) -> None:
         """GET /embeddings?product_slug= reads from product dir's visualizations/ subdir."""
         import json
-        viz_dir = artifacts_root / "gap_analysis" / "ramp__card" / "visualizations"
+        viz_dir = artifacts_root / "gap_analysis" / "test-co__card" / "visualizations"
         viz_dir.mkdir(parents=True, exist_ok=True)
         data = {
             "method": "umap",
@@ -1469,7 +1473,7 @@ class TestGapDataProductSlug:
             json.dumps(data), encoding="utf-8"
         )
 
-        r = client.get(_url("ramp", "embeddings") + "?product_slug=card")
+        r = client.get(_url("test-co", "embeddings") + "?product_slug=card")
         assert r.status_code == 200
 
     # ── Trend endpoint ─────────────────────────────────────────────────
@@ -1489,7 +1493,7 @@ class TestGapDataProductSlug:
             "mean_company_similarity": 0.4,
         }
 
-        task = task_store.create_task("gap_analysis", "ramp", product_slug="card")
+        task = task_store.create_task("gap_analysis", "test-co", product_slug="card")
         task_store.update_task(
             task.task_id,
             status=TaskStatus.COMPLETED,
@@ -1501,7 +1505,7 @@ class TestGapDataProductSlug:
             },
         )
 
-        r = client.get(_url("ramp", "trend") + "?product_slug=card")
+        r = client.get(_url("test-co", "trend") + "?product_slug=card")
         assert r.status_code == 200
         body = r.json()
         assert len(body["trend"]) == 1
@@ -1526,7 +1530,7 @@ class TestGapDataProductSlug:
         _DM = {"total_queries": 5, "total_citations": 8}
 
         # Company-level run
-        t_company = task_store.create_task("gap_analysis", "ramp")
+        t_company = task_store.create_task("gap_analysis", "test-co")
         task_store.update_task(
             t_company.task_id,
             status=TaskStatus.COMPLETED,
@@ -1534,14 +1538,14 @@ class TestGapDataProductSlug:
         )
 
         # Product-level run — must NOT appear in company-level trend
-        t_product = task_store.create_task("gap_analysis", "ramp", product_slug="card")
+        t_product = task_store.create_task("gap_analysis", "test-co", product_slug="card")
         task_store.update_task(
             t_product.task_id,
             status=TaskStatus.COMPLETED,
             result={"report_json": {"spa_results": [_SPA], "decision_metrics": _DM}},
         )
 
-        r = client.get(_url("ramp", "trend"))
+        r = client.get(_url("test-co", "trend"))
         assert r.status_code == 200
         run_ids = [pt["run_id"] for pt in r.json()["trend"]]
         assert t_company.task_id in run_ids

@@ -108,12 +108,25 @@ def _derive_slug(name: str) -> str:
 class AuthStore:
     """JSON-file backed store for companies and users."""
 
+    # Dummy hash for constant-time login failure (Codex W7)
+    _DUMMY_HASH: str = "0" * 32 + ":" + "0" * 64
+
     def __init__(self, base_dir: Path) -> None:
         self._base_dir = base_dir / "_auth"
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._companies_file = self._base_dir / "companies.json"
         self._users_file = self._base_dir / "users.json"
-        self._secret_key = os.environ.get("JWT_SECRET_KEY", secrets.token_hex(32))
+
+        # JWT_SECRET_KEY enforcement (Codex W8)
+        secret = os.environ.get("JWT_SECRET_KEY")
+        if not secret:
+            env = os.environ.get("ENVIRONMENT", "development")
+            if env not in ("development", "test"):
+                raise RuntimeError(
+                    "JWT_SECRET_KEY must be set in non-development environments"
+                )
+            secret = secrets.token_hex(32)
+        self._secret_key = secret
 
         # In-memory cache
         self._companies: Dict[str, Company] = {}
@@ -323,12 +336,12 @@ class AuthStore:
         company_name: str,
         company_domain: str,
     ) -> Tuple[UserProfile, Company]:
-        """Register a new user with automatic company deduplication.
+        """Register a new user — always creates an isolated company (Codex C1).
 
         - Normalizes the domain (strips www, extracts root)
-        - If a company with the same root domain exists, joins it as 'member'
-        - If not, creates a new company and the user becomes 'superuser'
-        - Subdomains are saved to company.additional_domains
+        - If a company with the same root domain already exists, raises
+          ``ValueError("domain_taken")`` — joining requires an invite
+        - Otherwise creates a new company and the user becomes 'superuser'
         """
         with self._lock:
             if self.get_user_by_email(email):
@@ -336,47 +349,95 @@ class AuthStore:
 
             root_domain, subdomain = normalize_domain(company_domain)
 
-            # Try to find existing company by root domain
+            # Block domain auto-join — registration always creates a new company
             existing = self.get_company_by_domain(root_domain)
-
             if existing:
-                company = existing
-                role = "member"
-                # Save subdomain if it's new
-                if subdomain and subdomain not in company.additional_domains:
-                    company.additional_domains.append(subdomain)
-                    company.updated_at = _utcnow()
-                    self._save_companies()
-            else:
-                # Create new company
-                slug = _derive_slug(company_name)
-                # Handle slug collision
-                base_slug = slug
-                counter = 1
-                while slug in self._companies:
-                    slug = f"{base_slug}-{counter}"
-                    counter += 1
+                raise ValueError("domain_taken")
 
-                additional = [subdomain] if subdomain else []
-                company = Company(
-                    slug=slug,
-                    name=company_name,
-                    domain=root_domain,
-                    additional_domains=additional,
-                )
-                self._companies[slug] = company
-                self._save_companies()
-                role = "superuser"
+            # Create new company
+            slug = _derive_slug(company_name)
+            base_slug = slug
+            counter = 1
+            while slug in self._companies:
+                slug = f"{base_slug}-{counter}"
+                counter += 1
 
-            # Create the user (RLock allows re-entry from this context)
+            additional = [subdomain] if subdomain else []
+            company = Company(
+                slug=slug,
+                name=company_name,
+                domain=root_domain,
+                additional_domains=additional,
+            )
+            self._companies[slug] = company
+            self._save_companies()
+
+            # Create the user as superuser (first user of the new company)
             user = self.create_user(
                 company_id=company.id,
                 email=email,
                 first_name=first_name,
                 last_name=last_name,
                 password=password,
-                role=role,
+                role="superuser",
             )
+
+        return user, company
+
+    # ── Invite flow (simple codes) ─────────────────────────────
+
+    def create_invite(
+        self, company_slug: str, role: str = "member"
+    ) -> str:
+        """Create a simple invite code for joining an existing company.
+
+        Returns a 16-character hex invite code. The code, company slug,
+        and target role are stored in an in-memory dict. For v0, invite
+        codes are not persisted to disk (lost on restart).
+        """
+        if not hasattr(self, "_invites"):
+            self._invites: Dict[str, Dict[str, str]] = {}
+        code = secrets.token_hex(8)
+        self._invites[code] = {"company_slug": company_slug, "role": role}
+        return code
+
+    def redeem_invite(
+        self,
+        invite_code: str,
+        first_name: str,
+        last_name: str,
+        email: str,
+        password: str,
+    ) -> Tuple[UserProfile, Company]:
+        """Redeem an invite code to join an existing company.
+
+        Raises ``ValueError`` if the invite is invalid, already used,
+        or the email is already registered.
+        """
+        invites = getattr(self, "_invites", {})
+        invite = invites.get(invite_code)
+        if not invite:
+            raise ValueError("Invalid or expired invite code")
+
+        company = self.get_company_by_slug(invite["company_slug"])
+        if not company:
+            raise ValueError("Company no longer exists")
+
+        with self._lock:
+            if self.get_user_by_email(email):
+                raise ValueError(f"User with email '{email}' already exists")
+
+            user = self.create_user(
+                company_id=company.id,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                password=password,
+                role=invite["role"],
+            )
+
+            # Remove used invite
+            del self._invites[invite_code]
 
         return user, company
 
@@ -422,6 +483,30 @@ class AuthStore:
             "user_id": user_id,
             "company_slug": company_slug,
             "exp": (_utcnow() + timedelta(hours=expires_hours)).isoformat(),
+        }
+        payload_bytes = json.dumps(payload).encode()
+        payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode()
+        sig = hmac.new(
+            self._secret_key.encode(), payload_bytes, hashlib.sha256
+        ).hexdigest()
+        return f"{payload_b64}.{sig}"
+
+    def create_stream_token(
+        self, user_id: str, company_slug: str, expires_minutes: int = 5
+    ) -> str:
+        """Create a short-lived stream token for SSE EventSource clients.
+
+        Stream tokens include ``stream_only: true`` in the payload so the
+        middleware prevents their reuse for non-SSE endpoints (Codex C4).
+        Default expiry is 5 minutes.
+        """
+        import base64
+
+        payload = {
+            "user_id": user_id,
+            "company_slug": company_slug,
+            "stream_only": True,
+            "exp": (_utcnow() + timedelta(minutes=expires_minutes)).isoformat(),
         }
         payload_bytes = json.dumps(payload).encode()
         payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode()

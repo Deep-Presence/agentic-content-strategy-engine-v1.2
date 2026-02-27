@@ -2,6 +2,8 @@
 
 Serves content pipeline artifacts for the Content Pipeline workspace.
 All data is read from ``artifacts/content/{slug}/`` JSON and stage files.
+
+All endpoints require authentication and company membership.
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 
+from api.auth.dependencies import require_tenant
 from api.dependencies import get_artifacts_root
 from api.schemas.content_data import (
     ContentBriefDetailResponse,
@@ -39,6 +42,7 @@ def list_briefs(
     slug: str,
     artifacts_root: Path = Depends(get_artifacts_root),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_tenant),
 ) -> ContentBriefListResponse:
     """List all content briefs with inferred statuses and eval scores."""
     return get_briefs(artifacts_root, _effective(slug, product_slug))
@@ -50,6 +54,7 @@ def get_brief(
     brief_id: str,
     artifacts_root: Path = Depends(get_artifacts_root),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_tenant),
 ) -> ContentBriefDetailResponse:
     """Get full detail for a single content brief."""
     return get_brief_detail(artifacts_root, _effective(slug, product_slug), brief_id)
@@ -62,6 +67,7 @@ def get_stage_content(
     stage: str,
     artifacts_root: Path = Depends(get_artifacts_root),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    _access=Depends(require_tenant),
 ) -> StageContentResponse:
     """Get stage-specific file content for a brief.
 

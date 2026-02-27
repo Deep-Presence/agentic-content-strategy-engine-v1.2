@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from api.auth.dependencies import require_auth, require_role
 from api.auth.store import AuthStore
 from api.dependencies import get_artifacts_root, get_auth_store, get_event_bus, get_task_store
 from api.schemas.common import (
@@ -22,6 +23,7 @@ from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask, TaskStatus
 from api.tasks.runner import run_research_pipeline_task
 from api.tasks.store import TaskStore
+from core.models.organization import UserProfile
 
 router = APIRouter(prefix="/api/v1/research", tags=["research"])
 
@@ -77,27 +79,36 @@ def _get_latest_research_run(
     responses={200: {"model": PipelineRunResponse, "description": "All requested stages already exist"}},
 )
 async def start_research(
-    request: ResearchStartRequest,
+    body: ResearchStartRequest,
     response: Response,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStore = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_store: AuthStore = Depends(get_auth_store),
 ) -> PipelineRunResponse:
-    slug = _derive_slug(request.company_name)
-    effective_slug = f"{slug}__{request.product_slug}" if request.product_slug else slug
-    requested_stages = list(request.stages) if request.stages else ["company", "persona", "style_guide"]
+    # Tenant isolation: slug must match authenticated user's company
+    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
+    slug = _derive_slug(body.company_name)
+    if not user_company_slug or slug != user_company_slug:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot start pipeline for another company",
+        )
+    effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
+    requested_stages = list(body.stages) if body.stages else ["company", "persona", "style_guide"]
 
-    if not request.force_rerun and _research_stages_exist(
+    if not body.force_rerun and _research_stages_exist(
         artifacts_root, effective_slug, slug, requested_stages
     ):
-        last_task = _get_latest_research_run(task_store, slug, request.product_slug)
+        last_task = _get_latest_research_run(task_store, slug, body.product_slug)
         response.status_code = 200
         return PipelineRunResponse(
             run_id=last_task.task_id if last_task else f"existing-{effective_slug}",
             pipeline="research",
             company_slug=slug,
-            product_slug=request.product_slug,
+            product_slug=body.product_slug,
             effective_slug=effective_slug,
             status="already_exists",
             created_at=last_task.created_at if last_task else datetime.now(timezone.utc),
@@ -108,12 +119,12 @@ async def start_research(
             ),
         )
 
-    task = task_store.create_task("research", slug, product_slug=request.product_slug)
+    task = task_store.create_task("research", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_research_pipeline_task(
             task_id=task.task_id,
-            request=request,
+            request=body,
             task_store=task_store,
             event_bus=event_bus,
             auth_store=auth_store,
@@ -135,9 +146,15 @@ async def start_research(
 @router.get("/{run_id}/status")
 def get_research_status(
     run_id: str,
+    request: Request,
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStore = Depends(get_task_store),
 ) -> TaskResponse:
     task = task_store.get_task(run_id)
+    # Task ownership check
+    user_company_slug = getattr(request.state, "company_slug", None)
+    if task.company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
     return TaskResponse(
         run_id=task.task_id,
         pipeline=task.pipeline,
@@ -156,10 +173,16 @@ def get_research_status(
 @router.post("/{run_id}/approve")
 def approve_research(
     run_id: str,
-    request: ApprovalRequest,
+    body: ApprovalRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStore = Depends(get_task_store),
 ) -> ApprovalResponse:
     task = task_store.get_task(run_id)
+    # Task ownership check
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if task.company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
     if task.status != TaskStatus.PENDING_APPROVAL:
         raise HTTPException(
             status_code=409,
@@ -169,13 +192,13 @@ def approve_research(
     stage = (task.approval_payload or {}).get("stage")
     task_store.submit_approval(
         run_id,
-        decision=request.decision,
-        revision_note=request.revision_note,
+        decision=body.decision,
+        revision_note=body.revision_note,
         stage=stage,
     )
 
     return ApprovalResponse(
         run_id=run_id,
-        decision=request.decision,
-        revision_note=request.revision_note,
+        decision=body.decision,
+        revision_note=body.revision_note,
     )

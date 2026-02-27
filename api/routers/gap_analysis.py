@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from api.auth.dependencies import require_auth, require_role
 from api.auth.store import AuthStore
 from api.dependencies import get_artifacts_root, get_auth_store, get_event_bus, get_task_store
 from api.schemas.common import GapAnalysisStartRequest, PipelineRunResponse, TaskResponse
@@ -16,6 +17,7 @@ from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask
 from api.tasks.runner import run_gap_pipeline_task
 from api.tasks.store import TaskStore
+from core.models.organization import UserProfile
 
 router = APIRouter(prefix="/api/v1/gap-analysis", tags=["gap-analysis"])
 
@@ -51,12 +53,21 @@ def _get_latest_gap_run(
 async def start_gap_analysis(
     body: GapAnalysisStartRequest,
     response: Response,
+    request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStore = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_store: AuthStore = Depends(get_auth_store),
 ) -> PipelineRunResponse:
+    # Tenant isolation: slug must match authenticated user's company
+    user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
     slug = _derive_slug(body.company_name)
+    if not user_company_slug or slug != user_company_slug:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot start pipeline for another company",
+        )
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
     if not body.force_rerun and _gap_analysis_artifacts_exist(artifacts_root, effective_slug):
@@ -102,9 +113,15 @@ async def start_gap_analysis(
 @router.get("/{run_id}/status", response_model=TaskResponse)
 async def get_gap_analysis_status(
     run_id: str,
+    request: Request,
+    _user: UserProfile = Depends(require_auth),
     task_store: TaskStore = Depends(get_task_store),
 ) -> TaskResponse:
     task = task_store.get_task(run_id)
+    # Task ownership check
+    user_company_slug = getattr(request.state, "company_slug", None)
+    if task.company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
     return TaskResponse(
         run_id=task.task_id,
         pipeline=task.pipeline,
