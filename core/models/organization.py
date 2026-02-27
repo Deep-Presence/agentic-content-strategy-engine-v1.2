@@ -80,3 +80,28 @@ class PipelineScope(BaseModel):
     scope: Literal["company", "product"] = "company"
     company_slug: str
     product_slug: Optional[str] = None
+
+
+class CompanyPipelineDefaults(BaseModel):
+    """Per-company pipeline default overrides.
+
+    All fields are optional — ``None`` means "use global default from settings.py".
+    Only non-None values override the global defaults at pipeline invocation time.
+    """
+
+    # Gap analysis
+    max_crawl_pages: Optional[int] = None
+    max_crawl_depth: Optional[int] = None
+    max_queries: Optional[int] = None
+    platforms: Optional[List[str]] = None
+
+    # Research
+    max_personas: Optional[int] = None
+    auto_approve_research: bool = False
+
+    # Content
+    max_briefs: Optional[int] = None
+    max_revision_cycles: Optional[int] = None
+    auto_approve_content: bool = False
+
+    updated_at: Optional[datetime] = None

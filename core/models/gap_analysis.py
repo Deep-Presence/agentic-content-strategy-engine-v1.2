@@ -24,6 +24,7 @@ class DiscoverySource(str, Enum):
     RSS_FEED = "rss_feed"
     SEED_URL = "seed_url"
     REDIRECT = "redirect"
+    KNOWLEDGE_DOC = "knowledge_doc"
 
 
 class DiscoveredPage(BaseModel):
@@ -134,6 +135,9 @@ class GapAnalysisInput(BaseModel):
     )
     product_description: Optional[str] = Field(
         default=None, description="Product description for prompt injection."
+    )
+    knowledge_doc_dir: Optional[str] = Field(
+        default=None, description="Path to knowledge docs directory for s1 embedding."
     )
 
 

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from core.models.organization import Company, Product, UserProfile
+from core.models.organization import Company, CompanyPipelineDefaults, Product, UserProfile
 
 
 def _utcnow() -> datetime:
@@ -98,6 +98,7 @@ def normalize_domain(raw: str) -> Tuple[str, Optional[str]]:
 # identity fields (id, created_at, slug) via **kwargs in update_* methods.
 _COMPANY_MUTABLE_FIELDS: frozenset = frozenset({"name", "domain", "additional_domains"})
 _PRODUCT_MUTABLE_FIELDS: frozenset = frozenset({"name", "domain", "description"})
+_USER_MUTABLE_FIELDS: frozenset = frozenset({"role", "first_name", "last_name", "is_active"})
 
 
 def _derive_slug(name: str) -> str:
@@ -325,6 +326,56 @@ class AuthStore:
             self._save_users()
         return profile
 
+    def update_user(self, user_id: str, requesting_user_id: Optional[str] = None, **kwargs: Any) -> UserProfile:
+        """Update mutable fields on a user profile.
+
+        Only fields in ``_USER_MUTABLE_FIELDS`` are applied. Immutable fields
+        (id, company_id, email, created_at) are silently ignored.
+
+        Guards:
+        - Cannot deactivate yourself (``requesting_user_id == user_id``
+          and ``is_active=False``).
+        - Cannot demote the last superuser of a company.
+        """
+        with self._lock:
+            user_data = self._users.get(user_id)
+            if not user_data:
+                raise ValueError(f"User '{user_id}' not found")
+
+            # Guard: cannot deactivate self
+            if (
+                requesting_user_id
+                and requesting_user_id == user_id
+                and kwargs.get("is_active") is False
+            ):
+                raise ValueError("Cannot deactivate your own account")
+
+            # Guard: cannot demote last superuser
+            current_role = user_data.get("role", "member")
+            new_role = kwargs.get("role")
+            if current_role == "superuser" and new_role and new_role != "superuser":
+                company_id = user_data["company_id"]
+                superuser_count = sum(
+                    1
+                    for u in self._users.values()
+                    if u["company_id"] == company_id
+                    and u["role"] == "superuser"
+                    and u.get("is_active", True)
+                )
+                if superuser_count <= 1:
+                    raise ValueError("Cannot demote the last superuser of this company")
+
+            for k, v in kwargs.items():
+                if k in _USER_MUTABLE_FIELDS:
+                    user_data[k] = v
+            user_data["updated_at"] = _utcnow().isoformat()
+            self._users[user_id] = user_data
+            self._save_users()
+
+        return UserProfile.model_validate(
+            {k: v for k, v in user_data.items() if k != "password_hash"}
+        )
+
     # ── Registration (company dedup) ───────────────────────────
 
     def register_user(
@@ -443,6 +494,41 @@ class AuthStore:
             del self._invites[invite_code]
 
         return user, company
+
+    # ── Pipeline Defaults (per-company) ─────────────────────────
+
+    def _settings_dir(self) -> Path:
+        """Return the settings directory, creating it if needed."""
+        d = self._base_dir / "settings"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def get_pipeline_defaults(self, company_slug: str) -> CompanyPipelineDefaults:
+        """Load per-company pipeline defaults. Returns empty defaults if not set."""
+        path = self._settings_dir() / f"{company_slug}.json"
+        if not path.exists():
+            return CompanyPipelineDefaults()
+        try:
+            data = json.loads(path.read_text())
+            return CompanyPipelineDefaults.model_validate(data)
+        except Exception:
+            return CompanyPipelineDefaults()
+
+    def update_pipeline_defaults(
+        self, company_slug: str, **kwargs: Any
+    ) -> CompanyPipelineDefaults:
+        """Update per-company pipeline defaults. Only non-None values are applied."""
+        with self._lock:
+            current = self.get_pipeline_defaults(company_slug)
+            for k, v in kwargs.items():
+                if hasattr(current, k) and v is not None:
+                    setattr(current, k, v)
+            current.updated_at = _utcnow()
+            path = self._settings_dir() / f"{company_slug}.json"
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(current.model_dump(mode="json"), indent=2, default=str))
+            tmp.replace(path)
+        return current
 
     # ── Password hashing ──────────────────────────────────────
 

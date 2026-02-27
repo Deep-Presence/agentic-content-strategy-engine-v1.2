@@ -200,6 +200,21 @@ async def run_gap_pipeline_task(
             if scope.product_domain:
                 domain = scope.product_domain
 
+            # Knowledge docs: product-level → company-level fallback
+            knowledge_doc_dir: Optional[str] = None
+            kdocs_base = artifacts_root / "knowledge_docs"
+            for candidate_slug in [scope.effective_slug, scope.company_slug]:
+                candidate_dir = kdocs_base / candidate_slug
+                if candidate_dir.is_dir() and (candidate_dir / "_metadata.json").exists():
+                    knowledge_doc_dir = str(candidate_dir)
+                    break
+
+            # Merge company pipeline defaults for Optional fields: request
+            # values take precedence, then company defaults.  Non-optional
+            # request fields (max_queries, platforms) are always present so
+            # they pass through directly.
+            _defaults = auth_store.get_pipeline_defaults(scope.company_slug) if auth_store else None
+
             input_data = GapAnalysisInput(
                 company_name=request.company_name,
                 domain=domain,
@@ -213,11 +228,18 @@ async def run_gap_pipeline_task(
                 language=request.language,
                 region=request.region,
                 additional_constraints=request.additional_constraints,
-                max_crawl_pages=request.max_crawl_pages,
-                max_crawl_depth=request.max_crawl_depth,
+                max_crawl_pages=(
+                    request.max_crawl_pages
+                    or (_defaults.max_crawl_pages if _defaults else None)
+                ),
+                max_crawl_depth=(
+                    request.max_crawl_depth
+                    or (_defaults.max_crawl_depth if _defaults else None)
+                ),
                 product_slug=scope.product_slug,
                 product_name=scope.product_name,
                 product_description=scope.product_description,
+                knowledge_doc_dir=knowledge_doc_dir,
             )
 
             report = await run_gap_analysis(

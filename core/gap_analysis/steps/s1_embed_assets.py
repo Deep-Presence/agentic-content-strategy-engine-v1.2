@@ -44,6 +44,8 @@ from core.shared_tools.async_chroma_client import (
     async_upsert_embeddings,
 )
 from core.shared_tools.async_embedding_client import async_embed_texts
+from core.shared_tools.knowledge_doc_metadata import mark_documents_embedded
+from core.shared_tools.text_extraction import extract_text as _extract_text_from_file
 
 logger = logging.getLogger(__name__)
 
@@ -1039,6 +1041,89 @@ async def crawl_company_assets(
 
 
 # ===========================================================================
+# Knowledge Document Loading
+# ===========================================================================
+
+
+def _load_knowledge_doc_units(
+    knowledge_doc_dir: str,
+    start_counter: int = 0,
+) -> List[SemanticUnit]:
+    """Load knowledge documents from a directory, extract text, chunk into SemanticUnits.
+
+    Reads _metadata.json to discover docs, uses the knowledge_doc_service
+    extract_text helper for PDF/DOCX support.
+    """
+    doc_dir = Path(knowledge_doc_dir)
+    if not doc_dir.is_dir():
+        logger.info("[knowledge_docs] Directory not found: %s", doc_dir)
+        return []
+
+    metadata_path = doc_dir / "_metadata.json"
+    if not metadata_path.exists():
+        logger.info("[knowledge_docs] No _metadata.json in %s", doc_dir)
+        return []
+
+    try:
+        raw = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning("[knowledge_docs] Failed to parse _metadata.json in %s", doc_dir)
+        return []
+
+    units: List[SemanticUnit] = []
+    counter = start_counter
+
+    for entry in raw:
+        stored_filename = entry.get("stored_filename", "")
+        original_filename = entry.get("filename", stored_filename)
+        file_path = doc_dir / stored_filename
+
+        if not file_path.exists():
+            logger.warning("[knowledge_docs] File missing: %s", file_path)
+            continue
+
+        # Extract text using shared utility
+        text = _extract_text_from_file(file_path)
+        if not text and file_path.suffix.lower() not in (".md", ".txt", ".pdf", ".docx"):
+            continue
+
+        if not text.strip():
+            continue
+
+        # Split into paragraphs and chunk using the same strategy as site content
+        paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+        chunks = _chunk_paragraphs(paragraphs)
+
+        for chunk in chunks:
+            counter += 1
+            chunk_text = chunk.strip()
+            if not chunk_text:
+                continue
+            units.append(
+                SemanticUnit(
+                    unit_id=f"kdoc_{counter}",
+                    url=None,
+                    title=original_filename,
+                    text=chunk_text,
+                    char_count=len(chunk_text),
+                    word_count=len(chunk_text.split()),
+                    discovery_source=DiscoverySource.KNOWLEDGE_DOC.value,
+                )
+            )
+
+    logger.info(
+        "[knowledge_docs] Loaded %d semantic units from %s",
+        len(units),
+        doc_dir,
+    )
+    return units
+
+
+# _mark_knowledge_docs_embedded moved to core.shared_tools.knowledge_doc_metadata
+# as mark_documents_embedded (uses shared lock to coordinate with uploads).
+
+
+# ===========================================================================
 # Main Entry Point: embed_company_assets
 # ===========================================================================
 
@@ -1118,6 +1203,20 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
     discovery_lookup = {_normalize_url(p.url): p for p in discovery_result.pages}
     units = build_semantic_units(pages_with_html, discovery_lookup=discovery_lookup)
 
+    # --- Load knowledge documents (if any) ---
+    if input_data.knowledge_doc_dir:
+        kdoc_units = _load_knowledge_doc_units(
+            input_data.knowledge_doc_dir,
+            start_counter=len(units),
+        )
+        if kdoc_units:
+            logger.info(
+                "[embed_company_assets] Adding %d knowledge doc units to %d site units",
+                len(kdoc_units),
+                len(units),
+            )
+            units.extend(kdoc_units)
+
     # --- Embed (async) ---
     texts = [u.text for u in units]
     embeddings = await async_embed_texts(texts)
@@ -1148,6 +1247,10 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
     output_path.write_text(
         json.dumps(payload, indent=2, default=str), encoding="utf-8"
     )
+
+    # --- Mark knowledge docs as embedded ---
+    if input_data.knowledge_doc_dir:
+        mark_documents_embedded(input_data.knowledge_doc_dir)
 
     logger.info(
         "[embed_company_assets] S1 complete: %d pages crawled, %d semantic units, "
