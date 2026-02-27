@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import uuid as _uuid
-from typing import Sequence
+from typing import Any, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db.enums import GapClassification
-from core.db.models.gap_analysis import ClusterSpecModel, QueryGapModel
+from core.db.models.gap_analysis import (
+    ClusterSpecModel,
+    QueryGapModel,
+    SpaResultModel,
+    CentroidResultModel,
+)
 from core.db.repositories.base import SQLAlchemyRepository
 
 
@@ -75,3 +80,118 @@ class GapAnalysisRepository(SQLAlchemyRepository[QueryGapModel]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    # ── Phase 3 additions ─────────────────────────────────────────────
+
+    async def count_gaps_by_run(
+        self, run_id: _uuid.UUID | str,
+    ) -> int:
+        """Total gap count for a run."""
+        pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        stmt = select(func.count()).select_from(QueryGapModel).where(
+            QueryGapModel.run_id == pk,
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one())
+
+    async def get_classification_counts(
+        self, run_id: _uuid.UUID | str,
+    ) -> dict[str, int]:
+        """Count gaps per classification for a run."""
+        pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        stmt = (
+            select(
+                QueryGapModel.classification,
+                func.count().label("cnt"),
+            )
+            .where(QueryGapModel.run_id == pk)
+            .group_by(QueryGapModel.classification)
+        )
+        result = await self._session.execute(stmt)
+        return {
+            str(row.classification.value): int(row.cnt)
+            for row in result.all()
+        }
+
+    async def get_spa_results(
+        self, run_id: _uuid.UUID | str,
+    ) -> Sequence[SpaResultModel]:
+        """Get SPA results for a run."""
+        pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        stmt = (
+            select(SpaResultModel)
+            .where(SpaResultModel.run_id == pk)
+            .order_by(SpaResultModel.cluster_name)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_centroid_results(
+        self, run_id: _uuid.UUID | str,
+    ) -> Sequence[CentroidResultModel]:
+        """Get centroid distances for a run."""
+        pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        stmt = (
+            select(CentroidResultModel)
+            .where(CentroidResultModel.run_id == pk)
+            .order_by(CentroidResultModel.cluster_name)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_gaps_paginated(
+        self,
+        run_id: _uuid.UUID | str,
+        *,
+        cluster: str | None = None,
+        classification: str | None = None,
+        search: str | None = None,
+        sort_by: str = "gap",
+        sort_dir: str = "desc",
+        page: int = 1,
+        page_size: int = 15,
+    ) -> dict[str, Any]:
+        """Enhanced paginated query with search, filter, sort.
+
+        Returns {items: [...], total: int, page: int, page_size: int, total_pages: int}.
+        """
+        pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        base = select(QueryGapModel).where(QueryGapModel.run_id == pk)
+
+        if cluster:
+            base = base.where(
+                (QueryGapModel.cluster_name == cluster)
+                | (QueryGapModel.cluster_id == cluster)
+            )
+        if classification:
+            try:
+                cls = GapClassification(classification)
+                base = base.where(QueryGapModel.classification == cls)
+            except ValueError:
+                pass  # invalid classification — skip filter
+        if search:
+            base = base.where(QueryGapModel.query_text.ilike(f"%{search}%"))
+
+        # Count total (before pagination)
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total = int((await self._session.execute(count_stmt)).scalar_one())
+
+        # Sort
+        sort_col = getattr(QueryGapModel, sort_by, QueryGapModel.gap)
+        order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
+        base = base.order_by(order)
+
+        # Paginate
+        offset = (page - 1) * page_size
+        base = base.offset(offset).limit(page_size)
+
+        result = await self._session.execute(base)
+        items = result.scalars().all()
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, (total + page_size - 1) // page_size),
+        }

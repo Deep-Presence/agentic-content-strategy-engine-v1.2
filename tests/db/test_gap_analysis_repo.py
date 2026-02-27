@@ -41,17 +41,17 @@ async def test_bulk_insert_query_gaps(db_session, sample_pipeline_run):
         _make_gap_data(
             sample_pipeline_run.id,
             "q1", "What is Ramp?",
-            "brand_awareness", 0.8, GapClassification.large_gap,
+            "brand_awareness", 0.8, GapClassification.significant_gap,
         ),
         _make_gap_data(
             sample_pipeline_run.id,
             "q2", "Ramp alternatives",
-            "competitor_comparison", 0.3, GapClassification.small_gap,
+            "competitor_comparison", 0.3, GapClassification.roughly_equal,
         ),
         _make_gap_data(
             sample_pipeline_run.id,
             "q3", "Expense management tools",
-            "category_generic", 0.5, GapClassification.moderate_gap,
+            "category_generic", 0.5, GapClassification.gap_to_close,
         ),
     ]
 
@@ -67,7 +67,7 @@ async def test_get_gaps_by_run(db_session, sample_pipeline_run):
     await repo.bulk_insert_query_gaps([
         _make_gap_data(
             sample_pipeline_run.id,
-            "q10", "Test query", "cluster_a", 0.7, GapClassification.large_gap,
+            "q10", "Test query", "cluster_a", 0.7, GapClassification.significant_gap,
         ),
     ])
 
@@ -86,19 +86,19 @@ async def test_get_gaps_by_run_filters_by_classification(
         _make_gap_data(
             sample_pipeline_run.id,
             "q20", "Large gap query",
-            "cluster_b", 0.9, GapClassification.large_gap,
+            "cluster_b", 0.9, GapClassification.significant_gap,
         ),
         _make_gap_data(
             sample_pipeline_run.id,
             "q21", "No gap query",
-            "cluster_b", 0.0, GapClassification.no_gap,
+            "cluster_b", 0.0, GapClassification.company_wins,
         ),
     ])
 
     large_gaps = await repo.get_gaps_by_run(
-        sample_pipeline_run.id, classification=GapClassification.large_gap
+        sample_pipeline_run.id, classification=GapClassification.significant_gap
     )
-    assert all(g.classification == GapClassification.large_gap for g in large_gaps)
+    assert all(g.classification == GapClassification.significant_gap for g in large_gaps)
     assert any(g.query_id == "q20" for g in large_gaps)
     # q21 should NOT appear
     assert not any(g.query_id == "q21" for g in large_gaps)
@@ -114,12 +114,12 @@ async def test_get_gaps_by_run_filters_by_cluster_name(
         _make_gap_data(
             sample_pipeline_run.id,
             "q30", "Cluster X query",
-            "cluster_x", 0.6, GapClassification.moderate_gap,
+            "cluster_x", 0.6, GapClassification.gap_to_close,
         ),
         _make_gap_data(
             sample_pipeline_run.id,
             "q31", "Cluster Y query",
-            "cluster_y", 0.4, GapClassification.small_gap,
+            "cluster_y", 0.4, GapClassification.roughly_equal,
         ),
     ])
 
@@ -139,7 +139,7 @@ async def test_update_gap(db_session, sample_pipeline_run):
         _make_gap_data(
             sample_pipeline_run.id,
             "q40", "Update me",
-            "cluster_z", 0.5, GapClassification.moderate_gap,
+            "cluster_z", 0.5, GapClassification.gap_to_close,
         ),
     ])
     gap = results[0]
@@ -147,12 +147,12 @@ async def test_update_gap(db_session, sample_pipeline_run):
     updated = await repo.update_gap(
         gap.id,
         gap=0.1,
-        classification=GapClassification.no_gap,
+        classification=GapClassification.company_wins,
         content_brief={"title": "New brief"},
     )
     assert updated is not None
     assert updated.gap == pytest.approx(0.1)
-    assert updated.classification == GapClassification.no_gap
+    assert updated.classification == GapClassification.company_wins
     assert updated.content_brief == {"title": "New brief"}
 
 

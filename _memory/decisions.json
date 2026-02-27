@@ -295,5 +295,22 @@
     "outcome": "18 new files, 32 modified files, 96 new tests. 1080 passed + 88 skipped = 1168 total. All existing tests pass unchanged via dependency override. Plan at .claude/plans/vectorized-honking-flamingo.md.",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-SVC-1",
+    "timestamp": "2026-02-28",
+    "task": "Service Layer Migration Phase 3 — Three separate service protocols with dual Json/Db implementations",
+    "approach": "Following the proven auth migration pattern (AuthServiceProtocol → JsonAuthService / DbAuthService), each data domain gets its own Protocol: GapDataServiceProtocol, BrandDataServiceProtocol, ContentDataServiceProtocol. Each has a JsonXxxService (wraps existing api/services/ functions via asyncio.to_thread) and a DbXxxService (uses SQL repos). Routers converted from sync def → async def with service injection via Depends(). DI functions default to JsonService, switch to DbService when DATABASE_URL + db_session_factory available. Filesystem operations (embedding projections, research artifacts, stage content) remain filesystem-backed even in DB services via asyncio.to_thread delegation.",
+    "rationale": "Separate protocols keep interfaces narrow and testable — each service has different dependencies (gap needs signal/platform repos, brand needs pipeline repo, content needs content repo). The Json→Db switch is transparent to routers. SQL aggregation replaces Python computation for heavy operations (AVG on 45 structural signals, corr() for Pearson correlations). Platform agreement Jaccard kept in Python per Codex W4 recommendation. Backfill script enables testing with real data without Phase 4 write hooks.",
+    "alternatives_rejected": [
+      "Single monolithic DataServiceProtocol (violates SRP, bloated interface, different dependency sets per domain)",
+      "Direct DB queries in routers (couples routers to DB, untestable)",
+      "Pure SQL for Jaccard computation (fragile, hard to test — Codex W4)",
+      "Skip Json wrappers, go DB-only (breaks all existing tests, no fallback)"
+    ],
+    "outcome": "16 new files, 14 modified. 3 service protocols + 6 implementations (3 Json + 3 Db). 2 new repos (signal, platform) + 3 enhanced repos. Backfill script for JSON→DB migration. 46 new tests (9 protocol conformance passed + 37 DB tests skipped). 1088 passed + 125 skipped = 1213 total. Plan at .claude/plans/glowing-soaring-turtle.md.",
+    "reversible": true,
+    "approved_by": "Aryan",
+    "codex_review": "Codex gpt-5.3-codex with high reasoning reviewed the plan before implementation. 2 CRITICAL + 5 WARNING findings incorporated: C1 GapClassification enum drift fix, C4 slug resolution UUID-scoped, W1 composite indexes, W2 NULL safety in SQL, W3 empty runs return 200, W4 Jaccard in Python, W5 parity tests."
   }
 ]

@@ -1,5 +1,5 @@
 {
-  "current_sprint": "auth-migration-phase2",
+  "current_sprint": "service-layer-phase3",
   "last_updated": "2026-02-28",
   "completed": [
     {
@@ -888,6 +888,48 @@
       "tests_added": 96,
       "test_total": "1080 passed + 88 skipped = 1168 collected",
       "summary": "Three-layer decomposition: (1) Pure utilities in core/auth/utils/, (2) AuthServiceProtocol + JsonAuthService + DbAuthService, (3) DI switch via get_auth_service(). All routers migrated from sync AuthStore to async AuthServiceProtocol. Middleware decoupled from AuthStore. All 1080 existing tests pass via JsonAuthService wrapping AuthStore."
+    },
+    {
+      "id": "T-service-layer-phase3",
+      "task": "Service Layer Migration Phase 3 — Three data service protocols (Gap, Brand, Content) with dual Json/Db implementations, 5 new repositories, backfill script, 46 new tests",
+      "sprint": "service-layer-phase3",
+      "status": "done",
+      "completed_at": "2026-02-28",
+      "files_changed": [
+        "core/services/__init__.py",
+        "core/services/gap_data.py",
+        "core/services/brand_data.py",
+        "core/services/content_data.py",
+        "core/services/json_gap_data.py",
+        "core/services/json_brand_data.py",
+        "core/services/json_content_data.py",
+        "core/services/db_gap_data.py",
+        "core/services/db_brand_data.py",
+        "core/services/db_content_data.py",
+        "core/db/repositories/signal_repo.py",
+        "core/db/repositories/platform_repo.py",
+        "core/db/repositories/gap_analysis_repo.py",
+        "core/db/repositories/pipeline_repo.py",
+        "core/db/repositories/content_repo.py",
+        "core/db/enums.py",
+        "api/dependencies.py",
+        "api/routers/gap_data.py",
+        "api/routers/brand_data.py",
+        "api/routers/content_data.py",
+        "tests/api/conftest.py",
+        "scripts/backfill_gap_data.py",
+        "tests/services/__init__.py",
+        "tests/services/conftest.py",
+        "tests/services/test_protocol_conformance.py",
+        "tests/services/test_db_gap_data.py",
+        "tests/services/test_db_brand_data.py",
+        "tests/services/test_db_content_data.py",
+        "tests/db/test_signal_repo.py",
+        "tests/db/test_platform_repo.py"
+      ],
+      "tests_added": 46,
+      "test_total": "1088 passed + 125 skipped = 1213 collected",
+      "summary": "Step 0: Fixed GapClassification enum (significant_gap/gap_to_close/roughly_equal/company_wins/no_data). Step 1: Created 3 service protocols + 3 JsonXxxService wrappers (asyncio.to_thread), DI functions, converted 14 router endpoints to async with service injection. Step 2: Created SignalRepository (signal averages, correlations, cluster patterns), PlatformRepository (platform summaries, URL sets, exclusivity), enhanced gap_analysis_repo (pagination, classification counts), enhanced pipeline_repo (get_latest_completed, list_runs_by_slug), enhanced content_repo (piece listing, detail). Step 3: Created DbGapDataService, DbBrandDataService, DbContentDataService. Step 4: Created backfill script (scripts/backfill_gap_data.py) for JSON→DB migration. Step 5: Created protocol conformance tests (9), DB service tests (25), DB repo tests (12)."
     }
   ],
   "blocked": []

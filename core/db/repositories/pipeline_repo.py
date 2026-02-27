@@ -74,3 +74,53 @@ class PipelineRepository(SQLAlchemyRepository[PipelineRunModel]):
         stmt = stmt.order_by(PipelineRunModel.created_at.asc())
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    # ── Phase 3 additions ─────────────────────────────────────────────
+
+    async def get_latest_completed(
+        self,
+        effective_slug: str,
+        pipeline_type: PipelineType,
+    ) -> PipelineRunModel | None:
+        """Find the most recent completed run for a slug + pipeline type.
+
+        Used by DbServices to resolve effective_slug → run_id.
+        """
+        stmt = (
+            select(PipelineRunModel)
+            .where(
+                PipelineRunModel.effective_slug == effective_slug,
+                PipelineRunModel.pipeline_type == pipeline_type,
+                PipelineRunModel.status == PipelineStatus.completed,
+            )
+            .order_by(PipelineRunModel.completed_at.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
+    async def list_runs_by_slug(
+        self,
+        effective_slug: str,
+        *,
+        pipeline_type: PipelineType | None = None,
+        status: PipelineStatus | None = None,
+        limit: int = 50,
+    ) -> Sequence[PipelineRunModel]:
+        """List runs for an effective slug with optional filters.
+
+        Results sorted by created_at descending (most recent first).
+        """
+        stmt = select(PipelineRunModel).where(
+            PipelineRunModel.effective_slug == effective_slug,
+        )
+        if pipeline_type is not None:
+            stmt = stmt.where(PipelineRunModel.pipeline_type == pipeline_type)
+        if status is not None:
+            stmt = stmt.where(PipelineRunModel.status == status)
+        stmt = (
+            stmt.order_by(PipelineRunModel.created_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()

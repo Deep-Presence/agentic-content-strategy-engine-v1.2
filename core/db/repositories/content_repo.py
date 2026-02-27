@@ -58,3 +58,20 @@ class ContentRepository(SQLAlchemyRepository[ContentPieceModel]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().first()
+
+    # ── Phase 3 additions ─────────────────────────────────────────────
+
+    async def get_piece_detail(
+        self,
+        run_id: _uuid.UUID | str,
+        piece_id: _uuid.UUID | str,
+    ) -> ContentPieceModel | None:
+        """Get a single content piece by run_id + piece_id."""
+        run_pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        piece_pk = _uuid.UUID(str(piece_id)) if isinstance(piece_id, str) else piece_id
+        stmt = select(ContentPieceModel).where(
+            ContentPieceModel.run_id == run_pk,
+            ContentPieceModel.id == piece_pk,
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().first()

@@ -53,11 +53,11 @@ class SearchEngine(str, Enum):
 
 
 class GapClassification(str, Enum):
-    large_gap = "large_gap"
-    moderate_gap = "moderate_gap"
-    small_gap = "small_gap"
-    no_gap = "no_gap"
-    already_cited = "already_cited"
+    significant_gap = "significant_gap"
+    gap_to_close = "gap_to_close"
+    roughly_equal = "roughly_equal"
+    company_wins = "company_wins"
+    no_data = "no_data"
 
 
 # ── Research Artifacts ────────────────────────────────────────────────

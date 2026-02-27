@@ -10,6 +10,12 @@ from api.tasks.event_bus import EventBus
 from api.tasks.store import TaskStore
 from core.auth.json_service import JsonAuthService
 from core.auth.service import AuthServiceProtocol
+from core.services.brand_data import BrandDataServiceProtocol
+from core.services.content_data import ContentDataServiceProtocol
+from core.services.gap_data import GapDataServiceProtocol
+from core.services.json_brand_data import JsonBrandDataService
+from core.services.json_content_data import JsonContentDataService
+from core.services.json_gap_data import JsonGapDataService
 
 
 def get_task_store(request: Request) -> TaskStore:
@@ -40,3 +46,46 @@ def get_auth_service(request: Request) -> AuthServiceProtocol:
         return service
     # Default: wrap the existing AuthStore
     return JsonAuthService(request.app.state.auth_store)
+
+
+def get_gap_data_service(request: Request) -> GapDataServiceProtocol:
+    """Return the gap data service.
+
+    Checks for a pre-built service on app.state (e.g., from dependency
+    override or DbGapDataService when DATABASE_URL is configured).
+    Defaults to JsonGapDataService wrapping the filesystem functions.
+    """
+    service = getattr(request.app.state, "gap_data_service", None)
+    if service is not None:
+        return service
+    return JsonGapDataService(
+        artifacts_root=request.app.state.artifacts_root,
+        task_store=request.app.state.task_store,
+    )
+
+
+def get_brand_data_service(request: Request) -> BrandDataServiceProtocol:
+    """Return the brand data service.
+
+    Defaults to JsonBrandDataService wrapping the filesystem + TaskStore.
+    """
+    service = getattr(request.app.state, "brand_data_service", None)
+    if service is not None:
+        return service
+    return JsonBrandDataService(
+        artifacts_root=request.app.state.artifacts_root,
+        task_store=request.app.state.task_store,
+    )
+
+
+def get_content_data_service(request: Request) -> ContentDataServiceProtocol:
+    """Return the content data service.
+
+    Defaults to JsonContentDataService wrapping the filesystem functions.
+    """
+    service = getattr(request.app.state, "content_data_service", None)
+    if service is not None:
+        return service
+    return JsonContentDataService(
+        artifacts_root=request.app.state.artifacts_root,
+    )

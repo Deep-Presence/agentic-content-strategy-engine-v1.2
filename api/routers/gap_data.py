@@ -1,19 +1,16 @@
 """Gap analysis data retrieval endpoints.
 
 Serves pre-computed pipeline artifacts for the Signal Analysis dashboard.
-All data is read from ``artifacts/gap_analysis/{slug}/`` JSON files.
-
 All endpoints require authentication and company membership.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
 
 from api.auth.dependencies import require_tenant
-from api.dependencies import get_artifacts_root, get_task_store
+from api.dependencies import get_gap_data_service
 from api.schemas.brand_data import SPATrendResponse
 from api.schemas.content_data import EmbeddingProjectionResponse
 from api.schemas.gap_data import (
@@ -24,17 +21,7 @@ from api.schemas.gap_data import (
     QueryListResponse,
     SignalAveragesResponse,
 )
-from api.services.brand_data_service import get_spa_trend
-from api.tasks.store import TaskStore
-from api.services.gap_data_service import (
-    get_clusters,
-    get_embedding_projection,
-    get_heatmap,
-    get_platforms,
-    get_queries,
-    get_signals,
-    get_summary,
-)
+from core.services.gap_data import GapDataServiceProtocol
 
 router = APIRouter(
     prefix="/api/v1/companies/{slug}/gap-analysis",
@@ -48,20 +35,20 @@ def _effective(slug: str, product_slug: Optional[str]) -> str:
 
 
 @router.get("/summary", response_model=GapSummaryResponse)
-def get_gap_summary(
+async def get_gap_summary(
     slug: str,
-    artifacts_root: Path = Depends(get_artifacts_root),
+    gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
     _access=Depends(require_tenant),
 ) -> GapSummaryResponse:
     """Executive overview: SPA score, proximity stats, classifications, clusters."""
-    return get_summary(artifacts_root, _effective(slug, product_slug))
+    return await gap_service.get_summary(_effective(slug, product_slug))
 
 
 @router.get("/queries", response_model=QueryListResponse)
-def get_gap_queries(
+async def get_gap_queries(
     slug: str,
-    artifacts_root: Path = Depends(get_artifacts_root),
+    gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
     cluster: Optional[str] = Query(None, description="Filter by cluster name or ID"),
     classification: Optional[str] = Query(None, description="Filter by gap classification"),
@@ -73,8 +60,7 @@ def get_gap_queries(
     _access=Depends(require_tenant),
 ) -> QueryListResponse:
     """Paginated, filterable query list for the Query Intelligence tab."""
-    return get_queries(
-        artifacts_root,
+    return await gap_service.get_queries(
         _effective(slug, product_slug),
         cluster=cluster,
         classification=classification,
@@ -87,69 +73,69 @@ def get_gap_queries(
 
 
 @router.get("/clusters", response_model=ClusterListResponse)
-def get_gap_clusters(
+async def get_gap_clusters(
     slug: str,
-    artifacts_root: Path = Depends(get_artifacts_root),
+    gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
     _access=Depends(require_tenant),
 ) -> ClusterListResponse:
     """Cluster specifications with centroid distances and structural rates."""
-    return get_clusters(artifacts_root, _effective(slug, product_slug))
+    return await gap_service.get_clusters(_effective(slug, product_slug))
 
 
 @router.get("/signals", response_model=SignalAveragesResponse)
-def get_gap_signals(
+async def get_gap_signals(
     slug: str,
-    artifacts_root: Path = Depends(get_artifacts_root),
+    gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
     _access=Depends(require_tenant),
 ) -> SignalAveragesResponse:
     """Structural signal averages, correlations, and cluster patterns."""
-    return get_signals(artifacts_root, _effective(slug, product_slug))
+    return await gap_service.get_signals(_effective(slug, product_slug))
 
 
 @router.get("/platforms", response_model=PlatformListResponse)
-def get_gap_platforms(
+async def get_gap_platforms(
     slug: str,
-    artifacts_root: Path = Depends(get_artifacts_root),
+    gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
     _access=Depends(require_tenant),
 ) -> PlatformListResponse:
     """Per-platform citation breakdown with agreement matrix."""
-    return get_platforms(artifacts_root, _effective(slug, product_slug))
+    return await gap_service.get_platforms(_effective(slug, product_slug))
 
 
 @router.get("/heatmap", response_model=HeatmapResponse)
-def get_gap_heatmap(
+async def get_gap_heatmap(
     slug: str,
-    artifacts_root: Path = Depends(get_artifacts_root),
+    gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
     _access=Depends(require_tenant),
 ) -> HeatmapResponse:
     """Gap score heatmap grouped by cluster."""
-    return get_heatmap(artifacts_root, _effective(slug, product_slug))
+    return await gap_service.get_heatmap(_effective(slug, product_slug))
 
 
 @router.get("/embeddings", response_model=EmbeddingProjectionResponse)
-def get_gap_embeddings(
+async def get_gap_embeddings(
     slug: str,
-    artifacts_root: Path = Depends(get_artifacts_root),
+    gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
     method: Literal["umap", "tsne"] = Query("umap", description="Projection method: umap or tsne"),
     _access=Depends(require_tenant),
 ) -> EmbeddingProjectionResponse:
     """2D embedding projections for scatter plot visualization."""
-    return get_embedding_projection(
-        artifacts_root, _effective(slug, product_slug), method=method
+    return await gap_service.get_embedding_projection(
+        _effective(slug, product_slug), method=method,
     )
 
 
 @router.get("/trend", response_model=SPATrendResponse)
-def get_spa_trend_endpoint(
+async def get_spa_trend_endpoint(
     slug: str,
-    task_store: TaskStore = Depends(get_task_store),
+    gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
     _access=Depends(require_tenant),
 ) -> SPATrendResponse:
     """SPA score trend across completed gap analysis runs."""
-    return get_spa_trend(task_store, _effective(slug, product_slug))
+    return await gap_service.get_spa_trend(_effective(slug, product_slug))
