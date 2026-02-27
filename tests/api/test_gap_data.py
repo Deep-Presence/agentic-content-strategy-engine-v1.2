@@ -692,6 +692,62 @@ class TestGapQueries:
             assert q["classification"] == "significant_gap"
 
 
+class TestGapQueryValidation:
+    """PB-6, PB-7, PB-9 — sort_dir, page clamping, classification sort."""
+
+    def test_sort_dir_invalid_returns_422(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """PB-6: sort_dir must be 'asc' or 'desc', other values → 422."""
+        data = _make_complete_new_format(num_gaps=5)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+        resp = client.get(_url("test-co", "queries") + "?sort_dir=invalid")
+        assert resp.status_code == 422
+
+    def test_page_clamped_to_last(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """PB-9: page=999 with 5 items returns clamped page with data."""
+        data = _make_complete_new_format(num_gaps=5)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+        body = client.get(
+            _url("test-co", "queries") + "?page=999&page_size=15"
+        ).json()
+        # Should be clamped to page 1 (5 items / 15 per page = 1 page)
+        assert body["page"] == 1
+        assert body["total_pages"] == 1
+        assert len(body["queries"]) > 0
+
+    def test_classification_sort_severity_order(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """PB-7: sort_by=classification orders by severity, not alphabetical."""
+        gaps = [
+            _make_gap(0, interpretation="company_wins", gap=0.05),
+            _make_gap(1, interpretation="significant_gap", gap=0.50),
+            _make_gap(2, interpretation="roughly_equal", gap=0.10),
+            _make_gap(3, interpretation="gap_to_close", gap=0.30),
+        ]
+        data = _make_complete_new_format(num_gaps=4)
+        data["analysis"]["gaps"] = gaps
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+        body = client.get(
+            _url("test-co", "queries") + "?sort_by=classification&sort_dir=desc"
+        ).json()
+        classifications = [q["classification"] for q in body["queries"]]
+        expected = ["significant_gap", "gap_to_close", "roughly_equal", "company_wins"]
+        assert classifications == expected
+
+    def test_sort_dir_asc_valid(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """sort_dir='asc' is accepted."""
+        data = _make_complete_new_format(num_gaps=3)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+        resp = client.get(_url("test-co", "queries") + "?sort_dir=asc")
+        assert resp.status_code == 200
+
+
 class TestGapClusters:
     """GET /clusters endpoint."""
 
@@ -1197,7 +1253,7 @@ class TestCX3SortByStringField:
     """CX-3: Sort by string field should not crash with mixed types."""
 
     def test_sort_by_classification(self, client: TestClient, artifacts_root: Path):
-        """sort_by=classification must not TypeError on mixed string/int."""
+        """sort_by=classification uses severity rank, not alphabetical (PB-7)."""
         data = _make_complete_new_format(num_gaps=5)
         _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
@@ -1208,7 +1264,13 @@ class TestCX3SortByStringField:
         assert resp.status_code == 200
         rows = resp.json()["queries"]
         classifications = [r["classification"] for r in rows]
-        assert classifications == sorted(classifications)
+        # Severity rank: no_data(0) < company_wins(1) < roughly_equal(2) < gap_to_close(3) < significant_gap(4)
+        _RANK = {
+            "no_data": 0, "company_wins": 1, "roughly_equal": 2,
+            "gap_to_close": 3, "significant_gap": 4,
+        }
+        ranks = [_RANK.get(c, 0) for c in classifications]
+        assert ranks == sorted(ranks)
 
     def test_sort_by_query_text(self, client: TestClient, artifacts_root: Path):
         """sort_by=query_text must work with string comparison."""

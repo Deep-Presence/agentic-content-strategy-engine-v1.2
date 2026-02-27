@@ -7,7 +7,6 @@ from fastapi import Request
 
 from api.auth.store import AuthStore
 from api.tasks.event_bus import EventBus
-from api.tasks.store import TaskStore
 from core.auth.json_service import JsonAuthService
 from core.auth.service import AuthServiceProtocol
 from core.services.brand_data import BrandDataServiceProtocol
@@ -16,9 +15,15 @@ from core.services.gap_data import GapDataServiceProtocol
 from core.services.json_brand_data import JsonBrandDataService
 from core.services.json_content_data import JsonContentDataService
 from core.services.json_gap_data import JsonGapDataService
+from core.services.task_store import TaskStoreProtocol
 
 
-def get_task_store(request: Request) -> TaskStore:
+def get_task_store(request: Request) -> TaskStoreProtocol:
+    """Return the task store — JSON-backed TaskStore or DbTaskStore.
+
+    When DATABASE_URL is configured, this will return DbTaskStore.
+    For now, always returns the JSON-backed TaskStore.
+    """
     return request.app.state.task_store
 
 

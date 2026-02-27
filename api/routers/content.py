@@ -19,7 +19,7 @@ from api.schemas.common import (
 from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
 from api.tasks.runner import _derive_slug, _resolve_scope_async, run_content_pipeline_task
-from api.tasks.store import TaskStore
+from core.services.task_store import TaskStoreProtocol
 from core.models.content_generation import ContentGenerationInput
 from core.models.organization import UserProfile
 
@@ -31,7 +31,7 @@ async def start_content(
     body: ContentStartRequest,
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
@@ -90,7 +90,7 @@ def get_content_status(
     run_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
 ) -> TaskResponse:
     task = task_store.get_task(run_id)
     # Task ownership check
@@ -118,7 +118,7 @@ def approve_content(
     body: ContentApprovalRequest,
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
 ) -> ContentApprovalResponse:
     task = task_store.get_task(run_id)
     # Task ownership check

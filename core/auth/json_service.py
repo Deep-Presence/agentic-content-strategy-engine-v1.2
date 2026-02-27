@@ -29,6 +29,12 @@ class JsonAuthService:
     async def get_company_by_slug(self, slug: str) -> Optional[Company]:
         return self._store.get_company_by_slug(slug)
 
+    async def get_company_by_id(self, company_id: str) -> Optional[Company]:
+        for company in self._store._companies.values():
+            if company.id == company_id:
+                return company
+        return None
+
     async def get_company_by_domain(self, raw_domain: str) -> Optional[Company]:
         return self._store.get_company_by_domain(raw_domain)
 
@@ -127,7 +133,7 @@ class JsonAuthService:
     async def create_invite(
         self, company_slug: str, role: str = "member"
     ) -> str:
-        return self._store.create_invite(company_slug, role)
+        return await asyncio.to_thread(self._store.create_invite, company_slug, role)
 
     async def redeem_invite(
         self,

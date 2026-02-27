@@ -3,15 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
+from core.services.task_store import TaskStoreProtocol
 from core.gap_analysis.pipeline import run_gap_analysis
+from core.auth.utils.domain import derive_slug
 from core.models.artifacts import CompanyResearchInput
 from core.models.gap_analysis import GapAnalysisInput
 from core.models.personas import PersonaResearchInput
@@ -138,7 +138,7 @@ def _enrich_interrupt_with_draft_content(
 def _derive_slug(company_name: str, company_slug: Optional[str] = None) -> str:
     if company_slug:
         return company_slug
-    return re.sub(r"[^a-z0-9]+", "-", company_name.lower()).strip("-") or company_name.lower()
+    return derive_slug(company_name) or company_name.lower()
 
 
 def resolve_artifacts(
@@ -200,7 +200,7 @@ async def run_gap_pipeline_task(
     task_id: str,
     request: Any,
     artifacts_root: Path,
-    task_store: TaskStore,
+    task_store: TaskStoreProtocol,
     event_bus: EventBus,
     auth_service: Optional[Any] = None,
 ) -> None:
@@ -327,7 +327,7 @@ async def _run_research_stage(
     build_graph_fn: Callable[..., Any],
     initial_state: Dict[str, Any],
     task_id: str,
-    task_store: TaskStore,
+    task_store: TaskStoreProtocol,
     event_bus: EventBus,
 ) -> Dict[str, Any]:
     """Run a single research stage with HITL interrupt/resume support.
@@ -403,7 +403,7 @@ async def _run_research_stage(
 async def run_research_pipeline_task(
     task_id: str,
     request: Any,
-    task_store: TaskStore,
+    task_store: TaskStoreProtocol,
     event_bus: EventBus,
     auth_service: Optional[Any] = None,
 ) -> None:
@@ -547,7 +547,7 @@ async def run_research_pipeline_task(
 async def run_content_pipeline_task(
     task_id: str,
     input_data: Any,
-    task_store: TaskStore,
+    task_store: TaskStoreProtocol,
     event_bus: EventBus,
 ) -> None:
     """Background task wrapper for content generation pipeline.

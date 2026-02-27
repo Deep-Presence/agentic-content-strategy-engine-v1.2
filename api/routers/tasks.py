@@ -15,7 +15,7 @@ from core.auth.service import AuthServiceProtocol
 from api.schemas.common import CancelResponse, TaskListResponse, TaskResponse, TaskSummary
 from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
+from core.services.task_store import TaskStoreProtocol
 from core.models.organization import UserProfile
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
@@ -29,7 +29,7 @@ def list_tasks(
     pipeline: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     product_slug: Optional[str] = Query(None),
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
     _user: UserProfile = Depends(require_auth),
 ) -> TaskListResponse:
     # Auto-filter by the authenticated user's company
@@ -61,7 +61,7 @@ def list_tasks(
 def get_task(
     task_id: str,
     request: Request,
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
     _user: UserProfile = Depends(require_auth),
 ) -> TaskResponse:
     task = task_store.get_task(task_id)
@@ -92,7 +92,7 @@ def get_task(
 def cancel_task(
     task_id: str,
     request: Request,
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
     _user: UserProfile = Depends(require_role("member", "superuser")),
 ) -> CancelResponse:
@@ -127,7 +127,7 @@ def cancel_task(
 async def create_stream_token(
     task_id: str,
     request: Request,
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     _user: UserProfile = Depends(require_auth),
 ) -> dict:

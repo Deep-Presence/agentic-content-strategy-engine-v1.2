@@ -4,10 +4,19 @@ from __future__ import annotations
 import uuid as _uuid
 from typing import Any, Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db.enums import GapClassification
+
+# Severity rank: higher = worse gap
+_CLASSIFICATION_RANK = {
+    GapClassification.significant_gap: 4,
+    GapClassification.gap_to_close: 3,
+    GapClassification.roughly_equal: 2,
+    GapClassification.company_wins: 1,
+    GapClassification.no_data: 0,
+}
 from core.db.models.gap_analysis import (
     ClusterSpecModel,
     QueryGapModel,
@@ -176,9 +185,22 @@ class GapAnalysisRepository(SQLAlchemyRepository[QueryGapModel]):
         count_stmt = select(func.count()).select_from(base.subquery())
         total = int((await self._session.execute(count_stmt)).scalar_one())
 
-        # Sort
-        sort_col = getattr(QueryGapModel, sort_by, QueryGapModel.gap)
-        order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        page = max(1, min(page, total_pages))  # Clamp to valid range
+
+        # Sort — severity-ranked for classification, column-based otherwise
+        if sort_by == "classification":
+            severity_expr = case(
+                *[
+                    (QueryGapModel.classification == cls, rank)
+                    for cls, rank in _CLASSIFICATION_RANK.items()
+                ],
+                else_=0,
+            )
+            order = severity_expr.desc() if sort_dir == "desc" else severity_expr.asc()
+        else:
+            sort_col = getattr(QueryGapModel, sort_by, QueryGapModel.gap)
+            order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
         base = base.order_by(order)
 
         # Paginate
@@ -193,5 +215,5 @@ class GapAnalysisRepository(SQLAlchemyRepository[QueryGapModel]):
             "total": total,
             "page": page,
             "page_size": page_size,
-            "total_pages": max(1, (total + page_size - 1) // page_size),
+            "total_pages": total_pages,
         }

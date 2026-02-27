@@ -1,6 +1,4 @@
 """Pure ASGI auth middleware — default-deny on protected routes.
-
-Replaces the previous BaseHTTPMiddleware grace-mode implementation.
 Middleware handles *authentication* (identity extraction).
 FastAPI dependencies handle *authorization* (role + tenant checks).
 

@@ -4,7 +4,7 @@ Covers:
 - POST /api/v1/auth/login — success, wrong password, nonexistent email, token validity
 - GET /api/v1/auth/me — with valid token, without token, with invalid/expired token
 - Input validation — invalid email format, short password
-- Auth middleware — grace mode, token parsing into request.state
+- Auth middleware — default-deny ASGI middleware, token parsing into request.state
 """
 from __future__ import annotations
 
@@ -105,6 +105,18 @@ class TestLogin:
         assert user["id"]  # Non-empty UUID
         assert user["company_id"]
 
+    def test_login_uses_company_by_id(self, client: TestClient) -> None:
+        """Login resolves company via get_company_by_id (not O(N) list scan)."""
+        reg = _register(client)
+        resp = client.post(
+            "/api/v1/auth/login",
+            json={"email": "jane@acme.com", "password": "securepass123"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["company"]["slug"] == "acme-corp"
+        assert data["company"]["id"] == reg["company"]["id"]
+
 
 # ── Me tests ─────────────────────────────────────────────────────
 
@@ -166,6 +178,60 @@ class TestMe:
             "role", "company_id", "is_active",
         }
 
+    def test_me_deactivated_user_returns_401(
+        self, client: TestClient, auth_store,
+    ) -> None:
+        """PB-34: Deactivated user with valid token must get 401 on /me."""
+        reg = _register(client)
+        token = reg["access_token"]
+        user_id = reg["user"]["id"]
+        # Deactivate the user
+        auth_store.update_user(user_id, is_active=False)
+        resp = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Account deactivated"
+
+    def test_me_deleted_user_returns_401(
+        self, client: TestClient, auth_store,
+    ) -> None:
+        """PB-34: Token for a deleted user must get 401 on /me."""
+        reg = _register(client)
+        token = reg["access_token"]
+        user_id = reg["user"]["id"]
+        # Remove user from store
+        auth_store._users.pop(user_id, None)
+        resp = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "User not found"
+
+    def test_me_no_token_returns_401(self, public_client: TestClient) -> None:
+        """PB-34: /me without token returns 401."""
+        resp = public_client.get("/api/v1/auth/me")
+        assert resp.status_code == 401
+
+    def test_me_active_user_returns_correct_data(
+        self, client: TestClient,
+    ) -> None:
+        """PB-34: Active user with valid token gets 200 with correct data."""
+        reg = _register(client)
+        token = reg["access_token"]
+        resp = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["user"]["email"] == "jane@acme.com"
+        assert data["user"]["is_active"] is True
+        assert data["company"]["slug"] == "acme-corp"
+        assert data["company"]["domain"] == "acme.com"
+
 
 # ── Validation tests (C3) ───────────────────────────────────────
 
@@ -199,10 +265,10 @@ class TestValidation:
 
 
 class TestAuthMiddleware:
-    """Auth middleware grace mode + token parsing."""
+    """Auth middleware default-deny ASGI + token parsing."""
 
     def test_request_without_auth_header_passes(self, client: TestClient) -> None:
-        """Grace mode: unauthenticated requests pass through."""
+        """Public routes pass through without auth."""
         resp = client.get("/health")
         assert resp.status_code == 200
 

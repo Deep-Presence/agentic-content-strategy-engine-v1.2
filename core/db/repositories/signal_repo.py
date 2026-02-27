@@ -155,6 +155,7 @@ class SignalRepository:
             ("comparison_table_rate", uss.has_comparison_table),
             ("step_by_step_rate", uss.has_step_by_step),
             ("research_refs_rate", uss.has_research_refs),
+            ("expert_quotes_rate", uss.has_expert_quotes),
         ]
 
         pattern_exprs = []

@@ -134,6 +134,10 @@ class DbAuthService:
         model = await self._company_repo.get_by_slug(slug)
         return self._orm_to_company(model) if model else None
 
+    async def get_company_by_id(self, company_id: str) -> Optional[Company]:
+        model = await self._company_repo.get_by_id(company_id)
+        return self._orm_to_company(model) if model else None
+
     async def get_company_by_domain(self, raw_domain: str) -> Optional[Company]:
         root, _ = normalize_domain(raw_domain)
         model = await self._company_repo.get_by_domain(root)

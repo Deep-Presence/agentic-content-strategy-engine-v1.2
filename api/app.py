@@ -30,6 +30,38 @@ middleware_logger = logging.getLogger("api.middleware")
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]  # content-strategy-engine/
 
 
+async def _init_task_store(app: FastAPI) -> TaskStore:
+    """Try DbTaskStore when DATABASE_URL is set, fall back to JSON TaskStore."""
+    from core.config.settings import settings
+
+    if settings.database_url:
+        try:
+            from core.db.engine import get_session_factory
+            from core.services.db_task_store import DbTaskStore
+
+            session_factory = get_session_factory()
+            db_store = DbTaskStore(
+                session_factory=session_factory,
+                max_concurrent=api_settings.max_concurrent_pipelines,
+            )
+            orphan_count = await db_store.recover_from_db()
+            logger.info(
+                "Using DbTaskStore (recovered %d orphans)", orphan_count
+            )
+            return db_store  # type: ignore[return-value]
+        except Exception:
+            logger.exception(
+                "Failed to initialize DbTaskStore — falling back to JSON TaskStore"
+            )
+
+    jobs_dir = _PROJECT_ROOT / "artifacts" / "_jobs"
+    return TaskStore(
+        base_dir=jobs_dir,
+        event_bus=app.state.event_bus,
+        max_concurrent=api_settings.max_concurrent_pipelines,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize shared state on startup, cleanup on shutdown."""
@@ -37,12 +69,7 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "event_bus") or app.state.event_bus is None:
         app.state.event_bus = EventBus()
     if not hasattr(app.state, "task_store") or app.state.task_store is None:
-        jobs_dir = _PROJECT_ROOT / "artifacts" / "_jobs"
-        app.state.task_store = TaskStore(
-            base_dir=jobs_dir,
-            event_bus=app.state.event_bus,
-            max_concurrent=api_settings.max_concurrent_pipelines,
-        )
+        app.state.task_store = await _init_task_store(app)
     if not hasattr(app.state, "artifacts_root") or app.state.artifacts_root is None:
         app.state.artifacts_root = _PROJECT_ROOT / "artifacts"
     if not hasattr(app.state, "auth_store") or app.state.auth_store is None:
@@ -52,7 +79,9 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "secret_key") or app.state.secret_key is None:
         app.state.secret_key = app.state.auth_store._secret_key
 
-    logger.info("API started — jobs dir: %s", app.state.task_store._base_dir)
+    logger.info(
+        "API started — task store: %s", type(app.state.task_store).__name__
+    )
     yield
     logger.info("API shutting down")
 

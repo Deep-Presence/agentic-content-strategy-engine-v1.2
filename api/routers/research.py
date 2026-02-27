@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -12,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from api.auth.dependencies import require_auth, require_role
 from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
 from core.auth.service import AuthServiceProtocol
+from core.auth.utils.domain import derive_slug
 from api.schemas.common import (
     ApprovalRequest,
     ApprovalResponse,
@@ -22,14 +22,14 @@ from api.schemas.common import (
 from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask, TaskStatus
 from api.tasks.runner import run_research_pipeline_task
-from api.tasks.store import TaskStore
+from core.services.task_store import TaskStoreProtocol
 from core.models.organization import UserProfile
 
 router = APIRouter(prefix="/api/v1/research", tags=["research"])
 
 
 def _derive_slug(company_name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", company_name.lower()).strip("-")
+    return derive_slug(company_name)
 
 
 # Stage → artifact existence check. Draft personas (.draft.md) are excluded.
@@ -62,7 +62,7 @@ def _research_stages_exist(
 
 
 def _get_latest_research_run(
-    task_store: TaskStore, slug: str, product_slug: Optional[str]
+    task_store: TaskStoreProtocol, slug: str, product_slug: Optional[str]
 ) -> Optional[PipelineTask]:
     """Return the most-recent completed research task for this exact scope."""
     tasks = [
@@ -83,7 +83,7 @@ async def start_research(
     response: Response,
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
@@ -148,7 +148,7 @@ def get_research_status(
     run_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
 ) -> TaskResponse:
     task = task_store.get_task(run_id)
     # Task ownership check
@@ -176,7 +176,7 @@ def approve_research(
     body: ApprovalRequest,
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
 ) -> ApprovalResponse:
     task = task_store.get_task(run_id)
     # Task ownership check

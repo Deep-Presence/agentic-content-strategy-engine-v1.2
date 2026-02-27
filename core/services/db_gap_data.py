@@ -150,19 +150,22 @@ class DbGapDataService:
             company_wins=classification_counts.get("company_wins", 0),
         )
 
-        # Cluster performance from specs + centroid results
+        # Cluster performance from specs + centroid + SPA results
         centroid_lookup = {c.cluster_name: c for c in centroid_results}
+        spa_lookup = {s.cluster_name: s for s in spa_results}
         cluster_perf: List[ClusterPerformanceRow] = []
         for spec in cluster_specs:
+            centroid = centroid_lookup.get(spec.cluster_name)
+            spa_row = spa_lookup.get(spec.cluster_name)
             cluster_perf.append(
                 ClusterPerformanceRow(
                     cluster_id=spec.cluster_id,
                     cluster_name=spec.cluster_name,
                     query_count=spec.query_count,
                     citation_count=spec.total_citations_analyzed,
-                    avg_gap=0.0,
-                    avg_citation_sim=0.0,
-                    avg_company_sim=0.0,
+                    avg_gap=centroid.distance if centroid else 0.0,
+                    avg_citation_sim=spa_row.mean_citation_similarity if spa_row else 0.0,
+                    avg_company_sim=spa_row.mean_company_similarity if spa_row else 0.0,
                     structural_rates=spec.structural_rates or {},
                 )
             )
@@ -327,7 +330,7 @@ class DbGapDataService:
                 comparison_table=cp.get("comparison_table_rate", 0.0),
                 step_by_step=cp.get("step_by_step_rate", 0.0),
                 research_refs=cp.get("research_refs_rate", 0.0),
-                expert_quotes=0.0,
+                expert_quotes=cp.get("expert_quotes_rate", 0.0),
             ))
 
         # Build cluster fingerprints from specs

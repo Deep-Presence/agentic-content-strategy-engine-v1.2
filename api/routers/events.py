@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from api.auth.dependencies import require_auth
 from api.dependencies import get_event_bus, get_task_store
 from api.tasks.event_bus import EventBus
-from api.tasks.store import TaskStore
+from core.services.task_store import TaskStoreProtocol
 from core.models.organization import UserProfile
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["events"])
@@ -24,7 +24,7 @@ async def stream_events(
     task_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
 ) -> StreamingResponse:
     # Validate task exists (raises 404 via exception handler if not)

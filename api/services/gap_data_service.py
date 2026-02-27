@@ -768,19 +768,27 @@ def get_queries(
     total = len(filtered)
 
     # Sort — type-aware to prevent mixed str/int TypeError (CX-3)
-    _STRING_SORT_FIELDS = {"classification", "query_text", "cluster_name"}
+    _STRING_SORT_FIELDS = {"query_text", "cluster_name"}
     _NUMERIC_SORT_FIELDS = {"gap_score", "company_sim", "citation_sim", "headers", "top_exemplar_sim"}
-    _SORT_FIELDS = _STRING_SORT_FIELDS | _NUMERIC_SORT_FIELDS
+    _SORT_FIELDS = _STRING_SORT_FIELDS | _NUMERIC_SORT_FIELDS | {"classification"}
     if sort_by not in _SORT_FIELDS:
         sort_by = "gap_score"
     reverse = sort_dir != "asc"
-    if sort_by in _STRING_SORT_FIELDS:
+    if sort_by == "classification":
+        # Severity-ranked sort (PB-7)
+        _RANK = {
+            "significant_gap": 4, "gap_to_close": 3,
+            "roughly_equal": 2, "company_wins": 1, "no_data": 0,
+        }
+        filtered.sort(key=lambda r: _RANK.get(str(getattr(r, "classification", "")), 0), reverse=reverse)
+    elif sort_by in _STRING_SORT_FIELDS:
         filtered.sort(key=lambda r: str(getattr(r, sort_by, "") or ""), reverse=reverse)
     else:
         filtered.sort(key=lambda r: float(getattr(r, sort_by, 0) or 0), reverse=reverse)
 
     # Paginate
     total_pages = max(1, math.ceil(total / page_size))
+    page = max(1, min(page, total_pages))  # Clamp to valid range (PB-9)
     start = (page - 1) * page_size
     end = start + page_size
     page_items = filtered[start:end]

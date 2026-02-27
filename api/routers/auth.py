@@ -30,11 +30,11 @@ async def register(
     body: RegisterRequest,
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> LoginResponse:
-    """Register a new user.
+    """Register a new user and create a new company.
 
-    - If company_domain matches an existing company, user joins as 'member'.
-    - If not, a new company is created and user becomes 'superuser'.
-    - Subdomains are normalized to root domain; originals saved to additional_domains.
+    Creates a new isolated company. The user becomes 'superuser'.
+    If the domain is already taken, returns 409. To join an existing
+    company, use ``POST /api/v1/auth/join`` with an invite code.
     """
     try:
         user, company = await auth_service.register_user(
@@ -100,14 +100,7 @@ async def login(
     if not user.get("is_active", True):
         raise HTTPException(status_code=401, detail="Account deactivated")
 
-    company = await auth_service.get_company_by_slug(user.get("company_slug", ""))
-    if not company:
-        # Fallback: look up company by company_id stored on the user
-        company_id = user.get("company_id", "")
-        for c in await auth_service.list_companies():
-            if c.id == company_id:
-                company = c
-                break
+    company = await auth_service.get_company_by_id(user.get("company_id", ""))
     if not company:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -136,32 +129,26 @@ async def login(
 @router.get("/me")
 async def get_me(
     request: Request,
+    current_user: UserProfile = Depends(require_auth),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> MeResponse:
     """Return current user info from the auth token.
 
-    Requires a valid Bearer token (parsed by AuthMiddleware).
+    Uses ``require_auth`` dependency to verify the token, check
+    ``is_active``, and return the authenticated ``UserProfile``.
     """
-    user_id = getattr(request.state, "user_id", None)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    user = await auth_service.get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-
     company_slug = getattr(request.state, "company_slug", None)
     company = (await auth_service.get_company_by_slug(company_slug)) if company_slug else None
 
     return MeResponse(
         user=UserResponse(
-            id=user["id"],
-            email=user["email"],
-            first_name=user["first_name"],
-            last_name=user["last_name"],
-            role=user["role"],
-            company_id=user["company_id"],
-            is_active=user.get("is_active", True),
+            id=current_user.id,
+            email=current_user.email,
+            first_name=current_user.first_name,
+            last_name=current_user.last_name,
+            role=current_user.role,
+            company_id=current_user.company_id,
+            is_active=current_user.is_active,
         ),
         company=CompanyResponse(
             id=company.id if company else "",

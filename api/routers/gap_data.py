@@ -54,7 +54,7 @@ async def get_gap_queries(
     classification: Optional[str] = Query(None, description="Filter by gap classification"),
     search: Optional[str] = Query(None, description="Search query text"),
     sort_by: str = Query("gap_score", description="Sort field"),
-    sort_dir: str = Query("desc", description="Sort direction: asc or desc"),
+    sort_dir: Literal["asc", "desc"] = Query("desc", description="Sort direction"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(15, ge=1, le=100, description="Items per page"),
     _access=Depends(require_tenant),
