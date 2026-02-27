@@ -586,3 +586,206 @@ class TestLoginBehavior:
         )
         assert resp.status_code == 401
         assert resp.json()["detail"] == "Invalid credentials"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 8. Critical review fixes (C1, C2+C3, C4, C5)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestC1ArtifactIDOR:
+    """C1: Cross-tenant artifact read bypass on flat types.
+
+    A user supplying their own slug in the URL but a different company's
+    filename should be rejected with 403.
+    """
+
+    def test_flat_type_filename_must_match_slug(
+        self,
+        client: TestClient,
+        artifacts_root: Path,
+        other_company: Company,
+    ) -> None:
+        """test-co user cannot read other-co.md via /artifacts/company_context/test-co/other-co.md."""
+        cc_dir = artifacts_root / "company_context"
+        cc_dir.mkdir(parents=True, exist_ok=True)
+        (cc_dir / "test-co.md").write_text("# Test Co context")
+        (cc_dir / "other-co.md").write_text("# Other Co SECRET context")
+
+        # Legit access — own file
+        resp = client.get("/api/v1/artifacts/company_context/test-co/test-co.md")
+        assert resp.status_code == 200
+        assert "Test Co context" in resp.text
+
+        # IDOR attempt — slug=test-co but filename=other-co.md
+        resp = client.get("/api/v1/artifacts/company_context/test-co/other-co.md")
+        assert resp.status_code == 403
+
+    def test_flat_type_effective_slug_allowed(
+        self,
+        client: TestClient,
+        artifacts_root: Path,
+    ) -> None:
+        """Effective slug files (test-co__product.md) are allowed for test-co user."""
+        cc_dir = artifacts_root / "company_context"
+        cc_dir.mkdir(parents=True, exist_ok=True)
+        (cc_dir / "test-co__product.md").write_text("# Product context")
+
+        resp = client.get(
+            "/api/v1/artifacts/company_context/test-co/test-co__product.md"
+        )
+        assert resp.status_code == 200
+
+    def test_flat_type_draft_file_allowed(
+        self,
+        client: TestClient,
+        artifacts_root: Path,
+    ) -> None:
+        """Draft files (test-co.draft.md) are allowed for the owning company."""
+        cc_dir = artifacts_root / "company_context"
+        cc_dir.mkdir(parents=True, exist_ok=True)
+        (cc_dir / "test-co.draft.md").write_text("# Draft context")
+
+        resp = client.get(
+            "/api/v1/artifacts/company_context/test-co/test-co.draft.md"
+        )
+        assert resp.status_code == 200
+
+    def test_flat_type_persona_idor_blocked(
+        self,
+        client: TestClient,
+        artifacts_root: Path,
+        other_company: Company,
+    ) -> None:
+        """Persona files from other company also blocked."""
+        persona_dir = artifacts_root / "personas"
+        persona_dir.mkdir(parents=True, exist_ok=True)
+        (persona_dir / "other-co__persona-icp.md").write_text("# Secret persona")
+
+        resp = client.get(
+            "/api/v1/artifacts/personas/test-co/other-co__persona-icp.md"
+        )
+        assert resp.status_code == 403
+
+
+class TestC4DeactivatedUserLogin:
+    """C4: Deactivated users must be rejected at login (before token issuance)."""
+
+    def test_deactivated_user_cannot_login(
+        self,
+        public_client: TestClient,
+        auth_store: AuthStore,
+        test_user: UserProfile,
+    ) -> None:
+        # Deactivate the user directly in the store
+        user_data = auth_store.get_user_by_id(test_user.id)
+        assert user_data is not None
+        user_data["is_active"] = False
+
+        resp = public_client.post(
+            "/api/v1/auth/login",
+            json={"email": "dev@testco.com", "password": "testpassword123"},
+        )
+        assert resp.status_code == 401
+        assert "deactivated" in resp.json()["detail"].lower()
+
+    def test_active_user_can_login(
+        self, public_client: TestClient, test_user: UserProfile
+    ) -> None:
+        """Sanity check: active user login still works."""
+        resp = public_client.post(
+            "/api/v1/auth/login",
+            json={"email": "dev@testco.com", "password": "testpassword123"},
+        )
+        assert resp.status_code == 200
+        assert "access_token" in resp.json()
+
+
+class TestC2C3SSEAuthDependency:
+    """C2+C3: SSE events endpoint must enforce is_active via require_auth."""
+
+    def test_deactivated_user_cannot_stream_events(
+        self,
+        app: FastAPI,
+        auth_store: AuthStore,
+        test_user: UserProfile,
+        test_company: Company,
+        task_store: TaskStore,
+        event_bus,
+    ) -> None:
+        """Deactivated user with valid token gets 401 from SSE endpoint."""
+        task = task_store.create_task("gap_analysis", "test-co")
+        event_bus.publish(task.task_id, "completed", {"result": "ok"})
+
+        # Create token while user is still active
+        token = auth_store.create_access_token(test_user.id, test_company.slug)
+
+        # Deactivate user
+        user_data = auth_store.get_user_by_id(test_user.id)
+        assert user_data is not None
+        user_data["is_active"] = False
+
+        deactivated_client = _AuthTestClient(
+            app, default_headers={"Authorization": f"Bearer {token}"}
+        )
+        resp = deactivated_client.get(f"/api/v1/tasks/{task.task_id}/events")
+        assert resp.status_code == 401
+
+
+class TestC5InviteRaceCondition:
+    """C5: Invite code redemption must be atomic — no double-use."""
+
+    def test_invite_code_single_use(
+        self,
+        public_client: TestClient,
+        superuser_client: TestClient,
+    ) -> None:
+        """After one successful redemption, the same code returns 400."""
+        # Create invite
+        invite_resp = superuser_client.post(
+            "/api/v1/auth/invite", json={"role": "member"}
+        )
+        assert invite_resp.status_code == 201
+        code = invite_resp.json()["invite_code"]
+
+        # First redemption — success
+        resp1 = public_client.post(
+            "/api/v1/auth/join",
+            json={
+                "invite_code": code,
+                "first_name": "First",
+                "last_name": "Redeemer",
+                "email": "first-redeemer@example.com",
+                "password": "securepass123",
+            },
+        )
+        assert resp1.status_code == 201
+
+        # Second redemption with same code — must fail (not 500)
+        resp2 = public_client.post(
+            "/api/v1/auth/join",
+            json={
+                "invite_code": code,
+                "first_name": "Second",
+                "last_name": "Redeemer",
+                "email": "second-redeemer@example.com",
+                "password": "securepass123",
+            },
+        )
+        assert resp2.status_code == 400
+        assert "invalid" in resp2.json()["detail"].lower() or "expired" in resp2.json()["detail"].lower()
+
+    def test_invalid_invite_code_returns_400(
+        self, public_client: TestClient
+    ) -> None:
+        resp = public_client.post(
+            "/api/v1/auth/join",
+            json={
+                "invite_code": "nonexistent-code",
+                "first_name": "Bad",
+                "last_name": "Code",
+                "email": "badcode@example.com",
+                "password": "securepass123",
+            },
+        )
+        assert resp.status_code == 400

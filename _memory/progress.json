@@ -1,5 +1,5 @@
 {
-  "current_sprint": "route-protection",
+  "current_sprint": "security-fixes",
   "last_updated": "2026-02-27",
   "completed": [
     {
@@ -189,6 +189,23 @@
   ],
   "in_progress": [],
   "recently_completed": [
+    {
+      "id": "T-security-fixes",
+      "task": "Fix 5 CRITICAL security findings from combined route-protection review (Claude + Codex gpt-5.3-codex)",
+      "sprint": "security-fixes",
+      "status": "done",
+      "completed_at": "2026-02-27",
+      "summary": "Fixed 5 CRITICAL security issues identified by combined manual + Codex review of route-protection sprint (commit 1d48965). C1: Cross-tenant artifact read bypass on flat types — added filename-to-slug validation in get_artifact_content() for company_context/personas/style_guides (stem must equal slug or start with slug__). C2+C3: SSE events.py missing Depends(require_auth) — deactivated users with valid tokens could stream indefinitely; added require_auth dependency. C4: Deactivated users could log in — added is_active check after password verification, before token issuance. C5: Invite code race condition — redeem_invite() read invite outside lock causing KeyError on concurrent double-use; moved entire lookup+create+delete inside with self._lock. Deferred 14 WARNING+INFO findings (PB-26 through PB-39) to pending backlog.",
+      "test_count": "952 tests passed (8 new), 1 pre-existing failure (PB-39)",
+      "files_changed": [
+        "api/routers/artifacts.py",
+        "api/routers/auth.py",
+        "api/routers/events.py",
+        "api/auth/store.py",
+        "tests/api/test_auth_enforcement.py",
+        ".claude/sprints/pending/backlog.md"
+      ]
+    },
     {
       "id": "T-route-protection",
       "task": "Route Protection & Authorization — 9-phase production-grade auth enforcement (Codex gpt-5.3-codex reviewed)",

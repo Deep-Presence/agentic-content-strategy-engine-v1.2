@@ -188,6 +188,14 @@ def get_artifact_content(
     if artifact_type in _FLAT_TYPES:
         file_path = (artifacts_root / artifact_type / filename).resolve()
         expected_parent = (artifacts_root / artifact_type).resolve()
+
+        # C1 fix: verify filename belongs to the authorized slug (prevents IDOR)
+        stem = Path(filename).stem
+        # Strip .draft suffix for draft files (e.g., "ramp.draft" → "ramp")
+        if stem.endswith(".draft"):
+            stem = stem[: -len(".draft")]
+        if not (stem == slug or stem.startswith(f"{slug}__")):
+            raise HTTPException(status_code=403, detail="Access denied")
     else:
         file_path = (artifacts_root / artifact_type / slug / filename).resolve()
         expected_parent = (artifacts_root / artifact_type / slug).resolve()

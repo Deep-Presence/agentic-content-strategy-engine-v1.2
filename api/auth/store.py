@@ -413,17 +413,20 @@ class AuthStore:
 
         Raises ``ValueError`` if the invite is invalid, already used,
         or the email is already registered.
+
+        C5 fix: entire operation (lookup + create + delete) runs inside
+        the lock to prevent double-use race condition.
         """
-        invites = getattr(self, "_invites", {})
-        invite = invites.get(invite_code)
-        if not invite:
-            raise ValueError("Invalid or expired invite code")
-
-        company = self.get_company_by_slug(invite["company_slug"])
-        if not company:
-            raise ValueError("Company no longer exists")
-
         with self._lock:
+            invites = getattr(self, "_invites", {})
+            invite = invites.get(invite_code)
+            if not invite:
+                raise ValueError("Invalid or expired invite code")
+
+            company = self.get_company_by_slug(invite["company_slug"])
+            if not company:
+                raise ValueError("Company no longer exists")
+
             if self.get_user_by_email(email):
                 raise ValueError(f"User with email '{email}' already exists")
 
@@ -436,7 +439,7 @@ class AuthStore:
                 role=invite["role"],
             )
 
-            # Remove used invite
+            # Remove used invite (guaranteed to exist — we hold the lock)
             del self._invites[invite_code]
 
         return user, company

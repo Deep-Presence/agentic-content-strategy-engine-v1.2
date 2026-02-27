@@ -95,6 +95,10 @@ def login(
     if not auth_store.verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    # C4 fix: reject deactivated users at login (before token issuance)
+    if not user.get("is_active", True):
+        raise HTTPException(status_code=401, detail="Account deactivated")
+
     company = auth_store.get_company_by_slug(user.get("company_slug", ""))
     if not company:
         # Fallback: look up company by company_id stored on the user

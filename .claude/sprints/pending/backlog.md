@@ -1,7 +1,7 @@
 # Pending Backlog
 
 > **Last synced:** 2026-02-27
-> **Total items:** 15
+> **Total items:** 29
 
 ## Critical (Fix Before Production)
 
@@ -186,6 +186,103 @@
 - **Date added:** 2026-02-27
 - **Description:** Auto-trigger content generation when gap analysis completes. Full design in `.claude/plans/cozy-twirling-mochi.md`.
 - **Files affected:** `api/tasks/runner.py`, `api/routers/gap_analysis.py`, `api/routers/content.py`
+- **Blocked by:** nothing
+
+### PB-26: Register endpoint docstring still says domain auto-join works (W1)
+- **Source:** Combined review (route-protection sprint) — Claude + Codex
+- **Date added:** 2026-02-27
+- **Description:** `auth.py:32` docstring still mentions "If company_domain matches an existing company, user joins as 'member'." — this is stale after Codex C1 hardening.
+- **Files affected:** `api/routers/auth.py`
+- **Blocked by:** nothing
+
+### PB-27: Login company lookup always fails on company_slug key — dead code path (W2)
+- **Source:** Combined review (route-protection sprint) — Claude
+- **Date added:** 2026-02-27
+- **Description:** `auth.py:98` calls `get_company_by_slug(user.get("company_slug", ""))` but UserProfile dict never has `company_slug` key (it's `company_id`). Always falls through to the company_id loop fallback. Remove the dead code path.
+- **Files affected:** `api/routers/auth.py`
+- **Blocked by:** nothing
+
+### PB-28: Stream tokens not single-use (W3)
+- **Source:** Combined review (route-protection sprint) — Claude
+- **Date added:** 2026-02-27
+- **Description:** `store.py:494` — plan said stream tokens would be single-use but they are not. A leaked token can be replayed for 5 minutes.
+- **Files affected:** `api/auth/store.py`
+- **Blocked by:** nothing
+
+### PB-29: Stream tokens not task-scoped (W4)
+- **Source:** Combined review (route-protection sprint) — Codex
+- **Date added:** 2026-02-27
+- **Description:** `store.py:505` — stream token has no `task_id` claim. A leaked token accesses any task in the tenant's company for 5 minutes.
+- **Files affected:** `api/auth/store.py`, `api/routers/events.py`
+- **Blocked by:** nothing
+
+### PB-30: Invite codes in-memory only — lost on restart (W5)
+- **Source:** Combined review (route-protection sprint) — Claude + Codex
+- **Date added:** 2026-02-27
+- **Description:** `store.py:396` uses `hasattr(self, "_invites")` pattern with in-memory dict. Invites are lost on server restart.
+- **Files affected:** `api/auth/store.py`
+- **Blocked by:** nothing
+
+### PB-31: `require_tenant` uses slug comparison, not UUID (W6)
+- **Source:** Combined review (route-protection sprint) — Claude (Codex I2)
+- **Date added:** 2026-02-27
+- **Description:** `dependencies.py:94` compares URL slug to token's company_slug. Should ideally compare company UUIDs for stronger guarantee.
+- **Files affected:** `api/auth/dependencies.py`
+- **Blocked by:** nothing
+
+### PB-32: DRY — tenant isolation pattern copy-pasted ~10 times across routers (W7)
+- **Source:** Combined review (route-protection sprint) — Claude + Codex
+- **Date added:** 2026-02-27
+- **Description:** `require_tenant` and `require_company_access` exist but some routers still inline slug checks. Consolidate.
+- **Files affected:** Multiple routers
+- **Blocked by:** nothing
+
+### PB-33: JWT_SECRET_KEY enforcement depends on ENVIRONMENT env var naming (W8)
+- **Source:** Combined review (route-protection sprint) — Codex
+- **Date added:** 2026-02-27
+- **Description:** `store.py:123` — environment check relies on `ENVIRONMENT` env var being exactly "development" or "test". Not documented anywhere.
+- **Files affected:** `api/auth/store.py`
+- **Blocked by:** nothing
+
+### PB-34: /me endpoint doesn't use require_auth dependency (I1)
+- **Source:** Combined review (route-protection sprint) — Claude
+- **Date added:** 2026-02-27
+- **Description:** `auth.py:131` — `/me` endpoint manually reads `request.state.user_id` instead of using `Depends(require_auth)`. Misses `is_active` check.
+- **Files affected:** `api/routers/auth.py`
+- **Blocked by:** nothing
+
+### PB-35: Stale docstrings/comments still reference grace-mode (I2)
+- **Source:** Combined review (route-protection sprint) — Claude
+- **Date added:** 2026-02-27
+- **Description:** Multiple files still reference "grace mode" auth which was replaced by default-deny middleware.
+- **Files affected:** Multiple
+- **Blocked by:** nothing
+
+### PB-36: Authorization header check case-sensitive — lowercase only (I3)
+- **Source:** Combined review (route-protection sprint) — Claude
+- **Date added:** 2026-02-27
+- **Description:** `middleware.py:59` — only checks for `authorization` header (lowercase). RFC says headers are case-insensitive.
+- **Files affected:** `api/auth/middleware.py`
+- **Blocked by:** nothing
+
+### PB-37: No test for invite code reuse after redemption (I4)
+- **Source:** Combined review (route-protection sprint) — Claude
+- **Date added:** 2026-02-27
+- **Description:** Now covered by TestC5InviteRaceCondition.test_invite_code_single_use.
+- **Status:** ✅ RESOLVED 2026-02-27 (security-fixes sprint)
+
+### PB-38: Artifact company listing scans global tree then filters — O(N tenants) (I5)
+- **Source:** Combined review (route-protection sprint) — Claude
+- **Date added:** 2026-02-27
+- **Description:** `artifacts.py:89` — scans all companies then filters to user's. Acceptable for <100 companies, but won't scale.
+- **Files affected:** `api/routers/artifacts.py`
+- **Blocked by:** nothing
+
+### PB-39: HITL test_revise_loops_back_to_agent failing (pre-existing)
+- **Source:** Discovered during security-fixes test run
+- **Date added:** 2026-02-27
+- **Description:** `tests/api/test_hitl_interrupt_resume.py::TestResumeFlow::test_revise_loops_back_to_agent` — fails on assert not `_has_interrupt(r3)`. Pre-existing, not caused by security fixes.
+- **Files affected:** `tests/api/test_hitl_interrupt_resume.py`
 - **Blocked by:** nothing
 
 ---
