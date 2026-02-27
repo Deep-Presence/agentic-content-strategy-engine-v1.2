@@ -18,10 +18,13 @@ _CLASSIFICATION_RANK = {
     GapClassification.no_data: 0,
 }
 from core.db.models.gap_analysis import (
-    ClusterSpecModel,
-    QueryGapModel,
-    SpaResultModel,
     CentroidResultModel,
+    ClusterSpecModel,
+    QueryExemplarModel,
+    QueryGapModel,
+    RunCitationModel,
+    RunQueryModel,
+    SpaResultModel,
 )
 from core.db.repositories.base import SQLAlchemyRepository
 
@@ -147,6 +150,66 @@ class GapAnalysisRepository(SQLAlchemyRepository[QueryGapModel]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    # ── Phase 4 bulk insert methods ──────────────────────────────────────
+
+    async def bulk_insert_run_queries(
+        self, queries: list[dict[str, object]]
+    ) -> Sequence[RunQueryModel]:
+        """Insert multiple run queries in a single flush."""
+        instances = [RunQueryModel(**q) for q in queries]
+        self._session.add_all(instances)
+        await self._session.flush()
+        return instances
+
+    async def bulk_insert_run_citations(
+        self, citations: list[dict[str, object]]
+    ) -> Sequence[RunCitationModel]:
+        """Insert multiple run citations in a single flush.
+
+        Caller MUST ensure the corresponding RunQueryModel rows exist
+        (composite FK constraint on run_id + query_id).
+        """
+        instances = [RunCitationModel(**c) for c in citations]
+        self._session.add_all(instances)
+        await self._session.flush()
+        return instances
+
+    async def bulk_insert_cluster_specs(
+        self, specs: list[dict[str, object]]
+    ) -> Sequence[ClusterSpecModel]:
+        """Insert multiple cluster specs in a single flush."""
+        instances = [ClusterSpecModel(**s) for s in specs]
+        self._session.add_all(instances)
+        await self._session.flush()
+        return instances
+
+    async def bulk_insert_spa_results(
+        self, results: list[dict[str, object]]
+    ) -> Sequence[SpaResultModel]:
+        """Insert multiple SPA results in a single flush."""
+        instances = [SpaResultModel(**r) for r in results]
+        self._session.add_all(instances)
+        await self._session.flush()
+        return instances
+
+    async def bulk_insert_centroid_results(
+        self, results: list[dict[str, object]]
+    ) -> Sequence[CentroidResultModel]:
+        """Insert multiple centroid results in a single flush."""
+        instances = [CentroidResultModel(**r) for r in results]
+        self._session.add_all(instances)
+        await self._session.flush()
+        return instances
+
+    async def bulk_insert_query_exemplars(
+        self, exemplars: list[dict[str, object]]
+    ) -> Sequence[QueryExemplarModel]:
+        """Insert multiple query exemplars in a single flush."""
+        instances = [QueryExemplarModel(**e) for e in exemplars]
+        self._session.add_all(instances)
+        await self._session.flush()
+        return instances
 
     async def get_gaps_paginated(
         self,

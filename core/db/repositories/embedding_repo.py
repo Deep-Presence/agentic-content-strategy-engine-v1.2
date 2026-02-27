@@ -45,6 +45,18 @@ class EmbeddingRepository(SQLAlchemyRepository[SemanticUnitModel]):
         await self._session.flush()
         return instance
 
+    # ── Phase 4 bulk insert methods ──────────────────────────────────────
+
+    async def bulk_store_embeddings(
+        self,
+        model_class: Type[EmbeddingModelT],
+        items: list[dict[str, object]],
+    ) -> None:
+        """Insert multiple embedding rows for any embedding model type."""
+        instances = [model_class(**item) for item in items]
+        self._session.add_all(instances)
+        await self._session.flush()
+
     async def similarity_search(
         self,
         model_class: Type[EmbeddingModelT],

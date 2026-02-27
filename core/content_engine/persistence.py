@@ -1,0 +1,147 @@
+"""DB persistence hooks for the content generation pipeline.
+
+After the content pipeline writes its JSON/filesystem artifacts, optionally
+persist the same data into Postgres tables so ``DbContentDataService``
+serves real data to the dashboard API.
+
+Design principles match ``core/gap_analysis/persistence.py``:
+- Filesystem-first, DB-additive
+- Graceful degradation — DB errors NEVER crash the pipeline
+- Per-function transaction isolation
+- Idempotent re-persist via delete-before-insert
+"""
+from __future__ import annotations
+
+import logging
+import uuid as _uuid
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+logger = logging.getLogger(__name__)
+
+
+def _should_persist(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+) -> bool:
+    """Return True if DB persistence is configured."""
+    return (
+        session_factory is not None
+        and run_id is not None
+        and company_id is not None
+    )
+
+
+def _map_content_status(status_value: str) -> Any:
+    """Map Pydantic ContentStatus to ORM ContentPieceStatus."""
+    from core.db.enums import ContentPieceStatus
+
+    status_map = {
+        "approved": ContentPieceStatus.approved,
+        "rejected": ContentPieceStatus.review,  # no 'rejected' in ORM — map to review
+        "edited": ContentPieceStatus.approved,   # edited → approved
+        "draft": ContentPieceStatus.drafting,
+    }
+    try:
+        return status_map.get(status_value.lower(), ContentPieceStatus.planned)
+    except (AttributeError, ValueError):
+        return ContentPieceStatus.planned
+
+
+async def persist_content_pieces(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    pieces: list,
+) -> None:
+    """Persist content pieces → content_pieces table."""
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None
+    try:
+        from core.db.models.content import ContentPieceModel
+        from core.db.repositories.content_repo import ContentRepository
+
+        async with session_factory() as session:
+            # Idempotent: clear previous rows for this run
+            await session.execute(
+                delete(ContentPieceModel).where(ContentPieceModel.run_id == run_id)
+            )
+
+            repo = ContentRepository(session)
+            for piece in pieces:
+                status_val = piece.status.value if hasattr(piece.status, "value") else str(piece.status)
+                eval_summary = getattr(piece, "eval_summary", None)
+                if eval_summary and hasattr(eval_summary, "model_dump"):
+                    eval_summary = eval_summary.model_dump(mode="json")
+
+                await repo.create_piece(
+                    id=_uuid.uuid4(),
+                    run_id=run_id,
+                    title=piece.title,
+                    status=_map_content_status(status_val),
+                    storage_key=getattr(piece, "artifact_path", None),
+                    word_count=len(piece.final_markdown.split()) if piece.final_markdown else 0,
+                    evaluation_results=eval_summary,
+                    revision_count=0,
+                )
+            await session.commit()
+        logger.info(
+            "persist_content_pieces: %d pieces stored for %s", len(pieces), slug
+        )
+    except Exception:
+        logger.warning(
+            "persist_content_pieces failed for %s, continuing without DB",
+            slug, exc_info=True,
+        )
+
+
+async def persist_content_run_summary(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    total_briefs: int,
+    total_approved: int,
+    total_rejected: int,
+) -> None:
+    """Update PipelineRunModel with content generation summary."""
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None
+    try:
+        from core.db.enums import PipelineStatus
+        from core.db.models.pipelines import PipelineRunModel
+
+        async with session_factory() as session:
+            run = await session.get(PipelineRunModel, run_id)
+            if run is None:
+                logger.warning(
+                    "persist_content_run_summary: PipelineRunModel %s not found",
+                    run_id,
+                )
+                return
+
+            run.summary = {
+                "total_briefs": total_briefs,
+                "total_approved": total_approved,
+                "total_rejected": total_rejected,
+            }
+            run.status = PipelineStatus.completed
+            run.completed_at = datetime.now(tz=timezone.utc)
+            run.stages_executed = [
+                "stage1_planner", "stage2_workers",
+                "stage3_evaluator", "stage4_review",
+            ]
+            await session.commit()
+        logger.info("persist_content_run_summary: run updated for %s", slug)
+    except Exception:
+        logger.warning(
+            "persist_content_run_summary failed for %s, continuing without DB",
+            slug, exc_info=True,
+        )

@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
@@ -196,6 +200,95 @@ def resolve_artifacts(
     return resolved
 
 
+async def _resolve_db_context(
+    company_slug: str,
+    effective_slug: str,
+) -> tuple[Optional[async_sessionmaker], Optional[uuid.UUID], Optional[uuid.UUID]]:
+    """Resolve session_factory, run_id, and company_id for DB persistence.
+
+    Returns (None, None, None) if DATABASE_URL is not set or company not in DB.
+    Never raises — all failures are logged and result in disabled DB writes.
+    """
+    try:
+        from core.config.settings import settings
+
+        if not settings.database_url:
+            return None, None, None
+
+        from core.db.engine import get_session_factory
+        from core.db.repositories.company_repo import CompanyRepository
+
+        sf = get_session_factory()
+        run_id = uuid.uuid4()
+
+        async with sf() as session:
+            repo = CompanyRepository(session)
+            company = await repo.get_by_slug(company_slug)
+            if company is None:
+                logger.warning(
+                    "Company '%s' not found in DB — skipping DB persistence",
+                    company_slug,
+                )
+                return None, None, None
+            company_id = company.id
+
+        return sf, run_id, company_id
+    except Exception:
+        logger.warning("DB context resolution failed — continuing without DB", exc_info=True)
+        return None, None, None
+
+
+async def _create_pipeline_run(
+    session_factory: async_sessionmaker,
+    run_id: uuid.UUID,
+    company_id: uuid.UUID,
+    effective_slug: str,
+    pipeline_type_str: str,
+) -> None:
+    """Create a PipelineRunModel record in the DB."""
+    try:
+        from core.db.enums import PipelineStatus, PipelineType
+        from core.db.models.pipelines import PipelineRunModel
+
+        pipeline_type = PipelineType(pipeline_type_str)
+        async with session_factory() as session:
+            run = PipelineRunModel(
+                id=run_id,
+                company_id=company_id,
+                effective_slug=effective_slug,
+                pipeline_type=pipeline_type,
+                status=PipelineStatus.running,
+                started_at=datetime.now(tz=timezone.utc),
+            )
+            session.add(run)
+            await session.commit()
+    except Exception:
+        logger.warning("Failed to create PipelineRunModel — continuing", exc_info=True)
+
+
+async def _mark_pipeline_run_failed(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[uuid.UUID],
+    error: str,
+) -> None:
+    """Mark a PipelineRunModel as failed."""
+    if session_factory is None or run_id is None:
+        return
+    try:
+        from core.db.enums import PipelineStatus
+        from core.db.models.pipelines import PipelineRunModel
+
+        async with session_factory() as session:
+            run = await session.get(PipelineRunModel, run_id)
+            if run:
+                run.status = PipelineStatus.failed
+                run.error_message = error[:2000] if error else None
+                run.completed_at = datetime.now(tz=timezone.utc)
+                await session.commit()
+    except Exception:
+        logger.warning("Failed to mark PipelineRunModel as failed", exc_info=True)
+
+
 async def run_gap_pipeline_task(
     task_id: str,
     request: Any,
@@ -212,6 +305,16 @@ async def run_gap_pipeline_task(
     company_slug = _derive_slug(request.company_name)
     product_slug = getattr(request, "product_slug", None)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    # Resolve DB context for Phase 4 persistence
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "gap_analysis",
+        )
 
     try:
         async with task_store.semaphore:
@@ -272,7 +375,11 @@ async def run_gap_pipeline_task(
             )
 
             report = await run_gap_analysis(
-                input_data=input_data, skip_steps=request.skip_steps
+                input_data=input_data,
+                skip_steps=request.skip_steps,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
             )
             result = {
                 "report_md": report.report_md or None,
@@ -296,6 +403,7 @@ async def run_gap_pipeline_task(
             task_id, status=TaskStatus.FAILED, error=str(exc)
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
         task_store.release_slug_lock(scope.effective_slug)
         task_store.remove_task_handle(task_id)
@@ -560,6 +668,17 @@ async def run_content_pipeline_task(
     # Read effective_slug from the persisted task (set by create_task at launch)
     _task = task_store.get_task(task_id)
     effective = _task.effective_slug or _task.company_slug or _derive_slug(input_data.company_name)
+    company_slug = _task.company_slug or _derive_slug(input_data.company_name)
+
+    # Resolve DB context for Phase 4 persistence
+    session_factory, run_id, company_id = await _resolve_db_context(
+        company_slug, effective
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            effective, "content",
+        )
 
     try:
         async with task_store.semaphore:
@@ -570,6 +689,9 @@ async def run_content_pipeline_task(
                 task_id=task_id,
                 task_store=task_store,
                 event_bus=event_bus,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
             )
 
             result = {
@@ -600,6 +722,7 @@ async def run_content_pipeline_task(
         logger.exception("Content generation pipeline failed: %s", exc)
         task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
         event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
         task_store.release_slug_lock(effective)
         task_store.remove_task_handle(task_id)

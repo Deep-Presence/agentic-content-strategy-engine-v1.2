@@ -8,7 +8,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db.enums import SearchEngine
-from core.db.models.cache import PlatformResultCacheModel, UrlEnrichmentCacheModel
+from core.db.models.cache import (
+    PlatformResultCacheModel,
+    UrlEnrichmentCacheModel,
+    UrlStructuralSignalsModel,
+)
 from core.db.repositories.base import SQLAlchemyRepository
 
 
@@ -130,3 +134,69 @@ class CacheRepository(SQLAlchemyRepository[PlatformResultCacheModel]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().one()
+
+    # ── Phase 4 bulk methods ─────────────────────────────────────────────
+
+    async def bulk_upsert_platform_results(
+        self, results: list[dict[str, object]]
+    ) -> None:
+        """Bulk upsert platform result cache entries via ON CONFLICT."""
+        for row in results:
+            stmt = pg_insert(PlatformResultCacheModel).values(**row)
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_platform_cache_hash_engine",
+                set_={
+                    "response_text": stmt.excluded.response_text,
+                    "citations": stmt.excluded.citations,
+                    "model_version": stmt.excluded.model_version,
+                    "fetched_at": stmt.excluded.fetched_at,
+                },
+            )
+            await self._session.execute(stmt)
+        await self._session.flush()
+
+    async def bulk_upsert_url_enrichments(
+        self, enrichments: list[dict[str, object]]
+    ) -> None:
+        """Bulk upsert URL enrichment cache entries via ON CONFLICT."""
+        for row in enrichments:
+            stmt = pg_insert(UrlEnrichmentCacheModel).values(**row)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["url_hash"],
+                set_={
+                    "final_url": stmt.excluded.final_url,
+                    "domain": stmt.excluded.domain,
+                    "title": stmt.excluded.title,
+                    "authority_type": stmt.excluded.authority_type,
+                    "content_type": stmt.excluded.content_type,
+                    "paragraph_count": stmt.excluded.paragraph_count,
+                    "http_status": stmt.excluded.http_status,
+                    "scraped_at": stmt.excluded.scraped_at,
+                    "raw_paragraphs_storage_key": stmt.excluded.raw_paragraphs_storage_key,
+                },
+            )
+            await self._session.execute(stmt)
+        await self._session.flush()
+
+    async def bulk_insert_structural_signals(
+        self, signals: list[dict[str, object]]
+    ) -> None:
+        """Insert multiple structural signal rows.
+
+        Uses ON CONFLICT DO UPDATE on the PK (url_enrichment_id) to
+        handle re-persists idempotently.
+        """
+        for row in signals:
+            stmt = pg_insert(UrlStructuralSignalsModel).values(**row)
+            # Update all signal columns on conflict
+            update_cols = {
+                c.name: getattr(stmt.excluded, c.name)
+                for c in UrlStructuralSignalsModel.__table__.columns
+                if c.name != "url_enrichment_id"
+            }
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["url_enrichment_id"],
+                set_=update_cols,
+            )
+            await self._session.execute(stmt)
+        await self._session.flush()

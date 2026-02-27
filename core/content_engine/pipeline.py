@@ -14,8 +14,11 @@ import os
 import re
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.config.settings import settings
 from core.content_engine.tracing import (
@@ -285,6 +288,9 @@ async def run_content_generation(
     task_id: Optional[str] = None,
     task_store: Optional[object] = None,
     event_bus: Optional[object] = None,
+    session_factory: Optional[async_sessionmaker] = None,
+    run_id: Optional[uuid.UUID] = None,
+    company_id: Optional[uuid.UUID] = None,
 ) -> ContentGenerationOutput:
     """Run the full 4-stage content generation pipeline.
 
@@ -582,6 +588,19 @@ async def run_content_generation(
     (artifact_dir / "run_metadata.json").write_text(
         json.dumps(output.model_dump(mode="json"), indent=2, default=str),
         encoding="utf-8",
+    )
+
+    # Phase 4: DB persistence (optional — only when session_factory is set)
+    from core.content_engine.persistence import (
+        persist_content_pieces,
+        persist_content_run_summary,
+    )
+    await persist_content_pieces(session_factory, run_id, company_id, slug, pieces)
+    await persist_content_run_summary(
+        session_factory, run_id, company_id, slug,
+        total_briefs=len(briefs),
+        total_approved=total_approved,
+        total_rejected=total_rejected,
     )
 
     _cli_footer(

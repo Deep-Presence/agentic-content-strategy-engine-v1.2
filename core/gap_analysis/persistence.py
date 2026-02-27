@@ -1,0 +1,669 @@
+"""DB persistence hooks for each gap analysis pipeline step.
+
+After each step writes its JSON artifact to disk, the pipeline optionally
+calls the corresponding ``persist_sN()`` function here to write the same
+data into Postgres tables so that ``DbGapDataService`` (and friends)
+serve real data to the dashboard API.
+
+Design principles:
+- **Filesystem-first, DB-additive**: JSON is always written first; DB is extra.
+- **Graceful degradation**: Every function catches all exceptions — DB errors
+  NEVER crash the pipeline.
+- **Per-step transaction isolation**: Each function opens its own session,
+  commits, and closes.  A failure in s4 does not affect s5.
+- **Idempotent re-persist**: Deletes stale rows for the same ``run_id``
+  before inserting, so retries are safe.
+"""
+from __future__ import annotations
+
+import hashlib
+import logging
+import math
+import uuid as _uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+logger = logging.getLogger(__name__)
+
+# ── Helpers ─────────────────────────────────────────────────────────────
+
+
+def _safe_float(val: Any) -> float:
+    """Convert to float, returning 0.0 for NaN/Inf/None."""
+    if val is None:
+        return 0.0
+    try:
+        f = float(val)
+        return 0.0 if math.isnan(f) or math.isinf(f) else f
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _classify(interpretation: str) -> Any:
+    """Map interpretation string to GapClassification enum."""
+    from core.db.enums import GapClassification
+
+    try:
+        return GapClassification(interpretation)
+    except ValueError:
+        legacy_map = {
+            "large_gap": GapClassification.significant_gap,
+            "moderate_gap": GapClassification.gap_to_close,
+            "small_gap": GapClassification.roughly_equal,
+            "no_gap": GapClassification.company_wins,
+            "already_cited": GapClassification.company_wins,
+        }
+        return legacy_map.get(interpretation, GapClassification.no_data)
+
+
+def _map_engine(engine_str: str) -> Any:
+    """Map engine string to SearchEngine enum, or None."""
+    from core.db.enums import SearchEngine
+
+    try:
+        return SearchEngine(engine_str.lower())
+    except ValueError:
+        return None
+
+
+def _hash_text(text: str) -> str:
+    """SHA-256 hex digest of a text string."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# ── Guard ───────────────────────────────────────────────────────────────
+
+
+def _should_persist(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+) -> bool:
+    """Return True if DB persistence is configured."""
+    return (
+        session_factory is not None
+        and run_id is not None
+        and company_id is not None
+    )
+
+
+# ── persist_s1: Semantic Units ──────────────────────────────────────────
+
+
+async def persist_s1(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    semantic_units: list,
+) -> None:
+    """Persist s1 outputs → semantic_units table (with embeddings)."""
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None and company_id is not None
+    try:
+        from core.db.models.embeddings import SemanticUnitModel
+        from core.db.repositories.embedding_repo import EmbeddingRepository
+
+        async with session_factory() as session:
+            # Idempotent: clear previous rows for this run
+            await session.execute(
+                delete(SemanticUnitModel).where(SemanticUnitModel.run_id == run_id)
+            )
+
+            repo = EmbeddingRepository(session)
+            items: list[dict[str, object]] = []
+            for unit in semantic_units:
+                if not unit.embedding:
+                    continue  # skip units without embeddings
+                if len(unit.embedding) != 1536:
+                    continue  # wrong dimension
+                items.append({
+                    "id": _uuid.uuid4(),
+                    "company_id": company_id,
+                    "run_id": run_id,
+                    "unit_id": unit.unit_id,
+                    "url": str(unit.url) if unit.url else None,
+                    "title": unit.title,
+                    "text": unit.text,
+                    "embedding": unit.embedding,
+                    "discovery_source": unit.discovery_source or "website",
+                    "char_count": unit.char_count,
+                    "word_count": unit.word_count,
+                })
+            if items:
+                await repo.bulk_store_embeddings(SemanticUnitModel, items)
+            await session.commit()
+        logger.info("persist_s1: %d semantic units stored for %s", len(items), slug)
+    except Exception:
+        logger.warning("persist_s1 failed for %s, continuing without DB", slug, exc_info=True)
+
+
+# ── persist_s2: Generated Queries ───────────────────────────────────────
+
+
+async def persist_s2(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    queries: list,
+) -> None:
+    """Persist s2 outputs → run_queries table."""
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None
+    try:
+        from core.db.models.gap_analysis import RunQueryModel
+        from core.db.repositories.gap_analysis_repo import GapAnalysisRepository
+
+        async with session_factory() as session:
+            # Idempotent
+            await session.execute(
+                delete(RunQueryModel).where(RunQueryModel.run_id == run_id)
+            )
+
+            repo = GapAnalysisRepository(session)
+            items: list[dict[str, object]] = []
+            for q in queries:
+                items.append({
+                    "id": _uuid.uuid4(),
+                    "run_id": run_id,
+                    "query_id": q.query_id,
+                    "cluster_id": getattr(q, "cluster_id", None),
+                    "cluster_name": q.cluster_name,
+                    "query_text": q.query_text,
+                    "buyer_stage": getattr(q, "buyer_stage", None),
+                    "persona_tag": getattr(q, "persona_tag", None),
+                })
+            if items:
+                await repo.bulk_insert_run_queries(items)
+            await session.commit()
+        logger.info("persist_s2: %d queries stored for %s", len(items), slug)
+    except Exception:
+        logger.warning("persist_s2 failed for %s, continuing without DB", slug, exc_info=True)
+
+
+# ── persist_s3: Platform Results + Citations ────────────────────────────
+
+
+async def persist_s3(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    platform_results: list,
+    queries: list,
+) -> None:
+    """Persist s3 outputs → run_citations + platform_result_cache.
+
+    Handles composite FK constraint: ensures RunQueryModel rows exist
+    before inserting RunCitationModel rows (backfills from queries if
+    step 2 was skipped).
+    """
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None
+    try:
+        from core.db.models.gap_analysis import RunCitationModel, RunQueryModel
+        from core.db.repositories.gap_analysis_repo import GapAnalysisRepository
+
+        async with session_factory() as session:
+            # Idempotent: clear citations for this run
+            await session.execute(
+                delete(RunCitationModel).where(RunCitationModel.run_id == run_id)
+            )
+
+            # Ensure run_queries exist (may have been skipped in s2)
+            existing_count = (await session.execute(
+                select(func.count()).select_from(RunQueryModel)
+                .where(RunQueryModel.run_id == run_id)
+            )).scalar_one()
+
+            repo = GapAnalysisRepository(session)
+            if existing_count == 0 and queries:
+                query_rows: list[dict[str, object]] = []
+                for q in queries:
+                    query_rows.append({
+                        "id": _uuid.uuid4(),
+                        "run_id": run_id,
+                        "query_id": q.query_id,
+                        "cluster_id": getattr(q, "cluster_id", None),
+                        "cluster_name": q.cluster_name,
+                        "query_text": q.query_text,
+                        "buyer_stage": getattr(q, "buyer_stage", None),
+                        "persona_tag": getattr(q, "persona_tag", None),
+                    })
+                await repo.bulk_insert_run_queries(query_rows)
+
+            # Build citation rows from platform results
+            citation_rows: list[dict[str, object]] = []
+            for pr in platform_results:
+                engine = _map_engine(pr.engine)
+                if engine is None:
+                    continue
+                for i, cit in enumerate(pr.citations):
+                    citation_rows.append({
+                        "id": _uuid.uuid4(),
+                        "run_id": run_id,
+                        "query_id": pr.query_id,
+                        "cluster_name": getattr(pr, "cluster_name", None),
+                        "engine": engine,
+                        "url": str(cit.url),
+                        "domain": getattr(cit, "source", None) or getattr(cit, "domain", None),
+                        "title": getattr(cit, "title", None),
+                        "snippet": getattr(cit, "snippet", None),
+                        "citation_rank": getattr(cit, "rank", i + 1),
+                    })
+            if citation_rows:
+                await repo.bulk_insert_run_citations(citation_rows)
+
+            await session.commit()
+        logger.info(
+            "persist_s3: %d citations stored for %s", len(citation_rows), slug
+        )
+    except Exception:
+        logger.warning("persist_s3 failed for %s, continuing without DB", slug, exc_info=True)
+
+
+# ── persist_s4: Enriched Citations → URL cache + structural signals ─────
+
+
+async def persist_s4(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    enriched: list,
+) -> None:
+    """Persist s4 outputs → url_enrichment_cache + url_structural_signals.
+
+    Uses ON CONFLICT upserts for the cache tables (shared across runs).
+    """
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None
+    try:
+        from core.db.repositories.cache_repo import CacheRepository
+
+        async with session_factory() as session:
+            repo = CacheRepository(session)
+            enrichment_rows: list[dict[str, object]] = []
+            signal_rows: list[dict[str, object]] = []
+
+            for cit in enriched:
+                url_str = str(cit.url)
+                url_hash = _hash_text(url_str)
+                enrichment_id = _uuid.uuid4()
+
+                enrichment_rows.append({
+                    "id": enrichment_id,
+                    "url_hash": url_hash,
+                    "url": url_str,
+                    "final_url": url_str,
+                    "domain": getattr(cit, "domain", None),
+                    "title": getattr(cit, "title", None),
+                    "authority_type": (
+                        cit.structural_signals.authority_type
+                        if cit.structural_signals else None
+                    ),
+                    "content_type": (
+                        cit.structural_signals.content_type
+                        if cit.structural_signals else None
+                    ),
+                    "paragraph_count": len(cit.paragraphs) if cit.paragraphs else 0,
+                    "http_status": 200,
+                    "scraped_at": datetime.now(tz=timezone.utc),
+                })
+
+                if cit.structural_signals:
+                    ss = cit.structural_signals
+                    signal_rows.append({
+                        "url_enrichment_id": enrichment_id,
+                        "word_count": ss.word_count,
+                        "paragraph_count": ss.paragraph_count,
+                        "header_count": ss.header_count,
+                        "list_item_count": ss.list_item_count,
+                        "stat_count": ss.stat_count,
+                        "citation_count": ss.citation_count,
+                        "has_headers": ss.has_headers,
+                        "has_lists": ss.has_lists,
+                        "has_numbers": ss.has_numbers,
+                        "main_content_word_count": ss.main_content_word_count,
+                        "sentence_count": ss.sentence_count,
+                        "avg_paragraph_length": _safe_float(ss.avg_paragraph_length),
+                        "median_paragraph_length": _safe_float(ss.median_paragraph_length),
+                        "max_paragraph_word_count": ss.max_paragraph_word_count,
+                        "avg_sentence_length": _safe_float(ss.avg_sentence_length),
+                        "avg_sentence_count_per_paragraph": _safe_float(ss.avg_sentence_count_per_paragraph),
+                        "reading_level": _safe_float(ss.reading_level),
+                        "self_contained_ratio": _safe_float(ss.self_contained_ratio),
+                        "h1_count": ss.h1_count,
+                        "h2_count": ss.h2_count,
+                        "h3_count": ss.h3_count,
+                        "h4_count": ss.h4_count,
+                        "ordered_list_count": ss.ordered_list_count,
+                        "unordered_list_count": ss.unordered_list_count,
+                        "table_count": ss.table_count,
+                        "definition_list_count": ss.definition_list_count,
+                        "blockquote_count": ss.blockquote_count,
+                        "code_block_count": ss.code_block_count,
+                        "list_block_count": ss.list_block_count,
+                        "bullets_per_list_block": _safe_float(ss.bullets_per_list_block),
+                        "min_bullets_per_list": ss.min_bullets_per_list,
+                        "has_faq_section": ss.has_faq_section,
+                        "has_definition_opening": ss.has_definition_opening,
+                        "has_key_takeaways": ss.has_key_takeaways,
+                        "has_toc": ss.has_toc,
+                        "has_comparison_table": ss.has_comparison_table,
+                        "has_step_by_step": ss.has_step_by_step,
+                        "has_research_refs": ss.has_research_refs,
+                        "has_expert_quotes": ss.has_expert_quotes,
+                        "data_point_count": ss.data_point_count,
+                        "citation_density": _safe_float(ss.citation_density),
+                        "named_entity_density": _safe_float(ss.named_entity_density),
+                    })
+
+            if enrichment_rows:
+                await repo.bulk_upsert_url_enrichments(enrichment_rows)
+            if signal_rows:
+                await repo.bulk_insert_structural_signals(signal_rows)
+
+            await session.commit()
+        logger.info(
+            "persist_s4: %d enrichments, %d signals stored for %s",
+            len(enrichment_rows), len(signal_rows), slug,
+        )
+    except Exception:
+        logger.warning("persist_s4 failed for %s, continuing without DB", slug, exc_info=True)
+
+
+# ── persist_s5: Query + Paragraph Embeddings ────────────────────────────
+
+
+async def persist_s5(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    queries: list,
+    enriched: list,
+) -> None:
+    """Persist s5 outputs → query_embeddings + paragraph_embeddings."""
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None
+    try:
+        from core.db.models.embeddings import (
+            ParagraphEmbeddingModel,
+            QueryEmbeddingModel,
+        )
+        from core.db.repositories.embedding_repo import EmbeddingRepository
+
+        async with session_factory() as session:
+            # Idempotent
+            await session.execute(
+                delete(QueryEmbeddingModel).where(QueryEmbeddingModel.run_id == run_id)
+            )
+
+            repo = EmbeddingRepository(session)
+
+            # Query embeddings
+            q_items: list[dict[str, object]] = []
+            for q in queries:
+                if not q.embedding or len(q.embedding) != 1536:
+                    continue
+                q_items.append({
+                    "id": _uuid.uuid4(),
+                    "run_id": run_id,
+                    "query_id": q.query_id,
+                    "query_text": q.query_text,
+                    "embedding": q.embedding,
+                })
+            if q_items:
+                await repo.bulk_store_embeddings(QueryEmbeddingModel, q_items)
+
+            # Paragraph embeddings — from best_paragraphs on enriched citations
+            # Note: paragraph_embeddings are tied to url_enrichment_cache via FK.
+            # Since we may not have url_enrichment_ids, we skip this for now
+            # and store only query embeddings. Paragraph embeddings require
+            # resolved url_enrichment_cache IDs (from persist_s4).
+            # This is a known limitation — paragraph embeddings will be
+            # addressed when we add cross-step ID resolution.
+
+            await session.commit()
+        logger.info("persist_s5: %d query embeddings stored for %s", len(q_items), slug)
+    except Exception:
+        logger.warning("persist_s5 failed for %s, continuing without DB", slug, exc_info=True)
+
+
+# ── persist_s6: Analysis Results ────────────────────────────────────────
+
+
+async def persist_s6(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    analysis: Any,
+) -> None:
+    """Persist s6 outputs → query_gaps, exemplars, cluster_specs, spa, centroids."""
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None
+    try:
+        from core.db.models.gap_analysis import (
+            CentroidResultModel,
+            ClusterSpecModel,
+            QueryExemplarModel,
+            QueryGapModel,
+            SpaResultModel,
+        )
+        from core.db.repositories.gap_analysis_repo import GapAnalysisRepository
+
+        async with session_factory() as session:
+            # Idempotent: clear all s6-owned tables for this run
+            for model_cls in (
+                QueryExemplarModel,  # child first (FK to query_gaps)
+                QueryGapModel,
+                ClusterSpecModel,
+                SpaResultModel,
+                CentroidResultModel,
+            ):
+                await session.execute(
+                    delete(model_cls).where(model_cls.run_id == run_id)  # type: ignore[attr-defined]
+                )
+
+            repo = GapAnalysisRepository(session)
+
+            # ── Query Gaps + Exemplars ─────────────────────────────
+            gap_rows: list[dict[str, object]] = []
+            exemplar_rows: list[dict[str, object]] = []
+
+            for gap in analysis.gaps:
+                gap_id = _uuid.uuid4()
+                # Build content_brief JSONB from exemplars
+                exemplars = getattr(gap, "top_cited_exemplars", [])
+                content_brief: Optional[Dict[str, Any]] = None
+                if gap.content_brief:
+                    content_brief = gap.content_brief.model_dump(mode="json") if hasattr(gap.content_brief, "model_dump") else gap.content_brief
+
+                gap_rows.append({
+                    "id": gap_id,
+                    "run_id": run_id,
+                    "query_id": gap.query_id,
+                    "cluster_id": getattr(gap, "cluster_id", None),
+                    "cluster_name": gap.cluster_name or "",
+                    "query_text": gap.query_text,
+                    "best_company_similarity": _safe_float(gap.best_company_similarity),
+                    "best_company_unit_id": getattr(gap, "best_company_unit", None),
+                    "best_company_unit_text": getattr(gap, "best_company_unit_text", None),
+                    "avg_citation_similarity": _safe_float(gap.avg_citation_similarity),
+                    "gap": _safe_float(gap.gap),
+                    "classification": _classify(gap.interpretation or "no_data"),
+                    "content_brief": content_brief,
+                })
+
+                for rank, ex in enumerate(exemplars[:5], start=1):
+                    exemplar_rows.append({
+                        "id": _uuid.uuid4(),
+                        "query_gap_id": gap_id,
+                        "url": str(ex.url),
+                        "domain": getattr(ex, "domain", None),
+                        "similarity": _safe_float(ex.similarity),
+                        "snippet": getattr(ex, "snippet", None),
+                        "authority_type": getattr(ex, "authority_type", None),
+                        "rank": rank,
+                    })
+
+            if gap_rows:
+                await repo.bulk_insert_query_gaps(gap_rows)
+            if exemplar_rows:
+                await repo.bulk_insert_query_exemplars(exemplar_rows)
+
+            # ── Cluster Specs ──────────────────────────────────────
+            spec_rows: list[dict[str, object]] = []
+            for spec in analysis.cluster_specs:
+                wc_range = getattr(spec, "word_count_range", [0, 0])
+                wc_min = int(wc_range[0]) if isinstance(wc_range, (list, tuple)) and len(wc_range) >= 1 else 0
+                wc_max = int(wc_range[1]) if isinstance(wc_range, (list, tuple)) and len(wc_range) >= 2 else 0
+                structural_rates = getattr(spec, "structural_rates", {}) or {}
+
+                spec_rows.append({
+                    "id": _uuid.uuid4(),
+                    "run_id": run_id,
+                    "cluster_id": getattr(spec, "cluster_id", None),
+                    "cluster_name": spec.cluster_name,
+                    "query_count": int(_safe_float(getattr(spec, "query_count", 0))),
+                    "total_citations_analyzed": int(_safe_float(getattr(spec, "total_citations_analyzed", 0))),
+                    "word_count_min": wc_min,
+                    "word_count_max": wc_max,
+                    "avg_word_count": _safe_float(getattr(spec, "avg_word_count", (wc_min + wc_max) / 2 if wc_min or wc_max else 0)),
+                    "avg_paragraph_word_count": _safe_float(getattr(spec, "avg_paragraph_word_count", 0)),
+                    "avg_sentence_count_per_paragraph": _safe_float(getattr(spec, "avg_sentence_count_per_paragraph", 0)),
+                    "min_similarity_threshold": _safe_float(getattr(spec, "min_similarity_threshold", None)),
+                    "min_bullets_per_list": int(_safe_float(getattr(spec, "min_bullets_per_list", 0))),
+                    # Rate columns — map from Pydantic fields (NOT structural_rates dict)
+                    "faq_rate": _safe_float(getattr(spec, "faq_rate", 0)),
+                    "table_rate": _safe_float(getattr(spec, "table_rate", 0)),
+                    "definition_rate": _safe_float(getattr(spec, "definition_rate", 0)),
+                    "code_block_rate": _safe_float(getattr(spec, "code_block_rate", 0)),
+                    "key_takeaways_rate": _safe_float(getattr(spec, "key_takeaways_rate", 0)),
+                    "dominant_content_type": getattr(spec, "dominant_content_type", None),
+                    "dominant_authority_type": getattr(spec, "dominant_authority_type", None),
+                    "required_elements": getattr(spec, "required_elements", None) or None,
+                    "structural_rates": structural_rates or None,
+                    "exemplar_themes": getattr(spec, "exemplar_themes", None) or None,
+                })
+            if spec_rows:
+                await repo.bulk_insert_cluster_specs(spec_rows)
+
+            # ── SPA Results ────────────────────────────────────────
+            spa_rows: list[dict[str, object]] = []
+            for spa in analysis.spa_results:
+                spa_rows.append({
+                    "id": _uuid.uuid4(),
+                    "run_id": run_id,
+                    "cluster_id": getattr(spa, "cluster_id", None),
+                    "cluster_name": spa.cluster_name or "all",
+                    "t_stat": _safe_float(spa.t_stat),
+                    "p_value": _safe_float(spa.p_value),
+                    "effect": getattr(spa, "effect", ""),
+                    "mean_citation_similarity": _safe_float(spa.mean_citation_similarity),
+                    "mean_company_similarity": _safe_float(spa.mean_company_similarity),
+                })
+            if spa_rows:
+                await repo.bulk_insert_spa_results(spa_rows)
+
+            # ── Centroid Results ────────────────────────────────────
+            centroid_rows: list[dict[str, object]] = []
+            for c in analysis.centroids:
+                centroid_rows.append({
+                    "id": _uuid.uuid4(),
+                    "run_id": run_id,
+                    "cluster_name": c.cluster_name or "",
+                    "distance": _safe_float(c.distance),
+                })
+            if centroid_rows:
+                await repo.bulk_insert_centroid_results(centroid_rows)
+
+            await session.commit()
+
+        logger.info(
+            "persist_s6: %d gaps, %d exemplars, %d specs, %d spa, %d centroids for %s",
+            len(gap_rows), len(exemplar_rows), len(spec_rows),
+            len(spa_rows), len(centroid_rows), slug,
+        )
+    except Exception:
+        logger.warning("persist_s6 failed for %s, continuing without DB", slug, exc_info=True)
+
+
+# ── persist_s7: No-op (visualizations stay on filesystem) ──────────────
+
+
+async def persist_s7(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    visualization_paths: Any,
+) -> None:
+    """No DB writes for s7 — visualizations are HTML files on disk."""
+    pass
+
+
+# ── persist_s8: Update PipelineRunModel summary ────────────────────────
+
+
+async def persist_s8(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    report: Any,
+    analysis: Any,
+) -> None:
+    """Update the PipelineRunModel with final summary metrics."""
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None
+    try:
+        from core.db.enums import PipelineStatus
+        from core.db.models.pipelines import PipelineRunModel
+
+        async with session_factory() as session:
+            run = await session.get(PipelineRunModel, run_id)
+            if run is None:
+                logger.warning("persist_s8: PipelineRunModel %s not found", run_id)
+                return
+
+            # Build summary from analysis decision_metrics
+            decision_metrics = getattr(analysis, "decision_metrics", {}) or {}
+            spa_results = getattr(analysis, "spa_results", []) or []
+            summary: Dict[str, Any] = {
+                "total_queries": int(_safe_float(decision_metrics.get("total_queries"))),
+                "total_citations": int(_safe_float(decision_metrics.get("total_citations"))),
+                "avg_gap": _safe_float(decision_metrics.get("avg_gap")),
+            }
+            if spa_results:
+                first_spa = spa_results[0]
+                summary["spa_score"] = _safe_float(
+                    first_spa.t_stat if hasattr(first_spa, "t_stat") else getattr(first_spa, "t_stat", None)
+                )
+
+            run.summary = summary
+            run.status = PipelineStatus.completed
+            run.completed_at = datetime.now(tz=timezone.utc)
+            run.stages_executed = [
+                "s1_embed_assets", "s2_generate_queries", "s3_search_platforms",
+                "s4_enrich_citations", "s5_embed_content", "s6_analyze",
+                "s7_visualize", "s8_generate_report",
+            ]
+
+            await session.commit()
+        logger.info("persist_s8: run summary updated for %s", slug)
+    except Exception:
+        logger.warning("persist_s8 failed for %s, continuing without DB", slug, exc_info=True)

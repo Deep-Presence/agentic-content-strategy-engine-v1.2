@@ -79,6 +79,19 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "secret_key") or app.state.secret_key is None:
         app.state.secret_key = app.state.auth_store._secret_key
 
+    # Expose DB session factory for per-request DbService construction (Phase 4)
+    if not hasattr(app.state, "db_session_factory") or app.state.db_session_factory is None:
+        try:
+            from core.config.settings import settings as _settings
+
+            if _settings.database_url:
+                from core.db.engine import get_session_factory
+
+                app.state.db_session_factory = get_session_factory()
+                logger.info("DB session factory exposed on app.state")
+        except Exception:
+            logger.debug("DB session factory not available — using JSON services")
+
     logger.info(
         "API started — task store: %s", type(app.state.task_store).__name__
     )
