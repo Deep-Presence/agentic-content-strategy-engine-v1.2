@@ -3,7 +3,7 @@
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
 > **Stack:** Python 3.12 · LangGraph · DeepAgents · FastAPI · Pydantic v2 · Langfuse v3
-> **Document Date:** 2026-02-27
+> **Document Date:** 2026-02-28
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -111,9 +111,33 @@
     - 25.11 [New Endpoints Summary](#2511-new-endpoints-summary)
     - 25.12 [Files Changed Summary](#2512-files-changed-summary)
     - 25.13 [Deferred Items](#2513-deferred-items)
-26. [Appendix A: Model & API Key Matrix](#appendix-a-model--api-key-matrix)
-27. [Appendix B: Artifact Naming Conventions](#appendix-b-artifact-naming-conventions)
-28. [Appendix C: Code Standards & Conventions](#appendix-c-code-standards--conventions)
+26. [SQLAlchemy & Service Layer Migration — 3-Phase Database Architecture](#26-sqlalchemy--service-layer-migration--3-phase-database-architecture)
+    - 26.1 [Migration Overview & Strategy](#261-migration-overview--strategy)
+    - 26.2 [Phase 1 — SQLAlchemy ORM Infrastructure (D-DB-1)](#262-phase-1--sqlalchemy-orm-infrastructure-d-db-1)
+    - 26.3 [Phase 1 — ORM Tables (31 Total)](#263-phase-1--orm-tables-31-total)
+    - 26.4 [Phase 1 — Repository Pattern](#264-phase-1--repository-pattern)
+    - 26.5 [Phase 1 — Alembic Migrations](#265-phase-1--alembic-migrations)
+    - 26.6 [Phase 1 — Engine & Session Factory](#266-phase-1--engine--session-factory)
+    - 26.7 [Phase 2 — Auth Migration: Three-Layer Decomposition (D-AUTH-2)](#267-phase-2--auth-migration-three-layer-decomposition-d-auth-2)
+    - 26.8 [Phase 2 — AuthServiceProtocol](#268-phase-2--authserviceprotocol)
+    - 26.9 [Phase 2 — JsonAuthService & DbAuthService](#269-phase-2--jsonauthservice--dbauthorservice)
+    - 26.10 [Phase 2 — Auth Utilities (Pure Functions)](#2610-phase-2--auth-utilities-pure-functions)
+    - 26.11 [Phase 2 — Middleware Decoupling](#2611-phase-2--middleware-decoupling)
+    - 26.12 [Phase 3 — Service Layer Migration: Three Data Protocols (D-SVC-1)](#2612-phase-3--service-layer-migration-three-data-protocols-d-svc-1)
+    - 26.13 [Phase 3 — GapDataServiceProtocol & Implementations](#2613-phase-3--gapdataserviceprotocol--implementations)
+    - 26.14 [Phase 3 — BrandDataServiceProtocol & ContentDataServiceProtocol](#2614-phase-3--branddataserviceprotocol--contentdataserviceprotocol)
+    - 26.15 [Phase 3 — Signal & Platform Repositories (SQL Analytics)](#2615-phase-3--signal--platform-repositories-sql-analytics)
+    - 26.16 [Phase 3 — TaskStoreProtocol & DbTaskStore (D-TASKSTORE-1)](#2616-phase-3--taskstoreprotocol--dbtaskstore-d-taskstore-1)
+    - 26.17 [DI Wiring — How the Switch Works](#2617-di-wiring--how-the-switch-works)
+    - 26.18 [Backfill Script (JSON to DB Migration)](#2618-backfill-script-json-to-db-migration)
+    - 26.19 [Cross-Cutting Patterns](#2619-cross-cutting-patterns)
+    - 26.20 [Architecture Diagram](#2620-architecture-diagram)
+    - 26.21 [Testing Strategy](#2621-testing-strategy)
+    - 26.22 [Files Changed Summary](#2622-files-changed-summary)
+    - 26.23 [Deferred Items](#2623-deferred-items)
+27. [Appendix A: Model & API Key Matrix](#appendix-a-model--api-key-matrix)
+28. [Appendix B: Artifact Naming Conventions](#appendix-b-artifact-naming-conventions)
+29. [Appendix C: Code Standards & Conventions](#appendix-c-code-standards--conventions)
 
 ---
 
@@ -133,7 +157,9 @@ The system exposes both a **CLI** and a **FastAPI REST API** (implemented 2026-0
 
 A **Settings Pages API** sprint (2026-02-27) added 11 new endpoints across 3 features — team management, company profile editing, and pipeline defaults — plus a full **Knowledge Document Upload** system (5 endpoints, multipart file upload, text extraction, s1 pipeline integration, embedded status tracking). Shared modules (`core/shared_tools/text_extraction.py`, `core/shared_tools/knowledge_doc_metadata.py`) ensure consistent text extraction and thread-safe metadata coordination between the API service layer and the gap analysis pipeline.
 
-**1029 tests passing, 1 pre-existing failure (PB-39).** Full coverage across all pipelines, API endpoints, data retrieval layers, settings management, and knowledge document upload.
+A **3-phase database migration** (2026-02-27/28) established a hybrid filesystem + PostgreSQL architecture: Phase 1 created 31 ORM tables, 16 repositories, and 4 Alembic migrations using pure SQLAlchemy 2.0. Phase 2 decomposed authentication into a three-layer architecture (pure utilities → service protocol → dual Json/Db implementations). Phase 3 applied the same protocol pattern across all data services (gap, brand, content, TaskStore) with SQL analytics repositories replacing Python-based JSON parsing for heavy aggregations. All phases use a single opt-in switch (`DATABASE_URL`) with automatic fallback to JSON-backed services.
+
+**1262 tests (1127 passed + 135 skipped), 1 pre-existing failure (PB-39).** Full coverage across all pipelines, API endpoints, data retrieval layers, settings management, knowledge document upload, auth services, DB repositories, and service layer protocols.
 
 **Current production clients analyzed:** Ramp (corporate spend management), Carta (equity management platform), and Mynd.
 
@@ -1949,7 +1975,7 @@ artifacts/knowledge_docs/
 - `0001_initial_schema.py` — Hand-written (not autogenerated). Creates pgvector extension, 12 enums, 31 tables, FKs with ON DELETE policies (CASCADE/SET NULL/RESTRICT), partial indexes.
 - `0002_hnsw_indexes.py` — HNSW vector indexes separated for deployment control (index creation can lock tables on large datasets).
 
-**Phase 1 Status:** Infrastructure complete. NOT wired into any existing router. `core/db/dependencies.py` contains FastAPI DI functions that are importable but not connected to routes. Phase 2 will migrate auth/services from JSON files to DB.
+**Phase 1 Status:** Infrastructure complete. Fully wired into routers via Phase 2 (auth) and Phase 3 (data services, TaskStore). See §26 for comprehensive 3-phase migration documentation.
 
 **Dependencies:** `sqlalchemy[asyncio]>=2.0.30`, `asyncpg>=0.29`, `psycopg2-binary>=2.9` (sync driver for Alembic), `alembic>=1.13`, `pgvector>=0.3`
 
@@ -4227,6 +4253,1125 @@ Knowledge doc dir resolution: checks `artifacts/knowledge_docs/{effective_slug}/
 
 ---
 
+## 26. SQLAlchemy & Service Layer Migration — 3-Phase Database Architecture
+
+> **Completed:** 2026-02-27 (Phase 1), 2026-02-28 (Phases 2 & 3)
+> **Total New Tests:** 235 (44 + 96 + 46 + 49)
+> **Total Test Count After:** 1262 (1127 passed + 135 skipped)
+> **Key Decision IDs:** D-DB-1, D-AUTH-2, D-SVC-1, D-TASKSTORE-1
+
+### 26.1 Migration Overview & Strategy
+
+The migration converts the content strategy engine from a **pure filesystem** persistence model to a **hybrid filesystem + PostgreSQL** architecture in three sequential phases. Each phase follows the same proven pattern: **Protocol → JsonService (backward compat) → DbService (opt-in)**. The filesystem remains the source of truth for large artifacts; the database provides queryable metadata, aggregations, and structured relational data.
+
+**Why three phases (not one big migration):**
+1. Phase 1 establishes infrastructure (ORM, repos, migrations) with zero production impact.
+2. Phase 2 migrates the most critical service (auth) as a proof-of-concept for the dual-mode pattern.
+3. Phase 3 applies the proven pattern across all remaining services and adds the TaskStore.
+
+**Zero-breakage guarantee:** At every phase, existing tests pass unchanged. The `DATABASE_URL` environment variable acts as the single opt-in switch. Without it, the system behaves identically to pre-migration.
+
+**Directory structure added:**
+```
+core/
+├── auth/                           ← Phase 2: Auth service layer
+│   ├── __init__.py
+│   ├── service.py                  ← AuthServiceProtocol
+│   ├── json_service.py             ← JsonAuthService (wraps AuthStore)
+│   ├── db_service.py               ← DbAuthService (uses SQL repos)
+│   └── utils/                      ← Pure functions, zero I/O
+│       ├── __init__.py
+│       ├── passwords.py            ← hash_password, verify_password, DUMMY_HASH
+│       ├── tokens.py               ← create_access_token, verify_token, get_secret_key
+│       └── domain.py               ← normalize_domain, derive_slug, field allowlists
+├── db/                             ← Phase 1: ORM infrastructure
+│   ├── __init__.py
+│   ├── base.py                     ← DeclarativeBase + UUIDPKMixin + TimestampMixin
+│   ├── engine.py                   ← Lazy async engine + session factory
+│   ├── enums.py                    ← 12 Postgres enum types
+│   ├── dependencies.py             ← FastAPI DI helpers (get_db_session, etc.)
+│   ├── models/                     ← 12 ORM model files (31 tables total)
+│   │   ├── organization.py         ← CompanyModel, ProductModel, UserModel, InviteModel, PipelineDefaultsModel
+│   │   ├── gap_analysis.py         ← RunQueryModel, RunCitationModel, QueryGapModel, QueryExemplarModel, ClusterSpecModel, SpaResultModel, CentroidResultModel
+│   │   ├── embeddings.py           ← RunQueryEmbeddingModel, RunCitationEmbeddingModel, RunParagraphScoreModel
+│   │   ├── content.py              ← ContentBriefModel, ContentPieceModel, PieceStageModel
+│   │   ├── cache.py                ← UrlEnrichmentCacheModel, UrlStructuralSignalsModel
+│   │   ├── pipelines.py            ← PipelineRunModel, StageRunModel
+│   │   ├── knowledge_docs.py       ← KnowledgeDocModel, KnowledgeDocMetadataModel
+│   │   ├── site_audit.py           ← SiteAuditFindingModel
+│   │   ├── topic_discovery.py      ← TopicModel
+│   │   ├── tracking.py             ← TrackingModel
+│   │   └── api_tasks.py            ← ApiTaskModel (Phase 3 — DB-backed TaskStore)
+│   ├── migrations/
+│   │   ├── env.py                  ← Alembic environment configuration
+│   │   └── versions/
+│   │       ├── 0001_initial_schema.py       ← All enums + 31 tables
+│   │       ├── 0002_hnsw_indexes.py         ← pgvector HNSW indexes (separated for deploy control)
+│   │       ├── 0003_fix_gap_enum_add_indexes.py  ← GapClassification fix + strategic indexes
+│   │       └── 0004_api_tasks.py            ← ApiTaskModel table
+│   └── repositories/               ← 16 repository files
+│       ├── base.py                 ← SQLAlchemyRepository[ModelT] generic base
+│       ├── auth_repo.py            ← Phase 2: AuthRepository
+│       ├── company_repo.py         ← CompanyRepository
+│       ├── product_repo.py         ← Phase 2: ProductRepository
+│       ├── invite_repo.py          ← Phase 2: InviteRepository
+│       ├── pipeline_defaults_repo.py  ← Phase 2: PipelineDefaultsRepository
+│       ├── pipeline_repo.py        ← Enhanced Phase 3: get_latest_completed, list_runs_by_slug
+│       ├── gap_analysis_repo.py    ← Enhanced Phase 3: paginated queries, classification counts, SPA results
+│       ├── content_repo.py         ← Enhanced Phase 3: list_pieces_by_run, get_piece_detail
+│       ├── embedding_repo.py       ← EmbeddingRepository (pgvector similarity search)
+│       ├── cache_repo.py           ← UrlEnrichmentCacheRepository (TTL-based)
+│       ├── signal_repo.py          ← Phase 3: SignalRepository (SQL aggregations on 45 signals)
+│       ├── platform_repo.py        ← Phase 3: PlatformRepository (platform coverage analytics)
+│       ├── task_repo.py            ← Phase 3: TaskRepository (api_tasks CRUD)
+│       ├── knowledge_doc_repo.py   ← KnowledgeDocRepository
+│       └── tracking_repo.py        ← TrackingRepository
+├── services/                       ← Phase 3: Service layer protocols + implementations
+│   ├── __init__.py
+│   ├── gap_data.py                 ← GapDataServiceProtocol (7 async methods)
+│   ├── json_gap_data.py            ← JsonGapDataService (wraps filesystem)
+│   ├── db_gap_data.py              ← DbGapDataService (SQL queries)
+│   ├── brand_data.py               ← BrandDataServiceProtocol (2 async methods)
+│   ├── json_brand_data.py          ← JsonBrandDataService
+│   ├── db_brand_data.py            ← DbBrandDataService
+│   ├── content_data.py             ← ContentDataServiceProtocol (3 async methods)
+│   ├── json_content_data.py        ← JsonContentDataService
+│   ├── db_content_data.py          ← DbContentDataService
+│   ├── task_store.py               ← TaskStoreProtocol (10 methods) + exception re-exports
+│   └── db_task_store.py            ← DbTaskStore (write-through with in-memory cache)
+```
+
+---
+
+### 26.2 Phase 1 — SQLAlchemy ORM Infrastructure (D-DB-1)
+
+**Sprint:** `sqlalchemy-migration` · **Date:** 2026-02-27 · **Tests:** +44 DB tests · **Files:** 44 new, 3 modified
+
+Phase 1 establishes the complete PostgreSQL database layer — ORM models, repositories, Alembic migrations, and the engine factory — without wiring any of it into existing routes or services. This is a pure infrastructure phase: all new code is additive, and no existing behavior changes.
+
+**ORM Choice: Pure SQLAlchemy 2.0 Declarative (NOT SQLModel)**
+
+SQLAlchemy won a 6-0 scorecard against SQLModel across the six features that matter most in this codebase:
+
+| Feature | SQLAlchemy 2.0 | SQLModel | Winner |
+|---------|---------------|----------|--------|
+| pgvector `Vector(1536)` | Native column type | Requires escape hatch | SQLAlchemy |
+| 12+ Postgres enums | Native `Enum(PgEnum)` | Limited enum support | SQLAlchemy |
+| JSONB with `server_default` | Native `mapped_column(JSONB, server_default=...)` | Partial support | SQLAlchemy |
+| `ARRAY(Text)` columns | Native `mapped_column(ARRAY(Text))` | Not supported | SQLAlchemy |
+| Self-referential FK | Standard FK pattern | Requires workarounds | SQLAlchemy |
+| Alembic autogenerate | Full support | Partial/buggy | SQLAlchemy |
+
+**Rationale:** We already maintain 3 model layers (core Pydantic, API schemas, ORM) with explicit repo conversions. SQLModel's dual Pydantic+ORM class provides zero benefit in this architecture — it would add complexity (escape hatches for pgvector, enums, JSONB) without reducing any.
+
+**Three-Tier Storage Model:**
+- **Tier 1 (Normalized Postgres tables):** Citation metadata, structural signals, query gaps, cluster specs, SPA results, pipeline runs, auth data. Every operation filters/joins/aggregates individual rows — relational is the correct abstraction.
+- **Tier 2 (pgvector columns):** Embedding vectors for similarity search (replaces ChromaDB in production). `Vector(1536)` with HNSW indexes.
+- **Tier 3 (Filesystem/S3):** Large blobs — raw paragraphs, platform response JSONLs, Plotly HTML visualizations, pipeline JSON archives. Too large for Postgres rows (enriched_citations.json exceeds 20MB for some clients).
+
+---
+
+### 26.3 Phase 1 — ORM Tables (31 Total)
+
+All models use two mixins from `core/db/base.py`:
+
+```python
+class UUIDPKMixin:
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+```
+
+**Organization & Auth (5 tables):**
+
+| Table | Key Columns | Indexes | Notes |
+|-------|-------------|---------|-------|
+| `companies` | `slug (unique)`, `name`, `domain`, `additional_domains (ARRAY)`, `is_archived` | `slug`, `domain` | Root entity. 1:many → products, users, invites |
+| `products` | `company_id (FK)`, `slug`, `name`, `domain`, `description` | `(company_id, slug)` unique | Represents a product line within a company |
+| `users` | `company_id (FK)`, `email (unique)`, `password_hash`, `role (Enum)`, `first_name`, `last_name`, `is_active` | `email`, `company_id` | PBKDF2 hashed passwords |
+| `invites` | `company_id (FK)`, `code (unique)`, `role (Enum)`, `created_by (FK)`, `redeemed_by (FK nullable)`, `expires_at` | `code` | Immutable post-creation (no `updated_at`) |
+| `company_pipeline_defaults` | `company_id (FK unique)`, `defaults_json (JSONB)` | `company_id` | 1:1 with companies |
+
+**Pipeline Infrastructure (2 tables):**
+
+| Table | Key Columns | Indexes | Notes |
+|-------|-------------|---------|-------|
+| `pipeline_runs` | `company_id (FK)`, `product_id (FK nullable)`, `pipeline_type (Enum)`, `status (Enum)`, `effective_slug`, `config_json (JSONB)`, `result_json (JSONB)`, `completed_at` | `effective_slug`, `(company_id, pipeline_type)`, partial `(status)` for active runs | Self-referential FK: `parent_run_id` for sub-steps |
+| `pipeline_stage_logs` | `run_id (FK)`, `stage_name`, `status (Enum)`, `started_at`, `completed_at`, `error_message` | `run_id` | Per-step progress tracking |
+
+**Gap Analysis Data (7 tables):**
+
+| Table | Key Columns | Indexes | Notes |
+|-------|-------------|---------|-------|
+| `run_queries` | `run_id (FK)`, `query_id`, `cluster_name`, `query_text`, `buyer_stage`, `persona_tag` | `(run_id, query_id)` unique, `(run_id, cluster_name)` | Insertion order matters (FK target for citations) |
+| `run_citations` | `run_id (FK)`, `query_id (FK composite)`, `engine (Enum)`, `url`, `domain`, `snippet`, `title`, `citation_rank`, `url_enrichment_id (FK nullable)` | `(run_id, query_id)`, `(run_id, engine)`, `url_enrichment_id` | Composite FK: `(run_id, query_id)` → `run_queries` |
+| `query_gaps` | `run_id (FK)`, `query_id`, `query_text`, `cluster_name`, `gap (Float)`, `classification (Enum)`, `avg_citation_similarity`, `best_company_similarity`, `best_company_unit_text`, `content_brief (JSONB)`, `targeted_by_content_id (FK nullable)` | `(run_id, query_id)` unique, `(run_id, classification)`, `(run_id, cluster_name)` | Links to content_pieces for gap-closing |
+| `query_exemplars` | `query_gap_id (FK)`, `url`, `domain`, `similarity (Float)`, `snippet`, `authority_type`, `rank`, `url_enrichment_id (FK nullable)` | `query_gap_id` | Cascade-deletes with parent query_gap |
+| `cluster_specs` | `run_id (FK)`, `cluster_name`, `query_count`, `total_citations_analyzed`, word count stats, boolean pattern rates, `dominant_content_type`, `structural_rates (JSONB)`, `exemplar_themes (ARRAY)` | `(run_id, cluster_name)` unique | Aggregate structural profile per cluster |
+| `spa_results` | `run_id (FK)`, `cluster_name`, `t_stat`, `p_value`, `mean_citation_similarity`, `mean_company_similarity`, `effect` | `(run_id, cluster_name)` unique | t-test statistics per cluster |
+| `centroid_results` | `run_id (FK)`, `cluster_name`, `distance (Float)` | `(run_id, cluster_name)` unique | Company-to-citation centroid distance |
+
+**Cache (3 tables):**
+
+| Table | Key Columns | Notes |
+|-------|-------------|-------|
+| `url_enrichment_cache` | `url_hash (unique)`, `url`, `domain`, `title`, `main_content_text`, `content_type`, `status_code`, `fetched_at`, `expires_at` | Query-agnostic — cached by URL, shared across runs |
+| `url_structural_signals` | `url_enrichment_id (FK 1:1)`, 45 individual typed columns across 4 categories | **Normalized columns, NOT JSONB** — enables SQL WHERE/GROUP BY/AVG on each signal |
+| `platform_result_cache` | `query_hash`, `engine (Enum)`, `result_json (JSONB)`, `expires_at` | TTL-based caching of platform search results |
+
+**Structural signals columns (45 in `url_structural_signals`):**
+
+| Category | Columns (sample) | Type |
+|----------|-------------------|------|
+| Readability (6) | `word_count`, `paragraph_count`, `avg_sentence_length`, `reading_level`, `vocabulary_diversity`, `readability_score` | Integer/Float |
+| Structure (15) | `header_count`, `h2_count`, `h3_count`, `ordered_list_count`, `unordered_list_count`, `table_count`, `code_block_count`, `image_count`, `has_faq_section`, `has_table_of_contents`, `has_key_takeaways` | Integer/Boolean |
+| Content Richness (12) | `definition_count`, `statistic_count`, `data_visualization_count`, `callout_count`, `has_expert_quotes`, `citation_density`, `internal_link_count`, `external_link_count` | Integer/Float/Boolean |
+| Authority (12) | `is_official_doc`, `has_author_bio`, `has_publish_date`, `has_schema_markup`, `domain_authority_tier`, `content_freshness_tier`, `has_canonical_url` | Boolean/String |
+
+**Embeddings (3 tables):**
+
+| Table | Key Columns | Notes |
+|-------|-------------|-------|
+| `run_query_embeddings` | `run_id (FK)`, `query_id`, `embedding (Vector(1536))` | pgvector with HNSW index |
+| `run_citation_embeddings` | `run_id (FK)`, `citation_id (FK)`, `embedding (Vector(1536))` | pgvector with HNSW index |
+| `run_paragraph_scores` | `run_id (FK)`, `citation_id (FK)`, `paragraph_index`, `rank`, `text`, `similarity (Float)` | Top-k paragraph selection results |
+
+**Other Tables (11):**
+
+| Domain | Tables | Notes |
+|--------|--------|-------|
+| Content Engine | `content_pieces`, `research_artifacts` | Content pipeline outputs |
+| Tracking | `tracking_snapshots`, `content_mention_tracking`, `content_piece_tracking` | Daily metric tracking with partial unique indexes |
+| Site Audit | `site_audits`, `audit_findings` | Site crawl findings |
+| Topic Discovery | `topic_discoveries`, `discovered_topics` | Topic research results |
+| Knowledge Docs | `knowledge_documents` | Uploaded reference documents |
+| Task Store | `api_tasks` | Phase 3 addition — mirrors JSON TaskStore |
+
+**Postgres Enum Types (12):**
+
+| Enum | Values |
+|------|--------|
+| `UserRole` | superuser, member, viewer |
+| `PipelineType` | research, gap_analysis, content, content_refresh, site_audit, topic_discovery |
+| `PipelineStatus` | pending, running, completed, failed, cancelled |
+| `StageStatus` | pending, running, completed, failed, skipped, cached |
+| `SearchEngine` | openai, claude, gemini, perplexity |
+| `GapClassification` | significant_gap, gap_to_close, roughly_equal, company_wins, no_data |
+| `ArtifactType` | company_context, persona, style_guide |
+| `ArtifactStatus` | draft, approved, archived |
+| `ContentPieceStatus` | planned, drafting, review, approved, published, archived |
+| `FindingSeverity` | critical, high, medium, low, info |
+| `TrackingStatus` | pending, completed, failed |
+
+---
+
+### 26.4 Phase 1 — Repository Pattern
+
+**Generic Base:** `core/db/repositories/base.py`
+
+```python
+class SQLAlchemyRepository(Generic[ModelT]):
+    model: ClassVar[type[ModelT]]  # Set by each concrete repo
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_by_id(self, id: UUID | str) -> ModelT | None
+    async def create(self, **kwargs) -> ModelT
+    async def update(self, id: UUID | str, **kwargs) -> ModelT | None
+    async def delete(self, id: UUID | str) -> bool
+    async def list_all(self, limit: int = 100, offset: int = 0) -> Sequence[ModelT]
+```
+
+**Transaction Ownership Contract — Critical Design:**
+- Repos call `session.add()` + `session.flush()` **only**
+- Repos **NEVER** call `session.commit()` or `session.rollback()`
+- The DI session generator owns the transaction lifecycle
+
+**Why flush-only:**
+1. **Savepoint-based test isolation** — each test wraps in a transaction that rolls back. If repos committed, rollback wouldn't work.
+2. **Multi-repo atomic transactions** — multiple repos can operate within one session, and a single commit makes all changes atomic.
+3. **Clean separation** — repos are pure data access, the application layer decides when to commit.
+
+**Domain Repositories (8 initial + 8 added in Phases 2-3):**
+
+| Repository | Phase | Key Methods |
+|------------|-------|-------------|
+| `CompanyRepository` | 1 | `get_by_slug`, `get_by_domain`, `slug_exists`, `list_active` |
+| `EmbeddingRepository` | 1 | `bulk_upsert`, `similarity_search` (pgvector cosine_distance) |
+| `CacheRepository` | 1 | `get_fresh_platform_result` (TTL check), `get_signals_by_url` |
+| `GapAnalysisRepository` | 1+3 | Phase 1: basic CRUD. Phase 3: `get_gaps_paginated`, `get_classification_counts`, `get_spa_results`, `get_centroid_results`, `count_gaps_by_run`, `get_cluster_specs` |
+| `PipelineRunRepository` | 1+3 | Phase 1: basic CRUD. Phase 3: `get_latest_completed(slug, pipeline_type)`, `list_runs_by_slug` |
+| `ContentRepository` | 1+3 | Phase 1: basic CRUD. Phase 3: `list_pieces_by_run`, `get_piece_detail` |
+| `AuthRepository` | 2 | `get_by_email`, `get_by_id`, `create_user`, `update_user`, `get_by_company` |
+| `InviteRepository` | 2 | `get_by_code`, `mark_redeemed`, `list_by_company` |
+| `ProductRepository` | 2 | `get_by_slugs(company_id, product_slug)`, `list_by_company` |
+| `PipelineDefaultsRepository` | 2 | `get_by_company`, `upsert_by_company` |
+| `SignalRepository` | 3 | `get_signal_averages`, `get_signal_correlations`, `get_cluster_patterns` — all SQL aggregation (see §26.15) |
+| `PlatformRepository` | 3 | `get_platform_summaries`, `get_platform_url_sets`, `get_citation_exclusivity` — SQL analytics (see §26.15) |
+| `TaskRepository` | 3 | `get_by_task_id`, `create_task`, `update_by_task_id`, `list_tasks`, `find_active_by_slug`, `mark_orphans_failed` |
+
+---
+
+### 26.5 Phase 1 — Alembic Migrations
+
+All migrations are **hand-written** (not autogenerated). Autogenerate has known issues with pgvector extensions, Postgres enum creation, partial indexes, and composite FKs.
+
+**Migration 0001: `0001_initial_schema.py`**
+- Creates `pgvector` extension: `op.execute('CREATE EXTENSION IF NOT EXISTS vector')`
+- Creates all 12 Postgres enum types via `op.execute('CREATE TYPE ...')`
+- Creates 31 tables with FKs, indexes, and ON DELETE policies (CASCADE/SET NULL/RESTRICT)
+- Insertion order respects FK dependencies: `companies` → `products` → `users` → `invites` → pipeline tables → gap analysis tables → etc.
+- Partial indexes for performance (e.g., active pipeline runs only)
+
+**Migration 0002: `0002_hnsw_indexes.py`**
+- Creates HNSW vector indexes on embedding columns for fast similarity search
+- **Separated from 0001** because HNSW index creation locks tables — in production with existing data, this can take minutes and must be deployed independently
+
+**Migration 0003: `0003_fix_gap_enum_add_indexes.py`**
+- Fixes `GapClassification` enum values to match the API schema: `significant_gap`, `gap_to_close`, `roughly_equal`, `company_wins`, `no_data` (previously had mismatched strings like `closure_opportunity`)
+- Adds strategic indexes identified during Phase 3 service implementation
+
+**Migration 0004: `0004_api_tasks.py`**
+- Creates `api_tasks` table for DB-backed TaskStore (Phase 3)
+- 4 indexes: `task_id` (unique), `effective_slug`, `status`, `(company_slug, pipeline)` composite
+
+---
+
+### 26.6 Phase 1 — Engine & Session Factory
+
+**`core/db/engine.py`:**
+
+```python
+_engine: Optional[AsyncEngine] = None
+_session_factory: Optional[async_sessionmaker] = None
+_lock = threading.Lock()
+
+def get_engine() -> AsyncEngine:
+    """Lazy singleton — creates engine on first call, NOT at import time."""
+    global _engine
+    if _engine is None:
+        with _lock:
+            if _engine is None:  # Double-checked locking
+                _engine = create_async_engine(
+                    settings.database_url,
+                    pool_pre_ping=True,
+                    pool_size=settings.database_pool_size,
+                    max_overflow=settings.database_max_overflow,
+                    pool_recycle=3600,
+                )
+    return _engine
+
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Returns session factory. Sessions expire_on_commit=False."""
+    global _session_factory
+    if _session_factory is None:
+        _session_factory = async_sessionmaker(
+            get_engine(), expire_on_commit=False
+        )
+    return _session_factory
+```
+
+**Key design decisions:**
+- **Lazy initialization:** Engine created on first call to `get_engine()`, NOT at import time. Existing pipeline scripts without `DATABASE_URL` are completely unaffected — they never call `get_engine()`.
+- **Double-checked locking:** Thread-safe singleton creation. Only one engine is ever created per process.
+- **`expire_on_commit=False`:** Prevents SQLAlchemy from expiring attributes after commit, which would cause lazy-load queries. All data is eagerly loaded in repos.
+- **Computed `database_url_sync`:** Derived from `database_url` by replacing `+asyncpg` with standard `postgresql://`. Single source of truth prevents sync/async URL drift. Used by Alembic (which requires sync connections).
+
+**Configuration in `core/config/settings.py`:**
+```python
+database_url: Optional[str] = None              # postgresql+asyncpg://...
+database_echo: bool = False                      # SQL logging
+database_pool_size: int = 5
+database_max_overflow: int = 10
+
+@property
+def database_url_sync(self) -> Optional[str]:
+    """Sync variant for Alembic."""
+    if self.database_url:
+        return self.database_url.replace("+asyncpg", "")
+    return None
+```
+
+---
+
+### 26.7 Phase 2 — Auth Migration: Three-Layer Decomposition (D-AUTH-2)
+
+**Sprint:** `auth-migration-phase2` · **Date:** 2026-02-28 · **Tests:** +96 · **Files:** 18 new, 32 modified
+
+Phase 2 proves the dual-mode service pattern by migrating authentication — the most critical and widely-used service. The existing `AuthStore` (JSON-file backed, synchronous) is wrapped in `JsonAuthService` for backward compatibility, while `DbAuthService` provides the SQL-backed implementation for production.
+
+**Three-Layer Architecture:**
+
+```
+Layer 1 — Pure Utilities (core/auth/utils/)
+    Zero I/O, zero side effects, importable anywhere
+    ├── passwords.py   → hash_password(), verify_password(), DUMMY_HASH
+    ├── tokens.py      → create_access_token(), verify_token(), get_secret_key()
+    └── domain.py      → normalize_domain(), derive_slug(), mutable field frozensets
+
+Layer 2 — Service Interface + Implementations
+    ├── core/auth/service.py       → AuthServiceProtocol (runtime_checkable Protocol)
+    ├── core/auth/json_service.py  → JsonAuthService (wraps AuthStore)
+    └── core/auth/db_service.py    → DbAuthService (uses SQL repos)
+
+Layer 3 — DI + Middleware
+    ├── api/dependencies.py        → get_auth_service() DI function
+    └── api/auth/middleware.py     → Decoupled from AuthStore; uses utilities only
+```
+
+**Why three layers (not two):**
+1. **Utilities** are needed by middleware, which runs outside FastAPI's DI system. If utilities lived inside the service, middleware would depend on the service implementation.
+2. **Protocol** enables transparent swap. Routers program to `AuthServiceProtocol`, not `JsonAuthService` or `DbAuthService`.
+3. **DI** picks the implementation based on `DATABASE_URL` availability. Tests override via `dependency_overrides`.
+
+---
+
+### 26.8 Phase 2 — AuthServiceProtocol
+
+**`core/auth/service.py`:**
+
+```python
+@runtime_checkable
+class AuthServiceProtocol(Protocol):
+    # ── Company operations (async) ──
+    async def get_company_by_slug(self, slug: str) -> Optional[Company]: ...
+    async def get_company_by_id(self, company_id: str) -> Optional[Company]: ...
+    async def get_company_by_domain(self, raw_domain: str) -> Optional[Company]: ...
+    async def list_companies(self) -> List[Company]: ...
+    async def create_company(self, slug, name, domain, products=None, additional_domains=None) -> Company: ...
+    async def update_company(self, slug: str, **kwargs) -> Company: ...
+
+    # ── Product operations (async) ──
+    async def get_product(self, company_slug: str, product_slug: str) -> Optional[Product]: ...
+    async def add_product(self, company_slug: str, product: Product) -> Product: ...
+    async def update_product(self, company_slug: str, product_slug: str, **kwargs) -> Product: ...
+    async def remove_product(self, company_slug: str, product_slug: str) -> bool: ...
+
+    # ── User operations (async) ──
+    async def get_user_by_email(self, email: str) -> Optional[Dict]: ...
+    async def get_user_by_id(self, user_id: str) -> Optional[Dict]: ...
+    async def list_users_for_company(self, company_id: str) -> List[UserProfile]: ...
+    async def create_user(self, company_id, email, password, first_name, last_name, role) -> UserProfile: ...
+    async def update_user(self, user_id, requesting_user_id, **kwargs) -> UserProfile: ...
+
+    # ── Registration + Invites (async) ──
+    async def register_user(self, first_name, last_name, email, password, company_name, company_domain) -> Tuple[UserProfile, Company]: ...
+    async def create_invite(self, company_slug: str, role: str) -> str: ...
+    async def redeem_invite(self, invite_code, first_name, last_name, email, password) -> Tuple[UserProfile, Company]: ...
+
+    # ── Pipeline Defaults (async) ──
+    async def get_pipeline_defaults(self, company_slug: str) -> CompanyPipelineDefaults: ...
+    async def update_pipeline_defaults(self, company_slug: str, **kwargs) -> CompanyPipelineDefaults: ...
+
+    # ── Tokens (sync — pure computation, no I/O) ──
+    def create_access_token(self, user_id: str, company_slug: str, expires_hours: int = 24) -> str: ...
+    def create_stream_token(self, user_id: str, company_slug: str, expires_minutes: int = 5) -> str: ...
+    def verify_token(self, token: str) -> Optional[Dict]: ...
+```
+
+**~25 async methods + 3 sync token methods.** Token methods are sync because they are pure HMAC computation with no I/O.
+
+---
+
+### 26.9 Phase 2 — JsonAuthService & DbAuthService
+
+**`core/auth/json_service.py` — JsonAuthService:**
+
+Wraps the existing synchronous `AuthStore` (`api/auth/store.py`).
+
+```python
+class JsonAuthService:
+    def __init__(self, store: AuthStore) -> None:
+        self._store = store
+
+    # Read ops: sync (in-memory dict, near-instant)
+    async def get_company_by_slug(self, slug: str) -> Optional[Company]:
+        return self._store.get_company(slug)  # Direct sync call — no thread needed
+
+    # Write ops: threaded to avoid blocking event loop
+    async def register_user(self, ...) -> Tuple[UserProfile, Company]:
+        return await asyncio.to_thread(self._store.register_user, ...)
+
+    # Token ops: delegated to utilities
+    def create_access_token(self, user_id, company_slug, expires_hours=24) -> str:
+        return create_access_token(self._store._secret_key, user_id, company_slug, expires_hours)
+```
+
+**Key pattern:** Read ops are synchronous (AuthStore holds data in-memory dicts, O(1) lookup). Write ops use `asyncio.to_thread()` because AuthStore holds an `RLock` for thread safety and writes to disk. Token ops delegate to `core/auth/utils/tokens.py` utilities.
+
+**`core/auth/db_service.py` — DbAuthService:**
+
+Takes 5 repositories + `secret_key` as constructor arguments.
+
+```python
+class DbAuthService:
+    def __init__(
+        self,
+        company_repo: CompanyRepository,
+        auth_repo: AuthRepository,
+        invite_repo: InviteRepository,
+        product_repo: ProductRepository,
+        pipeline_defaults_repo: PipelineDefaultsRepository,
+        secret_key: str,
+    ) -> None: ...
+```
+
+**Key business logic ported from AuthStore:**
+- **Registration:** Domain dedup via `company_repo.get_by_domain()`, slug collision avoidance, atomic company + superuser creation
+- **Invite create:** Generate random code, validate company exists, set TTL
+- **Invite redeem:** Lookup code, validate not expired/redeemed, create user, mark redeemed — all in one session
+- **User update guards:** Self-deactivation prevention, last-superuser protection
+
+**ORM ↔ Pydantic conversion methods:**
+- `_orm_to_company(CompanyModel) → Company`: Recursively converts products list
+- `_orm_to_user_dict(UserModel) → Dict`: Includes `password_hash` (for login verification)
+- `_orm_to_user_profile(UserModel) → UserProfile`: Excludes `password_hash` (for API responses)
+
+---
+
+### 26.10 Phase 2 — Auth Utilities (Pure Functions)
+
+**`core/auth/utils/passwords.py`:**
+
+| Function | Purpose |
+|----------|---------|
+| `hash_password(password: str) → str` | PBKDF2-HMAC-SHA256 with random 16-byte salt. Returns `"{salt_hex}:{hash_hex}"` |
+| `verify_password(password: str, stored_hash: str) → bool` | Constant-time comparison via `hmac.compare_digest()` |
+| `DUMMY_HASH` | `"0" * 32 + ":" + "0" * 64` — used for login timing-oracle prevention (always verify even for non-existent users) |
+
+**`core/auth/utils/tokens.py`:**
+
+| Function | Purpose |
+|----------|---------|
+| `create_access_token(secret_key, user_id, company_slug, expires_hours=24) → str` | Payload: `{user_id, company_slug, exp}`. Format: `base64_payload.hmac_signature` |
+| `create_stream_token(secret_key, user_id, company_slug, expires_minutes=5) → str` | Same format, adds `stream_only: true` flag. 5min TTL for SSE EventSource |
+| `verify_token(secret_key, token) → Optional[Dict]` | Validates HMAC signature + expiration. Returns payload or None |
+| `get_secret_key() → str` | `JWT_SECRET_KEY` env var → auto-generate in dev/test → `RuntimeError` in production |
+
+**`core/auth/utils/domain.py`:**
+
+| Function | Purpose |
+|----------|---------|
+| `normalize_domain(raw: str) → Tuple[str, Optional[str]]` | Strips protocol/www/path/port, handles multi-part TLDs (.co.uk, .com.au). Returns `(root_domain, subdomain_or_none)` |
+| `derive_slug(name: str) → str` | Kebab-case from company name: `regex r"[^a-z0-9]+" → "-"` |
+| `COMPANY_MUTABLE_FIELDS` | `frozenset({"name", "domain", "additional_domains"})` — prevents `**kwargs` overwriting immutable identity fields |
+| `PRODUCT_MUTABLE_FIELDS` | `frozenset({"name", "domain", "description"})` |
+| `USER_MUTABLE_FIELDS` | `frozenset({"role", "first_name", "last_name", "is_active"})` |
+
+---
+
+### 26.11 Phase 2 — Middleware Decoupling
+
+**Before Phase 2:** The ASGI auth middleware imported `AuthStore` and called `store.verify_token()` directly. This coupled middleware to the JSON storage implementation.
+
+**After Phase 2:** Middleware uses pure utilities + `app.state.secret_key`.
+
+```python
+# api/app.py lifespan — expose secret key for middleware
+app.state.secret_key = get_secret_key()
+
+# api/auth/middleware.py — uses verify_token utility directly
+from core.auth.utils.tokens import verify_token
+
+class AuthMiddleware:
+    async def __call__(self, scope, receive, send):
+        token = extract_token(scope)
+        if token:
+            payload = verify_token(scope["app"].state.secret_key, token)
+            if payload:
+                scope["state"]["user_id"] = payload["user_id"]
+                scope["state"]["company_slug"] = payload["company_slug"]
+```
+
+**Why this matters:** Middleware runs for every request, including WebSocket upgrades and SSE streams. It must be lightweight and cannot depend on service-layer abstractions that require DI resolution.
+
+**Router migration:** All 8 routers converted from `def → async def`, all `auth_store: AuthStore` parameters replaced with `auth_service: AuthServiceProtocol = Depends(get_auth_service)`, all calls `await`ed.
+
+---
+
+### 26.12 Phase 3 — Service Layer Migration: Three Data Protocols (D-SVC-1)
+
+**Sprint:** `service-layer-phase3` · **Date:** 2026-02-28 · **Tests:** +46 (9 passed + 37 skipped) · **Files:** 16 new, 14 modified
+
+Following the proven auth migration pattern, Phase 3 applies the same Protocol → JsonService → DbService pattern to all three data service domains. Each domain gets its own narrow protocol because they have different dependencies and different query patterns.
+
+**Why three separate protocols (not one monolithic `DataServiceProtocol`):**
+- Gap data needs `SignalRepository` + `PlatformRepository` — brand/content don't
+- Brand data needs `PipelineRunRepository` — gap data uses it differently (via run resolution)
+- Content data needs `ContentRepository` — gap/brand don't
+- Narrow interfaces are more testable and less coupled
+
+---
+
+### 26.13 Phase 3 — GapDataServiceProtocol & Implementations
+
+**`core/services/gap_data.py`:**
+
+```python
+@runtime_checkable
+class GapDataServiceProtocol(Protocol):
+    async def get_summary(self, effective_slug: str) -> GapSummaryResponse: ...
+    async def get_queries(self, effective_slug: str, cluster=None, classification=None,
+                         search=None, sort_by="gap_score", sort_dir="desc",
+                         page=1, page_size=15) -> QueryListResponse: ...
+    async def get_clusters(self, effective_slug: str) -> ClusterListResponse: ...
+    async def get_signals(self, effective_slug: str) -> SignalAveragesResponse: ...
+    async def get_platforms(self, effective_slug: str) -> PlatformListResponse: ...
+    async def get_heatmap(self, effective_slug: str) -> HeatmapResponse: ...
+    async def get_embedding_projection(self, effective_slug: str, method: str = "umap") -> EmbeddingProjectionResponse: ...
+```
+
+**`core/services/json_gap_data.py` — JsonGapDataService:**
+- Wraps existing `api/services/gap_data_service.py` module-level functions via `asyncio.to_thread()`
+- Preserves mtime-based caching (max 10 entries, FIFO eviction)
+- Preserves Python-based computations (Pearson correlations, Jaccard similarity, signal averages)
+- Zero behavior change from pre-migration
+
+**`core/services/db_gap_data.py` — DbGapDataService:**
+- Takes 4 repositories + `artifacts_root`:
+  - `GapAnalysisRepository` — gap queries, classification counts, SPA results
+  - `PipelineRunRepository` — run resolution (`effective_slug → run_id`)
+  - `SignalRepository` — SQL aggregations on 45 structural signals
+  - `PlatformRepository` — platform coverage analytics
+  - `artifacts_root: Path` — embedding projections remain filesystem-backed
+
+**Run Resolution Pattern (used by all Db services):**
+```python
+async def _resolve_run_id(self, effective_slug: str) -> UUID:
+    """Convert effective_slug to run_id by finding the latest completed gap analysis run."""
+    run = await self._pipeline_repo.get_latest_completed(effective_slug, PipelineType.gap_analysis)
+    if run is None:
+        raise HTTPException(404, f"No completed gap analysis for {effective_slug}")
+    return run.id
+```
+
+**Key DbGapDataService methods:**
+
+| Method | SQL Operations |
+|--------|---------------|
+| `get_summary` | Run resolution → SPA results + classification counts + cluster specs + centroid results + gap counts (all via SQL) → computed cluster performance |
+| `get_queries` | Paginated `query_gaps` query with filter/sort/offset → eager-load exemplars via relationship |
+| `get_signals` | `signal_repo.get_signal_averages(run_id)` → SQL `AVG(col)` for 45 signals. `signal_repo.get_signal_correlations(run_id)` → SQL `corr(signal, similarity)` for 15 key signals |
+| `get_platforms` | `platform_repo.get_platform_summaries` → per-engine citation counts. `get_platform_url_sets` → URL sets for Jaccard computation (done in Python per Codex W4) |
+| `get_embedding_projection` | **Delegates to filesystem** via `asyncio.to_thread()` — embedding projections are pre-computed Plotly HTML blobs |
+
+---
+
+### 26.14 Phase 3 — BrandDataServiceProtocol & ContentDataServiceProtocol
+
+**`core/services/brand_data.py` — BrandDataServiceProtocol:**
+
+```python
+@runtime_checkable
+class BrandDataServiceProtocol(Protocol):
+    async def get_research_artifacts(self, slug: str) -> ResearchArtifactsResponse: ...
+    async def get_run_history(self, slug: str, pipeline: Optional[str] = None,
+                             status: Optional[str] = None, limit: int = 50) -> RunHistoryResponse: ...
+```
+
+- `JsonBrandDataService`: Wraps `api/services/brand_data_service.py` — reads artifact files from filesystem, queries TaskStore for run history
+- `DbBrandDataService`: Uses `PipelineRunRepository.list_runs_by_slug()` for run history. Research artifact content still read from filesystem (artifacts are source of truth)
+
+**`core/services/content_data.py` — ContentDataServiceProtocol:**
+
+```python
+@runtime_checkable
+class ContentDataServiceProtocol(Protocol):
+    async def get_briefs(self, effective_slug: str) -> BriefListResponse: ...
+    async def get_brief_detail(self, effective_slug: str, brief_id: str) -> BriefDetailResponse: ...
+    async def get_brief_stage_content(self, effective_slug: str, brief_id: str, stage: str) -> StageContentResponse: ...
+```
+
+- `JsonContentDataService`: Wraps `api/services/content_data_service.py` — reads `briefs.json`, `run_metadata.json`, and stage files from filesystem
+- `DbContentDataService`: Uses `ContentRepository.list_pieces_by_run()` and `get_piece_detail()` for structured queries. Stage content (markdown files) still read from filesystem.
+
+**Filesystem delegation pattern (applies to all Db services):**
+Even when the DB is the primary data source, certain data remains filesystem-backed:
+- Embedding projection HTML files (pre-rendered Plotly)
+- Research artifact markdown files (company context, personas, style guides)
+- Content stage files (outline.md, draft.md, enriched.md, formatted.md)
+
+These are read via `asyncio.to_thread(Path.read_text)` in the Db service implementations.
+
+---
+
+### 26.15 Phase 3 — Signal & Platform Repositories (SQL Analytics)
+
+These repositories replace Python-based computations that previously parsed 20MB+ JSON files on every request.
+
+**`core/db/repositories/signal_repo.py` — SignalRepository:**
+
+**`get_signal_averages(run_id: UUID) → dict[str, float]`:**
+```sql
+SELECT
+    COALESCE(AVG(word_count), 0.0) as word_count,
+    COALESCE(AVG(paragraph_count), 0.0) as paragraph_count,
+    -- ... 45 signals total
+    -- Boolean signals computed as rates:
+    COALESCE(AVG(CASE WHEN has_faq_section THEN 1 ELSE 0 END), 0.0) as has_faq_section
+FROM url_structural_signals uss
+JOIN run_citations rc ON uss.url_enrichment_id = rc.url_enrichment_id
+WHERE rc.run_id = :run_id
+```
+Returns a dict keyed by signal name with float values. `COALESCE/NULLIF` for NULL safety per Codex W2.
+
+**`get_signal_correlations(run_id: UUID) → dict[str, float]`:**
+```sql
+SELECT
+    COALESCE(corr(word_count, similarity), 0.0) as word_count,
+    COALESCE(corr(reading_level, similarity), 0.0) as reading_level,
+    -- ... 15 key signals
+FROM url_structural_signals uss
+JOIN run_citations rc ON uss.url_enrichment_id = rc.url_enrichment_id
+JOIN run_paragraph_scores rps ON rps.citation_id = rc.id AND rps.rank = 1
+WHERE rc.run_id = :run_id
+```
+Joins with `run_paragraph_scores` (rank=1 = best paragraph) to correlate structural signals with semantic similarity. Pearson correlation via SQL `corr()`.
+
+**`get_cluster_patterns(run_id: UUID) → Sequence[dict]`:**
+```sql
+SELECT
+    rq.cluster_name,
+    COUNT(*) as total,
+    SUM(CASE WHEN uss.has_faq_section THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0) as faq_rate,
+    -- ... boolean pattern rates
+FROM run_citations rc
+JOIN run_queries rq ON rc.query_id = rq.query_id AND rc.run_id = rq.run_id
+JOIN url_structural_signals uss ON uss.url_enrichment_id = rc.url_enrichment_id
+WHERE rc.run_id = :run_id
+GROUP BY rq.cluster_name
+```
+
+**`core/db/repositories/platform_repo.py` — PlatformRepository:**
+
+**`get_platform_summaries(run_id: UUID) → Sequence[dict]`:**
+```sql
+SELECT engine, COUNT(*) as citation_count, COUNT(DISTINCT url) as unique_urls
+FROM run_citations WHERE run_id = :run_id
+GROUP BY engine
+```
+
+**`get_platform_url_sets(run_id: UUID) → dict[str, set[str]]`:**
+Queries `DISTINCT (engine, url)` and groups into Python sets. Used downstream for **Jaccard similarity** computation in Python (not SQL). Per Codex W4: "Jaccard computation involves set operations that are fragile in SQL — keep it in Python where it's easily tested."
+
+**`get_citation_exclusivity(run_id: UUID) → dict[str, int]`:**
+```sql
+WITH url_engine_counts AS (
+    SELECT url, COUNT(DISTINCT engine) as engine_count
+    FROM run_citations WHERE run_id = :run_id
+    GROUP BY url
+)
+SELECT rc.engine, COUNT(*) as exclusive_count
+FROM run_citations rc
+JOIN url_engine_counts uec ON rc.url = uec.url
+WHERE uec.engine_count = 1 AND rc.run_id = :run_id
+GROUP BY rc.engine
+```
+
+---
+
+### 26.16 Phase 3 — TaskStoreProtocol & DbTaskStore (D-TASKSTORE-1)
+
+**Sprint:** `cleanup-taskstore-migration` · **Date:** 2026-02-28 · **Tests:** +49 · **Files:** 5 new, 7 migrated
+
+**`core/services/task_store.py` — TaskStoreProtocol:**
+
+```python
+@runtime_checkable
+class TaskStoreProtocol(Protocol):
+    @property
+    def semaphore(self) -> asyncio.Semaphore: ...
+
+    # CRUD
+    def create_task(self, pipeline: str, company_slug: str, product_slug: Optional[str] = None) -> PipelineTask: ...
+    def get_task(self, task_id: str) -> PipelineTask: ...
+    def update_task(self, task_id: str, **kwargs) -> PipelineTask: ...
+    def list_tasks(self, pipeline=None, status=None, company_slug=None, product_slug=None) -> List[PipelineTask]: ...
+
+    # Slug locks
+    def acquire_slug_lock(self, slug: str) -> None: ...
+    def release_slug_lock(self, slug: str) -> None: ...
+
+    # Task handle tracking (for cancellation)
+    def register_task_handle(self, task_id: str, handle: asyncio.Task) -> None: ...
+    def cancel_task_handle(self, task_id: str) -> bool: ...
+    def remove_task_handle(self, task_id: str) -> None: ...
+
+    # HITL approval
+    async def wait_for_approval(self, task_id: str, timeout: float = 86400) -> Dict: ...
+    def submit_approval(self, task_id: str, decision: str, revision_note: Optional[str] = None, stage: Optional[str] = None) -> None: ...
+```
+
+Re-exports `TaskConflictError` and `TaskNotFoundError` for consumer convenience.
+
+**`core/services/db_task_store.py` — DbTaskStore:**
+
+**Architecture: Write-through in-memory cache with DB persistence.**
+
+```
+┌──────────────────────┐
+│   In-Memory Cache     │  ← Fast sync reads (dict lookup)
+│   _tasks: Dict        │
+│   _slug_locks: Dict   │  ← Process-local (NOT persisted)
+│   _approval_queues    │  ← Process-local (NOT persisted)
+│   _task_handles       │  ← Process-local (NOT persisted)
+│   semaphore           │  ← Process-local (NOT persisted)
+└─────────┬────────────┘
+          │ write-through
+          ▼
+┌──────────────────────┐
+│   PostgreSQL          │  ← Durable state (survives restarts)
+│   api_tasks table     │
+│   JSONB: result,      │
+│   approval_history    │
+└──────────────────────┘
+```
+
+**Why write-through (not write-behind):**
+- State transitions (`status`, `result`, `error`) are critical — must be durable immediately
+- Non-critical updates (`progress_pct`) can be fire-and-forget
+- Write-behind would lose state if the process crashes mid-pipeline (Codex CX-13 finding)
+
+**`api_tasks` ORM Model (`core/db/models/api_tasks.py`):**
+
+```python
+class ApiTaskModel(Base):
+    __tablename__ = "api_tasks"
+
+    task_id:            Mapped[str]            = mapped_column(String, primary_key=True)
+    company_slug:       Mapped[str]            = mapped_column(String, index=True)
+    pipeline:           Mapped[str]            = mapped_column(String)
+    status:             Mapped[str]            = mapped_column(String)  # Plain string, NOT PG enum
+    effective_slug:     Mapped[Optional[str]]  = mapped_column(String, nullable=True)
+    product_slug:       Mapped[Optional[str]]  = mapped_column(String, nullable=True)
+    progress_pct:       Mapped[float]          = mapped_column(Float, default=0.0)
+    result:             Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    error:              Mapped[Optional[str]]  = mapped_column(String, nullable=True)
+    approval_payload:   Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    approval_history:   Mapped[list]           = mapped_column(JSONB, default=list)
+    created_at:         Mapped[datetime]       = mapped_column(DateTime(timezone=True))
+    updated_at:         Mapped[datetime]       = mapped_column(DateTime(timezone=True))
+```
+
+**Why plain String status (not PG enum):** `TaskStatus` includes values like `pending_approval` and `failed_restart` which are not part of the standard pipeline status enum. PG enums are immutable — adding new values requires `ALTER TYPE ... ADD VALUE` in a migration. Plain String avoids this friction.
+
+**Startup Recovery:**
+```python
+async def recover_from_db(self) -> int:
+    """Load non-terminal tasks, mark orphans as failed_restart."""
+    # 1. Load all tasks from DB → self._tasks cache
+    # 2. Find tasks with status 'running' or 'pending_approval' (orphaned)
+    # 3. Mark orphans as status='failed_restart', updated_at=now()
+    # 4. Return count of recovered orphans
+```
+
+**Session factory:** Per-operation (NOT request-scoped). DbTaskStore is a long-lived singleton, not tied to HTTP request lifecycles.
+
+---
+
+### 26.17 DI Wiring — How the Switch Works
+
+**`api/dependencies.py`:**
+
+```python
+def get_auth_service(request: Request) -> AuthServiceProtocol:
+    """Returns DbAuthService if DATABASE_URL, else JsonAuthService."""
+    service = getattr(request.app.state, "auth_service", None)
+    if service is not None:
+        return service
+    return JsonAuthService(request.app.state.auth_store)
+
+def get_gap_data_service(request: Request) -> GapDataServiceProtocol:
+    """Returns DbGapDataService if pre-built in lifespan, else JsonGapDataService."""
+    service = getattr(request.app.state, "gap_data_service", None)
+    if service is not None:
+        return service
+    return JsonGapDataService(
+        artifacts_root=request.app.state.artifacts_root,
+        task_store=request.app.state.task_store,
+    )
+
+def get_brand_data_service(request: Request) -> BrandDataServiceProtocol:
+    service = getattr(request.app.state, "brand_data_service", None)
+    if service is not None:
+        return service
+    return JsonBrandDataService(
+        artifacts_root=request.app.state.artifacts_root,
+        task_store=request.app.state.task_store,
+    )
+
+def get_content_data_service(request: Request) -> ContentDataServiceProtocol:
+    service = getattr(request.app.state, "content_data_service", None)
+    if service is not None:
+        return service
+    return JsonContentDataService(artifacts_root=request.app.state.artifacts_root)
+
+def get_task_store(request: Request) -> TaskStoreProtocol:
+    return request.app.state.task_store
+```
+
+**`api/app.py` lifespan (simplified):**
+
+```python
+async def lifespan(app: FastAPI):
+    # Phase 1: Always initialize JSON-backed services
+    app.state.auth_store = AuthStore(...)
+    app.state.task_store = TaskStore(...)
+    app.state.secret_key = get_secret_key()
+
+    # Phase 2-3: Attempt DB services if DATABASE_URL is set
+    if settings.database_url:
+        try:
+            session_factory = get_session_factory()
+            app.state.db_session_factory = session_factory
+
+            # Auth service (Phase 2)
+            async with session_factory() as session:
+                app.state.auth_service = DbAuthService(
+                    CompanyRepository(session), AuthRepository(session), ...
+                )
+
+            # TaskStore (Phase 3)
+            db_task_store = DbTaskStore(session_factory)
+            recovered = await db_task_store.recover_from_db()
+            app.state.task_store = db_task_store
+
+            # Data services (Phase 3)
+            app.state.gap_data_service = DbGapDataService(...)
+            app.state.brand_data_service = DbBrandDataService(...)
+            app.state.content_data_service = DbContentDataService(...)
+        except Exception:
+            logger.warning("DB init failed — falling back to JSON services")
+
+    yield  # App is running
+
+    # Cleanup
+```
+
+**The switch is transparent to routers.** Routers receive a protocol-typed service via `Depends()` and call methods on it. They never know whether they're talking to JSON or DB.
+
+---
+
+### 26.18 Backfill Script (JSON to DB Migration)
+
+**`scripts/backfill_gap_data.py`:**
+
+Migrates existing JSON gap analysis artifacts to the database for testing with real data without implementing Phase 4 pipeline write hooks.
+
+```bash
+python scripts/backfill_gap_data.py --company-slug ramp [--product-slug corporate-card] [--dry-run]
+```
+
+**Logic:**
+1. Find latest completed gap analysis directory for `{effective_slug}`
+2. Load `gap_analysis_complete.json` (or fall back to `analysis.json` + `gap_report.json`)
+3. Parse queries, citations, structural signals, gaps, cluster specs, SPA results
+4. Insert into DB respecting FK ordering: `pipeline_runs` → `run_queries` → `run_citations` + `url_structural_signals` → `query_gaps` + `query_exemplars` + `cluster_specs` + `spa_results` + `centroid_results`
+5. **Idempotent:** Checks existing rows by composite key before inserting. Safe to re-run.
+6. `--dry-run` flag: Prints what would be inserted without executing
+
+---
+
+### 26.19 Cross-Cutting Patterns
+
+**Pattern 1: The Service Protocol Pattern**
+
+```python
+# 1. Define protocol (runtime_checkable for isinstance checks in tests)
+@runtime_checkable
+class SomeServiceProtocol(Protocol):
+    async def method1(self, ...) -> ReturnType: ...
+
+# 2. JSON implementation (wraps existing code, backward compat)
+class JsonSomeService:
+    async def method1(self, ...):
+        return await asyncio.to_thread(existing_module.method1, ...)
+
+# 3. DB implementation (uses SQL repos)
+class DbSomeService:
+    def __init__(self, repo: SomeRepository, ...): ...
+    async def method1(self, ...):
+        return await self._repo.method1(...)
+
+# 4. DI switch (transparent to consumers)
+def get_some_service(request: Request) -> SomeServiceProtocol:
+    return getattr(request.app.state, "some_service", None) or JsonSomeService(...)
+```
+
+**Applied identically 5 times:** Auth, Gap Data, Brand Data, Content Data, TaskStore.
+
+**Pattern 2: Run Resolution**
+
+All Db data services resolve `effective_slug → run_id` before querying:
+```python
+run = await self._pipeline_repo.get_latest_completed(effective_slug, pipeline_type)
+```
+This finds the most recent completed pipeline run for a given company/product slug. If none exists, returns 404.
+
+**Pattern 3: Filesystem Delegation in Db Services**
+
+Even in DB mode, certain data remains filesystem-backed:
+```python
+# DbGapDataService.get_embedding_projection()
+projection_path = self._artifacts_root / "gap_analysis" / effective_slug / "visualizations" / f"{method}_projection.html"
+content = await asyncio.to_thread(projection_path.read_text)
+```
+This ensures large blobs (HTML visualizations, markdown artifacts, content stage files) stay on fast filesystem I/O rather than being stored as Postgres LOBs.
+
+**Pattern 4: Effective Slug**
+
+```
+Company level:    "{company_slug}"                  → "ramp"
+Product level:    "{company_slug}__{product_slug}"  → "ramp__corporate-card"
+```
+
+Used consistently across artifact directories, lock keys, pipeline run records, and all service methods. Double-underscore separator is unambiguous since individual slugs use `[a-z0-9-]` only.
+
+---
+
+### 26.20 Architecture Diagram
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                    FastAPI Routers (all async def)                      │
+│    auth · companies · gap_data · content_data · brand_data             │
+│    settings · knowledge_docs · tasks · events · artifacts              │
+│    gap_analysis · research · content                                   │
+└──────────────────────────────┬─────────────────────────────────────────┘
+                               │ Depends()
+                               ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│              DI Functions (api/dependencies.py)                         │
+│                                                                        │
+│  get_auth_service() ─────→ AuthServiceProtocol                         │
+│  get_gap_data_service() ─→ GapDataServiceProtocol                      │
+│  get_brand_data_service()→ BrandDataServiceProtocol                    │
+│  get_content_data_service()→ContentDataServiceProtocol                 │
+│  get_task_store() ───────→ TaskStoreProtocol                           │
+│                                                                        │
+│  Switch: if app.state.{service} exists → return it (DB)                │
+│          else → construct Json*Service (filesystem fallback)           │
+└──────────────┬──────────────────────────────┬──────────────────────────┘
+               │                              │
+    ┌──────────▼──────────┐        ┌──────────▼──────────┐
+    │   Json Services      │        │   Db Services        │
+    │   (Default)          │        │   (Opt-in)           │
+    ├──────────────────────┤        ├──────────────────────┤
+    │ JsonAuthService      │        │ DbAuthService        │
+    │ JsonGapDataService   │        │ DbGapDataService     │
+    │ JsonBrandDataService │        │ DbBrandDataService   │
+    │ JsonContentDataSvc   │        │ DbContentDataService │
+    │ TaskStore (JSON)     │        │ DbTaskStore          │
+    └─────────┬────────────┘        └─────────┬────────────┘
+              │                               │
+              │ asyncio.to_thread()            │ async session
+              ▼                               ▼
+    ┌──────────────────┐          ┌────────────────────────┐
+    │ Filesystem        │          │ 16 Repositories         │
+    │ (api/services/,   │          ├────────────────────────┤
+    │  api/auth/store,  │          │ CompanyRepository       │
+    │  artifacts/)      │          │ AuthRepository          │
+    └──────────────────┘          │ ProductRepository       │
+                                  │ InviteRepository        │
+                                  │ PipelineDefaultsRepo    │
+                                  │ PipelineRunRepository   │
+                                  │ GapAnalysisRepository   │
+                                  │ ContentRepository       │
+                                  │ EmbeddingRepository     │
+                                  │ CacheRepository         │
+                                  │ SignalRepository        │
+                                  │ PlatformRepository      │
+                                  │ TaskRepository          │
+                                  │ KnowledgeDocRepository  │
+                                  │ TrackingRepository      │
+                                  │ SiteAuditRepository     │
+                                  └───────────┬────────────┘
+                                              │ flush-only
+                                              ▼
+                                  ┌────────────────────────┐
+                                  │ PostgreSQL + pgvector    │
+                                  │ 31 tables · 12 enums    │
+                                  │ 4 Alembic migrations     │
+                                  │ HNSW vector indexes      │
+                                  └────────────────────────┘
+```
+
+---
+
+### 26.21 Testing Strategy
+
+**Phase 1 Tests (44):**
+- Located in `tests/db/` — auto-skip without `TEST_DATABASE_URL`
+- Savepoint-based isolation: each test wraps in a transaction that rolls back
+- `after_transaction_end` listener restarts nested transaction for proper isolation
+- Tests cover: model creation, repo CRUD, composite FK ordering, migration schema verification
+
+**Phase 2 Tests (96):**
+- Auth utility unit tests: password hashing, token creation/verification, domain normalization
+- JsonAuthService tests: verify all protocol methods via wrapped AuthStore
+- DbAuthService tests: full integration with DB (auto-skip without `TEST_DATABASE_URL`)
+- Router async migration tests: verify all endpoints return correct responses after sync→async conversion
+
+**Phase 3 Tests (46 = 9 passed + 37 skipped):**
+- **Protocol conformance tests (9, always pass):** Verify both Json and Db implementations satisfy `isinstance(service, SomeServiceProtocol)` — catches interface drift
+- **DB service tests (37, auto-skip):** Signal repo aggregations, platform repo analytics, gap data service end-to-end, TaskStore write-through + recovery
+
+**Phase 3 TaskStore Tests (49):**
+- DbTaskStore CRUD: create, update, list, get
+- Write-through verification: changes appear in DB after sync update
+- Orphan recovery: running/pending_approval tasks marked as `failed_restart` on startup
+- Slug lock isolation: concurrent creates for same slug fail correctly
+- Approval flow: wait_for_approval + submit_approval round-trip
+
+**Test fixture pattern:**
+```python
+# Each tests/db/ file needs its own pytestmark (conftest pytestmark doesn't propagate)
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("TEST_DATABASE_URL"),
+    reason="Requires TEST_DATABASE_URL"
+)
+```
+
+**Backward compatibility guarantee:**
+All 1127 existing tests (non-DB) pass unchanged — they use JSON-backed services via `dependency_overrides` in conftest.py.
+
+---
+
+### 26.22 Files Changed Summary
+
+| Phase | New Files | Modified Files | Key Additions |
+|-------|-----------|----------------|---------------|
+| **Phase 1** | 44 | 3 | 31 ORM models, 8 repos, 2 migrations, engine factory, base classes, enums, 44 tests |
+| **Phase 2** | 18 | 32 | AuthServiceProtocol, 2 service implementations, 3 utility modules, 3 new repos, middleware decoupled, 8 routers async, 96 tests |
+| **Phase 3 (Services)** | 16 | 14 | 3 protocols, 6 service implementations, 2 new repos (signal, platform), 3 enhanced repos, backfill script, 46 tests |
+| **Phase 3 (TaskStore)** | 5 | 7 | TaskStoreProtocol, DbTaskStore, ApiTaskModel ORM, TaskRepository, migration 0004, 49 tests |
+| **Total** | **83** | **56** | **235 new tests** |
+
+---
+
+### 26.23 Deferred Items
+
+| Item | Description | Why Deferred |
+|------|-------------|-------------|
+| Phase 4 — Pipeline Write Hooks | Populate DB tables during pipeline execution (s1-s8 write to DB as they run) | Requires modifying each pipeline step — separate sprint |
+| Multi-Instance Scaling | Redis pub/sub or PG LISTEN/NOTIFY for SSE events, task cancellation, approval queues across workers | Process-local primitives (semaphore, slug_locks, queues) are sufficient for single-instance |
+| API Key Encryption (Phase 1D) | Encrypted per-company API keys in DB | Pre-YC — running on our own keys |
+| Content-Gap Integration | Gap analysis auto-refreshes when new content is published | Complex cross-pipeline coordination — design preserved in `.claude/plans/cozy-twirling-mochi.md` |
+| CHECK Constraints | DB-level validation on numeric fields (word_count >= 0, similarity 0-1) | Codex recommendation — low risk without them since Pydantic validates at app level |
+| Unit-of-Work Abstraction | Formalize the session commit pattern across multi-repo operations | Codex architectural recommendation — current pattern works but isn't explicitly named |
+| PB-28/29: Stream Token Hardening | Single-use + task-scoped stream tokens | v0 5-min TTL is acceptable |
+
+---
+
 ## Appendix A: Model & API Key Matrix
 
 | Component | Model | API Key Variable | Default Model |
@@ -5899,10 +7044,14 @@ def test_other_user_cannot_read_test_co_profile(self, other_client, test_company
 | 2026-02-27 | §16 | Added Database dependency group (sqlalchemy, asyncpg, psycopg2-binary, alembic, pgvector) | T-sqlalchemy-migration |
 | 2026-02-27 | §17 | Added Decision 14: SQLAlchemy 2.0 + Alembic Database Layer (D-DB-1) — Codex-reviewed, 6-0 vs SQLModel | T-sqlalchemy-migration |
 | 2026-02-27 | §18 | Updated test coverage description to 1073 tests, added DB layer mention, added CI recommendation | T-sqlalchemy-migration |
+| 2026-02-28 | §1 | Updated Executive Summary — 1262 tests, 3-phase DB migration description | T-db-migration-docs |
+| 2026-02-28 | §9.8 | Updated Phase 1 status — now fully wired via Phases 2+3, cross-ref to §26 | T-db-migration-docs |
+| 2026-02-28 | TOC | Added §26 SQLAlchemy & Service Layer Migration with 23 subsection links, renumbered Appendices to §27-§29 | T-db-migration-docs |
+| 2026-02-28 | §26 | **NEW SECTION** — SQLAlchemy & Service Layer Migration: 3-phase database architecture. Phase 1: 31 ORM tables, 16 repos, 4 Alembic migrations, flush-only pattern, lazy engine. Phase 2: AuthServiceProtocol, 3-layer decomposition (utilities/protocol/services), JsonAuthService + DbAuthService, middleware decoupling. Phase 3: 3 data service protocols (Gap/Brand/Content), 6 implementations (3 Json + 3 Db), SignalRepository SQL aggregations, PlatformRepository analytics, TaskStoreProtocol + DbTaskStore write-through, DI wiring, backfill script. 23 subsections, architecture diagram, cross-cutting patterns, testing strategy, deferred items. | D-DB-1, D-AUTH-2, D-SVC-1, D-TASKSTORE-1 |
 
 ---
 
 *End of Comprehensive System Documentation*
-*Generated: 2026-02-27*
-*Total codebase files analyzed: ~210+*
-*Total lines of documentation: ~6600+*
+*Generated: 2026-02-28*
+*Total codebase files analyzed: ~290+*
+*Total lines of documentation: ~7800+*

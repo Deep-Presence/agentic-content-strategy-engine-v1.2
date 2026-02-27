@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-02-27
-> **Total items:** 34
+> **Last synced:** 2026-02-28
+> **Total items:** 27
 
 ## Critical (Fix Before Production)
 
@@ -52,6 +52,7 @@
 - **Description:** Use `Literal["asc", "desc"]` type annotation.
 - **Files affected:** `api/routers/gap_data.py:54`
 - **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-02-28 (T5 — cleanup-taskstore sprint)
 
 ### PB-7: Classification sort is alphabetical, not by severity (W5)
 - **Source:** Phase 1+2 code review — sprint front-back-integration
@@ -59,6 +60,7 @@
 - **Description:** Add severity-rank mapping: `significant_gap=4, gap_to_close=3, roughly_equal=2, company_wins=1`.
 - **Files affected:** `api/services/gap_data_service.py:753`
 - **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-02-28 (T5 — cleanup-taskstore sprint)
 
 ### PB-8: `company_avg` always 0.0 in signal averages (W6)
 - **Source:** Phase 1+2 code review — sprint front-back-integration
@@ -73,6 +75,7 @@
 - **Description:** Clamp `page = min(page, total_pages)` or return 400 for out-of-range.
 - **Files affected:** `api/services/gap_data_service.py:756`
 - **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-02-28 (T5 — cleanup-taskstore sprint)
 
 ### PB-10: Enriched citations ~20MB cached x 10 = 200MB memory risk (W9)
 - **Source:** Phase 1+2 code review — sprint front-back-integration
@@ -138,6 +141,7 @@
 - **Description:** Extract to shared utility.
 - **Files affected:** `api/auth/store.py:96`, `api/routers/content.py:26`
 - **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-02-28 (T3 — cleanup-taskstore sprint, consolidated to `core.auth.utils.domain.derive_slug`)
 
 ### PB-19: No test for `normalize_domain` with port numbers (I4)
 - **Source:** Phase 1+2 code review
@@ -194,6 +198,7 @@
 - **Description:** `auth.py:32` docstring still mentions "If company_domain matches an existing company, user joins as 'member'." — this is stale after Codex C1 hardening.
 - **Files affected:** `api/routers/auth.py`
 - **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-02-28 (T2 — cleanup-taskstore sprint)
 
 ### PB-27: Login company lookup always fails on company_slug key — dead code path (W2)
 - **Source:** Combined review (route-protection sprint) — Claude
@@ -201,6 +206,7 @@
 - **Description:** `auth.py:98` calls `get_company_by_slug(user.get("company_slug", ""))` but UserProfile dict never has `company_slug` key (it's `company_id`). Always falls through to the company_id loop fallback. Remove the dead code path.
 - **Files affected:** `api/routers/auth.py`
 - **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-02-28 (T2 — cleanup-taskstore sprint, replaced with `get_company_by_id`)
 
 ### PB-28: Stream tokens not single-use (W3)
 - **Source:** Combined review (route-protection sprint) — Claude
@@ -250,6 +256,7 @@
 - **Description:** `auth.py:131` — `/me` endpoint manually reads `request.state.user_id` instead of using `Depends(require_auth)`. Misses `is_active` check.
 - **Files affected:** `api/routers/auth.py`
 - **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-02-28 (T1 — SECURITY — cleanup-taskstore sprint)
 
 ### PB-35: Stale docstrings/comments still reference grace-mode (I2)
 - **Source:** Combined review (route-protection sprint) — Claude
@@ -257,6 +264,7 @@
 - **Description:** Multiple files still reference "grace mode" auth which was replaced by default-deny middleware.
 - **Files affected:** Multiple
 - **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-02-28 (T2 — cleanup-taskstore sprint)
 
 ### PB-36: Authorization header check case-sensitive — lowercase only (I3)
 - **Source:** Combined review (route-protection sprint) — Claude
@@ -326,3 +334,36 @@
 
 ### PB-1: `update_company` allows overwriting immutable fields ✅ RESOLVED 2026-02-26
 - **Resolved by:** T-review-action-items (P0 C2/C5) — added `_COMPANY_MUTABLE_FIELDS` + `_PRODUCT_MUTABLE_FIELDS` allowlists
+
+### PB-6: `sort_dir` accepts any string value ✅ RESOLVED 2026-02-28
+- **Resolved by:** T5 (cleanup-taskstore sprint) — changed to `Literal["asc", "desc"]`
+
+### PB-7: Classification sort is alphabetical ✅ RESOLVED 2026-02-28
+- **Resolved by:** T5 (cleanup-taskstore sprint) — added `_CLASSIFICATION_RANK` severity mapping
+
+### PB-9: Pagination allows `page > total_pages` ✅ RESOLVED 2026-02-28
+- **Resolved by:** T5 (cleanup-taskstore sprint) — added page clamping in both JSON and DB paths
+
+### PB-16: Unused `Field` import in auth/models.py ✅ FALSE POSITIVE
+- **Resolved by:** Verified — `Field` IS used on lines 179 (InviteRequest) and 193 (JoinRequest)
+
+### PB-17: `base64` imported inside method ✅ FALSE POSITIVE
+- **Resolved by:** Verified — top-level import in `tokens.py:12`
+
+### PB-18: `_derive_slug` duplicated ✅ RESOLVED 2026-02-28
+- **Resolved by:** T3 (cleanup-taskstore sprint) — consolidated to `core.auth.utils.domain.derive_slug`
+
+### PB-26: Register docstring stale ✅ RESOLVED 2026-02-28
+- **Resolved by:** T2 (cleanup-taskstore sprint) — updated docstring
+
+### PB-27: Login dead code path ✅ RESOLVED 2026-02-28
+- **Resolved by:** T2 (cleanup-taskstore sprint) — replaced with `get_company_by_id`
+
+### PB-34: /me endpoint missing require_auth ✅ RESOLVED 2026-02-28
+- **Resolved by:** T1 SECURITY (cleanup-taskstore sprint) — added `Depends(require_auth)`
+
+### PB-35: Stale grace-mode docstrings ✅ RESOLVED 2026-02-28
+- **Resolved by:** T2 (cleanup-taskstore sprint) — updated to "default-deny ASGI middleware"
+
+### PB-37: No test for invite code reuse ✅ RESOLVED 2026-02-27
+- **Resolved by:** security-fixes sprint — TestC5InviteRaceCondition.test_invite_code_single_use

@@ -1,17 +1,17 @@
 {
-  "sprint": "service-layer-phase3",
-  "sprint_goal": "Service Layer Migration Phase 3 — Three data service protocols (GapData, BrandData, ContentData) with dual Json/Db implementations, new signal+platform repositories, router async conversion with DI injection, backfill script, comprehensive DB tests.",
-  "sprint_status": "COMPLETE — All 6 steps done (Step 0-5). 16 new files created. 14 files modified. 46 new tests. 1088 passed + 125 skipped = 1213 total.",
-  "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "Raw SDK clients for LLM calls (no LangChain wrappers)", "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception", "Frontend renders its own charts from raw JSON (not iframes)", "No Supabase yet — filesystem artifacts are source of truth", "email-validator required for auth models (EmailStr)", "Password min_length=8, max_length=128 enforced in LoginRequest and RegisterRequest", "Double-underscore separator for effective slugs: {company}__{product}", "Prompt product context only when product_slug AND product_name both set", "Default-deny middleware — all routes protected unless explicitly whitelisted", "Registration creates isolated companies only — domain auto-join removed (Codex C1)", "JWT_SECRET_KEY required in non-dev/test environments (Codex W8)", "core/ cannot import from api/ — shared code goes in core/shared_tools/", "DB layer is opt-in via DATABASE_URL — no engine creation at import time", "Repos flush only, DI session generator owns commit/rollback", "Native PgUUID(as_uuid=True) for PKs — repo layer handles str<->uuid conversion", "AuthServiceProtocol is the contract — all routers use get_auth_service dependency", "Middleware uses verify_token utility + app.state.secret_key (no AuthStore dependency)", "Service protocols are the contract — routers use get_*_data_service dependencies", "JsonService is default, DbService is opt-in via DATABASE_URL + db_session_factory"],
+  "sprint": "cleanup-taskstore-migration",
+  "sprint_goal": "Cleanup Sprint + TaskStore DB Migration — Security fix (PB-34 /me auth), data correctness (signal repo, cluster perf), API validation (sort_dir, page clamping, classification sort), and TaskStore migration from JSON files to DB (TaskStoreProtocol, ApiTaskModel ORM, DbTaskStore write-through, lifespan DI switch).",
+  "sprint_status": "COMPLETE — All 10 tasks done (T1-T10). 8 new files, ~24 modified. 49 new tests. 1127 passed + 135 skipped = 1262 total.",
+  "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "Raw SDK clients for LLM calls (no LangChain wrappers)", "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception", "Frontend renders its own charts from raw JSON (not iframes)", "No Supabase yet — filesystem artifacts are source of truth", "email-validator required for auth models (EmailStr)", "Password min_length=8, max_length=128 enforced in LoginRequest and RegisterRequest", "Double-underscore separator for effective slugs: {company}__{product}", "Prompt product context only when product_slug AND product_name both set", "Default-deny middleware — all routes protected unless explicitly whitelisted", "Registration creates isolated companies only — domain auto-join removed (Codex C1)", "JWT_SECRET_KEY required in non-dev/test environments (Codex W8)", "core/ cannot import from api/ — shared code goes in core/shared_tools/", "DB layer is opt-in via DATABASE_URL — no engine creation at import time", "Repos flush only, DI session generator owns commit/rollback", "Native PgUUID(as_uuid=True) for PKs — repo layer handles str<->uuid conversion", "AuthServiceProtocol is the contract — all routers use get_auth_service dependency", "Middleware uses verify_token utility + app.state.secret_key (no AuthStore dependency)", "Service protocols are the contract — routers use get_*_data_service dependencies", "JsonService is default, DbService is opt-in via DATABASE_URL + db_session_factory", "TaskStoreProtocol is the contract — all routers/runners use get_task_store dependency", "DbTaskStore is opt-in via DATABASE_URL — JSON TaskStore is fallback on init failure"],
   "active_branches": ["feat/front-back"],
   "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "langfuse 3.14.1 installed", "trafilatura 1.6+ installed", "textstat 0.7+ installed", "LangGraph >=1.0 installed", "email-validator >=2.0 installed", "pdfplumber >=0.10 installed", "python-docx >=1.0 installed", "sqlalchemy[asyncio] >=2.0.30 installed", "asyncpg >=0.29 installed", "psycopg2-binary >=2.9 installed", "alembic >=1.13 installed", "pgvector >=0.3 installed"],
   "current_clients": ["Ramp", "Carta", "Mynd"],
-  "key_files_in_flux": ["core/services/", "core/db/repositories/", "api/dependencies.py"],
-  "last_completed": "T-service-layer-phase3 — Service Layer Migration Phase 3 complete (16 new files, 14 modified, 46 new tests, 1213 total)",
+  "key_files_in_flux": [],
+  "last_completed": "T-cleanup-taskstore — Cleanup Sprint + TaskStore DB Migration complete (8 new files, ~24 modified, 49 new tests, 1262 total)",
   "deferred_issues_location": ".claude/sprints/pending/backlog.md",
   "deferred_feature2": ".claude/plans/cozy-twirling-mochi.md (Feature 2 — Content-Gap Integration)",
   "deferred_api_keys": "Phase 1D — API Key Configuration deferred to future sprint (RuntimeConfig passthrough + Fernet/KMS encryption)",
-  "test_count": 1213,
+  "test_count": 1262,
   "phases_completed": [
     "front-back Phase 1 — Foundation (auth, company model, registration)",
     "front-back Phase 2 — Gap Analysis Data Endpoints (6 endpoints, service layer, 61 tests)",
@@ -45,7 +45,10 @@
     "service-layer Phase 3 Step 2 — New Repositories (SignalRepo, PlatformRepo, enhanced gap_analysis/pipeline/content repos, 12 DB tests)",
     "service-layer Phase 3 Step 3 — DB Service Implementations (DbGapDataService, DbBrandDataService, DbContentDataService)",
     "service-layer Phase 3 Step 4 — Backfill Script (scripts/backfill_gap_data.py, idempotent JSON→DB migration)",
-    "service-layer Phase 3 Step 5 — Integration Testing (9 protocol conformance + 25 DB service + 12 DB repo tests)"
+    "service-layer Phase 3 Step 5 — Integration Testing (9 protocol conformance + 25 DB service + 12 DB repo tests)",
+    "cleanup-taskstore Phase A — Cleanup fixes (T1-T5: /me auth, create_invite async, get_company_by_id, _derive_slug, signal repo, gap validation)",
+    "cleanup-taskstore Phase B — TaskStoreProtocol + ORM (T6-T8: protocol, DI wiring, ApiTaskModel + TaskRepository + migration 0004)",
+    "cleanup-taskstore Phase C — DbTaskStore + Integration (T9-T10: write-through cache, lifespan DI switch)"
   ],
-  "phases_remaining": ["Phase 2C-taskstore — Migrate TaskStore from JSON to DB", "Phase 4 — Pipeline write hooks (populate DB tables during pipeline execution)"]
+  "phases_remaining": ["Phase 4 — Pipeline write hooks (populate DB tables during pipeline execution)"]
 }

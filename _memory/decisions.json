@@ -10,7 +10,7 @@
       "anyio wrapping for ChromaDB (over-engineering, asyncio.to_thread works fine)",
       "async-stdlib.bounded_gather (over-engineering for BFS crawl)"
     ],
-    "outcome": "All 7 tasks complete. 58 tests passing. Expected ~57min → ~11min pipeline time.",
+    "outcome": "All 7 tasks complete. 58 tests passing. Expected ~57min \u2192 ~11min pipeline time.",
     "reversible": true,
     "approved_by": "Aryan"
   },
@@ -18,12 +18,12 @@
     "id": "D-async-2",
     "timestamp": "2026-02-15",
     "task": "Cloudflare bypass strategy for s1 crawler",
-    "approach": "3-tier fallback chain in _crawl_one: httpx (fast) → Playwright headless Chromium (CF bypass) → Wayback Machine (last resort). Site-level flag skips httpx after first CF detection.",
+    "approach": "3-tier fallback chain in _crawl_one: httpx (fast) \u2192 Playwright headless Chromium (CF bypass) \u2192 Wayback Machine (last resort). Site-level flag skips httpx after first CF detection.",
     "rationale": "Cloudflare-protected sites (carta.com) return 403 to all httpx requests. Playwright is already in requirements.txt. Wayback Machine provides historical content as last resort.",
     "alternatives_rejected": [
       "cloudscraper library (fragile, constantly breaks as CF updates)",
       "Proxy rotation (cost, complexity, still blocked by JS challenge)",
-      "Skip CF-protected sites (unacceptable — Carta is a client)"
+      "Skip CF-protected sites (unacceptable \u2014 Carta is a client)"
     ],
     "outcome": "Implementation complete. Awaiting live test on carta.com.",
     "reversible": true,
@@ -33,7 +33,7 @@
     "id": "D-CG-1",
     "timestamp": "2026-02-15",
     "task": "Content Generation Engine architecture",
-    "approach": "4-stage async pipeline: Strategic Planner (Sonnet) → Orchestrator-Workers (Sonnet/Haiku/Perplexity) → Evaluator-Optimizer (4 dimensions, 2 revision cycles) → LangGraph HITL. Raw AsyncAnthropic SDK, semaphore concurrency, Langfuse tracing.",
+    "approach": "4-stage async pipeline: Strategic Planner (Sonnet) \u2192 Orchestrator-Workers (Sonnet/Haiku/Perplexity) \u2192 Evaluator-Optimizer (4 dimensions, 2 revision cycles) \u2192 LangGraph HITL. Raw AsyncAnthropic SDK, semaphore concurrency, Langfuse tracing.",
     "rationale": "Follows two proven Anthropic patterns: Orchestrator-Workers for parallel content production, Evaluator-Optimizer for automated QA. Reuses existing async/semaphore patterns from gap analysis. LangGraph HITL matches research pipeline pattern.",
     "alternatives_rejected": [
       "LangChain wrappers (inconsistent with gap analysis, hides control)",
@@ -58,7 +58,7 @@
   {
     "id": "D-API-1",
     "timestamp": "2026-02-16",
-    "task": "FastAPI integration architecture — asyncio.create_task, JSON TaskStore, SSE events, MemorySaver HITL",
+    "task": "FastAPI integration architecture \u2014 asyncio.create_task, JSON TaskStore, SSE events, MemorySaver HITL",
     "approach": "Same-repo api/ package. asyncio.create_task (not Celery), JSON-file-backed TaskStore, SSE for progress, MemorySaver checkpointer for HITL interrupt/resume. pydantic_settings.BaseSettings for env-var config.",
     "rationale": "Lightweight, no infra deps. JSON files are simple and debuggable. asyncio.create_task matches existing async-first patterns. MemorySaver enables LangGraph checkpoint/resume for HITL approvals.",
     "alternatives_rejected": [
@@ -70,17 +70,17 @@
     "reversible": true,
     "approved_by": "Aryan",
     "tech_debt_warnings": [
-      "model_dump(mode='json') in TaskStore persistence — works fine in Pydantic v2 but verify with future Pydantic upgrades"
+      "model_dump(mode='json') in TaskStore persistence \u2014 works fine in Pydantic v2 but verify with future Pydantic upgrades"
     ]
   },
   {
     "id": "D-SSO-1",
     "timestamp": "2026-02-18",
-    "task": "S4 main content extraction — dual-soup architecture",
+    "task": "S4 main content extraction \u2014 dual-soup architecture",
     "approach": "Two separate HTML processing paths: _extract_main_content() uses trafilatura for clean text extraction (paragraphs), _extract_structural_html() uses semantic-tag-only scoping for element counting (preserves ol/dl/table/details).",
-    "rationale": "Trafilatura gives best text quality but flattens structural HTML elements (ol→p, dl→p, details→p). Semantic tags preserve structure for counting. Dual approach gets best of both.",
+    "rationale": "Trafilatura gives best text quality but flattens structural HTML elements (ol\u2192p, dl\u2192p, details\u2192p). Semantic tags preserve structure for counting. Dual approach gets best of both.",
     "alternatives_rejected": [
-      "Trafilatura-only (loses structural element counts — ordered_list_count=0, definition_list_count=0)",
+      "Trafilatura-only (loses structural element counts \u2014 ordered_list_count=0, definition_list_count=0)",
       "BeautifulSoup-only (doesn't handle nav/footer/sidebar contamination well enough)",
       "Custom content extraction (reinventing what trafilatura already does well)"
     ],
@@ -92,7 +92,7 @@
     "id": "D-SSO-2",
     "timestamp": "2026-02-18",
     "task": "GapContentBrief naming and 3-tier output architecture",
-    "approach": "Named GapContentBrief (not ContentBrief) to avoid collision with content_generation.ContentBrief. gap_analysis_complete.json is additive — existing 3-file contract (gap_report.json, generation_spec.json, analysis.json) unchanged.",
+    "approach": "Named GapContentBrief (not ContentBrief) to avoid collision with content_generation.ContentBrief. gap_analysis_complete.json is additive \u2014 existing 3-file contract (gap_report.json, generation_spec.json, analysis.json) unchanged.",
     "rationale": "Content engine's run_content_engine.py (lines 93-106) loads 3 separate JSON files. Breaking this contract would require coordinated changes. New file is a superset for future consumption.",
     "alternatives_rejected": [
       "Replace gap_report.json with combined file (breaks content engine loading)",
@@ -105,12 +105,12 @@
   {
     "id": "D-FB-1",
     "timestamp": "2026-02-25",
-    "task": "Phase 1 auth and data model architecture — JSON-file backed, pre-Supabase",
+    "task": "Phase 1 auth and data model architecture \u2014 JSON-file backed, pre-Supabase",
     "approach": "JSON-file backed AuthStore for companies+users (artifacts/_auth/), PBKDF2 password hashing, HMAC-signed JWT-like tokens, grace-mode middleware. UserProfile uses first_name/last_name (not single name field). Company model has additional_domains for subdomain tracking.",
     "rationale": "Simple, no external dependencies, easy to migrate to Supabase later. Grace-mode middleware allows incremental auth rollout without blocking unauthenticated requests. Separate first_name/last_name is standard for user profiles.",
     "alternatives_rejected": [
       "bcrypt for password hashing (requires extra C dependency, PBKDF2 is sufficient for v0)",
-      "PyJWT for tokens (over-engineering for v0 — HMAC-signed base64 is simple and replaceable)",
+      "PyJWT for tokens (over-engineering for v0 \u2014 HMAC-signed base64 is simple and replaceable)",
       "Single name field (harder to personalize UI, less professional)"
     ],
     "outcome": "AuthStore working with full CRUD, registration with company dedup, 423 tests passing.",
@@ -120,11 +120,11 @@
   {
     "id": "D-FB-2",
     "timestamp": "2026-02-25",
-    "task": "Registration flow — company deduplication by normalized domain",
-    "approach": "normalize_domain() strips protocol/www/path/port, handles multi-part TLDs (.co.uk, .com.au), returns (root_domain, subdomain_or_none). Registration matches by root domain — first user becomes superuser, subsequent users join as member. Subdomains preserved in company.additional_domains.",
+    "task": "Registration flow \u2014 company deduplication by normalized domain",
+    "approach": "normalize_domain() strips protocol/www/path/port, handles multi-part TLDs (.co.uk, .com.au), returns (root_domain, subdomain_or_none). Registration matches by root domain \u2014 first user becomes superuser, subsequent users join as member. Subdomains preserved in company.additional_domains.",
     "rationale": "Domain normalization prevents duplicate companies created from variations (app.ramp.com vs www.ramp.com vs ramp.com). Multi-part TLD handling prevents incorrect root extraction (example.co.uk should not become co.uk). Subdomain preservation captures seed URLs for future crawling.",
     "alternatives_rejected": [
-      "Email domain verification (deferred — adds friction, not needed for v0)",
+      "Email domain verification (deferred \u2014 adds friction, not needed for v0)",
       "Manual company creation only (bad UX, doesn't scale)",
       "tldextract library (adds dependency for something we can handle with a simple frozenset)"
     ],
@@ -135,8 +135,8 @@
   {
     "id": "D-FB-3",
     "timestamp": "2026-02-25",
-    "task": "Phase 2 gap data endpoints — URL routing and backward compatibility",
-    "approach": "Separate prefix /api/v1/companies/{slug}/gap-analysis/ (not /api/v1/gap-analysis/) to avoid conflicts with existing /api/v1/gap-analysis/{run_id}/status endpoint. Fallback chain: gap_analysis_complete.json → analysis.json + gap_report.json for backward compatibility with Ramp's old format (11 structural signal fields, no content_brief).",
+    "task": "Phase 2 gap data endpoints \u2014 URL routing and backward compatibility",
+    "approach": "Separate prefix /api/v1/companies/{slug}/gap-analysis/ (not /api/v1/gap-analysis/) to avoid conflicts with existing /api/v1/gap-analysis/{run_id}/status endpoint. Fallback chain: gap_analysis_complete.json \u2192 analysis.json + gap_report.json for backward compatibility with Ramp's old format (11 structural signal fields, no content_brief).",
     "rationale": "Existing gap analysis endpoints are run-management (start, status, cancel). Data endpoints are resource-oriented (read pre-computed artifacts by company slug). Separate URL namespace keeps concerns clean. Backward compat ensures Ramp's existing data works without re-running the pipeline.",
     "alternatives_rejected": [
       "Nest under existing /api/v1/gap-analysis/ prefix (URL collision with run_id paths, confusing semantics)",
@@ -150,8 +150,8 @@
   {
     "id": "D-FB-4",
     "timestamp": "2026-02-25",
-    "task": "Gap data service — caching and computation strategy",
-    "approach": "Module-level mtime-based cache (max 10 entries, FIFO eviction). All computed metrics (Pearson correlations, Jaccard similarity, signal averages, cluster fingerprints) computed on-the-fly from raw artifacts. Platform engine names mapped to lowercase frontend keys (openai→chatgpt, etc.).",
+    "task": "Gap data service \u2014 caching and computation strategy",
+    "approach": "Module-level mtime-based cache (max 10 entries, FIFO eviction). All computed metrics (Pearson correlations, Jaccard similarity, signal averages, cluster fingerprints) computed on-the-fly from raw artifacts. Platform engine names mapped to lowercase frontend keys (openai\u2192chatgpt, etc.).",
     "rationale": "Artifacts are static between pipeline runs, so mtime-based invalidation is simple and correct. On-the-fly computation avoids stale pre-computed caches. Module-level cache handles repeated requests within a session. FIFO is acceptable for small cache size.",
     "alternatives_rejected": [
       "Pre-compute metrics at pipeline completion (couples pipeline to API concerns, duplicates work if frontend schema changes)",
@@ -165,12 +165,12 @@
   {
     "id": "D-FB-5",
     "timestamp": "2026-02-25",
-    "task": "Phase 1+2 code review — fix C1-C4 immediately, defer C5-C7 + W1-W9 + I1-I8",
+    "task": "Phase 1+2 code review \u2014 fix C1-C4 immediately, defer C5-C7 + W1-W9 + I1-I8",
     "approach": "Fix 4 critical issues blocking frontend integration now: C1 (missing login/me endpoints), C2 (AuthMiddleware not registered), C3 (no email/password validation), C4 (auth data not gitignored). Defer remaining 20 issues to .claude/sprints/v1/review-findings-deferred.md.",
     "rationale": "C1-C4 directly block frontend login flow. C5-C7 are production safety issues that don't block dev work. W1-W9 are improvements that can wait. Deferring non-blocking issues keeps velocity while tracking everything.",
     "alternatives_rejected": [
       "Fix all 27 issues now (scope creep, delays frontend integration)",
-      "Only fix C1 (leaves security gaps — auth data would be committed without C4)"
+      "Only fix C1 (leaves security gaps \u2014 auth data would be committed without C4)"
     ],
     "outcome": "C1-C4 fixed, 500 tests passing. Deferred issues tracked in .claude/sprints/v1/.",
     "reversible": true,
@@ -179,13 +179,13 @@
   {
     "id": "D-PL-1",
     "timestamp": "2026-02-26",
-    "task": "Product-level pipeline execution — effective_slug design and prompt injection strategy",
-    "approach": "Double-underscore separator `{company_slug}__{product_slug}` for artifact dirs and lock keys. `effective_slug` stored on `PipelineTask`. Central `RunScope` dataclass + `_resolve_scope()` helper in runner.py. Research artifacts inherit from company slug (ordered fallback chain: effective_slug → company_slug → None). Product prompts injected via `{product_context_block}` slot (empty string for company-level runs). Guard condition: inject only when `product_slug AND product_name` both non-null. `_SLUG_PATTERN` in all 3 service files extended to `^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$` to accept effective slugs.",
+    "task": "Product-level pipeline execution \u2014 effective_slug design and prompt injection strategy",
+    "approach": "Double-underscore separator `{company_slug}__{product_slug}` for artifact dirs and lock keys. `effective_slug` stored on `PipelineTask`. Central `RunScope` dataclass + `_resolve_scope()` helper in runner.py. Research artifacts inherit from company slug (ordered fallback chain: effective_slug \u2192 company_slug \u2192 None). Product prompts injected via `{product_context_block}` slot (empty string for company-level runs). Guard condition: inject only when `product_slug AND product_name` both non-null. `_SLUG_PATTERN` in all 3 service files extended to `^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$` to accept effective slugs.",
     "rationale": "Double underscore is unambiguous since individual slugs use `[a-z0-9-]` only. Storing effective_slug on PipelineTask eliminates re-derivation in all 4 teardown paths (3 runners + cancel endpoint). Central _resolve_scope() makes product lookup DRY. Inheritance fallback means product runs can leverage company research without re-running it. Empty-string default for product_context_block means zero prompt drift for company-level runs.",
     "alternatives_rejected": [
       "Single underscore separator (ambiguous if slug ever contains underscores)",
       "Separate artifact trees per product without inheritance (duplicates research artifacts, wastes storage)",
-      "Separate prompt files per product level (unnecessary — injection is DRY and safe)",
+      "Separate prompt files per product level (unnecessary \u2014 injection is DRY and safe)",
       "Compute effective_slug in each of 11 data endpoint handlers (drift risk)"
     ],
     "outcome": "All 5 phases complete. 882 tests passing (114 new). Company-level and product-level locks are independent (ramp and ramp__corporate-card can run concurrently). Same product locks properly conflict.",
@@ -198,10 +198,10 @@
     "timestamp": "2026-02-19",
     "task": "Switch embedding model from text-embedding-3-large (3072) to text-embedding-3-small (1536)",
     "approach": "Changed settings.embedding_model default to text-embedding-3-small. Updated all test fixtures (mock settings, dimension sizes). Updated all documentation references (CLAUDE.md, README.md, COMPREHENSIVE_SYSTEM_DOCUMENTATION.md).",
-    "rationale": "text-embedding-3-small is sufficient for semantic proximity analysis. Halves embedding storage and computation cost (1536 vs 3072 dims). No code changes needed beyond settings default — all code reads settings.embedding_model dynamically.",
+    "rationale": "text-embedding-3-small is sufficient for semantic proximity analysis. Halves embedding storage and computation cost (1536 vs 3072 dims). No code changes needed beyond settings default \u2014 all code reads settings.embedding_model dynamically.",
     "alternatives_rejected": [
       "Keep text-embedding-3-large (unnecessarily expensive for gap analysis cosine similarity)",
-      "Use a different provider (Cohere, Voyage) — would require client changes"
+      "Use a different provider (Cohere, Voyage) \u2014 would require client changes"
     ],
     "outcome": "Embedding model changed. 351 tests passing. All docs updated. Existing artifacts with 3072-dim embeddings will need re-embedding on next pipeline run.",
     "reversible": true,
@@ -210,15 +210,15 @@
   {
     "id": "D-AUTH-1",
     "timestamp": "2026-02-27",
-    "task": "Route protection & authorization — default-deny middleware, RBAC, tenant isolation, invite flow",
-    "approach": "Pure ASGI middleware (not BaseHTTPMiddleware) for default-deny auth with explicit public path whitelist. FastAPI dependencies for RBAC (require_auth, require_role) and tenant isolation (require_tenant). Registration hardened to create isolated companies only — joining existing companies requires invite codes. Stream tokens (5min, stream_only flag) for SSE EventSource clients. JWT_SECRET_KEY enforcement in non-dev environments.",
-    "rationale": "Codex gpt-5.3-codex review found 6 CRITICAL issues (C1–C6) in the grace-mode auth system: cross-tenant registration, client-controlled tenant scoping, IDOR task endpoints, query-param token leakage, fail-open grace mode, deleted user authorization. All incorporated into this 9-phase implementation. Pure ASGI middleware avoids BaseHTTPMiddleware's known issues with SSE streaming (W1). Dependency-based auth allows per-endpoint role granularity.",
+    "task": "Route protection & authorization \u2014 default-deny middleware, RBAC, tenant isolation, invite flow",
+    "approach": "Pure ASGI middleware (not BaseHTTPMiddleware) for default-deny auth with explicit public path whitelist. FastAPI dependencies for RBAC (require_auth, require_role) and tenant isolation (require_tenant). Registration hardened to create isolated companies only \u2014 joining existing companies requires invite codes. Stream tokens (5min, stream_only flag) for SSE EventSource clients. JWT_SECRET_KEY enforcement in non-dev environments.",
+    "rationale": "Codex gpt-5.3-codex review found 6 CRITICAL issues (C1\u2013C6) in the grace-mode auth system: cross-tenant registration, client-controlled tenant scoping, IDOR task endpoints, query-param token leakage, fail-open grace mode, deleted user authorization. All incorporated into this 9-phase implementation. Pure ASGI middleware avoids BaseHTTPMiddleware's known issues with SSE streaming (W1). Dependency-based auth allows per-endpoint role granularity.",
     "alternatives_rejected": [
-      "Keep BaseHTTPMiddleware (risky for SSE streaming — Codex W1)",
-      "Token-based tenant scoping only (no server-side validation — Codex C2)",
-      "Full bearer tokens as query params for SSE (leaks in logs/referrer — Codex C4)",
-      "Domain-based auto-join registration (cross-tenant account takeover — Codex C1)",
-      "Email-based invite system (over-engineering for v0 — simple codes sufficient)",
+      "Keep BaseHTTPMiddleware (risky for SSE streaming \u2014 Codex W1)",
+      "Token-based tenant scoping only (no server-side validation \u2014 Codex C2)",
+      "Full bearer tokens as query params for SSE (leaks in logs/referrer \u2014 Codex C4)",
+      "Domain-based auto-join registration (cross-tenant account takeover \u2014 Codex C1)",
+      "Email-based invite system (over-engineering for v0 \u2014 simple codes sufficient)",
       "Middleware-level role checks (mixes auth + authz concerns, less flexible)"
     ],
     "outcome": "944 tests passing. Default-deny on all routes. RBAC enforced. Tenant isolation verified. Invite flow working. Stream tokens for SSE. 42 dedicated auth enforcement tests.",
@@ -229,17 +229,17 @@
   {
     "id": "D-GUARD-1",
     "timestamp": "2026-02-27",
-    "task": "Existing-company pipeline guard — prevent duplicate runs for users joining analyzed companies",
+    "task": "Existing-company pipeline guard \u2014 prevent duplicate runs for users joining analyzed companies",
     "approach": "force_rerun: bool = False on GapAnalysisStartRequest + ResearchStartRequest. Guard fires BEFORE task_store.create_task(). Gap analysis: dual-sentinel (gap_analysis_complete.json OR analysis.json). Research: stage-aware _research_stages_exist() checks only requested stages, excludes .draft.md personas. Both return HTTP 200 with already_exists=True, stable run_id (last completed task or f'existing-{effective_slug}').",
     "rationale": "Dual-sentinel mirrors gap_data_service.py:112 consistency. Stage-aware research guard prevents blocking legitimate partial-stage re-runs (e.g., stages=['persona'] when only company context exists). Guard before create_task avoids triggering 409 slug conflict. f'existing-{effective_slug}' fallback is non-empty and stable so frontend doesn't crash on status polling.",
     "alternatives_rejected": [
-      "Single-sentinel (gap_analysis_complete.json only) — breaks for companies with only s6 output",
-      "Coarse research guard (any artifact exists) — blocks partial-stage runs (Codex C1)",
-      "Include .draft.md in persona check — false positives (Codex C2)",
-      "list_tasks()[0] for last run — unsorted, cross-scope contamination (Codex C3)",
-      "Empty run_id='' fallback — breaks frontend status polling (Codex C4)"
+      "Single-sentinel (gap_analysis_complete.json only) \u2014 breaks for companies with only s6 output",
+      "Coarse research guard (any artifact exists) \u2014 blocks partial-stage runs (Codex C1)",
+      "Include .draft.md in persona check \u2014 false positives (Codex C2)",
+      "list_tasks()[0] for last run \u2014 unsorted, cross-scope contamination (Codex C3)",
+      "Empty run_id='' fallback \u2014 breaks frontend status polling (Codex C4)"
     ],
-    "outcome": "12 new tests. 900 tests passing total. Feature 2 (Content-Gap Integration) deferred to future sprint — design preserved in .claude/plans/cozy-twirling-mochi.md.",
+    "outcome": "12 new tests. 900 tests passing total. Feature 2 (Content-Gap Integration) deferred to future sprint \u2014 design preserved in .claude/plans/cozy-twirling-mochi.md.",
     "reversible": true,
     "approved_by": "Aryan",
     "codex_reviews": "2 rounds of Codex gpt-5.3-codex high-reasoning review. Round 1: 5C+7W (scope included Feature 2). Round 2: 4C+6W (Feature 1 only). All criticals incorporated."
@@ -247,15 +247,15 @@
   {
     "id": "D-SETTINGS-1",
     "timestamp": "2026-02-27",
-    "task": "Settings Pages API + Knowledge Doc Upload — architecture and shared module extraction",
-    "approach": "File-backed settings (artifacts/_auth/settings/{slug}.json) + knowledge docs with _metadata.json sidecar. Shared modules in core/shared_tools/ (text_extraction.py for canonical .md/.txt/.pdf/.docx extraction, knowledge_doc_metadata.py for single process-wide metadata_lock + atomic I/O). Pipeline defaults merge: request > company defaults > global settings. Knowledge docs auto-included in s1 embedding with discovery_source='knowledge_doc'. Runner resolves knowledge_doc_dir with product→company fallback.",
+    "task": "Settings Pages API + Knowledge Doc Upload \u2014 architecture and shared module extraction",
+    "approach": "File-backed settings (artifacts/_auth/settings/{slug}.json) + knowledge docs with _metadata.json sidecar. Shared modules in core/shared_tools/ (text_extraction.py for canonical .md/.txt/.pdf/.docx extraction, knowledge_doc_metadata.py for single process-wide metadata_lock + atomic I/O). Pipeline defaults merge: request > company defaults > global settings. Knowledge docs auto-included in s1 embedding with discovery_source='knowledge_doc'. Runner resolves knowledge_doc_dir with product\u2192company fallback.",
     "rationale": "File-backed storage continues the existing pattern (auth store, task store). Shared modules prevent code duplication and ensure thread safety between concurrent upload + pipeline execution. core/shared_tools/ is the correct location since core/ cannot import from api/. Auto-include all knowledge docs is simpler UX than per-doc selection.",
     "alternatives_rejected": [
       "Redis-backed settings (over-engineering for single-server)",
-      "Per-doc include/exclude toggle (unnecessary complexity — delete docs you don't want)",
-      "Separate lock per metadata file (same process, same GIL — single lock is simpler and sufficient)",
+      "Per-doc include/exclude toggle (unnecessary complexity \u2014 delete docs you don't want)",
+      "Separate lock per metadata file (same process, same GIL \u2014 single lock is simpler and sufficient)",
       "pdfminer instead of pdfplumber (pdfplumber has cleaner API for text extraction)",
-      "Phase 1D API keys in this sprint (deferred — pre-YC we run with our own keys)"
+      "Phase 1D API keys in this sprint (deferred \u2014 pre-YC we run with our own keys)"
     ],
     "outcome": "6 phases + 6 review fixes complete. 1029 tests (77 new). 11 new API endpoints. Shared modules eliminate code duplication and prevent race conditions.",
     "reversible": true,
@@ -264,15 +264,15 @@
   {
     "id": "D-DB-1",
     "timestamp": "2026-02-27",
-    "task": "SQLAlchemy + Alembic migration Phase 1 — ORM choice, schema design, repository pattern",
+    "task": "SQLAlchemy + Alembic migration Phase 1 \u2014 ORM choice, schema design, repository pattern",
     "approach": "Pure SQLAlchemy 2.0 Declarative (NOT SQLModel). Native PgUUID(as_uuid=True) for PKs. Lazy engine initialization (no import-time DB connections). Hand-written Alembic migrations (not autogenerated). HNSW indexes split into separate migration 0002. Generic repo base with flush-only contract (DI session generator owns commit/rollback). 12 Postgres enum types. 31 ORM tables matching 30-table schema (url_structural_signals is 1:1 extension of url_enrichment_cache). Savepoint-based test isolation with after_transaction_end restart logic.",
-    "rationale": "SQLAlchemy 2.0 wins 6-0 scorecard vs SQLModel across pgvector Vector(1536), 12+ Postgres enums, JSONB with server_default, ARRAY(Text), self-referential FK, and Alembic autogenerate. We already maintain 3 model layers (core Pydantic, API schemas, ORM) with explicit repo conversion — SQLModel's dual class provides zero benefit. Hand-written first migration avoids known autogenerate footguns with pgvector/enums/partial indexes. Flush-only repos enable savepoint test isolation AND multi-repo atomic transactions. Codex gpt-5.3-codex review with extra-high reasoning identified 10 CRITICAL + 8 WARNING findings, all incorporated.",
+    "rationale": "SQLAlchemy 2.0 wins 6-0 scorecard vs SQLModel across pgvector Vector(1536), 12+ Postgres enums, JSONB with server_default, ARRAY(Text), self-referential FK, and Alembic autogenerate. We already maintain 3 model layers (core Pydantic, API schemas, ORM) with explicit repo conversion \u2014 SQLModel's dual class provides zero benefit. Hand-written first migration avoids known autogenerate footguns with pgvector/enums/partial indexes. Flush-only repos enable savepoint test isolation AND multi-repo atomic transactions. Codex gpt-5.3-codex review with extra-high reasoning identified 10 CRITICAL + 8 WARNING findings, all incorporated.",
     "alternatives_rejected": [
       "SQLModel (dual Pydantic+ORM class unnecessary in our architecture, escape hatches for pgvector/enums)",
-      "String(36) PKs (16 bytes vs 36 bytes per PK/FK, slower indexing — native UUID is correct for Postgres)",
+      "String(36) PKs (16 bytes vs 36 bytes per PK/FK, slower indexing \u2014 native UUID is correct for Postgres)",
       "Autogenerated first migration (known issues with pgvector extensions, enum creation, partial indexes)",
       "Combined HNSW+schema migration (HNSW index creation locks tables in production)",
-      "Separate database_url_sync env var (drift risk — computed property from database_url eliminates it)",
+      "Separate database_url_sync env var (drift risk \u2014 computed property from database_url eliminates it)",
       "Repos owning commit() (breaks savepoint test isolation, prevents multi-repo atomicity)"
     ],
     "outcome": "44 new files. 31 ORM tables registered. 8 domain repositories. Hand-written Alembic migrations. 44 DB tests (auto-skip without TEST_DATABASE_URL). Zero changes to existing code. 1028 existing tests pass unchanged.",
@@ -283,14 +283,14 @@
   {
     "id": "D-AUTH-2",
     "timestamp": "2026-02-28",
-    "task": "Auth Migration Phase 2 — Three-layer decomposition of AuthStore into async DB-backed AuthService",
-    "approach": "Layer 1: Pure utility extraction to core/auth/utils/ (passwords, tokens, domain). Layer 2: AuthServiceProtocol (runtime_checkable Protocol) + JsonAuthService (wraps AuthStore via asyncio.to_thread) + DbAuthService (uses DB repos). Layer 3: DI switch via get_auth_service() — returns DbAuthService if DATABASE_URL set, else JsonAuthService. Middleware decoupled from AuthStore — uses verify_token utility + app.state.secret_key directly. All routers migrated from sync def→async def, all auth_store params→auth_service. Runner has both _resolve_scope (sync, CLI) and _resolve_scope_async (async, routers).",
-    "rationale": "Dual-mode adapter strategy enables zero test breakage — existing 1080 tests pass via JsonAuthService wrapping AuthStore. Utility extraction enables middleware to operate without any service dependency. Protocol-based interface enables seamless swap from JSON to DB backend without touching any router code. Async-first design prepares for production DB usage.",
+    "task": "Auth Migration Phase 2 \u2014 Three-layer decomposition of AuthStore into async DB-backed AuthService",
+    "approach": "Layer 1: Pure utility extraction to core/auth/utils/ (passwords, tokens, domain). Layer 2: AuthServiceProtocol (runtime_checkable Protocol) + JsonAuthService (wraps AuthStore via asyncio.to_thread) + DbAuthService (uses DB repos). Layer 3: DI switch via get_auth_service() \u2014 returns DbAuthService if DATABASE_URL set, else JsonAuthService. Middleware decoupled from AuthStore \u2014 uses verify_token utility + app.state.secret_key directly. All routers migrated from sync def\u2192async def, all auth_store params\u2192auth_service. Runner has both _resolve_scope (sync, CLI) and _resolve_scope_async (async, routers).",
+    "rationale": "Dual-mode adapter strategy enables zero test breakage \u2014 existing 1080 tests pass via JsonAuthService wrapping AuthStore. Utility extraction enables middleware to operate without any service dependency. Protocol-based interface enables seamless swap from JSON to DB backend without touching any router code. Async-first design prepares for production DB usage.",
     "alternatives_rejected": [
-      "Direct AuthStore replacement (would break all 1080 tests at once — high risk)",
+      "Direct AuthStore replacement (would break all 1080 tests at once \u2014 high risk)",
       "Keep sync endpoints with sync DB calls (blocks on DB I/O, defeats async architecture)",
       "Single AuthService class with conditional logic (violates SRP, harder to test)",
-      "Full middleware rewrite (unnecessary — only needed to decouple from AuthStore)"
+      "Full middleware rewrite (unnecessary \u2014 only needed to decouple from AuthStore)"
     ],
     "outcome": "18 new files, 32 modified files, 96 new tests. 1080 passed + 88 skipped = 1168 total. All existing tests pass unchanged via dependency override. Plan at .claude/plans/vectorized-honking-flamingo.md.",
     "reversible": true,
@@ -299,18 +299,36 @@
   {
     "id": "D-SVC-1",
     "timestamp": "2026-02-28",
-    "task": "Service Layer Migration Phase 3 — Three separate service protocols with dual Json/Db implementations",
-    "approach": "Following the proven auth migration pattern (AuthServiceProtocol → JsonAuthService / DbAuthService), each data domain gets its own Protocol: GapDataServiceProtocol, BrandDataServiceProtocol, ContentDataServiceProtocol. Each has a JsonXxxService (wraps existing api/services/ functions via asyncio.to_thread) and a DbXxxService (uses SQL repos). Routers converted from sync def → async def with service injection via Depends(). DI functions default to JsonService, switch to DbService when DATABASE_URL + db_session_factory available. Filesystem operations (embedding projections, research artifacts, stage content) remain filesystem-backed even in DB services via asyncio.to_thread delegation.",
-    "rationale": "Separate protocols keep interfaces narrow and testable — each service has different dependencies (gap needs signal/platform repos, brand needs pipeline repo, content needs content repo). The Json→Db switch is transparent to routers. SQL aggregation replaces Python computation for heavy operations (AVG on 45 structural signals, corr() for Pearson correlations). Platform agreement Jaccard kept in Python per Codex W4 recommendation. Backfill script enables testing with real data without Phase 4 write hooks.",
+    "task": "Service Layer Migration Phase 3 \u2014 Three separate service protocols with dual Json/Db implementations",
+    "approach": "Following the proven auth migration pattern (AuthServiceProtocol \u2192 JsonAuthService / DbAuthService), each data domain gets its own Protocol: GapDataServiceProtocol, BrandDataServiceProtocol, ContentDataServiceProtocol. Each has a JsonXxxService (wraps existing api/services/ functions via asyncio.to_thread) and a DbXxxService (uses SQL repos). Routers converted from sync def \u2192 async def with service injection via Depends(). DI functions default to JsonService, switch to DbService when DATABASE_URL + db_session_factory available. Filesystem operations (embedding projections, research artifacts, stage content) remain filesystem-backed even in DB services via asyncio.to_thread delegation.",
+    "rationale": "Separate protocols keep interfaces narrow and testable \u2014 each service has different dependencies (gap needs signal/platform repos, brand needs pipeline repo, content needs content repo). The Json\u2192Db switch is transparent to routers. SQL aggregation replaces Python computation for heavy operations (AVG on 45 structural signals, corr() for Pearson correlations). Platform agreement Jaccard kept in Python per Codex W4 recommendation. Backfill script enables testing with real data without Phase 4 write hooks.",
     "alternatives_rejected": [
       "Single monolithic DataServiceProtocol (violates SRP, bloated interface, different dependency sets per domain)",
       "Direct DB queries in routers (couples routers to DB, untestable)",
-      "Pure SQL for Jaccard computation (fragile, hard to test — Codex W4)",
+      "Pure SQL for Jaccard computation (fragile, hard to test \u2014 Codex W4)",
       "Skip Json wrappers, go DB-only (breaks all existing tests, no fallback)"
     ],
-    "outcome": "16 new files, 14 modified. 3 service protocols + 6 implementations (3 Json + 3 Db). 2 new repos (signal, platform) + 3 enhanced repos. Backfill script for JSON→DB migration. 46 new tests (9 protocol conformance passed + 37 DB tests skipped). 1088 passed + 125 skipped = 1213 total. Plan at .claude/plans/glowing-soaring-turtle.md.",
+    "outcome": "16 new files, 14 modified. 3 service protocols + 6 implementations (3 Json + 3 Db). 2 new repos (signal, platform) + 3 enhanced repos. Backfill script for JSON\u2192DB migration. 46 new tests (9 protocol conformance passed + 37 DB tests skipped). 1088 passed + 125 skipped = 1213 total. Plan at .claude/plans/glowing-soaring-turtle.md.",
     "reversible": true,
     "approved_by": "Aryan",
     "codex_review": "Codex gpt-5.3-codex with high reasoning reviewed the plan before implementation. 2 CRITICAL + 5 WARNING findings incorporated: C1 GapClassification enum drift fix, C4 slug resolution UUID-scoped, W1 composite indexes, W2 NULL safety in SQL, W3 empty runs return 200, W4 Jaccard in Python, W5 parity tests."
+  },
+  {
+    "id": "D-TASKSTORE-1",
+    "timestamp": "2026-02-28",
+    "task": "TaskStore DB Migration \u2014 Protocol + DbTaskStore + lifespan DI switch",
+    "approach": "TaskStoreProtocol (runtime_checkable Protocol) mirroring existing TaskStore API. DbTaskStore uses write-through pattern: state transitions write to DB via asyncio.create_task(), in-memory dict for fast sync reads. Startup recovery loads non-terminal tasks, marks orphans as failed_restart. ApiTaskModel ORM with plain String status (not PG enum, because TaskStatus includes pending_approval/failed_restart). Lifespan _init_task_store() tries DbTaskStore when DATABASE_URL set, falls back to JSON TaskStore on failure. Session factory per-operation (not request-scoped).",
+    "rationale": "Single-instance durability: task history persists across restarts, queryable task data. Protocol-based interface enables transparent swap. Write-through ensures DB durability for state transitions while keeping sync reads fast. Plain String status avoids PG enum limitations. Fallback to JSON ensures zero-downtime for existing deployments without DB.",
+    "alternatives_rejected": [
+      "Write-behind (loses durability guarantees \u2014 Codex CX-13)",
+      "PG advisory locks for slug locks (over-engineering \u2014 in-memory locks sufficient for single instance)",
+      "PG enum for status column (missing pending_approval/failed_restart values \u2014 Codex CX-3)",
+      "Request-scoped sessions for DbTaskStore (long-lived singleton, not request lifecycle \u2014 Codex CX-4)",
+      "JSON\u2192DB migration script (out of scope \u2014 DbTaskStore starts fresh, JSON preserved as-is \u2014 Codex CX-7)"
+    ],
+    "outcome": "5 new files (protocol, DbTaskStore, ORM model, repository, migration). 7 files migrated to protocol type hints. 49 new tests. 1127 passed + 135 skipped = 1262 total. Horizontal scaling (multi-worker SSE, distributed cancellation) deferred \u2014 requires Redis pub/sub or PG LISTEN/NOTIFY.",
+    "reversible": true,
+    "approved_by": "Aryan",
+    "codex_review": "Codex gpt-5.3-codex with high reasoning. 14 findings: 7 INCORPORATED (CX-1 scope, CX-3 enum, CX-4 sessions, CX-6 cancellation, CX-9 /me tests, CX-10 get_company_by_id, CX-13 write-through), 4 REJECTED (CX-2 sync/async, CX-5 advisory locks, CX-7 migration script, CX-8 PB-28/29 reorder), 3 DEFERRED (CX-11 API spec, CX-12 test estimates, CX-14 false positives). Plan at .claude/plans/sleepy-moseying-charm.md."
   }
 ]

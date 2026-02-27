@@ -2,51 +2,58 @@
   {
     "id": "F1",
     "timestamp": "2026-02-15",
-    "what_broke": "Carta company_embeddings.json was empty (0 semantic units) — BFS crawl returned nothing",
-    "root_cause": "Two issues: (1) BFS queue never seeded with base_url when no seed_urls provided — only sitemap/RSS pages were added but sitemaps returned 403. (2) carta.com is behind Cloudflare JS challenge — all httpx requests return 403 regardless of User-Agent.",
-    "fix_applied": "(1) Always append base_url to priority_queue. (2) Added 3-tier fallback: httpx → Playwright headless Chromium → Wayback Machine. Site-level flag skips httpx after first CF detection.",
-    "lesson": "Always seed BFS with base_url regardless of seed_urls. Major sites use Cloudflare — need headless browser fallback for reliable crawling.",
-    "files_affected": ["core/gap_analysis/steps/s1_embed_assets.py"],
+    "what_broke": "Carta company_embeddings.json was empty (0 semantic units) \u2014 BFS crawl returned nothing",
+    "root_cause": "Two issues: (1) BFS queue never seeded with base_url when no seed_urls provided \u2014 only sitemap/RSS pages were added but sitemaps returned 403. (2) carta.com is behind Cloudflare JS challenge \u2014 all httpx requests return 403 regardless of User-Agent.",
+    "fix_applied": "(1) Always append base_url to priority_queue. (2) Added 3-tier fallback: httpx \u2192 Playwright headless Chromium \u2192 Wayback Machine. Site-level flag skips httpx after first CF detection.",
+    "lesson": "Always seed BFS with base_url regardless of seed_urls. Major sites use Cloudflare \u2014 need headless browser fallback for reliable crawling.",
+    "files_affected": [
+      "core/gap_analysis/steps/s1_embed_assets.py"
+    ],
     "recurrence_prevention": "base_url is now always in priority_queue. Playwright fallback handles CF-protected sites automatically."
   },
   {
     "id": "F2",
     "timestamp": "2026-02-15",
-    "what_broke": "Langfuse tracing errors: 'Langfuse' object has no attribute 'trace' — all tracing silently failed during live pipeline run",
+    "what_broke": "Langfuse tracing errors: 'Langfuse' object has no attribute 'trace' \u2014 all tracing silently failed during live pipeline run",
     "root_cause": "tracing.py was written for Langfuse v2 API (lf.trace(), target.generation(), target.span()) but langfuse 3.14.1 was installed. v3 removed these methods entirely.",
-    "fix_applied": "Rewrote tracing.py to use v3 SDK API: lf.trace() → lf.start_span() + span.update_trace(session_id=...), target.generation() → target.start_generation() + gen.end(), target.span() → target.start_span(), usage= → usage_details=, span.end(**kwargs) → span.update(**kwargs) then span.end().",
+    "fix_applied": "Rewrote tracing.py to use v3 SDK API: lf.trace() \u2192 lf.start_span() + span.update_trace(session_id=...), target.generation() \u2192 target.start_generation() + gen.end(), target.span() \u2192 target.start_span(), usage= \u2192 usage_details=, span.end(**kwargs) \u2192 span.update(**kwargs) then span.end().",
     "lesson": "Always verify SDK API against installed version, not docs that may describe a different version. Langfuse v3 is a breaking change from v2. Also note: start_generation is already deprecated in 3.14.1 in favor of start_observation(as_type='generation').",
-    "files_affected": ["core/content_engine/tracing.py"],
+    "files_affected": [
+      "core/content_engine/tracing.py"
+    ],
     "recurrence_prevention": "v3 API is now used throughout. Monitor for start_observation migration when upgrading langfuse."
   },
   {
     "id": "F3",
     "timestamp": "2026-02-18",
-    "what_broke": "Trafilatura flattens structural HTML elements — ordered_list_count, definition_list_count, table_count all zero",
+    "what_broke": "Trafilatura flattens structural HTML elements \u2014 ordered_list_count, definition_list_count, table_count all zero",
     "root_cause": "trafilatura.extract() converts <ol>, <dl>, <details>, <table> into <p> tags in its HTML output. Counting elements on trafilatura output yields 0 for these structural elements.",
     "fix_applied": "Implemented dual-soup architecture: _extract_main_content() for text (trafilatura), _extract_structural_html() for element counting (semantic-tag-only, no trafilatura). Each path scoped separately.",
     "lesson": "trafilatura is excellent for text extraction but NOT for structural HTML analysis. Always use original HTML (scoped to semantic tags) for counting structural elements.",
-    "files_affected": ["core/gap_analysis/steps/s4_enrich_citations.py"],
+    "files_affected": [
+      "core/gap_analysis/steps/s4_enrich_citations.py"
+    ],
     "recurrence_prevention": "Dual-soup architecture is now standard. Text extraction and structure counting are separate code paths."
   },
   {
     "id": "F4",
     "timestamp": "2026-02-18",
-    "what_broke": "textstat.flesch_kincaid_grade() failed with NLTK LookupError — cmudict not found",
+    "what_broke": "textstat.flesch_kincaid_grade() failed with NLTK LookupError \u2014 cmudict not found",
     "root_cause": "textstat internally uses NLTK cmudict for syllable counting. The cmudict corpus was not downloaded, and SSL certificate verification failed when attempting to download.",
     "fix_applied": "Downloaded cmudict manually with ssl._create_unverified_context workaround. The S4 code wraps textstat calls in try/except with default 0.0 on failure.",
     "lesson": "textstat depends on NLTK corpora. Ensure cmudict is available in deployment environments. The try/except guard handles graceful degradation.",
-    "files_affected": ["core/gap_analysis/steps/s4_enrich_citations.py"],
+    "files_affected": [
+      "core/gap_analysis/steps/s4_enrich_citations.py"
+    ],
     "recurrence_prevention": "try/except guard around reading_level computation. Non-English text also skips reading level (defaults to 0.0)."
-  }
-  ,
+  },
   {
     "id": "F5",
     "timestamp": "2026-02-24",
-    "what_broke": "Persona and style guide agents produce .draft.md files that are never promoted to .md — _write_and_mirror() never executes",
-    "root_cause": "Three-part failure chain: (1) CLI scripts called graph.invoke() but never checked result['__interrupt__'] — they printed empty results and exited. (2) core/research/graphs/pipeline.py caught GraphInterrupt exception which is dead code in LangGraph >=1.0 (invoke returns normally with __interrupt__ in dict instead of raising). (3) The API runner was the ONLY path that correctly handled interrupts, but CLI users had no working path.",
+    "what_broke": "Persona and style guide agents produce .draft.md files that are never promoted to .md \u2014 _write_and_mirror() never executes",
+    "root_cause": "Three-part failure chain: (1) CLI scripts called graph.invoke() but never checked result['__interrupt__'] \u2014 they printed empty results and exited. (2) core/research/graphs/pipeline.py caught GraphInterrupt exception which is dead code in LangGraph >=1.0 (invoke returns normally with __interrupt__ in dict instead of raising). (3) The API runner was the ONLY path that correctly handled interrupts, but CLI users had no working path.",
     "fix_applied": "(1) Created scripts/_cli_approval.py shared helper with MemorySaver checkpointer + interactive terminal approval loop. (2) Updated all 4 CLI scripts to use it. (3) Replaced dead GraphInterrupt catch in pipeline.py with __interrupt__ dict check. (4) Added _cleanup_drafts node on reject path in all 3 research graphs to delete orphaned .draft.md files.",
-    "lesson": "LangGraph >=1.0 completely changed the interrupt model — interrupt() no longer raises GraphInterrupt, it returns __interrupt__ in the result dict. Any code catching GraphInterrupt is silently dead. Always verify LangGraph API behavior against the installed version.",
+    "lesson": "LangGraph >=1.0 completely changed the interrupt model \u2014 interrupt() no longer raises GraphInterrupt, it returns __interrupt__ in the result dict. Any code catching GraphInterrupt is silently dead. Always verify LangGraph API behavior against the installed version.",
     "files_affected": [
       "scripts/_cli_approval.py",
       "scripts/run_persona_research.py",
@@ -63,7 +70,7 @@
   {
     "id": "F6",
     "timestamp": "2026-02-24",
-    "what_broke": "Content engine HITL disconnected from API task runner — auto_approve was hardcoded to False in pipeline.py line 384, and run_content_pipeline_task() didn't pass task_store/event_bus for Stage 4 HITL",
+    "what_broke": "Content engine HITL disconnected from API task runner \u2014 auto_approve was hardcoded to False in pipeline.py line 384, and run_content_pipeline_task() didn't pass task_store/event_bus for Stage 4 HITL",
     "root_cause": "Two issues: (1) content pipeline Stage 4 passed auto_approve=input_data.auto_approve to run_content_review() correctly after fix, but before the fix it was hardcoded False. (2) run_content_pipeline_task() called run_content_generation() without passing task_store/event_bus, so the content review graph had no way to pause for API-driven HITL approval.",
     "fix_applied": "(1) Fixed auto_approve passthrough. (2) Added task_id/task_store/event_bus optional params to run_content_generation(). (3) Added _run_content_review_hitl() function that builds per-brief content review graphs with MemorySaver and uses task_store.wait_for_approval() for interrupt/resume. (4) run_content_pipeline_task() now passes all three params through.",
     "lesson": "When adding HITL to a new pipeline, ensure the task runner passes task_store and event_bus all the way down to the graph layer. The graph needs the checkpointer, and the runner needs the approval queue.",
@@ -76,11 +83,13 @@
   {
     "id": "F7",
     "timestamp": "2026-02-25",
-    "what_broke": "math domain error in _pearson() — math.sqrt received negative value from floating-point imprecision",
+    "what_broke": "math domain error in _pearson() \u2014 math.sqrt received negative value from floating-point imprecision",
     "root_cause": "Pearson correlation formula computes `product = (n * sx2 - sx * sx) * (n * sy2 - sy * sy)`. When data values are nearly identical, floating-point cancellation can make the product slightly negative (e.g., -1e-15), causing math.sqrt() to throw ValueError.",
     "fix_applied": "Added guard: `if product <= 0: return 0.0` before `denom = math.sqrt(product)` in _pearson() function.",
     "lesson": "Any math.sqrt() call on a computed product should guard against negative values from floating-point imprecision. This is a common issue with variance/covariance calculations.",
-    "files_affected": ["api/services/gap_data_service.py"],
+    "files_affected": [
+      "api/services/gap_data_service.py"
+    ],
     "recurrence_prevention": "Guard clause before sqrt. Test with `pytest.approx()` for floating-point comparisons instead of exact equality."
   },
   {
@@ -88,9 +97,48 @@
     "timestamp": "2026-02-25",
     "what_broke": "25 existing registration tests failed after adding password min_length=8 constraint (C3 fix)",
     "root_cause": "Existing test_registration.py used short passwords like 'p1', 'pass1', 'pass' in API-level tests. After adding Field(min_length=8) to LoginRequest and RegisterRequest, Pydantic validation rejected these with 422.",
-    "fix_applied": "Updated all API-level test passwords to meet the 8-character minimum: 'p1'→'password01', 'pass1'→'securepass1', 'pass'→'securepass'. Only changed API-level tests (unit tests for AuthStore.register_user() keep short passwords since the constraint is on the API model, not the store).",
+    "fix_applied": "Updated all API-level test passwords to meet the 8-character minimum: 'p1'\u2192'password01', 'pass1'\u2192'securepass1', 'pass'\u2192'securepass'. Only changed API-level tests (unit tests for AuthStore.register_user() keep short passwords since the constraint is on the API model, not the store).",
     "lesson": "When adding validation constraints to request models, always check existing test fixtures that use those models. API-level tests hit the validation layer; store-level tests bypass it.",
-    "files_affected": ["tests/api/test_registration.py", "api/auth/models.py"],
+    "files_affected": [
+      "tests/api/test_registration.py",
+      "api/auth/models.py"
+    ],
     "recurrence_prevention": "Run full test suite after any validation change. Keep unit tests (store-level) and integration tests (API-level) aware of which layer enforces the constraint."
+  },
+  {
+    "id": "F9",
+    "timestamp": "2026-02-28",
+    "what_broke": "test_get_task_store_annotation_is_protocol assertion failure \u2014 annotation was string, not class",
+    "root_cause": "`from __future__ import annotations` makes type annotations strings at runtime. `inspect.signature().return_annotation` returns a string like 'TaskStoreProtocol' instead of the actual class. Identity comparison (`is TaskStoreProtocol`) fails.",
+    "fix_applied": "Use `get_type_hints()` from `typing` module instead of `inspect.signature().return_annotation`. `get_type_hints()` resolves string annotations back to actual types.",
+    "lesson": "Never use `inspect.signature().return_annotation` for type identity checks when `from __future__ import annotations` is in play. Always use `typing.get_type_hints()` to resolve string annotations.",
+    "files_affected": [
+      "tests/services/test_protocol_conformance.py"
+    ],
+    "recurrence_prevention": "Pattern documented. Use `get_type_hints(func)['return']` for annotation introspection."
+  },
+  {
+    "id": "F10",
+    "timestamp": "2026-02-28",
+    "what_broke": "DB tests in tests/db/test_task_repo.py showed as ERROR instead of SKIP without TEST_DATABASE_URL",
+    "root_cause": "conftest.py pytestmark doesn't propagate to all test files in the directory. Each individual test file needs its own `pytestmark = pytest.mark.skipif(...)` to auto-skip.",
+    "fix_applied": "Added `pytestmark = pytest.mark.skipif(not os.environ.get('TEST_DATABASE_URL', ''), reason='TEST_DATABASE_URL not set')` to the test file itself.",
+    "lesson": "In pytest, `pytestmark` in conftest.py may not apply to all files. Always add the skip marker directly to each DB test file for reliability.",
+    "files_affected": [
+      "tests/db/test_task_repo.py"
+    ],
+    "recurrence_prevention": "Every new tests/db/ file must include its own pytestmark auto-skip."
+  },
+  {
+    "id": "F11",
+    "timestamp": "2026-02-28",
+    "what_broke": "RuntimeError: no running event loop in DbTaskStore sync tests \u2014 asyncio.create_task() in create_task()/update_task()",
+    "root_cause": "DbTaskStore sync methods use `asyncio.create_task()` for write-through DB writes, which requires a running event loop. Patching `store._db_create` with `patch.object()` doesn't intercept before `asyncio.create_task()` is called. Sync tests have no event loop.",
+    "fix_applied": "Made all tests async (@pytest.mark.asyncio) and patched at module level: `patch('core.services.db_task_store.asyncio.create_task', return_value=MagicMock())` to prevent actual coroutine scheduling.",
+    "lesson": "When testing code that uses `asyncio.create_task()` in sync methods, patch `asyncio.create_task` at the module level where it's imported, not on the instance method it calls. Tests must be async to provide an event loop context.",
+    "files_affected": [
+      "tests/services/test_db_task_store.py"
+    ],
+    "recurrence_prevention": "Pattern: `_PATCH_TARGET = 'module.asyncio.create_task'` as a constant, used in all tests."
   }
 ]
