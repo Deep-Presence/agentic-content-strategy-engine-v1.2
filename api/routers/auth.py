@@ -15,8 +15,9 @@ from api.auth.models import (
     RegisterRequest,
     UserResponse,
 )
-from api.auth.store import AuthStore
-from api.dependencies import get_auth_store
+from api.dependencies import get_auth_service
+from core.auth.service import AuthServiceProtocol
+from core.auth.utils.passwords import DUMMY_HASH, verify_password
 from core.models.organization import UserProfile
 
 logger = logging.getLogger(__name__)
@@ -25,9 +26,9 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 @router.post("/register", status_code=201)
-def register(
+async def register(
     body: RegisterRequest,
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> LoginResponse:
     """Register a new user.
 
@@ -36,7 +37,7 @@ def register(
     - Subdomains are normalized to root domain; originals saved to additional_domains.
     """
     try:
-        user, company = auth_store.register_user(
+        user, company = await auth_service.register_user(
             first_name=body.first_name,
             last_name=body.last_name,
             email=body.email,
@@ -56,7 +57,7 @@ def register(
             )
         raise HTTPException(status_code=409, detail=msg)
 
-    token = auth_store.create_access_token(user.id, company.slug)
+    token = auth_service.create_access_token(user.id, company.slug)
 
     return LoginResponse(
         access_token=token,
@@ -79,38 +80,38 @@ def register(
 
 
 @router.post("/login")
-def login(
+async def login(
     body: LoginRequest,
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> LoginResponse:
     """Authenticate with email + password.
 
     Returns an access token, user info, and company info.
     """
-    user = auth_store.get_user_by_email(body.email)
+    user = await auth_service.get_user_by_email(body.email)
     if not user:
         # Constant-time dummy hash to prevent timing oracle (Codex W7)
-        auth_store.verify_password(body.password, AuthStore._DUMMY_HASH)
+        verify_password(body.password, DUMMY_HASH)
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    if not auth_store.verify_password(body.password, user["password_hash"]):
+    if not verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # C4 fix: reject deactivated users at login (before token issuance)
     if not user.get("is_active", True):
         raise HTTPException(status_code=401, detail="Account deactivated")
 
-    company = auth_store.get_company_by_slug(user.get("company_slug", ""))
+    company = await auth_service.get_company_by_slug(user.get("company_slug", ""))
     if not company:
         # Fallback: look up company by company_id stored on the user
         company_id = user.get("company_id", "")
-        for c in auth_store.list_companies():
+        for c in await auth_service.list_companies():
             if c.id == company_id:
                 company = c
                 break
     if not company:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = auth_store.create_access_token(user["id"], company.slug)
+    token = auth_service.create_access_token(user["id"], company.slug)
 
     return LoginResponse(
         access_token=token,
@@ -133,9 +134,9 @@ def login(
 
 
 @router.get("/me")
-def get_me(
+async def get_me(
     request: Request,
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> MeResponse:
     """Return current user info from the auth token.
 
@@ -145,12 +146,12 @@ def get_me(
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    user = auth_store.get_user_by_id(user_id)
+    user = await auth_service.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
     company_slug = getattr(request.state, "company_slug", None)
-    company = auth_store.get_company_by_slug(company_slug) if company_slug else None
+    company = (await auth_service.get_company_by_slug(company_slug)) if company_slug else None
 
     return MeResponse(
         user=UserResponse(
@@ -193,11 +194,11 @@ class JoinRequest(BaseModel):
 
 
 @router.post("/invite", status_code=201)
-def create_invite(
+async def create_invite(
     body: InviteRequest,
     request: Request,
     _user: UserProfile = Depends(require_role("superuser")),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> InviteResponse:
     """Create an invite code for the current user's company.
 
@@ -208,7 +209,7 @@ def create_invite(
     if not company_slug:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    code = auth_store.create_invite(company_slug, role=body.role)
+    code = await auth_service.create_invite(company_slug, role=body.role)
     return InviteResponse(
         invite_code=code,
         company_slug=company_slug,
@@ -217,9 +218,9 @@ def create_invite(
 
 
 @router.post("/join", status_code=201)
-def join_company(
+async def join_company(
     body: JoinRequest,
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> LoginResponse:
     """Join an existing company using an invite code.
 
@@ -227,7 +228,7 @@ def join_company(
     which company and role the user gets.
     """
     try:
-        user, company = auth_store.redeem_invite(
+        user, company = await auth_service.redeem_invite(
             invite_code=body.invite_code,
             first_name=body.first_name,
             last_name=body.last_name,
@@ -237,7 +238,7 @@ def join_company(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    token = auth_store.create_access_token(user.id, company.slug)
+    token = auth_service.create_access_token(user.id, company.slug)
 
     return LoginResponse(
         access_token=token,

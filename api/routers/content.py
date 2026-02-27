@@ -7,8 +7,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.auth.dependencies import require_auth, require_role
-from api.auth.store import AuthStore
-from api.dependencies import get_auth_store, get_event_bus, get_task_store
+from api.dependencies import get_auth_service, get_event_bus, get_task_store
+from core.auth.service import AuthServiceProtocol
 from api.schemas.common import (
     ContentApprovalRequest,
     ContentApprovalResponse,
@@ -18,7 +18,7 @@ from api.schemas.common import (
 )
 from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
-from api.tasks.runner import _derive_slug, _resolve_scope, run_content_pipeline_task
+from api.tasks.runner import _derive_slug, _resolve_scope_async, run_content_pipeline_task
 from api.tasks.store import TaskStore
 from core.models.content_generation import ContentGenerationInput
 from core.models.organization import UserProfile
@@ -33,7 +33,7 @@ async def start_content(
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStore = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
     # Tenant isolation: slug must match authenticated user's company
     user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
@@ -44,7 +44,7 @@ async def start_content(
             detail="Cannot start pipeline for another company",
         )
     product_slug = body.product_slug
-    scope = _resolve_scope(company_slug, product_slug, auth_store)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
     # Auto-compute gap_slug from effective_slug when product_slug set but gap_slug not
     gap_slug = body.gap_slug or scope.effective_slug

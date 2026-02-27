@@ -9,8 +9,7 @@ from typing import Tuple
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.auth.dependencies import require_role, require_tenant
-from api.auth.store import AuthStore
-from api.dependencies import get_auth_store
+from api.dependencies import get_auth_service
 from api.schemas.settings import (
     CompanyProfileSettingsResponse,
     PipelineDefaultsResponse,
@@ -20,6 +19,7 @@ from api.schemas.settings import (
     UpdatePipelineDefaultsRequest,
     UpdateUserRequest,
 )
+from core.auth.service import AuthServiceProtocol
 from core.models.organization import Company, UserProfile
 
 router = APIRouter(
@@ -31,11 +31,11 @@ router = APIRouter(
 # ── Helpers ───────────────────────────────────────────────
 
 
-def _require_superuser_tenant(
+async def _require_superuser_tenant(
     slug: str,
     request: Request,
     user: UserProfile = Depends(require_role("superuser")),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> Tuple[UserProfile, Company]:
     """Verify the user is a superuser and belongs to the company."""
     # Lightweight tenant check
@@ -43,7 +43,7 @@ def _require_superuser_tenant(
     if not company_slug or slug != company_slug:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    company = auth_store.get_company_by_slug(slug)
+    company = await auth_service.get_company_by_slug(slug)
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
 
@@ -54,17 +54,17 @@ def _require_superuser_tenant(
 
 
 @router.get("/team", response_model=TeamListResponse)
-def list_team(
+async def list_team(
     slug: str,
     _user: UserProfile = Depends(require_tenant),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> TeamListResponse:
     """List all team members for this company."""
-    company = auth_store.get_company_by_slug(slug)
+    company = await auth_service.get_company_by_slug(slug)
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
 
-    users = auth_store.list_users_for_company(company.id)
+    users = await auth_service.list_users_for_company(company.id)
     members = [
         TeamMemberResponse(
             id=u.id,
@@ -81,13 +81,13 @@ def list_team(
 
 
 @router.put("/team/{user_id}", response_model=TeamMemberResponse)
-def update_team_member(
+async def update_team_member(
     slug: str,
     user_id: str,
     body: UpdateUserRequest,
     request: Request,
     su_company: Tuple[UserProfile, Company] = Depends(_require_superuser_tenant),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> TeamMemberResponse:
     """Update a team member's role, name, or active status.
 
@@ -96,7 +96,7 @@ def update_team_member(
     su_user, company = su_company
 
     # Verify target user belongs to this company
-    target = auth_store.get_user_by_id(user_id)
+    target = await auth_service.get_user_by_id(user_id)
     if not target or target.get("company_id") != company.id:
         raise HTTPException(status_code=404, detail="User not found in this company")
 
@@ -105,7 +105,7 @@ def update_team_member(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     try:
-        updated = auth_store.update_user(
+        updated = await auth_service.update_user(
             user_id,
             requesting_user_id=su_user.id,
             **update_fields,
@@ -128,13 +128,13 @@ def update_team_member(
 
 
 @router.get("/profile", response_model=CompanyProfileSettingsResponse)
-def get_profile(
+async def get_profile(
     slug: str,
     _user: UserProfile = Depends(require_tenant),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> CompanyProfileSettingsResponse:
     """Get company profile settings."""
-    company = auth_store.get_company_by_slug(slug)
+    company = await auth_service.get_company_by_slug(slug)
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
 
@@ -149,11 +149,11 @@ def get_profile(
 
 
 @router.put("/profile", response_model=CompanyProfileSettingsResponse)
-def update_profile(
+async def update_profile(
     slug: str,
     body: UpdateCompanyProfileRequest,
     su_company: Tuple[UserProfile, Company] = Depends(_require_superuser_tenant),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> CompanyProfileSettingsResponse:
     """Update company profile settings. Superuser only."""
     _, company = su_company
@@ -161,7 +161,7 @@ def update_profile(
     update_fields = body.model_dump(exclude_none=True)
     if update_fields:
         try:
-            company = auth_store.update_company(slug, **update_fields)
+            company = await auth_service.update_company(slug, **update_fields)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -179,24 +179,24 @@ def update_profile(
 
 
 @router.get("/pipeline-defaults", response_model=PipelineDefaultsResponse)
-def get_pipeline_defaults(
+async def get_pipeline_defaults(
     slug: str,
     _user: UserProfile = Depends(require_tenant),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineDefaultsResponse:
     """Get per-company pipeline default overrides."""
-    defaults = auth_store.get_pipeline_defaults(slug)
+    defaults = await auth_service.get_pipeline_defaults(slug)
     return PipelineDefaultsResponse(**defaults.model_dump())
 
 
 @router.put("/pipeline-defaults", response_model=PipelineDefaultsResponse)
-def update_pipeline_defaults(
+async def update_pipeline_defaults(
     slug: str,
     body: UpdatePipelineDefaultsRequest,
     su_company: Tuple[UserProfile, Company] = Depends(_require_superuser_tenant),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineDefaultsResponse:
     """Update per-company pipeline defaults. Superuser only."""
     update_fields = body.model_dump(exclude_none=True)
-    defaults = auth_store.update_pipeline_defaults(slug, **update_fields)
+    defaults = await auth_service.update_pipeline_defaults(slug, **update_fields)
     return PipelineDefaultsResponse(**defaults.model_dump())

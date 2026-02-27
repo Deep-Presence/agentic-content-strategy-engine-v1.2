@@ -10,8 +10,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.auth.dependencies import require_auth, require_role
-from api.auth.store import AuthStore
-from api.dependencies import get_auth_store, get_event_bus, get_task_store
+from api.dependencies import get_auth_service, get_event_bus, get_task_store
+from core.auth.service import AuthServiceProtocol
 from api.schemas.common import CancelResponse, TaskListResponse, TaskResponse, TaskSummary
 from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
@@ -124,11 +124,11 @@ def cancel_task(
 
 
 @router.post("/{task_id}/stream-token")
-def create_stream_token(
+async def create_stream_token(
     task_id: str,
     request: Request,
     task_store: TaskStore = Depends(get_task_store),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
     _user: UserProfile = Depends(require_auth),
 ) -> dict:
     """Create a short-lived stream token for SSE EventSource clients.
@@ -145,5 +145,5 @@ def create_stream_token(
         raise HTTPException(status_code=403, detail="Access denied")
 
     user_id = getattr(request.state, "user_id", None)
-    token = auth_store.create_stream_token(user_id, company_slug)
+    token = auth_service.create_stream_token(user_id, company_slug)
     return {"stream_token": token, "expires_in": 300}

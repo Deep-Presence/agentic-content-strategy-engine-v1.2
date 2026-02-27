@@ -98,6 +98,8 @@ def app(
     application.state.event_bus = event_bus
     application.state.artifacts_root = artifacts_root
     application.state.auth_store = auth_store
+    # Expose secret_key for ASGI middleware (decoupled from AuthStore)
+    application.state.secret_key = auth_store._secret_key
     return application
 
 

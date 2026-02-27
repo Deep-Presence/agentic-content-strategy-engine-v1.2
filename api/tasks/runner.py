@@ -45,6 +45,7 @@ def _resolve_scope(
     """Resolve a RunScope from company_slug + product_slug.
 
     Looks up product details from auth_store when product_slug is set.
+    Sync version — kept for CLI compatibility.
     """
     effective = f"{company_slug}__{product_slug}" if product_slug else company_slug
     product_name: Optional[str] = None
@@ -53,6 +54,34 @@ def _resolve_scope(
 
     if product_slug and auth_store:
         product = auth_store.get_product(company_slug, product_slug)
+        if product:
+            product_name = product.name
+            product_description = product.description
+            product_domain = product.domain
+
+    return RunScope(
+        company_slug=company_slug,
+        product_slug=product_slug,
+        effective_slug=effective,
+        product_name=product_name,
+        product_description=product_description,
+        product_domain=product_domain,
+    )
+
+
+async def _resolve_scope_async(
+    company_slug: str,
+    product_slug: Optional[str],
+    auth_service: Optional[Any] = None,
+) -> RunScope:
+    """Async version of _resolve_scope using AuthServiceProtocol."""
+    effective = f"{company_slug}__{product_slug}" if product_slug else company_slug
+    product_name: Optional[str] = None
+    product_description: Optional[str] = None
+    product_domain: Optional[str] = None
+
+    if product_slug and auth_service:
+        product = await auth_service.get_product(company_slug, product_slug)
         if product:
             product_name = product.name
             product_description = product.description
@@ -173,7 +202,7 @@ async def run_gap_pipeline_task(
     artifacts_root: Path,
     task_store: TaskStore,
     event_bus: EventBus,
-    auth_store: Optional[Any] = None,
+    auth_service: Optional[Any] = None,
 ) -> None:
     """Background task wrapper for gap analysis pipeline.
 
@@ -182,7 +211,7 @@ async def run_gap_pipeline_task(
     """
     company_slug = _derive_slug(request.company_name)
     product_slug = getattr(request, "product_slug", None)
-    scope = _resolve_scope(company_slug, product_slug, auth_store)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
     try:
         async with task_store.semaphore:
@@ -213,7 +242,7 @@ async def run_gap_pipeline_task(
             # values take precedence, then company defaults.  Non-optional
             # request fields (max_queries, platforms) are always present so
             # they pass through directly.
-            _defaults = auth_store.get_pipeline_defaults(scope.company_slug) if auth_store else None
+            _defaults = (await auth_service.get_pipeline_defaults(scope.company_slug)) if auth_service else None
 
             input_data = GapAnalysisInput(
                 company_name=request.company_name,
@@ -376,7 +405,7 @@ async def run_research_pipeline_task(
     request: Any,
     task_store: TaskStore,
     event_bus: EventBus,
-    auth_store: Optional[Any] = None,
+    auth_service: Optional[Any] = None,
 ) -> None:
     """Background task wrapper for research pipeline (company → persona → style).
 
@@ -390,7 +419,7 @@ async def run_research_pipeline_task(
 
     company_slug = _derive_slug(request.company_name)
     product_slug = getattr(request, "product_slug", None)
-    scope = _resolve_scope(company_slug, product_slug, auth_store)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
     slug = scope.effective_slug  # persona/style_guide graphs use this for output paths
     stages = request.stages
     auto_approve = request.auto_approve

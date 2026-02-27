@@ -246,6 +246,7 @@ content-strategy-engine/
 ├── README.md                              # User-facing documentation + quick start
 ├── pyproject.toml                         # Project metadata + dependency declaration
 ├── requirements.txt                       # Flat dependency list (for pip install)
+├── alembic.ini                            # Alembic config — script_location=core/db/migrations (DB URL from settings)
 ├── .env.local                             # API keys + secrets (gitignored)
 │
 ├── core/                                  # *** ALL BUSINESS LOGIC ***
@@ -349,13 +350,49 @@ content-strategy-engine/
 │   │   ├── webhooks.py                    # Slack Block Kit + Discord chunked notifications (125 lines)
 │   │   └── cli.py                         # CLI entry point with argparse (96 lines)
 │   │
-│   ├── storage/                           # Persistence layer
+│   ├── storage/                           # Persistence layer (filesystem + Supabase mirror)
 │   │   ├── __init__.py
 │   │   ├── backends/
 │   │   │   ├── __init__.py
 │   │   │   └── base.py                    # Abstract StorageBackend interface (read/write/exists/delete/list_dir)
 │   │   ├── supabase_client.py             # Singleton Supabase client factory (lru_cache)
 │   │   └── supabase_mirror.py             # Versioned mirroring: mirror_*_if_configured() functions (339 lines)
+│   │
+│   ├── db/                                # Database layer — SQLAlchemy 2.0 + asyncpg + Alembic (Phase 1)
+│   │   ├── __init__.py                    # Exports: Base, UUIDPKMixin, TimestampMixin, get_engine, get_session_factory, reset_engine
+│   │   ├── base.py                        # DeclarativeBase + UUIDPKMixin (native PgUUID) + TimestampMixin
+│   │   ├── engine.py                      # Lazy engine init + async session factory (no import-time DB connection)
+│   │   ├── enums.py                       # 12 Postgres enum types (UserRole, PipelineType, PipelineStatus, etc.)
+│   │   ├── dependencies.py               # FastAPI DI: get_db_session(), get_*_repo() (not wired to routes in Phase 1)
+│   │   ├── models/                        # ORM models — 31 tables across 10 files
+│   │   │   ├── __init__.py                # Imports all model modules (triggers metadata registration)
+│   │   │   ├── organization.py            # CompanyModel, ProductModel, UserModel, InviteModel, PipelineDefaultsModel
+│   │   │   ├── pipelines.py               # PipelineRunModel (self-ref FK), PipelineStageLogModel
+│   │   │   ├── cache.py                   # PlatformResultCacheModel, UrlEnrichmentCacheModel, UrlStructuralSignalsModel (45 cols)
+│   │   │   ├── gap_analysis.py            # RunQueryModel, RunCitationModel, QueryGapModel, QueryExemplarModel, ClusterSpecModel, SpaResultModel, CentroidResultModel
+│   │   │   ├── embeddings.py              # SemanticUnitModel, QueryEmbeddingModel, ParagraphEmbeddingModel, RunParagraphScoreModel (pgvector)
+│   │   │   ├── content.py                 # ContentPieceModel, ResearchArtifactModel
+│   │   │   ├── tracking.py                # TrackingSnapshotModel (partial unique indexes), ContentMentionTrackingModel, ContentPieceTrackingModel
+│   │   │   ├── site_audit.py              # SiteAuditModel, AuditFindingModel
+│   │   │   ├── topic_discovery.py         # TopicDiscoveryModel, DiscoveredTopicModel
+│   │   │   └── knowledge_docs.py          # KnowledgeDocumentModel
+│   │   ├── repositories/                  # Generic base + 8 domain repos (flush-only contract)
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py                    # SQLAlchemyRepository[ModelT] — generic CRUD (get_by_id, create, update, delete, list_all)
+│   │   │   ├── company_repo.py            # get_by_slug, get_by_domain, list_active
+│   │   │   ├── auth_repo.py               # get_by_email, list_by_company, count_superusers, deactivate
+│   │   │   ├── pipeline_repo.py           # create_run, update_status, list_by_company, add_stage_log, get_active_runs
+│   │   │   ├── cache_repo.py              # get_fresh_platform_result/url_enrichment (TTL), upsert (ON CONFLICT)
+│   │   │   ├── gap_analysis_repo.py       # bulk_insert_query_gaps, get_gaps_by_run, update_gap, get_cluster_specs
+│   │   │   ├── embedding_repo.py          # store_embedding, similarity_search (pgvector cosine_distance)
+│   │   │   ├── tracking_repo.py           # create_snapshot, get_snapshot, add_mention, get_trend
+│   │   │   └── content_repo.py            # create_piece, update_status, list_by_run, get_by_gap_query
+│   │   └── migrations/                    # Alembic migration framework
+│   │       ├── env.py                     # Reads settings.database_url_sync (computed property), imports models for metadata
+│   │       ├── script.py.mako             # Migration template
+│   │       └── versions/
+│   │           ├── 0001_initial_schema.py # Hand-written: pgvector ext, 12 enums, 31 tables, FKs, partial indexes
+│   │           └── 0002_hnsw_indexes.py   # HNSW vector indexes (separate for deployment control)
 │   │
 │   └── shared_tools/                      # Cross-pipeline utilities
 │       ├── __init__.py
@@ -1878,6 +1915,44 @@ artifacts/knowledge_docs/
 
 **Merge strategy:** Request-level values always take precedence. Company defaults fill in `None`/unset fields. Global settings are the final fallback.
 
+### 9.8 SQLAlchemy Database Layer (Phase 1 — Added 2026-02-27)
+
+**Package:** `core/db/` — SQLAlchemy 2.0 Declarative + asyncpg + Alembic
+
+**Architecture:** Pure SQLAlchemy 2.0 (NOT SQLModel). Three-tier model architecture: core Pydantic models (contracts between pipeline steps), API schemas (request/response), ORM models (database persistence). Repository layer handles conversion between ORM and Pydantic models.
+
+**Key Design Decisions:**
+- **Lazy engine initialization:** `get_engine()` creates the engine on first call, NOT at import time. Existing pipeline scripts without `DATABASE_URL` are completely unaffected.
+- **Native Postgres UUID PKs:** `PgUUID(as_uuid=True)` — 16 bytes vs 36 bytes for String(36). Repo layer handles `str ↔ uuid.UUID` conversion.
+- **Flush-only repository contract:** Repos call `session.add()` + `session.flush()` only. The DI session generator (`get_db_session()`) owns `commit()` on success and `rollback()` on error. This enables savepoint-based test isolation AND multi-repo atomic transactions.
+- **Computed `database_url_sync`:** Derived from `database_url` by replacing `+asyncpg` with standard `postgresql://`. Single source of truth prevents sync/async URL drift.
+
+**Schema:** 31 ORM tables across 10 model files:
+- **Organization (5):** companies, products, users, invites, company_pipeline_defaults
+- **Pipeline (2):** pipeline_runs (self-ref FK, partial index on active runs), pipeline_stage_logs
+- **Cache (3):** platform_result_cache, url_enrichment_cache, url_structural_signals (45 individual typed columns)
+- **Gap Analysis (7):** run_queries, run_citations (composite FK), query_gaps, query_exemplars, cluster_specs, spa_results, centroid_results
+- **Embeddings (4):** semantic_units, query_embeddings, paragraph_embeddings, run_paragraph_scores — all with pgvector `Vector(1536)` + HNSW indexes
+- **Content (2):** content_pieces, research_artifacts
+- **Tracking (3):** tracking_snapshots (partial unique indexes for NULL handling), content_mention_tracking, content_piece_tracking
+- **Site Audit (2):** site_audits, audit_findings
+- **Topic Discovery (2):** topic_discoveries, discovered_topics
+- **Knowledge Docs (1):** knowledge_documents
+
+**Enum Types (12):** UserRole, PipelineType, PipelineStatus, StageStatus, SearchEngine, GapClassification, ArtifactType, ArtifactStatus, ContentPieceStatus, FindingSeverity, TrackingStatus
+
+**Repositories (8 domain + 1 generic base):**
+- Generic `SQLAlchemyRepository[ModelT]` with `get_by_id`, `create`, `update`, `delete`, `list_all`
+- Domain repos extend with specific methods (e.g., `cache_repo.get_fresh_platform_result()` with TTL check, `embedding_repo.similarity_search()` with pgvector cosine_distance)
+
+**Alembic Migrations:**
+- `0001_initial_schema.py` — Hand-written (not autogenerated). Creates pgvector extension, 12 enums, 31 tables, FKs with ON DELETE policies (CASCADE/SET NULL/RESTRICT), partial indexes.
+- `0002_hnsw_indexes.py` — HNSW vector indexes separated for deployment control (index creation can lock tables on large datasets).
+
+**Phase 1 Status:** Infrastructure complete. NOT wired into any existing router. `core/db/dependencies.py` contains FastAPI DI functions that are importable but not connected to routes. Phase 2 will migrate auth/services from JSON files to DB.
+
+**Dependencies:** `sqlalchemy[asyncio]>=2.0.30`, `asyncpg>=0.29`, `psycopg2-binary>=2.9` (sync driver for Alembic), `alembic>=1.13`, `pgvector>=0.3`
+
 ---
 
 ## 10. Data Models — Complete Pydantic v2 Schema Reference
@@ -2238,7 +2313,20 @@ DraftNotification:   thread, fit_score (0.0-1.0), why_match, draft_markdown, met
 effective_supabase_url:     SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL
 effective_supabase_anon_key: SUPABASE_ANON_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY
 effective_supabase_key:     SUPABASE_SERVICE_ROLE_KEY or effective_supabase_anon_key
+database_url_sync:          Derived from DATABASE_URL (replaces +asyncpg with postgresql://)
 ```
+
+#### Optional — Database (PostgreSQL + SQLAlchemy) — Added 2026-02-27
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DATABASE_URL` | `None` | PostgreSQL async URL (`postgresql+asyncpg://...`). DB layer is opt-in — `None` means no DB. |
+| `DATABASE_ECHO` | `false` | Enable SQLAlchemy SQL logging |
+| `DATABASE_POOL_SIZE` | `5` | Connection pool size |
+| `DATABASE_MAX_OVERFLOW` | `10` | Max overflow connections beyond pool size |
+| `PLATFORM_CACHE_TTL_DAYS` | `7` | Re-search platforms after N days (cache repo TTL) |
+| `URL_ENRICHMENT_CACHE_TTL_DAYS` | `14` | Re-scrape URLs after N days (cache repo TTL) |
+| `TEST_DATABASE_URL` | — | Test database URL. If not set, all 44 DB tests auto-skip. |
 
 ---
 
@@ -2598,9 +2686,19 @@ tests/
     ├── test_evaluator.py                 # 2 tests — Full eval loop + revision
     ├── test_graph.py                     # 3 tests — LangGraph HITL
     └── test_integration.py              # 2 tests — Full pipeline + skip stages
+├── db/                                   # 44 tests — auto-skip without TEST_DATABASE_URL (added 2026-02-27)
+│   ├── __init__.py
+│   ├── conftest.py                       # Async fixtures, savepoint isolation with restart logic, sample_company/user/pipeline_run
+│   ├── test_models.py                    # 12 tests — table creation, constraint enforcement, enum types
+│   ├── test_organization_repo.py         # 5 tests — company CRUD, get_by_slug, get_by_domain, list_active
+│   ├── test_auth_repo.py                # 4 tests — user CRUD, get_by_email, list_by_company
+│   ├── test_pipeline_repo.py            # 6 tests — pipeline run CRUD, stage logs, status transitions
+│   ├── test_cache_repo.py               # 6 tests — platform/URL enrichment cache, TTL hit/miss, upsert
+│   ├── test_gap_analysis_repo.py        # 6 tests — bulk insert query gaps, update, cluster specs
+│   └── test_embedding_repo.py           # 5 tests — pgvector store, similarity search, generic embedding
 ```
 
-**Test counts:** 1029 total tests, 1 pre-existing failure (PB-39). Research pipeline coverage added 2026-02-26 (+109 tests). Front-back integration sprint added 343 tests across 4 phases. Product-level pipeline sprint added 114 tests across 5 phases (product CRUD: 35, task infra: 16, pipeline wiring: 36, product prompts: 15, data endpoints: 12). Pipeline guard sprint added 12 tests (gap analysis guard: 7, research guard: 5). Route protection sprint added 44 tests (42 auth enforcement + 2 invite flow). **Settings + Knowledge Docs sprint added 77 tests** (team: 16, profile: 11, pipeline defaults: 12, knowledge docs: 19, s1 integration: 15, embedded status: 3) + **6 review fixes applied** (C1 DRY, C2 shared text extraction, C3 shared metadata lock, W1 dead import, W3 pipeline defaults wiring, W5 type annotation). S4 mock regression fixed in Phase -1 of structural signal overhaul.
+**Test counts:** 1073 total tests (1029 existing + 44 DB), 1 pre-existing failure (PB-39). Research pipeline coverage added 2026-02-26 (+109 tests). Front-back integration sprint added 343 tests across 4 phases. Product-level pipeline sprint added 114 tests across 5 phases (product CRUD: 35, task infra: 16, pipeline wiring: 36, product prompts: 15, data endpoints: 12). Pipeline guard sprint added 12 tests (gap analysis guard: 7, research guard: 5). Route protection sprint added 44 tests (42 auth enforcement + 2 invite flow). **Settings + Knowledge Docs sprint added 77 tests** (team: 16, profile: 11, pipeline defaults: 12, knowledge docs: 19, s1 integration: 15, embedded status: 3) + **6 review fixes applied** (C1 DRY, C2 shared text extraction, C3 shared metadata lock, W1 dead import, W3 pipeline defaults wiring, W5 type annotation). **SQLAlchemy migration sprint added 44 DB tests** (models: 12, organization repo: 5, auth repo: 4, pipeline repo: 6, cache repo: 6, gap analysis repo: 6, embedding repo: 5) — auto-skip without `TEST_DATABASE_URL`. S4 mock regression fixed in Phase -1 of structural signal overhaul.
 
 ### API Test Coverage (475+ tests — 126 base + 179 front-back + 114 product-level + 12 pipeline-guard + 44 route-protection)
 
@@ -2761,6 +2859,13 @@ Web & HTTP:
 
 Integrations:
 └── praw v7.7+ → Reddit API (read-only)
+
+Database (added 2026-02-27):
+├── sqlalchemy[asyncio] v2.0.30+ → ORM, async engine, session factory (core/db/)
+├── asyncpg v0.29+ → PostgreSQL async driver (used by create_async_engine)
+├── psycopg2-binary v2.9+ → PostgreSQL sync driver (required by Alembic for migrations)
+├── alembic v1.13+ → Database migration framework (core/db/migrations/)
+└── pgvector v0.3+ → PostgreSQL vector extension bindings (Vector(1536) column type)
 ```
 
 ### Internal Dependency Flow
@@ -2982,6 +3087,32 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 **Approved by:** Aryan
 
+### Decision 14: SQLAlchemy 2.0 + Alembic Database Layer (D-DB-1)
+
+**Choice:** Pure SQLAlchemy 2.0 Declarative with native PgUUID PKs, hand-written Alembic migrations, flush-only repository pattern, and lazy engine initialization.
+
+**Rationale:**
+- SQLAlchemy 2.0 wins 6-0 scorecard vs SQLModel across pgvector `Vector(1536)`, 12+ Postgres enums, JSONB `server_default`, `ARRAY(Text)`, self-referential FK, and Alembic autogenerate
+- We maintain 3 separate model layers (core Pydantic, API schemas, ORM) — SQLModel's dual class provides zero benefit
+- Hand-written first migration avoids known autogenerate footguns with pgvector/enums/partial indexes
+- Flush-only repos enable savepoint test isolation AND multi-repo atomic transactions within single requests
+- Lazy engine init prevents import-time DB connections (existing pipeline scripts without `DATABASE_URL` are unaffected)
+- Native `PgUUID(as_uuid=True)` is 16 bytes vs 36 bytes for String(36), faster indexing on Postgres
+- `database_url_sync` computed from `database_url` prevents sync/async URL drift (single source of truth)
+
+**Alternatives Rejected:**
+- SQLModel (escape hatches required for pgvector, enums, JSONB; dual class unnecessary in our architecture)
+- String(36) PKs (storage/performance penalty, non-native Postgres type)
+- Autogenerated first migration (known issues with pgvector extensions, enum creation order, partial indexes, opclass syntax)
+- Combined HNSW+schema migration (index creation locks tables on large datasets)
+- Repos owning commit() (breaks savepoint test isolation, prevents multi-repo atomicity)
+
+**Codex Review:** gpt-5.3-codex with extra-high reasoning. 10 CRITICAL, 8 WARNING, 6 ARCHITECTURAL, 10 MISSING, 8 IMPROVEMENT findings. All CRITICALs and relevant WARNINGs incorporated. Plan at `.claude/plans/fluffy-herding-oasis.md`.
+
+**Outcome:** 44 new files, 31 ORM tables, 44 DB tests (auto-skip without `TEST_DATABASE_URL`). Zero changes to existing code. 1028 existing tests pass unchanged.
+
+**Approved by:** Aryan
+
 ---
 
 ## 18. Known Vulnerabilities, Flaws & Technical Debt
@@ -2990,9 +3121,9 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 #### 1. PARTIAL TEST COVERAGE (Significantly Improved)
 **Severity:** Low (downgraded from Critical — 2026-02-15, improved through 2026-02-27)
-**Description:** 1029 total tests, 1 pre-existing failure (PB-39). Research pipeline: 109 tests. API layer: 380+ tests (126 base + 179 from front-back + 44 route-protection + 77 settings/knowledge docs). Content engine: 57 tests. Gap analysis: comprehensive coverage (s1, s2, s4, s5, s6, s7, s8, pipeline + s1 knowledge doc integration). Reddit HIL still has zero tests. Settings + Knowledge Docs sprint added 77 tests.
-**Impact:** All major pipelines, all API endpoints, settings management, and knowledge document upload have regression protection. Only Reddit HIL remains unprotected.
-**Recommendation:** Add tests for Reddit HIL (webhook delivery, PRAW mocking).
+**Description:** 1073 total tests (1029 existing + 44 DB), 1 pre-existing failure (PB-39). Research pipeline: 109 tests. API layer: 380+ tests (126 base + 179 from front-back + 44 route-protection + 77 settings/knowledge docs). Content engine: 57 tests. Gap analysis: comprehensive coverage (s1, s2, s4, s5, s6, s7, s8, pipeline + s1 knowledge doc integration). Database layer: 44 tests (auto-skip without `TEST_DATABASE_URL`). Reddit HIL still has zero tests. SQLAlchemy migration sprint added 44 DB tests.
+**Impact:** All major pipelines, all API endpoints, settings management, knowledge document upload, and database layer have regression protection. Only Reddit HIL remains unprotected.
+**Recommendation:** Add tests for Reddit HIL (webhook delivery, PRAW mocking). Run DB tests with `TEST_DATABASE_URL` in CI to validate full PostgreSQL integration.
 
 #### 2. InMemoryStore — Agent Memory Not Persistent
 **Severity:** High
@@ -5761,10 +5892,17 @@ def test_other_user_cannot_read_test_co_profile(self, other_client, test_company
 | 2026-02-27 | §20 | Added Settings Pages API + Knowledge Doc Upload to What's Built; added 5 missing sprints to Completed Sprints table | T-settings-knowledge-docs |
 | 2026-02-27 | §21 | Updated status header — 1029 tests, 14 routers, settings + knowledge docs endpoints | T-settings-knowledge-docs |
 | 2026-02-27 | §25 | **NEW SECTION** — Settings Pages API & Knowledge Doc Upload Sprint: 13 subsections covering team management, company profile, pipeline defaults, file upload, s1 integration, embedded status tracking, shared module extraction, review fixes, runner wiring, endpoint summary, files changed, deferred items | T-settings-knowledge-docs |
+| 2026-02-27 | §4 | Added `alembic.ini` to root, `core/db/` tree (31 files: engine, base, enums, dependencies, 10 model files, 9 repo files, migrations), `tests/db/` tree (9 files) | T-sqlalchemy-migration |
+| 2026-02-27 | §9 | Added §9.8 SQLAlchemy Database Layer — architecture overview, schema summary (31 tables), design decisions, repo pattern, migration strategy, Phase 1 status | T-sqlalchemy-migration |
+| 2026-02-27 | §11 | Added Database environment variables (DATABASE_URL, DATABASE_ECHO, pool settings, cache TTLs, TEST_DATABASE_URL) + computed property database_url_sync | T-sqlalchemy-migration |
+| 2026-02-27 | §15 | Updated test count 1029→1073 (+44 DB tests); added tests/db/ tree to directory listing | T-sqlalchemy-migration |
+| 2026-02-27 | §16 | Added Database dependency group (sqlalchemy, asyncpg, psycopg2-binary, alembic, pgvector) | T-sqlalchemy-migration |
+| 2026-02-27 | §17 | Added Decision 14: SQLAlchemy 2.0 + Alembic Database Layer (D-DB-1) — Codex-reviewed, 6-0 vs SQLModel | T-sqlalchemy-migration |
+| 2026-02-27 | §18 | Updated test coverage description to 1073 tests, added DB layer mention, added CI recommendation | T-sqlalchemy-migration |
 
 ---
 
 *End of Comprehensive System Documentation*
 *Generated: 2026-02-27*
-*Total codebase files analyzed: ~170+*
-*Total lines of documentation: ~6300+*
+*Total codebase files analyzed: ~210+*
+*Total lines of documentation: ~6600+*

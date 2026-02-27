@@ -1,7 +1,7 @@
 """JSON-file backed auth store for companies and users.
 
 This is a v0 implementation that persists to local JSON files.
-It will be replaced by Supabase Auth + DB tables later.
+It will be replaced by a DB-backed AuthService (see core/auth/).
 
 Files:
   artifacts/_auth/companies.json — List[Company]
@@ -9,18 +9,31 @@ Files:
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
-import os
-import re
 import secrets
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
 
+from core.auth.utils.domain import (
+    COMPANY_MUTABLE_FIELDS as _COMPANY_MUTABLE_FIELDS,
+    PRODUCT_MUTABLE_FIELDS as _PRODUCT_MUTABLE_FIELDS,
+    USER_MUTABLE_FIELDS as _USER_MUTABLE_FIELDS,
+    derive_slug as _derive_slug,
+    normalize_domain,
+)
+from core.auth.utils.passwords import (
+    DUMMY_HASH,
+    hash_password,
+    verify_password,
+)
+from core.auth.utils.tokens import (
+    create_access_token as _create_access_token,
+    create_stream_token as _create_stream_token,
+    get_secret_key,
+    verify_token as _verify_token,
+)
 from core.models.organization import Company, CompanyPipelineDefaults, Product, UserProfile
 
 
@@ -28,89 +41,11 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-# Known multi-part TLDs where the second-level domain is part of the TLD.
-_MULTI_PART_TLDS = frozenset({
-    "co.uk", "co.jp", "co.in", "co.kr", "co.nz", "co.za", "co.id",
-    "com.au", "com.br", "com.cn", "com.mx", "com.tw", "com.sg",
-    "org.uk", "net.au", "ac.uk", "gov.uk",
-})
-
-
-def normalize_domain(raw: str) -> Tuple[str, Optional[str]]:
-    """Normalize a domain to its root form.
-
-    Returns (root_domain, subdomain_or_none).
-
-    - Strips protocol (http/https), path, trailing slash
-    - Strips www (not considered a meaningful subdomain)
-    - Extracts root domain vs subdomain
-    - Handles multi-part TLDs (.co.uk, .com.au, etc.)
-    - Returns lowercase
-
-    Examples:
-        "ramp.com"           → ("ramp.com", None)
-        "www.ramp.com"       → ("ramp.com", None)
-        "app.ramp.com"       → ("ramp.com", "app.ramp.com")
-        "https://ramp.com/p" → ("ramp.com", None)
-        "app.example.co.uk"  → ("example.co.uk", "app.example.co.uk")
-    """
-    domain = raw.strip().lower()
-
-    # Strip protocol
-    if "://" in domain:
-        domain = urlparse(domain).netloc or domain.split("://", 1)[1]
-
-    # Strip path / trailing slash
-    domain = domain.split("/")[0]
-    # Strip port
-    domain = domain.split(":")[0]
-
-    # Strip www
-    original = domain
-    if domain.startswith("www."):
-        domain = domain[4:]
-
-    parts = domain.split(".")
-
-    if len(parts) <= 2:
-        # Already a root domain (e.g., ramp.com)
-        return domain, None
-
-    # Check for multi-part TLD
-    possible_tld = ".".join(parts[-2:])
-    if possible_tld in _MULTI_PART_TLDS:
-        # e.g., app.example.co.uk → root = example.co.uk
-        root = ".".join(parts[-3:])
-        if len(parts) > 3:
-            return root, domain
-        return root, None
-    else:
-        # e.g., app.ramp.com → root = ramp.com
-        root = ".".join(parts[-2:])
-        subdomain = domain if domain != root else None
-        # Don't return www-stripped as a subdomain
-        if subdomain and original.startswith("www."):
-            subdomain = None
-        return root, subdomain
-
-
-# Allowlists for mutable fields — prevents callers from overwriting immutable
-# identity fields (id, created_at, slug) via **kwargs in update_* methods.
-_COMPANY_MUTABLE_FIELDS: frozenset = frozenset({"name", "domain", "additional_domains"})
-_PRODUCT_MUTABLE_FIELDS: frozenset = frozenset({"name", "domain", "description"})
-_USER_MUTABLE_FIELDS: frozenset = frozenset({"role", "first_name", "last_name", "is_active"})
-
-
-def _derive_slug(name: str) -> str:
-    """Derive a URL-safe slug from a company name."""
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-
-
 class AuthStore:
     """JSON-file backed store for companies and users."""
 
     # Dummy hash for constant-time login failure (Codex W7)
-    _DUMMY_HASH: str = "0" * 32 + ":" + "0" * 64
+    _DUMMY_HASH: str = DUMMY_HASH
 
     def __init__(self, base_dir: Path) -> None:
         self._base_dir = base_dir / "_auth"
@@ -118,16 +53,8 @@ class AuthStore:
         self._companies_file = self._base_dir / "companies.json"
         self._users_file = self._base_dir / "users.json"
 
-        # JWT_SECRET_KEY enforcement (Codex W8)
-        secret = os.environ.get("JWT_SECRET_KEY")
-        if not secret:
-            env = os.environ.get("ENVIRONMENT", "development")
-            if env not in ("development", "test"):
-                raise RuntimeError(
-                    "JWT_SECRET_KEY must be set in non-development environments"
-                )
-            secret = secrets.token_hex(32)
-        self._secret_key = secret
+        # JWT_SECRET_KEY enforcement (Codex W8) — delegated to utility
+        self._secret_key = get_secret_key()
 
         # In-memory cache
         self._companies: Dict[str, Company] = {}
@@ -530,102 +457,31 @@ class AuthStore:
             tmp.replace(path)
         return current
 
-    # ── Password hashing ──────────────────────────────────────
+    # ── Password hashing (delegates to core.auth.utils.passwords) ──
 
     @staticmethod
     def _hash_password(password: str) -> str:
-        """Hash password with salt using SHA-256.
-
-        Simple implementation for v0. Will be replaced by Supabase Auth.
-        """
-        salt = secrets.token_hex(16)
-        hashed = hashlib.pbkdf2_hmac(
-            "sha256", password.encode(), salt.encode(), 100_000
-        )
-        return f"{salt}:{hashed.hex()}"
+        return hash_password(password)
 
     @staticmethod
     def verify_password(password: str, stored_hash: str) -> bool:
-        """Verify password against stored hash."""
-        try:
-            salt, hash_hex = stored_hash.split(":", 1)
-            expected = hashlib.pbkdf2_hmac(
-                "sha256", password.encode(), salt.encode(), 100_000
-            )
-            return hmac.compare_digest(expected.hex(), hash_hex)
-        except (ValueError, AttributeError):
-            return False
+        return verify_password(password, stored_hash)
 
-    # ── JWT token (simple implementation) ─────────────────────
+    # ── JWT tokens (delegates to core.auth.utils.tokens) ─────
 
     def create_access_token(
         self, user_id: str, company_slug: str, expires_hours: int = 24
     ) -> str:
-        """Create a simple JWT-like token.
-
-        v0: base64-encoded JSON with HMAC signature.
-        Will be replaced by proper JWT or Supabase session tokens.
-        """
-        import base64
-
-        payload = {
-            "user_id": user_id,
-            "company_slug": company_slug,
-            "exp": (_utcnow() + timedelta(hours=expires_hours)).isoformat(),
-        }
-        payload_bytes = json.dumps(payload).encode()
-        payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode()
-        sig = hmac.new(
-            self._secret_key.encode(), payload_bytes, hashlib.sha256
-        ).hexdigest()
-        return f"{payload_b64}.{sig}"
+        return _create_access_token(
+            self._secret_key, user_id, company_slug, expires_hours
+        )
 
     def create_stream_token(
         self, user_id: str, company_slug: str, expires_minutes: int = 5
     ) -> str:
-        """Create a short-lived stream token for SSE EventSource clients.
-
-        Stream tokens include ``stream_only: true`` in the payload so the
-        middleware prevents their reuse for non-SSE endpoints (Codex C4).
-        Default expiry is 5 minutes.
-        """
-        import base64
-
-        payload = {
-            "user_id": user_id,
-            "company_slug": company_slug,
-            "stream_only": True,
-            "exp": (_utcnow() + timedelta(minutes=expires_minutes)).isoformat(),
-        }
-        payload_bytes = json.dumps(payload).encode()
-        payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode()
-        sig = hmac.new(
-            self._secret_key.encode(), payload_bytes, hashlib.sha256
-        ).hexdigest()
-        return f"{payload_b64}.{sig}"
+        return _create_stream_token(
+            self._secret_key, user_id, company_slug, expires_minutes
+        )
 
     def verify_token(self, token: str) -> Optional[Dict[str, str]]:
-        """Verify and decode an access token.
-
-        Returns payload dict or None if invalid/expired.
-        """
-        import base64
-
-        try:
-            parts = token.split(".", 1)
-            if len(parts) != 2:
-                return None
-            payload_b64, sig = parts
-            payload_bytes = base64.urlsafe_b64decode(payload_b64)
-            expected_sig = hmac.new(
-                self._secret_key.encode(), payload_bytes, hashlib.sha256
-            ).hexdigest()
-            if not hmac.compare_digest(sig, expected_sig):
-                return None
-            payload = json.loads(payload_bytes)
-            exp = datetime.fromisoformat(payload["exp"])
-            if _utcnow() > exp:
-                return None
-            return payload
-        except Exception:
-            return None
+        return _verify_token(self._secret_key, token)

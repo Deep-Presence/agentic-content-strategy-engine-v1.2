@@ -127,6 +127,28 @@ class Settings(BaseSettings):
     # Legacy / optional
     tavily_api_key_company_context: str | None = None
 
+    # --- Database (PostgreSQL) ---
+    database_url: str | None = None  # postgresql+asyncpg://localhost:5432/deep_presence
+    database_echo: bool = False  # SQL logging
+    database_pool_size: int = 5
+    database_max_overflow: int = 10
+
+    # --- Auth ---
+    invite_ttl_days: int = 7  # Invite codes expire after 7 days
+
+    # --- Cache TTLs ---
+    platform_cache_ttl_days: int = 7  # Re-search platforms after 7 days
+    url_enrichment_cache_ttl_days: int = 14  # Re-scrape URLs after 14 days
+
+    @property
+    def database_url_sync(self) -> str | None:
+        """Derive sync URL from async URL for Alembic (avoids drift)."""
+        if not self.database_url:
+            return None
+        return self.database_url.replace("+asyncpg", "").replace(
+            "asyncpg://", "postgresql://"
+        )
+
     @property
     def effective_supabase_url(self) -> str | None:
         """SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL fallback."""

@@ -48,6 +48,10 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "auth_store") or app.state.auth_store is None:
         app.state.auth_store = AuthStore(base_dir=app.state.artifacts_root)
 
+    # Expose the JWT secret key for the ASGI middleware (decoupled from AuthStore)
+    if not hasattr(app.state, "secret_key") or app.state.secret_key is None:
+        app.state.secret_key = app.state.auth_store._secret_key
+
     logger.info("API started — jobs dir: %s", app.state.task_store._base_dir)
     yield
     logger.info("API shutting down")

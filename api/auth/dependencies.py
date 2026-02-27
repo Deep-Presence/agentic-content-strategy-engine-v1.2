@@ -12,19 +12,19 @@ from typing import Callable, Optional, Tuple
 
 from fastapi import Depends, HTTPException, Request
 
-from api.auth.store import AuthStore
-from api.dependencies import get_auth_store
+from api.dependencies import get_auth_service
+from core.auth.service import AuthServiceProtocol
 from core.models.organization import Company, UserProfile
 
 
-def require_auth(
+async def require_auth(
     request: Request,
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> UserProfile:
     """Return the authenticated user or raise 401.
 
     Reads ``request.state.user_id`` (set by ASGI AuthMiddleware),
-    resolves the full user profile from the store, and checks
+    resolves the full user profile from the service, and checks
     ``is_active``.  Every protected endpoint should depend on this.
     """
     user_id: Optional[str] = getattr(request.state, "user_id", None)
@@ -35,7 +35,7 @@ def require_auth(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user_data = auth_store.get_user_by_id(user_id)
+    user_data = await auth_service.get_user_by_id(user_id)
     if not user_data:
         raise HTTPException(
             status_code=401,
@@ -66,7 +66,7 @@ def require_role(*allowed_roles: str) -> Callable[..., UserProfile]:
         user = Depends(require_role("member", "superuser"))
     """
 
-    def _check_role(
+    async def _check_role(
         user: UserProfile = Depends(require_auth),
     ) -> UserProfile:
         if user.role not in allowed_roles:
@@ -79,7 +79,7 @@ def require_role(*allowed_roles: str) -> Callable[..., UserProfile]:
     return _check_role
 
 
-def require_tenant(
+async def require_tenant(
     slug: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
@@ -97,10 +97,10 @@ def require_tenant(
     return _user
 
 
-def require_company_access(
+async def require_company_access(
     slug: str,
     user: UserProfile = Depends(require_auth),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> Tuple[UserProfile, Company]:
     """Verify the authenticated user belongs to the company identified by *slug*.
 
@@ -108,7 +108,7 @@ def require_company_access(
     Returns ``(user, company)`` for convenience.
     Suitable for endpoints that need the Company object (write operations).
     """
-    company = auth_store.get_company_by_slug(slug)
+    company = await auth_service.get_company_by_slug(slug)
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
 
@@ -118,16 +118,16 @@ def require_company_access(
     return user, company
 
 
-def require_company_member(
+async def require_company_member(
     slug: str,
     user: UserProfile = Depends(require_role("member", "superuser")),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> Tuple[UserProfile, Company]:
     """Like ``require_company_access`` but also requires member+ role.
 
     Combines role check and tenant check in one dependency for write endpoints.
     """
-    company = auth_store.get_company_by_slug(slug)
+    company = await auth_service.get_company_by_slug(slug)
     if not company:
         raise HTTPException(status_code=404, detail=f"Company '{slug}' not found")
 

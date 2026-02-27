@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth.dependencies import require_company_member, require_tenant
-from api.dependencies import get_artifacts_root, get_auth_store, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_task_store
 from api.schemas.company import (
     CompanyProfileResponse,
     LatestRunSummary,
@@ -23,8 +23,8 @@ from api.schemas.company import (
     ProductUpdateRequest,
     ResearchArtifactSummary,
 )
-from api.auth.store import AuthStore
 from api.tasks.store import TaskStore
+from core.auth.service import AuthServiceProtocol
 from core.models.organization import Company, Product, UserProfile
 
 logger = logging.getLogger(__name__)
@@ -151,10 +151,10 @@ def _get_latest_runs(
 
 
 @router.get("/{slug}", response_model=CompanyProfileResponse)
-def get_company_profile(
+async def get_company_profile(
     slug: str,
     artifacts_root: Path = Depends(get_artifacts_root),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
     task_store: TaskStore = Depends(get_task_store),
     _user: UserProfile = Depends(require_tenant),
 ) -> CompanyProfileResponse:
@@ -165,8 +165,8 @@ def get_company_profile(
     if not _SLUG_PATTERN.match(slug):
         raise HTTPException(status_code=400, detail="Invalid slug format")
 
-    # Try auth store first for company metadata
-    company = auth_store.get_company_by_slug(slug)
+    # Try auth service first for company metadata
+    company = await auth_service.get_company_by_slug(slug)
 
     # Check filesystem for artifacts
     has_research = (
@@ -224,11 +224,11 @@ def get_company_profile(
 
 
 @router.post("/{slug}/products", response_model=ProductDetailResponse, status_code=201)
-def create_product(
+async def create_product(
     slug: str,
     body: ProductCreateRequest,
     auth: tuple[UserProfile, Company] = Depends(require_company_member),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> ProductDetailResponse:
     """Create a new product under a company.
 
@@ -251,7 +251,7 @@ def create_product(
     )
 
     try:
-        auth_store.add_product(slug, product)
+        await auth_service.add_product(slug, product)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -268,14 +268,14 @@ def create_product(
 
 
 @router.get("/{slug}/products/{product_slug}", response_model=ProductDetailResponse)
-def get_product(
+async def get_product(
     slug: str,
     product_slug: str,
     _user: UserProfile = Depends(require_tenant),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> ProductDetailResponse:
     """Get a specific product by slug. Requires company membership."""
-    product = auth_store.get_product(slug, product_slug)
+    product = await auth_service.get_product(slug, product_slug)
     if not product:
         raise HTTPException(
             status_code=404,
@@ -295,17 +295,17 @@ def get_product(
 
 
 @router.put("/{slug}/products/{product_slug}", response_model=ProductDetailResponse)
-def update_product(
+async def update_product(
     slug: str,
     product_slug: str,
     body: ProductUpdateRequest,
     auth: tuple[UserProfile, Company] = Depends(require_company_member),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> ProductDetailResponse:
     """Update a product's fields. Requires member+ role and company membership."""
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     try:
-        product = auth_store.update_product(slug, product_slug, **updates)
+        product = await auth_service.update_product(slug, product_slug, **updates)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -322,14 +322,14 @@ def update_product(
 
 
 @router.delete("/{slug}/products/{product_slug}")
-def delete_product(
+async def delete_product(
     slug: str,
     product_slug: str,
     auth: tuple[UserProfile, Company] = Depends(require_company_member),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> dict:
     """Delete a product. Requires member+ role and company membership."""
-    removed = auth_store.remove_product(slug, product_slug)
+    removed = await auth_service.remove_product(slug, product_slug)
     if not removed:
         raise HTTPException(
             status_code=404,

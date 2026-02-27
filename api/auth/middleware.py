@@ -19,7 +19,9 @@ import logging
 from typing import Any, Optional
 from urllib.parse import parse_qs
 
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from core.auth.utils.tokens import verify_token as _verify_token_util
 
 logger = logging.getLogger(__name__)
 
@@ -146,15 +148,14 @@ class AuthMiddleware:
             await _send_401(send, "Missing authentication token", "missing_token")
             return
 
-        # Verify token via AuthStore
-        auth_store = self._get_auth_store(scope)
-        if not auth_store:
-            # No auth store available — fail closed
-            logger.error("AuthStore not available on app.state")
+        # Verify token via extracted utility (no AuthStore dependency)
+        secret_key = self._get_secret_key(scope)
+        if not secret_key:
+            logger.error("secret_key not available on app.state")
             await _send_401(send, "Authentication service unavailable", "auth_unavailable")
             return
 
-        payload = auth_store.verify_token(token)
+        payload = _verify_token_util(secret_key, token)
         if not payload:
             await _send_401(send, "Invalid or expired token", "invalid_token")
             return
@@ -171,11 +172,11 @@ class AuthMiddleware:
         await self.app(scope, receive, send)
 
     @staticmethod
-    def _get_auth_store(scope: Scope) -> Any:
-        """Safely retrieve auth_store from app state."""
+    def _get_secret_key(scope: Scope) -> Optional[str]:
+        """Safely retrieve secret_key from app state."""
         app = scope.get("app")
         if app and hasattr(app, "state"):
-            return getattr(app.state, "auth_store", None)
+            return getattr(app.state, "secret_key", None)
         return None
 
 

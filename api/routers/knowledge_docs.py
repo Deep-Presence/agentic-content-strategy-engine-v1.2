@@ -12,8 +12,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from fastapi.responses import FileResponse
 
 from api.auth.dependencies import require_company_member, require_tenant
-from api.auth.store import AuthStore
-from api.dependencies import get_artifacts_root, get_auth_store
+from api.dependencies import get_artifacts_root
 from api.schemas.knowledge_docs import (
     KnowledgeDocListResponse,
     KnowledgeDocResponse,

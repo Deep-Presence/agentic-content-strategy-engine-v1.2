@@ -1,160 +1,188 @@
 # PRD — Next Sprint
 **Status:** DRAFT — Pending Aryan Approval
-**Date:** 2026-02-27
-**Preceding Sprint:** pipeline-guard (900 tests, Feature 1 complete)
-**Branch:** feat/next (to be created from feat/front-back)
+**Date:** 2026-02-28
+**Preceding Sprint:** auth-migration-phase2 (1168 tests, Phase 1 + Phase 2 complete)
+**Branch:** feat/front-back
+
+---
+
+## Current State
+
+**SQLAlchemy Phase 1 + Auth Migration Phase 2 are COMPLETE.** The full DB infrastructure and auth service layer are in place:
+
+### Phase 1 (complete)
+- 31 ORM tables across 10 model files (`core/db/models/`)
+- 12 Postgres enum types (`core/db/enums.py`)
+- Hand-written Alembic migrations (0001 schema + 0002 HNSW indexes)
+- Generic repo base + 8 domain repositories (`core/db/repositories/`)
+- FastAPI DI wiring (`core/db/dependencies.py`)
+- 44 DB tests (auto-skip without `TEST_DATABASE_URL`)
+
+### Phase 2 (complete)
+- Pure utility extraction: `core/auth/utils/` (passwords, tokens, domain)
+- `AuthServiceProtocol` (runtime_checkable Protocol) — the new interface contract
+- `JsonAuthService` wrapping AuthStore (backward compat, used by all tests)
+- `DbAuthService` using DB repos (production path when `DATABASE_URL` set)
+- 3 new repos: invite, product, pipeline_defaults
+- DI switch: `get_auth_service()` returns appropriate implementation
+- Middleware decoupled from AuthStore — uses `verify_token` utility directly
+- All 8 routers + runner migrated from sync `AuthStore` to async `AuthServiceProtocol`
+- 96 new tests (1080 passed + 88 skipped = 1168 total)
+
+### What remains:
+- **Phase 2B-services:** Wire service layers (GapData, ContentData, BrandData) to DB repos
+- **Phase 2C-taskstore:** Migrate TaskStore from JSON files to DB
+- **Phase 3:** Wire repos into FastAPI routes via DI (artifact reads from DB)
+- **Backlog cleanup:** 34 deferred items in `.claude/sprints/pending/backlog.md`
 
 ---
 
 ## Sprint Options
 
-Two possible sprint directions. Pick one or sequence them.
+Four possible directions. Pick one or combine.
 
 ---
 
 ## Option A — Review-Issues Cleanup Sprint
 
-**Goal:** Burn down the remaining deferred review findings from `.claude/sprints/v1/review-findings-deferred.md`. Harden the API layer before any external usage.
+**Goal:** Burn down deferred review findings from the backlog. Harden the API layer before external usage.
 
-**Effort estimate:** Small (1 session). These are well-understood, scoped fixes.
+**Effort estimate:** Small (1 session). Well-understood, scoped fixes.
 
 ### Tasks (Priority Order)
 
-#### P0 — Test Regression Fix (from pipeline-guard self-review)
+#### P0 — Security / Correctness
 
-**T-guard-fix-1:** Fix `test_start_partial_stages_only_skip_if_requested_stages_present` in `tests/api/test_research.py`
-- Add `mock_research_runner` fixture to the test
-- Change `assert resp.status_code != 200` → `assert resp.status_code == 202`
-- Eliminates `RuntimeWarning: The executor did not finishing joining its threads` background task leak
-- **Scope:** 1 test, 1 file
-- **Risk:** None
+**T-pb34-me-auth:** PB-34 — `/me` endpoint missing `require_auth` dependency
+- `api/routers/auth.py` — manually reads `request.state.user_id` instead of `Depends(require_auth)`
+- Misses `is_active` check — deactivated users can query `/me`
+- Fix: replace manual state read with `Depends(require_auth)`
+- Add 1 test
+
+**T-pb26-docstring:** PB-26 — Register endpoint docstring still says domain auto-join works
+- Stale after Codex C1 hardening
+- Fix: update docstring
+
+**T-pb27-login-dead-code:** PB-27 — Login company lookup dead code path
+- Login endpoint may have stale company lookup code
+- Fix: remove dead code path
 
 #### P1 — API Correctness
 
-**T-w7-pagination:** Fix W7 — page > total_pages allowed
-- `api/services/gap_data_service.py:756`
+**T-pb9-pagination:** PB-9 — page > total_pages allowed
 - Clamp: `page = max(1, min(page, max(1, total_pages)))`
-- Add 1 test: `test_page_beyond_total_pages_returns_last_page`
+- Add 1 test
 
-**T-w4-sort-literal:** Fix W4 — `sort_dir` accepts any string
-- `api/routers/gap_data.py:54`
-- Change `sort_dir: str = "asc"` → `sort_dir: Literal["asc", "desc"] = "asc"`
-- FastAPI auto-validates Query params — this gives free 422 on invalid values
-- Add 1 test: `test_invalid_sort_dir_returns_422`
+**T-pb6-sort-literal:** PB-6 — `sort_dir` accepts any string
+- Change to `Literal["asc", "desc"]`
+- Add 1 test
 
-**T-w5-classification-sort:** Fix W5 — classification sort is alphabetical, not severity-ranked
-- `api/services/gap_data_service.py:753`
-- Add severity rank mapping: `significant_gap=4, gap_to_close=3, roughly_equal=2, company_wins=1`
-- Sorting by `classification` then uses numeric rank, not lexicographic order
+**T-pb7-classification-sort:** PB-7 — classification sort is alphabetical, not severity-ranked
+- Add severity rank mapping
 
-#### P2 — Guard Code Quality (from pipeline-guard self-review)
+#### P2 — Cleanup
 
-**T-guard-fix-2:** Deduplicate slug in `_research_stages_exist`
-- `api/routers/research.py`
-- `slugs = list(dict.fromkeys([s for s in [effective_slug, company_slug] if s]))`
-- Prevents redundant double-check on company-level runs
-- No test needed (behavior unchanged)
+**T-pb16-unused-import:** PB-16 — Unused `Field` import
+**T-pb17-base64-import:** PB-17 — `base64` imported inside method
+**T-pb18-derive-slug-dup:** PB-18 — `_derive_slug` duplicated across routers (now use `core.auth.utils.domain.derive_slug`)
+**T-pb35-stale-grace-mode:** PB-35 — Stale grace-mode docstrings
 
-**T-guard-fix-3:** Move `force_rerun` field adjacent to other fields in schemas
-- `api/schemas/common.py`
-- Visual cleanup only — no behavior change
-
-#### P3 — Deferred Warnings (if time permits)
-
-**T-w1-jwt-docs:** W1 — Document `JWT_SECRET_KEY` as required for stable auth across restarts
-- Add to `docs/COMPREHENSIVE_SYSTEM_DOCUMENTATION.md` §11 (Config & Env)
-- Add `.env.example` entry with note about persistence
-
-**T-w9-cache-size:** W9 — Reduce `_CACHE_MAX_ENTRIES` risk
-- Monitor or reduce from 10 to 5 entries in both service files
-- OR add comment explaining 200MB theoretical ceiling
-
-### Tests Added (Option A)
-~5-7 new tests. Total would reach ~907.
+### Tests Added
+~5-7 new tests. Total would reach ~1173-1175.
 
 ---
 
-## Option B — Feature 2: Content-Gap Integration
+## Option B — SQLAlchemy Phase 2B: Service Layer Migration
 
-**Goal:** When `/gap-analysis/start` returns `already_exists=True`, allow the frontend to immediately launch content generation using the existing gap analysis. One HTTP call goes from "analyze" to "generate content."
+**Goal:** Migrate file-backed data services (GapData, ContentData, BrandData) to use DB repositories. This is the next step toward full DB-backed data access.
 
-**Full design:** Preserved in `.claude/plans/cozy-twirling-mochi.md`
+**Effort estimate:** Medium (1-2 sessions).
 
-**Effort estimate:** Medium (2-3 sessions). Multi-file, multi-service change.
+### Scope
 
-### High-Level Scope
+- `GapDataService` → reads gap analysis artifacts from DB repos instead of filesystem
+- `ContentDataService` → reads content artifacts from DB repos
+- `BrandDataService` → reads research artifacts from DB repos
+- `KnowledgeDocService` → metadata in DB instead of `_metadata.json` sidecar
+- File-backed mtime caching (`_CACHE`) replaced by DB queries
+- **Backward compat:** Filesystem reads as fallback when DB has no data
+- **Tests:** Existing 61 gap data + 85 content data + 57 brand data tests must pass
 
-1. **`POST /api/v1/companies/{slug}/gap-analysis/generate-content`**
-   - Takes: `company_name`, `domain`, `product_slug` (optional), `max_briefs`, `auto_approve`, `force_rerun`
-   - Discovers latest gap analysis artifacts for the slug
-   - Launches content generation pipeline with `gap_slug` sourced from artifacts
-   - Returns: `PipelineRunResponse` with `pipeline="content"`
+### Risk
+- Needs pipeline runners to WRITE to DB (not just read) — may need Phase 3 coordination
+- Transaction boundaries for bulk writes during pipeline execution
 
-2. **`ContentStartRequest` updates**
-   - Add `gap_slug: Optional[str] = None` field — lets caller specify which gap analysis to use
-   - When provided, content runner reads `artifacts/gap_analysis/{gap_slug}/gap_analysis_complete.json` directly instead of running gap analysis first
-
-3. **Runner wiring**
-   - `run_content_pipeline_task()` in `api/tasks/runner.py` — read gap analysis artifacts when `gap_slug` is set
-   - Pass `GapReport` (or equivalent) into `run_content_generation()` as context
-
-4. **Service discovery helper**
-   - `api/services/gap_data_service.py` — add `find_latest_gap_slug(company_slug, product_slug) -> Optional[str]`
-   - Returns the most-recent `effective_slug` that has complete gap analysis artifacts
-
-### Design Considerations
-- Reuse existing `ContentStartRequest` (add `gap_slug` field, backward-compat with default `None`)
-- This is an **additive** endpoint — the existing `/content/start` is unchanged
-- Frontend flow: `gap-analysis/start` returns `already_exists=True` → frontend shows "Generate Content from Analysis" button → calls new endpoint
-
-### Tests (Option B)
-~20-25 new tests:
-- Service: `find_latest_gap_slug` (3 tests)
-- Runner: gap_slug wiring (4 tests)
-- Router: new endpoint (8 tests)
-- Integration: full chain (2 tests)
-
-Total would reach ~920-925.
+### Tests Added
+~30-40 new tests. Total would reach ~1198-1208.
 
 ---
 
-## Option C — Hybrid Sprint
+## Option C — SQLAlchemy Phase 2C: TaskStore Migration
 
-**Goal:** Do Option A (cleanup) THEN start Option B Feature 2.
+**Goal:** Migrate JSON-file-backed TaskStore to PostgreSQL. Enables horizontal scaling and persistent task history.
+
+**Effort estimate:** Small-Medium (1 session).
+
+### Scope
+- `PipelineRunRepo` replaces `artifacts/_jobs/*.json` persistence
+- Task creation, status updates, approval records → DB
+- SSE event bus remains in-memory (acceptable for single-server)
+- Slug locks move to DB advisory locks
+- **Backward compat:** JSON fallback for tests without `TEST_DATABASE_URL`
+- **Tests:** Existing task/runner tests must pass
+
+### Risk
+- Advisory lock semantics differ from in-memory locks
+- Need to handle JSON → DB migration for existing task data
+
+### Tests Added
+~15-20 new tests. Total would reach ~1183-1188.
+
+---
+
+## Option D — Hybrid: Cleanup (Option A) + TaskStore (Option C)
+
+**Goal:** Quick cleanup sprint to resolve security/correctness backlog items, then migrate TaskStore to DB.
 
 **Recommended sequencing:**
-1. T-guard-fix-1 (test fix, 15 min)
-2. T-w7 + T-w4 + T-w5 (API correctness, 1 hour)
-3. Feature 2 scoping and planning (with Codex plan review)
-4. Feature 2 implementation
+1. PB-34 `/me` auth fix (security, 15 min)
+2. PB-26, PB-27 cleanup (10 min)
+3. PB-18 `_derive_slug` dedup — now use `core.auth.utils.domain.derive_slug` (10 min)
+4. PB-9, PB-6, PB-7 API correctness (30 min)
+5. TaskStore DB migration (Phase 2C)
 
 ---
 
 ## Recommendation
 
-**Start with Option A** — clean up the known issues before expanding scope. The test regression fix is blocking (RuntimeWarning in CI). The W7/W4/W5 fixes are small and increase production confidence. Then kick off Feature 2 in the same session or the next.
+**Option D (Hybrid)** — Fix PB-34 (security) and the quick cleanup items first (leveraging the new `core.auth.utils.domain.derive_slug` to eliminate duplication), then tackle TaskStore migration. The `/me` auth bypass is a real security gap that should be closed before any external usage. TaskStore migration is the most self-contained DB migration step (no dependencies on Phase 2B or Phase 3).
+
+Phase 2B (services) requires pipeline writers to store data in DB, which is a larger coordination effort better suited for a dedicated sprint. Phase 3 (route wiring) comes after Phase 2B+2C are stable.
 
 ---
 
-## Constraints (Unchanged from Previous Sprints)
+## Constraints (Unchanged)
 
 - Backward compatibility with existing artifacts
 - All Pydantic fields must have defaults
 - Raw SDK clients for LLM calls (no LangChain wrappers)
 - LangGraph >=1.0 interrupt model: check `__interrupt__` in result dict
-- Frontend renders its own charts from raw JSON (not iframes)
-- No Supabase yet — filesystem artifacts are source of truth
+- No Supabase — own PostgreSQL database
 - `email-validator` required for auth models (`EmailStr`)
-- Password `min_length=8`, `max_length=128` enforced in `LoginRequest` and `RegisterRequest`
+- Password `min_length=8`, `max_length=128`
 - Double-underscore separator for effective slugs: `{company}__{product}`
-- Product prompt guard: inject only when `product_slug AND product_name` both set
+- DB layer is opt-in via `DATABASE_URL` — no engine creation at import time
+- Repos flush only, DI session generator owns commit/rollback
+- Native `PgUUID(as_uuid=True)` for PKs — repo layer handles str↔uuid conversion
+- **NEW:** `AuthServiceProtocol` is the contract — all routers use `get_auth_service` dependency
+- **NEW:** Middleware uses `verify_token` utility + `app.state.secret_key` (no AuthStore dependency)
 
 ---
 
 ## Pre-Sprint Checklist
 
 Before starting work:
-- [ ] Aryan approves sprint direction (A, B, or C)
+- [ ] Aryan approves sprint direction (A, B, C, or D)
 - [ ] Read `_memory/` files (progress, failures, decisions, context)
-- [ ] Run `pytest tests/ -v` — confirm 900 passing
-- [ ] Create feature branch: `feat/cleanup` or `feat/content-gap`
+- [ ] Run `pytest tests/ -v` — confirm 1168 collected (1080 passed + 88 skipped)
+- [ ] Verify `core/auth/` and `core/db/` files are committed on feat/front-back

@@ -1,17 +1,17 @@
 {
-  "sprint": "settings-knowledge-docs",
-  "sprint_goal": "Settings Pages API (team/profile/pipeline-defaults) + Knowledge Doc Upload (CRUD + s1 integration + embedded status) + review fixes",
-  "sprint_status": "COMPLETE — 6 phases + 6 review fixes, 1029 tests passing, 1 pre-existing failure (PB-39)",
-  "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "Raw SDK clients for LLM calls (no LangChain wrappers)", "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception", "Frontend renders its own charts from raw JSON (not iframes)", "No Supabase yet — filesystem artifacts are source of truth", "email-validator required for auth models (EmailStr)", "Password min_length=8, max_length=128 enforced in LoginRequest and RegisterRequest", "Double-underscore separator for effective slugs: {company}__{product}", "Prompt product context only when product_slug AND product_name both set", "Default-deny middleware — all routes protected unless explicitly whitelisted", "Registration creates isolated companies only — domain auto-join removed (Codex C1)", "JWT_SECRET_KEY required in non-dev/test environments (Codex W8)", "core/ cannot import from api/ — shared code goes in core/shared_tools/"],
+  "sprint": "auth-migration-phase2",
+  "sprint_goal": "Auth Migration Phase 2 — Replace JSON-file-backed AuthStore with async, database-backed AuthService. Three-layer decomposition: pure utilities, AuthServiceProtocol + dual implementations (JsonAuthService + DbAuthService), DI switch. All routers migrated from sync to async. Middleware decoupled from AuthStore.",
+  "sprint_status": "COMPLETE — All 6 sub-phases done (2A-2F). 18 new files created. 32 files modified. 96 new tests. 1080 passed + 88 skipped = 1168 total.",
+  "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "Raw SDK clients for LLM calls (no LangChain wrappers)", "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception", "Frontend renders its own charts from raw JSON (not iframes)", "No Supabase yet — filesystem artifacts are source of truth", "email-validator required for auth models (EmailStr)", "Password min_length=8, max_length=128 enforced in LoginRequest and RegisterRequest", "Double-underscore separator for effective slugs: {company}__{product}", "Prompt product context only when product_slug AND product_name both set", "Default-deny middleware — all routes protected unless explicitly whitelisted", "Registration creates isolated companies only — domain auto-join removed (Codex C1)", "JWT_SECRET_KEY required in non-dev/test environments (Codex W8)", "core/ cannot import from api/ — shared code goes in core/shared_tools/", "DB layer is opt-in via DATABASE_URL — no engine creation at import time", "Repos flush only, DI session generator owns commit/rollback", "Native PgUUID(as_uuid=True) for PKs — repo layer handles str<->uuid conversion", "AuthServiceProtocol is the contract — all routers use get_auth_service dependency", "Middleware uses verify_token utility + app.state.secret_key (no AuthStore dependency)"],
   "active_branches": ["feat/front-back"],
-  "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "langfuse 3.14.1 installed", "trafilatura 1.6+ installed", "textstat 0.7+ installed", "LangGraph >=1.0 installed", "email-validator >=2.0 installed", "pdfplumber >=0.10 installed", "python-docx >=1.0 installed"],
+  "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "langfuse 3.14.1 installed", "trafilatura 1.6+ installed", "textstat 0.7+ installed", "LangGraph >=1.0 installed", "email-validator >=2.0 installed", "pdfplumber >=0.10 installed", "python-docx >=1.0 installed", "sqlalchemy[asyncio] >=2.0.30 installed", "asyncpg >=0.29 installed", "psycopg2-binary >=2.9 installed", "alembic >=1.13 installed", "pgvector >=0.3 installed"],
   "current_clients": ["Ramp", "Carta", "Mynd"],
-  "key_files_in_flux": [],
-  "last_completed": "T-settings-knowledge-docs — Settings Pages API + Knowledge Doc Upload (77 new tests → 1029 total)",
+  "key_files_in_flux": ["core/auth/", "core/db/"],
+  "last_completed": "T-auth-migration-phase2 — Auth Migration Phase 2 complete (18 new files, 32 modified, 96 new tests, 1168 total)",
   "deferred_issues_location": ".claude/sprints/pending/backlog.md",
   "deferred_feature2": ".claude/plans/cozy-twirling-mochi.md (Feature 2 — Content-Gap Integration)",
   "deferred_api_keys": "Phase 1D — API Key Configuration deferred to future sprint (RuntimeConfig passthrough + Fernet/KMS encryption)",
-  "test_count": 1029,
+  "test_count": 1168,
   "phases_completed": [
     "front-back Phase 1 — Foundation (auth, company model, registration)",
     "front-back Phase 2 — Gap Analysis Data Endpoints (6 endpoints, service layer, 61 tests)",
@@ -32,7 +32,14 @@
     "settings-knowledge-docs Phase 2A — Knowledge Doc Upload (multipart, CRUD, download, 19 tests)",
     "settings-knowledge-docs Phase 2B — S1 Integration (knowledge docs embedded alongside site content, 15 tests)",
     "settings-knowledge-docs Phase 2C — Embedded Status Tracking (mark docs as embedded, 3 tests)",
-    "settings-knowledge-docs Review Fixes (C1 DRY, C2 text extraction, C3 metadata lock, W1/W3/W5)"
+    "settings-knowledge-docs Review Fixes (C1 DRY, C2 text extraction, C3 metadata lock, W1/W3/W5)",
+    "sqlalchemy-migration Phase 1 — Infrastructure + ORM (31 tables) + Alembic (hand-written) + Repos (8 domain) + DI + Tests (44)",
+    "auth-migration Phase 2A — Utility extraction (core/auth/utils/: passwords, tokens, domain)",
+    "auth-migration Phase 2B — AuthServiceProtocol + JsonAuthService (wraps AuthStore)",
+    "auth-migration Phase 2C — New repositories (invite, product, pipeline_defaults)",
+    "auth-migration Phase 2D — DbAuthService (full business logic with DB repos)",
+    "auth-migration Phase 2E — DI wiring + middleware migration (get_auth_service, async auth deps, decoupled middleware)",
+    "auth-migration Phase 2F — Router migration (all 8 routers + runner migrated from sync AuthStore to async AuthServiceProtocol)"
   ],
-  "phases_remaining": []
+  "phases_remaining": ["Phase 2B-services — Wire service layers (GapData, ContentData, BrandData) to DB repos", "Phase 2C-taskstore — Migrate TaskStore from JSON to DB", "Phase 3 — Wire repos into FastAPI routes via DI (artifact reads from DB)"]
 }

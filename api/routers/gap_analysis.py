@@ -10,8 +10,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.auth.store import AuthStore
-from api.dependencies import get_artifacts_root, get_auth_store, get_event_bus, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
+from core.auth.service import AuthServiceProtocol
 from api.schemas.common import GapAnalysisStartRequest, PipelineRunResponse, TaskResponse
 from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask
@@ -58,7 +58,7 @@ async def start_gap_analysis(
     task_store: TaskStore = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
-    auth_store: AuthStore = Depends(get_auth_store),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
     # Tenant isolation: slug must match authenticated user's company
     user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
@@ -94,7 +94,7 @@ async def start_gap_analysis(
             artifacts_root=artifacts_root,
             task_store=task_store,
             event_bus=event_bus,
-            auth_store=auth_store,
+            auth_service=auth_service,
         )
     )
     task_store.register_task_handle(task.task_id, handle)
