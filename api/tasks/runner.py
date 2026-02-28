@@ -652,6 +652,108 @@ async def run_research_pipeline_task(
 # ── Content generation pipeline runner ───────────────────────────────
 
 
+async def run_site_audit_task(
+    task_id: str,
+    request: Any,
+    artifacts_root: Path,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+) -> None:
+    """Background task wrapper for site audit pipeline.
+
+    Derives slugs from the request, emits SSE events, calls the site audit
+    pipeline (when implemented), persists results, and updates the task store.
+    All exceptions are caught so the background task never crashes silently.
+
+    Args:
+        task_id: The task UUID created by the router.
+        request: SiteAuditStartRequest with company_name, domain, and options.
+        artifacts_root: Filesystem root for artifact persistence.
+        task_store: Task persistence store.
+        event_bus: SSE event bus for real-time progress streaming.
+        auth_service: Optional auth service for product lookups.
+    """
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "site_audit"})
+
+            try:
+                from core.site_audit.pipeline import run_site_audit
+                from core.models.site_audit import SiteAuditInput
+
+                input_data = SiteAuditInput(
+                    company_name=request.company_name,
+                    domain=request.domain,
+                    company_slug=scope.effective_slug,
+                    product_slug=scope.product_slug,
+                    max_pages=getattr(request, "max_pages", 200),
+                    max_depth=getattr(request, "max_depth", 4),
+                    check_core_web_vitals=getattr(request, "check_core_web_vitals", True),
+                    check_schema_validation=getattr(request, "check_schema_validation", True),
+                    check_ai_bot_access=getattr(request, "check_ai_bot_access", True),
+                )
+
+                audit_result = await run_site_audit(input_data)
+
+                # Persist audit_result.json
+                import json
+                out_dir = (
+                    artifacts_root
+                    / "site_audit"
+                    / scope.effective_slug
+                    / audit_result.audit_id
+                )
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / "audit_result.json").write_text(
+                    audit_result.model_dump_json(indent=2), encoding="utf-8"
+                )
+
+                result = {
+                    "audit_id": audit_result.audit_id,
+                    "domain": audit_result.domain,
+                    "overall_score": audit_result.overall_score,
+                    "grade": audit_result.grade,
+                    "pages_crawled": audit_result.pages_crawled,
+                    "produced_artifacts": [
+                        {"type": "site_audit", "slug": scope.effective_slug},
+                    ],
+                }
+            except (ImportError, NotImplementedError):
+                # Pipeline not yet wired — record a placeholder result
+                logger.warning(
+                    "run_site_audit not available (pipeline not yet implemented): task_id=%s",
+                    task_id,
+                )
+                result = {
+                    "audit_id": "",
+                    "domain": request.domain,
+                    "status": "not_implemented",
+                    "produced_artifacts": [],
+                }
+
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result
+            )
+            event_bus.publish(task_id, "completed", {"pipeline": "site_audit"})
+
+    except asyncio.CancelledError:
+        logger.info("Site audit pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("Site audit pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc)
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)
+
+
 async def run_content_pipeline_task(
     task_id: str,
     input_data: Any,

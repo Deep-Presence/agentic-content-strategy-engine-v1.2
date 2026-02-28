@@ -20,7 +20,7 @@ from api.exceptions import (
 )
 from api.auth.middleware import AuthMiddleware
 from api.auth.store import AuthStore
-from api.routers import artifacts, auth, brand_data, companies, content, content_data, events, gap_analysis, gap_data, health, knowledge_docs, research, settings, tasks
+from api.routers import artifacts, auth, brand_data, companies, content, content_data, events, gap_analysis, gap_data, health, knowledge_docs, research, settings, site_audit as site_audit_router, tasks
 from api.tasks.event_bus import EventBus
 from api.tasks.store import TaskConflictError, TaskNotFoundError, TaskStore
 
@@ -165,6 +165,7 @@ def create_app() -> FastAPI:
     app.include_router(brand_data.router)
     app.include_router(settings.router)
     app.include_router(knowledge_docs.router)
+    app.include_router(site_audit_router.router)
     app.include_router(tasks.router)
 
     return app

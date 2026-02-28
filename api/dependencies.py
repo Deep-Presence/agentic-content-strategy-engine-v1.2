@@ -16,6 +16,8 @@ from core.services.gap_data import GapDataServiceProtocol
 from core.services.json_brand_data import JsonBrandDataService
 from core.services.json_content_data import JsonContentDataService
 from core.services.json_gap_data import JsonGapDataService
+from core.services.json_site_audit_data import JsonSiteAuditDataService
+from core.services.site_audit_data import SiteAuditDataServiceProtocol
 from core.services.task_store import TaskStoreProtocol
 
 _logger = logging.getLogger(__name__)
@@ -175,5 +177,20 @@ def get_content_data_service(request: Request) -> ContentDataServiceProtocol:
     if db_service is not None:
         return db_service
     return JsonContentDataService(
+        artifacts_root=request.app.state.artifacts_root,
+    )
+
+
+def get_site_audit_data_service(request: Request) -> SiteAuditDataServiceProtocol:
+    """Return the site audit data service.
+
+    Checks for a pre-built service on app.state (e.g., from dependency
+    override in tests).  Falls back to JsonSiteAuditDataService which reads
+    from artifacts/site_audit/{slug}/{audit_id}/audit_result.json.
+    """
+    service = getattr(request.app.state, "site_audit_data_service", None)
+    if service is not None:
+        return service
+    return JsonSiteAuditDataService(
         artifacts_root=request.app.state.artifacts_root,
     )

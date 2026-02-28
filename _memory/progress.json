@@ -965,6 +965,31 @@
       "tests_added": 46,
       "test_total": "1088 passed + 125 skipped = 1213 collected",
       "summary": "Step 0: Fixed GapClassification enum (significant_gap/gap_to_close/roughly_equal/company_wins/no_data). Step 1: Created 3 service protocols + 3 JsonXxxService wrappers (asyncio.to_thread), DI functions, converted 14 router endpoints to async with service injection. Step 2: Created SignalRepository (signal averages, correlations, cluster patterns), PlatformRepository (platform summaries, URL sets, exclusivity), enhanced gap_analysis_repo (pagination, classification counts), enhanced pipeline_repo (get_latest_completed, list_runs_by_slug), enhanced content_repo (piece listing, detail). Step 3: Created DbGapDataService, DbBrandDataService, DbContentDataService. Step 4: Created backfill script (scripts/backfill_gap_data.py) for JSON\u2192DB migration. Step 5: Created protocol conformance tests (9), DB service tests (25), DB repo tests (12)."
+    },
+    {
+      "id": "T-phase4-persistence",
+      "task": "Phase 4 — Pipeline DB Write Hooks (populate DB tables during pipeline execution)",
+      "sprint": "phase4-persistence",
+      "status": "done",
+      "completed_at": "2026-02-28",
+      "files_changed": [
+        "core/gap_analysis/persistence.py",
+        "core/content_engine/persistence.py",
+        "core/gap_analysis/pipeline.py",
+        "core/content_engine/pipeline.py",
+        "api/tasks/runner.py",
+        "api/app.py",
+        "api/dependencies.py",
+        "core/db/repositories/cache_repo.py",
+        "core/db/repositories/embedding_repo.py",
+        "core/db/repositories/gap_analysis_repo.py",
+        "scripts/backfill_gap_data.py",
+        "tests/gap_analysis/test_persistence.py",
+        "tests/content_engine/test_persistence.py"
+      ],
+      "tests_added": 80,
+      "test_total": "1207 passed + 135 skipped = 1342 collected",
+      "summary": "Gap analysis: 8 persist_s1–s8 functions in core/gap_analysis/persistence.py (669 lines) — each step writes to corresponding ORM tables with idempotent delete-before-insert. Content engine: 2 functions (persist_content_pieces, persist_content_run_summary) in core/content_engine/persistence.py (147 lines). Runner: _resolve_db_context() resolves session_factory+run_id+company_id, _create_pipeline_run() inserts PipelineRun ORM, _mark_pipeline_run_failed() on exception. App: lazy db_session_factory init. Backfill: enhanced with spec fields (avg_word_count, avg_paragraph_word_count, etc.). 80 new unit tests (57 gap + 23 content) mocking AsyncSession."
     }
   ],
   "blocked": []

@@ -140,6 +140,13 @@ class Settings(BaseSettings):
     platform_cache_ttl_days: int = 7  # Re-search platforms after 7 days
     url_enrichment_cache_ttl_days: int = 14  # Re-scrape URLs after 14 days
 
+    # --- Site Audit (Pipeline 0) ---
+    site_audit_max_pages: int = 200  # Default max pages to crawl
+    site_audit_max_depth: int = 4  # Default BFS crawl depth
+    site_audit_concurrency: int = 30  # Concurrent page-analysis requests
+    site_audit_request_timeout: float = 15.0  # Per-request HTTP timeout (seconds)
+    site_audit_max_redirects: int = 5  # Max redirect hops before marking broken
+
     @property
     def database_url_sync(self) -> str | None:
         """Derive sync URL from async URL for Alembic (avoids drift)."""
