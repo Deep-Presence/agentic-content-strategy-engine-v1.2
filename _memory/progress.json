@@ -1,5 +1,5 @@
 {
-  "current_sprint": "cleanup-taskstore-migration",
+  "current_sprint": "site-audit",
   "last_updated": "2026-02-28",
   "completed": [
     {
@@ -990,6 +990,72 @@
       "tests_added": 80,
       "test_total": "1207 passed + 135 skipped = 1342 collected",
       "summary": "Gap analysis: 8 persist_s1–s8 functions in core/gap_analysis/persistence.py (669 lines) — each step writes to corresponding ORM tables with idempotent delete-before-insert. Content engine: 2 functions (persist_content_pieces, persist_content_run_summary) in core/content_engine/persistence.py (147 lines). Runner: _resolve_db_context() resolves session_factory+run_id+company_id, _create_pipeline_run() inserts PipelineRun ORM, _mark_pipeline_run_failed() on exception. App: lazy db_session_factory init. Backfill: enhanced with spec fields (avg_word_count, avg_paragraph_word_count, etc.). 80 new unit tests (57 gap + 23 content) mocking AsyncSession."
+    },
+    {
+      "id": "T-site-audit-all",
+      "task": "Site Audit Module (Pipeline 0) — full 6-step deterministic website audit across 8 dimensions",
+      "sprint": "site-audit",
+      "status": "done",
+      "completed_at": "2026-02-28",
+      "files_changed": [
+        "core/models/site_audit.py",
+        "core/site_audit/__init__.py",
+        "core/site_audit/config.py",
+        "core/site_audit/pipeline.py",
+        "core/site_audit/scoring.py",
+        "core/site_audit/steps/s1_discover.py",
+        "core/site_audit/steps/s2_analyze_pages.py",
+        "core/site_audit/steps/s3_check_schema.py",
+        "core/site_audit/steps/s4_check_aeo.py",
+        "core/site_audit/steps/s5_aggregate.py",
+        "core/site_audit/steps/s6_report.py",
+        "core/site_audit/checks/crawlability.py",
+        "core/site_audit/checks/on_page_seo.py",
+        "core/site_audit/checks/eeat_signals.py",
+        "core/site_audit/checks/security.py",
+        "core/site_audit/checks/extractability.py",
+        "core/site_audit/checks/schema_checks.py",
+        "core/site_audit/checks/performance.py",
+        "core/db/repositories/site_audit_repo.py",
+        "api/routers/site_audit.py",
+        "api/schemas/site_audit.py",
+        "core/services/site_audit_data.py",
+        "core/services/json_site_audit_data.py",
+        "api/dependencies.py",
+        "api/app.py",
+        "api/tasks/runner.py",
+        "api/tasks/models.py",
+        "tests/core/test_site_audit/test_models.py",
+        "tests/core/test_site_audit/test_config.py",
+        "tests/core/test_site_audit/test_crawler.py",
+        "tests/core/test_site_audit/test_checks.py",
+        "tests/core/test_site_audit/test_schema.py",
+        "tests/core/test_site_audit/test_aeo.py",
+        "tests/core/test_site_audit/test_steps.py",
+        "tests/core/test_site_audit/test_repo.py",
+        "tests/core/test_site_audit/test_integration.py",
+        "tests/api/test_site_audit.py"
+      ],
+      "tests_added": 636,
+      "test_total": "~1850+ collected (636 site audit + 1207 existing passed + 135 skipped)",
+      "summary": "Complete site audit module (Pipeline 0) built by 4-teammate agent team. 8-dimension website audit (crawlability, performance, on-page SEO, extractability/AEO, schema markup, E-E-A-T, freshness, security). 6-step pipeline: s1_discover (async BFS crawler with robots.txt/sitemap/RSS/BFS phases + AI bot detection) → s2_analyze_pages (parallel page analysis with semaphore control) → s3_check_schema (JSON-LD detection with @graph handling) → s4_check_aeo (AEO readiness scoring 0-100) → s5_aggregate (penalty-based scoring, grade computation A-F) → s6_report (Markdown + JSON output). 100% deterministic — no LLM calls. Penalty-based scoring: start at 100, deduct by severity (critical=10, high=5, medium=2, low=1, info=0). Weighted dimensions sum to 1.0. Grade thresholds: A≥90, B≥75, C≥60, D≥40, F<40. API layer: 6 endpoints (start, status, list/detail/findings/pages). Service protocol + JSON filesystem implementation. 636 tests across 10 test files."
+    },
+    {
+      "id": "T-DT-integration",
+      "task": "Daily Tracker orchestrator + API router + DI wiring — 16 endpoints",
+      "sprint": "daily-tracker",
+      "status": "done",
+      "completed_at": "2026-02-28",
+      "files_changed": [
+        "core/daily_tracker/orchestrator.py",
+        "api/routers/daily_tracker.py",
+        "api/dependencies.py",
+        "api/app.py",
+        "tests/daily_tracker/test_orchestrator.py",
+        "tests/daily_tracker/test_api_endpoints.py"
+      ],
+      "test_count": "66 new tests (20 orchestrator + 46 API endpoints) — all passing",
+      "codex_review": "Self-review: verified Mediator pattern (no direct module-to-module calls), auth/tenant isolation on all 16 endpoints, DI wiring correctness, error propagation, import cleanup"
     }
   ],
   "blocked": []

@@ -1,6 +1,6 @@
 # Pending Backlog
 
-> **Last synced:** 2026-02-28
+> **Last synced:** 2026-02-28 (post site-audit sprint)
 > **Total items:** 27
 
 ## Critical (Fix Before Production)

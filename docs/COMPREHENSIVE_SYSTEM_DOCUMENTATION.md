@@ -3,7 +3,7 @@
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
 > **Stack:** Python 3.12 · LangGraph · DeepAgents · FastAPI · Pydantic v2 · Langfuse v3
-> **Document Date:** 2026-02-28
+> **Document Date:** 2026-02-28 (updated: daily LLM visibility tracker)
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -14,6 +14,32 @@
 2. [What This System Does — The Business Problem](#2-what-this-system-does--the-business-problem)
 3. [High-Level Architecture](#3-high-level-architecture)
 4. [Directory Structure — Complete File Map](#4-directory-structure--complete-file-map)
+4a. [Pipeline 0: Site Audit](#4a-pipeline-0-site-audit)
+   - 4a.1 [Overview & Architecture](#4a1-overview--architecture)
+   - 4a.2 [Step 1 — Discover (s1_discover.py)](#4a2-step-1--discover-s1_discoverpy)
+   - 4a.3 [Step 2 — Analyze Pages (s2_analyze_pages.py)](#4a3-step-2--analyze-pages-s2_analyze_pagespy)
+   - 4a.4 [Step 3 — Check Schema (s3_check_schema.py)](#4a4-step-3--check-schema-s3_check_schemapy)
+   - 4a.5 [Step 4 — Check AEO (s4_check_aeo.py)](#4a5-step-4--check-aeo-s4_check_aeopy)
+   - 4a.6 [Step 5 — Aggregate (s5_aggregate.py)](#4a6-step-5--aggregate-s5_aggregatepy)
+   - 4a.7 [Step 6 — Report (s6_report.py)](#4a7-step-6--report-s6_reportpy)
+   - 4a.8 [Check Modules](#4a8-check-modules)
+   - 4a.9 [Scoring Algorithm](#4a9-scoring-algorithm)
+   - 4a.10 [Configuration](#4a10-configuration)
+   - 4a.11 [Pydantic Models](#4a11-pydantic-models)
+   - 4a.12 [API Endpoints](#4a12-api-endpoints)
+4b. [Daily LLM Visibility Tracker](#4b-daily-llm-visibility-tracker)
+   - 4b.1 [Overview & Architecture](#4b1-overview--architecture)
+   - 4b.2 [Module Architecture — Design Patterns](#4b2-module-architecture--design-patterns)
+   - 4b.3 [Protocol Interfaces](#4b3-protocol-interfaces)
+   - 4b.4 [Orchestrator (Mediator)](#4b4-orchestrator-mediator)
+   - 4b.5 [Prompt Library Service](#4b5-prompt-library-service)
+   - 4b.6 [Platform Runner Service (Adapter)](#4b6-platform-runner-service-adapter)
+   - 4b.7 [Mention Detector](#4b7-mention-detector)
+   - 4b.8 [Analytics Engine & Metric Calculators](#4b8-analytics-engine--metric-calculators)
+   - 4b.9 [API Endpoints (16 Total)](#4b9-api-endpoints-16-total)
+   - 4b.10 [DI Wiring](#4b10-di-wiring)
+   - 4b.11 [Pydantic Models](#4b11-pydantic-models)
+   - 4b.12 [ORM & Database](#4b12-orm--database)
 5. [Pipeline 1: Research Artifacts](#5-pipeline-1-research-artifacts)
    - 5.1 [Company Context Research Agent](#51-company-context-research-agent)
    - 5.2 [Audience Persona Research Agent](#52-audience-persona-research-agent)
@@ -143,7 +169,9 @@
 
 ## 1. Executive Summary
 
-The **Content Strategy Engine** is a multi-agent AI platform that automates the end-to-end workflow of content strategy for B2B companies. It operates across three sequential pipelines:
+The **Content Strategy Engine** is a multi-agent AI platform that automates the end-to-end workflow of content strategy for B2B companies. It operates across four pipelines:
+
+0. **Site Audit Pipeline** (implemented) — A 6-step deterministic pipeline that audits website AI-readiness across 8 dimensions (crawlability, performance, on-page SEO, content extractability/AEO, schema markup, E-E-A-T, freshness, security). Scores each dimension 0–100 using penalty-based deductions, computes a weighted overall score, assigns a letter grade (A–F), and generates actionable Markdown + JSON reports. 100% deterministic — no LLM calls.
 
 1. **Research Artifacts Pipeline** (implemented) — Uses LLM agents with web research tools to produce company context documents, audience persona profiles, and writing style guides. Each artifact goes through a human-in-the-loop approval flow (approve / revise / reject) before being finalized.
 
@@ -159,7 +187,7 @@ A **Settings Pages API** sprint (2026-02-27) added 11 new endpoints across 3 fea
 
 A **3-phase database migration** (2026-02-27/28) established a hybrid filesystem + PostgreSQL architecture: Phase 1 created 31 ORM tables, 16 repositories, and 4 Alembic migrations using pure SQLAlchemy 2.0. Phase 2 decomposed authentication into a three-layer architecture (pure utilities → service protocol → dual Json/Db implementations). Phase 3 applied the same protocol pattern across all data services (gap, brand, content, TaskStore) with SQL analytics repositories replacing Python-based JSON parsing for heavy aggregations. All phases use a single opt-in switch (`DATABASE_URL`) with automatic fallback to JSON-backed services.
 
-**1262 tests (1127 passed + 135 skipped), 1 pre-existing failure (PB-39).** Full coverage across all pipelines, API endpoints, data retrieval layers, settings management, knowledge document upload, auth services, DB repositories, and service layer protocols.
+**~1978 tests (~1843 passed + 135 skipped), 1 pre-existing failure (PB-39).** Full coverage across all pipelines (including site audit), API endpoints, data retrieval layers, settings management, knowledge document upload, auth services, DB repositories, and service layer protocols. Site audit module adds 636 new tests.
 
 **Current production clients analyzed:** Ramp (corporate spend management), Carta (equity management platform), and Mynd.
 
@@ -295,9 +323,32 @@ content-strategy-engine/
 │   │   │                                  #   EnrichedCitation, SpaResult, CentroidResult, QueryGap,
 │   │   │                                  #   ClusterContentSpec, AnalysisResult, GapReport,
 │   │   │                                  #   DiscoveredPage, SiteTreeNode, SiteDiscoveryResult
+│   │   ├── site_audit.py                 # SiteAuditInput, AuditFinding, PageAuditResult, DimensionScore, SiteAuditResult,
+│   │   │                                  #   SchemaDetectionResult, AEOReadinessResult, AIBotAccessResult, SitemapHealthResult
 │   │   ├── knowledge_docs.py             # KnowledgeDocument metadata model (upload tracking)
 │   │   ├── organization.py               # CompanyPipelineDefaults model (per-company pipeline overrides)
 │   │   └── reddit_hil.py                 # RedditMonitorInput, RedditThread, DraftNotification
+│   │
+│   ├── site_audit/                        # Pipeline 0: Site Audit (6-step, deterministic)
+│   │   ├── __init__.py
+│   │   ├── config.py                      # AuditConfig frozen dataclass, DEFAULT_AUDIT_CONFIG, dimension weights
+│   │   ├── pipeline.py                    # Main orchestrator: run_site_audit()
+│   │   ├── scoring.py                     # Penalty-based scoring, grade computation
+│   │   ├── checks/                        # Pure-function check modules (no I/O)
+│   │   │   ├── crawlability.py            # robots.txt, sitemap, canonical, redirect checks
+│   │   │   ├── on_page_seo.py             # Title, meta desc, headings, alt text, internal links
+│   │   │   ├── eeat_signals.py            # Author info, citations, original research, recency
+│   │   │   ├── security.py                # HTTPS, mixed content, CSP headers
+│   │   │   ├── extractability.py          # Question headings, hooks, self-contained paragraphs
+│   │   │   ├── schema_checks.py           # JSON-LD parsing, type validation, @graph handling
+│   │   │   └── performance.py             # SSR content check + Core Web Vitals (async)
+│   │   └── steps/                         # Individual pipeline steps
+│   │       ├── s1_discover.py             # AsyncSiteCrawler — 4-phase BFS + AI bot detection
+│   │       ├── s2_analyze_pages.py        # Per-page parallel analysis with semaphore
+│   │       ├── s3_check_schema.py         # JSON-LD detection with @graph, type validation
+│   │       ├── s4_check_aeo.py            # AEO readiness scoring (0-100 composite)
+│   │       ├── s5_aggregate.py            # Dimension scoring, overall score, grade, top findings
+│   │       └── s6_report.py               # Markdown + JSON report generation
 │   │
 │   ├── research/                          # Pipeline 1: Research Artifacts
 │   │   ├── __init__.py
@@ -577,6 +628,407 @@ content-strategy-engine/
     ├── FLOW-2.svg
     └── gap-analysis-flow.png
 ```
+
+---
+
+## 4a. Pipeline 0: Site Audit
+
+### 4a.1 Overview & Architecture
+
+The Site Audit pipeline is a **100% deterministic** (no LLM calls) 6-step pipeline that audits a website's AI-readiness across 8 dimensions. It runs before the Gap Analysis pipeline and produces a comprehensive audit report with dimension scores, an overall grade, and actionable findings.
+
+**8 Audit Dimensions** (with weights summing to 1.0):
+
+| Dimension | Weight | What It Measures |
+|-----------|--------|------------------|
+| `crawlability` | 0.20 | robots.txt accessibility, sitemap quality, canonical tags, redirect chains |
+| `performance` | 0.10 | SSR content presence, Core Web Vitals (graceful degradation) |
+| `on_page_seo` | 0.15 | Title tags, meta descriptions, heading hierarchy, alt text, internal links |
+| `extractability` | 0.20 | AEO readiness — question headings, hooks, self-contained paragraphs, conciseness |
+| `schema_markup` | 0.10 | JSON-LD presence, schema type validation, coverage across pages |
+| `eeat` | 0.15 | Author attribution, citations/references, original research signals, recency |
+| `freshness` | 0.05 | Content recency signals |
+| `security` | 0.05 | HTTPS enforcement, mixed content, security headers (CSP, etc.) |
+
+**Pipeline flow:**
+
+```
+s1_discover → s2_analyze_pages → s3_check_schema → s4_check_aeo → s5_aggregate → s6_report
+```
+
+- **s1 failure = hard fail** (no pages to analyze)
+- All other steps degrade gracefully — pipeline continues even if individual steps error
+
+**Entry point:** `core/site_audit/pipeline.py` → `run_site_audit(input, output_dir, skip_steps, on_progress)`
+
+### 4a.2 Step 1 — Discover (s1_discover.py)
+
+**File:** `core/site_audit/steps/s1_discover.py` (~891 lines)
+**Class:** `AsyncSiteCrawler`
+**Output:** `S1DiscoveryOutput` dataclass
+
+4-phase URL discovery:
+1. **robots.txt** — Parse User-Agent directives, extract sitemap URLs, detect AI bot policies (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot)
+2. **Sitemaps** — XML sitemap parsing (supports sitemap index files)
+3. **RSS/Atom feeds** — Feed discovery and URL extraction
+4. **BFS crawl** — Breadth-first HTML link extraction with configurable `max_pages`, `max_depth`, `request_timeout`
+
+**AI Bot Detection:** Produces `AIBotAccessResult` with per-bot boolean fields (`gptbot_allowed`, `claudebot_allowed`, etc.) and summary fields (`total_bots_checked`, `bots_allowed`, `bots_blocked`).
+
+**Sitemap Health:** Produces `SitemapHealthResult` with `has_sitemap`, `sitemap_count`, `sitemap_url_count`, `has_sitemap_index`.
+
+**Test isolation:** `_transport` parameter on `AsyncSiteCrawler.__init__()` accepts `httpx.MockTransport` for zero-network test runs.
+
+### 4a.3 Step 2 — Analyze Pages (s2_analyze_pages.py)
+
+**File:** `core/site_audit/steps/s2_analyze_pages.py` (~582 lines)
+**Functions:** `analyze_single_page()` (sync, pure CPU) + `analyze_all_pages()` (async with `asyncio.Semaphore`)
+
+Runs all check functions from the `checks/` modules on each page:
+- Crawlability checks → `list[AuditFinding]`
+- On-page SEO checks → `list[AuditFinding]`
+- E-E-A-T signal checks → `list[AuditFinding]`
+- Security checks → `list[AuditFinding]`
+- Freshness checks → `list[AuditFinding]`
+
+Produces `PageAuditResult` per page with all findings collected.
+
+### 4a.4 Step 3 — Check Schema (s3_check_schema.py)
+
+**File:** `core/site_audit/steps/s3_check_schema.py`
+**Functions:** `detect_schema(html, url) -> SchemaDetectionResult` + `generate_schema_findings(url, result) -> list[AuditFinding]`
+
+- Parses `<script type="application/ld+json">` blocks from HTML
+- Handles `@graph` arrays (explodes into individual items)
+- Per-block `try/except` isolation — malformed JSON doesn't crash the entire page
+- Validates schema `@type` against known types
+- Infers page type from schema types
+
+### 4a.5 Step 4 — Check AEO (s4_check_aeo.py)
+
+**File:** `core/site_audit/steps/s4_check_aeo.py`
+**Function:** `analyze_aeo_readiness(html, url, config) -> tuple[AEOReadinessResult, list[AuditFinding]]`
+
+**AEO Readiness Score** (0–100), composite formula:
+
+```
+score = question_heading_ratio × 25
+      + hook_ratio × 25
+      + self_contained_paragraph_ratio × 20
+      + paragraph_length_score × 15
+      + pattern_score (0–15)
+```
+
+Components:
+- **Question headings:** H2/H3/H4 ending in `?` or starting with interrogatives (what/how/why/when/where/which/can/does/is)
+- **Hooks:** First 2 sentences of paragraphs directly answering the heading's question
+- **Self-contained paragraphs:** Complete, standalone answer paragraphs (checked via `extractability.py`)
+- **Paragraph length:** Penalizes too-short (<50 words) and too-long (>300 words) paragraphs
+- **Patterns:** Numbered lists, definition lists, FAQ sections, comparison tables, step-by-step guides
+
+### 4a.6 Step 5 — Aggregate (s5_aggregate.py)
+
+**File:** `core/site_audit/steps/s5_aggregate.py`
+**Function:** `aggregate_results(pages, schema_results, aeo_results, bot_access, sitemap_health, config) -> SiteAuditResult`
+
+1. Collects all `AuditFinding` objects from pages, schema, and AEO steps
+2. Computes per-dimension scores via `scoring.compute_all_dimension_scores()`
+3. Computes weighted overall score via `scoring.compute_overall_score()`
+4. Assigns letter grade via `scoring.compute_grade()`
+5. Computes top findings — sorted by severity, deduplicated by type, with occurrence counts
+6. Computes AEO and schema summary statistics
+
+### 4a.7 Step 6 — Report (s6_report.py)
+
+**File:** `core/site_audit/steps/s6_report.py`
+**Functions:** `generate_markdown_report(result) -> str` + `generate_report(result, output_dir) -> tuple[Path, Path]`
+
+Produces:
+- **report.md** — Markdown executive summary with sections for overall grade, dimension scores (bar chart via grade letters), AI bot access status, sitemap health, AEO readiness, top findings with recommendations
+- **audit_result.json** — Full `SiteAuditResult` serialized via `model_dump(mode="json")`
+
+### 4a.8 Check Modules
+
+All in `core/site_audit/checks/` — pure functions returning `list[AuditFinding]`, zero I/O:
+
+| Module | Dimension | Key Checks |
+|--------|-----------|------------|
+| `crawlability.py` | crawlability | robots.txt accessible, sitemap exists, canonical present, redirect chain length |
+| `on_page_seo.py` | on_page_seo | Title tag present/length, meta description, H1 count, heading hierarchy, alt text on images, internal link count |
+| `eeat_signals.py` | eeat | Author name/bio present, citations/references, original research indicators, content date recency |
+| `security.py` | security | HTTPS enforced, mixed content, Content-Security-Policy header, X-Frame-Options |
+| `extractability.py` | extractability | Question heading classification, hook detection, self-contained paragraph evaluation |
+| `schema_checks.py` | schema_markup | JSON-LD block parsing, `@graph` handling, type validation, page type inference |
+| `performance.py` | performance | `check_ssr_content()` (sync, pure) + `fetch_core_web_vitals()` (async, graceful degradation) |
+
+### 4a.9 Scoring Algorithm
+
+**File:** `core/site_audit/scoring.py`
+
+**Penalty-based scoring:**
+1. Start at 100 for each dimension
+2. Deduct per finding by severity: `critical=10, high=5, medium=2, low=1, info=0`
+3. Clamp to `[0, 100]`
+
+**Overall score:** Weighted sum of dimension scores × dimension weights (weights sum to 1.0)
+
+**Grade thresholds:** A ≥ 90, B ≥ 75, C ≥ 60, D ≥ 40, F < 40
+
+**Functions:**
+```python
+def compute_dimension_score(dimension, findings, config=DEFAULT_AUDIT_CONFIG) -> DimensionScore
+def compute_all_dimension_scores(findings, config=DEFAULT_AUDIT_CONFIG) -> list[DimensionScore]
+def compute_overall_score(dimension_scores) -> float
+def compute_grade(overall_score, config=DEFAULT_AUDIT_CONFIG) -> str
+```
+
+### 4a.10 Configuration
+
+**File:** `core/site_audit/config.py`
+
+`AuditConfig` — frozen dataclass (thread-safe):
+- `dimension_weights: dict[AuditDimension, float]` — must sum to 1.0 (assertion at module load)
+- `severity_penalties: dict[AuditCheckSeverity, int]` — deduction points per severity level
+- `grade_thresholds: list[tuple[float, str]]` — sorted descending by threshold
+- `grade_for_score(score) -> str` — compute grade from score
+- `penalty_for(severity) -> int` — get deduction points
+
+`DEFAULT_AUDIT_CONFIG` — module-level singleton used by all pipeline functions.
+
+**Settings additions** in `core/config/settings.py`:
+- `site_audit_max_pages: int = 50`
+- `site_audit_max_depth: int = 3`
+- `site_audit_request_timeout: float = 10.0`
+- `site_audit_concurrent_pages: int = 5`
+- `site_audit_user_agent: str = "DeepPresenceBot/1.0"`
+
+### 4a.11 Pydantic Models
+
+**File:** `core/models/site_audit.py`
+
+| Model | Description |
+|-------|-------------|
+| `AuditDimension` | Enum: crawlability, performance, on_page_seo, extractability, schema_markup, eeat, freshness, security |
+| `AuditCheckSeverity` | Enum: critical, high, medium, low, info |
+| `SiteAuditInput` | Input: domain (required), max_pages, max_depth, skip_steps |
+| `AuditFinding` | Single finding: dimension, severity, check_name, message, url, details |
+| `SchemaDetectionResult` | JSON-LD: has_schema, schema_types, schema_count, page_type |
+| `AEOReadinessResult` | AEO: overall_score, question_heading_ratio, hook_ratio, etc. |
+| `PageAuditResult` | Per-page: url, status_code, findings list, schema result, aeo result |
+| `AIBotAccessResult` | Bot access: gptbot_allowed, claudebot_allowed, etc. |
+| `SitemapHealthResult` | Sitemap: has_sitemap, sitemap_count, url_count |
+| `DimensionScore` | Score: dimension, score (0-100), grade, finding_count, finding_breakdown |
+| `SiteAuditResult` | Full result: domain, overall_score, grade, dimension_scores, pages, findings, bot_access, sitemap_health |
+
+All fields have defaults for backward compatibility.
+
+### 4a.12 API Endpoints
+
+**Router:** `api/routers/site_audit.py` (registered at `/api/v1/site-audit/` and `/api/v1/companies/{slug}/audits/`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/site-audit/start` | Launch site audit (202 Accepted) |
+| `GET` | `/api/v1/site-audit/{run_id}/status` | Poll audit status |
+| `GET` | `/api/v1/companies/{slug}/audits` | List audits for company |
+| `GET` | `/api/v1/companies/{slug}/audits/{audit_id}` | Get audit detail |
+| `GET` | `/api/v1/companies/{slug}/audits/{audit_id}/findings` | Get audit findings |
+| `GET` | `/api/v1/companies/{slug}/audits/{audit_id}/pages` | Get page-level results |
+
+**Service:** `SiteAuditDataServiceProtocol` (runtime_checkable Protocol) + `JsonSiteAuditDataService` (filesystem-backed, FIFO cache)
+
+**Repository:** `SiteAuditRepository` in `core/db/repositories/site_audit_repo.py` (flush-only contract)
+
+---
+
+## 4b. Daily LLM Visibility Tracker
+
+### 4b.1 Overview & Architecture
+
+The Daily LLM Visibility Tracker monitors brand visibility across AI platforms (ChatGPT, Claude, Gemini, Perplexity). It runs tracked prompts against each platform daily, detects brand mentions and citations in responses, and computes analytics (mention rate, share of voice, citation rate, trends).
+
+**Key characteristics:**
+- Reuses existing gap analysis search engines via an **adapter pattern** — zero code duplication
+- All metric computation is **100% deterministic** — no LLM calls in the analytics path
+- The only LLM calls happen in the platform runner (via existing gap engines)
+- Modular architecture with Mediator and Strategy patterns
+
+**Location:** `core/daily_tracker/` (business logic), `api/routers/daily_tracker.py` (API), `core/models/daily_tracker.py` (Pydantic), `core/db/models/daily_tracker.py` (ORM)
+
+### 4b.2 Module Architecture — Design Patterns
+
+| Pattern | Where | Why |
+|---------|-------|-----|
+| **Mediator** | `DailyTrackerOrchestrator` | Modules never talk to each other directly. Adding a new module (e.g., notifications) requires changes only in the orchestrator. |
+| **Strategy** | `MetricCalculator` ABC + registry | Each metric is a subclass. New metrics never modify existing calculator code (Open/Closed Principle). |
+| **Adapter** | `PlatformRunnerService` | Wraps existing gap analysis `SearchEngine` implementations. Imports `from core.gap_analysis.engines.openai_engine import OpenAIEngine` etc. |
+| **Protocol** | 5 `@runtime_checkable` Protocols | Decouples interfaces from implementations. Enables test mocking and future DB-backed swaps. |
+
+### 4b.3 Protocol Interfaces
+
+All protocols are `@runtime_checkable` and defined in `core/daily_tracker/protocols.py`:
+
+| Protocol | Methods | Implementor |
+|----------|---------|-------------|
+| `PromptLibraryServiceProtocol` | `create_prompt`, `get_prompt`, `list_prompts`, `update_prompt`, `delete_prompt`, `toggle_prompt`, `import_from_gap_analysis`, `bulk_create` | `PromptLibraryService` |
+| `PlatformRunnerServiceProtocol` | `run_prompts` | `PlatformRunnerService` |
+| `MentionDetectorProtocol` | `detect_mentions` | `MentionDetector` |
+| `AnalyticsServiceProtocol` | `compute_visibility_metrics`, `compute_mention_rate_trend`, `compute_share_of_voice`, `compute_citation_rate`, `get_competitor_metrics` | `AnalyticsService` |
+| `DailyTrackerOrchestratorProtocol` | `execute_daily_run`, `get_run_status` | `DailyTrackerOrchestrator` |
+
+### 4b.4 Orchestrator (Mediator)
+
+**File:** `core/daily_tracker/orchestrator.py`
+
+The orchestrator coordinates the full daily run pipeline without modules talking directly to each other.
+
+**Pipeline flow:**
+1. **Fetch prompts** — specific IDs via `get_prompt()` or all active via `list_prompts(company_id, filters=None)`
+2. **Run prompts across platforms** — delegates to `PlatformRunnerService.run_prompts()` which returns `DailyRunResult` with `PlatformResponse` objects
+3. **Detect mentions** — for each response, calls `MentionDetector.detect_mentions(text, brand, competitors)` (sync, regex-based)
+4. **Assemble result** — builds `DailyRunResult` with enriched responses and `_mention_analyses` attached as index-aligned list
+
+**Key design decisions:**
+- **Stateless** — does not cache run results or own DB dependencies. The API layer handles persistence.
+- **Error isolation** — catches all exceptions and returns `RunStatus.FAILED` with error message (never re-raises).
+- **`_mention_analyses`** attached as a separate attribute (not part of `PlatformResponse`) to avoid modifying models owned by other modules.
+
+### 4b.5 Prompt Library Service
+
+**File:** `core/daily_tracker/prompt_library.py`
+
+CRUD operations for tracked prompts. Each prompt belongs to a company, has text/category/tags, an active flag, and a source (`manual`, `gap_analysis`, `custom`).
+
+**Key operations:**
+- `create_prompt(company_id, text, category, tags)` — dedup by text within company
+- `import_from_gap_analysis(company_id, slug)` — reads `artifacts/gap_analysis/{slug}/queries.json`, imports as tracked prompts
+- `bulk_create(company_id, prompt_dicts)` — skips duplicates
+
+### 4b.6 Platform Runner Service (Adapter)
+
+**File:** `core/daily_tracker/platform_runner.py`
+
+Adapter pattern wrapping existing gap analysis search engines. Imports engines directly:
+```python
+from core.gap_analysis.engines.openai_engine import OpenAIEngine
+from core.gap_analysis.engines.claude_engine import ClaudeEngine
+from core.gap_analysis.engines.gemini_engine import GeminiEngine
+from core.gap_analysis.engines.perplexity_engine import PerplexityEngine
+```
+
+Converts `TrackedPrompt` → engine-compatible format, runs with semaphore concurrency control, and assembles `DailyRunResult` with `PlatformResponse` objects.
+
+### 4b.7 Mention Detector
+
+**File:** `core/daily_tracker/mention_detector.py`
+
+Regex-based brand mention detection. 100% deterministic, no LLM calls, sub-millisecond latency.
+
+Returns `MentionAnalysis` with:
+- `brand_mentioned: bool`, `brand_mention_count: int`
+- `competitor_mentions: dict[str, int]`
+- `citations: list[str]` (extracted URLs)
+- `citation_rank: int | None` (position of first brand citation)
+
+### 4b.8 Analytics Engine & Metric Calculators
+
+**File:** `core/daily_tracker/analytics_engine.py`
+
+Uses the **Strategy pattern** via `MetricCalculator` ABC (`core/daily_tracker/metrics/base.py`).
+
+**4 metric calculators** (registered in `METRIC_REGISTRY`):
+| Calculator | File | Output |
+|------------|------|--------|
+| `MentionRateCalculator` | `metrics/mention_rate.py` | `VisibilityMetrics.mention_rate` |
+| `ShareOfVoiceCalculator` | `metrics/share_of_voice.py` | `dict[str, float]` brand vs competitors |
+| `CitationRateCalculator` | `metrics/citation_rate.py` | Citation rate with domain breakdown |
+| `TrendCalculator` | `metrics/trend.py` | `list[TrendDataPoint]` over time |
+
+**Data provider:** `AnalyticsService` uses a `ResponseDataProvider` protocol (defined in `analytics_engine.py`) decoupled from DB repos. The DI layer bridges via `_DbResponseDataProvider` adapter in `api/dependencies.py`.
+
+### 4b.9 API Endpoints (16 Total)
+
+**Router:** `api/routers/daily_tracker.py` — prefix `/api/v1/daily-tracker`
+
+#### Prompt Library (8 endpoints)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/prompts` | member/superuser | Create tracked prompt (201) |
+| `GET` | `/prompts` | any auth | List with filters (category, source, active, search, tags) |
+| `GET` | `/prompts/{prompt_id}` | any auth | Get specific prompt |
+| `PUT` | `/prompts/{prompt_id}` | member/superuser | Update prompt fields |
+| `DELETE` | `/prompts/{prompt_id}` | member/superuser | Delete prompt (204) |
+| `PATCH` | `/prompts/{prompt_id}/toggle` | member/superuser | Toggle active/inactive |
+| `POST` | `/prompts/import` | member/superuser | Import from gap analysis queries (201) |
+| `POST` | `/prompts/bulk` | member/superuser | Bulk create prompts (201) |
+
+#### Run Management (3 endpoints)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/runs` | member/superuser | Trigger daily run (202) |
+| `GET` | `/runs/{run_id}` | any auth | Get run status |
+| `GET` | `/runs` | any auth | List runs for company |
+
+#### Analytics (5 endpoints)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/analytics/visibility` | any auth | Overall visibility metrics |
+| `GET` | `/analytics/mention-trend` | any auth | Mention rate over time (`?days=30`) |
+| `GET` | `/analytics/sov` | any auth | Share of voice vs competitors |
+| `GET` | `/analytics/citations` | any auth | Citation rates with domain breakdown |
+| `GET` | `/analytics/competitors` | any auth | Per-competitor metrics |
+
+**Tenant isolation:** All endpoints use `_get_company_id(request)` which extracts `company_slug` from `request.state` (set by auth middleware).
+
+### 4b.10 DI Wiring
+
+**File:** `api/dependencies.py` (APPEND ONLY — 3 factory functions added)
+
+| Factory | Returns | Fallback |
+|---------|---------|----------|
+| `get_prompt_library_service(request)` | `PromptLibraryService` | Checks `app.state.prompt_library_service` override, then builds from `db_session_factory`. 503 if neither available. |
+| `get_analytics_service(request)` | `AnalyticsService` | Checks `app.state.analytics_service` override, then builds with `_DbResponseDataProvider`. 503 if no DB. |
+| `get_daily_tracker_orchestrator(request)` | `DailyTrackerOrchestrator` | Wires `PromptLibraryService` + `PlatformRunnerService` + `MentionDetector`. 503 if no DB. |
+
+**`_DbResponseDataProvider`** — adapter class in `api/dependencies.py` bridging `DailyRunResponseRepository` to the `ResponseDataProvider` protocol used by `AnalyticsService`.
+
+**Test injection:** Tests set `app.state.prompt_library_service`, `app.state.analytics_service`, `app.state.orchestrator` to mock objects. DI functions check these first before building real services.
+
+### 4b.11 Pydantic Models
+
+**File:** `core/models/daily_tracker.py`
+
+| Model | Purpose |
+|-------|---------|
+| `TrackedPrompt` | Prompt with company_id, text, category, tags, active, source |
+| `PromptSource` | Enum: `manual`, `gap_analysis`, `custom` |
+| `PromptLibraryFilter` | Filter for list queries (category, tags, active, source, search) |
+| `DailyRunConfig` | Run configuration (engines, prompts, concurrency) |
+| `PlatformResponse` | Single response: prompt_id, engine, response_text, latency_ms |
+| `MentionAnalysis` | Detection result: brand_mentioned, counts, citations, rank |
+| `DailyRunResult` | Full run result: run_id, status, responses, timestamps |
+| `RunStatus` | Enum: `pending`, `running`, `completed`, `failed` |
+| `VisibilityMetrics` | Aggregate metrics: mention_rate, citation_rate, avg_position |
+| `TrendDataPoint` | Time-series point: date, mention_rate, citation_rate |
+| `CompetitorMetrics` | Per-competitor: name, mention_rate, avg_position |
+
+### 4b.12 ORM & Database
+
+**File:** `core/db/models/daily_tracker.py`
+
+3 ORM tables:
+| Table | Purpose |
+|-------|---------|
+| `TrackedPromptModel` | Persists tracked prompts with company_id, text, metadata |
+| `DailyRunModel` | Run records with status, timestamps, config |
+| `DailyRunResponseModel` | Individual responses with mention analysis results |
+
+**Repositories** (`core/db/repositories/daily_tracker_repo.py`):
+- `TrackedPromptRepository` — CRUD + filtering
+- `DailyRunRepository` — Run lifecycle
+- `DailyRunResponseRepository` — Response storage + analytics queries
+
+**Migration:** `core/db/migrations/versions/0005_daily_tracker.py`
 
 ---
 
@@ -2712,6 +3164,17 @@ tests/
     ├── test_evaluator.py                 # 2 tests — Full eval loop + revision
     ├── test_graph.py                     # 3 tests — LangGraph HITL
     └── test_integration.py              # 2 tests — Full pipeline + skip stages
+├── core/test_site_audit/                # 585 tests — Site Audit Module (Pipeline 0) (added 2026-02-28)
+│   ├── __init__.py
+│   ├── test_models.py                    # 52 tests — Pydantic model validation, enum coverage, defaults
+│   ├── test_config.py                    # 42 tests — AuditConfig, weights sum, grade thresholds, penalties, pipeline signature
+│   ├── test_crawler.py                   # 60 tests — AsyncSiteCrawler 4-phase discovery, AI bot detection, MockTransport
+│   ├── test_checks.py                    # 86 tests — crawlability, on_page_seo, eeat_signals, security check modules
+│   ├── test_schema.py                    # 76 tests — JSON-LD parsing, @graph handling, type validation, findings
+│   ├── test_aeo.py                       # 125 tests — AEO readiness scoring, extractability, question headings, hooks
+│   ├── test_steps.py                     # 59 tests — s2_analyze_pages, s3_check_schema, s4_check_aeo integration
+│   ├── test_repo.py                      # 24 tests — SiteAuditRepository flush-only contract
+│   └── test_integration.py              # 61 tests — scoring, aggregation, report generation, pipeline wiring
 ├── db/                                   # 44 tests — auto-skip without TEST_DATABASE_URL (added 2026-02-27)
 │   ├── __init__.py
 │   ├── conftest.py                       # Async fixtures, savepoint isolation with restart logic, sample_company/user/pipeline_run
@@ -2724,9 +3187,9 @@ tests/
 │   └── test_embedding_repo.py           # 5 tests — pgvector store, similarity search, generic embedding
 ```
 
-**Test counts:** 1073 total tests (1029 existing + 44 DB), 1 pre-existing failure (PB-39). Research pipeline coverage added 2026-02-26 (+109 tests). Front-back integration sprint added 343 tests across 4 phases. Product-level pipeline sprint added 114 tests across 5 phases (product CRUD: 35, task infra: 16, pipeline wiring: 36, product prompts: 15, data endpoints: 12). Pipeline guard sprint added 12 tests (gap analysis guard: 7, research guard: 5). Route protection sprint added 44 tests (42 auth enforcement + 2 invite flow). **Settings + Knowledge Docs sprint added 77 tests** (team: 16, profile: 11, pipeline defaults: 12, knowledge docs: 19, s1 integration: 15, embedded status: 3) + **6 review fixes applied** (C1 DRY, C2 shared text extraction, C3 shared metadata lock, W1 dead import, W3 pipeline defaults wiring, W5 type annotation). **SQLAlchemy migration sprint added 44 DB tests** (models: 12, organization repo: 5, auth repo: 4, pipeline repo: 6, cache repo: 6, gap analysis repo: 6, embedding repo: 5) — auto-skip without `TEST_DATABASE_URL`. S4 mock regression fixed in Phase -1 of structural signal overhaul.
+**Test counts:** ~1978 total tests (~1843 passed + 135 skipped), 1 pre-existing failure (PB-39). **Site Audit sprint added 636 tests** (585 core + 51 API) — models: 52, config: 42, crawler: 60, checks: 86, schema: 76, AEO: 125, steps: 59, repo: 24, integration: 61, API: 51. Research pipeline coverage added 2026-02-26 (+109 tests). Front-back integration sprint added 343 tests across 4 phases. Product-level pipeline sprint added 114 tests across 5 phases. Pipeline guard sprint added 12 tests. Route protection sprint added 44 tests. Settings + Knowledge Docs sprint added 77 tests. SQLAlchemy migration sprint added 44 DB tests — auto-skip without `TEST_DATABASE_URL`. S4 mock regression fixed in Phase -1 of structural signal overhaul.
 
-### API Test Coverage (475+ tests — 126 base + 179 front-back + 114 product-level + 12 pipeline-guard + 44 route-protection)
+### API Test Coverage (526+ tests — 126 base + 179 front-back + 114 product-level + 12 pipeline-guard + 44 route-protection + 51 site-audit)
 
 | Test File | What's Tested |
 |-----------|---------------|
@@ -3146,9 +3609,9 @@ scripts/run_server.py ← API entry point (uvicorn)
 ### Critical Issues
 
 #### 1. PARTIAL TEST COVERAGE (Significantly Improved)
-**Severity:** Low (downgraded from Critical — 2026-02-15, improved through 2026-02-27)
-**Description:** 1073 total tests (1029 existing + 44 DB), 1 pre-existing failure (PB-39). Research pipeline: 109 tests. API layer: 380+ tests (126 base + 179 from front-back + 44 route-protection + 77 settings/knowledge docs). Content engine: 57 tests. Gap analysis: comprehensive coverage (s1, s2, s4, s5, s6, s7, s8, pipeline + s1 knowledge doc integration). Database layer: 44 tests (auto-skip without `TEST_DATABASE_URL`). Reddit HIL still has zero tests. SQLAlchemy migration sprint added 44 DB tests.
-**Impact:** All major pipelines, all API endpoints, settings management, knowledge document upload, and database layer have regression protection. Only Reddit HIL remains unprotected.
+**Severity:** Low (downgraded from Critical — 2026-02-15, improved through 2026-02-28)
+**Description:** ~1978 total tests (~1843 passed + 135 skipped), 1 pre-existing failure (PB-39). **Site audit module: 636 tests** (585 core + 51 API — models, config, crawler, checks, schema, AEO, steps, repo, integration, API endpoints). Research pipeline: 109 tests. API layer: 526+ tests. Content engine: 57 tests. Gap analysis: comprehensive coverage. Database layer: 44 tests (auto-skip without `TEST_DATABASE_URL`). Reddit HIL still has zero tests.
+**Impact:** All major pipelines (including site audit), all API endpoints, settings management, knowledge document upload, and database layer have regression protection. Only Reddit HIL remains unprotected.
 **Recommendation:** Add tests for Reddit HIL (webhook delivery, PRAW mocking). Run DB tests with `TEST_DATABASE_URL` in CI to validate full PostgreSQL integration.
 
 #### 2. InMemoryStore — Agent Memory Not Persistent
@@ -3336,13 +3799,14 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 | Component | Status | Maturity |
 |-----------|--------|----------|
+| **Site Audit (Pipeline 0)** | ✅ Implemented | **High — 6-step deterministic audit, 8 dimensions, penalty-based scoring, 636 tests** |
 | Company Research Agent | ✅ Production | High — used for Ramp, Carta, Mynd |
 | Persona Research Agent | ✅ Production | High — ICP personas approved for Ramp, Carta |
 | Style Guide Research Agent | ✅ Functional | Medium — bugs fixed, awaiting approvals |
 | Research Pipeline Orchestrator | ✅ Functional | High — cross-stage wiring works, 109 tests |
 | Gap Analysis (8 steps) | ✅ Production | High — complete for Ramp, Carta |
 | Content Generation Engine | ✅ Implemented | Medium — 57 tests passing, awaiting live smoke test |
-| **FastAPI REST API (core)** | ✅ Implemented | **High — 126 tests, SSE, HITL, all 3 pipelines** |
+| **FastAPI REST API (core)** | ✅ Implemented | **High — 126 tests, SSE, HITL, all 4 pipelines** |
 | **API Data Endpoints (front-back)** | ✅ Implemented | **High — 16 endpoints, 179 tests, 4-phase sprint complete** |
 | **Product-Level Pipeline Execution** | ✅ Implemented | **High — product CRUD, effective_slug locking, per-product artifact dirs, product prompts, 114 tests** |
 | **Auth System (v0)** | ✅ Implemented | **High — default-deny ASGI middleware, RBAC, tenant isolation, invite flow, 952 tests** |
@@ -3369,6 +3833,11 @@ scripts/run_server.py ← API entry point (uvicorn)
 | `route-protection` | `feat/front-back` | 2026-02-27 | 44 | Default-deny ASGI middleware, RBAC, tenant isolation, invite flow, stream tokens → 944 total |
 | `security-fixes` | `feat/front-back` | 2026-02-27 | 8 | 5 CRITICAL review fixes (artifact IDOR, SSE auth, login is_active, invite race) → 952 total |
 | **`settings-knowledge-docs`** | **`feat/front-back`** | **2026-02-27** | **77** | **Settings Pages API (team/profile/pipeline-defaults) + Knowledge Doc Upload (CRUD + s1 integration + embedded status) + 6 review fixes → 1029 total** |
+| `sqlalchemy-migration` | `feat/front-back` | 2026-02-27 | 44 | SQLAlchemy 2.0 Phase 1 — 31 ORM tables, Alembic, 8 domain repos, DI → 1073 total |
+| `auth-migration-phase2` | `feat/front-back` | 2026-02-28 | 96 | AuthServiceProtocol, Json/Db dual impl, middleware decoupling → 1168 total |
+| `service-layer-phase3` | `feat/front-back` | 2026-02-28 | 46 | 3 data service protocols, dual implementations, backfill → 1213 total |
+| `cleanup-taskstore-migration` | `feat/front-back` | 2026-02-28 | 129 | TaskStoreProtocol, DbTaskStore, Phase 4 persistence hooks → 1342 total |
+| **`site-audit`** | **`feat/front-back`** | **2026-02-28** | **636** | **Pipeline 0: 6-step deterministic audit, 8 dimensions, async BFS crawler, AEO readiness, penalty-based scoring, API layer → ~1978 total** |
 
 ### What's Planned (Future Scope)
 
@@ -3379,7 +3848,7 @@ scripts/run_server.py ← API entry point (uvicorn)
 | 3 | **Production Hardening** | Fix deferred issues (C5-C7, CX-1 through CX-10), thread-safe caches, rate limiting | front-back sprint |
 | 4 | **~~Product-Level Pipeline Execution~~** | ~~Model supports it (Company → Products), execution deferred~~ — **DONE in product-level-pipeline sprint** | ✅ Complete |
 | 5 | **Supabase Migration** | Replace JSON AuthStore with Supabase, migrate task persistence | Auth system, Supabase schema |
-| 6 | **SQLAlchemy ORM** | Replace raw Supabase client with ORM | Supabase schema |
+| 6 | **~~SQLAlchemy ORM~~** | ~~Replace raw Supabase client with ORM~~ — **DONE in sqlalchemy-migration + service-layer-phase3 sprints** | ✅ Complete |
 | 6 | **Reddit HIL Tests** | Only untested module (PRAW mocking, webhook delivery) | Existing codebase |
 | 7 | **Persistent Agent Store** | Replace InMemoryStore with durable storage | DeepAgents integration |
 | 8 | **Cloud Storage Backends** | S3/GCS/Supabase Storage implementations | StorageBackend interface |
@@ -3587,6 +4056,32 @@ GET  /api/v1/tasks/{task_id}                    → TaskResponse
 POST /api/v1/tasks/{task_id}/cancel             → CancelResponse
 ```
 - **Cancel** now performs real cancellation: calls `asyncio.Task.cancel()` on the background task handle, publishes SSE `cancelled` event, and sets task status to `cancelled`. Runners catch `asyncio.CancelledError` for clean shutdown.
+
+#### Daily LLM Visibility Tracker (`api/routers/daily_tracker.py`)
+```
+POST /api/v1/daily-tracker/prompts                      → TrackedPrompt (201)
+GET  /api/v1/daily-tracker/prompts                      → PromptListResponse
+GET  /api/v1/daily-tracker/prompts/{prompt_id}          → TrackedPrompt
+PUT  /api/v1/daily-tracker/prompts/{prompt_id}          → TrackedPrompt
+DELETE /api/v1/daily-tracker/prompts/{prompt_id}        → 204
+PATCH /api/v1/daily-tracker/prompts/{prompt_id}/toggle  → TrackedPrompt
+POST /api/v1/daily-tracker/prompts/import               → list[TrackedPrompt] (201)
+POST /api/v1/daily-tracker/prompts/bulk                 → list[TrackedPrompt] (201)
+POST /api/v1/daily-tracker/runs                         → RunStatusResponse (202)
+GET  /api/v1/daily-tracker/runs/{run_id}                → RunStatusResponse
+GET  /api/v1/daily-tracker/runs                         → RunListResponse
+GET  /api/v1/daily-tracker/analytics/visibility         → VisibilityMetrics
+GET  /api/v1/daily-tracker/analytics/mention-trend      → list[TrendDataPoint]
+GET  /api/v1/daily-tracker/analytics/sov                → dict[str, float]
+GET  /api/v1/daily-tracker/analytics/citations          → dict[str, object]
+GET  /api/v1/daily-tracker/analytics/competitors        → list[CompetitorMetrics]
+```
+
+**Auth:** All endpoints require authentication. Write operations (POST/PUT/DELETE/PATCH) require `member` or `superuser` role. Read operations (GET) require any authenticated user.
+
+**Tenant isolation:** `_get_company_id(request)` extracts `company_slug` from `request.state` (set by auth middleware). All queries are scoped to the authenticated company.
+
+**DI:** Services injected via `get_prompt_library_service`, `get_analytics_service`, `get_daily_tracker_orchestrator` (defined in `api/dependencies.py`). Tests inject mocks via `app.state.*` overrides.
 
 #### Artifact Retrieval
 ```
@@ -7048,10 +7543,21 @@ def test_other_user_cannot_read_test_co_profile(self, other_client, test_company
 | 2026-02-28 | §9.8 | Updated Phase 1 status — now fully wired via Phases 2+3, cross-ref to §26 | T-db-migration-docs |
 | 2026-02-28 | TOC | Added §26 SQLAlchemy & Service Layer Migration with 23 subsection links, renumbered Appendices to §27-§29 | T-db-migration-docs |
 | 2026-02-28 | §26 | **NEW SECTION** — SQLAlchemy & Service Layer Migration: 3-phase database architecture. Phase 1: 31 ORM tables, 16 repos, 4 Alembic migrations, flush-only pattern, lazy engine. Phase 2: AuthServiceProtocol, 3-layer decomposition (utilities/protocol/services), JsonAuthService + DbAuthService, middleware decoupling. Phase 3: 3 data service protocols (Gap/Brand/Content), 6 implementations (3 Json + 3 Db), SignalRepository SQL aggregations, PlatformRepository analytics, TaskStoreProtocol + DbTaskStore write-through, DI wiring, backfill script. 23 subsections, architecture diagram, cross-cutting patterns, testing strategy, deferred items. | D-DB-1, D-AUTH-2, D-SVC-1, D-TASKSTORE-1 |
+| 2026-02-28 | §1 | Updated Executive Summary — ~1978 tests, added Pipeline 0 (Site Audit) description | T-site-audit-all |
+| 2026-02-28 | TOC | Added §4a Pipeline 0: Site Audit with 12 subsection links | T-site-audit-all |
+| 2026-02-28 | §4 | Added core/site_audit/ directory tree (16 files: pipeline, config, scoring, 6 steps, 7 checks) + core/models/site_audit.py | T-site-audit-all |
+| 2026-02-28 | §4a | **NEW SECTION** — Pipeline 0: Site Audit. 12 subsections covering overview, all 6 steps (s1_discover through s6_report), 7 check modules, scoring algorithm, configuration, Pydantic models (2 enums + 9 models), API endpoints (6 endpoints), service protocol + JSON implementation | T-site-audit-all |
+| 2026-02-28 | §15 | Added site audit test tree (585 core + 51 API = 636 tests across 10 files); updated test counts to ~1978 total; updated API test coverage header to 526+ | T-site-audit-all |
+| 2026-02-28 | §18 | Updated test coverage description to ~1978 tests with site audit module breakdown | T-site-audit-all |
+| 2026-02-28 | §20 | Added Site Audit to What's Built table; added 5 missing completed sprints (sqlalchemy through site-audit); marked SQLAlchemy ORM as DONE in What's Planned | T-site-audit-all |
+
+| 2026-02-28 | TOC | Added §4b Daily LLM Visibility Tracker with 12 subsection links | T-DT-integration |
+| 2026-02-28 | §4b | **NEW SECTION** — Daily LLM Visibility Tracker: 12 subsections covering overview, design patterns (Mediator/Strategy/Adapter/Protocol), 5 protocol interfaces, orchestrator pipeline flow, prompt library, platform runner adapter, mention detector, analytics engine with 4 metric calculators, 16 API endpoints (8 prompt CRUD + 3 run management + 5 analytics), DI wiring with 3 factory functions + _DbResponseDataProvider adapter, Pydantic models (11 models), ORM tables (3 tables + 3 repositories + migration 0005) | T-DT-integration |
+| 2026-02-28 | §21.2 | Added Daily LLM Visibility Tracker endpoint reference (16 endpoints) with auth and tenant isolation details | T-DT-integration |
 
 ---
 
 *End of Comprehensive System Documentation*
 *Generated: 2026-02-28*
-*Total codebase files analyzed: ~290+*
-*Total lines of documentation: ~7800+*
+*Total codebase files analyzed: ~320+*
+*Total lines of documentation: ~8100+*

@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from api.auth.store import AuthStore
 from api.tasks.event_bus import EventBus
@@ -194,3 +195,168 @@ def get_site_audit_data_service(request: Request) -> SiteAuditDataServiceProtoco
     return JsonSiteAuditDataService(
         artifacts_root=request.app.state.artifacts_root,
     )
+
+
+# ── Daily Tracker dependencies ───────────────────────────────────────
+
+
+def get_prompt_library_service(request: Request) -> Any:
+    """Return the PromptLibraryService for daily tracker prompt CRUD.
+
+    Checks for a pre-built override on app.state (tests), then constructs
+    a new instance.  Uses lazy import to avoid circular imports and to
+    allow the daily tracker module to be optional.
+
+    Why not DB session: PromptLibraryService wraps a repo that needs an
+    AsyncSession.  In v1 without DATABASE_URL, we return a mock-friendly
+    service from app.state.  With DATABASE_URL, we build per-request.
+    """
+    service = getattr(request.app.state, "prompt_library_service", None)
+    if service is not None:
+        return service
+
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is not None:
+        try:
+            from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
+            from core.daily_tracker.prompt_library import PromptLibraryService
+
+            session = sf()
+            return PromptLibraryService(prompt_repo=TrackedPromptRepository(session))
+        except Exception:
+            _logger.debug("Failed to build PromptLibraryService", exc_info=True)
+
+    raise HTTPException(
+        status_code=503,
+        detail="Prompt library service unavailable (requires DATABASE_URL)",
+    )
+
+
+def get_analytics_service(request: Request) -> Any:
+    """Return the AnalyticsService for daily tracker analytics.
+
+    Checks for a pre-built override on app.state (tests), then constructs
+    a new instance with a mock-friendly ResponseDataProvider.
+    """
+    service = getattr(request.app.state, "analytics_service", None)
+    if service is not None:
+        return service
+
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is not None:
+        try:
+            from core.daily_tracker.analytics_engine import AnalyticsService
+
+            # Why: build a lightweight data provider that wraps the DB repo.
+            # This avoids importing the repo at module level.
+            from core.db.repositories.daily_tracker_repo import (
+                DailyRunRepository,
+                DailyRunResponseRepository,
+            )
+
+            session = sf()
+            response_repo = DailyRunResponseRepository(session)
+            run_repo = DailyRunRepository(session)
+
+            # Create a simple data provider adapter
+            provider = _DbResponseDataProvider(response_repo, run_repo)
+            return AnalyticsService(data_provider=provider)
+        except Exception:
+            _logger.debug("Failed to build AnalyticsService", exc_info=True)
+
+    raise HTTPException(
+        status_code=503,
+        detail="Analytics service unavailable (requires DATABASE_URL)",
+    )
+
+
+def get_daily_tracker_orchestrator(request: Request) -> Any:
+    """Return the DailyTrackerOrchestrator for running daily tracking.
+
+    Checks for a pre-built override on app.state (tests), then constructs
+    a new instance wiring together all daily tracker modules.
+    """
+    service = getattr(request.app.state, "daily_tracker_orchestrator", None)
+    if service is not None:
+        return service
+
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is not None:
+        try:
+            from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
+            from core.daily_tracker.prompt_library import PromptLibraryService
+            from core.daily_tracker.platform_runner import PlatformRunnerService
+            from core.daily_tracker.mention_detector import MentionDetector
+            from core.daily_tracker.orchestrator import DailyTrackerOrchestrator
+
+            session = sf()
+            prompt_repo = TrackedPromptRepository(session)
+
+            return DailyTrackerOrchestrator(
+                prompt_service=PromptLibraryService(prompt_repo=prompt_repo),
+                runner_service=PlatformRunnerService(),
+                mention_detector=MentionDetector(),
+            )
+        except Exception:
+            _logger.debug(
+                "Failed to build DailyTrackerOrchestrator", exc_info=True
+            )
+
+    raise HTTPException(
+        status_code=503,
+        detail="Daily tracker orchestrator unavailable (requires DATABASE_URL)",
+    )
+
+
+# ── Daily Tracker internal helpers ───────────────────────────────────
+
+
+class _DbResponseDataProvider:
+    """Adapter between DB repos and the AnalyticsService ResponseDataProvider protocol.
+
+    Why: AnalyticsService depends on a ResponseDataProvider protocol, not directly
+    on DB repos.  This adapter bridges the gap in the DI layer so the analytics
+    engine remains testable with pure mocks.
+    """
+
+    def __init__(self, response_repo: Any, run_repo: Any) -> None:
+        self._response_repo = response_repo
+        self._run_repo = run_repo
+
+    async def get_responses_for_run(
+        self, run_id: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch all platform responses for a run, converting ORM to dicts."""
+        import uuid as _uuid
+
+        rows = await self._response_repo.get_responses_by_run(
+            _uuid.UUID(run_id)
+        )
+        return [self._row_to_dict(r) for r in rows]
+
+    async def get_responses_for_company(
+        self, company_id: str, *, days: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch responses for a company's recent runs."""
+        runs = await self._run_repo.list_runs(company_id, limit=100)
+        all_responses: list[dict[str, Any]] = []
+        for run in runs:
+            rows = await self._response_repo.get_responses_by_run(run.id)
+            all_responses.extend(self._row_to_dict(r) for r in rows)
+        return all_responses
+
+    @staticmethod
+    def _row_to_dict(row: Any) -> dict[str, Any]:
+        """Convert an ORM DailyRunResponseModel to a response dict."""
+        return {
+            "prompt_id": str(row.prompt_id),
+            "engine": row.engine,
+            "response_text": row.response_text,
+            "mention_analysis": {
+                "brand_mentioned": row.brand_mentioned,
+                "brand_mention_count": row.brand_mention_count,
+                "competitor_mentions": row.competitor_mentions or {},
+                "citations": row.citations or [],
+                "citation_rank": row.citation_rank,
+            },
+        }

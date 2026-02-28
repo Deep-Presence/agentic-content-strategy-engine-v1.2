@@ -330,5 +330,21 @@
     "reversible": true,
     "approved_by": "Aryan",
     "codex_review": "Codex gpt-5.3-codex with high reasoning. 14 findings: 7 INCORPORATED (CX-1 scope, CX-3 enum, CX-4 sessions, CX-6 cancellation, CX-9 /me tests, CX-10 get_company_by_id, CX-13 write-through), 4 REJECTED (CX-2 sync/async, CX-5 advisory locks, CX-7 migration script, CX-8 PB-28/29 reorder), 3 DEFERRED (CX-11 API spec, CX-12 test estimates, CX-14 false positives). Plan at .claude/plans/sleepy-moseying-charm.md."
+  },
+  {
+    "id": "D-DT-INT-1",
+    "timestamp": "2026-02-28",
+    "task": "Daily Tracker Integration — Orchestrator (Mediator), FastAPI router, DI wiring",
+    "approach": "Mediator pattern orchestrator coordinates prompt library, platform runner, and mention detector — no direct module-to-module communication. Stateless orchestrator returns DailyRunResult (no DB dependency). API router provides 16 endpoints (8 prompt CRUD, 3 run management, 5 analytics) with auth/tenant isolation. DI layer in api/dependencies.py provides 3 factory functions (get_prompt_library_service, get_analytics_service, get_daily_tracker_orchestrator) with app.state override pattern for test injection. _DbResponseDataProvider adapter bridges DB repos to AnalyticsService's ResponseDataProvider protocol.",
+    "rationale": "Mediator pattern keeps modules decoupled — adding new modules (e.g., notification service) requires changes only in the orchestrator. Stateless orchestrator enables pure-mock testing (no DB setup needed). DI factory functions follow existing app.state override pattern (consistent with other routers). _DbResponseDataProvider adapter keeps analytics engine decoupled from storage — it can work with any data provider implementing the protocol. All 503 responses on missing DB ensure clear failure mode vs silent degradation.",
+    "alternatives_rejected": [
+      "Direct module-to-module calls (tight coupling, harder to test, harder to extend)",
+      "Orchestrator owns DB persistence (mixes orchestration with storage, harder to test)",
+      "Inline analytics computation in router (violates SRP, duplicates calculation logic)",
+      "Single monolithic DI function for all services (harder to override individually in tests)"
+    ],
+    "outcome": "66 new tests (20 orchestrator + 46 API). All passing. 16 endpoints operational with auth enforcement. Mediator pattern verified — orchestrator only depends on 3 protocol interfaces.",
+    "reversible": true,
+    "approved_by": "team-lead"
   }
 ]
