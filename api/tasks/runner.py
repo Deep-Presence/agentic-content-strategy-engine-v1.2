@@ -828,3 +828,71 @@ async def run_content_pipeline_task(
     finally:
         task_store.release_slug_lock(effective)
         task_store.remove_task_handle(task_id)
+
+
+async def run_content_v13_pipeline_task(
+    task_id: str,
+    input_data: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+) -> None:
+    """Background task wrapper for v1.3 content generation pipeline.
+
+    Follows the same semaphore + slug-lock + handle pattern as
+    run_content_pipeline_task. Enforces the global max-3-concurrent
+    semaphore and registers the task handle for cancellation.
+    """
+    from core.content_engine.pipeline_v13 import run_content_generation_v13
+
+    _task = task_store.get_task(task_id)
+    effective = _task.effective_slug or _task.company_slug or _derive_slug(input_data.company_name)
+    company_slug = _task.company_slug or _derive_slug(input_data.company_name)
+
+    session_factory, run_id, company_id = await _resolve_db_context(company_slug, effective)
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id, effective, "content_v13"
+        )
+
+    try:
+        async with task_store.semaphore:
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "content_v13"})
+
+            output = await run_content_generation_v13(
+                input_data=input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            result = {
+                "company_slug": output.company_slug,
+                "total_briefs": output.total_briefs,
+                "total_approved": output.total_approved,
+                "total_rejected": output.total_rejected,
+                "pieces": [
+                    {
+                        "brief_id": p.brief_id,
+                        "title": p.title,
+                        "status": p.status.value if hasattr(p.status, "value") else str(p.status),
+                    }
+                    for p in output.pieces
+                ],
+                "produced_artifacts": [{"type": "content_v13", "slug": effective}],
+            }
+            task_store.update_task(task_id, status=TaskStatus.COMPLETED, result=result)
+            event_bus.publish(task_id, "completed", {"pipeline": "content_v13"})
+
+    except asyncio.CancelledError:
+        logger.info("Content v1.3 pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("Content v1.3 pipeline failed: %s", exc)
+        task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        task_store.release_slug_lock(effective)
+        task_store.remove_task_handle(task_id)

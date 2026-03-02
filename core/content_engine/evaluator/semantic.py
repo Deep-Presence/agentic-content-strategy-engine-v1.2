@@ -11,7 +11,7 @@ from typing import List, Optional
 import numpy as np
 
 from core.config.settings import settings
-from core.content_engine.tracing import create_span, end_span, log_score
+from core.content_engine.tracing_v13 import create_span, end_span, log_score
 from core.models.content_generation import ContentBrief, DimensionResult, FormattedContent
 from core.shared_tools.async_embedding_client import async_embed_texts
 
@@ -43,7 +43,7 @@ async def evaluate_semantic(
     Args:
         content: The formatted content to evaluate.
         brief: Content brief with target queries and threshold.
-        trace: Langfuse trace for instrumentation.
+        trace: Trace span for instrumentation.
 
     Returns:
         DimensionResult with semantic evaluation.

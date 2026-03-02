@@ -1,6 +1,7 @@
 """Fact Enricher worker — Step 3 of the worker chain.
 
 Uses Perplexity sonar-pro for web-grounded fact verification and enrichment.
+All LLM calls route through LiteLLM via llm_client.llm_call().
 """
 from __future__ import annotations
 
@@ -8,20 +9,17 @@ import logging
 import re
 from typing import Dict, List, Optional
 
-import httpx
-
 from core.config.settings import settings
+from core.content_engine.llm_client import llm_call
 from core.content_engine.prompts.enricher_prompts import (
     ENRICHER_SYSTEM_PROMPT,
     build_enricher_user_prompt,
 )
-from core.content_engine.tracing import create_span, end_span, log_generation
-from core.content_engine.utils import _retry_async_anthropic
+from core.content_engine.tracing_v13 import create_span, end_span, log_generation
+from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation import ContentBrief, ContentDraft, EnrichedDraft
 
 logger = logging.getLogger(__name__)
-
-_PERPLEXITY_BASE_URL = "https://api.perplexity.ai"
 
 
 async def enrich_with_facts(
@@ -39,7 +37,7 @@ async def enrich_with_facts(
         brief: Original content brief for context.
         company_name: Company name for search context.
         domain: Company domain.
-        trace: Langfuse trace for instrumentation.
+        trace: Trace span for instrumentation.
 
     Returns:
         EnrichedDraft with fact-checked and enriched content.
@@ -64,6 +62,10 @@ async def enrich_with_facts(
         company_name=company_name,
         domain=domain,
     )
+    # Truncate to sonar-pro context budget (127k tokens); leave headroom for system + response
+    user_prompt = truncate_to_token_limit(
+        user_prompt, max_tokens=120_000, label="fact_enricher_user"
+    )
 
     api_key = settings.perplexity_api_key
     if not api_key:
@@ -77,82 +79,67 @@ async def enrich_with_facts(
             facts_added=[],
         )
 
-    async def _call():
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{_PERPLEXITY_BASE_URL}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": ENRICHER_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "max_tokens": 8192,
-                },
-            )
-            response.raise_for_status()
-            return response.json()
-
-    result = await _retry_async_anthropic(_call, max_retries=2, base_delay=3.0)
-
-    enriched_text = ""
     try:
-        enriched_text = result["choices"][0]["message"]["content"]
-    except (KeyError, IndexError):
-        logger.warning("Unexpected Perplexity response format: %s", result)
-        enriched_text = draft.markdown
+        response = await llm_call(
+            model=model,
+            system=ENRICHER_SYSTEM_PROMPT,
+            user=user_prompt,
+            max_tokens=8192,
+            metadata={"agent": "fact_enricher", "brief_id": brief.brief_id},
+            max_retries=2,
+            base_delay=3.0,
+        )
 
-    # Clean up code fences
-    if enriched_text.startswith("```markdown"):
-        enriched_text = enriched_text[len("```markdown") :].strip()
-    if enriched_text.startswith("```"):
-        enriched_text = enriched_text[3:].strip()
-    if enriched_text.endswith("```"):
-        enriched_text = enriched_text[:-3].strip()
+        enriched_text = response.content
 
-    # Detect added facts (citations in [Source, Year] format)
-    citations_found = re.findall(r"\[([^\]]+?,\s*\d{4})\]", enriched_text)
-    facts_added: List[Dict[str, str]] = [
-        {"citation": c} for c in citations_found
-    ]
+        # Clean up code fences
+        if enriched_text.startswith("```markdown"):
+            enriched_text = enriched_text[len("```markdown") :].strip()
+        if enriched_text.startswith("```"):
+            enriched_text = enriched_text[3:].strip()
+        if enriched_text.endswith("```"):
+            enriched_text = enriched_text[:-3].strip()
 
-    word_count = len(enriched_text.split())
+        # Detect added facts (citations in [Source, Year] format)
+        citations_found = re.findall(r"\[([^\]]+?,\s*\d{4})\]", enriched_text)
+        facts_added: List[Dict[str, str]] = [
+            {"citation": c} for c in citations_found
+        ]
 
-    # Langfuse logging
-    usage_info = result.get("usage", {})
-    log_generation(
-        trace,
-        name="fact_enricher",
-        model=model,
-        input_text=user_prompt,
-        output_text=enriched_text,
-        parent_span=span,
-        model_parameters={"max_tokens": 8192},
-        usage={
-            "input": usage_info.get("prompt_tokens", 0),
-            "output": usage_info.get("completion_tokens", 0),
-        },
-    )
-    end_span(span, output={
-        "facts_added": len(facts_added),
-        "word_count": word_count,
-    })
+        word_count = len(enriched_text.split())
 
-    logger.info(
-        "Fact Enricher: %s → %d facts added, %d words",
-        brief.brief_id,
-        len(facts_added),
-        word_count,
-    )
+        log_generation(
+            span,
+            name="fact_enricher",
+            model=model,
+            input_text=user_prompt,
+            output_text=enriched_text,
+            model_parameters={"max_tokens": 8192},
+            usage={
+                "prompt_tokens": response.input_tokens,
+                "completion_tokens": response.output_tokens,
+                "total_tokens": response.total_tokens,
+            },
+        )
+        end_span(span, output={
+            "facts_added": len(facts_added),
+            "word_count": word_count,
+        })
 
-    return EnrichedDraft(
-        brief_id=draft.brief_id,
-        title=draft.title,
-        markdown=enriched_text,
-        word_count=word_count,
-        facts_added=facts_added,
-    )
+        logger.info(
+            "Fact Enricher: %s → %d facts added, %d words",
+            brief.brief_id,
+            len(facts_added),
+            word_count,
+        )
+
+        return EnrichedDraft(
+            brief_id=draft.brief_id,
+            title=draft.title,
+            markdown=enriched_text,
+            word_count=word_count,
+            facts_added=facts_added,
+        )
+    except Exception as exc:
+        end_span(span, error=str(exc)[:500])
+        raise

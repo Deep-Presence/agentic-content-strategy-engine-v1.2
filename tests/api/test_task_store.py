@@ -9,7 +9,7 @@ import pytest
 
 from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask, TaskStatus
-from api.tasks.store import TaskConflictError, TaskNotFoundError, TaskStore
+from api.tasks.store import ApprovalWindowError, TaskConflictError, TaskNotFoundError, TaskStore
 
 
 @pytest.fixture
@@ -209,3 +209,100 @@ class TestHITLApproval:
     ) -> None:
         with pytest.raises(TaskNotFoundError):
             store.submit_approval("nonexistent", "approve")
+
+
+# ── Nonce Validation + TOCTOU Prevention ──────────────────────────────
+
+
+class TestSubmitApprovalNonce:
+    """Tests for atomic nonce validation in submit_approval."""
+
+    def test_nonce_mismatch_raises(self, store: TaskStore) -> None:
+        """Stale nonce → ApprovalWindowError (not silent acceptance)."""
+        task = store.create_task("content_v13", "ramp")
+        store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={"stage": "topic_approval", "checkpoint_nonce": "nonce-abc"},
+        )
+        with pytest.raises(ApprovalWindowError, match="nonce mismatch"):
+            store.submit_approval(
+                task.task_id, "approve",
+                expected_nonce="nonce-WRONG",
+            )
+
+    def test_nonce_match_succeeds(self, store: TaskStore) -> None:
+        """Correct nonce → approval queued normally."""
+        task = store.create_task("content_v13", "ramp")
+        store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={"stage": "topic_approval", "checkpoint_nonce": "nonce-abc"},
+        )
+        # Should not raise
+        store.submit_approval(
+            task.task_id, "approve",
+            expected_nonce="nonce-abc",
+        )
+        # Verify approval was queued
+        queue = store._approval_queues[task.task_id]
+        assert not queue.empty()
+
+    def test_no_nonce_skips_validation(self, store: TaskStore) -> None:
+        """When expected_nonce is None (research/v1.0 callers), skip nonce check."""
+        task = store.create_task("research", "ramp")
+        store.update_task(task.task_id, status=TaskStatus.PENDING_APPROVAL)
+        # No expected_nonce → backward compatible, no error
+        store.submit_approval(task.task_id, "approve")
+        queue = store._approval_queues[task.task_id]
+        assert not queue.empty()
+
+    def test_queue_full_raises_instead_of_replacing(self, store: TaskStore) -> None:
+        """Duplicate approval → ApprovalWindowError (not silent drain-and-replace)."""
+        task = store.create_task("content_v13", "ramp")
+        store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={"stage": "topic_approval", "checkpoint_nonce": "nonce-abc"},
+        )
+        # First approval succeeds
+        store.submit_approval(
+            task.task_id, "approve",
+            expected_nonce="nonce-abc",
+        )
+        # Second approval for same checkpoint → queue full
+        with pytest.raises(ApprovalWindowError, match="queue full"):
+            store.submit_approval(
+                task.task_id, "approve",
+                expected_nonce="nonce-abc",
+            )
+
+    def test_nonce_none_in_payload_mismatches_expected(self, store: TaskStore) -> None:
+        """Task has no nonce in payload but endpoint sends one → mismatch."""
+        task = store.create_task("content_v13", "ramp")
+        store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={"stage": "topic_approval"},  # no checkpoint_nonce
+        )
+        with pytest.raises(ApprovalWindowError, match="nonce mismatch"):
+            store.submit_approval(
+                task.task_id, "approve",
+                expected_nonce="nonce-abc",
+            )
+
+    def test_audit_history_not_recorded_on_nonce_failure(self, store: TaskStore) -> None:
+        """Nonce failure must happen BEFORE audit logging."""
+        task = store.create_task("content_v13", "ramp")
+        store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={"stage": "topic_approval", "checkpoint_nonce": "nonce-abc"},
+        )
+        with pytest.raises(ApprovalWindowError):
+            store.submit_approval(
+                task.task_id, "approve",
+                expected_nonce="nonce-WRONG",
+            )
+        # No audit record should have been created
+        assert len(task.approval_history) == 0

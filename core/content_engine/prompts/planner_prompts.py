@@ -312,3 +312,17 @@ def _safe_json_str(data: dict, max_len: int = 10000) -> str:
         return s
     except Exception:
         return "{}"
+
+
+# ---------------------------------------------------------------------------
+# Hub getter (opt-in via settings.langsmith_use_hub)
+# ---------------------------------------------------------------------------
+
+_HUB_NAME = "deep-presence/planner-system"
+
+
+def get_planner_system_prompt() -> str:
+    """Get planner system prompt from Hub or local fallback."""
+    from core.content_engine.prompt_registry import get_prompt
+
+    return get_prompt(_HUB_NAME, PLANNER_SYSTEM_PROMPT)

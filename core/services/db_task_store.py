@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.tasks.models import ApprovalRecord, PipelineTask, TaskStatus
-from core.services.task_store import TaskConflictError, TaskNotFoundError
+from core.services.task_store import ApprovalWindowError, TaskConflictError, TaskNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -217,11 +217,23 @@ class DbTaskStore:
         decision: str,
         revision_note: Optional[str] = None,
         stage: Optional[str] = None,
+        approval_data: Optional[Dict[str, Any]] = None,
+        expected_nonce: Optional[str] = None,
     ) -> None:
         if task_id not in self._tasks:
             raise TaskNotFoundError(task_id)
 
         task = self._tasks[task_id]
+
+        # Atomic nonce validation — prevents TOCTOU and replay
+        if expected_nonce is not None:
+            current_nonce = (task.approval_payload or {}).get("checkpoint_nonce")
+            if current_nonce != expected_nonce:
+                raise ApprovalWindowError(
+                    f"Stale or replayed approval: nonce mismatch "
+                    f"(expected {expected_nonce}, current {current_nonce})"
+                )
+
         resolved_stage = (
             stage
             or (task.approval_payload or {}).get("stage")
@@ -245,18 +257,16 @@ class DbTaskStore:
             )
         )
 
-        payload = {"decision": decision, "revision_note": revision_note}
+        # Queue the full approval data if provided, else generic payload
+        payload = approval_data if approval_data is not None else {"decision": decision, "revision_note": revision_note}
         if task_id not in self._approval_queues:
             self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
         try:
             self._approval_queues[task_id].put_nowait(payload)
         except asyncio.QueueFull:
-            logger.warning("Approval queue full for task %s — replacing", task_id)
-            try:
-                self._approval_queues[task_id].get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-            self._approval_queues[task_id].put_nowait(payload)
+            raise ApprovalWindowError(
+                f"Approval already submitted for task {task_id} — queue full"
+            )
 
     # ── DB write-through helpers ──────────────────────────────────────
 

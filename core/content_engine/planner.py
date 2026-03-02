@@ -15,7 +15,7 @@ from core.content_engine.prompts.planner_prompts import (
     PLANNER_SYSTEM_PROMPT,
     build_planner_user_prompt,
 )
-from core.content_engine.tracing import (
+from core.content_engine.tracing_v13 import (
     create_span,
     create_trace,
     end_span,
@@ -61,7 +61,7 @@ async def plan_content(
         gap_report_json: Gap report as dict.
         generation_spec_json: Content generation spec as dict.
         analysis_json: Full analysis results as dict.
-        session_id: Langfuse session ID.
+        session_id: Session ID.
 
     Returns:
         PlannerOutput with prioritized content briefs.
@@ -147,7 +147,7 @@ async def plan_content(
         "output_tokens": response.usage.output_tokens,
     })
 
-    # Langfuse logging
+    # LangSmith logging
     log_generation(
         trace,
         name="plan_content",

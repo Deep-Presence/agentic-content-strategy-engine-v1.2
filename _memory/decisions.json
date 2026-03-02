@@ -346,5 +346,77 @@
     "outcome": "66 new tests (20 orchestrator + 46 API). All passing. 16 endpoints operational with auth enforcement. Mediator pattern verified — orchestrator only depends on 3 protocol interfaces.",
     "reversible": true,
     "approved_by": "team-lead"
+  },
+  {
+    "id": "D-CE-V13-1",
+    "timestamp": "2026-03-02",
+    "task": "Content Engine Pipeline v1.3 — two-phase context loading, LiteLLM, dual feedback loops, E-E-A-T",
+    "approach": "6-stage pipeline running alongside v1.0: (1) scorecard extraction (~11K tokens) for planner triage, (2) full context per-topic for Brief Builder, (3) workers accept ContentBlueprint (subclass of ContentBrief), (4) 5-dimension evaluator with dual feedback (section-level vs major-change), (5) 3 HITL checkpoints via LangGraph interrupt(). LiteLLM wraps all LLM calls (workers, judges, agents). v1.0 preserved as-is. Workers modified in-place (swap SDK call → llm_call), shared between both pipelines. _ensure_litellm_model() auto-prefixes model strings for backward compat.",
+    "rationale": "Full gap analysis output (80-120K tokens) created context explosion for the v1.0 planner. Two-phase loading reduces planner context to ~11K tokens. ContentBlueprint extends ContentBrief so all existing workers accept it transparently (zero type hint changes). LiteLLM provides model abstraction for benchmarking + easy provider switches. Dual feedback loops prevent expensive re-briefs from automated evaluator false positives — major direction change only from HITL-3 human rejection or semantic score < 0.5. E-E-A-T adds content quality signal missing from v1.0's 4-dimension evaluation.",
+    "alternatives_rejected": [
+      "Separate v1.3 worker copies (90% code duplication, maintenance nightmare)",
+      "Replace v1.0 pipeline entirely (breaks existing content runs, no fallback)",
+      "LangChain for LLM abstraction (inconsistent with gap analysis, hides control)",
+      "Runtime prompt pulls from LangSmith Hub (adds availability dependency — prompts stay in Python files)",
+      "Major direction change from automated evaluator (too expensive, false positive risk)"
+    ],
+    "outcome": "Phases A-D1-D2 complete. 14 new files created, 9 files modified. 211 content+research tests passing. v1.0 pipeline fully preserved. Workers shared between both pipelines via LiteLLM.",
+    "reversible": true,
+    "approved_by": "Aryan",
+    "key_design_points": [
+      "ContentBlueprint extends ContentBrief — transparent to all workers",
+      "_ensure_litellm_model() auto-prefixes: claude-* → anthropic/, sonar* → perplexity/, gpt-* → openai/, gemini-* → google/",
+      "classify_feedback() returns pass/section_level/major_change — section_level is default loop",
+      "Targeted revision maps (v1.3): structural/style/eeat/semantic→drafter+fact_checker, factual→fact_checker only",
+      "use_eeat=False and use_targeted_revision=False defaults preserve v1.0 behavior",
+      "Three composed LangGraph sub-graphs with interrupt() at each HITL gate",
+      "LangSmith tracing automatic via litellm.success_callback = ['langsmith']"
+    ]
+  },
+  {
+    "id": "D-CE-V13-2",
+    "timestamp": "2026-03-02",
+    "task": "Content Engine v1.3 D3 — Defer full lightweight gap analysis for manual mode to PB-45",
+    "approach": "Keep the current inline approach: pipeline_v13.py lines 363-404 construct a WorkerQueryContext directly from the user's manual_prompt without running gap analysis stages s3-s6. The inline context provides topic, intent, and a minimal exemplar structure sufficient for Brief Builder to produce a valid ContentBlueprint.",
+    "rationale": "Full s3-s6 reuse adds 2-5 min latency for manual mode (search 4 platforms + enrich + embed + analyze). It also requires s1 output (SemanticUnit list) as prerequisite, which doesn't exist for manual-mode users who haven't run gap analysis. The current inline WorkerQueryContext is sufficient for v0 — Brief Builder can produce useful blueprints from just a topic string + intent.",
+    "alternatives_rejected": [
+      "Run full s3-s6 for manual mode (2-5 min latency, requires s1 prerequisite that may not exist)",
+      "Run s3 only (still 30-60s for 4 platform searches, and without s4-s6 the citations lack quality scoring)",
+      "Cache previous gap analysis results per topic (complex cache invalidation, stale data risk)"
+    ],
+    "outcome": "D3 deferred to PB-45 in backlog. Current inline approach works for v0. Zero code change — just deferral comment added at pipeline_v13.py line 399.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CE-V13-3",
+    "timestamp": "2026-03-02",
+    "task": "Content Engine v1.3 Pipeline Refactor — Phases 4-10 (25-point gap closure)",
+    "approach": "10-phase implementation closing 25 gaps between v1.3 current state and target flow. Key changes: (1) Forward 5 brief builder fields (gap_reasoning, tone_voice_description, target_persona, buyer_stage, intent_stage) through outliner→drafter. (2) Rewrite fact checker from 'enrich' to 'verify-only'. (3) New Linker agent (Perplexity sonar-pro) resolving [INTERNAL-LINK], [EXTERNAL-LINK], [STAT:] placeholders. (4) New v1.3 dispatcher chain: Outliner→Drafter→Linker→Fact Checker (no formatter). (5) Evaluator routing: drafter+fact_checker (no formatter/enricher cascade). (6) evaluate_and_optimize returns 3-tuple with FeedbackRoute. (7) HITL-3 edit→drafter+fact_checker→re-present (max 2 edits). (8) HITL-3 reject→re-brief→re-dispatch→re-evaluate→re-present (max 2 re-briefs). (9) Evaluator major_change signal→automatic re-brief before HITL-3.",
+    "rationale": "Closes all 25 gaps from the comprehensive audit. Repurposes rationale field (no new field), uses s1 discovery pages only for linker internal links, keeps factual judge as secondary quality gate alongside upstream fact checker. v1.0 path preserved unchanged in evaluator loop.",
+    "alternatives_rejected": [
+      "Remove factual judge entirely (keep as quality gate — if pass rate exceeds 95% after fact checker, reconsider later)",
+      "Full v1.0 revision chain in evaluator targeted revision (unnecessary — formatter removed from v1.3 chain)"
+    ],
+    "outcome": "343 content engine tests passing (338→343, +5 HITL-3 tests). 19 pipeline_v13 tests (14→19). New files: linker_prompts.py, linker.py, test_linker.py. Modified: loop.py, pipeline_v13.py, drafter_prompts.py, drafter.py, outliner_prompts.py, outliner.py, enricher_prompts.py, dispatcher.py, settings.py, test_evaluator_v13.py, test_evaluator.py, test_pipeline_v13.py.",
+    "reversible": true,
+    "approved_by": "Aryan",
+    "factual_judge_decision": "Keep factual judge as secondary quality gate. Fact checker corrects upstream, factual judge scores downstream. If factual judge pass rate exceeds 95% after fact checker, consider removing in future sprint."
+  },
+  {
+    "id": "D-LANGSMITH-1",
+    "timestamp": "2026-03-02",
+    "task": "Eliminate Langfuse, unify all tracing on LangSmith",
+    "approach": "Extend tracing_v13.py with backward-compat kwargs shim (absorbs old Langfuse kwargs: input=, parent_span=, level=, status_message=, model_parameters=, user_id=, metadata= on end_span, tags= on update_trace_output). Pure import swaps across 14 files — zero callsite changes needed. contextvars for LangGraph span propagation (avoids MemorySaver msgpack crash). Prompt registry with Hub pull + local fallback (opt-in via langsmith_use_hub setting). langgraph.json for LangGraph Studio.",
+    "rationale": "Split-brain tracing (14 Langfuse files, 6 LangSmith files, 1 untraced file) caused incomplete observability. LangSmith provides Trace→Playground→Re-run workflow. Backward-compat shim avoids touching 57 callsites. contextvars solves Codex-confirmed MemorySaver serialization crash.",
+    "alternatives_rejected": [
+      "Refactor all 57 callsites to new signatures (risky, touches too many files)",
+      "Keep Langfuse alongside LangSmith (split-brain persists)",
+      "Put RunTree in LangGraph state (crashes MemorySaver — confirmed by Codex)"
+    ],
+    "outcome": "437 content engine tests passing. Zero Langfuse imports in core/api/tests. 38 new tests. tracing.py deleted, langfuse removed from requirements.",
+    "reversible": true,
+    "approved_by": "Aryan",
+    "codex_review": "v1 plan REJECTED with 6 critical findings. All 6 incorporated into v2: C1 (signature mismatch→kwargs shim), C2 (hidden import at pipeline.py:175), C3 (cleanup order→Phase 5 last), C4 (langgraph.json→only graph_v13.py), C5 (RunTree in state→contextvars), C6 (pull_prompt→pull_prompt_commit)"
   }
 ]

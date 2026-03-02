@@ -29,8 +29,9 @@ playwright
 trafilatura>=1.6.0
 textstat>=0.7.0
 
-# Content generation engine
-langfuse>=2.0
+# Content engine — LLM abstraction + observability
+litellm>=1.50
+langsmith>=0.2
 
 # Knowledge doc upload — text extraction
 pdfplumber>=0.10

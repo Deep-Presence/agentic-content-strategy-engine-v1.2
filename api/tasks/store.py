@@ -32,6 +32,16 @@ class TaskConflictError(Exception):
         super().__init__(message)
 
 
+class ApprovalWindowError(Exception):
+    """Raised when an approval is submitted outside the valid window.
+
+    Covers: stale nonce (TOCTOU/replay), or queue already consumed (duplicate).
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
 class TaskStore:
     """In-memory + JSON-file-backed task persistence.
 
@@ -210,20 +220,49 @@ class TaskStore:
         decision: str,
         revision_note: Optional[str] = None,
         stage: Optional[str] = None,
+        approval_data: Optional[Dict[str, Any]] = None,
+        expected_nonce: Optional[str] = None,
     ) -> None:
         """Submit an approval decision, unblocking wait_for_approval.
 
         If the queue doesn't exist yet (wait hasn't started), creates it
         and puts the data — the waiter will find it when it starts.
         Also records the decision in the task's approval_history for audit.
+
+        Args:
+            approval_data: If provided, the full stage-specific approval dict
+                is placed on the queue (used by v1.3 content pipeline).
+                If None, a generic ``{decision, revision_note}`` dict is queued
+                (backward-compatible for research pipeline callers).
+            expected_nonce: If provided, validates that the task's current
+                ``approval_payload.checkpoint_nonce`` matches before queuing.
+                Prevents TOCTOU races and replay attacks.  Callers that don't
+                use nonces (research/content-v1.0) omit this parameter.
+
+        Raises:
+            TaskNotFoundError: If *task_id* is unknown.
+            ApprovalWindowError: If nonce mismatches or queue is already full
+                (duplicate submission).
         """
         from api.tasks.models import ApprovalRecord
 
         if task_id not in self._tasks:
             raise TaskNotFoundError(task_id)
 
-        # Record in approval history
         task = self._tasks[task_id]
+
+        # Atomic nonce validation — prevents TOCTOU and replay.
+        # Nonce check + queue put are in the same synchronous function
+        # (no await between them), making them atomic in async Python.
+        if expected_nonce is not None:
+            current_nonce = (task.approval_payload or {}).get("checkpoint_nonce")
+            if current_nonce != expected_nonce:
+                raise ApprovalWindowError(
+                    f"Stale or replayed approval: nonce mismatch "
+                    f"(expected {expected_nonce}, current {current_nonce})"
+                )
+
+        # Record in approval history
         resolved_stage = (
             stage
             or (task.approval_payload or {}).get("stage")
@@ -245,19 +284,16 @@ class TaskStore:
         task.updated_at = datetime.now(timezone.utc)
         self._persist(task)
 
-        payload = {"decision": decision, "revision_note": revision_note}
+        # Queue the full approval data if provided, else generic payload
+        payload = approval_data if approval_data is not None else {"decision": decision, "revision_note": revision_note}
         if task_id not in self._approval_queues:
             self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
         try:
             self._approval_queues[task_id].put_nowait(payload)
         except asyncio.QueueFull:
-            logger.warning("Approval queue full for task %s — replacing", task_id)
-            # Drain and re-put (only 1 slot)
-            try:
-                self._approval_queues[task_id].get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-            self._approval_queues[task_id].put_nowait(payload)
+            raise ApprovalWindowError(
+                f"Approval already submitted for task {task_id} — queue full"
+            )
 
     # ── Persistence ───────────────────────────────────────────────────
 

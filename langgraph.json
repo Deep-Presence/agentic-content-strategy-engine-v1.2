@@ -1,0 +1,9 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "content_topic_approval": "./core/content_engine/graph_v13.py:build_topic_approval_graph",
+    "content_brief_approval": "./core/content_engine/graph_v13.py:build_brief_approval_graph",
+    "content_review": "./core/content_engine/graph_v13.py:build_content_review_graph"
+  },
+  "env": ".env.local"
+}

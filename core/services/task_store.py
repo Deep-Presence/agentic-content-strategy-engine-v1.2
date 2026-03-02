@@ -12,9 +12,9 @@ import asyncio
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from api.tasks.models import PipelineTask
-from api.tasks.store import TaskConflictError, TaskNotFoundError  # noqa: F401
+from api.tasks.store import ApprovalWindowError, TaskConflictError, TaskNotFoundError  # noqa: F401
 
-__all__ = ["TaskStoreProtocol", "TaskNotFoundError", "TaskConflictError"]
+__all__ = ["TaskStoreProtocol", "TaskNotFoundError", "TaskConflictError", "ApprovalWindowError"]
 
 
 @runtime_checkable
@@ -71,4 +71,6 @@ class TaskStoreProtocol(Protocol):
         decision: str,
         revision_note: Optional[str] = None,
         stage: Optional[str] = None,
+        approval_data: Optional[Dict[str, Any]] = None,
+        expected_nonce: Optional[str] = None,
     ) -> None: ...

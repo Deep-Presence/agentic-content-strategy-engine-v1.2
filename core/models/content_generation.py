@@ -187,6 +187,9 @@ class ContentOutline(BaseModel):
     has_table_section: bool = False
     has_key_takeaways: bool = False
 
+    # --- Voice & tone (v1.3.1) ---
+    voice_tone_description: str = ""
+
 
 class ContentDraft(BaseModel):
     """Raw markdown draft produced by the Drafter."""
@@ -205,6 +208,18 @@ class EnrichedDraft(BaseModel):
     markdown: str = ""
     word_count: int = 0
     facts_added: List[Dict[str, str]] = Field(default_factory=list)
+
+
+class LinkedDraft(BaseModel):
+    """Output of the Linker worker — draft with resolved links."""
+
+    brief_id: str = ""
+    title: str = ""
+    markdown: str = ""
+    word_count: int = 0
+    internal_links_added: int = 0
+    external_links_added: int = 0
+    stats_resolved: int = 0
 
 
 class FormattedContent(BaseModel):

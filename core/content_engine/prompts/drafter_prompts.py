@@ -35,9 +35,17 @@ clear topic sentence, supporting evidence, and can be understood without reading
 paragraph before or after it. Target 50-150 words per paragraph.
 
 7. **Include placeholders for statistics**: Where you need to cite specific data, \
-use the format [STAT: description] — the fact enricher will fill these in.
+use the format [STAT: description] — the fact checker will fill these in.
 
-8. **Match the structural blueprint**: The brief includes structural targets derived \
+8. **Internal link placeholders**: Where the content should reference another page on \
+the company's own site, use [INTERNAL-LINK: anchor text describing target page]. \
+The linker agent will replace these with real URLs.
+
+9. **External link placeholders**: Where the content should reference an authoritative \
+external source, use [EXTERNAL-LINK: anchor text describing resource]. \
+The linker agent will find and insert real URLs.
+
+10. **Match the structural blueprint**: The brief includes structural targets derived \
 from analyzing what content AI search engines actually cite. These targets are your \
 primary structural constraints:
    - Target the word count range specified in the brief (NOT a fixed limit)
@@ -45,7 +53,7 @@ primary structural constraints:
    - If the brief calls for FAQ sections, tables, or definitions, include them
    - Distribute structural elements across sections as specified in the outline
 
-9. **Style guide is your voice**: The writing style guide defines voice, tone, \
+11. **Style guide is your voice**: The writing style guide defines voice, tone, \
 terminology, and formatting conventions. Follow it precisely — it represents the \
 brand's editorial standards.
 
@@ -109,6 +117,7 @@ def build_drafter_user_prompt(
     exemplar_summaries: list[dict] | None = None,
     exemplar_themes: list[str] | None = None,
     word_count_range: tuple[int, int] | None = None,
+    voice_tone_description: str = "",
 ) -> str:
     """Build the user prompt for the drafter.
 
@@ -123,11 +132,21 @@ def build_drafter_user_prompt(
         exemplar_summaries: Structural fingerprints of top-cited content.
         exemplar_themes: Common themes across exemplars.
         word_count_range: Min/max word count.
+        voice_tone_description: Tone/voice guidance from brief builder.
     """
     queries_str = "\n".join(
         f"  - \"{q.get('query_text', '')}\""
         for q in target_queries
     )
+
+    # Voice & tone direction from brief builder (overrides style guide when present)
+    voice_section = ""
+    if voice_tone_description:
+        voice_section = f"""\
+## Voice & Tone Direction
+{voice_tone_description}
+Closely follow this voice and tone. If not specified, follow the style guide below.
+"""
 
     # Style guide goes FIRST and prominently — it's the PRIMARY voice reference
     style_section = ""
@@ -190,6 +209,7 @@ def build_drafter_user_prompt(
         )
 
     return f"""\
+{voice_section}
 {style_section}
 
 ## Content Outline
@@ -213,3 +233,25 @@ specified in each section. Follow the style guide for voice, tone, and formattin
 Match or exceed the structural blueprint targets. Include [STAT: description] \
 placeholders where specific statistics or data points should be inserted.
 """
+
+
+# ---------------------------------------------------------------------------
+# Hub getters (opt-in via settings.langsmith_use_hub)
+# ---------------------------------------------------------------------------
+
+_HUB_NAME_DRAFTER = "deep-presence/drafter-system"
+_HUB_NAME_REVISION = "deep-presence/drafter-revision"
+
+
+def get_drafter_system_prompt() -> str:
+    """Get drafter system prompt from Hub or local fallback."""
+    from core.content_engine.prompt_registry import get_prompt
+
+    return get_prompt(_HUB_NAME_DRAFTER, DRAFTER_SYSTEM_PROMPT)
+
+
+def get_revision_system_prompt() -> str:
+    """Get revision system prompt from Hub or local fallback."""
+    from core.content_engine.prompt_registry import get_prompt
+
+    return get_prompt(_HUB_NAME_REVISION, REVISION_SYSTEM_PROMPT)

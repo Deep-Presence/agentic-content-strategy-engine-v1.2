@@ -45,7 +45,7 @@ async def test_evaluate_and_optimize_all_pass(sample_brief, sample_formatted, tm
             return_value=DimensionResult(dimension="factual", passed=True, score=0.75),
         ),
     ):
-        result_content, history = await evaluate_and_optimize(
+        result_content, history, feedback_route = await evaluate_and_optimize(
             content=sample_formatted,
             brief=sample_brief,
             company_context_md="",
@@ -56,6 +56,7 @@ async def test_evaluate_and_optimize_all_pass(sample_brief, sample_formatted, tm
         )
 
     assert history.final_passed is True
+    assert feedback_route == "pass"
     assert len(history.cycles) == 1  # Only initial eval, no revisions
     assert history.cycles[0].overall_passed is True
 
@@ -127,7 +128,7 @@ async def test_evaluate_and_optimize_revision_triggered(sample_brief, sample_for
             ),
         ),
     ):
-        result_content, history = await evaluate_and_optimize(
+        result_content, history, feedback_route = await evaluate_and_optimize(
             content=sample_formatted,
             brief=sample_brief,
             company_context_md="",
@@ -141,4 +142,73 @@ async def test_evaluate_and_optimize_revision_triggered(sample_brief, sample_for
     assert len(history.cycles) == 2
     assert history.cycles[0].overall_passed is False
     assert history.cycles[1].overall_passed is True
-    assert history.final_passed is True
+
+
+# ─────────────────────────────────────────────────────────────────────
+# C1 Regression: v1.0 pipeline must not crash on 3-tuple unpack
+# ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_v10_pipeline_handles_3tuple_from_evaluate(sample_brief, tmp_path):
+    """C1 regression: pipeline.py must unpack all 3 values from evaluate_and_optimize.
+
+    evaluate_and_optimize now returns (FormattedContent, RevisionHistory, FeedbackRoute).
+    The v1.0 pipeline previously only unpacked 2 — that causes ValueError at runtime.
+    This test ensures the call site handles the full return tuple correctly.
+    """
+    from core.content_engine.evaluator.loop import evaluate_and_optimize
+
+    input_data = ContentGenerationInput(
+        company_name="TestCo",
+        domain="testco.com",
+        max_revision_cycles=1,
+    )
+
+    # Verify evaluate_and_optimize returns exactly 3 values
+    with (
+        patch(
+            "core.content_engine.evaluator.loop.evaluate_structural",
+            return_value=DimensionResult(dimension="structural", passed=True, score=0.9),
+        ),
+        patch(
+            "core.content_engine.evaluator.loop.evaluate_semantic",
+            new_callable=AsyncMock,
+            return_value=DimensionResult(dimension="semantic", passed=True, score=0.8),
+        ),
+        patch(
+            "core.content_engine.evaluator.loop.evaluate_style",
+            new_callable=AsyncMock,
+            return_value=DimensionResult(dimension="style", passed=True, score=0.85),
+        ),
+        patch(
+            "core.content_engine.evaluator.loop.evaluate_factual",
+            new_callable=AsyncMock,
+            return_value=DimensionResult(dimension="factual", passed=True, score=0.75),
+        ),
+    ):
+        sample_fc = FormattedContent(
+            brief_id="brief-001",
+            title="Test",
+            markdown="# Test\n\nContent here.",
+            word_count=100,
+        )
+        result = await evaluate_and_optimize(
+            content=sample_fc,
+            brief=sample_brief,
+            company_context_md="",
+            style_guide_md="",
+            input_data=input_data,
+            max_cycles=1,
+            artifact_dir=tmp_path,
+        )
+
+    # Must return a 3-tuple — unpacking to 2 values would raise ValueError
+    assert len(result) == 3, (
+        "evaluate_and_optimize must return 3 values: "
+        "(FormattedContent, RevisionHistory, FeedbackRoute)"
+    )
+    content_out, history_out, feedback_route_out = result
+    assert isinstance(content_out, FormattedContent)
+    assert history_out.final_passed is True
+    assert feedback_route_out == "pass"

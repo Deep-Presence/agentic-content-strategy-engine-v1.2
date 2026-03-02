@@ -33,7 +33,7 @@ class PipelineTask(BaseModel):
     """Represents a single pipeline run managed by the TaskStore."""
 
     task_id: str
-    pipeline: Literal["research", "gap_analysis", "content", "site_audit"]
+    pipeline: Literal["research", "gap_analysis", "content", "content_v13", "site_audit"]
     status: TaskStatus = TaskStatus.RUNNING
     company_slug: str = ""
     product_slug: Optional[str] = None

@@ -35,7 +35,8 @@ Respond with ONLY valid JSON matching this schema:
   "total_target_words": 1500,
   "has_faq_section": false,
   "has_table_section": false,
-  "has_key_takeaways": false
+  "has_key_takeaways": false,
+  "voice_tone_description": "Professional and data-driven — write as a trusted advisor. Use concrete benchmarks and avoid salesy language."
 }
 ```
 
@@ -107,6 +108,10 @@ def build_outliner_user_prompt(
     company_context_snippet: str,
     exemplar_summaries: list[dict] | None = None,
     exemplar_themes: list[str] | None = None,
+    tone_voice_description: str = "",
+    target_persona: str = "",
+    buyer_stage: str = "",
+    gap_reasoning: list[str] | None = None,
 ) -> str:
     """Build the user prompt for the outliner.
 
@@ -123,6 +128,10 @@ def build_outliner_user_prompt(
         company_context_snippet: Company context markdown.
         exemplar_summaries: Structural fingerprints of top-cited content.
         exemplar_themes: Common themes across exemplars.
+        tone_voice_description: Tone/voice guidance from brief builder.
+        target_persona: Target audience persona.
+        buyer_stage: Buyer journey stage.
+        gap_reasoning: Points explaining how this content addresses the gap.
     """
     queries_str = "\n".join(
         f"  - \"{q.get('query_text', '')}\" (cluster: {q.get('cluster_name', '')})"
@@ -175,6 +184,21 @@ def build_outliner_user_prompt(
             + "\n".join(f"- {t}" for t in exemplar_themes)
         )
 
+    # Content direction context from brief builder
+    direction_section = ""
+    if any([tone_voice_description, target_persona, buyer_stage, gap_reasoning]):
+        parts = ["### Content Direction Context"]
+        if target_persona:
+            parts.append(f"Target Persona: {target_persona}")
+        if buyer_stage:
+            parts.append(f"Buyer Stage: {buyer_stage}")
+        if tone_voice_description:
+            parts.append(f"Tone/Voice: {tone_voice_description}")
+        if gap_reasoning:
+            parts.append("Gap Reasoning:")
+            parts.extend(f"- {point}" for point in gap_reasoning)
+        direction_section = "\n".join(parts)
+
     return f"""\
 ## Content Brief
 
@@ -197,6 +221,8 @@ Word Count Range: {word_count_range[0]}-{word_count_range[1]} words
 {exemplar_section}
 {themes_section}
 
+{direction_section}
+
 ### Company Context
 {company_context_snippet if company_context_snippet else 'Not provided.'}
 
@@ -209,3 +235,17 @@ If table_rate > 0.3, include a section with a comparison/data table and set has_
 Always include a Key Takeaways section at the end and set has_key_takeaways=true \
 unless the format is short_faq.
 """
+
+
+# ---------------------------------------------------------------------------
+# Hub getter (opt-in via settings.langsmith_use_hub)
+# ---------------------------------------------------------------------------
+
+_HUB_NAME = "deep-presence/outliner-system"
+
+
+def get_outliner_system_prompt() -> str:
+    """Get outliner system prompt from Hub or local fallback."""
+    from core.content_engine.prompt_registry import get_prompt
+
+    return get_prompt(_HUB_NAME, OUTLINER_SYSTEM_PROMPT)

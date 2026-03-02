@@ -21,7 +21,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
 from core.content_engine.pipeline import _brief_dir
-from core.content_engine.tracing import create_span, create_trace, end_span, log_score, update_trace_output
+from core.content_engine.tracing_v13 import create_span, create_trace, end_span, log_score, update_trace_output
 from core.models.content_generation import (
     ContentBrief,
     ContentPiece,
@@ -181,9 +181,9 @@ async def run_content_review(
         briefs: Original briefs.
         revision_histories: Eval histories from Stage 3.
         auto_approve: Whether to auto-approve all pieces.
-        session_id: Langfuse session ID.
+        session_id: Session ID.
         artifact_dir: Root artifact directory.
-        parent_span: Optional Langfuse parent span.
+        parent_span: Optional parent span.
         checkpointer: Optional LangGraph checkpointer for interrupt/resume support.
 
     Returns:

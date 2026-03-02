@@ -1,7 +1,80 @@
 {
-  "current_sprint": "site-audit",
-  "last_updated": "2026-02-28",
+  "current_sprint": "langsmith-migration",
+  "last_updated": "2026-03-02",
   "completed": [
+    {
+      "id": "T-langsmith-migration",
+      "task": "LangSmith migration — eliminate Langfuse, unify tracing, add Hub prompt registry + LangGraph Studio",
+      "sprint": "langsmith-migration",
+      "status": "done",
+      "completed_at": "2026-03-02",
+      "files_changed": [
+        "core/content_engine/tracing_v13.py",
+        "core/content_engine/graph_v13.py",
+        "core/content_engine/pipeline_v13.py",
+        "core/content_engine/pipeline.py",
+        "core/content_engine/planner.py",
+        "core/content_engine/graph.py",
+        "core/content_engine/workers/dispatcher.py",
+        "core/content_engine/workers/outliner.py",
+        "core/content_engine/workers/drafter.py",
+        "core/content_engine/workers/fact_enricher.py",
+        "core/content_engine/workers/formatter.py",
+        "core/content_engine/evaluator/loop.py",
+        "core/content_engine/evaluator/structural.py",
+        "core/content_engine/evaluator/semantic.py",
+        "core/content_engine/evaluator/style_judge.py",
+        "core/content_engine/evaluator/factual_judge.py",
+        "core/content_engine/evaluator/eeat_judge.py",
+        "core/content_engine/prompt_registry.py (NEW)",
+        "core/content_engine/prompts/*.py (11 files — getters added)",
+        "core/config/settings.py",
+        "requirements.txt",
+        "langgraph.json (NEW)",
+        "scripts/upload_prompts_to_hub.py (NEW)",
+        "core/content_engine/tracing.py (DELETED)"
+      ],
+      "tests_added": 38,
+      "summary": "5-phase migration: P0 backward-compat kwargs shim + contextvars in tracing_v13.py, P1 16 import swaps across 14 files, P2 graph_v13.py tracing via contextvars + pipeline set_current_span, P3 prompt_registry.py with Hub pull + local fallback + getters in 11 prompt files, P4 langgraph.json for Studio, P5 deleted tracing.py + removed langfuse from requirements/settings. Codex-reviewed plan (6 critical corrections incorporated). 437 content engine tests passing."
+    },
+    {
+      "id": "T-v13-h1-h2-h3-h5-fixes",
+      "task": "v1.3 pipeline security & correctness fixes — H1/H2/H3/H5 (PB-50/51/52/54)",
+      "sprint": "content-engine-v13",
+      "status": "done",
+      "completed_at": "2026-03-02",
+      "resolved_backlog_items": ["PB-50", "PB-51", "PB-52", "PB-54"],
+      "files_changed": [
+        "core/content_engine/pipeline_v13.py",
+        "api/tasks/runner.py",
+        "api/routers/content_v13.py",
+        "tests/content_engine/test_pipeline_v13.py",
+        "tests/api/test_content_v13.py"
+      ],
+      "tests_added": 15,
+      "summary": "H1: fixed isinstance(gap_context, dict) always-False type guard — re-briefs now use full WorkerQueryContext. H2: v1.3 router routes through run_content_v13_pipeline_task in runner.py — semaphore + handle + slug-lock enforced. H3a: HITL-1 retry loop (max 2) re-invokes select_topics with user feedback. H3b: HITL-2 feedback loop (max 1) re-runs build_briefs_parallel with feedback in TopicSelection.rationale. H5: gap_slug validated against slug regex + Path.is_relative_to() before filesystem path construction."
+    },
+    {
+      "id": "T-v13-critical-fixes",
+      "task": "v1.3 pipeline critical fixes — C1/C2/C3/C4 (PB-46/47/48/49)",
+      "sprint": "content-engine-v13",
+      "status": "done",
+      "completed_at": "2026-03-02",
+      "resolved_backlog_items": ["PB-46", "PB-47", "PB-48", "PB-49"],
+      "files_changed": [
+        "core/content_engine/pipeline.py",
+        "core/content_engine/workers/dispatcher.py",
+        "core/content_engine/pipeline_v13.py",
+        "core/content_engine/brief_builder.py",
+        "api/routers/content_v13.py",
+        "tests/content_engine/test_evaluator.py",
+        "tests/content_engine/test_pipeline_v13.py",
+        "tests/content_engine/test_brief_builder.py",
+        "tests/api/test_content_v13.py"
+      ],
+      "tests_added": 12,
+      "summary": "C1: fixed 2-tuple unpack crash in v1.0 pipeline. C2: dispatcher now returns (brief_id, FormattedContent) tuples + Stage 4 uses dict lookup to prevent silent corruption when workers fail. C3: added tenant ownership check (403) to all 4 v1.3 approval endpoints. C4: added brief_id_overrides to build_briefs_parallel() so re-briefs use unique rebrief-{uuid8} IDs instead of colliding brief-001."
+    },
     {
       "id": "T-async-1",
       "task": "Shared async utilities (async_embedding_client, async_chroma_client)",
@@ -227,9 +300,158 @@
       "tests_added": 49,
       "test_total": "1127 passed + 135 skipped = 1262 collected",
       "summary": "Phase A (T1-T5): PB-34 /me auth fix, create_invite async + get_company_by_id, _derive_slug consolidation, signal repo has_expert_quotes + cluster perf, gap data validation (sort_dir Literal, page clamping, classification sort). Phase B (T6-T8): TaskStoreProtocol (runtime_checkable), DI wiring + type hint migration across 7 files, ApiTaskModel ORM + TaskRepository + Alembic migration 0004. Phase C (T9-T10): DbTaskStore write-through cache implementation, lifespan _init_task_store with DATABASE_URL-conditional DI switch and JSON fallback."
+    },
+    {
+      "id": "T-CE-v13",
+      "task": "Content Engine Pipeline v1.3 — two-phase context loading, Brief Builder agent, 3 HITL checkpoints, LiteLLM migration, E-E-A-T evaluation, dual feedback loops",
+      "sprint": "content-engine-v13",
+      "status": "done",
+      "started_at": "2026-03-01",
+      "completed_at": "2026-03-02",
+      "phases_completed": [
+        "A1: New Pydantic models (content_generation_v13.py) — PlannerScorecard, TopicSelection, ContentBlueprint, LLMResponse, etc.",
+        "A2: Context router (context_router.py) — extract_scorecard (~11K tokens) + extract_worker_context",
+        "A3: LiteLLM wrapper (llm_client.py) — llm_call with retry, jittered backoff, _ensure_litellm_model auto-prefix",
+        "A4: LangSmith tracing (tracing_v13.py) — create_trace/create_span/end_span wrapper",
+        "A5: Settings additions (settings.py) — LiteLLM model IDs, LangSmith config fields",
+        "B1: Strategic Planner (strategic_planner.py) — scorecard → topic selections via llm_call",
+        "B2: Brief Builder (brief_builder.py) — full context → ContentBlueprint, parallel build via semaphore",
+        "B3: E-E-A-T Judge (eeat_judge.py) — 5th evaluation dimension, LLM-as-judge pattern",
+        "C1: LangGraph v1.3 (graph_v13.py) — 3 composed sub-graphs with interrupt() at HITL gates",
+        "C2: Evaluator loop updates (loop.py) — classify_feedback(), targeted revision routing, use_eeat/use_targeted_revision flags",
+        "C3: Pipeline orchestrator (pipeline_v13.py) — 6-stage flow, both entry modes",
+        "D1: API schemas + router (content_v13.py, schemas/content_v13.py) — 5 endpoints (start, status, approve topics/briefs/content)",
+        "D2: Worker LiteLLM migration — outliner, drafter, fact_enricher, formatter, style_judge, factual_judge migrated to llm_call()",
+        "D3: Manual mode deferred to PB-45 (inline WorkerQueryContext sufficient for v0)",
+        "D4: DB persistence (persist_v13_planner_output + persist_v13_brief_approval, wired into pipeline_v13.py, 12 tests)",
+        "E1: Documentation update (COMPREHENSIVE_SYSTEM_DOCUMENTATION.md §7, §15, §21 updated)",
+        "E2: Integration testing (240+ new tests: 12 test files, 5 router bugs found+fixed via TDD)"
+      ],
+      "phases_remaining": [],
+      "files_created": [
+        "core/models/content_generation_v13.py",
+        "core/content_engine/context_router.py",
+        "core/content_engine/llm_client.py",
+        "core/content_engine/tracing_v13.py",
+        "core/content_engine/strategic_planner.py",
+        "core/content_engine/brief_builder.py",
+        "core/content_engine/evaluator/eeat_judge.py",
+        "core/content_engine/graph_v13.py",
+        "core/content_engine/pipeline_v13.py",
+        "core/content_engine/prompts/strategic_planner_prompts.py",
+        "core/content_engine/prompts/brief_builder_prompts.py",
+        "core/content_engine/prompts/eeat_judge_prompts.py",
+        "api/routers/content_v13.py",
+        "api/schemas/content_v13.py"
+      ],
+      "files_modified": [
+        "core/config/settings.py",
+        "core/content_engine/workers/outliner.py",
+        "core/content_engine/workers/drafter.py",
+        "core/content_engine/workers/fact_enricher.py",
+        "core/content_engine/workers/formatter.py",
+        "core/content_engine/evaluator/style_judge.py",
+        "core/content_engine/evaluator/factual_judge.py",
+        "core/content_engine/evaluator/loop.py",
+        "tests/content_engine/conftest.py"
+      ],
+      "test_count": "2220 total tests (314 content engine + 28 API v1.3 + rest of suite)"
+    },
+    {
+      "id": "T-v13-D3-defer",
+      "task": "Content Engine v1.3 D3 — Manual mode lightweight gap analysis deferred to PB-45",
+      "sprint": "content-engine-v13",
+      "status": "done",
+      "completed_at": "2026-03-02",
+      "files_changed": [
+        "core/content_engine/pipeline_v13.py (deferral comment at line 399)",
+        ".claude/sprints/pending/backlog.md (PB-45 added)"
+      ]
+    },
+    {
+      "id": "T-v13-D4",
+      "task": "Content Engine v1.3 D4 — DB persistence for v1.3 stages (planner output + brief approval → PipelineRunModel.config JSONB)",
+      "sprint": "content-engine-v13",
+      "status": "done",
+      "completed_at": "2026-03-02",
+      "files_changed": [
+        "core/content_engine/persistence.py (2 new functions: persist_v13_planner_output, persist_v13_brief_approval)",
+        "core/content_engine/pipeline_v13.py (wired persistence calls after HITL-1 and HITL-2)"
+      ],
+      "test_count": "12 new tests in test_v13_persistence.py"
+    },
+    {
+      "id": "T-v13-E2",
+      "task": "Content Engine v1.3 E2 — Integration testing (TDD: 240+ new tests across 13 files, 5 router bugs found and fixed)",
+      "sprint": "content-engine-v13",
+      "status": "done",
+      "completed_at": "2026-03-02",
+      "files_created": [
+        "tests/content_engine/test_context_router.py (25 tests)",
+        "tests/content_engine/test_llm_client.py (12 tests)",
+        "tests/content_engine/test_v13_models.py (10 tests)",
+        "tests/content_engine/test_strategic_planner.py (15 tests)",
+        "tests/content_engine/test_brief_builder.py (20 tests)",
+        "tests/content_engine/test_eeat_judge.py (10 tests)",
+        "tests/content_engine/test_tracing_v13.py (8 tests)",
+        "tests/content_engine/test_evaluator_v13.py (8 tests)",
+        "tests/content_engine/test_graph_v13.py (49 tests)",
+        "tests/content_engine/test_pipeline_v13.py (14 tests)",
+        "tests/content_engine/test_v13_persistence.py (12 tests)",
+        "tests/api/test_content_v13.py (28 tests)"
+      ],
+      "files_modified": [
+        "tests/content_engine/conftest.py (v1.3 fixtures added)",
+        "api/routers/content_v13.py (5 bugs fixed: create_task args, PipelineTask fields, submit_approval signature)",
+        "api/tasks/models.py (added content_v13 to pipeline Literal)",
+        "core/content_engine/graph_v13.py (run_hitl_checkpoint reads approval_payload from task)"
+      ],
+      "bugs_found": [
+        "Router used effective_slug= instead of product_slug= in create_task",
+        "PipelineTask.pipeline Literal missing content_v13",
+        "Router status endpoint referenced non-existent task.progress field",
+        "submit_approval received dict instead of string decision",
+        "run_hitl_checkpoint used wait_for_approval return value instead of task.approval_payload"
+      ],
+      "test_count": "314 content engine tests + 28 API tests all passing"
+    },
+    {
+      "id": "T-ce-v13-refactor",
+      "task": "Content Engine v1.3 Pipeline Refactor — 10-phase gap closure (model fields, planner/brief prompts, outliner/drafter prompts, fact checker rewrite, linker agent, dispatcher chain, evaluator routing, HITL-3 feedback loops, cleanup+docs)",
+      "sprint": "content-engine-v13",
+      "status": "done",
+      "completed_at": "2026-03-02",
+      "phases_complete": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      "summary": "Closed all 25 gaps between v1.3 implementation and target flow. New worker chain: Outliner→Drafter→Linker→Fact Checker. Evaluator returns 3-tuple with FeedbackRoute. HITL-3 edit→drafter (max 2), reject→re-brief (max 2), major_change→auto re-brief. 5 new pipeline tests. 343 content engine tests passing.",
+      "test_count": "343 content engine tests passing",
+      "new_tests": 5,
+      "files_changed": [
+        "core/models/content_generation.py (LinkedDraft, voice_tone_description on ContentOutline)",
+        "core/models/content_generation_v13.py (ContentBlueprint new fields, rationale docstring)",
+        "core/content_engine/evaluator/loop.py (3-tuple return, FeedbackRoute tracking, removed EnrichedDraft import)",
+        "core/content_engine/pipeline_v13.py (Stage 4 3-tuple unpack, Stage 5 HITL-3 loop with _apply_human_edits + _rebrief_and_rerun)",
+        "core/content_engine/prompts/drafter_prompts.py (link placeholders, voice_tone_description)",
+        "core/content_engine/prompts/outliner_prompts.py (content direction context)",
+        "core/content_engine/prompts/enricher_prompts.py (verify-only rewrite)",
+        "core/content_engine/prompts/brief_builder_prompts.py (5 new fields, removed truncation)",
+        "core/content_engine/prompts/strategic_planner_prompts.py (richer rationale instruction)",
+        "core/content_engine/prompts/linker_prompts.py (NEW — linker prompt templates)",
+        "core/content_engine/workers/linker.py (NEW — link resolution agent)",
+        "core/content_engine/workers/drafter.py (voice_tone_description param)",
+        "core/content_engine/workers/outliner.py (forward brief fields)",
+        "core/content_engine/workers/dispatcher.py (v1.3 chain: outliner→drafter→linker→fact_checker)",
+        "core/content_engine/brief_builder.py (removed style guide truncation)",
+        "core/config/settings.py (content_engine_linker_model setting)",
+        "tests/content_engine/test_evaluator.py (3-tuple unpack, feedback_route assert)",
+        "tests/content_engine/test_evaluator_v13.py (6 routing tests updated for v1.3)",
+        "tests/content_engine/test_pipeline_v13.py (3-tuple mocks, 5 new HITL-3 tests)",
+        "tests/content_engine/test_linker.py (NEW — 8 linker tests)",
+        "docs/COMPREHENSIVE_SYSTEM_DOCUMENTATION.md (§7.2-7.6, §10 updated)"
+      ]
     }
   ],
   "in_progress": [],
+  "_session_note_2026_03_02_codex_fixes": "Completed M1+M2+H8+H9 TDD fixes. M1: response=None sentinel in eeat_judge.py (+4 tests). M2: truncate_to_token_limit in linker+fact_enricher, max_length in schemas (+8 tests). H8: brief_decision_log in HITL-2 loop, all blueprints to persist (+8 tests). H9: evaluated 4-tuple threading at 4 locations (+4 tests). Total: 379 tests. review.md updated.",
   "recently_completed": [
     {
       "id": "T-sqlalchemy-migration",

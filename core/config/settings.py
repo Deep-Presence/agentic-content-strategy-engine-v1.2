@@ -119,10 +119,27 @@ class Settings(BaseSettings):
         '{"pillar_page": 3, "comparison": 3, "long_blog": 2, "how_to": 2, "short_faq": 1}'
     )
 
-    # Langfuse (observability)
-    langfuse_public_key: str | None = None
-    langfuse_secret_key: str | None = None
-    langfuse_host: str = "https://us.cloud.langfuse.com"
+    # --- Content Engine v1.3 — LiteLLM model identifiers ---
+    # Provider-prefixed strings for LiteLLM routing
+    content_engine_v13_planner_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_brief_builder_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_worker_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_formatter_model: str = "anthropic/claude-haiku-4-5-20251001"
+    content_engine_v13_style_judge_model: str = "anthropic/claude-haiku-4-5-20251001"
+    content_engine_v13_factual_judge_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_eeat_judge_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_fact_enricher_model: str = "perplexity/sonar-pro"
+    content_engine_v13_linker_model: str = "perplexity/sonar-pro"
+
+    # --- Content Engine v1.3 — Pipeline defaults ---
+    content_engine_v13_max_topics: int = 6
+    content_engine_v13_max_concurrent_workers: int = 3
+
+    # --- LangSmith (observability + Hub) ---
+    langsmith_api_key: str | None = None
+    langsmith_project: str = "content-engine"
+    langsmith_use_hub: bool = False
+    langsmith_hub_tag: str = "production"
 
     # Legacy / optional
     tavily_api_key_company_context: str | None = None

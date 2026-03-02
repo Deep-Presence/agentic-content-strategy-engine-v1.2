@@ -145,3 +145,91 @@ async def persist_content_run_summary(
             "persist_content_run_summary failed for %s, continuing without DB",
             slug, exc_info=True,
         )
+
+
+# ── v1.3 persistence hooks ───────────────────────────────────────────
+
+
+async def persist_v13_planner_output(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    planner_output: dict,
+    approval_decision: str,
+    approved_topic_ranks: list,
+) -> None:
+    """Persist Strategic Planner output + HITL-1 decision to PipelineRunModel.config JSONB.
+
+    Writes to ``config["v13_planner"]`` so it doesn't collide with
+    existing config fields.
+    """
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None
+    try:
+        from core.db.models.pipelines import PipelineRunModel
+
+        async with session_factory() as session:
+            run = await session.get(PipelineRunModel, run_id)
+            if run is None:
+                logger.warning(
+                    "persist_v13_planner_output: PipelineRunModel %s not found", run_id
+                )
+                return
+
+            config = dict(run.config or {})
+            config["v13_planner"] = {
+                "selections": planner_output,
+                "approval_decision": approval_decision,
+                "approved_topic_ranks": approved_topic_ranks,
+            }
+            run.config = config
+            await session.commit()
+        logger.info("persist_v13_planner_output: stored for %s", slug)
+    except Exception:
+        logger.warning(
+            "persist_v13_planner_output failed for %s, continuing without DB",
+            slug, exc_info=True,
+        )
+
+
+async def persist_v13_brief_approval(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    blueprints: list,
+    approval_decisions: list,
+) -> None:
+    """Persist Brief Builder output + HITL-2 decisions to PipelineRunModel.config JSONB.
+
+    Writes to ``config["v13_briefs"]``.
+    """
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None
+    try:
+        from core.db.models.pipelines import PipelineRunModel
+
+        async with session_factory() as session:
+            run = await session.get(PipelineRunModel, run_id)
+            if run is None:
+                logger.warning(
+                    "persist_v13_brief_approval: PipelineRunModel %s not found", run_id
+                )
+                return
+
+            config = dict(run.config or {})
+            config["v13_briefs"] = {
+                "blueprints": blueprints,
+                "approval_decisions": approval_decisions,
+            }
+            run.config = config
+            await session.commit()
+        logger.info("persist_v13_brief_approval: stored for %s", slug)
+    except Exception:
+        logger.warning(
+            "persist_v13_brief_approval failed for %s, continuing without DB",
+            slug, exc_info=True,
+        )

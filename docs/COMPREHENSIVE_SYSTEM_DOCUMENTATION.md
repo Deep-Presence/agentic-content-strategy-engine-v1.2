@@ -1821,11 +1821,75 @@ GapAnalysisInput
 
 ## 7. Pipeline 3: Content Generation Engine
 
-**Status:** Implemented (v1.0). Branch: `feat/content-engine-v1.0.0`. 57/57 tests passing.
+**Status:** Implemented (v1.0 + v1.3). Branch: `feat/front-back`. 314 content engine tests + 28 API tests passing.
 
-**Architecture:** 4-stage async pipeline using two Anthropic agent patterns:
+**v1.0 Architecture:** 4-stage async pipeline using two Anthropic agent patterns:
 - **Orchestrator-Workers** — parallel content production with semaphore-controlled concurrency
 - **Evaluator-Optimizer** — 4-dimension quality gate with automated revision cycles
+
+**v1.3 Architecture:** 6-stage pipeline with two-phase context loading, 2 new agents, 3 HITL checkpoints, LiteLLM for all LLM calls, LangSmith tracing, E-E-A-T evaluation, and dual feedback loops. Both v1.0 and v1.3 coexist via separate API endpoints.
+
+```
+v1.3 Pipeline Flow:
+┌─────────────────────────────────────────────────────────────────────────┐
+│  [Stage 0] Two-Phase Context Loading (ContextRouter)                    │
+│    Phase 1: extract_scorecard() → PlannerScorecard (~11K tokens)        │
+│    Phase 2: extract_worker_context() → per-topic full context           │
+└──────────────────┬──────────────────────────────────────────────────────┘
+                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  [Stage 1] Strategic Planner Agent (LiteLLM)                            │
+│    Input: scorecard + company context + style guide                     │
+│    Output: StrategicPlannerOutput → List[TopicSelection]                │
+│    → HITL-1: Topic Approval (approve/modify/reject/retry)               │
+└──────────────────┬──────────────────────────────────────────────────────┘
+                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  [Stage 2] Brief Builder Agent (LiteLLM, parallel per topic)            │
+│    Input: TopicSelection + WorkerQueryContext                            │
+│    Output: List[ContentBlueprint] (extends ContentBrief)                │
+│    → HITL-2: Brief Approval (approve/feedback/reject per blueprint)      │
+└──────────────────┬──────────────────────────────────────────────────────┘
+                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  [Stage 3] Content Workers (v1.3 chain)                                 │
+│    Outliner → Drafter → Linker → Fact Checker (verify-only)             │
+│  [Stage 4] Evaluator-Optimizer (4+1 dimensions, dual feedback)          │
+│    + E-E-A-T (5th judge), section_level → drafter+fact_checker          │
+│    + major_change (semantic < 0.5) → auto re-brief                      │
+│  [Stage 5] HITL-3 Content Review (bounded retry loops)                  │
+│    edit (max 2) → drafter → re-evaluate → re-present                   │
+│    reject (max 2) → re-brief → re-dispatch → re-evaluate → re-present  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Entry Modes:
+  AUTONOMOUS: Full pipeline (stages 0-5), reads gap_analysis output
+  MANUAL: User prompt → inline WorkerQueryContext → stages 2-5
+```
+
+**v1.3 New Files:**
+| File | Purpose |
+|------|---------|
+| `core/content_engine/context_router.py` | Two-phase context extraction (scorecard + worker context) |
+| `core/content_engine/strategic_planner.py` | Agent 1: Topic selection with ranking and metadata |
+| `core/content_engine/brief_builder.py` | Agent 2: Parallel blueprint generation per topic |
+| `core/content_engine/llm_client.py` | LiteLLM wrapper with auto-prefix and retry |
+| `core/content_engine/pipeline_v13.py` | 6-stage orchestrator with skip_stages support |
+| `core/content_engine/graph_v13.py` | 3 LangGraph HITL checkpoints (topic/brief/content) |
+| `core/content_engine/tracing_v13.py` | LangSmith tracing (graceful degradation when disabled) |
+| `core/content_engine/evaluator/eeat_judge.py` | E-E-A-T evaluation dimension |
+| `core/content_engine/prompts/strategic_planner_prompts.py` | Planner prompt templates |
+| `core/content_engine/prompts/brief_builder_prompts.py` | Brief builder prompt templates |
+| `core/content_engine/prompts/eeat_judge_prompts.py` | E-E-A-T judge prompt templates |
+| `core/models/content_generation_v13.py` | v1.3 Pydantic models |
+| `api/routers/content_v13.py` | 5 API endpoints (start, status, 3 approvals) |
+| `api/schemas/content_v13.py` | Request/response schemas |
+
+**v1.3 DB Persistence:** Two new functions in `core/content_engine/persistence.py`:
+- `persist_v13_planner_output()` → writes to `PipelineRunModel.config["v13_planner"]` JSONB
+- `persist_v13_brief_approval()` → writes to `PipelineRunModel.config["v13_briefs"]` JSONB
+
+**v1.0 Architecture (preserved):**
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -1917,7 +1981,7 @@ async def dispatch_workers(
 
 Uses `asyncio.Semaphore(max_concurrent)` + `asyncio.gather(return_exceptions=True)`. Failing one worker does NOT cancel the batch.
 
-**Worker Chain (4 steps per brief):**
+**Worker Chain — v1.0 (4 steps per brief):**
 
 | Step | File | Model | Function | Output |
 |------|------|-------|----------|--------|
@@ -1926,16 +1990,31 @@ Uses `asyncio.Semaphore(max_concurrent)` + `asyncio.gather(return_exceptions=Tru
 | 3. Enrich | `workers/fact_enricher.py` | Perplexity sonar-pro | `enrich_with_facts()` | `EnrichedDraft` |
 | 4. Format | `workers/formatter.py` | Haiku 4.5 | `format_content()` | `FormattedContent` |
 
+**Worker Chain — v1.3 (4 steps per brief, different chain):**
+
+| Step | File | Model | Function | Output |
+|------|------|-------|----------|--------|
+| 1. Outline | `workers/outliner.py` | Sonnet 4.5 | `generate_outline()` | `ContentOutline` |
+| 2. Draft | `workers/drafter.py` | Sonnet 4.5 | `generate_draft()` | `ContentDraft` |
+| 3. Link | `workers/linker.py` | Perplexity sonar-pro | `link_content()` | `LinkedDraft` |
+| 4. Fact Check | `workers/fact_enricher.py` | Perplexity sonar-pro | `enrich_with_facts()` | `EnrichedDraft` |
+
+v1.3 replaces the Formatter step with a Linker agent that resolves `[INTERNAL-LINK]`, `[EXTERNAL-LINK]`, and `[STAT:]` placeholders. Structural counts are computed inline via `_count_structural_elements()`. The Fact Checker is rewritten from "enrich" to "verify-only" (no new content added).
+
 **Each step:**
 - Has its own prompt file in `core/content_engine/prompts/`
-- Logs a Langfuse span under the worker trace
-- Persists intermediate artifact to disk (`outline.json`, `draft.md`, `enriched.md`, `formatted.md`)
+- Logs a tracing span (v1.0: Langfuse, v1.3: LangSmith)
+- Persists intermediate artifact to disk (v1.0: `outline.json`, `draft.md`, `enriched.md`, `formatted.md`; v1.3: `outline.json`, `draft.md`, `linked.md`, `fact_checked.md`)
 
-**Fact Enricher:** Uses httpx to call Perplexity API directly. Gracefully skips if `PERPLEXITY_API_KEY` not set (returns draft unchanged). Detects added citations via regex.
+**Linker (v1.3):** Uses Perplexity sonar-pro to resolve link/stat placeholders. Accepts site pages from s1 discovery for internal link resolution. Gracefully skips if `PERPLEXITY_API_KEY` not set. Returns `LinkedDraft` with link/stat counts.
 
-**Formatter:** Uses `_count_structural_elements(markdown)` for word count, header count, list count, stat count, and citation count using regex patterns.
+**Fact Enricher (v1.0):** Uses httpx to call Perplexity API directly. Gracefully skips if `PERPLEXITY_API_KEY` not set (returns draft unchanged). Detects added citations via regex.
 
-**Drafter also provides:** `revise_draft()` — used during evaluator revision cycles to incorporate feedback.
+**Fact Checker (v1.3):** Verify-only — replaces `[STAT:]` placeholders, verifies existing claims, flags unverifiable claims. Does NOT add new content.
+
+**Formatter (v1.0 only):** Uses `_count_structural_elements(markdown)` for word count, header count, list count, stat count, and citation count using regex patterns.
+
+**Drafter also provides:** `revise_draft()` — used during evaluator revision cycles and HITL-3 edit feedback to incorporate feedback.
 
 **CLI Progress:**
 ```
@@ -1961,10 +2040,14 @@ async def evaluate_and_optimize(
     max_cycles: int = 2,
     session_id: str = "",
     artifact_dir: Path = Path("."),
-) -> tuple[FormattedContent, RevisionHistory]
+    use_eeat: bool = False,           # v1.3: enable E-E-A-T dimension
+    use_targeted_revision: bool = False,  # v1.3: dual feedback routing
+) -> tuple[FormattedContent, RevisionHistory, FeedbackRoute]
 ```
 
-**4 Evaluation Dimensions (run in parallel via `asyncio.gather`):**
+Returns a 3-tuple: final content, revision history, and feedback route ("pass", "section_level", or "major_change").
+
+**4+1 Evaluation Dimensions (run in parallel via `asyncio.gather`):**
 
 | Dimension | File | Type | Model | Threshold |
 |-----------|------|------|-------|-----------|
@@ -1972,6 +2055,7 @@ async def evaluate_and_optimize(
 | Semantic | `evaluator/semantic.py` | Embedding proximity | OpenAI text-embedding-3-small | >= 0.65 |
 | Style | `evaluator/style_judge.py` | LLM-as-Judge | Haiku 4.5 | >= 0.7 |
 | Factual | `evaluator/factual_judge.py` | LLM-as-Judge | Sonnet 4.5 | >= 0.7 |
+| E-E-A-T | `evaluator/eeat_judge.py` | LLM-as-Judge | Sonnet 4.5 | >= 0.7 | (v1.3 only)
 
 **Structural Evaluator (8 checks):**
 1. Word count within `word_count_range`
@@ -1991,17 +2075,40 @@ Score = passed_checks / total_checks. Passes if >= 0.8.
 
 **Factual Judge:** Evaluates claim accuracy, source quality, recency, completeness. Returns JSON with `score` (0-1) and `feedback`.
 
-**Revision Logic:**
+**Revision Logic (v1.0 — `use_targeted_revision=False`):**
 1. If any dimension fails → compile feedback from all failed dimensions
 2. Re-run: `revise_draft()` → `enrich_with_facts()` → `format_content()` (skip Outliner)
 3. Re-evaluate all 4 dimensions
 4. If still failing after `max_cycles` → flag for HITL with eval results attached
 5. Early exit when `max_revision_cycles=0` (skip evaluator entirely)
 
+**Revision Logic (v1.3 — `use_targeted_revision=True`, dual feedback routing):**
+
+`FeedbackRoute = Literal["pass", "section_level", "major_change"]`
+
+`classify_feedback(dimensions)` routes based on failure severity:
+- **"pass"** — all dimensions passed, no revision needed
+- **"section_level"** — targeted fix: run only needed workers (drafter + fact_checker)
+- **"major_change"** — semantic score < 0.5, content direction fundamentally wrong → flag for re-brief
+
+`_get_targeted_revision_plan(dimensions)` determines workers:
+| Failed Dimension(s) | Workers Run |
+|---------------------|-------------|
+| structural, style, semantic, or eeat | `["drafter", "fact_checker"]` |
+| factual only | `["fact_checker"]` |
+| drafter + any combo | `["drafter", "fact_checker"]` (always re-verify after drafter revises) |
+
+`_run_targeted_revision()` chain: drafter (if needed) → fact_checker (if needed) → inline `_count_structural_elements()` (no formatter step).
+
+Early-stop: if score improvement < 0.02 between revision cycles, stop and flag as `"section_level"`.
+
+Return type: `Tuple[FormattedContent, RevisionHistory, FeedbackRoute]` — 3rd element signals to pipeline whether content passed, needs section-level fix, or needs re-brief.
+
 ### 7.4 Stage 4 — Human Review (LangGraph HITL)
 
-**File:** `core/content_engine/graph.py`
+**File:** `core/content_engine/graph.py` (v1.0), `core/content_engine/pipeline_v13.py` Stage 5 (v1.3)
 
+**v1.0 Graph HITL:**
 ```python
 def build_content_review_graph() -> CompiledGraph
 async def run_content_review(
@@ -2018,6 +2125,34 @@ async def run_content_review(
 **Resume tokens:** `{"approval_decision": "approve"|"edit"|"reject", "editor_notes": "..."}`
 
 **`auto_approve` flag** skips interrupt (same pattern as research pipeline). Approved content saved to `final.md`.
+
+**v1.3 HITL-3 Feedback Loops (pipeline_v13.py Stage 5):**
+
+HITL-3 uses `run_hitl_checkpoint()` with bounded retry loops:
+
+| Decision | Action | Max Attempts | Constants |
+|----------|--------|--------------|-----------|
+| `"approve"` | Write `final.md`, status=APPROVED | — | — |
+| `"edit"` | Route to drafter with `[HUMAN REVIEW]` feedback → fact checker → re-evaluate → re-present | 2 | `_MAX_EDIT_ATTEMPTS = 2` |
+| `"reject"` | Route to brief builder for re-brief → re-dispatch workers → re-evaluate → re-present | 2 | `_MAX_REBRIEFS = 2` |
+
+**Edit flow** (`_apply_human_edits()`):
+1. `revise_draft(feedback=f"[HUMAN REVIEW]\n{editor_notes}")` — drafter incorporates human notes
+2. `enrich_with_facts()` — re-verify facts on revised content
+3. `_count_structural_elements()` — compute counts inline (no formatter step)
+4. Return `FormattedContent` → loop back to HITL-3 for re-approval
+
+**Reject/Major-change flow** (`_rebrief_and_rerun()`):
+1. Create new `TopicSelection` with `rationale=f"Re-brief after rejection: {user_comment[:200]}"`
+2. Extract worker contexts from blueprint's `gap_context`
+3. `build_briefs_parallel()` — re-brief with original contexts
+4. `dispatch_workers_v13()` — full worker chain on new brief
+5. `evaluate_and_optimize()` — full evaluation
+6. Return 3-tuple → loop back to HITL-3 for approval
+
+**Evaluator `major_change` signal:** When `evaluate_and_optimize()` returns `feedback_route="major_change"` (semantic < 0.5), the pipeline automatically triggers `_rebrief_and_rerun()` before presenting at HITL-3, counting against the re-brief limit.
+
+**Permanent rejection:** After exhausting edit or re-brief attempts, content is marked `ContentStatus.REJECTED` with no further retries.
 
 ### 7.5 Langfuse Tracing Architecture
 
@@ -2060,6 +2195,7 @@ Session: content-gen-{slug}-{timestamp}     (implicit — created when trace ref
 
 ### 7.6 Artifact Structure
 
+**v1.0:**
 ```
 artifacts/content/{company-slug}/
 ├── briefs.json                    # PlannerOutput (all briefs)
@@ -2069,6 +2205,22 @@ artifacts/content/{company-slug}/
 │       ├── draft.md               # Raw draft markdown
 │       ├── enriched.md            # Fact-enriched markdown
 │       ├── formatted.md           # Style-formatted markdown
+│       ├── eval_history.json      # RevisionHistory
+│       └── final.md               # Approved content
+└── run_metadata.json              # ContentGenerationOutput
+```
+
+**v1.3:**
+```
+artifacts/content/{company-slug}/
+├── planner_output.json            # StrategicPlannerOutput (topics)
+├── blueprints.json                # List[ContentBlueprint] (briefs)
+├── content/
+│   └── brief-{N}/
+│       ├── outline.json           # ContentOutline (with voice_tone_description)
+│       ├── draft.md               # Raw draft with link placeholders
+│       ├── linked.md              # After Linker: resolved links
+│       ├── fact_checked.md        # After Fact Checker: verified claims
 │       ├── eval_history.json      # RevisionHistory
 │       └── final.md               # Approved content
 └── run_metadata.json              # ContentGenerationOutput
@@ -2631,20 +2783,24 @@ PlannerOutput:     briefs: List[ContentBrief], planning_metadata: Dict
 **Stage 2 Models:**
 ```
 OutlineSection:    heading, level (2), key_points, target_word_count (300)
-ContentOutline:    brief_id, title, sections: List[OutlineSection], total_target_words
+ContentOutline:    brief_id, title, sections: List[OutlineSection], total_target_words,
+                   voice_tone_description: str = ""  (v1.3: forwarded from brief to drafter)
 ContentDraft:      brief_id, title, markdown, word_count
 EnrichedDraft:     brief_id, title, markdown, word_count, facts_added: List[Dict]
+LinkedDraft:       brief_id, title, markdown, word_count,   (v1.3: output of Linker worker)
+                   internal_links_added (int), external_links_added (int), stats_resolved (int)
 FormattedContent:  brief_id, title, markdown, word_count, header_count, list_count,
                    stat_count, citation_count
 ```
 
 **Stage 3 Models:**
 ```
-DimensionResult:   dimension ("structural"|"semantic"|"style"|"factual"),
+DimensionResult:   dimension ("structural"|"semantic"|"style"|"factual"|"eeat"),
                    passed, score (0-1), feedback, details: Dict
 EvalResult:        brief_id, cycle, dimensions: List[DimensionResult],
                    overall_passed, overall_score
 RevisionHistory:   brief_id, cycles: List[EvalResult], final_passed
+FeedbackRoute:     Literal["pass", "section_level", "major_change"]  (v1.3: evaluator return signal)
 ```
 
 **Stage 4 Models:**
@@ -2654,6 +2810,27 @@ ContentPiece:      brief_id, title, status (ContentStatus), final_markdown,
                    eval_summary: Dict, human_notes, artifact_path
 ContentGenerationOutput: company_slug, total_briefs, total_approved, total_rejected,
                         pieces: List[ContentPiece], run_metadata: Dict
+```
+
+### Content Engine v1.3 Models (`core/models/content_generation_v13.py`)
+
+```
+TopicSelection:    topic_title, content_format, target_cluster, target_queries,
+                   rationale (gap-based reasoning), priority_score,
+                   funnel_stage, estimated_word_count
+StrategicPlannerOutput: topics: List[TopicSelection], planning_metadata: Dict
+ContentBlueprint   (extends ContentBrief):
+                   gap_context: Dict, gap_reasoning: List[str] = [],
+                   tone_voice_description: str = "", target_persona: str = "",
+                   buyer_stage: str = "", intent_stage: str = ""
+ContentGenerationInputV13: company_name, domain, analysis_json_path (str),
+                   company_context_path, persona_paths, style_guide_path,
+                   max_briefs (10), max_concurrent_workers (3),
+                   max_revision_cycles (2), auto_approve (False),
+                   skip_stages ([]), user_prompt (Optional, for MANUAL mode)
+WorkerQueryContext: query_id, cluster_name, query_text, gap, interpretation,
+                   content_brief (GapContentBrief), exemplars
+PlannerScorecard:  total_queries, coverage_summary, top_gaps: List[Dict]
 ```
 
 ### Reddit HIL Models (`core/models/reddit_hil.py`)
@@ -3233,7 +3410,7 @@ tests/
 | `test_auth_enforcement.py` | 42 | Middleware enforcement (public routes, 401 without token, expired/malformed tokens, valid token), deactivated user 401, role-based access (viewer blocked from pipelines/products/invites, member/superuser allowed), tenant isolation (cross-company profile/pipeline/task/gap-data/content-data/artifact access → 403, task auto-filter by company), stream tokens (creation, task ownership, expiry behavior), registration hardening (isolated company, domain-taken 409, invite flow, invite requires superuser), login constant-time behavior |
 | `test_registration.py` | 2 | Invite flow join + invite code single-use (added alongside Phase 3 hardening) |
 
-### Content Engine Test Coverage (57/57 passing)
+### Content Engine Test Coverage — v1.0 (57/57 passing)
 
 | Test File | Count | What's Tested |
 |-----------|-------|---------------|
@@ -3248,6 +3425,25 @@ tests/
 | `test_evaluator.py` | 2 | All-pass scenario + revision-triggered scenario |
 | `test_graph.py` | 3 | Graph compilation, auto-approve, `run_content_review()` |
 | `test_integration.py` | 2 | Full pipeline (auto-approve) + skip stages |
+
+### Content Engine Test Coverage — v1.3 (257/257 passing, added 2026-03-02)
+
+| Test File | Count | What's Tested |
+|-----------|-------|---------------|
+| `test_context_router.py` | 25 | `extract_scorecard()`, `extract_worker_context()`, markdown formatting, edge cases |
+| `test_llm_client.py` | 12 | `_ensure_litellm_model()` prefix mapping (8 providers), `llm_call()` success/retry/error |
+| `test_v13_models.py` | 10 | JSON roundtrip for all v1.3 models, `ContentBlueprint` extends `ContentBrief`, enums, defaults |
+| `test_strategic_planner.py` | 15 | `select_topics()` with mocked `llm_call`, ranking, metadata, feedback, max_topics, JSON fallback |
+| `test_brief_builder.py` | 20 | `build_brief()`, `build_briefs_parallel()`, concurrency, error propagation, unique IDs |
+| `test_eeat_judge.py` | 10 | `evaluate_eeat()` → `DimensionResult`, score thresholds, markdown fences, JSON fallback |
+| `test_tracing_v13.py` | 8 | Session ID format, graceful degradation, span create/end, flush |
+| `test_evaluator_v13.py` | 8 | `classify_feedback()` (pass/section_level/major_change), `_get_targeted_revision_plan()` routing |
+| `test_graph_v13.py` | 49 | 3 HITL graphs (topic/brief/content), node functions, routing, `run_hitl_checkpoint()` loop |
+| `test_pipeline_v13.py` | 14 | Autonomous + manual modes, skip stages, topic/brief rejection, artifact persistence |
+| `test_v13_persistence.py` | 12 | `persist_v13_planner_output()`, `persist_v13_brief_approval()`, noop guards, DB error handling |
+| `test_content_v13.py` (API) | 28 | 5 endpoints: start (202/403/401/422), status, 3 approval endpoints with validation |
+
+**Bugs found via TDD:** 5 router bugs caught by integration tests (effective_slug→product_slug, missing pipeline Literal, wrong field names, submit_approval signature mismatch, approval_payload flow).
 
 ### Research Pipeline Test Coverage (109/109 passing — added 2026-02-26)
 
@@ -3989,7 +4185,7 @@ POST /api/v1/research/{run_id}/approve          → ApprovalResponse
 { "decision": "approve|revise|reject", "revision_note": "optional feedback" }
 ```
 
-#### Content Generation Pipeline
+#### Content Generation Pipeline (v1.0)
 ```
 POST /api/v1/content/start                      → 202 Accepted: PipelineRunResponse
 GET  /api/v1/content/{run_id}/status            → TaskResponse
@@ -4010,6 +4206,38 @@ POST /api/v1/content/{run_id}/approve           → ContentApprovalResponse
 { "brief_id": "brief-1", "decision": "approve|edit|reject", "editor_notes": "optional" }
 ```
 - `brief_id` is validated against the current `approval_payload.brief_id` — returns 409 on mismatch
+
+#### Content Generation Pipeline v1.3 (added 2026-03-02)
+```
+POST /api/v1/content/v13/start                          → 202 Accepted: PipelineRunResponseV13
+GET  /api/v1/content/v13/{run_id}/status                → TaskResponse (dict)
+POST /api/v1/content/v13/{run_id}/approve/topics        → ApprovalResponseV13
+POST /api/v1/content/v13/{run_id}/approve/briefs        → ApprovalResponseV13
+POST /api/v1/content/v13/{run_id}/approve/content       → ApprovalResponseV13
+```
+
+**Content v1.3 Start Request:**
+```json
+{
+  "company_name": "Ramp", "domain": "ramp.com",
+  "entry_mode": "autonomous",
+  "max_topics": 5, "auto_approve": false,
+  "skip_stages": [], "max_revision_cycles": 2,
+  "manual_prompt": null, "manual_description": null
+}
+```
+- `entry_mode` (optional, default "autonomous"): `"autonomous"` | `"manual"`
+- `max_topics` (optional, default 5): Maximum topics for Strategic Planner
+- `auto_approve` (optional, default false): Skip all 3 HITL checkpoints
+- `skip_stages` (optional): List of stage numbers to skip
+- `manual_prompt` (required for manual mode): User's topic prompt
+
+**Three HITL Approval Endpoints:**
+- Topic Approval: `{ "decision": "approve|modify|reject|retry", "approved_topic_ranks": [0,1,2], "feedback": "..." }`
+- Brief Approval: `{ "brief_id": "brief-001", "decision": "approve|feedback|reject", "feedback": "..." }`
+- Content Review: `{ "brief_id": "brief-001", "decision": "approve|edit|reject", "editor_notes": "...", "rethink": false }`
+
+**Approval flow:** Router stores full approval dict on `task.approval_payload` via `update_task()`, then calls `submit_approval(decision=string)` to unblock the pipeline. `run_hitl_checkpoint()` reads `task.approval_payload` for `Command(resume=...)` graph resumption.
 
 #### SSE Event Streaming
 ```
@@ -7555,9 +7783,18 @@ def test_other_user_cannot_read_test_co_profile(self, other_client, test_company
 | 2026-02-28 | §4b | **NEW SECTION** — Daily LLM Visibility Tracker: 12 subsections covering overview, design patterns (Mediator/Strategy/Adapter/Protocol), 5 protocol interfaces, orchestrator pipeline flow, prompt library, platform runner adapter, mention detector, analytics engine with 4 metric calculators, 16 API endpoints (8 prompt CRUD + 3 run management + 5 analytics), DI wiring with 3 factory functions + _DbResponseDataProvider adapter, Pydantic models (11 models), ORM tables (3 tables + 3 repositories + migration 0005) | T-DT-integration |
 | 2026-02-28 | §21.2 | Added Daily LLM Visibility Tracker endpoint reference (16 endpoints) with auth and tenant isolation details | T-DT-integration |
 
+| 2026-03-02 | §7 | Updated Content Engine: added v1.3 architecture (6-stage pipeline, 2 new agents, 3 HITL, LiteLLM, LangSmith, E-E-A-T, dual feedback), 14 new files documented, DB persistence (2 functions) | T-v13-E2 |
+| 2026-03-02 | §15 | Added Content Engine v1.3 test coverage table: 257 new tests across 12 files (context_router 25, llm_client 12, v13_models 10, strategic_planner 15, brief_builder 20, eeat_judge 10, tracing 8, evaluator 8, graph 49, pipeline 14, persistence 12, API 28). 5 router bugs found via TDD | T-v13-E2 |
+| 2026-03-02 | §21 | Added Content Generation Pipeline v1.3 endpoint reference (5 endpoints), entry modes, 3 HITL approval flow, approval_payload pattern | T-v13-E2 |
+| 2026-03-02 | §7.2 | Updated v1.3 worker chain: Outliner→Drafter→Linker→Fact Checker; added Linker and Fact Checker (verify-only) descriptions | T-ce-v13-refactor |
+| 2026-03-02 | §7.3 | Updated evaluate_and_optimize signature (use_eeat, use_targeted_revision, 3-tuple return); added E-E-A-T dimension; added v1.3 dual feedback routing (classify_feedback, _get_targeted_revision_plan, early-stop logic) | T-ce-v13-refactor |
+| 2026-03-02 | §7.4 | Added v1.3 HITL-3 feedback loops: edit→drafter (max 2), reject→re-brief (max 2), major_change→auto re-brief, _apply_human_edits(), _rebrief_and_rerun() | T-ce-v13-refactor |
+| 2026-03-02 | §7.6 | Added v1.3 artifact structure (linked.md, fact_checked.md, blueprints.json, planner_output.json) | T-ce-v13-refactor |
+| 2026-03-02 | §10 | Added LinkedDraft model, voice_tone_description on ContentOutline, FeedbackRoute literal, "eeat" dimension; added v1.3 models subsection (TopicSelection, ContentBlueprint, ContentGenerationInputV13, WorkerQueryContext, PlannerScorecard) | T-ce-v13-refactor |
+
 ---
 
 *End of Comprehensive System Documentation*
-*Generated: 2026-02-28*
+*Generated: 2026-03-02 (updated: v1.3 pipeline refactor — Phases 1-10)*
 *Total codebase files analyzed: ~320+*
 *Total lines of documentation: ~8100+*

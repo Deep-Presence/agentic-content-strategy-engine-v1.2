@@ -1,9 +1,33 @@
 # Pending Backlog
 
-> **Last synced:** 2026-02-28 (post site-audit sprint)
-> **Total items:** 27
+> **Last synced:** 2026-03-02 (v1.3 M1+M2+H8+H9 fixes — PB-57/58/59 resolved)
+> **Total items:** 34
 
 ## Critical (Fix Before Production)
+
+### PB-46: [v1.3-C1] v1.0 pipeline crashes — evaluator returns 3-tuple, v1.0 unpacks 2
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Files affected:** `core/content_engine/pipeline.py:460`
+- **Status:** ✅ RESOLVED 2026-03-02 — `optimized, history, _ = await evaluate_and_optimize(...)`
+
+### PB-47: [v1.3-C2] Dispatcher/evaluator zip mismatch — wrong brief paired with content after worker failure
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Files affected:** `core/content_engine/workers/dispatcher.py:439-458`, `core/content_engine/pipeline_v13.py:699-714`
+- **Status:** ✅ RESOLVED 2026-03-02 — dispatcher returns `List[Tuple[str, FormattedContent]]`; Stage 4 uses `blueprint_by_id` dict lookup instead of positional zip.
+
+### PB-48: [v1.3-C3] v1.3 API approval endpoints missing tenant ownership checks
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Files affected:** `api/routers/content_v13.py`
+- **Status:** ✅ RESOLVED 2026-03-02 — Added `http_request: Request` + `task.company_slug != user_company_slug → 403` to all 4 endpoints (status, /approve/topics, /approve/briefs, /approve/content).
+
+### PB-49: [v1.3-C4] Re-brief always generates `brief-001` — artifact overwrite in multi-piece runs
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Files affected:** `core/content_engine/brief_builder.py`, `core/content_engine/pipeline_v13.py`
+- **Status:** ✅ RESOLVED 2026-03-02 — Added `brief_id_overrides` param to `build_briefs_parallel()`; `_rebrief_and_rerun()` passes `f"rebrief-{uuid4().hex[:8]}"` as override.
 
 ### PB-1: `update_company` allows overwriting `id`, `created_at`, `slug` via `**kwargs`
 - **Source:** Phase 1+2 code review (C5) — sprint front-back-integration
@@ -14,6 +38,60 @@
 - **Status:** ✅ RESOLVED 2026-02-26 (T-review-action-items P0 C2/C5)
 
 ## High Priority
+
+### PB-50: [v1.3-H1] Re-brief context extraction is type-broken — gap_context always uses fallback
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Files affected:** `core/content_engine/pipeline_v13.py:284-286`
+- **Status:** ✅ RESOLVED 2026-03-02 — `isinstance(gap_context, dict)` replaced with direct Pydantic attribute access: `qid = blueprint.gap_context.query_gap.get("query_id", ...)` + pass full `WorkerQueryContext` (not a degraded stub).
+
+### PB-51: [v1.3-H2] v1.3 API bypasses task semaphore, cancellation, and slug lock
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Files affected:** `api/routers/content_v13.py`, `api/tasks/runner.py`
+- **Status:** ✅ RESOLVED 2026-03-02 — Added `run_content_v13_pipeline_task()` to runner.py with semaphore + handle + slug-lock pattern. Router removed local `_run_v13_pipeline_task` and calls `task_store.register_task_handle()` after `asyncio.create_task()`.
+
+### PB-52: [v1.3-H3] HITL-1 "retry" and HITL-2 "feedback" are dead paths — no actual re-run
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Files affected:** `core/content_engine/pipeline_v13.py:499-676`
+- **Status:** ✅ RESOLVED 2026-03-02 — H3a: bounded retry loop (`_MAX_TOPIC_RETRIES=2`) calls `select_topics(user_feedback=feedback)` on "retry". H3b: bounded feedback loop (`_MAX_BRIEF_FEEDBACK_RETRIES=1`) re-runs `build_briefs_parallel` with feedback in `TopicSelection.rationale`.
+
+### PB-53: [v1.3-H4] Manual mode can silently produce zero blueprints with existing gap data
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Description:** When `analysis_json` exists in manual mode, `extract_worker_context(["manual-1"])` is called but "manual-1" never matches real gap query_ids. Empty `worker_contexts` → `build_briefs_parallel` returns None for all topics → empty output. Fix: fallback to inline WorkerQueryContext when extraction is empty.
+- **Files affected:** `core/content_engine/pipeline_v13.py:635-650`, `core/content_engine/context_router.py:168`
+- **Blocked by:** nothing
+
+### PB-54: [v1.3-H5] `gap_slug` unsanitized in filesystem path construction — path traversal
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Files affected:** `api/routers/content_v13.py:99,121`
+- **Status:** ✅ RESOLVED 2026-03-02 — Added `_SLUG_PATTERN` regex validation + `Path.is_relative_to(artifacts_root)` guard before path construction. Returns 400 on violation.
+
+### PB-55: [v1.3-H6] v1.3 workers/evaluators import Langfuse tracing — LangSmith spans silently degraded
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Description:** `eeat_judge.py` and `evaluator/loop.py` import from `core.content_engine.tracing` (Langfuse v1.0). v1.3 pipeline passes LangSmith `RunTree` spans — incompatible types. Langfuse helpers are no-ops on unrecognized objects → evaluator dimension traces silently dropped.
+- **Files affected:** `core/content_engine/evaluator/eeat_judge.py:22`, `core/content_engine/evaluator/loop.py:24`
+- **Blocked by:** nothing
+
+### PB-56: [v1.3-H7] Content review graph `apply_edits → approval_gate` loop bypasses pipeline edit_count guard
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Description:** The graph has an `apply_edits → approval_gate` internal edge. A user repeatedly submitting "edit" in `run_hitl_checkpoint`'s interrupt loop bypasses the pipeline's `_MAX_EDIT_ATTEMPTS` guard. `_content_apply_edits` does nothing (only sets a flag), so the user sees the same unchanged content repeatedly. Fix: remove the `apply_edits → approval_gate` edge; let the pipeline's `while` loop handle edit cycles.
+- **Files affected:** `core/content_engine/graph_v13.py:324`
+- **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-03-02 — Removed `apply_edits → approval_gate` edge from `graph_v13.py:324`; pipeline's `while not piece_resolved` loop handles all edit cycles.
+
+### PB-57: [v1.3-H8] `persist_v13_brief_approval()` hardcodes all decisions as "approve"
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Description:** `pipeline_v13.py:605-608` only persists approved blueprints and hardcodes `"decision": "approve"`. Rejected and feedback decisions not recorded — incomplete audit trail.
+- **Files affected:** `core/content_engine/pipeline_v13.py:605-608`
+- **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-03-02 — `brief_decision_log` accumulates all decisions (approve/reject + feedback/feedback_attempts). ALL blueprints (not just approved) passed to `persist_v13_brief_approval`. 8 new tests in `TestHITL2BriefDecisionLogging` + `test_writes_reject_decision_correctly`.
 
 ### PB-2: `_secret_key` regenerated on restart if `JWT_SECRET_KEY` not set (W1)
 - **Source:** Phase 1+2 code review — sprint front-back-integration
@@ -45,6 +123,50 @@
 - **Blocked by:** nothing
 
 ## Medium Priority
+
+### PB-58: [v1.3-M1] `"response" in dir()` check in E-E-A-T judge is unreliable
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Description:** `eeat_judge.py:135` uses `if "response" in dir() else 0` to guard token count logging. `dir()` checks module scope, not local scope. Fix: use sentinel `response_obj = None` before try block.
+- **Files affected:** `core/content_engine/evaluator/eeat_judge.py:135`
+- **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-03-02 — `response = None` sentinel added before try block; check changed to `if response is not None`. 4 tests in `TestEeatUsageLogging`.
+
+### PB-59: [v1.3-M2] Unbounded user strings (editor_notes, manual_prompt) in LLM prompts
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Description:** API schemas have no `max_length` on `editor_notes` or `manual_prompt`. Linker/fact-checker prompts don't call `truncate_to_token_limit()` on draft input. Increases prompt injection and token cost risk.
+- **Files affected:** `api/schemas/content_v13.py`, `core/content_engine/workers/linker.py:80`
+- **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-03-02 — `max_length` added to `manual_prompt`/`manual_description` (2000) and `editor_notes` (5000) in schemas. `truncate_to_token_limit(max_tokens=120_000)` added to linker and fact_enricher after user_prompt build. Defense-in-depth truncation in router. 8 tests in `TestLinkerTruncation` + `TestContentV13SchemaValidation`.
+
+### PB-60: [v1.3-M3] Pipeline trace not flushed on error paths
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Description:** `update_trace_output()` and `flush()` only run on success path in `pipeline_v13.py:969`. Any exception leaves the LangSmith trace open. Fix: wrap with `try/finally: flush()`.
+- **Files affected:** `core/content_engine/pipeline_v13.py:969`
+- **Blocked by:** nothing
+
+### PB-61: [v1.3-M4] v1.3 `_update_task(progress=...)` maps to nonexistent field
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Description:** `pipeline_v13.py` calls `_update_task(..., progress={"stage": N, ...})` but `PipelineTask` has no `progress` field — only `current_step` and `progress_pct`. Stage info is silently dropped; UI shows no progress.
+- **Files affected:** `core/content_engine/pipeline_v13.py:434+`, `api/tasks/models.py:41`
+- **Blocked by:** nothing
+
+### PB-62: [v1.3-M5] Manual mode skips HITL-2 — undocumented design decision
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Description:** Manual mode goes directly from brief building to workers without HITL-2 checkpoint. Intentional (faster manual flow) but undocumented. Fix: add docstring clarification.
+- **Files affected:** `core/content_engine/pipeline_v13.py:652-661`
+- **Blocked by:** nothing
+
+### PB-63: [v1.3] Add missing integration tests for v1.3 failure paths
+- **Source:** v1.3 critical code review — content-engine-v13
+- **Date added:** 2026-03-02
+- **Description:** 379 tests pass (36 added this session for M1/M2/H8/H9). Still missing: v1.0 pipeline calling evaluator (C1), cross-tenant approval (C3), re-brief brief_id collision (C4), `_rebrief_and_rerun()` with Pydantic gap_context (H1), concurrent v1.3 runs (H2). Worker zip mismatch now covered by `TestEvaluatedTupleRouting`.
+- **Files affected:** `tests/content_engine/`, `tests/api/test_content_v13.py`
+- **Blocked by:** nothing (PB-46 through PB-59 all resolved)
 
 ### PB-6: `sort_dir` accepts any string value (W4)
 - **Source:** Phase 1+2 code review — sprint front-back-integration
@@ -321,6 +443,13 @@
 - **Files affected:** `api/routers/settings.py`, `api/routers/knowledge_docs.py`
 - **Blocked by:** nothing
 
+### PB-45: D3 — Full lightweight gap analysis for manual mode
+- **Source:** Content Engine v1.3 sprint — D3 deferred by design
+- **Date added:** 2026-03-02
+- **Description:** Manual mode currently constructs `WorkerQueryContext` inline with minimal data. Full s3-s6 reuse (search→enrich→embed→analyze on user's topic) would provide richer context but adds 2-5 min latency and requires s1 output (SemanticUnit list) as prerequisite. Current inline approach is sufficient for v0.
+- **Files affected:** `core/content_engine/pipeline_v13.py` (lines 395-435)
+- **Blocked by:** nothing
+
 ### PB-44: Knowledge doc upload content_type inferred from extension only
 - **Source:** Settings-knowledge-docs sprint self-review
 - **Date added:** 2026-02-27
@@ -367,3 +496,15 @@
 
 ### PB-37: No test for invite code reuse ✅ RESOLVED 2026-02-27
 - **Resolved by:** security-fixes sprint — TestC5InviteRaceCondition.test_invite_code_single_use
+
+### PB-46: v1.0 pipeline evaluator 3-tuple unpack crash ✅ RESOLVED 2026-03-02
+- **Resolved by:** v1.3 critical fixes — `pipeline.py:460` changed to `optimized, history, _ = ...`; 1 regression test added
+
+### PB-47: Dispatcher zip mismatch — silent brief/content corruption ✅ RESOLVED 2026-03-02
+- **Resolved by:** v1.3 critical fixes — `dispatch_workers_v13()` now returns `List[Tuple[str, FormattedContent]]`; Stage 4 uses dict-based brief_id lookup; `_rebrief_and_rerun()` unpacks tuple; 2 regression tests added
+
+### PB-48: v1.3 approval endpoints missing tenant ownership check ✅ RESOLVED 2026-03-02
+- **Resolved by:** v1.3 critical fixes — Added `Request` + `task.company_slug != user_company_slug → 403` to 4 endpoints in `content_v13.py`; 5 cross-tenant tests added
+
+### PB-49: Re-brief brief_id collision overwrites original artifact ✅ RESOLVED 2026-03-02
+- **Resolved by:** v1.3 critical fixes — Added `brief_id_overrides` to `build_briefs_parallel()`; `_rebrief_and_rerun()` passes `rebrief-{uuid8}` override; 4 collision-prevention tests added

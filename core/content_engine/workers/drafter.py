@@ -10,16 +10,15 @@ import logging
 import re
 from typing import Optional
 
-from anthropic import AsyncAnthropic
-
 from core.config.settings import settings
+from core.content_engine.llm_client import llm_call
 from core.content_engine.prompts.drafter_prompts import (
     DRAFTER_SYSTEM_PROMPT,
     REVISION_SYSTEM_PROMPT,
     build_drafter_user_prompt,
 )
-from core.content_engine.tracing import create_span, end_span, log_generation
-from core.content_engine.utils import _retry_async_anthropic, truncate_to_token_limit
+from core.content_engine.tracing_v13 import create_span, end_span, log_generation
+from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation import ContentBrief, ContentDraft, ContentOutline
 
 logger = logging.getLogger(__name__)
@@ -42,7 +41,7 @@ async def generate_draft(
         brief: Original content brief for context.
         style_guide_md: Company writing style guide.
         company_context_md: Company context markdown.
-        trace: Langfuse trace for instrumentation.
+        trace: Trace span for instrumentation.
 
     Returns:
         ContentDraft with full markdown and word count.
@@ -71,63 +70,62 @@ async def generate_draft(
         exemplar_summaries=[e.model_dump() for e in brief.exemplar_summaries],
         exemplar_themes=brief.exemplar_themes,
         word_count_range=brief.word_count_range,
+        voice_tone_description=getattr(outline, "voice_tone_description", ""),
     )
 
     user_prompt = truncate_to_token_limit(
         user_prompt, _MAX_INPUT_TOKENS, label="drafter_prompt"
     )
 
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-
-    async def _call():
-        return await client.messages.create(
+    try:
+        response = await llm_call(
             model=model,
-            max_tokens=8192,
             system=DRAFTER_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
+            user=user_prompt,
+            max_tokens=8192,
+            metadata={"agent": "drafter", "brief_id": brief.brief_id},
+            base_delay=2.0,
         )
 
-    response = await _retry_async_anthropic(_call, max_retries=3, base_delay=2.0)
+        raw_text = response.content
 
-    raw_text = ""
-    for block in response.content:
-        if hasattr(block, "text"):
-            raw_text += block.text
+        # Clean up: remove code fences if the model wrapped output
+        markdown = raw_text.strip()
+        if markdown.startswith("```markdown"):
+            markdown = markdown[len("```markdown") :].strip()
+        if markdown.startswith("```"):
+            markdown = markdown[3:].strip()
+        if markdown.endswith("```"):
+            markdown = markdown[:-3].strip()
 
-    # Clean up: remove code fences if the model wrapped output
-    markdown = raw_text.strip()
-    if markdown.startswith("```markdown"):
-        markdown = markdown[len("```markdown") :].strip()
-    if markdown.startswith("```"):
-        markdown = markdown[3:].strip()
-    if markdown.endswith("```"):
-        markdown = markdown[:-3].strip()
+        word_count = len(markdown.split())
 
-    word_count = len(markdown.split())
+        log_generation(
+            span,
+            name="drafter",
+            model=model,
+            input_text=user_prompt,
+            output_text=markdown,
+            model_parameters={"max_tokens": 8192},
+            usage={
+                "prompt_tokens": response.input_tokens,
+                "completion_tokens": response.output_tokens,
+                "total_tokens": response.total_tokens,
+            },
+        )
+        end_span(span, output={"word_count": word_count, "brief_id": brief.brief_id})
 
-    log_generation(
-        trace,
-        name="drafter",
-        model=model,
-        input_text=user_prompt,
-        output_text=markdown,
-        parent_span=span,
-        model_parameters={"max_tokens": 8192},
-        usage={
-            "input": response.usage.input_tokens,
-            "output": response.usage.output_tokens,
-        },
-    )
-    end_span(span, output={"word_count": word_count, "brief_id": brief.brief_id})
+        logger.info("Drafter: %s → %d words", brief.brief_id, word_count)
 
-    logger.info("Drafter: %s → %d words", brief.brief_id, word_count)
-
-    return ContentDraft(
-        brief_id=brief.brief_id,
-        title=brief.title,
-        markdown=markdown,
-        word_count=word_count,
-    )
+        return ContentDraft(
+            brief_id=brief.brief_id,
+            title=brief.title,
+            markdown=markdown,
+            word_count=word_count,
+        )
+    except Exception as exc:
+        end_span(span, error=str(exc)[:500])
+        raise
 
 
 async def revise_draft(
@@ -149,7 +147,7 @@ async def revise_draft(
         feedback: Compiled feedback from failed evaluation dimensions.
         style_guide_md: Company writing style guide.
         company_context_md: Company context markdown.
-        trace: Langfuse trace for instrumentation.
+        trace: Trace span for instrumentation.
 
     Returns:
         Revised ContentDraft.
@@ -206,53 +204,51 @@ count target. Return the complete revised article in Markdown.
         user_prompt, _MAX_INPUT_TOKENS, label="revision_prompt"
     )
 
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-
-    async def _call():
-        return await client.messages.create(
+    try:
+        response = await llm_call(
             model=model,
-            max_tokens=8192,
             system=REVISION_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
+            user=user_prompt,
+            max_tokens=8192,
+            metadata={"agent": "revision_drafter", "brief_id": brief.brief_id},
+            base_delay=2.0,
         )
 
-    response = await _retry_async_anthropic(_call, max_retries=3, base_delay=2.0)
+        raw_text = response.content
 
-    raw_text = ""
-    for block in response.content:
-        if hasattr(block, "text"):
-            raw_text += block.text
+        markdown = raw_text.strip()
+        if markdown.startswith("```markdown"):
+            markdown = markdown[len("```markdown") :].strip()
+        if markdown.startswith("```"):
+            markdown = markdown[3:].strip()
+        if markdown.endswith("```"):
+            markdown = markdown[:-3].strip()
 
-    markdown = raw_text.strip()
-    if markdown.startswith("```markdown"):
-        markdown = markdown[len("```markdown") :].strip()
-    if markdown.startswith("```"):
-        markdown = markdown[3:].strip()
-    if markdown.endswith("```"):
-        markdown = markdown[:-3].strip()
+        word_count = len(markdown.split())
 
-    word_count = len(markdown.split())
+        log_generation(
+            span,
+            name="revision_drafter",
+            model=model,
+            input_text=user_prompt,
+            output_text=markdown,
+            model_parameters={"max_tokens": 8192},
+            usage={
+                "prompt_tokens": response.input_tokens,
+                "completion_tokens": response.output_tokens,
+                "total_tokens": response.total_tokens,
+            },
+        )
+        end_span(span, output={"word_count": word_count, "revised": True})
 
-    log_generation(
-        trace,
-        name="revision_drafter",
-        model=model,
-        input_text=user_prompt,
-        output_text=markdown,
-        parent_span=span,
-        model_parameters={"max_tokens": 8192},
-        usage={
-            "input": response.usage.input_tokens,
-            "output": response.usage.output_tokens,
-        },
-    )
-    end_span(span, output={"word_count": word_count, "revised": True})
+        logger.info("Revision Drafter: %s → %d words", brief.brief_id, word_count)
 
-    logger.info("Revision Drafter: %s → %d words", brief.brief_id, word_count)
-
-    return ContentDraft(
-        brief_id=brief.brief_id,
-        title=brief.title,
-        markdown=markdown,
-        word_count=word_count,
-    )
+        return ContentDraft(
+            brief_id=brief.brief_id,
+            title=brief.title,
+            markdown=markdown,
+            word_count=word_count,
+        )
+    except Exception as exc:
+        end_span(span, error=str(exc)[:500])
+        raise

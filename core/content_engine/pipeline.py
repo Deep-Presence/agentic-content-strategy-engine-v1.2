@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.config.settings import settings
-from core.content_engine.tracing import (
+from core.content_engine.tracing_v13 import (
     create_pipeline_trace,
     create_session,
     create_span,
@@ -158,7 +158,6 @@ async def _run_content_review_hitl(
     task_store: Any,
     event_bus: Any,
     session_id: str = "",
-    parent_span: Optional[object] = None,
 ) -> List[ContentPiece]:
     """Run Stage 4 with HITL interrupt/resume via API task_store.
 
@@ -172,7 +171,6 @@ async def _run_content_review_hitl(
     from langgraph.types import Command
 
     from core.content_engine.graph import build_content_review_graph
-    from core.content_engine.tracing import create_span, end_span, log_score, update_trace_output
 
     # Import TaskStatus locally to avoid circular import
     from api.tasks.models import TaskStatus
@@ -308,7 +306,7 @@ async def run_content_generation(
     skip_stages = input_data.skip_stages
     pipeline_start = time.monotonic()
 
-    # Langfuse session + pipeline trace
+    # LangSmith session + pipeline trace
     session_id = create_session(slug)
     pipeline_trace = create_pipeline_trace(
         session_id,
@@ -324,6 +322,45 @@ async def run_content_generation(
 
     _cli_header(slug, skip_stages)
 
+    try:
+        return await _run_v10_pipeline_stages(
+            input_data=input_data,
+            slug=slug,
+            artifact_dir=artifact_dir,
+            skip_stages=skip_stages,
+            pipeline_start=pipeline_start,
+            session_id=session_id,
+            pipeline_trace=pipeline_trace,
+            task_id=task_id,
+            task_store=task_store,
+            event_bus=event_bus,
+            session_factory=session_factory,
+            run_id=run_id,
+            company_id=company_id,
+        )
+    except Exception as exc:
+        end_span(pipeline_trace, error=str(exc)[:500])
+        flush()
+        raise
+
+
+async def _run_v10_pipeline_stages(
+    input_data: ContentGenerationInput,
+    *,
+    slug: str,
+    artifact_dir: Path,
+    skip_stages: list,
+    pipeline_start: float,
+    session_id: str,
+    pipeline_trace: object,
+    task_id: Optional[str] = None,
+    task_store: Optional[object] = None,
+    event_bus: Optional[object] = None,
+    session_factory: Optional[async_sessionmaker] = None,
+    run_id: Optional[uuid.UUID] = None,
+    company_id: Optional[uuid.UUID] = None,
+) -> ContentGenerationOutput:
+    """Internal stage execution for v1.0 — called inside try/except."""
     # Load shared input artifacts
     company_context_md = _load_artifact_md(input_data.company_context_path)
     style_guide_md = _load_artifact_md(input_data.style_guide_path)
@@ -457,7 +494,7 @@ async def run_content_generation(
             _cli_worker_progress(
                 f"Evaluating brief-{i + 1}/{len(formatted_contents)}: \"{fc.title[:50]}...\""
             )
-            optimized, history = await evaluate_and_optimize(
+            optimized, history, _ = await evaluate_and_optimize(
                 content=fc,
                 brief=brief,
                 company_context_md=company_context_md,
@@ -540,7 +577,6 @@ async def run_content_generation(
             task_store=task_store,
             event_bus=event_bus,
             session_id=session_id,
-            parent_span=stage4_span,
         )
         end_span(stage4_span, output={
             "approved": sum(1 for p in pieces if p.status == ContentStatus.APPROVED),
@@ -610,13 +646,13 @@ async def run_content_generation(
     )
 
     # Finalize pipeline trace
+    # update_trace_output ends the trace internally — no end_span needed
     update_trace_output(pipeline_trace, output={
         "total_briefs": len(briefs),
         "total_approved": total_approved,
         "total_rejected": total_rejected,
         "total_time_s": round(time.monotonic() - pipeline_start, 1),
     })
-    end_span(pipeline_trace)
 
-    flush()  # Flush Langfuse events
+    flush()  # Flush tracing events
     return output
