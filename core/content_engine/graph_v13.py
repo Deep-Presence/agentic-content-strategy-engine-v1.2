@@ -18,7 +18,9 @@ import logging
 import time
 import uuid
 from typing import Any, Dict, List, Optional
+from typing_extensions import TypedDict
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
@@ -27,6 +29,55 @@ from api.tasks.models import TaskStatus
 from core.content_engine.tracing_v13 import create_span, end_span, get_current_span
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_checkpointer(checkpointer: Any) -> BaseCheckpointSaver:
+    """Return checkpointer if valid, otherwise default to MemorySaver."""
+    if isinstance(checkpointer, BaseCheckpointSaver):
+        return checkpointer
+    return MemorySaver()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# State schemas — TypedDict gives each key its own LangGraph channel,
+# fixing INVALID_CONCURRENT_GRAPH_UPDATE with StateGraph(dict).
+# total=False: all keys optional (not all present at init).
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TopicApprovalState(TypedDict, total=False):
+    planner_selections: list
+    selection_metadata: dict
+    auto_approve: bool
+    topic_presented_at: int
+    topic_selections_count: int
+    topic_decision: str
+    approved_topic_ranks: list
+    topic_feedback: str
+
+
+class BriefApprovalState(TypedDict, total=False):
+    blueprint: dict
+    auto_approve: bool
+    brief_presented_at: int
+    brief_id: str
+    brief_title: str
+    brief_decision: str
+    brief_feedback: str
+
+
+class ContentReviewState(TypedDict, total=False):
+    content: Any
+    eval_summary: dict
+    auto_approve: bool
+    content_presented_at: int
+    content_brief_id: str
+    content_decision: str
+    editor_notes: str
+    rethink: bool
+    editor_notes_applied: bool
+    finalized: bool
+    finalized_at: int
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -99,7 +150,7 @@ def build_topic_approval_graph(
     The pipeline orchestrator handles retry logic externally
     (re-running the Strategic Planner with feedback).
     """
-    graph = StateGraph(dict)
+    graph = StateGraph(TopicApprovalState)
 
     graph.add_node("present", _topic_present)
     graph.add_node("approval_gate", _topic_approval_gate)
@@ -116,7 +167,7 @@ def build_topic_approval_graph(
         },
     )
 
-    return graph.compile(checkpointer=checkpointer or MemorySaver())
+    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -192,7 +243,7 @@ def build_brief_approval_graph(
     The pipeline orchestrator handles the feedback loop
     (re-running Agent 2 with user feedback).
     """
-    graph = StateGraph(dict)
+    graph = StateGraph(BriefApprovalState)
 
     graph.add_node("present", _brief_present)
     graph.add_node("approval_gate", _brief_approval_gate)
@@ -209,7 +260,7 @@ def build_brief_approval_graph(
         },
     )
 
-    return graph.compile(checkpointer=checkpointer or MemorySaver())
+    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -333,7 +384,7 @@ def build_content_review_graph(
     the edit retry logic and calls ``_apply_human_edits()`` after this graph
     returns.  The graph must exit on every decision — never loop internally.
     """
-    graph = StateGraph(dict)
+    graph = StateGraph(ContentReviewState)
 
     graph.add_node("present", _content_present)
     graph.add_node("approval_gate", _content_approval_gate)
@@ -354,7 +405,7 @@ def build_content_review_graph(
     graph.add_edge("apply_edits", END)  # Pipeline handles revision + re-presentation externally
     graph.add_edge("finalize", END)
 
-    return graph.compile(checkpointer=checkpointer or MemorySaver())
+    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
 
 
 # ═══════════════════════════════════════════════════════════════════════

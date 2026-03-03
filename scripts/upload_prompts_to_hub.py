@@ -19,18 +19,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Prompt name → (hub_name, module_path, constant_name)
 PROMPTS = [
-    ("deep-presence/outliner-system", "core.content_engine.prompts.outliner_prompts", "OUTLINER_SYSTEM_PROMPT"),
-    ("deep-presence/drafter-system", "core.content_engine.prompts.drafter_prompts", "DRAFTER_SYSTEM_PROMPT"),
-    ("deep-presence/drafter-revision", "core.content_engine.prompts.drafter_prompts", "REVISION_SYSTEM_PROMPT"),
-    ("deep-presence/enricher-system", "core.content_engine.prompts.enricher_prompts", "ENRICHER_SYSTEM_PROMPT"),
-    ("deep-presence/formatter-system", "core.content_engine.prompts.formatter_prompts", "FORMATTER_SYSTEM_PROMPT"),
-    ("deep-presence/factual-judge-system", "core.content_engine.prompts.factual_judge_prompts", "FACTUAL_JUDGE_SYSTEM_PROMPT"),
-    ("deep-presence/style-judge-system", "core.content_engine.prompts.style_judge_prompts", "STYLE_JUDGE_SYSTEM_PROMPT"),
-    ("deep-presence/eeat-judge-system", "core.content_engine.prompts.eeat_judge_prompts", "EEAT_JUDGE_SYSTEM_PROMPT"),
-    ("deep-presence/planner-system", "core.content_engine.prompts.planner_prompts", "PLANNER_SYSTEM_PROMPT"),
-    ("deep-presence/strategic-planner-system", "core.content_engine.prompts.strategic_planner_prompts", "STRATEGIC_PLANNER_SYSTEM_PROMPT"),
-    ("deep-presence/brief-builder-system", "core.content_engine.prompts.brief_builder_prompts", "BRIEF_BUILDER_SYSTEM_PROMPT"),
-    ("deep-presence/linker-system", "core.content_engine.prompts.linker_prompts", "LINKER_SYSTEM_PROMPT"),
+    ("outliner-system", "core.content_engine.prompts.outliner_prompts", "OUTLINER_SYSTEM_PROMPT"),
+    ("drafter-system", "core.content_engine.prompts.drafter_prompts", "DRAFTER_SYSTEM_PROMPT"),
+    ("drafter-revision", "core.content_engine.prompts.drafter_prompts", "REVISION_SYSTEM_PROMPT"),
+    ("enricher-system", "core.content_engine.prompts.enricher_prompts", "ENRICHER_SYSTEM_PROMPT"),
+    ("formatter-system", "core.content_engine.prompts.formatter_prompts", "FORMATTER_SYSTEM_PROMPT"),
+    ("factual-judge-system", "core.content_engine.prompts.factual_judge_prompts", "FACTUAL_JUDGE_SYSTEM_PROMPT"),
+    ("style-judge-system", "core.content_engine.prompts.style_judge_prompts", "STYLE_JUDGE_SYSTEM_PROMPT"),
+    ("eeat-judge-system", "core.content_engine.prompts.eeat_judge_prompts", "EEAT_JUDGE_SYSTEM_PROMPT"),
+    ("planner-system", "core.content_engine.prompts.planner_prompts", "PLANNER_SYSTEM_PROMPT"),
+    ("strategic-planner-system", "core.content_engine.prompts.strategic_planner_prompts", "STRATEGIC_PLANNER_SYSTEM_PROMPT"),
+    ("brief-builder-system", "core.content_engine.prompts.brief_builder_prompts", "BRIEF_BUILDER_SYSTEM_PROMPT"),
+    ("linker-system", "core.content_engine.prompts.linker_prompts", "LINKER_SYSTEM_PROMPT"),
 ]
 
 
@@ -47,7 +47,18 @@ def main() -> None:
         print("ERROR: langsmith not installed. Run: pip install langsmith")
         sys.exit(1)
 
-    client = Client()
+    from langchain_core.prompts import ChatPromptTemplate
+
+    from core.config.settings import settings
+
+    if not settings.langsmith_api_key:
+        print("ERROR: LANGSMITH_API_KEY not set in .env.local")
+        sys.exit(1)
+
+    client_kwargs: dict = {"api_key": settings.langsmith_api_key}
+    if settings.langsmith_workspace_id:
+        client_kwargs["workspace_id"] = settings.langsmith_workspace_id
+    client = Client(**client_kwargs)
 
     for hub_name, module_path, constant_name in PROMPTS:
         module = importlib.import_module(module_path)
@@ -59,9 +70,12 @@ def main() -> None:
             continue
 
         try:
+            prompt_obj = ChatPromptTemplate.from_messages([
+                ("system", prompt_text),
+            ])
             client.push_prompt(
                 hub_name,
-                object=prompt_text,
+                object=prompt_obj,
                 description=f"System prompt: {constant_name} from {module_path}",
             )
             print(f"[OK] Uploaded: {hub_name} ({char_count:,} chars)")

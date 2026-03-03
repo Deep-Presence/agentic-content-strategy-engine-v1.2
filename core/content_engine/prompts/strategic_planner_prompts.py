@@ -131,7 +131,7 @@ def build_strategic_planner_user_prompt(
 # Hub getter (opt-in via settings.langsmith_use_hub)
 # ---------------------------------------------------------------------------
 
-_HUB_NAME = "deep-presence/strategic-planner-system"
+_HUB_NAME = "strategic-planner-system"
 
 
 def get_strategic_planner_system_prompt() -> str:

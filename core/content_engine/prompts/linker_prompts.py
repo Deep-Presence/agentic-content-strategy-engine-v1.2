@@ -117,7 +117,7 @@ Use web search to find the best matching resource.
 # Hub getter (opt-in via settings.langsmith_use_hub)
 # ---------------------------------------------------------------------------
 
-_HUB_NAME = "deep-presence/linker-system"
+_HUB_NAME = "linker-system"
 
 
 def get_linker_system_prompt() -> str:

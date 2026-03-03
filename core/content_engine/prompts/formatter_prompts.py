@@ -102,7 +102,7 @@ Return the complete formatted article.
 # Hub getter (opt-in via settings.langsmith_use_hub)
 # ---------------------------------------------------------------------------
 
-_HUB_NAME = "deep-presence/formatter-system"
+_HUB_NAME = "formatter-system"
 
 
 def get_formatter_system_prompt() -> str:

@@ -6,7 +6,7 @@ When Hub is unavailable or disabled, local fallback prompts are used.
 Usage in prompt files:
     from core.content_engine.prompt_registry import get_prompt
 
-    _HUB_NAME = "deep-presence/outliner-system"
+    _HUB_NAME = "outliner-system"
 
     def get_outliner_system_prompt() -> str:
         return get_prompt(_HUB_NAME, OUTLINER_SYSTEM_PROMPT)
@@ -71,7 +71,10 @@ def _pull_from_hub(hub_name: str, tag: str = "") -> Optional[str]:
     try:
         from langsmith import Client
 
-        client = Client()
+        client_kwargs: Dict[str, Any] = {"api_key": settings.langsmith_api_key}
+        if settings.langsmith_workspace_id:
+            client_kwargs["workspace_id"] = settings.langsmith_workspace_id
+        client = Client(**client_kwargs)
         kwargs: Dict[str, Any] = {}
         if tag:
             kwargs["commit_hash"] = tag
@@ -91,7 +94,7 @@ def get_prompt(hub_name: str, local_fallback: str, tag: str = "") -> str:
     """Get a prompt from Hub with local fallback. Thread-safe, TTL-cached.
 
     Args:
-        hub_name: LangSmith Hub prompt name (e.g., "deep-presence/outliner-system").
+        hub_name: LangSmith Hub prompt name (e.g., "outliner-system").
         local_fallback: Local prompt string to use when Hub is unavailable.
         tag: Optional version tag for Hub (e.g., "production").
 

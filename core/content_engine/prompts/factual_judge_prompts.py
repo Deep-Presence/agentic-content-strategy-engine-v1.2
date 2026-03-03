@@ -65,7 +65,7 @@ Flag any unsupported claims, outdated statistics, or questionable assertions.
 # Hub getter (opt-in via settings.langsmith_use_hub)
 # ---------------------------------------------------------------------------
 
-_HUB_NAME = "deep-presence/factual-judge-system"
+_HUB_NAME = "factual-judge-system"
 
 
 def get_factual_judge_system_prompt() -> str:

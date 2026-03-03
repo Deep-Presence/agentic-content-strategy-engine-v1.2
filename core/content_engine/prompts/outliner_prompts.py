@@ -241,7 +241,7 @@ unless the format is short_faq.
 # Hub getter (opt-in via settings.langsmith_use_hub)
 # ---------------------------------------------------------------------------
 
-_HUB_NAME = "deep-presence/outliner-system"
+_HUB_NAME = "outliner-system"
 
 
 def get_outliner_system_prompt() -> str:

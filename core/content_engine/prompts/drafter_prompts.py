@@ -239,8 +239,8 @@ placeholders where specific statistics or data points should be inserted.
 # Hub getters (opt-in via settings.langsmith_use_hub)
 # ---------------------------------------------------------------------------
 
-_HUB_NAME_DRAFTER = "deep-presence/drafter-system"
-_HUB_NAME_REVISION = "deep-presence/drafter-revision"
+_HUB_NAME_DRAFTER = "drafter-system"
+_HUB_NAME_REVISION = "drafter-revision"
 
 
 def get_drafter_system_prompt() -> str:

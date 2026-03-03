@@ -229,7 +229,7 @@ def build_brief_builder_user_prompt(
 # Hub getter (opt-in via settings.langsmith_use_hub)
 # ---------------------------------------------------------------------------
 
-_HUB_NAME = "deep-presence/brief-builder-system"
+_HUB_NAME = "brief-builder-system"
 
 
 def get_brief_builder_system_prompt() -> str:

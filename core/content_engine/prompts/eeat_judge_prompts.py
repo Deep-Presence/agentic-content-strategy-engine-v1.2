@@ -116,7 +116,7 @@ def build_eeat_judge_user_prompt(
 # Hub getter (opt-in via settings.langsmith_use_hub)
 # ---------------------------------------------------------------------------
 
-_HUB_NAME = "deep-presence/eeat-judge-system"
+_HUB_NAME = "eeat-judge-system"
 
 
 def get_eeat_judge_system_prompt() -> str:

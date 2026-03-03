@@ -30,9 +30,10 @@ from __future__ import annotations
 
 import contextvars
 import logging
-import os
 import time
 from typing import Any, Dict, List, Optional, Union
+
+from core.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -76,14 +77,14 @@ def _is_enabled() -> bool:
     """Check if LangSmith tracing is enabled."""
     if not _langsmith_available:
         return False
-    if not os.environ.get("LANGSMITH_API_KEY"):
+    if not settings.langsmith_api_key:
         return False
     return True
 
 
 def _get_project_name() -> str:
     """Get the LangSmith project name from env or default."""
-    return os.environ.get("LANGSMITH_PROJECT", "content-engine")
+    return settings.langsmith_project
 
 
 _client_instance: Optional[Any] = None
@@ -93,7 +94,10 @@ def _get_client() -> Any:
     """Return a cached LangSmith Client singleton."""
     global _client_instance
     if _client_instance is None:
-        _client_instance = Client()
+        _kwargs: dict[str, Any] = {"api_key": settings.langsmith_api_key}
+        if settings.langsmith_workspace_id:
+            _kwargs["workspace_id"] = settings.langsmith_workspace_id
+        _client_instance = Client(**_kwargs)
     return _client_instance
 
 

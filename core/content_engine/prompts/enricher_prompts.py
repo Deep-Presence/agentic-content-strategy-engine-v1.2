@@ -70,7 +70,7 @@ Only correct factual data if provably wrong.
 # Hub getter (opt-in via settings.langsmith_use_hub)
 # ---------------------------------------------------------------------------
 
-_HUB_NAME = "deep-presence/enricher-system"
+_HUB_NAME = "enricher-system"
 
 
 def get_enricher_system_prompt() -> str:

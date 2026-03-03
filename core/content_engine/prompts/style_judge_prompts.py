@@ -97,7 +97,7 @@ rules, not just general impressions. Cite exact passages that violate style guid
 # Hub getter (opt-in via settings.langsmith_use_hub)
 # ---------------------------------------------------------------------------
 
-_HUB_NAME = "deep-presence/style-judge-system"
+_HUB_NAME = "style-judge-system"
 
 
 def get_style_judge_system_prompt() -> str:

@@ -137,6 +137,7 @@ class Settings(BaseSettings):
 
     # --- LangSmith (observability + Hub) ---
     langsmith_api_key: str | None = None
+    langsmith_workspace_id: str | None = None
     langsmith_project: str = "content-engine"
     langsmith_use_hub: bool = False
     langsmith_hub_tag: str = "production"

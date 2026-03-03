@@ -318,7 +318,7 @@ def _safe_json_str(data: dict, max_len: int = 10000) -> str:
 # Hub getter (opt-in via settings.langsmith_use_hub)
 # ---------------------------------------------------------------------------
 
-_HUB_NAME = "deep-presence/planner-system"
+_HUB_NAME = "planner-system"
 
 
 def get_planner_system_prompt() -> str:
