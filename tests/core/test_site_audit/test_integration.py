@@ -190,9 +190,9 @@ class TestComputeDimensionScore:
 
     def test_multiple_findings_accumulate(self) -> None:
         findings = [
-            _make_finding(severity=AuditCheckSeverity.critical),  # -10
-            _make_finding(severity=AuditCheckSeverity.high),  # -5
-            _make_finding(severity=AuditCheckSeverity.medium),  # -2
+            _make_finding(severity=AuditCheckSeverity.critical, finding_type="issue_a"),  # -10
+            _make_finding(severity=AuditCheckSeverity.high, finding_type="issue_b"),  # -5
+            _make_finding(severity=AuditCheckSeverity.medium, finding_type="issue_c"),  # -2
         ]
         score = compute_dimension_score(AuditDimension.crawlability, findings)
         assert score.score == 83.0
@@ -200,8 +200,8 @@ class TestComputeDimensionScore:
     def test_score_clamped_at_zero(self) -> None:
         # 15 critical findings = -150, but clamped to 0
         findings = [
-            _make_finding(severity=AuditCheckSeverity.critical)
-            for _ in range(15)
+            _make_finding(severity=AuditCheckSeverity.critical, finding_type=f"issue_{i}")
+            for i in range(15)
         ]
         score = compute_dimension_score(AuditDimension.crawlability, findings)
         assert score.score == 0.0
@@ -307,6 +307,124 @@ class TestComputeGrade:
 
     def test_100_is_a(self) -> None:
         assert compute_grade(100.0) == "A"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PAGE-NORMALISED SCORING TESTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestPageNormalisedScoring:
+    """Tests for page-normalised penalty accumulation (T-SA-08)."""
+
+    def test_200_page_and_2_page_comparable_scores(self) -> None:
+        """Same per-page issue rate → scores within 15 points."""
+        # 1 low finding per page on every page
+        findings_200 = [
+            _make_finding(
+                severity=AuditCheckSeverity.low,
+                url=f"https://example.com/page{i}",
+                finding_type="missing_thing",
+            )
+            for i in range(200)
+        ]
+        findings_2 = [
+            _make_finding(
+                severity=AuditCheckSeverity.low,
+                url=f"https://example.com/page{i}",
+                finding_type="missing_thing",
+            )
+            for i in range(2)
+        ]
+
+        score_200 = compute_dimension_score(
+            AuditDimension.crawlability, findings_200, pages_crawled=200,
+        )
+        score_2 = compute_dimension_score(
+            AuditDimension.crawlability, findings_2, pages_crawled=2,
+        )
+        # Both sites: 100% pages affected, 1 low per page → penalty=1.0 → score=99
+        assert abs(score_200.score - score_2.score) <= 15.0
+        # In fact they should be identical
+        assert score_200.score == score_2.score == 99.0
+
+    def test_single_finding_200_page_site_minor_penalty(self) -> None:
+        """1 low finding on 200 pages → score >= 95 (tiny average penalty)."""
+        findings = [
+            _make_finding(
+                severity=AuditCheckSeverity.low,
+                url="https://example.com/page1",
+                finding_type="minor_issue",
+            ),
+        ]
+        score = compute_dimension_score(
+            AuditDimension.crawlability, findings, pages_crawled=200,
+        )
+        # penalty = 1.0 / 200 = 0.005 → score = 99.995
+        assert score.score >= 95.0
+
+    def test_all_pages_affected_full_penalty(self) -> None:
+        """200/200 pages with critical → penalty = 10, score ≈ 90."""
+        findings = [
+            _make_finding(
+                severity=AuditCheckSeverity.critical,
+                url=f"https://example.com/page{i}",
+                finding_type="blocked_resource",
+            )
+            for i in range(200)
+        ]
+        score = compute_dimension_score(
+            AuditDimension.crawlability, findings, pages_crawled=200,
+        )
+        # All 200 pages have penalty 10 → mean = 10 → score = 90
+        assert score.score == 90.0
+
+    def test_zero_pages_no_crash(self) -> None:
+        """pages_crawled=0 handled by max(1, ...) — no ZeroDivisionError."""
+        findings = [
+            _make_finding(severity=AuditCheckSeverity.critical),
+        ]
+        score = compute_dimension_score(
+            AuditDimension.crawlability, findings, pages_crawled=0,
+        )
+        # Degrades gracefully to pages_crawled=1 behaviour
+        assert score.score == 90.0
+
+    def test_site_level_finding_not_divided_by_pages(self) -> None:
+        """Findings with url="" apply full flat penalty regardless of page count."""
+        site_finding = AuditFinding(
+            finding_type="robots_blocks_all",
+            dimension=AuditDimension.crawlability,
+            severity=AuditCheckSeverity.critical,
+            message="robots.txt blocks all bots",
+            recommendation="Fix robots.txt",
+            url="",  # site-level
+        )
+        score = compute_dimension_score(
+            AuditDimension.crawlability, [site_finding], pages_crawled=200,
+        )
+        # Site-level penalty = 10, not divided by 200 → score = 90
+        assert score.score == 90.0
+
+    def test_mixed_severity_same_finding_type_takes_worst(self) -> None:
+        """Same finding_type at low + critical on same page → uses critical penalty."""
+        findings = [
+            _make_finding(
+                severity=AuditCheckSeverity.low,
+                url="https://example.com/page1",
+                finding_type="dup_issue",
+            ),
+            _make_finding(
+                severity=AuditCheckSeverity.critical,
+                url="https://example.com/page1",
+                finding_type="dup_issue",
+            ),
+        ]
+        score = compute_dimension_score(
+            AuditDimension.crawlability, findings, pages_crawled=1,
+        )
+        # Dedup takes max(1, 10) = 10 → score = 90 (not 89)
+        assert score.score == 90.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -661,6 +779,7 @@ class TestPipelineIntegration:
                     company_slug="example-corp",
                 ),
                 on_progress=progress_messages.append,
+                output_dir=tmp_path,
             )
 
         assert result.status == "completed"
@@ -711,7 +830,7 @@ class TestPipelineIntegration:
         assert result.pages_crawled == 1
         # Schema and AEO should be defaults (not enriched)
         page = result.page_results[0]
-        assert page.schema.has_schema is False
+        assert page.schema_result.has_schema is False
         assert page.aeo.snippet_readiness_score == 0.0
 
     @pytest.mark.asyncio
@@ -804,3 +923,433 @@ class TestPipelineIntegration:
         assert result.status == "completed"
         assert result.pages_crawled == 0
         assert result.audit_id != ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DEGRADED PIPELINE TESTS (T-SA-09)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDegradedPipeline:
+    """Tests for partial-step failure tracking and degraded status."""
+
+    def _mock_discovery(self) -> Any:
+        """Create a standard mock discovery for degraded tests."""
+        from core.site_audit.steps.s1_discover import S1DiscoveryOutput
+
+        html = "<html><head><title>Test</title></head><body><h1>Test</h1><p>Content here for analysis.</p></body></html>"
+        return S1DiscoveryOutput(
+            pages_with_html=[
+                ("https://example.com/", html),
+                ("https://example.com/about", html),
+            ],
+            crawl_depth_map={
+                "https://example.com/": 0,
+                "https://example.com/about": 1,
+            },
+            status_code_map={
+                "https://example.com/": 200,
+                "https://example.com/about": 200,
+            },
+            redirect_map={},
+            discovered_urls={"https://example.com/", "https://example.com/about"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_s3_failure_produces_degraded_status(self) -> None:
+        """When s3 (schema) fails catastrophically, status is 'degraded'."""
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=self._mock_discovery(),
+        ), patch(
+            "core.site_audit.pipeline.detect_schema",
+            side_effect=RuntimeError("Schema parser crash"),
+        ):
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(company_name="Test", domain="example.com"),
+                skip_steps=[6],
+            )
+
+        assert result.status == "degraded"
+        assert 3 in result.failed_steps
+        assert "schema_markup" in result.degraded_dimensions
+
+    @pytest.mark.asyncio
+    async def test_s4_failure_produces_degraded_status(self) -> None:
+        """When s4 (AEO) fails catastrophically, status is 'degraded'."""
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=self._mock_discovery(),
+        ), patch(
+            "core.site_audit.pipeline.analyze_aeo_readiness",
+            side_effect=RuntimeError("AEO crash"),
+        ):
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(company_name="Test", domain="example.com"),
+                skip_steps=[6],
+            )
+
+        assert result.status == "degraded"
+        assert 4 in result.failed_steps
+        assert "extractability" in result.degraded_dimensions
+
+    @pytest.mark.asyncio
+    async def test_s3_and_s4_both_fail_degraded(self) -> None:
+        """When both s3 and s4 fail, both dimensions are degraded."""
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=self._mock_discovery(),
+        ), patch(
+            "core.site_audit.pipeline.detect_schema",
+            side_effect=RuntimeError("Schema crash"),
+        ), patch(
+            "core.site_audit.pipeline.analyze_aeo_readiness",
+            side_effect=RuntimeError("AEO crash"),
+        ):
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(company_name="Test", domain="example.com"),
+                skip_steps=[6],
+            )
+
+        assert result.status == "degraded"
+        assert 3 in result.failed_steps
+        assert 4 in result.failed_steps
+        assert "schema_markup" in result.degraded_dimensions
+        assert "extractability" in result.degraded_dimensions
+
+    @pytest.mark.asyncio
+    async def test_degraded_dimension_score_is_zero(self) -> None:
+        """Failed dimension scores are overridden to 0.0."""
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=self._mock_discovery(),
+        ), patch(
+            "core.site_audit.pipeline.detect_schema",
+            side_effect=RuntimeError("Schema crash"),
+        ):
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(company_name="Test", domain="example.com"),
+                skip_steps=[6],
+            )
+
+        # Find the schema_markup dimension score
+        schema_dim = next(
+            ds for ds in result.dimension_scores
+            if ds.dimension.value == "schema_markup"
+        )
+        assert schema_dim.score == 0.0
+        assert schema_dim.weighted_score == 0.0
+
+    @pytest.mark.asyncio
+    async def test_no_failures_status_completed(self) -> None:
+        """Normal run without failures → status='completed', empty failed_steps."""
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=self._mock_discovery(),
+        ):
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(company_name="Test", domain="example.com"),
+                skip_steps=[6],
+            )
+
+        assert result.status == "completed"
+        assert result.failed_steps == []
+        assert result.degraded_dimensions == []
+
+    @pytest.mark.asyncio
+    async def test_s3_per_page_resilience(self) -> None:
+        """One bad page in s3 doesn't fail the whole step."""
+        call_count = 0
+
+        def _flaky_detect(html: str, url: str) -> Any:
+            nonlocal call_count
+            call_count += 1
+            if "about" in url:
+                raise ValueError("Bad HTML on about page")
+            from core.site_audit.steps.s3_check_schema import detect_schema
+            return detect_schema(html, url)
+
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=self._mock_discovery(),
+        ), patch(
+            "core.site_audit.pipeline.detect_schema",
+            side_effect=_flaky_detect,
+        ):
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(company_name="Test", domain="example.com"),
+                skip_steps=[6],
+            )
+
+        # Step 3 did NOT fail as a whole — individual page failure handled
+        assert result.status == "completed"
+        assert 3 not in result.failed_steps
+        assert call_count == 2  # Both pages attempted
+
+    @pytest.mark.asyncio
+    async def test_degraded_result_serialises_with_new_fields(self) -> None:
+        """Degraded result JSON roundtrips with failed_steps/degraded_dimensions."""
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=self._mock_discovery(),
+        ), patch(
+            "core.site_audit.pipeline.detect_schema",
+            side_effect=RuntimeError("Schema crash"),
+        ):
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(company_name="Test", domain="example.com"),
+                skip_steps=[6],
+            )
+
+        # Roundtrip through JSON
+        data = json.loads(result.model_dump_json())
+        restored = SiteAuditResult(**data)
+        assert restored.status == "degraded"
+        assert restored.failed_steps == [3]
+        assert "schema_markup" in restored.degraded_dimensions
+
+
+# ---------------------------------------------------------------------------
+# Config flags wiring tests (T-SA-21)
+# ---------------------------------------------------------------------------
+
+class TestConfigFlagsWired:
+    """Verify that SiteAuditInput config flags control pipeline behaviour."""
+
+    def _mock_discovery(self) -> "S1DiscoveryOutput":
+        from core.site_audit.steps.s1_discover import S1DiscoveryOutput
+
+        return S1DiscoveryOutput(
+            pages_with_html=[
+                (
+                    "https://example.com/",
+                    "<html><head><title>Test</title></head>"
+                    "<body><h1>Test</h1><p>Content here.</p>"
+                    "<noscript>No JS content fallback</noscript></body></html>",
+                ),
+            ],
+            ai_bot_access=AIBotAccessResult(
+                gptbot_allowed=True,
+                robots_txt_exists=True,
+            ),
+            crawl_depth_map={"https://example.com/": 0},
+            status_code_map={"https://example.com/": 200},
+            redirect_map={},
+            discovered_urls={"https://example.com/"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_schema_validation_false_skips_s3(self) -> None:
+        """check_schema_validation=False → no schema findings produced."""
+        mock_disc = self._mock_discovery()
+
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=mock_disc,
+        ):
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(
+                    company_name="Test",
+                    domain="example.com",
+                    check_schema_validation=False,
+                ),
+                skip_steps=[6],
+            )
+
+        assert result.status in ("completed", "degraded")
+        # No schema_result should be set on any page
+        for page in result.page_results:
+            assert page.schema_result is None or page.schema_result == SchemaDetectionResult()
+
+    @pytest.mark.asyncio
+    async def test_schema_validation_true_runs_s3(self) -> None:
+        """check_schema_validation=True (default) → schema detection runs."""
+        mock_disc = self._mock_discovery()
+
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=mock_disc,
+        ):
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(
+                    company_name="Test",
+                    domain="example.com",
+                    check_schema_validation=True,
+                ),
+                skip_steps=[6],
+            )
+
+        assert result.status in ("completed", "degraded")
+        # Schema detection should have run — schema_result populated
+        # (even if no schema found, the detect_schema call was made)
+        assert len(result.page_results) > 0
+
+    @pytest.mark.asyncio
+    async def test_ai_bot_access_false_skips_parsing(self) -> None:
+        """check_ai_bot_access=False → discover_site called with flag."""
+        mock_disc = self._mock_discovery()
+
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=mock_disc,
+        ) as mock_discover:
+            from core.site_audit.pipeline import run_site_audit
+
+            await run_site_audit(
+                SiteAuditInput(
+                    company_name="Test",
+                    domain="example.com",
+                    check_ai_bot_access=False,
+                ),
+                skip_steps=[6],
+            )
+
+        # Verify the flag was passed through to discover_site
+        mock_discover.assert_called_once()
+        call_kwargs = mock_discover.call_args.kwargs
+        assert call_kwargs["check_ai_bot_access"] is False
+
+    @pytest.mark.asyncio
+    async def test_core_web_vitals_false_skips_ssr_check(self) -> None:
+        """check_core_web_vitals=False → no possible_csr_page finding."""
+        # Use HTML that would trigger CSR detection (noscript with content,
+        # minimal body text)
+        from core.site_audit.steps.s1_discover import S1DiscoveryOutput
+
+        csr_html = (
+            "<html><head><title>SPA App</title></head>"
+            "<body><div id='root'></div>"
+            "<noscript>Enable JavaScript to run this app.</noscript>"
+            "</body></html>"
+        )
+        mock_disc = S1DiscoveryOutput(
+            pages_with_html=[("https://example.com/", csr_html)],
+            crawl_depth_map={"https://example.com/": 0},
+            status_code_map={"https://example.com/": 200},
+            redirect_map={},
+            discovered_urls={"https://example.com/"},
+        )
+
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=mock_disc,
+        ):
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(
+                    company_name="Test",
+                    domain="example.com",
+                    check_core_web_vitals=False,
+                ),
+                skip_steps=[6],
+            )
+
+        # No SSR/CSR performance finding should be present
+        for page in result.page_results:
+            ssr_findings = [
+                f for f in page.findings
+                if f.finding_type == "possible_csr_page"
+            ]
+            assert len(ssr_findings) == 0, "SSR check should be skipped when check_core_web_vitals=False"
+
+    @pytest.mark.asyncio
+    async def test_output_dir_uses_tmp_path(self, tmp_path: Path) -> None:
+        """When output_dir is provided, report files go there instead of artifacts/."""
+        from core.site_audit.steps.s1_discover import S1DiscoveryOutput
+
+        mock_discovery = S1DiscoveryOutput(
+            pages_with_html=[
+                ("https://example.com/", "<html><head><title>Test</title></head><body><h1>Test</h1><p>Content.</p></body></html>"),
+            ],
+            crawl_depth_map={"https://example.com/": 0},
+            status_code_map={"https://example.com/": 200},
+            redirect_map={},
+            discovered_urls={"https://example.com/"},
+        )
+
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=mock_discovery,
+        ):
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(company_name="Test", domain="example.com"),
+                output_dir=tmp_path,
+            )
+
+        assert result.status == "completed"
+        # Report files should be inside tmp_path
+        report_files = list(tmp_path.iterdir())
+        assert len(report_files) > 0, "Report should write files to output_dir"
+
+    @pytest.mark.asyncio
+    async def test_output_dir_default_uses_artifacts(self) -> None:
+        """When output_dir is None, default path is computed from effective_slug."""
+        from core.site_audit.steps.s1_discover import S1DiscoveryOutput
+
+        mock_discovery = S1DiscoveryOutput(
+            pages_with_html=[
+                ("https://example.com/", "<html><head><title>Test</title></head><body><h1>Test</h1><p>Content.</p></body></html>"),
+            ],
+            crawl_depth_map={"https://example.com/": 0},
+            status_code_map={"https://example.com/": 200},
+            redirect_map={},
+            discovered_urls={"https://example.com/"},
+        )
+
+        with patch(
+            "core.site_audit.pipeline.discover_site",
+            new_callable=AsyncMock,
+            return_value=mock_discovery,
+        ), patch(
+            "core.site_audit.pipeline.generate_report",
+            new_callable=AsyncMock,
+        ) as mock_report:
+            from core.site_audit.pipeline import run_site_audit
+
+            result = await run_site_audit(
+                SiteAuditInput(
+                    company_name="Test",
+                    domain="example.com",
+                    company_slug="test-co",
+                ),
+            )
+
+        assert result.status == "completed"
+        # Default path should be artifacts/site_audit/{slug}/{audit_id}
+        call_args = mock_report.call_args
+        report_path = call_args[0][1]
+        assert "artifacts" in str(report_path)
+        assert "test-co" in str(report_path)

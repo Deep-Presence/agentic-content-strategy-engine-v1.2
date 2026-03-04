@@ -13,11 +13,18 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
+
+# Match "application/ld+json" with optional charset suffix (case-insensitive).
+_JSONLD_TYPE_RE = re.compile(r"^application/ld\+json\s*(;.*)?$", re.IGNORECASE)
+
+# URI prefixes to strip from @type values.
+_SCHEMA_ORG_PREFIXES = ("http://schema.org/", "https://schema.org/")
 
 # Known schema types we recognise (subset of schema.org)
 KNOWN_SCHEMA_TYPES: frozenset[str] = frozenset(
@@ -34,6 +41,7 @@ KNOWN_SCHEMA_TYPES: frozenset[str] = frozenset(
         "WebSite",
         "WebPage",
         "Speakable",
+        "SpeakableSpecification",
     }
 )
 
@@ -65,9 +73,8 @@ def parse_jsonld_blocks(html: str) -> tuple[list[dict[str, Any]], list[str]]:
         errors.append(f"HTML parse error: {exc}")
         return blocks, errors
 
-    # Match type="application/ld+json" (case-insensitive, with optional charset suffix)
-    # TODO(codex-W3): also match 'application/ld+json; charset=utf-8' variants via regex
-    script_tags = soup.find_all("script", type="application/ld+json")
+    # Match type="application/ld+json" with optional charset suffix (case-insensitive)
+    script_tags = soup.find_all("script", type=_JSONLD_TYPE_RE)
     for i, tag in enumerate(script_tags):
         # Use get_text() as fallback when tag.string is None (multi-node script content)
         raw_text = tag.string if tag.string is not None else tag.get_text()
@@ -97,19 +104,32 @@ def parse_jsonld_blocks(html: str) -> tuple[list[dict[str, Any]], list[str]]:
     return blocks, errors
 
 
+def _normalize_schema_type(raw_type: str) -> str:
+    """Strip ``schema.org`` URI prefixes from a ``@type`` value.
+
+    Converts ``"http://schema.org/Article"`` → ``"Article"`` etc.
+    Short-form types like ``"Article"`` pass through unchanged.
+    """
+    for prefix in _SCHEMA_ORG_PREFIXES:
+        if raw_type.startswith(prefix):
+            return raw_type[len(prefix):]
+    return raw_type
+
+
 def identify_schema_types(blocks: list[dict[str, Any]]) -> list[str]:
     """Extract ``@type`` values from a list of schema blocks.
 
     Handles ``@type`` as both a string and a list of strings.
-    Deduplicates while preserving order of first occurrence.
+    URI-style values (``http://schema.org/Article``) are normalised to
+    short form (``Article``).  Deduplicates while preserving order of
+    first occurrence.
 
     Args:
         blocks: List of schema objects (typically from :func:`parse_jsonld_blocks`).
 
     Returns:
-        Deduplicated list of ``@type`` string values found across all blocks.
-        Only known schema types are included in the result — unknown types are
-        still returned so callers can decide what to do with them.
+        Deduplicated list of normalised ``@type`` string values found
+        across all blocks.
     """
     seen: set[str] = set()
     types: list[str] = []
@@ -126,9 +146,10 @@ def identify_schema_types(blocks: list[dict[str, Any]]) -> list[str]:
             continue
 
         for t in candidates:
-            if t not in seen:
-                seen.add(t)
-                types.append(t)
+            normalized = _normalize_schema_type(t)
+            if normalized not in seen:
+                seen.add(normalized)
+                types.append(normalized)
 
     return types
 
@@ -405,6 +426,66 @@ def infer_page_type(url: str, html: str) -> str:  # noqa: ARG001
     return "page"
 
 
+def validate_product_schema(block: dict[str, Any]) -> list[str]:
+    """Validate a Product schema block.
+
+    Required: ``name``, pricing info (``offers`` OR ``price`` + ``priceCurrency``).
+    Recommended (warning if absent): ``description``, ``image``, ``brand``, ``sku``.
+
+    Args:
+        block: A single schema.org Product object dict.
+
+    Returns:
+        List of validation error/warning strings.  Empty list = valid.
+    """
+    errors: list[str] = []
+
+    if not block.get("name"):
+        errors.append("Product missing required field: name")
+
+    has_offers = bool(block.get("offers"))
+    has_price = bool(block.get("price")) and bool(block.get("priceCurrency"))
+    if not has_offers and not has_price:
+        errors.append("Product missing pricing information: needs offers or price+priceCurrency")
+
+    # Recommended warnings
+    if not block.get("description"):
+        errors.append("Product missing recommended field: description")
+    if not block.get("image"):
+        errors.append("Product missing recommended field: image")
+    if not block.get("brand"):
+        errors.append("Product missing recommended field: brand")
+    if not block.get("sku"):
+        errors.append("Product missing recommended field: sku")
+
+    return errors
+
+
+def validate_speakable_schema(block: dict[str, Any]) -> list[str]:
+    """Validate a Speakable / SpeakableSpecification schema block.
+
+    Required: ``cssSelector`` OR ``xpath``.
+    Recommended (warning if absent): ``name``.
+
+    Args:
+        block: A single schema.org Speakable object dict.
+
+    Returns:
+        List of validation error/warning strings.  Empty list = valid.
+    """
+    errors: list[str] = []
+
+    has_css = bool(block.get("cssSelector"))
+    has_xpath = bool(block.get("xpath"))
+    if not has_css and not has_xpath:
+        errors.append("Speakable missing content selector: needs cssSelector or xpath")
+
+    if not block.get("name"):
+        errors.append("Speakable missing recommended field: name")
+
+    return errors
+
+
 def validate_schema_block(
     block: dict[str, Any],
 ) -> list[str]:
@@ -429,7 +510,7 @@ def validate_schema_block(
     )
 
     all_errors: list[str] = []
-    for t in types:
+    for t in (_normalize_schema_type(t) for t in types):
         if t in ("Article", "BlogPosting"):
             all_errors.extend(validate_article_schema(block))
             break  # Don't double-validate if both types appear
@@ -444,6 +525,12 @@ def validate_schema_block(
             break
         elif t == "BreadcrumbList":
             all_errors.extend(validate_breadcrumb_schema(block))
+            break
+        elif t == "Product":
+            all_errors.extend(validate_product_schema(block))
+            break
+        elif t in ("Speakable", "SpeakableSpecification"):
+            all_errors.extend(validate_speakable_schema(block))
             break
 
     return all_errors

@@ -449,10 +449,10 @@ class TestCheckFreshness:
         severities = {f.severity for f in findings}
         assert severities & {AuditCheckSeverity.medium, AuditCheckSeverity.low}
 
-    def test_over_2y_low(self) -> None:
+    def test_over_2y_medium(self) -> None:
         findings = check_freshness(_URL, "2020-01-01", None)
         assert len(findings) == 1
-        assert findings[0].severity == AuditCheckSeverity.low
+        assert findings[0].severity == AuditCheckSeverity.medium
 
     def test_modified_date_takes_precedence(self) -> None:
         # Old publish but recently modified → no finding
@@ -463,10 +463,10 @@ class TestCheckFreshness:
         findings = check_freshness(_URL, "not-a-date", None)
         assert isinstance(findings, list)
 
-    def test_dimension_is_eeat(self) -> None:
+    def test_dimension_is_freshness(self) -> None:
         findings = check_freshness(_URL, "2020-01-01", None)
         if findings:
-            assert findings[0].dimension == AuditDimension.eeat
+            assert findings[0].dimension == AuditDimension.freshness
 
     def test_with_timezone_iso_string(self) -> None:
         findings = check_freshness(_URL, "2020-06-15T10:00:00Z", None)
@@ -475,6 +475,80 @@ class TestCheckFreshness:
     def test_empty_string_publish_date(self) -> None:
         findings = check_freshness(_URL, "", None)
         assert isinstance(findings, list)
+
+
+class TestRobustDateParsing:
+    """Tests for _parse_date_robust via check_freshness (T-SA-23)."""
+
+    def test_iso8601_with_timezone_offset(self) -> None:
+        """ISO 8601 with +05:30 timezone offset → parsed, stale finding."""
+        findings = check_freshness(_URL, "2020-06-15T10:00:00+05:30", None)
+        assert len(findings) == 1  # > 2 years old
+
+    def test_iso8601_with_z_suffix(self) -> None:
+        """ISO 8601 with Z suffix → parsed correctly."""
+        findings = check_freshness(_URL, "2020-01-15T10:30:00Z", None)
+        assert len(findings) == 1
+
+    def test_iso8601_with_fractional_seconds(self) -> None:
+        """ISO 8601 with fractional seconds → parsed."""
+        findings = check_freshness(_URL, "2020-01-15T10:30:00.123456Z", None)
+        assert len(findings) == 1
+
+    def test_human_readable_full_month(self) -> None:
+        """Human-readable 'January 15, 2024' → parsed."""
+        findings = check_freshness(_URL, "January 15, 2020", None)
+        assert len(findings) == 1  # > 2 years old
+
+    def test_human_readable_short_month(self) -> None:
+        """Human-readable '15 Jan 2020' → parsed."""
+        findings = check_freshness(_URL, "15 Jan 2020", None)
+        assert len(findings) == 1
+
+    def test_invalid_date_no_findings(self) -> None:
+        """Invalid date 'not-a-date' → no findings (graceful skip)."""
+        findings = check_freshness(_URL, "not-a-date", None)
+        assert findings == []
+
+    def test_oversized_string_no_findings(self) -> None:
+        """String >100 chars → no findings (guard)."""
+        long_date = "2020-01-01" + "x" * 100
+        findings = check_freshness(_URL, long_date, None)
+        assert findings == []
+
+    def test_partial_date_year_month(self) -> None:
+        """Partial date '2020-01' → parsed as first of month."""
+        findings = check_freshness(_URL, "2020-01", None)
+        assert len(findings) == 1  # > 2 years old
+
+
+class TestMissingDateMetadata:
+    """Tests for missing_date_metadata finding on article pages (T-SA-24)."""
+
+    def test_article_no_dates_generates_finding(self) -> None:
+        findings = check_freshness(_URL, None, None, page_type="article")
+        assert len(findings) == 1
+        assert findings[0].finding_type == "missing_date_metadata"
+        assert findings[0].severity == AuditCheckSeverity.low
+
+    def test_homepage_no_dates_no_finding(self) -> None:
+        findings = check_freshness(_URL, None, None, page_type="homepage")
+        assert findings == []
+
+    def test_product_no_dates_no_finding(self) -> None:
+        findings = check_freshness(_URL, None, None, page_type="product")
+        assert findings == []
+
+    def test_article_with_dates_no_missing_finding(self) -> None:
+        findings = check_freshness(_URL, "2025-12-01", None, page_type="article")
+        # Should not have missing_date_metadata (has dates)
+        missing = [f for f in findings if f.finding_type == "missing_date_metadata"]
+        assert missing == []
+
+    def test_default_page_type_no_finding(self) -> None:
+        """Default page_type='page' should not generate finding."""
+        findings = check_freshness(_URL, None, None)
+        assert findings == []
 
 
 # ---------------------------------------------------------------------------

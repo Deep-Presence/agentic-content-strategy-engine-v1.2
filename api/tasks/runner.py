@@ -719,10 +719,17 @@ async def run_site_audit_task(
                     "overall_score": audit_result.overall_score,
                     "grade": audit_result.grade,
                     "pages_crawled": audit_result.pages_crawled,
+                    "status": audit_result.status,
                     "produced_artifacts": [
                         {"type": "site_audit", "slug": scope.effective_slug},
                     ],
                 }
+
+                # Propagate degraded pipeline info into task result
+                if audit_result.status == "degraded":
+                    result["degraded"] = True
+                    result["failed_steps"] = audit_result.failed_steps
+                    result["degraded_dimensions"] = audit_result.degraded_dimensions
             except (ImportError, NotImplementedError):
                 # Pipeline not yet wired — record a placeholder result
                 logger.warning(

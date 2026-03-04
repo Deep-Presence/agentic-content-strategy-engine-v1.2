@@ -118,6 +118,59 @@ class AuditConfig:
     aeo_min_question_heading_ratio: float = 0.3
     aeo_ideal_paragraph_word_count_min: int = 20
     aeo_ideal_paragraph_word_count_max: int = 80
+    aeo_quick_answer_min_words: int = 15
+    aeo_quick_answer_max_words: int = 150
+
+    def __post_init__(self) -> None:
+        """Validate invariants on a frozen dataclass."""
+        # 1. Weights must sum to 1.0
+        if abs(sum(self.dimension_weights.values()) - 1.0) >= 0.01:
+            raise ValueError(
+                f"dimension_weights must sum to 1.0, got {sum(self.dimension_weights.values()):.4f}"
+            )
+        # 2. Required grades present
+        required_grades = {"A", "B", "C", "D"}
+        missing = required_grades - set(self.grade_thresholds.keys())
+        if missing:
+            raise ValueError(f"grade_thresholds missing required grades: {sorted(missing)}")
+        # 3. Grade thresholds monotonically decreasing: A >= B >= C >= D
+        t = self.grade_thresholds
+        if not (t["A"] >= t["B"] >= t["C"] >= t["D"]):
+            raise ValueError(
+                f"grade_thresholds must be monotonically decreasing: "
+                f"A({t['A']}) >= B({t['B']}) >= C({t['C']}) >= D({t['D']})"
+            )
+        # 4. Title length bounds
+        if self.title_min_length > self.title_max_length:
+            raise ValueError(
+                f"title_min_length ({self.title_min_length}) must be <= "
+                f"title_max_length ({self.title_max_length})"
+            )
+        # 5. Meta description length bounds
+        if self.meta_min_length > self.meta_max_length:
+            raise ValueError(
+                f"meta_min_length ({self.meta_min_length}) must be <= "
+                f"meta_max_length ({self.meta_max_length})"
+            )
+        # 6. All severity penalties >= 0
+        for sev, pen in self.severity_penalties.items():
+            if pen < 0:
+                raise ValueError(
+                    f"severity_penalties['{sev}'] must be >= 0, got {pen}"
+                )
+        # 7. AEO question heading ratio in [0, 1]
+        if not (0.0 <= self.aeo_min_question_heading_ratio <= 1.0):
+            raise ValueError(
+                f"aeo_min_question_heading_ratio must be in [0.0, 1.0], "
+                f"got {self.aeo_min_question_heading_ratio}"
+            )
+        # 8. AEO paragraph word count bounds
+        if self.aeo_ideal_paragraph_word_count_min > self.aeo_ideal_paragraph_word_count_max:
+            raise ValueError(
+                f"aeo_ideal_paragraph_word_count_min ({self.aeo_ideal_paragraph_word_count_min}) "
+                f"must be <= aeo_ideal_paragraph_word_count_max "
+                f"({self.aeo_ideal_paragraph_word_count_max})"
+            )
 
     def weight_sum(self) -> float:
         """Return the sum of dimension weights (should be 1.0).

@@ -163,6 +163,42 @@ class TestClassifyHeadingAsQuestion:
         assert classify_heading_as_question("WHAT is AEO?") is True
         assert classify_heading_as_question("How Does This Work?") is True
 
+    # Rule 3: wh-word headings without trailing ?
+    def test_how_to_without_question_mark(self) -> None:
+        assert classify_heading_as_question("How to deploy your app") is True
+
+    def test_what_makes_without_question_mark(self) -> None:
+        assert classify_heading_as_question("What makes a great leader") is True
+
+    def test_why_without_question_mark(self) -> None:
+        assert classify_heading_as_question("Why content matters for AI") is True
+
+    def test_where_without_question_mark(self) -> None:
+        assert classify_heading_as_question("Where to find resources") is True
+
+    def test_wh_word_too_few_words(self) -> None:
+        """Fragment heading 'How' (1 word) → False (guard: < 4 words)."""
+        assert classify_heading_as_question("How") is False
+
+    def test_auxiliary_without_question_mark_rejected(self) -> None:
+        """Auxiliary 'Is' without ? should be rejected."""
+        assert classify_heading_as_question("Is your team ready for growth") is False
+
+    def test_can_without_question_mark_rejected(self) -> None:
+        """Auxiliary 'Can' without ? should be rejected."""
+        assert classify_heading_as_question("Can we help you today") is False
+
+    def test_have_with_question_mark(self) -> None:
+        """New word 'Have' with ? → True."""
+        assert classify_heading_as_question("Have you considered this?") is True
+
+    def test_vs_with_period(self) -> None:
+        """'Ramp vs. Brex' (period in vs.) → True."""
+        assert classify_heading_as_question("Ramp vs. Brex") is True
+
+    def test_pros_and_cons(self) -> None:
+        assert classify_heading_as_question("Pros and cons of equity management") is True
+
 
 # ---------------------------------------------------------------------------
 # detect_quick_answer_hook
@@ -183,24 +219,24 @@ class TestDetectQuickAnswerHook:
         assert detect_quick_answer_hook(heading, soup) is True
 
     def test_paragraph_too_short(self) -> None:
-        """Paragraph with fewer than 30 words does not qualify."""
-        html = f"<h2>What is AEO?</h2><p>{self._make_words(20)}</p>"
+        """Paragraph with fewer than 15 words (new default min) does not qualify."""
+        html = f"<h2>What is AEO?</h2><p>{self._make_words(10)}</p>"
         soup, heading = _heading(html)
         assert detect_quick_answer_hook(heading, soup) is False
 
     def test_paragraph_too_long(self) -> None:
-        """Paragraph with more than 70 words does not qualify."""
-        html = f"<h2>What is AEO?</h2><p>{self._make_words(80)}</p>"
+        """Paragraph with more than 150 words (new default max) does not qualify."""
+        html = f"<h2>What is AEO?</h2><p>{self._make_words(160)}</p>"
         soup, heading = _heading(html)
         assert detect_quick_answer_hook(heading, soup) is False
 
-    def test_paragraph_exactly_30_words(self) -> None:
-        html = f"<h2>What is AEO?</h2><p>{self._make_words(30)}</p>"
+    def test_paragraph_exactly_15_words(self) -> None:
+        html = f"<h2>What is AEO?</h2><p>{self._make_words(15)}</p>"
         soup, heading = _heading(html)
         assert detect_quick_answer_hook(heading, soup) is True
 
-    def test_paragraph_exactly_70_words(self) -> None:
-        html = f"<h2>What is AEO?</h2><p>{self._make_words(70)}</p>"
+    def test_paragraph_exactly_150_words(self) -> None:
+        html = f"<h2>What is AEO?</h2><p>{self._make_words(150)}</p>"
         soup, heading = _heading(html)
         assert detect_quick_answer_hook(heading, soup) is True
 
@@ -228,17 +264,78 @@ class TestDetectQuickAnswerHook:
         soup, heading = _heading(html)
         assert detect_quick_answer_hook(heading, soup) is False
 
-    def test_beyond_three_siblings(self) -> None:
-        """A <p> 4 siblings away must NOT qualify."""
+    def test_beyond_five_siblings(self) -> None:
+        """A <p> 6 siblings away must NOT qualify (window is 5)."""
         html = (
             f"<h2>What is AEO?</h2>"
             f"<div>Block 1</div>"
             f"<div>Block 2</div>"
             f"<div>Block 3</div>"
+            f"<div>Block 4</div>"
+            f"<div>Block 5</div>"
             f"<p>{self._make_words(40)}</p>"
         )
         soup, heading = _heading(html)
-        # Should return False as p is beyond 3 siblings
+        assert detect_quick_answer_hook(heading, soup) is False
+
+    def test_short_answer_20_words(self) -> None:
+        """Short answer (20 words) → True (was False with old 30-70)."""
+        html = f"<h2>What is AEO?</h2><p>{self._make_words(20)}</p>"
+        soup, heading = _heading(html)
+        assert detect_quick_answer_hook(heading, soup) is True
+
+    def test_long_answer_120_words(self) -> None:
+        """Long answer (120 words) → True (was False with old 30-70)."""
+        html = f"<h2>What is AEO?</h2><p>{self._make_words(120)}</p>"
+        soup, heading = _heading(html)
+        assert detect_quick_answer_hook(heading, soup) is True
+
+    def test_nested_div_div_p(self) -> None:
+        """Answer in nested div > div > p → True."""
+        html = (
+            f"<h2>What is AEO?</h2>"
+            f"<div><div><p>{self._make_words(40)}</p></div></div>"
+        )
+        soup, heading = _heading(html)
+        assert detect_quick_answer_hook(heading, soup) is True
+
+    def test_multiple_paragraphs_first_too_short(self) -> None:
+        """First p too short, second qualifying → True (don't stop at first)."""
+        html = (
+            f"<h2>What is AEO?</h2>"
+            f"<p>{self._make_words(5)}</p>"
+            f"<p>{self._make_words(40)}</p>"
+        )
+        soup, heading = _heading(html)
+        assert detect_quick_answer_hook(heading, soup) is True
+
+    def test_stops_at_next_heading(self) -> None:
+        """Answer after next heading → False (bounded search)."""
+        html = (
+            f"<h2>What is AEO?</h2>"
+            f"<h3>Sub-section</h3>"
+            f"<p>{self._make_words(40)}</p>"
+        )
+        soup, heading = _heading(html)
+        assert detect_quick_answer_hook(heading, soup) is False
+
+    def test_custom_config_old_range(self) -> None:
+        """Custom config with old range (30-70) → backward compat."""
+        from core.site_audit.config import AuditConfig
+        old_config = AuditConfig(aeo_quick_answer_min_words=30, aeo_quick_answer_max_words=70)
+        html = f"<h2>What is AEO?</h2><p>{self._make_words(20)}</p>"
+        soup, heading = _heading(html)
+        assert detect_quick_answer_hook(heading, soup, config=old_config) is False
+
+    def test_answer_beyond_five_siblings_fails(self) -> None:
+        """Answer beyond 5 siblings → False (window limit)."""
+        html = (
+            f"<h2>What is AEO?</h2>"
+            f"<span>1</span><span>2</span><span>3</span>"
+            f"<span>4</span><span>5</span>"
+            f"<p>{self._make_words(40)}</p>"
+        )
+        soup, heading = _heading(html)
         assert detect_quick_answer_hook(heading, soup) is False
 
 
@@ -392,6 +489,58 @@ class TestDetectDefinitionOpening:
     def test_empty(self) -> None:
         assert detect_definition_opening("") is False
 
+    # -- T-SA-19: Tightened regex — new tests --
+
+    def test_false_generic_sentence(self) -> None:
+        """T-SA-19: 'The company is great' should NOT match (no definitional frame)."""
+        assert detect_definition_opening("The company is great at what they do.") is False
+
+    def test_false_possessive_opener(self) -> None:
+        """T-SA-19: 'Our team is experienced' should NOT match."""
+        assert detect_definition_opening("Our team is experienced in enterprise solutions.") is False
+
+    def test_true_with_article(self) -> None:
+        """T-SA-19: 'AEO is the practice of...' matches (article continuation)."""
+        assert detect_definition_opening("AEO is the practice of optimizing content.") is True
+
+    def test_true_with_indefinite(self) -> None:
+        """T-SA-19: 'Content marketing is a strategy...' matches."""
+        assert detect_definition_opening("Content marketing is a strategy for creating content.") is True
+
+    def test_true_known_as(self) -> None:
+        """T-SA-19: 'Python is known as...' matches (definitional verb)."""
+        assert detect_definition_opening("Python is known as a versatile programming language.") is True
+
+    def test_true_defined_as(self) -> None:
+        """T-SA-19: 'Machine learning is defined as...' matches."""
+        assert detect_definition_opening("Machine learning is defined as a subset of artificial intelligence.") is True
+
+    def test_true_typically(self) -> None:
+        """T-SA-19: 'A CDN is typically a network...' matches (adverb)."""
+        assert detect_definition_opening("A CDN is typically a geographically distributed network.") is True
+
+    def test_true_not_negation(self) -> None:
+        """T-SA-19: 'AEO is not the same as SEO' matches (negation frame)."""
+        assert detect_definition_opening("AEO is not the same as traditional SEO.") is True
+
+    # -- Codex F-3 fix: non-topic starters rejected --
+
+    def test_false_existential_there(self) -> None:
+        """Codex F-3: 'There is a lot...' should NOT match (existential)."""
+        assert detect_definition_opening("There is a lot of confusion around this topic.") is False
+
+    def test_false_possessive_our(self) -> None:
+        """Codex F-3: 'Our support is top-notch' should NOT match (possessive)."""
+        assert detect_definition_opening("Our support is top-notch for enterprise clients.") is False
+
+    def test_false_pronoun_it(self) -> None:
+        """Codex F-3: 'It is a well-known fact' should NOT match (pronoun)."""
+        assert detect_definition_opening("It is a well-known fact that websites need optimization.") is False
+
+    def test_false_pronoun_we(self) -> None:
+        """Codex F-3: 'We are a team...' should NOT match (pronoun)."""
+        assert detect_definition_opening("We are a team of experienced professionals.") is False
+
 
 # ---------------------------------------------------------------------------
 # detect_key_takeaways
@@ -542,6 +691,40 @@ class TestDetectToc:
     def test_no_toc(self) -> None:
         html = "<h1>Article Title</h1><p>This is a regular article without a TOC.</p>"
         assert detect_toc(_soup(html)) is False
+
+    # -- T-SA-20: CSS selector optimisation — verify coverage preserved --
+
+    def test_class_with_prefix(self) -> None:
+        """T-SA-20: CSS selector matches partial class names like 'post-toc'."""
+        html = '<div class="post-toc"><ul><li>Heading 1</li></ul></div>'
+        assert detect_toc(_soup(html)) is True
+
+    def test_id_table_of_contents_underscore(self) -> None:
+        """T-SA-20: Underscore variant 'table_of_contents' detected."""
+        html = '<nav id="table_of_contents"><a href="#a">A</a></nav>'
+        assert detect_toc(_soup(html)) is True
+
+    def test_class_contents_with_prefix(self) -> None:
+        """T-SA-20: 'main-contents-list' should match via 'contents' substring."""
+        html = '<div class="main-contents-list"><ul><li>Item</li></ul></div>'
+        assert detect_toc(_soup(html)) is True
+
+    # -- Codex F-2 fix: case-insensitive matching --
+
+    def test_uppercase_id_toc(self) -> None:
+        """Codex F-2: Uppercase id='TOC' should be detected."""
+        html = '<div id="TOC"><ul><li>Section</li></ul></div>'
+        assert detect_toc(_soup(html)) is True
+
+    def test_mixed_case_class_toc(self) -> None:
+        """Codex F-2: Mixed-case class='Post-TOC' should be detected."""
+        html = '<div class="Post-TOC"><ul><li>Section</li></ul></div>'
+        assert detect_toc(_soup(html)) is True
+
+    def test_uppercase_table_of_contents(self) -> None:
+        """Codex F-2: 'Table-Of-Contents' id should be detected."""
+        html = '<div id="Table-Of-Contents"><ul><li>Section</li></ul></div>'
+        assert detect_toc(_soup(html)) is True
 
 
 # ---------------------------------------------------------------------------

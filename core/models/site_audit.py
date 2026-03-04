@@ -10,7 +10,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +57,11 @@ class SiteAuditInput(BaseModel):
 
     Unlike output models, required fields here are intentional — the caller
     *must* supply them.  Optional fields control which checks run.
+
+    Validators:
+        - ``company_slug`` is auto-derived from ``company_name`` when not
+          supplied (mode="before" for robustness with frozen models).
+        - ``product_slug`` is validated against path-traversal characters.
     """
 
     company_name: str
@@ -66,6 +73,24 @@ class SiteAuditInput(BaseModel):
     check_core_web_vitals: bool = True
     check_schema_validation: bool = True
     check_ai_bot_access: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_company_slug(cls, data: Any) -> Any:
+        """Auto-derive ``company_slug`` from ``company_name`` when absent."""
+        if isinstance(data, dict):
+            if not data.get("company_slug") and data.get("company_name"):
+                slug = re.sub(r"[^a-z0-9]+", "-", data["company_name"].lower()).strip("-")
+                data["company_slug"] = slug
+        return data
+
+    @field_validator("product_slug")
+    @classmethod
+    def _validate_product_slug(cls, v: str | None) -> str | None:
+        """Reject product slugs containing path-traversal characters."""
+        if v is not None and not re.match(r"^[a-z0-9][a-z0-9-]*$", v):
+            raise ValueError(f"Invalid product_slug: {v!r}")
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -156,8 +181,10 @@ class PageAuditResult(BaseModel):
         * Technical SEO (canonical, noindex, nofollow)
         * Security (has_https, has_mixed_content)
         * Freshness / authority (publish_date, has_author, ...)
-        * Structured sub-results (schema, aeo, findings)
+        * Structured sub-results (schema_result, aeo, findings)
     """
+
+    model_config = {"populate_by_name": True}
 
     # HTTP / crawl metadata
     url: str = ""
@@ -206,7 +233,7 @@ class PageAuditResult(BaseModel):
     author_name: Optional[str] = None
 
     # Structured sub-results
-    schema: SchemaDetectionResult = Field(default_factory=SchemaDetectionResult)
+    schema_result: SchemaDetectionResult = Field(default_factory=SchemaDetectionResult, alias="schema")
     aeo: AEOReadinessResult = Field(default_factory=AEOReadinessResult)
     findings: list[AuditFinding] = Field(default_factory=list)
 
@@ -238,6 +265,7 @@ class AIBotAccessResult(BaseModel):
     ccbot_allowed: bool = True
     has_llms_txt: bool = False
     robots_txt_exists: bool = False
+    crawl_delay_seconds: float | None = None
 
 
 class SitemapHealthResult(BaseModel):
@@ -339,3 +367,5 @@ class SiteAuditResult(BaseModel):
     completed_at: Optional[datetime] = None
     status: str = "pending"
     error_message: Optional[str] = None
+    failed_steps: list[int] = Field(default_factory=list)
+    degraded_dimensions: list[str] = Field(default_factory=list)

@@ -1,7 +1,7 @@
 {
-  "audit_id": "7ab16908-f3f5-4274-83aa-837f881876d7",
+  "audit_id": "e80ef014-dfdf-4a93-8071-725384f039c7",
   "domain": "example.com",
-  "overall_score": 93.5,
+  "overall_score": 96.65,
   "grade": "A",
   "pages_crawled": 2,
   "pages_discovered": 2,
@@ -9,9 +9,9 @@
   "dimension_scores": [
     {
       "dimension": "crawlability",
-      "score": 93.0,
+      "score": 96.5,
       "weight": 0.2,
-      "weighted_score": 18.6,
+      "weighted_score": 19.3,
       "finding_count": 2,
       "critical_count": 0,
       "high_count": 1,
@@ -21,21 +21,21 @@
     },
     {
       "dimension": "performance",
-      "score": 100.0,
+      "score": 97.5,
       "weight": 0.1,
-      "weighted_score": 10.0,
-      "finding_count": 0,
+      "weighted_score": 9.75,
+      "finding_count": 1,
       "critical_count": 0,
-      "high_count": 0,
+      "high_count": 1,
       "medium_count": 0,
       "low_count": 0,
       "info_count": 0
     },
     {
       "dimension": "on_page_seo",
-      "score": 84.0,
+      "score": 92.0,
       "weight": 0.15,
-      "weighted_score": 12.6,
+      "weighted_score": 13.8,
       "finding_count": 5,
       "critical_count": 0,
       "high_count": 2,
@@ -45,9 +45,9 @@
     },
     {
       "dimension": "extractability",
-      "score": 91.0,
+      "score": 95.5,
       "weight": 0.2,
-      "weighted_score": 18.2,
+      "weighted_score": 19.1,
       "finding_count": 3,
       "critical_count": 0,
       "high_count": 1,
@@ -57,9 +57,9 @@
     },
     {
       "dimension": "schema_markup",
-      "score": 94.0,
+      "score": 97.0,
       "weight": 0.1,
-      "weighted_score": 9.4,
+      "weighted_score": 9.7,
       "finding_count": 4,
       "critical_count": 0,
       "high_count": 0,
@@ -69,13 +69,13 @@
     },
     {
       "dimension": "eeat",
-      "score": 98.0,
+      "score": 100.0,
       "weight": 0.15,
-      "weighted_score": 14.7,
-      "finding_count": 1,
+      "weighted_score": 15.0,
+      "finding_count": 0,
       "critical_count": 0,
       "high_count": 0,
-      "medium_count": 1,
+      "medium_count": 0,
       "low_count": 0,
       "info_count": 0
     },
@@ -181,7 +181,7 @@
       "modified_date": null,
       "has_author": true,
       "author_name": "By Jane Doe | February 1, 2026",
-      "schema": {
+      "schema_result": {
         "has_schema": true,
         "schema_types": [
           "Article"
@@ -345,7 +345,7 @@
       "modified_date": null,
       "has_author": false,
       "author_name": null,
-      "schema": {
+      "schema_result": {
         "has_schema": false,
         "schema_types": [],
         "raw_jsonld_blocks": [],
@@ -401,6 +401,18 @@
           }
         },
         {
+          "finding_type": "possible_csr_page",
+          "dimension": "performance",
+          "severity": "high",
+          "message": "Page may be client-side rendered \u2014 only 6 visible words detected. AI crawlers cannot extract content from CSR pages.",
+          "recommendation": "Ensure the page is server-side rendered (SSR) or uses static site generation (SSG). AI bots typically do not execute JavaScript, so CSR pages appear blank to them. Implement SSR or pre-rendering to make content accessible.",
+          "url": "https://example.com/about",
+          "details": {
+            "visible_word_count": 6,
+            "threshold": 100
+          }
+        },
+        {
           "finding_type": "missing_canonical",
           "dimension": "crawlability",
           "severity": "medium",
@@ -408,17 +420,6 @@
           "recommendation": "Add ``<link rel='canonical' href='...' />`` to the ``<head>`` to prevent duplicate content issues.",
           "url": "https://example.com/about",
           "details": {}
-        },
-        {
-          "finding_type": "missing_author",
-          "dimension": "eeat",
-          "severity": "medium",
-          "message": "No author attribution detected on this page.",
-          "recommendation": "Add a visible author byline with the author's name. Linking to an author bio page with credentials further strengthens E-E-A-T signals for AI citation systems.",
-          "url": "https://example.com/about",
-          "details": {
-            "has_author": false
-          }
         },
         {
           "finding_type": "missing_breadcrumb_schema",
@@ -462,8 +463,8 @@
   ],
   "total_findings": 15,
   "findings_by_severity": {
-    "medium": 9,
-    "high": 4,
+    "medium": 8,
+    "high": 5,
     "low": 2
   },
   "findings_by_dimension": {
@@ -471,7 +472,7 @@
     "crawlability": 2,
     "schema_markup": 4,
     "extractability": 3,
-    "eeat": 1
+    "performance": 1
   },
   "top_findings": [
     {
@@ -496,6 +497,14 @@
       "severity": "high",
       "message": "Page is missing a meta description.",
       "recommendation": "Add a meta description between 120 and 160 characters summarising the page content.",
+      "count": 1
+    },
+    {
+      "finding_type": "possible_csr_page",
+      "dimension": "performance",
+      "severity": "high",
+      "message": "Page may be client-side rendered \u2014 only 6 visible words detected. AI crawlers cannot extract content from CSR pages.",
+      "recommendation": "Ensure the page is server-side rendered (SSR) or uses static site generation (SSG). AI bots typically do not execute JavaScript, so CSR pages appear blank to them. Implement SSR or pre-rendering to make content accessible.",
       "count": 1
     },
     {
@@ -545,21 +554,15 @@
       "message": "Only 29% of headings are phrased as questions (threshold: 30%). Question-format headings improve AI snippet extraction.",
       "recommendation": "Rephrase at least 30% of subheadings as questions that your audience is actually asking (e.g. 'How does X work?' instead of 'About X'). This increases the likelihood of appearing in AI-generated answers.",
       "count": 2
-    },
-    {
-      "finding_type": "missing_canonical",
-      "dimension": "crawlability",
-      "severity": "medium",
-      "message": "Page is missing a canonical URL tag.",
-      "recommendation": "Add ``<link rel='canonical' href='...' />`` to the ``<head>`` to prevent duplicate content issues.",
-      "count": 1
     }
   ],
   "avg_snippet_readiness": 33.41,
   "pages_with_schema": 1,
   "avg_question_heading_ratio": 0.1429,
-  "started_at": "2026-02-28T02:41:20.368969Z",
+  "started_at": "2026-03-03T21:47:34.564433Z",
   "completed_at": null,
   "status": "completed",
-  "error_message": null
+  "error_message": null,
+  "failed_steps": [],
+  "degraded_dimensions": []
 }

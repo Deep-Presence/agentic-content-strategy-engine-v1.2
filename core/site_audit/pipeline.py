@@ -28,12 +28,15 @@ from typing import Optional
 
 from core.models.site_audit import (
     AIBotAccessResult,
+    AuditCheckSeverity,
+    AuditDimension,
     PageAuditResult,
     SiteAuditInput,
     SiteAuditResult,
     SitemapHealthResult,
 )
 from core.site_audit.config import DEFAULT_AUDIT_CONFIG, AuditConfig
+from core.site_audit.scoring import compute_grade, compute_overall_score
 from core.site_audit.steps.s1_discover import S1DiscoveryOutput, discover_site
 from core.site_audit.steps.s2_analyze_pages import analyze_all_pages
 from core.site_audit.steps.s3_check_schema import detect_schema, generate_schema_findings
@@ -42,6 +45,14 @@ from core.site_audit.steps.s5_aggregate import aggregate_results
 from core.site_audit.steps.s6_report import generate_report
 
 logger = logging.getLogger(__name__)
+
+# Maps each step number to the audit dimensions it is solely responsible for.
+# Used to determine which dimensions are degraded when a step fails.
+_STEP_DIMENSION_MAP: dict[int, list[str]] = {
+    2: ["crawlability", "on_page_seo", "security", "eeat", "freshness", "performance"],
+    3: ["schema_markup"],
+    4: ["extractability"],
+}
 
 
 def _should_skip(step: int, skip_steps: Optional[list[int]]) -> bool:
@@ -76,6 +87,7 @@ async def run_site_audit(
     config: AuditConfig = DEFAULT_AUDIT_CONFIG,
     on_progress: Optional[Callable[[str], None]] = None,
     skip_steps: Optional[list[int]] = None,
+    output_dir: Optional[Path] = None,
 ) -> SiteAuditResult:
     """Run the full site audit pipeline and return a :class:`SiteAuditResult`.
 
@@ -105,7 +117,14 @@ async def run_site_audit(
     t0 = time.monotonic()
 
     domain = input_data.domain
-    effective_slug = input_data.product_slug or input_data.company_slug or ""
+    if input_data.product_slug and input_data.company_slug:
+        effective_slug = f"{input_data.company_slug}__{input_data.product_slug}"
+    elif input_data.company_slug:
+        effective_slug = input_data.company_slug
+    else:
+        effective_slug = ""
+
+    failed_steps: list[int] = []
 
     logger.info(
         "Starting site audit: domain=%s audit_id=%s slug=%s",
@@ -131,6 +150,7 @@ async def run_site_audit(
                 respect_robots=True,
                 timeout=config.request_timeout,
                 config=config,
+                check_ai_bot_access=input_data.check_ai_bot_access,
             )
             _emit(
                 on_progress,
@@ -170,36 +190,49 @@ async def run_site_audit(
                 status_code_map=discovery.status_code_map,
                 redirect_map=discovery.redirect_map,
                 config=config,
+                check_core_web_vitals=input_data.check_core_web_vitals,
             )
             _emit(on_progress, f"Step 2 complete: {len(page_results)} pages analyzed")
             logger.info("s2_analyze_pages complete: %d results", len(page_results))
         except Exception as exc:
             logger.exception("s2_analyze_pages failed: %s", exc)
             _emit(on_progress, f"Step 2 failed: {exc}")
+            failed_steps.append(2)
             # Continue with empty results — later steps handle empty gracefully
 
     # ── Step 3: Schema detection ────────────────────────────────────────
-    if _should_skip(3, skip_steps):
-        logger.info("s3_check_schema: SKIPPED")
+    if _should_skip(3, skip_steps) or not input_data.check_schema_validation:
+        logger.info("s3_check_schema: SKIPPED%s", "" if _should_skip(3, skip_steps) else " (check_schema_validation=False)")
         _emit(on_progress, "Step 3 (schema detection): skipped")
     else:
         try:
             _emit(on_progress, "Step 3: Detecting structured data...")
             # Schema detection needs the raw HTML from discovery
             html_map = {url: html for url, html in discovery.pages_with_html}
+            s3_page_failures = 0
+            s3_pages_attempted = 0
             for page in page_results:
-                html = html_map.get(page.url, "")
-                if not html:
-                    continue
-                schema_result = detect_schema(html, page.url)
-                page.schema = schema_result
-                schema_findings = generate_schema_findings(page.url, schema_result)
-                page.findings.extend(schema_findings)
+                try:
+                    html = html_map.get(page.url, "")
+                    if not html:
+                        continue
+                    s3_pages_attempted += 1
+                    schema_result = detect_schema(html, page.url)
+                    page.schema_result = schema_result
+                    schema_findings = generate_schema_findings(page.url, schema_result)
+                    page.findings.extend(schema_findings)
+                except Exception as page_exc:
+                    s3_page_failures += 1
+                    logger.warning("s3 failed for page %s: %s", page.url, page_exc)
+            if s3_page_failures > 0 and s3_page_failures == s3_pages_attempted:
+                logger.error("s3_check_schema: all %d pages failed", s3_page_failures)
+                failed_steps.append(3)
             _emit(on_progress, "Step 3 complete: schema detection done")
             logger.info("s3_check_schema complete")
         except Exception as exc:
             logger.exception("s3_check_schema failed: %s", exc)
             _emit(on_progress, f"Step 3 failed: {exc}")
+            failed_steps.append(3)
 
     # ── Step 4: AEO readiness ───────────────────────────────────────────
     if _should_skip(4, skip_steps):
@@ -209,18 +242,29 @@ async def run_site_audit(
         try:
             _emit(on_progress, "Step 4: Analyzing AEO readiness...")
             html_map = {url: html for url, html in discovery.pages_with_html}
+            s4_page_failures = 0
+            s4_pages_attempted = 0
             for page in page_results:
-                html = html_map.get(page.url, "")
-                if not html:
-                    continue
-                aeo_result, aeo_findings = analyze_aeo_readiness(html, page.url, config)
-                page.aeo = aeo_result
-                page.findings.extend(aeo_findings)
+                try:
+                    html = html_map.get(page.url, "")
+                    if not html:
+                        continue
+                    s4_pages_attempted += 1
+                    aeo_result, aeo_findings = analyze_aeo_readiness(html, page.url, config)
+                    page.aeo = aeo_result
+                    page.findings.extend(aeo_findings)
+                except Exception as page_exc:
+                    s4_page_failures += 1
+                    logger.warning("s4 failed for page %s: %s", page.url, page_exc)
+            if s4_page_failures > 0 and s4_page_failures == s4_pages_attempted:
+                logger.error("s4_check_aeo: all %d pages failed", s4_page_failures)
+                failed_steps.append(4)
             _emit(on_progress, "Step 4 complete: AEO analysis done")
             logger.info("s4_check_aeo complete")
         except Exception as exc:
             logger.exception("s4_check_aeo failed: %s", exc)
             _emit(on_progress, f"Step 4 failed: {exc}")
+            failed_steps.append(4)
 
     # ── Step 5: Aggregate ───────────────────────────────────────────────
     if _should_skip(5, skip_steps):
@@ -276,6 +320,59 @@ async def run_site_audit(
                 error_message=f"Aggregation failed: {exc}",
             )
 
+    # ── Degraded status for partial failures ────────────────────────────
+    if failed_steps:
+        degraded_dims: list[str] = []
+        for step in failed_steps:
+            degraded_dims.extend(_STEP_DIMENSION_MAP.get(step, []))
+        degraded_dims = list(set(degraded_dims))
+
+        result.failed_steps = failed_steps
+        result.degraded_dimensions = degraded_dims
+        result.status = "degraded"
+
+        # Override degraded dimension scores to 0 (conservative)
+        for ds in result.dimension_scores:
+            if ds.dimension.value in degraded_dims:
+                ds.score = 0.0
+                ds.weighted_score = 0.0
+
+        # Recompute overall from modified dimension scores
+        result.overall_score = compute_overall_score(result.dimension_scores)
+        result.grade = compute_grade(result.overall_score, config)
+
+    # ── Crawl-delay findings (site-level, from robots.txt) ─────────────
+    if discovery.ai_bot_access.crawl_delay_seconds is not None:
+        delay = discovery.ai_bot_access.crawl_delay_seconds
+        if delay > 30:
+            result.top_findings.append({
+                "finding_type": "crawl_delay_excessive",
+                "dimension": AuditDimension.crawlability.value,
+                "severity": AuditCheckSeverity.medium.value,
+                "message": (
+                    f"robots.txt specifies Crawl-delay: {delay}s — this significantly "
+                    f"throttles AI crawlers and may reduce crawl coverage."
+                ),
+                "recommendation": (
+                    "Review whether such a high Crawl-delay is necessary. "
+                    "Consider reducing it to allow AI bots to index more pages."
+                ),
+            })
+        elif delay > 10:
+            result.top_findings.append({
+                "finding_type": "crawl_delay_high",
+                "dimension": AuditDimension.crawlability.value,
+                "severity": AuditCheckSeverity.info.value,
+                "message": (
+                    f"robots.txt specifies Crawl-delay: {delay}s — this may slow "
+                    f"AI crawler indexing of the site."
+                ),
+                "recommendation": (
+                    "Monitor whether the Crawl-delay is impacting how quickly "
+                    "AI search engines index new content."
+                ),
+            })
+
     # ── Step 6: Report ──────────────────────────────────────────────────
     if _should_skip(6, skip_steps):
         logger.info("s6_report: SKIPPED")
@@ -283,10 +380,12 @@ async def run_site_audit(
     else:
         try:
             _emit(on_progress, "Step 6: Generating report...")
-            output_dir = Path("artifacts") / "site_audit" / effective_slug / audit_id
-            await generate_report(result, output_dir)
+            report_dir = output_dir if output_dir is not None else (
+                Path("artifacts") / "site_audit" / effective_slug / audit_id
+            )
+            await generate_report(result, report_dir)
             _emit(on_progress, "Step 6 complete: report generated")
-            logger.info("s6_report complete: %s", output_dir)
+            logger.info("s6_report complete: %s", report_dir)
         except Exception as exc:
             logger.exception("s6_report failed: %s", exc)
             _emit(on_progress, f"Step 6 failed: {exc}")

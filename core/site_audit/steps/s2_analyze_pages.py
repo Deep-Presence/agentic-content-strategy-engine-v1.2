@@ -48,6 +48,8 @@ from core.site_audit.checks.on_page_seo import (
     check_meta_description,
     check_title,
 )
+from core.site_audit.checks.performance import check_ssr_content
+from core.site_audit.checks.schema_checks import infer_page_type
 from core.site_audit.checks.security import check_https, check_mixed_content
 from core.site_audit.config import AuditConfig, DEFAULT_AUDIT_CONFIG
 
@@ -80,12 +82,17 @@ def _extract_title(soup: BeautifulSoup) -> tuple[str, int]:
     title_tag = soup.title
     if title_tag is None:
         return "", 0
-    text = (title_tag.string or "").strip()
+    text = title_tag.get_text(" ", strip=True)
     return text, len(text)
 
 
 def _extract_meta_description(soup: BeautifulSoup) -> tuple[str, int]:
     """Extract meta description content and its length.
+
+    Fallback chain:
+    1. ``<meta name="description">``
+    2. ``<meta property="og:description">``
+    3. ``<meta name="twitter:description">``
 
     Args:
         soup: Parsed BeautifulSoup object.
@@ -93,11 +100,28 @@ def _extract_meta_description(soup: BeautifulSoup) -> tuple[str, int]:
     Returns:
         Tuple of (content, length).  Both are empty/0 if absent.
     """
+    # Primary: standard meta description
     tag = soup.find("meta", attrs={"name": "description"})
-    if tag is None:
-        return "", 0
-    content = (tag.get("content") or "").strip()  # type: ignore[union-attr]
-    return content, len(content)
+    if tag is not None:
+        content = (tag.get("content") or "").strip()  # type: ignore[union-attr]
+        if content:
+            return content, len(content)
+
+    # Fallback 1: Open Graph description
+    tag = soup.find("meta", attrs={"property": "og:description"})
+    if tag is not None:
+        content = (tag.get("content") or "").strip()  # type: ignore[union-attr]
+        if content:
+            return content, len(content)
+
+    # Fallback 2: Twitter card description
+    tag = soup.find("meta", attrs={"name": "twitter:description"})
+    if tag is not None:
+        content = (tag.get("content") or "").strip()  # type: ignore[union-attr]
+        if content:
+            return content, len(content)
+
+    return "", 0
 
 
 def _extract_headings(soup: BeautifulSoup) -> list[dict[str, str]]:
@@ -189,10 +213,11 @@ def _extract_content_metrics(soup: BeautifulSoup, html: str) -> tuple[int, float
         pass
 
     if not main_text:
-        # Fallback: strip scripts/styles and get visible text
-        for tag in soup(["script", "style", "noscript"]):
+        # Fallback: re-parse from raw HTML to avoid mutating the shared soup
+        fallback_soup = BeautifulSoup(html, "html.parser")
+        for tag in fallback_soup(["script", "style", "noscript"]):
             tag.decompose()
-        main_text = soup.get_text(" ", strip=True)
+        main_text = fallback_soup.get_text(" ", strip=True)
 
     word_count = len(main_text.split()) if main_text else 0
 
@@ -206,22 +231,24 @@ def _extract_content_metrics(soup: BeautifulSoup, html: str) -> tuple[int, float
     return word_count, reading_level
 
 
-def _is_ssr(soup: BeautifulSoup) -> bool:
+def _is_ssr(html: str) -> bool:
     """Detect whether the page is server-side rendered.
 
     A page is considered SSR when its ``<body>`` contains >100 words of
     visible text (excluding script content).
 
+    Re-parses from raw HTML internally to avoid mutating any shared soup.
+
     Args:
-        soup: Parsed BeautifulSoup object.
+        html: Raw HTML string.
 
     Returns:
         True when the page appears to be SSR.
     """
+    soup = BeautifulSoup(html, "html.parser")
     body = soup.body
     if body is None:
         return False
-    # Remove script/style tags temporarily for word counting
     for tag in body(["script", "style", "noscript"]):
         tag.decompose()
     visible_text = body.get_text(" ", strip=True)
@@ -344,11 +371,19 @@ def _extract_author(soup: BeautifulSoup) -> tuple[bool, Optional[str]]:
     return False, None
 
 
+_HTTP_URL_IN_CSS_RE = re.compile(
+    r"""url\(\s*['"]?(http://[^'")]+)['"]?\s*\)""", re.IGNORECASE,
+)
+
+
 def _has_mixed_content(soup: BeautifulSoup, page_url: str) -> bool:
     """Detect mixed content on HTTPS pages.
 
-    Checks ``src`` and ``href`` attributes on ``<script>``, ``<link>``,
-    ``<img>``, ``<iframe>``, and ``<source>`` tags for HTTP-schemed URLs.
+    Checks:
+    1. ``src`` / ``href`` attributes on resource tags.
+    2. ``srcset`` on ``<img>`` and ``<source>`` (comma-separated URL list).
+    3. ``poster`` on ``<video>``, ``data`` on ``<object>``, ``src`` on ``<embed>``.
+    4. Inline ``style`` attributes and ``<style>`` blocks for ``url(http://...)``.
 
     Args:
         soup: Parsed BeautifulSoup object.
@@ -360,18 +395,42 @@ def _has_mixed_content(soup: BeautifulSoup, page_url: str) -> bool:
     if not page_url.startswith("https://"):
         return False
 
+    # Phase 1: Standard tag/attribute pairs
     check_attrs = [
         ("script", "src"),
         ("link", "href"),
         ("img", "src"),
         ("iframe", "src"),
         ("source", "src"),
+        ("video", "poster"),
+        ("object", "data"),
+        ("embed", "src"),
     ]
     for tag_name, attr in check_attrs:
         for tag in soup.find_all(tag_name, **{attr: True}):
             val = (tag.get(attr) or "").strip()
             if val.startswith("http://"):
                 return True
+
+    # Phase 2: srcset attributes (img, source) — comma-separated URL+descriptor
+    for tag_name in ("img", "source"):
+        for tag in soup.find_all(tag_name, srcset=True):
+            for entry in (tag.get("srcset") or "").split(","):
+                url_part = entry.strip().split()[0] if entry.strip() else ""
+                if url_part.startswith("http://"):
+                    return True
+
+    # Phase 3: Inline style attributes with url(http://...)
+    for tag in soup.find_all(style=True):
+        if _HTTP_URL_IN_CSS_RE.search(tag.get("style") or ""):
+            return True
+
+    # Phase 4: <style> blocks
+    for style_tag in soup.find_all("style"):
+        text = style_tag.string or style_tag.get_text()
+        if text and _HTTP_URL_IN_CSS_RE.search(text):
+            return True
+
     return False
 
 
@@ -387,6 +446,7 @@ def analyze_single_page(
     status_code: int,
     redirect_url: Optional[str],
     config: AuditConfig,
+    check_core_web_vitals: bool = True,
 ) -> PageAuditResult:
     """Analyse a single crawled page and return a structured result.
 
@@ -481,12 +541,15 @@ def analyze_single_page(
     result.word_count = word_count
     result.reading_level = reading_level
 
-    # SSR detection — re-parse since we decomposed tags above during content extraction
+    # SSR detection — _is_ssr re-parses internally (no shared state)
     try:
-        fresh_soup = BeautifulSoup(html, "html.parser")
-        result.is_ssr = _is_ssr(fresh_soup)
+        result.is_ssr = _is_ssr(html)
     except Exception:
         result.is_ssr = True
+
+    # Performance: SSR content check (pure, no I/O)
+    if check_core_web_vitals:
+        all_findings.extend(check_ssr_content(html, url))
 
     # Canonical
     has_canonical, canonical_url = _extract_canonical(soup, url)
@@ -510,13 +573,16 @@ def analyze_single_page(
     publish_date, modified_date = _extract_freshness(soup)
     result.publish_date = publish_date
     result.modified_date = modified_date
-    all_findings.extend(check_freshness(url, publish_date, modified_date))
+    page_type = infer_page_type(url, html)
+    all_findings.extend(check_freshness(url, publish_date, modified_date, page_type=page_type))
 
-    # Author
+    # Author — only penalise missing author on article-type pages (blog, posts,
+    # articles).  Homepages, product pages, etc. do not need author attribution.
     has_author, author_name = _extract_author(soup)
     result.has_author = has_author
     result.author_name = author_name
-    all_findings.extend(check_author(url, has_author))
+    if page_type == "article":
+        all_findings.extend(check_author(url, has_author))
 
     result.findings = all_findings
     return result
@@ -533,6 +599,7 @@ async def analyze_all_pages(
     status_code_map: dict[str, int],
     redirect_map: dict[str, str],
     config: AuditConfig = DEFAULT_AUDIT_CONFIG,
+    check_core_web_vitals: bool = True,
 ) -> list[PageAuditResult]:
     """Analyse all crawled pages concurrently.
 
@@ -567,6 +634,7 @@ async def analyze_all_pages(
                     status_code=status,
                     redirect_url=redirect,
                     config=config,
+                    check_core_web_vitals=check_core_web_vitals,
                 )
             except Exception as exc:
                 logger.error("Page analysis failed for %s: %s", url, exc, exc_info=True)

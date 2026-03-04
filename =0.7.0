@@ -1,0 +1,8 @@
+Collecting defusedxml
+  Downloading defusedxml-0.7.1-py2.py3-none-any.whl.metadata (32 kB)
+Downloading defusedxml-0.7.1-py2.py3-none-any.whl (25 kB)
+Installing collected packages: defusedxml
+Successfully installed defusedxml-0.7.1
+
+[notice] A new release of pip is available: 24.3.1 -> 26.0.1
+[notice] To update, run: pip install --upgrade pip

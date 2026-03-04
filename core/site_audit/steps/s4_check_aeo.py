@@ -181,7 +181,7 @@ def analyze_aeo_readiness(
     # --- Detect quick-answer hooks ---
     quick_answer_hook_count = 0
     for q_heading in question_headings:
-        if detect_quick_answer_hook(q_heading, soup):
+        if detect_quick_answer_hook(q_heading, soup, config=config):
             quick_answer_hook_count += 1
 
     quick_answer_hook_ratio = (

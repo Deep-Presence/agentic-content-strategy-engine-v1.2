@@ -62,7 +62,7 @@ def _site_audit_artifacts_exist(
             try:
                 data = json.loads(result_file.read_text(encoding="utf-8"))
                 if (
-                    data.get("status") == "completed"
+                    data.get("status") in ("completed", "degraded")
                     and data.get("domain") == domain
                 ):
                     return True

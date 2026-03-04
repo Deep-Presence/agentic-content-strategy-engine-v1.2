@@ -11,7 +11,52 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from dateutil import parser as dateutil_parser
+
 from core.models.site_audit import AuditCheckSeverity, AuditDimension, AuditFinding
+
+
+# Maximum length for date strings to prevent DoS via fuzzy parsing.
+_MAX_DATE_STR_LENGTH: int = 100
+
+
+def _parse_date_robust(date_str: str) -> datetime | None:
+    """Parse a date string using multiple strategies.
+
+    1. Reject strings > 100 chars (prevents DoS via fuzzy parser).
+    2. Try ``dateutil.parser.isoparse()`` first (ISO 8601 with timezones, Z, fractional seconds).
+    3. Fallback to ``dateutil.parser.parse(fuzzy=False)`` for human-readable dates.
+    4. Normalize timezone-naive results to UTC.
+
+    Args:
+        date_str: Raw date string from HTML meta tags.
+
+    Returns:
+        A timezone-aware datetime in UTC, or ``None`` if parsing fails.
+    """
+    if not date_str or len(date_str) > _MAX_DATE_STR_LENGTH:
+        return None
+
+    parsed: datetime | None = None
+
+    # Strategy 1: ISO 8601 (fastest, strictest)
+    try:
+        parsed = dateutil_parser.isoparse(date_str)
+    except (ValueError, TypeError):
+        pass
+
+    # Strategy 2: human-readable fallback (non-fuzzy)
+    if parsed is None:
+        try:
+            parsed = dateutil_parser.parse(date_str, fuzzy=False)
+        except (ValueError, TypeError, OverflowError):
+            return None
+
+    # Normalize naive datetimes to UTC
+    if parsed is not None and parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed
 
 
 def check_author(url: str, has_author: bool) -> list[AuditFinding]:
@@ -52,6 +97,7 @@ def check_freshness(
     url: str,
     publish_date: str | None,
     modified_date: str | None,
+    page_type: str = "page",
 ) -> list[AuditFinding]:
     """Generate findings for stale or undated content.
 
@@ -62,6 +108,9 @@ def check_freshness(
         url: Page URL.
         publish_date: ISO 8601 date string of original publication, or ``None``.
         modified_date: ISO 8601 date string of last modification, or ``None``.
+        page_type: Inferred page type (e.g. ``"article"``, ``"homepage"``).
+            When ``"article"`` and no dates are found, generates a low-severity
+            finding recommending date metadata.
 
     Returns:
         List of :class:`AuditFinding` objects.
@@ -71,24 +120,27 @@ def check_freshness(
     # Use modified_date preferentially, fall back to publish_date
     best_date_str = modified_date or publish_date
     if not best_date_str:
+        # Article pages without any date metadata get a finding
+        if page_type == "article":
+            findings.append(
+                AuditFinding(
+                    finding_type="missing_date_metadata",
+                    dimension=AuditDimension.freshness,
+                    severity=AuditCheckSeverity.low,
+                    url=url,
+                    message="Article page has no publish or modified date metadata.",
+                    recommendation=(
+                        "Add article:published_time and article:modified_time "
+                        "meta tags. AI models deprioritise undated articles when "
+                        "assessing content freshness."
+                    ),
+                    details={"page_type": page_type},
+                )
+            )
         return findings  # No date available — cannot assess freshness
 
-    # Try to parse the date
-    parsed: datetime | None = None
-    for fmt in (
-        "%Y-%m-%dT%H:%M:%S%z",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d",
-    ):
-        try:
-            parsed = datetime.strptime(best_date_str[:len(fmt) + 6], fmt)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            break
-        except (ValueError, TypeError):
-            continue
-
+    # Parse the date using robust multi-strategy parser
+    parsed = _parse_date_robust(best_date_str)
     if parsed is None:
         return findings  # Unparseable date — skip
 
@@ -99,8 +151,8 @@ def check_freshness(
         findings.append(
             AuditFinding(
                 finding_type="stale_content_2y",
-                dimension=AuditDimension.eeat,
-                severity=AuditCheckSeverity.low,
+                dimension=AuditDimension.freshness,
+                severity=AuditCheckSeverity.medium,
                 url=url,
                 message=(
                     f"Content is over 2 years old (last updated: {best_date_str[:10]})."
@@ -121,8 +173,8 @@ def check_freshness(
         findings.append(
             AuditFinding(
                 finding_type="stale_content_1y",
-                dimension=AuditDimension.eeat,
-                severity=AuditCheckSeverity.medium,
+                dimension=AuditDimension.freshness,
+                severity=AuditCheckSeverity.low,
                 url=url,
                 message=(
                     f"Content is over 1 year old (last updated: {best_date_str[:10]})."

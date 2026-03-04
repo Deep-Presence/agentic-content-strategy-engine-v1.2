@@ -1,7 +1,34 @@
 {
-  "current_sprint": "langsmith-migration",
-  "last_updated": "2026-03-02",
+  "current_sprint": "site-audit-p3-bugfixes",
+  "last_updated": "2026-03-04",
   "completed": [
+    {
+      "id": "T-site-audit-p3-bugfixes",
+      "task": "Site Audit P3 Bug Fixes — 9 fixes from combined manual + Codex review",
+      "sprint": "site-audit-p3-bugfixes",
+      "status": "done",
+      "completed_at": "2026-03-04",
+      "files_changed": [
+        "core/site_audit/pipeline.py (output_dir param, crawl-delay findings)",
+        "core/site_audit/config.py (__post_init__ validation, aeo_quick_answer fields)",
+        "core/site_audit/checks/eeat_signals.py (_parse_date_robust, page_type param)",
+        "core/site_audit/checks/extractability.py (Rule 3 wh-words, quick-answer rewrite)",
+        "core/site_audit/checks/schema_checks.py (Product + Speakable validators)",
+        "core/site_audit/steps/s1_discover.py (canonical_url, _parse_crawl_delay)",
+        "core/site_audit/steps/s2_analyze_pages.py (page_type wiring)",
+        "core/site_audit/steps/s4_check_aeo.py (config passthrough)",
+        "core/models/site_audit.py (crawl_delay_seconds field)",
+        "pyproject.toml (python-dateutil dep)",
+        "tests/core/test_site_audit/test_config_validation.py (NEW)",
+        "tests/core/test_site_audit/test_integration.py",
+        "tests/core/test_site_audit/test_checks.py",
+        "tests/core/test_site_audit/test_aeo.py",
+        "tests/core/test_site_audit/test_schema.py",
+        "tests/core/test_site_audit/test_crawler.py"
+      ],
+      "tests_added": 82,
+      "summary": "9 P3 bug fixes: T-SA-32 output_dir isolation, T-SA-31 AuditConfig __post_init__ (8 ValueError checks), T-SA-23 dateutil robust parsing, T-SA-24 missing date finding (article only), T-SA-29 question-heading Rule 3 (wh-words without ?), T-SA-30 quick-answer 15-150 + heading boundary, T-SA-26 Product+Speakable validators, T-SA-27 canonical_url dedup, T-SA-28 crawl-delay parse+report. T-SA-25 dropped (already resolved). Codex-reviewed (14 findings, all incorporated). 793 site audit tests passing."
+    },
     {
       "id": "T-langsmith-migration",
       "task": "LangSmith migration — eliminate Langfuse, unify tracing, add Hub prompt registry + LangGraph Studio",
@@ -451,6 +478,7 @@
     }
   ],
   "in_progress": [],
+  "_session_note_2026_03_04_site_audit_p3": "Sprint v3: 9 P3 bug fixes for site audit pipeline. T-SA-32 output_dir, T-SA-31 config validation, T-SA-23 dateutil parsing, T-SA-24 missing date (article), T-SA-29 question-heading Rule 3, T-SA-30 quick-answer expansion, T-SA-26 Product+Speakable schema, T-SA-27 canonical_url, T-SA-28 crawl-delay. 82 new tests, 793 site audit tests passing. Codex-reviewed (14 findings all incorporated).",
   "_session_note_2026_03_02_codex_fixes": "Completed M1+M2+H8+H9 TDD fixes. M1: response=None sentinel in eeat_judge.py (+4 tests). M2: truncate_to_token_limit in linker+fact_enricher, max_length in schemas (+8 tests). H8: brief_decision_log in HITL-2 loop, all blueprints to persist (+8 tests). H9: evaluated 4-tuple threading at 4 locations (+4 tests). Total: 379 tests. review.md updated.",
   "recently_completed": [
     {

@@ -120,8 +120,14 @@ async def _run(args: argparse.Namespace) -> int:
     if result.error_message:
         print(f"  Error          : {result.error_message}")
 
+    # Compute effective_slug matching pipeline convention
+    if input_data.product_slug and input_data.company_slug:
+        effective_slug = f"{input_data.company_slug}__{input_data.product_slug}"
+    else:
+        effective_slug = input_data.company_slug or ""
+
     output_path = (
-        _PROJECT_ROOT / "artifacts" / "site_audit" / result.audit_id / "audit_result.json"
+        _PROJECT_ROOT / "artifacts" / "site_audit" / effective_slug / result.audit_id / "audit_result.json"
     )
     print(f"\nArtifacts saved to: {output_path.parent}")
     return 0

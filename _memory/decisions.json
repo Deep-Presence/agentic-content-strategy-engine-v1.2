@@ -418,5 +418,60 @@
     "reversible": true,
     "approved_by": "Aryan",
     "codex_review": "v1 plan REJECTED with 6 critical findings. All 6 incorporated into v2: C1 (signature mismatch→kwargs shim), C2 (hidden import at pipeline.py:175), C3 (cleanup order→Phase 5 last), C4 (langgraph.json→only graph_v13.py), C5 (RunTree in state→contextvars), C6 (pull_prompt→pull_prompt_commit)"
+  },
+  {
+    "id": "D-SA-P3-1",
+    "timestamp": "2026-03-04",
+    "task": "Question-heading classification without trailing ?",
+    "approach": "Classify wh-word headings (how/what/why/when/where/who/which) as questions even without trailing ?, with >= 4 words guard. Auxiliary verbs (is/can/does/etc.) still require ?.",
+    "rationale": "AI engines DO extract 'How to...' headings as Q&A. Guard prevents false positives on fragment headings like 'How' or 'What Now'.",
+    "alternatives_rejected": ["Require ? for all headings (under-reports AEO)", "No word-count guard (false positives on fragments)"],
+    "outcome": "10 new tests passing. AEO scores more accurate for well-structured content.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-SA-P3-2",
+    "timestamp": "2026-03-04",
+    "task": "Quick-answer word range expansion 15-150",
+    "approach": "Expand from hardcoded 30-70 to configurable 15-150 via AuditConfig fields (aeo_quick_answer_min_words, aeo_quick_answer_max_words). Search bounded by heading elements.",
+    "rationale": "FAQ answers often 15-30 words, detailed answers 70-150. Current range missed both. Heading boundary prevents matching unrelated paragraphs.",
+    "alternatives_rejected": ["Keep 30-70 (misses valid content)", "Unbounded search (matches wrong sections)"],
+    "outcome": "10 new tests passing. Config fields allow reverting to any range.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-SA-P3-3",
+    "timestamp": "2026-03-04",
+    "task": "Missing date finding for article pages only",
+    "approach": "Generate low-severity missing_date_metadata finding only when page_type == 'article'. Non-article pages unaffected.",
+    "rationale": "AI models deprioritize undated articles. Homepage/product/pricing pages don't need date metadata.",
+    "alternatives_rejected": ["Flag all page types (over-penalizes non-articles per Codex F-3)", "No finding at all (misses real issue)"],
+    "outcome": "5 new tests passing. Article freshness accuracy improved.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-SA-P3-4",
+    "timestamp": "2026-03-04",
+    "task": "Crawl-delay parse+report only, no enforcement",
+    "approach": "Parse Crawl-delay from robots.txt, cap at 300s, report as findings (info >10s, medium >30s). Rate-limiting enforcement deferred.",
+    "rationale": "Enforcement requires shared domain-level rate limiter (asyncio.Lock + timestamp) — separate feature. Parse+report provides immediate value.",
+    "alternatives_rejected": ["Full enforcement (too complex for P3 fix)", "No findings, just data field (less actionable)"],
+    "outcome": "12 new tests passing. Clients see if robots.txt throttles AI bots.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-SA-P3-5",
+    "timestamp": "2026-03-04",
+    "task": "Split canonical URL from request URL for dedup",
+    "approach": "New canonical_url() for dedup (sorts params, strips www, removes default ports, normalizes percent-encoding). normalize_url() unchanged for HTTP requests.",
+    "rationale": "Sorting query params in request URL breaks signed URLs and param-order-sensitive endpoints (Codex F-4).",
+    "alternatives_rejected": ["Sort params in normalize_url (breaks signed URLs)", "No param sorting (poor dedup)"],
+    "outcome": "8 new tests passing. Better dedup without breaking fetches.",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]

@@ -129,8 +129,9 @@ def aggregate_results(
     """
     all_findings = _collect_all_findings(page_results)
 
-    # Per-dimension scores
-    dimension_scores = compute_all_dimension_scores(all_findings, config)
+    # Per-dimension scores (page-normalised)
+    pages_crawled = len(page_results)
+    dimension_scores = compute_all_dimension_scores(all_findings, config, pages_crawled)
     overall_score = compute_overall_score(dimension_scores)
     grade = compute_grade(overall_score, config)
 
@@ -158,7 +159,7 @@ def aggregate_results(
     )
 
     # Schema coverage
-    pages_with_schema = sum(1 for p in page_results if p.schema.has_schema)
+    pages_with_schema = sum(1 for p in page_results if p.schema_result.has_schema)
 
     # Top findings
     top_findings = _compute_top_findings(all_findings)

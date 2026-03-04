@@ -21,6 +21,8 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+
+import defusedxml.ElementTree as SafeET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
@@ -170,8 +172,15 @@ def _extract_sitemaps_from_robots(raw_robots: Optional[str]) -> List[str]:
 # ===========================================================================
 
 
+_MAX_XML_BYTES: int = 10 * 1024 * 1024  # 10 MB
+
+
 async def _fetch_xml(url: str, client: httpx.AsyncClient) -> Optional[ET.Element]:
-    """Fetch and parse an XML URL, return root element or None."""
+    """Fetch and parse an XML URL, return root element or None.
+
+    Uses ``defusedxml`` to block entity expansion and XXE attacks.
+    Rejects responses larger than :data:`_MAX_XML_BYTES`.
+    """
     try:
         resp = await client.get(url, timeout=20)
         if resp.status_code >= 400:
@@ -179,7 +188,13 @@ async def _fetch_xml(url: str, client: httpx.AsyncClient) -> Optional[ET.Element
         content = resp.text
         if not content.strip():
             return None
-        return ET.fromstring(content)
+        if len(content.encode("utf-8", errors="replace")) > _MAX_XML_BYTES:
+            logger.warning("XML body too large for %s — skipping", url)
+            return None
+        return SafeET.fromstring(content)
+    except (SafeET.DTDForbidden, SafeET.EntitiesForbidden):
+        logger.warning("XML entity/DTD attack blocked for %s", url)
+        return None
     except Exception as e:
         logger.warning("Failed to parse XML at %s: %s", url, e)
         return None

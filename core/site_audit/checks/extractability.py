@@ -44,14 +44,33 @@ _QUESTION_START_WORDS: tuple[str, ...] = (
     "should",
     "will",
     "do",
+    "have",
+    "has",
+    "could",
+    "would",
+    "might",
+    "may",
+    "did",
+    "was",
+    "were",
 )
+
+# Core wh-words that can indicate a question heading even WITHOUT a trailing "?",
+# provided the heading has >= 4 words.  Auxiliary verbs (is, can, does, etc.)
+# require "?" to avoid false positives like "Is your team ready for growth".
+_WH_WORDS: frozenset[str] = frozenset({
+    "what", "how", "why", "when", "where", "who", "which",
+})
 
 # Comparison patterns that appear *within* a heading
 _COMPARISON_PATTERNS: tuple[str, ...] = (
     r"\bvs\b",
+    r"\bvs\.\b",
     r"\bversus\b",
     r"\bcompared to\b",
     r"\bdifference between\b",
+    r"\bpros and cons\b",
+    r"\bcomparison\b",
 )
 
 
@@ -91,6 +110,14 @@ def classify_heading_as_question(text: str) -> bool:
         if re.search(pattern, lower):
             return True
 
+    # Rule 3: wh-word headings without trailing "?" — only core wh-words,
+    # minimum 4 words to filter fragment headings like "How" or "What Now"
+    word_count = len(stripped.split())
+    if word_count >= 4:
+        for word in _WH_WORDS:
+            if re.match(rf"^{re.escape(word)}\b", lower):
+                return True
+
     return False
 
 
@@ -109,29 +136,45 @@ def _count_words(text: str) -> int:
     return len(text.split())
 
 
-def detect_quick_answer_hook(heading_element: Tag, soup: BeautifulSoup) -> bool:
+def detect_quick_answer_hook(
+    heading_element: Tag,
+    soup: BeautifulSoup,
+    config: Optional["AuditConfig"] = None,
+) -> bool:
     """Check whether a question heading is followed by a direct-answer paragraph.
 
-    After a question heading, look for the immediately following ``<p>`` element
-    (first ``<p>`` sibling, or first ``<p>`` inside the next non-text sibling).
-    The paragraph must be 30–70 words long.
+    After a question heading, search up to 5 siblings for ``<p>`` elements
+    (including ``<p>`` nested inside ``<div>``/``<section>``/``<article>``
+    containers).  The paragraph word count must fall within
+    ``[config.aeo_quick_answer_min_words, config.aeo_quick_answer_max_words]``
+    (default 15–150).
 
-    Search up to 3 siblings after the heading.  Skip non-text siblings like
-    ``<img>`` or empty ``<div>`` elements.  Return False if no suitable paragraph
-    is found within that window.
+    The search stops at the next heading element (h1–h6) to prevent matching
+    unrelated paragraphs in subsequent sections.
 
     Args:
         heading_element: The BS4 Tag element for the heading (h1–h6).
         soup: The full page BeautifulSoup tree (not used directly but kept for
             API consistency with other detectors).
+        config: Optional AuditConfig for word count range.  When ``None``,
+            uses the module-level default.
 
     Returns:
         True if a qualifying answer paragraph was found, False otherwise.
     """
+    if config is None:
+        from core.site_audit.config import DEFAULT_AUDIT_CONFIG
+        config = DEFAULT_AUDIT_CONFIG
+
+    min_words = config.aeo_quick_answer_min_words
+    max_words = config.aeo_quick_answer_max_words
+
+    _HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+
     sibling_count = 0
     current = heading_element.next_sibling
 
-    while current is not None and sibling_count < 3:
+    while current is not None and sibling_count < 5:
         # Skip pure whitespace text nodes
         if isinstance(current, NavigableString):
             if current.strip():
@@ -145,6 +188,10 @@ def detect_quick_answer_hook(heading_element: Tag, soup: BeautifulSoup) -> bool:
 
         tag_name = current.name.lower() if current.name else ""
 
+        # Stop at next heading (bounded search — Codex F-13)
+        if tag_name in _HEADING_TAGS:
+            return False
+
         # Skip non-content tags
         if tag_name in ("img", "figure", "picture", "script", "style", "noscript"):
             current = current.next_sibling
@@ -153,20 +200,21 @@ def detect_quick_answer_hook(heading_element: Tag, soup: BeautifulSoup) -> bool:
         if tag_name == "p":
             text = _get_visible_text(current)
             word_count = _count_words(text)
-            if 30 <= word_count <= 70:
+            if min_words <= word_count <= max_words:
                 return True
-            # A <p> was found but doesn't qualify — stop searching
-            return False
+            # Don't stop at first non-matching <p> — continue searching
+            sibling_count += 1
+            current = current.next_sibling
+            continue
 
         if tag_name in ("div", "section", "article"):
-            # Look for first <p> inside this container
-            inner_p = current.find("p")
-            if inner_p and isinstance(inner_p, Tag):
-                text = _get_visible_text(inner_p)
-                word_count = _count_words(text)
-                if 30 <= word_count <= 70:
-                    return True
-            # Even if no qualifying <p>, count this as a sibling
+            # Search ALL <p> elements inside this container
+            for inner_p in current.find_all("p"):
+                if isinstance(inner_p, Tag):
+                    text = _get_visible_text(inner_p)
+                    word_count = _count_words(text)
+                    if min_words <= word_count <= max_words:
+                        return True
             sibling_count += 1
             current = current.next_sibling
             continue
@@ -278,17 +326,40 @@ def detect_faq_section(soup: BeautifulSoup) -> bool:
     return False
 
 
+# Continuation words after "is/are" that indicate a genuine definition.
+# We match articles, demonstratives, quantifiers, and definitional adverbs.
+# This rejects bare adjective predicates like "The company is great".
+_DEFINITIONAL_CONTINUATIONS = re.compile(
+    r"^(?:"
+    r"a|an|the|"                              # articles
+    r"defined|known|considered|described|"     # definitional verbs
+    r"one|any|not|when|where|what|how|"        # quantifiers/relatives
+    r"essentially|basically|generally|"        # adverbs of definition
+    r"typically|commonly|often|primarily|"     # frequency adverbs (definitional)
+    r"specifically|usually|simply|"            # more adverbs
+    r"used|designed|built|meant|intended"      # purpose verbs (passive)
+    r")\s",
+    re.IGNORECASE,
+)
+
+
 def detect_definition_opening(text: str) -> bool:
     """Detect whether the first paragraph opens with a definition of the topic.
 
     Matches patterns like:
-    - "{Topic} is ..."
-    - "{Topic} are ..."
+    - "{Topic} is a/the/defined as ..."
+    - "{Topic} are ..."  (with definitional continuation)
     - "{Topic} refers to ..."
 
+    After matching an ``is/are`` verb, the word that follows must be an article
+    or definitional frame (``a``, ``an``, ``the``, ``defined``, ``known``, etc.)
+    to avoid false positives like "The company is great".
+
+    ``refers to`` is inherently definitional and needs no continuation check.
+
     Paragraphs starting with continuity markers (e.g. "However, AEO is...")
-    do NOT qualify as definition openings even if they contain a definitional
-    pattern further into the sentence.
+    or non-topic starters (pronouns, possessives, existential "there")
+    do NOT qualify as definition openings.
 
     Args:
         text: Plain text of the FIRST paragraph on the page.
@@ -306,15 +377,33 @@ def detect_definition_opening(text: str) -> bool:
         if re.match(rf"^{re.escape(marker)}\b", lower):
             return False
 
+    # Reject non-topic starters: pronouns, possessives, existential "there".
+    # A real definition opening uses the topic noun/name directly.
+    if re.match(
+        r"^(?:there|it|our|we|you|they|my|your|his|her|its)\b",
+        lower,
+    ):
+        return False
+
     # Match: <topic (1–5 words)> is/are/refers to ...
-    # Use non-greedy match: 1 word (mandatory), then 0–4 optional words
-    patterns = [
-        r"^\S+(?:\s+\S+){0,4}\s+(?:is|are)\s+",
-        r"^\S+(?:\s+\S+){0,4}\s+refers\s+to\s+",
+    patterns: list[tuple[str, str]] = [
+        (r"^\S+(?:\s+\S+){0,4}\s+(?:is|are)\s+", "is_are"),
+        (r"^\S+(?:\s+\S+){0,4}\s+refers\s+to\s+", "refers_to"),
     ]
-    for pattern in patterns:
-        if re.match(pattern, stripped, re.IGNORECASE):
-            return True
+    for pattern, kind in patterns:
+        m = re.match(pattern, stripped, re.IGNORECASE)
+        if m:
+            if kind == "refers_to":
+                return True  # "refers to" is inherently definitional
+            # For is/are: require a definitional continuation word or
+            # a hyphenated compound term (e.g. "machine-readable").
+            remainder = stripped[m.end():]
+            if _DEFINITIONAL_CONTINUATIONS.match(remainder):
+                return True
+            # Hyphenated compound terms are typically technical/definitional
+            first_word = remainder.split()[0] if remainder.split() else ""
+            if "-" in first_word and len(first_word) > 3:
+                return True
 
     return False
 
@@ -441,19 +530,18 @@ def detect_toc(soup: BeautifulSoup) -> bool:
     Returns:
         True if a table of contents is detected.
     """
-    # Use substring matching on normalized id/class values to catch variants like
-    # "post-toc", "toc-wrapper", "wp-table-of-contents", etc.
-    toc_substrings = ("toc", "table-of-contents", "table_of_contents", "contents")
-
-    # Rule 1: id/class substring match (normalize underscores → hyphens)
-    for element in soup.find_all(True):
-        element_id = element.get("id", "").lower()
-        element_classes = [c.lower() for c in element.get("class", [])]
-
-        if any(sub in element_id for sub in toc_substrings):
-            return True
-        if any(sub in cls for sub in toc_substrings for cls in element_classes):
-            return True
+    # Rule 1: CSS selector for id/class substrings — replaces O(n) scan.
+    # Catches "toc", "post-toc", "toc-wrapper", "wp-table-of-contents", etc.
+    # The `i` flag ensures case-insensitive matching (CSS Selectors Level 4,
+    # supported by soupsieve ≥2.0 which BeautifulSoup 4 uses internally).
+    _toc_selector = (
+        '[id*="toc" i], [class*="toc" i], '
+        '[id*="table-of-contents" i], [class*="table-of-contents" i], '
+        '[id*="table_of_contents" i], [class*="table_of_contents" i], '
+        '[id*="contents" i], [class*="contents" i]'
+    )
+    if soup.select_one(_toc_selector):
+        return True
 
     # Rule 2: nav element with internal anchor links near the top
     body = soup.find("body") or soup

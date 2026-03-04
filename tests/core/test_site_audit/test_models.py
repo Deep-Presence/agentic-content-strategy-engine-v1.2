@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 
 from core.models.site_audit import (
     AEOReadinessResult,
@@ -96,7 +98,7 @@ class TestSiteAuditInput:
 
     def test_defaults(self) -> None:
         inp = SiteAuditInput(company_name="X", domain="x.com")
-        assert inp.company_slug is None
+        assert inp.company_slug == "x"  # auto-derived from company_name
         assert inp.product_slug is None
         assert inp.max_pages == 200
         assert inp.max_depth == 4
@@ -128,6 +130,40 @@ class TestSiteAuditInput:
         assert restored.company_name == inp.company_name
         assert restored.domain == inp.domain
         assert restored.max_pages == inp.max_pages
+
+    # ── T-SA-10: Auto-derive company_slug + product_slug validation ──
+
+    def test_slug_derived_from_company_name(self) -> None:
+        inp = SiteAuditInput(company_name="Lovable", domain="lovable.dev")
+        assert inp.company_slug == "lovable"
+
+    def test_slug_special_chars(self) -> None:
+        inp = SiteAuditInput(company_name="A & B Co.", domain="ab.com")
+        assert inp.company_slug == "a-b-co"
+
+    def test_explicit_slug_preserved(self) -> None:
+        inp = SiteAuditInput(
+            company_name="Lovable", domain="lovable.dev", company_slug="custom"
+        )
+        assert inp.company_slug == "custom"
+
+    def test_product_slug_valid(self) -> None:
+        inp = SiteAuditInput(
+            company_name="Acme", domain="acme.com", product_slug="dashboard"
+        )
+        assert inp.product_slug == "dashboard"
+
+    def test_product_slug_path_traversal_rejected(self) -> None:
+        with pytest.raises(Exception):  # ValidationError
+            SiteAuditInput(
+                company_name="Acme", domain="acme.com", product_slug="../evil"
+            )
+
+    def test_product_slug_uppercase_rejected(self) -> None:
+        with pytest.raises(Exception):  # ValidationError
+            SiteAuditInput(
+                company_name="Acme", domain="acme.com", product_slug="BadSlug"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +345,7 @@ class TestPageAuditResult:
         assert p.modified_date is None
         assert p.has_author is False
         assert p.author_name is None
-        assert isinstance(p.schema, SchemaDetectionResult)
+        assert isinstance(p.schema_result, SchemaDetectionResult)
         assert isinstance(p.aeo, AEOReadinessResult)
         assert p.findings == []
 
@@ -317,8 +353,8 @@ class TestPageAuditResult:
         """Nested default_factory models must not be shared."""
         p1 = PageAuditResult()
         p2 = PageAuditResult()
-        p1.schema.schema_types.append("Article")
-        assert p2.schema.schema_types == []
+        p1.schema_result.schema_types.append("Article")
+        assert p2.schema_result.schema_types == []
 
     def test_findings_list_isolated(self) -> None:
         p1 = PageAuditResult()
@@ -356,7 +392,7 @@ class TestPageAuditResult:
         )
         restored = json_roundtrip(p)
         assert restored.url == "https://acme.com/"
-        assert restored.schema.has_schema is True
+        assert restored.schema_result.has_schema is True
         assert restored.aeo.snippet_readiness_score == pytest.approx(60.0)
         assert len(restored.findings) == 1
         assert restored.findings[0].finding_type == "short_meta"
@@ -372,6 +408,34 @@ class TestPageAuditResult:
         p = PageAuditResult(headings=headings)
         assert len(p.headings) == 2
         assert p.headings[0]["level"] == "h1"
+
+
+class TestSchemaKeyFallback:
+    """T-SA-22: Verify both 'schema_result' (field name) and 'schema' (alias)
+    are accepted when reading page result dicts from JSON artifacts."""
+
+    def test_schema_result_key_used(self) -> None:
+        """Field name key takes priority."""
+        p: dict = {"schema_result": {"has_schema": True, "schema_types": ["Article"]}}
+        result = p.get("schema_result", p.get("schema", {}))
+        assert result == {"has_schema": True, "schema_types": ["Article"]}
+
+    def test_schema_alias_key_used(self) -> None:
+        """Alias key accepted when field name absent."""
+        p: dict = {"schema": {"has_schema": True}}
+        result = p.get("schema_result", p.get("schema", {}))
+        assert result == {"has_schema": True}
+
+    def test_neither_key_returns_empty(self) -> None:
+        p: dict = {"url": "https://example.com"}
+        result = p.get("schema_result", p.get("schema", {}))
+        assert result == {}
+
+    def test_both_keys_prefers_field_name(self) -> None:
+        """When both present, field name wins."""
+        p: dict = {"schema_result": {"a": 1}, "schema": {"b": 2}}
+        result = p.get("schema_result", p.get("schema", {}))
+        assert result == {"a": 1}
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +589,8 @@ class TestSiteAuditResult:
         assert r.completed_at is None
         assert r.status == "pending"
         assert r.error_message is None
+        assert r.failed_steps == []
+        assert r.degraded_dimensions == []
 
     def test_nested_models_isolated(self) -> None:
         r1 = SiteAuditResult()
@@ -540,7 +606,7 @@ class TestSiteAuditResult:
         assert r2.page_results == []
 
     def test_status_values(self) -> None:
-        for status in ("pending", "running", "completed", "failed"):
+        for status in ("pending", "running", "completed", "failed", "degraded"):
             r = SiteAuditResult(status=status)
             assert r.status == status
 
@@ -616,3 +682,76 @@ class TestSiteAuditResult:
         r = SiteAuditResult(top_findings=top)
         assert len(r.top_findings) == 2
         assert r.top_findings[0]["finding_type"] == "missing_title"
+
+
+# ---------------------------------------------------------------------------
+# T-SA-01: Path traversal — _validate_audit_id + _audit_dir hardening
+# ---------------------------------------------------------------------------
+
+
+class TestAuditIdValidation:
+    """Verify that _validate_audit_id and _audit_dir reject path traversal
+    attempts while accepting valid UUID4 strings (T-SA-01 fix)."""
+
+    def test_valid_uuid4_accepted(self, tmp_path: Path) -> None:
+        from core.services.json_site_audit_data import _audit_dir
+
+        audit_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        # Just verify no exception — directory need not exist
+        result = _audit_dir(tmp_path, "test-co", audit_id)
+        assert result == tmp_path / "site_audit" / "test-co" / audit_id
+
+    def test_path_traversal_rejected(self, tmp_path: Path) -> None:
+        from core.services.json_site_audit_data import _audit_dir
+
+        for malicious_id in [
+            "../../etc",
+            "../gap_analysis",
+            "../../gap_analysis",
+            "../../../etc/passwd",
+            "..%2F..%2Fetc",
+        ]:
+            with pytest.raises(HTTPException) as exc_info:
+                _audit_dir(tmp_path, "test-co", malicious_id)
+            assert exc_info.value.status_code == 400
+
+    def test_uppercase_uuid_rejected(self, tmp_path: Path) -> None:
+        from core.services.json_site_audit_data import _audit_dir
+
+        with pytest.raises(HTTPException) as exc_info:
+            _audit_dir(tmp_path, "test-co", "A1B2C3D4-E5F6-7890-ABCD-EF1234567890")
+        assert exc_info.value.status_code == 400
+
+    def test_wrong_format_rejected(self, tmp_path: Path) -> None:
+        from core.services.json_site_audit_data import _audit_dir
+
+        for bad_id in ["not-a-uuid", "", "12345", "abc", "hello world"]:
+            with pytest.raises(HTTPException) as exc_info:
+                _audit_dir(tmp_path, "test-co", bad_id)
+            assert exc_info.value.status_code == 400
+
+    def test_symlink_escape_rejected(self, tmp_path: Path) -> None:
+        """Symlink that points outside company_root must be rejected."""
+        from core.services.json_site_audit_data import _audit_dir
+
+        company_root = tmp_path / "site_audit" / "test-co"
+        company_root.mkdir(parents=True)
+        audit_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        # Create a symlink inside company_root that points outside
+        escape_target = tmp_path / "secrets"
+        escape_target.mkdir()
+        (company_root / audit_id).symlink_to(escape_target)
+
+        with pytest.raises(HTTPException) as exc_info:
+            _audit_dir(tmp_path, "test-co", audit_id)
+        assert exc_info.value.status_code == 400
+
+    def test_validate_audit_id_directly(self) -> None:
+        from core.services.json_site_audit_data import _validate_audit_id
+
+        # Valid — no exception
+        _validate_audit_id("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+        # Invalid — raises
+        with pytest.raises(HTTPException):
+            _validate_audit_id("../../etc")

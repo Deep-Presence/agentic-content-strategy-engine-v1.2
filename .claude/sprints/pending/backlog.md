@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-02 (v1.3 M1+M2+H8+H9 fixes — PB-57/58/59 resolved)
-> **Total items:** 34
+> **Last synced:** 2026-03-04 (Sprint v3 site-audit-p3-bugfixes — PB-64 added)
+> **Total items:** 35
 
 ## Critical (Fix Before Production)
 
@@ -232,6 +232,13 @@
 - **Date added:** 2026-02-18
 - **Description:** Protect s6_analyze from embedding dimension mismatch.
 - **Files affected:** `core/gap_analysis/steps/s6_analyze.py`
+- **Blocked by:** nothing
+
+### PB-64: Crawl-delay enforcement (rate limiting) in site audit crawler
+- **Source:** Sprint v3 site-audit-p3-bugfixes (T-SA-28 deferred scope)
+- **Date added:** 2026-03-04
+- **Description:** Actual crawl-delay enforcement requires a shared domain-level rate limiter (`asyncio.Lock` + timestamp tracking) to throttle requests per `Crawl-delay` directive. Currently only parsed and reported. Needs `_CrawlDelayLimiter` class with `async with limiter.acquire(domain):` pattern.
+- **Files affected:** `core/site_audit/steps/s1_discover.py`
 - **Blocked by:** nothing
 
 ## Low Priority / Nice to Have

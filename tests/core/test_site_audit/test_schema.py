@@ -29,7 +29,9 @@ from core.site_audit.checks.schema_checks import (
     validate_faq_schema,
     validate_howto_schema,
     validate_organization_schema,
+    validate_product_schema,
     validate_schema_block,
+    validate_speakable_schema,
 )
 from core.site_audit.steps.s3_check_schema import detect_schema, generate_schema_findings
 
@@ -195,6 +197,27 @@ class TestParseJsonldBlocks:
         assert len(blocks) == 1
         assert len(errors) == 1
 
+    def test_charset_utf8_suffix_matched(self) -> None:
+        """T-SA-14: script type with charset=utf-8 suffix must be found."""
+        html = '<script type="application/ld+json; charset=utf-8">{"@type": "Article"}</script>'
+        blocks, errors = parse_jsonld_blocks(html)
+        assert len(blocks) == 1
+        assert blocks[0]["@type"] == "Article"
+        assert errors == []
+
+    def test_charset_uppercase_matched(self) -> None:
+        """T-SA-14: charset=UTF-8 uppercase variant."""
+        html = '<script type="application/ld+json; charset=UTF-8">{"@type": "WebSite"}</script>'
+        blocks, _ = parse_jsonld_blocks(html)
+        assert len(blocks) == 1
+
+    def test_case_insensitive_type_attribute(self) -> None:
+        """T-SA-14: case-insensitive matching of MIME type."""
+        html = '<script type="Application/LD+JSON">{"@type": "Organization"}</script>'
+        blocks, _ = parse_jsonld_blocks(html)
+        assert len(blocks) == 1
+        assert blocks[0]["@type"] == "Organization"
+
 
 # ---------------------------------------------------------------------------
 # identify_schema_types
@@ -232,6 +255,38 @@ class TestIdentifySchemaTypes:
 
     def test_empty_blocks(self) -> None:
         assert identify_schema_types([]) == []
+
+    def test_uri_http_prefix_normalized(self) -> None:
+        """T-SA-14: http://schema.org/ prefix stripped from @type."""
+        blocks = [{"@type": "http://schema.org/Article"}]
+        assert identify_schema_types(blocks) == ["Article"]
+
+    def test_uri_https_prefix_normalized(self) -> None:
+        """T-SA-14: https://schema.org/ prefix stripped from @type."""
+        blocks = [{"@type": "https://schema.org/Article"}]
+        assert identify_schema_types(blocks) == ["Article"]
+
+    def test_short_form_unchanged(self) -> None:
+        """T-SA-14: short form @type preserved as-is."""
+        blocks = [{"@type": "Article"}]
+        assert identify_schema_types(blocks) == ["Article"]
+
+    def test_mixed_uri_and_short_form_deduplicated(self) -> None:
+        """T-SA-14: URI and short form of same type → single entry."""
+        blocks = [
+            {"@type": "http://schema.org/Article"},
+            {"@type": "Article"},
+        ]
+        types = identify_schema_types(blocks)
+        assert types == ["Article"]
+
+    def test_list_type_with_uri(self) -> None:
+        """T-SA-14: @type as list with URI prefix."""
+        blocks = [{"@type": ["http://schema.org/Article", "BlogPosting"]}]
+        types = identify_schema_types(blocks)
+        assert "Article" in types
+        assert "BlogPosting" in types
+        assert len(types) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -733,3 +788,148 @@ class TestGenerateSchemaFindings:
         findings = generate_schema_findings("https://example.com/blog/test", result)
         types = {f.finding_type for f in findings}
         assert "missing_article_schema" not in types
+
+
+# ---------------------------------------------------------------------------
+# Codex F-1: validate_schema_block dispatches on normalized @type
+# ---------------------------------------------------------------------------
+
+
+class TestValidateSchemaBlockURIType:
+    """Codex F-1: validate_schema_block must normalize URI-style @type before dispatch."""
+
+    def test_uri_article_type_validates(self) -> None:
+        """https://schema.org/Article should trigger Article validation."""
+        block = {
+            "@type": "https://schema.org/Article",
+            "headline": "Test Article",
+            "author": {"@type": "Person", "name": "Alice"},
+            "datePublished": "2026-01-01",
+        }
+        errors = validate_schema_block(block)
+        # Should have no errors since all required fields are present
+        assert not any("headline" in e.lower() for e in errors)
+
+    def test_uri_article_type_missing_fields_detected(self) -> None:
+        """URI-style Article type → missing fields should be flagged."""
+        block = {
+            "@type": "http://schema.org/Article",
+            # Missing headline, author, datePublished
+        }
+        errors = validate_schema_block(block)
+        assert len(errors) > 0  # Should flag missing required fields
+
+    def test_uri_faqpage_type_validates(self) -> None:
+        """https://schema.org/FAQPage should trigger FAQ validation."""
+        block = {
+            "@type": "https://schema.org/FAQPage",
+            # Missing mainEntity — should flag it
+        }
+        errors = validate_schema_block(block)
+        assert any("mainEntity" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# validate_product_schema (T-SA-26)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateProductSchema:
+    def test_valid_product(self) -> None:
+        block = {"@type": "Product", "name": "Widget", "offers": {"price": "9.99"}}
+        errors = validate_product_schema(block)
+        # Only recommended warnings expected
+        assert not any("required" in e.lower() for e in errors)
+
+    def test_missing_name(self) -> None:
+        block = {"@type": "Product", "offers": {"price": "9.99"}}
+        errors = validate_product_schema(block)
+        assert any("name" in e for e in errors)
+
+    def test_missing_offers_and_price(self) -> None:
+        block = {"@type": "Product", "name": "Widget"}
+        errors = validate_product_schema(block)
+        assert any("pricing" in e.lower() for e in errors)
+
+    def test_offers_present_no_pricing_error(self) -> None:
+        block = {"@type": "Product", "name": "W", "offers": {"price": "5"}}
+        errors = validate_product_schema(block)
+        assert not any("pricing" in e.lower() for e in errors)
+
+    def test_price_and_currency_present(self) -> None:
+        block = {"@type": "Product", "name": "W", "price": "5", "priceCurrency": "USD"}
+        errors = validate_product_schema(block)
+        assert not any("pricing" in e.lower() for e in errors)
+
+    def test_missing_description_warning(self) -> None:
+        block = {"@type": "Product", "name": "W", "offers": {}, "image": "x", "brand": "B", "sku": "S"}
+        errors = validate_product_schema(block)
+        assert any("description" in e for e in errors)
+
+    def test_missing_image_warning(self) -> None:
+        block = {"@type": "Product", "name": "W", "offers": {}, "description": "D", "brand": "B", "sku": "S"}
+        errors = validate_product_schema(block)
+        assert any("image" in e for e in errors)
+
+    def test_brand_and_sku_warnings(self) -> None:
+        block = {"@type": "Product", "name": "W", "offers": {}, "description": "D", "image": "I"}
+        errors = validate_product_schema(block)
+        assert any("brand" in e for e in errors)
+        assert any("sku" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# validate_speakable_schema (T-SA-26)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateSpeakableSchema:
+    def test_valid_with_css_selector(self) -> None:
+        block = {"@type": "Speakable", "cssSelector": ".article-body", "name": "Main content"}
+        errors = validate_speakable_schema(block)
+        assert errors == []
+
+    def test_valid_with_xpath(self) -> None:
+        block = {"@type": "Speakable", "xpath": "//article", "name": "Main content"}
+        errors = validate_speakable_schema(block)
+        assert errors == []
+
+    def test_missing_both_selectors(self) -> None:
+        block = {"@type": "Speakable", "name": "Test"}
+        errors = validate_speakable_schema(block)
+        assert any("selector" in e.lower() for e in errors)
+
+    def test_speakable_specification_type(self) -> None:
+        """SpeakableSpecification alias works."""
+        block = {"@type": "SpeakableSpecification", "cssSelector": ".main"}
+        errors = validate_speakable_schema(block)
+        assert not any("selector" in e.lower() for e in errors)
+
+    def test_missing_name_warning(self) -> None:
+        block = {"@type": "Speakable", "cssSelector": ".main"}
+        errors = validate_speakable_schema(block)
+        assert any("name" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# validate_schema_block dispatches Product/Speakable (T-SA-26)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateSchemaBlockProductSpeakable:
+    def test_dispatches_product(self) -> None:
+        block = {"@type": "Product", "name": "Widget", "offers": {}}
+        errors = validate_schema_block(block)
+        # Should have run product validation (recommended warnings present)
+        assert any("description" in e for e in errors)
+
+    def test_dispatches_speakable(self) -> None:
+        block = {"@type": "Speakable"}
+        errors = validate_schema_block(block)
+        assert any("selector" in e.lower() for e in errors)
+
+    def test_dispatches_speakable_specification(self) -> None:
+        block = {"@type": "SpeakableSpecification", "cssSelector": ".main"}
+        errors = validate_schema_block(block)
+        # Should have run speakable validation (name warning)
+        assert any("name" in e for e in errors)

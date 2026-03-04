@@ -22,8 +22,10 @@ import asyncio
 import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+
+import defusedxml.ElementTree as SafeET
 from typing import Optional
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
 import httpx
@@ -69,6 +71,9 @@ _SITEMAP_NS: dict[str, str] = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.
 
 #: Default user-agent sent by the site audit crawler.
 _DEFAULT_UA: str = "DeepPresence-SiteAudit/1.0"
+
+#: Maximum XML body size (bytes) before parsing — rejects DoS payloads.
+_MAX_XML_BYTES: int = 10 * 1024 * 1024  # 10 MB
 
 # ---------------------------------------------------------------------------
 # Output dataclass
@@ -135,23 +140,92 @@ def normalize_url(url: str) -> str:
         return url
 
 
-def is_same_domain(url: str, domain: str) -> bool:
-    """Return True only when *url* belongs to exactly *domain*.
+def canonical_url(url: str) -> str:
+    """Produce a canonical key for deduplication only.
 
-    Subdomains are treated as different domains.  e.g.
-    ``blog.example.com`` is NOT the same domain as ``example.com``.
+    Applies all normalizations from :func:`normalize_url` plus:
+    - Sorts query parameters for order-invariant dedup.
+    - Strips ``www.`` prefix from the host.
+    - Removes default ports (``:443`` for HTTPS, ``:80`` for HTTP).
+    - Normalizes percent-encoding.
+
+    **Do NOT use this for actual HTTP requests** — sorting query params
+    can break signed or parameter-order-sensitive URLs.
+
+    Args:
+        url: Absolute URL string.
+
+    Returns:
+        Canonical URL string suitable as a dedup key.
+    """
+    try:
+        # Start with normalize_url's logic
+        parsed = urlparse(url)
+        scheme = parsed.scheme.lower()
+        netloc = parsed.netloc.lower()
+
+        # Strip default ports
+        if ":" in netloc:
+            host_part, port_part = netloc.rsplit(":", 1)
+            try:
+                port = int(port_part)
+                if (scheme == "https" and port == 443) or (scheme == "http" and port == 80):
+                    netloc = host_part
+            except ValueError:
+                pass
+
+        # Strip www prefix
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+
+        # Sort query parameters
+        params = parse_qsl(parsed.query, keep_blank_values=True)
+        sorted_query = urlencode(sorted(params))
+
+        # Normalize percent-encoding: decode then re-encode with only
+        # necessary escapes so that %61 and 'a' produce the same key.
+        norm_path = quote(unquote(parsed.path), safe="/:@!$&'()*+,;=-._~")
+
+        normalized = parsed._replace(
+            scheme=scheme,
+            netloc=netloc,
+            path=norm_path,
+            fragment="",
+            query=sorted_query,
+        )
+        result = urlunparse(normalized)
+
+        # Remove trailing slash only if path has content beyond "/"
+        if result.endswith("/") and urlparse(result).path not in ("", "/"):
+            result = result.rstrip("/")
+        return result
+    except Exception:
+        return url
+
+
+def _strip_www(host: str) -> str:
+    """Remove a leading ``www.`` prefix from *host*."""
+    return host[4:] if host.startswith("www.") else host
+
+
+def is_same_domain(url: str, domain: str) -> bool:
+    """Return True when *url* belongs to *domain* (www-alias aware).
+
+    Treats ``www.example.com`` and ``example.com`` as equivalent.
+    Other subdomains (e.g. ``blog.example.com``) are still separate.
 
     Args:
         url: Absolute URL string.
         domain: Domain string, e.g. ``"example.com"``.
 
     Returns:
-        True if the netloc of *url* equals *domain* (case-insensitive).
+        True if the canonical (www-stripped) netloc of *url* equals the
+        canonical form of *domain*.
     """
     netloc = urlparse(url).netloc.lower()
     # Strip port if present
     netloc = netloc.split(":")[0]
-    return netloc == domain.lower()
+    return _strip_www(netloc) == _strip_www(domain.lower())
 
 
 def should_skip_url(url: str) -> bool:
@@ -184,7 +258,8 @@ def _extract_links(html: str, base_url: str, domain: str) -> list[str]:
         List of deduplicated normalized absolute URLs.
     """
     soup = BeautifulSoup(html, "html.parser")
-    links: set[str] = set()
+    seen_canonical: set[str] = set()
+    links: list[str] = []
     for tag in soup.find_all("a", href=True):
         href = (tag.get("href") or "").strip()
         if not href:
@@ -193,9 +268,12 @@ def _extract_links(html: str, base_url: str, domain: str) -> list[str]:
             continue
         absolute = urljoin(base_url, href)
         normalized = normalize_url(absolute)
+        canon = canonical_url(absolute)
         if is_same_domain(normalized, domain) and not should_skip_url(normalized):
-            links.add(normalized)
-    return list(links)
+            if canon not in seen_canonical:
+                seen_canonical.add(canon)
+                links.append(normalized)
+    return links
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +330,11 @@ def _parse_ai_bot_access(
     Returns:
         :class:`~core.models.site_audit.AIBotAccessResult` instance.
     """
-    result = AIBotAccessResult(robots_txt_exists=bool(raw_robots.strip()))
+    crawl_delay = _parse_crawl_delay(raw_robots)
+    result = AIBotAccessResult(
+        robots_txt_exists=bool(raw_robots.strip()),
+        crawl_delay_seconds=crawl_delay,
+    )
 
     bot_fields = {
         "GPTBot": "gptbot_allowed",
@@ -267,6 +349,44 @@ def _parse_ai_bot_access(
         object.__setattr__(result, field_name, allowed)  # AIBotAccessResult is not frozen
 
     return result
+
+
+import re as _re
+
+#: Maximum Crawl-delay value (seconds) to prevent unbounded delays.
+_MAX_CRAWL_DELAY: float = 300.0
+
+#: Regex to extract Crawl-delay directive from the User-agent: * block.
+_CRAWL_DELAY_RE = _re.compile(
+    r"(?:^|\n)\s*Crawl-delay:\s*(\d+\.?\d*)", _re.IGNORECASE
+)
+
+
+def _parse_crawl_delay(raw_robots: str) -> float | None:
+    """Extract the ``Crawl-delay`` directive from robots.txt.
+
+    Parses the first ``Crawl-delay:`` value found (for ``User-agent: *``).
+    Caps at :data:`_MAX_CRAWL_DELAY` seconds to prevent unbounded values.
+
+    Args:
+        raw_robots: Raw robots.txt content.
+
+    Returns:
+        Delay in seconds (float), or ``None`` if not found.
+    """
+    if not raw_robots:
+        return None
+
+    m = _CRAWL_DELAY_RE.search(raw_robots)
+    if m is None:
+        return None
+
+    try:
+        delay = float(m.group(1))
+    except (ValueError, TypeError):
+        return None
+
+    return min(delay, _MAX_CRAWL_DELAY)
 
 
 def _parse_sitemap_urls_from_robots(raw_robots: str) -> list[str]:
@@ -300,6 +420,10 @@ async def _fetch_xml(
 ) -> Optional[ET.Element]:
     """Fetch *url* and parse it as XML, returning the root element.
 
+    Uses ``defusedxml`` to block entity expansion (billion-laughs) and
+    external entity injection (XXE).  Rejects responses larger than
+    :data:`_MAX_XML_BYTES`.
+
     Args:
         url: XML URL to fetch.
         client: httpx async client.
@@ -315,7 +439,19 @@ async def _fetch_xml(
         text = resp.text
         if not text.strip():
             return None
-        return ET.fromstring(text)
+        if len(text.encode("utf-8", errors="replace")) > _MAX_XML_BYTES:
+            logger.warning(
+                "XML body too large for %s (%d bytes) — skipping",
+                url, len(text),
+            )
+            return None
+        return SafeET.fromstring(text)
+    except SafeET.DTDForbidden:
+        logger.warning("XML DTD/entity attack blocked for %s", url)
+        return None
+    except SafeET.EntitiesForbidden:
+        logger.warning("XML entity expansion blocked for %s", url)
+        return None
     except ET.ParseError as exc:
         logger.warning("XML parse error for %s: %s", url, exc)
         return None
@@ -331,6 +467,7 @@ async def _parse_sitemap(
     domain: str,
     visited: set[str],
     max_urls: int = 10_000,
+    max_depth: int = 5,
 ) -> tuple[list[str], bool]:
     """Recursively fetch and parse a sitemap or sitemap index.
 
@@ -341,11 +478,15 @@ async def _parse_sitemap(
         domain: Allowed domain for URL filtering.
         visited: Set of already-visited sitemap URLs (mutated in place).
         max_urls: Maximum number of page URLs to collect.
+        max_depth: Maximum recursion depth for sitemap index chains.
 
     Returns:
         Tuple of (page_urls, has_index) where page_urls is a list of
         normalized page URLs and has_index indicates a sitemap index was found.
     """
+    if max_depth <= 0:
+        logger.warning("Sitemap recursion depth exceeded for %s", sitemap_url)
+        return [], False
     if sitemap_url in visited:
         return [], False
     visited.add(sitemap_url)
@@ -378,7 +519,8 @@ async def _parse_sitemap(
             if len(urls) >= max_urls:
                 break
             child_urls, _ = await _parse_sitemap(
-                child_url, client, timeout, domain, visited, max_urls
+                child_url, client, timeout, domain, visited, max_urls,
+                max_depth=max_depth - 1,
             )
             urls.extend(child_urls)
 
@@ -551,6 +693,7 @@ class AsyncSiteCrawler:
         respect_robots: bool = True,
         timeout: float = 15.0,
         user_agent: str = _DEFAULT_UA,
+        check_ai_bot_access: bool = True,
         _transport: Optional[httpx.AsyncBaseTransport] = None,
     ) -> None:
         """Initialise the crawler with configuration.
@@ -563,16 +706,20 @@ class AsyncSiteCrawler:
             respect_robots: Whether to honour robots.txt disallow rules.
             timeout: Per-request HTTP timeout in seconds.
             user_agent: User-agent string sent with each request.
+            check_ai_bot_access: Whether to parse AI bot access from
+                robots.txt / llms.txt.  When False, returns a default
+                :class:`AIBotAccessResult`.
             _transport: Optional httpx transport override (for testing).
                 Pass an ``httpx.MockTransport`` to avoid real network calls.
         """
-        self.domain = domain.lower()
+        self.domain = _strip_www(domain.lower())
         self.max_pages = max_pages
         self.max_depth = max_depth
         self.concurrency = concurrency
         self.respect_robots = respect_robots
         self.timeout = timeout
         self.user_agent = user_agent
+        self.check_ai_bot_access = check_ai_bot_access
         self._transport = _transport
 
         # BFS state
@@ -588,6 +735,7 @@ class AsyncSiteCrawler:
         self._robot_parser: RobotFileParser = RobotFileParser()
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(concurrency)
         self._stop_crawling: bool = False
+        self._stop_event: asyncio.Event = asyncio.Event()
 
     async def crawl(self) -> S1DiscoveryOutput:
         """Run the full 4-phase discovery and return results.
@@ -611,20 +759,20 @@ class AsyncSiteCrawler:
             robots_raw, self._robot_parser = await _fetch_robots_txt(
                 self.domain, client, self.timeout
             )
-            ai_bot_access = _parse_ai_bot_access(robots_raw, self._robot_parser, homepage)
-
-            # Check llms.txt
-            has_llms_txt = await self._check_llms_txt(client)
-            # AIBotAccessResult uses regular dataclass assignment
-            ai_bot_access = AIBotAccessResult(
-                gptbot_allowed=ai_bot_access.gptbot_allowed,
-                claudebot_allowed=ai_bot_access.claudebot_allowed,
-                perplexitybot_allowed=ai_bot_access.perplexitybot_allowed,
-                google_extended_allowed=ai_bot_access.google_extended_allowed,
-                ccbot_allowed=ai_bot_access.ccbot_allowed,
-                has_llms_txt=has_llms_txt,
-                robots_txt_exists=ai_bot_access.robots_txt_exists,
-            )
+            if self.check_ai_bot_access:
+                ai_bot_access = _parse_ai_bot_access(robots_raw, self._robot_parser, homepage)
+                has_llms_txt = await self._check_llms_txt(client)
+                ai_bot_access = AIBotAccessResult(
+                    gptbot_allowed=ai_bot_access.gptbot_allowed,
+                    claudebot_allowed=ai_bot_access.claudebot_allowed,
+                    perplexitybot_allowed=ai_bot_access.perplexitybot_allowed,
+                    google_extended_allowed=ai_bot_access.google_extended_allowed,
+                    ccbot_allowed=ai_bot_access.ccbot_allowed,
+                    has_llms_txt=has_llms_txt,
+                    robots_txt_exists=ai_bot_access.robots_txt_exists,
+                )
+            else:
+                ai_bot_access = AIBotAccessResult()
 
             # Phase 2: Sitemap discovery
             sitemap_health = await _discover_from_sitemaps(
@@ -675,7 +823,10 @@ class AsyncSiteCrawler:
     async def _enqueue(self, url: str, depth: int) -> None:
         """Add *url* to the BFS queue if not already visited or queued.
 
-        Uses the minimum depth if the URL is discovered at multiple depths.
+        Uses :func:`canonical_url` for dedup keys so that URLs differing
+        only in query param order, www prefix, or default port are treated
+        as the same page.  The original ``normalize_url`` form is stored
+        for actual fetching.
 
         Args:
             url: Normalized URL to enqueue.
@@ -684,15 +835,15 @@ class AsyncSiteCrawler:
         normalized = normalize_url(url)
         if not normalized:
             return
-        if normalized in self._visited:
+        canon = canonical_url(normalized)
+        # Always update depth to minimum — even for already-visited URLs.
+        if canon in self._depth_map:
+            if depth < self._depth_map[canon]:
+                self._depth_map[canon] = depth
+            # Already visited or already queued — don't re-enqueue.
             return
-        if normalized in self._depth_map:
-            # Keep minimum depth
-            if depth < self._depth_map[normalized]:
-                self._depth_map[normalized] = depth
-            return
-        self._discovered.add(normalized)
-        self._depth_map[normalized] = depth
+        self._discovered.add(canon)
+        self._depth_map[canon] = depth
         await self._queue.put((normalized, depth))
 
     def _is_allowed(self, url: str) -> bool:
@@ -743,6 +894,15 @@ class AsyncSiteCrawler:
         Spawns ``self.concurrency`` worker coroutines that all pull from
         ``self._queue`` concurrently, bounded by ``self._semaphore``.
 
+        Uses ``asyncio.wait`` with two signals — ``queue.join()`` (natural
+        completion) and ``_stop_event`` (max_pages reached) — whichever fires
+        first triggers shutdown.  This avoids the deadlock that occurs when
+        ``queue.join()`` blocks on items that workers have abandoned after
+        ``_stop_crawling`` is set.
+
+        After shutdown, remaining queue items are drained **after** workers
+        are cancelled to preserve queue accounting invariants.
+
         Args:
             client: httpx async client (shared across workers).
         """
@@ -750,12 +910,44 @@ class AsyncSiteCrawler:
             asyncio.create_task(self._bfs_worker(client))
             for _ in range(self.concurrency)
         ]
-        await self._queue.join()
-        self._stop_crawling = True
-        for w in workers:
-            w.cancel()
-        # Suppress CancelledError from worker cancellation
-        await asyncio.gather(*workers, return_exceptions=True)
+
+        join_task = asyncio.create_task(self._queue.join())
+        stop_task = asyncio.create_task(self._stop_event.wait())
+
+        try:
+            _done, pending = await asyncio.wait(
+                [join_task, stop_task],
+                timeout=300.0,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not _done:
+                logger.warning("BFS crawl timed out after 300s")
+        except asyncio.CancelledError:
+            pass  # External cancellation — still clean up below
+        finally:
+            self._stop_crawling = True
+            self._stop_event.set()
+            # Cancel the waiter tasks
+            for t in (join_task, stop_task):
+                t.cancel()
+            await asyncio.gather(join_task, stop_task, return_exceptions=True)
+            # Cancel workers FIRST so no concurrent get()/task_done() calls
+            for w in workers:
+                w.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+            # Drain remaining queue items — safe because workers are stopped
+            drained = 0
+            while True:
+                try:
+                    self._queue.get_nowait()
+                    self._queue.task_done()
+                    drained += 1
+                except asyncio.QueueEmpty:
+                    break
+            if drained:
+                logger.debug(
+                    "Drained %d remaining queue items after BFS shutdown", drained
+                )
 
     async def _bfs_worker(self, client: httpx.AsyncClient) -> None:
         """Single BFS worker: dequeue, fetch, extract links, enqueue.
@@ -791,10 +983,11 @@ class AsyncSiteCrawler:
             url: Normalized URL to fetch.
             depth: BFS depth of this URL.
         """
-        if url in self._visited:
+        canon = canonical_url(url)
+        if canon in self._visited:
             return
 
-        self._visited.add(url)
+        self._visited.add(canon)
 
         if depth > self.max_depth:
             return
@@ -826,6 +1019,15 @@ class AsyncSiteCrawler:
         if normalized_final != url:
             self._redirect_map[url] = normalized_final
 
+        # Cross-domain redirect gate: reject content from external domains
+        if not is_same_domain(final_url, self.domain):
+            logger.warning(
+                "Cross-domain redirect: %s → %s — skipping content storage",
+                url, final_url,
+            )
+            self._status_map[url] = resp.status_code
+            return
+
         status = resp.status_code
         self._status_map[url] = status
 
@@ -844,6 +1046,7 @@ class AsyncSiteCrawler:
             else:
                 # max_pages reached — stop enqueuing new URLs
                 self._stop_crawling = True
+                self._stop_event.set()
 
 
 # ---------------------------------------------------------------------------
@@ -860,6 +1063,7 @@ async def discover_site(
     timeout: float = 15.0,
     user_agent: str = _DEFAULT_UA,
     config: AuditConfig = DEFAULT_AUDIT_CONFIG,
+    check_ai_bot_access: bool = True,
 ) -> S1DiscoveryOutput:
     """Run async BFS discovery for *domain* and return all outputs.
 
@@ -887,5 +1091,6 @@ async def discover_site(
         respect_robots=respect_robots,
         timeout=timeout,
         user_agent=user_agent,
+        check_ai_bot_access=check_ai_bot_access,
     )
     return await crawler.crawl()

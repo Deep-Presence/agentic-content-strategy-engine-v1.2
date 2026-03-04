@@ -29,6 +29,11 @@ _CACHE_MAX = 10
 # Slug validation: bare slug OR effective slug (slug__product-slug)
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
 
+# Audit ID validation: strict lowercase UUID4 format
+_AUDIT_ID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
 
 def _validate_slug(slug: str) -> None:
     """Raise HTTP 400 for invalid / path-traversal slugs."""
@@ -74,9 +79,34 @@ def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
     return data
 
 
+def _validate_audit_id(audit_id: str) -> None:
+    """Raise HTTP 400 for invalid or path-traversal audit IDs.
+
+    Accepts only lowercase UUID4 hex strings (``xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx``).
+    """
+    if not _AUDIT_ID_RE.match(audit_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid audit ID: '{audit_id}'",
+        )
+
+
 def _audit_dir(artifacts_root: Path, company_slug: str, audit_id: str) -> Path:
-    """Return the canonical path for a single audit run's output directory."""
-    return artifacts_root / "site_audit" / company_slug / audit_id
+    """Return the canonical path for a single audit run's output directory.
+
+    Validates *audit_id* format and enforces a path-containment check as
+    defense-in-depth against symlink escapes.
+    """
+    _validate_audit_id(audit_id)
+    company_root = artifacts_root / "site_audit" / company_slug
+    candidate = company_root / audit_id
+    # Defense-in-depth: resolve symlinks and verify containment
+    if not candidate.resolve().is_relative_to(company_root.resolve()):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid audit ID: '{audit_id}'",
+        )
+    return candidate
 
 
 def _company_audit_root(artifacts_root: Path, company_slug: str) -> Path:
@@ -300,8 +330,8 @@ def _sync_get_page_results(
                 "reading_level": p.get("reading_level", 0.0),
                 "has_https": p.get("has_https", True),
                 "is_noindex": p.get("is_noindex", False),
-                # Use alias "schema" for the PageResultResponse schema_result field
-                "schema": p.get("schema", {}),
+                # Accept both field name ("schema_result") and alias ("schema")
+                "schema": p.get("schema_result", p.get("schema", {})),
                 "aeo": p.get("aeo", {}),
                 "finding_count": len(p.get("findings", [])),
             }

@@ -27,9 +27,12 @@ from core.site_audit.steps.s1_discover import (
     S1DiscoveryOutput,
     _discover_feeds_from_html,
     _extract_links,
+    _fetch_xml,
     _parse_ai_bot_access,
+    _parse_crawl_delay,
     _parse_sitemap,
     _parse_sitemap_urls_from_robots,
+    canonical_url,
     is_same_domain,
     normalize_url,
     should_skip_url,
@@ -121,8 +124,9 @@ class TestIsSameDomain:
     def test_with_port_stripped(self) -> None:
         assert is_same_domain("https://example.com:443/page", "example.com") is True
 
-    def test_www_subdomain_is_different(self) -> None:
-        assert is_same_domain("https://www.example.com/page", "example.com") is False
+    def test_www_alias_is_same_domain(self) -> None:
+        """www.example.com and example.com are treated as equivalent (T-SA-17)."""
+        assert is_same_domain("https://www.example.com/page", "example.com") is True
 
 
 # ---------------------------------------------------------------------------
@@ -765,3 +769,606 @@ class TestAsyncSiteCrawler:
         assert len(output.discovered_urls) > 0
 
 
+# ---------------------------------------------------------------------------
+# T-SA-02: XML entity expansion / defusedxml tests
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# T-SA-03: Cross-domain redirect + www aliasing tests
+# ---------------------------------------------------------------------------
+
+
+class TestCrossDomainRedirect:
+    """Verify cross-domain redirects are rejected while same-domain
+    (including www alias) redirects are accepted (T-SA-03 fix)."""
+
+    @pytest.mark.asyncio
+    async def test_cross_domain_redirect_not_stored(self) -> None:
+        """A 301 to a different domain must NOT store HTML in results."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if url_str == "https://example.com/redirect-page":
+                return httpx.Response(
+                    301, headers={"location": "https://evil.com/spam"},
+                )
+            if url_str == "https://evil.com/spam":
+                return httpx.Response(
+                    200, text="<html><body>Evil content</body></html>",
+                    headers={"content-type": "text/html"},
+                )
+            if url_str == "https://example.com/robots.txt":
+                return httpx.Response(404)
+            if url_str == "https://example.com/llms.txt":
+                return httpx.Response(404)
+            if "sitemap" in url_str:
+                return httpx.Response(404)
+            if url_str == "https://example.com/":
+                body = '<html><body><a href="/redirect-page">Link</a></body></html>'
+                return httpx.Response(
+                    200, text=body, headers={"content-type": "text/html"},
+                )
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(handler)
+        crawler = AsyncSiteCrawler(
+            domain="example.com", max_pages=10, max_depth=2, concurrency=1,
+            _transport=transport,
+        )
+        output = await crawler.crawl()
+
+        # The cross-domain redirected URL must NOT have its HTML stored
+        stored_urls = [u for u, _ in output.pages_with_html]
+        for u in stored_urls:
+            assert "evil.com" not in u
+
+        # But the redirect should be recorded in redirect_map
+        redirect_vals = list(output.redirect_map.values())
+        assert any("evil.com" in v for v in redirect_vals)
+
+    @pytest.mark.asyncio
+    async def test_same_domain_redirect_stored(self) -> None:
+        """A 301 within the same domain must store HTML normally."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if url_str == "https://example.com/old":
+                return httpx.Response(
+                    301, headers={"location": "https://example.com/new"},
+                )
+            if url_str == "https://example.com/new":
+                return httpx.Response(
+                    200, text="<html><body>New page</body></html>",
+                    headers={"content-type": "text/html"},
+                )
+            if url_str == "https://example.com/robots.txt":
+                return httpx.Response(404)
+            if url_str == "https://example.com/llms.txt":
+                return httpx.Response(404)
+            if "sitemap" in url_str:
+                return httpx.Response(404)
+            if url_str == "https://example.com/":
+                body = '<html><body><a href="/old">Link</a></body></html>'
+                return httpx.Response(
+                    200, text=body, headers={"content-type": "text/html"},
+                )
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(handler)
+        crawler = AsyncSiteCrawler(
+            domain="example.com", max_pages=10, max_depth=2, concurrency=1,
+            _transport=transport,
+        )
+        output = await crawler.crawl()
+
+        stored_urls = [u for u, _ in output.pages_with_html]
+        # The original URL should have its HTML stored
+        assert any("old" in u for u in stored_urls)
+
+    @pytest.mark.asyncio
+    async def test_www_redirect_accepted(self) -> None:
+        """example.com → www.example.com redirect must be accepted."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if url_str == "https://example.com/":
+                return httpx.Response(
+                    301, headers={"location": "https://www.example.com/"},
+                )
+            if url_str == "https://www.example.com/":
+                return httpx.Response(
+                    200, text="<html><body>Homepage via www</body></html>",
+                    headers={"content-type": "text/html"},
+                )
+            if "robots.txt" in url_str:
+                return httpx.Response(404)
+            if "llms.txt" in url_str:
+                return httpx.Response(404)
+            if "sitemap" in url_str:
+                return httpx.Response(404)
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(handler)
+        crawler = AsyncSiteCrawler(
+            domain="example.com", max_pages=10, max_depth=2, concurrency=1,
+            _transport=transport,
+        )
+        output = await crawler.crawl()
+
+        # HTML should be stored even though redirect went to www
+        assert len(output.pages_with_html) >= 1
+
+
+class TestIsSameDomainWwwAlias:
+    """Verify is_same_domain treats www.X and X as equivalent (T-SA-17 in P0)."""
+
+    def test_www_prefix_matches(self) -> None:
+        assert is_same_domain("https://www.example.com/page", "example.com") is True
+
+    def test_apex_matches_www_domain(self) -> None:
+        assert is_same_domain("https://example.com/page", "www.example.com") is True
+
+    def test_both_www_matches(self) -> None:
+        assert is_same_domain("https://www.example.com/", "www.example.com") is True
+
+    def test_different_domain_rejected(self) -> None:
+        assert is_same_domain("https://evil.com/page", "example.com") is False
+
+    def test_subdomain_not_www_rejected(self) -> None:
+        assert is_same_domain("https://blog.example.com/", "example.com") is False
+
+    def test_case_insensitive(self) -> None:
+        assert is_same_domain("https://WWW.Example.COM/page", "example.com") is True
+
+
+class TestXmlSecurity:
+    """Verify _fetch_xml blocks entity expansion and oversized payloads."""
+
+    @pytest.mark.asyncio
+    async def test_normal_sitemap_parses(self) -> None:
+        """Valid sitemap XML must still parse correctly after defusedxml swap."""
+        xml_body = textwrap.dedent("""\
+            <?xml version="1.0" encoding="UTF-8"?>
+            <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <url><loc>https://example.com/page1</loc></url>
+            </urlset>
+        """)
+        transport = _make_mock_transport({
+            "https://example.com/sitemap.xml": (200, xml_body),
+        })
+        async with httpx.AsyncClient(transport=transport) as client:
+            root = await _fetch_xml("https://example.com/sitemap.xml", client, 10.0)
+        assert root is not None
+
+    @pytest.mark.asyncio
+    async def test_empty_xml_returns_none(self) -> None:
+        transport = _make_mock_transport({
+            "https://example.com/sitemap.xml": (200, "   "),
+        })
+        async with httpx.AsyncClient(transport=transport) as client:
+            root = await _fetch_xml("https://example.com/sitemap.xml", client, 10.0)
+        assert root is None
+
+    @pytest.mark.asyncio
+    async def test_http_error_returns_none(self) -> None:
+        transport = _make_mock_transport({
+            "https://example.com/sitemap.xml": (500, "error"),
+        })
+        async with httpx.AsyncClient(transport=transport) as client:
+            root = await _fetch_xml("https://example.com/sitemap.xml", client, 10.0)
+        assert root is None
+
+    @pytest.mark.asyncio
+    async def test_entity_expansion_blocked(self) -> None:
+        """Billion-laughs-lite payload must be rejected by defusedxml."""
+        bomb = textwrap.dedent("""\
+            <?xml version="1.0"?>
+            <!DOCTYPE bomb [
+              <!ENTITY a "AAAAAAAAAA">
+              <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">
+            ]>
+            <urlset>&b;</urlset>
+        """)
+        transport = _make_mock_transport({
+            "https://example.com/sitemap.xml": (200, bomb),
+        })
+        async with httpx.AsyncClient(transport=transport) as client:
+            root = await _fetch_xml("https://example.com/sitemap.xml", client, 10.0)
+        # defusedxml rejects DTD/entities — should return None gracefully
+        assert root is None
+
+    @pytest.mark.asyncio
+    async def test_oversized_xml_rejected(self) -> None:
+        """XML body larger than _MAX_XML_BYTES must be rejected."""
+        from core.site_audit.steps.s1_discover import _MAX_XML_BYTES
+
+        # Create XML just over the limit
+        big_body = "<urlset>" + ("x" * (_MAX_XML_BYTES + 100)) + "</urlset>"
+        transport = _make_mock_transport({
+            "https://example.com/sitemap.xml": (200, big_body),
+        })
+        async with httpx.AsyncClient(transport=transport) as client:
+            root = await _fetch_xml("https://example.com/sitemap.xml", client, 10.0)
+        assert root is None
+
+    @pytest.mark.asyncio
+    async def test_sitemap_recursion_depth_capped(self) -> None:
+        """Sitemap index chain deeper than max_depth must stop."""
+        # Create a chain: each sitemap index points to the next
+        url_map: dict[str, tuple[int, str]] = {}
+        for i in range(8):  # 8 levels deep
+            child_url = f"https://example.com/sitemap-{i + 1}.xml"
+            body = textwrap.dedent(f"""\
+                <?xml version="1.0"?>
+                <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+                  <sitemap><loc>{child_url}</loc></sitemap>
+                </sitemapindex>
+            """)
+            url_map[f"https://example.com/sitemap-{i}.xml"] = (200, body)
+
+        # Terminal sitemap with actual URLs
+        url_map["https://example.com/sitemap-8.xml"] = (200, textwrap.dedent("""\
+            <?xml version="1.0"?>
+            <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <url><loc>https://example.com/deep-page</loc></url>
+            </urlset>
+        """))
+
+        transport = _make_mock_transport(url_map)
+        async with httpx.AsyncClient(transport=transport) as client:
+            # max_depth=3 means it stops before reaching level 8
+            urls, has_index = await _parse_sitemap(
+                "https://example.com/sitemap-0.xml",
+                client, 10.0, "example.com", set(), max_depth=3,
+            )
+        # Should NOT reach the terminal sitemap at depth 8
+        assert "https://example.com/deep-page" not in urls
+
+
+# ---------------------------------------------------------------------------
+# T-SA-05: BFS deadlock prevention tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestBfsDeadlockPrevention:
+    """Verify the BFS crawler does not deadlock when max_pages is reached
+    during high-concurrency crawls with branching URL structures (T-SA-05)."""
+
+    async def test_max_pages_no_deadlock_branching(self) -> None:
+        """Branching URL structure with many enqueued items must not hang."""
+        # Each page links to 10 others → queue grows much faster than max_pages
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if "robots.txt" in url_str or "llms.txt" in url_str:
+                return httpx.Response(404)
+            if "sitemap" in url_str:
+                return httpx.Response(404)
+            # Generate pages with many outbound links
+            links = "".join(
+                f'<a href="/p{i}">Link {i}</a>' for i in range(10)
+            )
+            body = f"<html><body><h1>Page</h1>{links}</body></html>"
+            return httpx.Response(200, text=body, headers={"content-type": "text/html"})
+
+        transport = httpx.MockTransport(handler)
+        crawler = AsyncSiteCrawler(
+            domain="example.com", max_pages=5, max_depth=3,
+            concurrency=10, _transport=transport,
+        )
+
+        # This must complete without deadlocking
+        output = await asyncio.wait_for(crawler.crawl(), timeout=10.0)
+
+        assert len(output.pages_with_html) <= 5
+        assert len(output.pages_with_html) >= 1
+
+    async def test_max_pages_1_immediate_shutdown(self) -> None:
+        """max_pages=1 with many links must complete immediately."""
+        links = "".join(f'<a href="/p{i}">L{i}</a>' for i in range(50))
+        homepage = f"<html><body>{links}</body></html>"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if "robots.txt" in url_str or "llms.txt" in url_str:
+                return httpx.Response(404)
+            if "sitemap" in url_str:
+                return httpx.Response(404)
+            return httpx.Response(
+                200, text=homepage, headers={"content-type": "text/html"},
+            )
+
+        transport = httpx.MockTransport(handler)
+        crawler = AsyncSiteCrawler(
+            domain="example.com", max_pages=1, max_depth=3,
+            concurrency=5, _transport=transport,
+        )
+
+        output = await asyncio.wait_for(crawler.crawl(), timeout=10.0)
+        assert len(output.pages_with_html) == 1
+
+    async def test_max_pages_high_concurrency(self) -> None:
+        """Production-default concurrency (30) must not deadlock."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if "robots.txt" in url_str or "llms.txt" in url_str:
+                return httpx.Response(404)
+            if "sitemap" in url_str:
+                return httpx.Response(404)
+            links = "".join(f'<a href="/q{i}">Q{i}</a>' for i in range(20))
+            body = f"<html><body>{links}</body></html>"
+            return httpx.Response(200, text=body, headers={"content-type": "text/html"})
+
+        transport = httpx.MockTransport(handler)
+        crawler = AsyncSiteCrawler(
+            domain="example.com", max_pages=10, max_depth=2,
+            concurrency=30, _transport=transport,
+        )
+
+        output = await asyncio.wait_for(crawler.crawl(), timeout=15.0)
+        assert len(output.pages_with_html) <= 10
+        assert len(output.pages_with_html) >= 1
+
+    async def test_queue_empty_after_crawl(self) -> None:
+        """After crawl completes, the internal queue must be empty."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if "robots.txt" in url_str or "llms.txt" in url_str:
+                return httpx.Response(404)
+            if "sitemap" in url_str:
+                return httpx.Response(404)
+            links = "".join(f'<a href="/r{i}">R{i}</a>' for i in range(5))
+            body = f"<html><body>{links}</body></html>"
+            return httpx.Response(200, text=body, headers={"content-type": "text/html"})
+
+        transport = httpx.MockTransport(handler)
+        crawler = AsyncSiteCrawler(
+            domain="example.com", max_pages=3, max_depth=2,
+            concurrency=5, _transport=transport,
+        )
+
+        await asyncio.wait_for(crawler.crawl(), timeout=10.0)
+        assert crawler._queue.empty()
+
+
+# ---------------------------------------------------------------------------
+# T-SA-18: Depth map update for visited URLs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestDepthMapUpdate:
+    """T-SA-18: Verify that _enqueue() updates depth to minimum even for
+    already-visited URLs, so crawl_depth_map reflects the shallowest path."""
+
+    async def test_visited_url_depth_updated_to_shallower(self) -> None:
+        """URL visited at depth 3, rediscovered at depth 1 → depth map shows 1."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if "robots.txt" in url_str or "llms.txt" in url_str:
+                return httpx.Response(404)
+            if "sitemap" in url_str:
+                return httpx.Response(404)
+            # Homepage links to /deep which links to /target
+            if url_str.rstrip("/") == "https://example.com":
+                body = '<html><body><a href="/deep">deep</a><a href="/target">target</a></body></html>'
+            elif "/deep" in url_str:
+                # deep page links to /target (re-discovered at depth 2)
+                body = '<html><body><a href="/target">target again</a></body></html>'
+            else:
+                body = "<html><body><p>leaf</p></body></html>"
+            return httpx.Response(200, text=body, headers={"content-type": "text/html"})
+
+        transport = httpx.MockTransport(handler)
+        crawler = AsyncSiteCrawler(
+            domain="example.com", max_pages=50, max_depth=4,
+            concurrency=1, _transport=transport,
+        )
+        await asyncio.wait_for(crawler.crawl(), timeout=10.0)
+
+        target_url = normalize_url("https://example.com/target")
+        # Target is linked at depth 1 from homepage AND depth 2 from /deep.
+        # With concurrency=1 and BFS order, homepage processes first.
+        # Depth map should reflect the shallowest: depth 1.
+        assert crawler._depth_map.get(target_url, -1) <= 1
+
+    async def test_deeper_rediscovery_no_depth_change(self) -> None:
+        """URL at depth 1, later found at depth 3 → depth stays 1."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if "robots.txt" in url_str or "llms.txt" in url_str:
+                return httpx.Response(404)
+            if "sitemap" in url_str:
+                return httpx.Response(404)
+            if url_str.rstrip("/") == "https://example.com":
+                body = '<html><body><a href="/a">a</a></body></html>'
+            elif "/a" in url_str:
+                body = '<html><body><a href="/b">b</a></body></html>'
+            elif "/b" in url_str:
+                # Links back to /a at depth 3
+                body = '<html><body><a href="/a">a again</a></body></html>'
+            else:
+                body = "<html><body><p>leaf</p></body></html>"
+            return httpx.Response(200, text=body, headers={"content-type": "text/html"})
+
+        transport = httpx.MockTransport(handler)
+        crawler = AsyncSiteCrawler(
+            domain="example.com", max_pages=50, max_depth=5,
+            concurrency=1, _transport=transport,
+        )
+        await asyncio.wait_for(crawler.crawl(), timeout=10.0)
+
+        a_url = canonical_url("https://example.com/a")
+        # /a discovered at depth 1 from homepage. Rediscovered at depth 3 from /b.
+        # Depth should remain 1.
+        assert crawler._depth_map.get(a_url) == 1
+
+
+# ---------------------------------------------------------------------------
+# canonical_url tests (T-SA-27)
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalUrl:
+    def test_query_params_sorted(self) -> None:
+        result = canonical_url("https://example.com/page?z=1&a=2")
+        assert result == "https://example.com/page?a=2&z=1"
+
+    def test_www_stripped(self) -> None:
+        result = canonical_url("https://www.example.com/page")
+        assert "www." not in result
+        assert "example.com/page" in result
+
+    def test_default_port_https_443_removed(self) -> None:
+        result = canonical_url("https://example.com:443/page")
+        assert ":443" not in result
+
+    def test_default_port_http_80_removed(self) -> None:
+        result = canonical_url("http://example.com:80/page")
+        assert ":80" not in result
+
+    def test_non_default_port_preserved(self) -> None:
+        result = canonical_url("https://example.com:8080/page")
+        assert ":8080" in result
+
+    def test_percent_encoding_normalized(self) -> None:
+        """Both forms should produce the same canonical key."""
+        a = canonical_url("https://example.com/p%61ge")
+        b = canonical_url("https://example.com/page")
+        # URL parsing normalizes %61 → 'a' automatically
+        assert a == b
+
+    def test_normalize_url_preserves_query_param_order(self) -> None:
+        """Regression: normalize_url must NOT sort params (breaks signed URLs)."""
+        result = normalize_url("https://example.com/page?z=1&a=2")
+        assert result == "https://example.com/page?z=1&a=2"
+
+    def test_combined_all_normalizations(self) -> None:
+        """All normalizations applied together."""
+        result = canonical_url("https://www.example.com:443/page?z=1&a=2#frag")
+        assert "www." not in result
+        assert ":443" not in result
+        assert "#frag" not in result
+        assert "a=2&z=1" in result
+
+
+# ---------------------------------------------------------------------------
+# _parse_crawl_delay tests (T-SA-28)
+# ---------------------------------------------------------------------------
+
+
+class TestParseCrawlDelay:
+    def test_integer_delay(self) -> None:
+        robots = "User-agent: *\nCrawl-delay: 5\n"
+        assert _parse_crawl_delay(robots) == 5.0
+
+    def test_decimal_delay(self) -> None:
+        robots = "User-agent: *\nCrawl-delay: 2.5\n"
+        assert _parse_crawl_delay(robots) == 2.5
+
+    def test_no_crawl_delay(self) -> None:
+        robots = "User-agent: *\nDisallow: /private/\n"
+        assert _parse_crawl_delay(robots) is None
+
+    def test_multiple_user_agent_blocks(self) -> None:
+        robots = (
+            "User-agent: Googlebot\n"
+            "Disallow: /secret/\n\n"
+            "User-agent: *\n"
+            "Crawl-delay: 10\n"
+        )
+        result = _parse_crawl_delay(robots)
+        assert result == 10.0
+
+    def test_capped_at_300(self) -> None:
+        robots = "Crawl-delay: 500\n"
+        assert _parse_crawl_delay(robots) == 300.0
+
+    def test_empty_robots(self) -> None:
+        assert _parse_crawl_delay("") is None
+
+    def test_ai_bot_access_roundtrip(self) -> None:
+        """AIBotAccessResult with crawl_delay_seconds JSON roundtrip."""
+        from core.models.site_audit import AIBotAccessResult
+        model = AIBotAccessResult(crawl_delay_seconds=5.0)
+        data = model.model_dump(mode="json")
+        restored = AIBotAccessResult.model_validate(data)
+        assert restored.crawl_delay_seconds == 5.0
+
+    def test_ai_bot_access_none_roundtrip(self) -> None:
+        """AIBotAccessResult without crawl_delay_seconds."""
+        from core.models.site_audit import AIBotAccessResult
+        model = AIBotAccessResult()
+        data = model.model_dump(mode="json")
+        restored = AIBotAccessResult.model_validate(data)
+        assert restored.crawl_delay_seconds is None
+
+
+# ---------------------------------------------------------------------------
+# Crawl-delay pipeline findings (T-SA-28)
+# ---------------------------------------------------------------------------
+
+
+class TestCrawlDelayFindings:
+    @pytest.mark.asyncio
+    async def test_delay_5_no_finding(self) -> None:
+        """Crawl-delay: 5 → no finding in top_findings."""
+        from unittest.mock import AsyncMock, patch
+        from core.site_audit.steps.s1_discover import S1DiscoveryOutput
+        from core.site_audit.pipeline import run_site_audit
+        from core.models.site_audit import SiteAuditInput
+
+        mock_disc = S1DiscoveryOutput(
+            pages_with_html=[],
+            ai_bot_access=AIBotAccessResult(crawl_delay_seconds=5.0),
+            discovered_urls=set(),
+        )
+        with patch("core.site_audit.pipeline.discover_site", new_callable=AsyncMock, return_value=mock_disc):
+            result = await run_site_audit(
+                SiteAuditInput(company_name="Test", domain="test.com"),
+                skip_steps=[6],
+            )
+        assert not any(f.get("finding_type") == "crawl_delay_high" for f in result.top_findings)
+        assert not any(f.get("finding_type") == "crawl_delay_excessive" for f in result.top_findings)
+
+    @pytest.mark.asyncio
+    async def test_delay_15_info_finding(self) -> None:
+        """Crawl-delay: 15 → info-level finding."""
+        from unittest.mock import AsyncMock, patch
+        from core.site_audit.steps.s1_discover import S1DiscoveryOutput
+        from core.site_audit.pipeline import run_site_audit
+        from core.models.site_audit import SiteAuditInput
+
+        mock_disc = S1DiscoveryOutput(
+            pages_with_html=[],
+            ai_bot_access=AIBotAccessResult(crawl_delay_seconds=15.0),
+            discovered_urls=set(),
+        )
+        with patch("core.site_audit.pipeline.discover_site", new_callable=AsyncMock, return_value=mock_disc):
+            result = await run_site_audit(
+                SiteAuditInput(company_name="Test", domain="test.com"),
+                skip_steps=[6],
+            )
+        findings = [f for f in result.top_findings if f.get("finding_type") == "crawl_delay_high"]
+        assert len(findings) == 1
+        assert findings[0]["severity"] == "info"
+
+    @pytest.mark.asyncio
+    async def test_delay_45_medium_finding(self) -> None:
+        """Crawl-delay: 45 → medium-level finding."""
+        from unittest.mock import AsyncMock, patch
+        from core.site_audit.steps.s1_discover import S1DiscoveryOutput
+        from core.site_audit.pipeline import run_site_audit
+        from core.models.site_audit import SiteAuditInput
+
+        mock_disc = S1DiscoveryOutput(
+            pages_with_html=[],
+            ai_bot_access=AIBotAccessResult(crawl_delay_seconds=45.0),
+            discovered_urls=set(),
+        )
+        with patch("core.site_audit.pipeline.discover_site", new_callable=AsyncMock, return_value=mock_disc):
+            result = await run_site_audit(
+                SiteAuditInput(company_name="Test", domain="test.com"),
+                skip_steps=[6],
+            )
+        findings = [f for f in result.top_findings if f.get("finding_type") == "crawl_delay_excessive"]
+        assert len(findings) == 1
+        assert findings[0]["severity"] == "medium"

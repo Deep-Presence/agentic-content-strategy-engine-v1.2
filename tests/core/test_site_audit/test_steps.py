@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 import pytest
 
-from core.models.site_audit import AuditCheckSeverity, PageAuditResult
+from core.models.site_audit import AuditCheckSeverity, AuditDimension, PageAuditResult
 from core.site_audit.config import AuditConfig, DEFAULT_AUDIT_CONFIG
 from core.site_audit.steps.s2_analyze_pages import (
     _extract_author,
@@ -159,6 +159,27 @@ class TestExtractTitle:
         title, _ = _extract_title(soup)
         assert title == "Hello"
 
+    def test_nested_span_title(self) -> None:
+        """T-SA-11: title with child <span> elements must be extracted."""
+        soup = _soup("<html><head><title><span>Deep</span> Presence</title></head></html>")
+        title, length = _extract_title(soup)
+        assert title == "Deep Presence"
+        assert length == 13
+
+    def test_nested_bold_italic(self) -> None:
+        """T-SA-11: title with mixed inline formatting."""
+        soup = _soup("<html><head><title><b>Bold</b> and <i>italic</i></title></head></html>")
+        title, length = _extract_title(soup)
+        assert title == "Bold and italic"
+        assert length == 15
+
+    def test_deeply_nested_title(self) -> None:
+        """T-SA-11: deeply nested single child."""
+        soup = _soup("<html><head><title><span><em>Nested</em></span></title></head></html>")
+        title, length = _extract_title(soup)
+        assert title == "Nested"
+        assert length == 6
+
 
 # ---------------------------------------------------------------------------
 # _extract_meta_description tests
@@ -180,6 +201,66 @@ class TestExtractMetaDescription:
 
     def test_empty_content_attribute(self) -> None:
         soup = _soup('<html><head><meta name="description" content=""/></head></html>')
+        desc, length = _extract_meta_description(soup)
+        assert desc == ""
+        assert length == 0
+
+    def test_og_description_fallback(self) -> None:
+        """T-SA-12: og:description used when name=description absent."""
+        soup = _soup('<html><head><meta property="og:description" content="OG description here"/></head></html>')
+        desc, length = _extract_meta_description(soup)
+        assert desc == "OG description here"
+        assert length == 19
+
+    def test_twitter_description_fallback(self) -> None:
+        """T-SA-12: twitter:description used as last fallback."""
+        soup = _soup('<html><head><meta name="twitter:description" content="Twitter desc"/></head></html>')
+        desc, length = _extract_meta_description(soup)
+        assert desc == "Twitter desc"
+        assert length == 12
+
+    def test_name_preferred_over_og(self) -> None:
+        """T-SA-12: name=description takes priority over og:description."""
+        soup = _soup(
+            '<html><head>'
+            '<meta name="description" content="Primary desc"/>'
+            '<meta property="og:description" content="OG desc"/>'
+            '</head></html>'
+        )
+        desc, _ = _extract_meta_description(soup)
+        assert desc == "Primary desc"
+
+    def test_empty_name_falls_to_og(self) -> None:
+        """T-SA-12: empty name=description falls through to og:description."""
+        soup = _soup(
+            '<html><head>'
+            '<meta name="description" content=""/>'
+            '<meta property="og:description" content="OG fallback"/>'
+            '</head></html>'
+        )
+        desc, _ = _extract_meta_description(soup)
+        assert desc == "OG fallback"
+
+    def test_og_preferred_over_twitter(self) -> None:
+        """T-SA-12: og:description takes priority over twitter:description."""
+        soup = _soup(
+            '<html><head>'
+            '<meta property="og:description" content="OG wins"/>'
+            '<meta name="twitter:description" content="Twitter loses"/>'
+            '</head></html>'
+        )
+        desc, _ = _extract_meta_description(soup)
+        assert desc == "OG wins"
+
+    def test_all_empty_returns_empty(self) -> None:
+        """T-SA-12: all three tags present but empty → empty result."""
+        soup = _soup(
+            '<html><head>'
+            '<meta name="description" content=""/>'
+            '<meta property="og:description" content="  "/>'
+            '<meta name="twitter:description" content=""/>'
+            '</head></html>'
+        )
         desc, length = _extract_meta_description(soup)
         assert desc == ""
         assert length == 0
@@ -381,6 +462,53 @@ class TestHasMixedContent:
         soup = _soup(html)
         assert _has_mixed_content(soup, "https://example.com/page") is True
 
+    # -- T-SA-15: Extended mixed-content detection --
+
+    def test_img_srcset_http_detected(self) -> None:
+        """T-SA-15: HTTP URL in srcset attribute."""
+        html = '<html><body><img srcset="http://cdn.com/img.jpg 1x, https://cdn.com/img2.jpg 2x"/></body></html>'
+        assert _has_mixed_content(_soup(html), "https://example.com/") is True
+
+    def test_img_srcset_all_https(self) -> None:
+        """T-SA-15: All-HTTPS srcset should not trigger."""
+        html = '<html><body><img srcset="https://cdn.com/a.jpg 1x, https://cdn.com/b.jpg 2x"/></body></html>'
+        assert _has_mixed_content(_soup(html), "https://example.com/") is False
+
+    def test_video_poster_http(self) -> None:
+        """T-SA-15: HTTP poster on video tag."""
+        html = '<html><body><video poster="http://cdn.com/thumb.jpg"></video></body></html>'
+        assert _has_mixed_content(_soup(html), "https://example.com/") is True
+
+    def test_object_data_http(self) -> None:
+        """T-SA-15: HTTP data on object tag."""
+        html = '<html><body><object data="http://cdn.com/flash.swf"></object></body></html>'
+        assert _has_mixed_content(_soup(html), "https://example.com/") is True
+
+    def test_embed_src_http(self) -> None:
+        """T-SA-15: HTTP src on embed tag."""
+        html = '<html><body><embed src="http://cdn.com/plugin.swf"></body></html>'
+        assert _has_mixed_content(_soup(html), "https://example.com/") is True
+
+    def test_inline_style_url_http(self) -> None:
+        """T-SA-15: HTTP url() in inline style attribute."""
+        html = '<html><body><div style="background: url(http://cdn.com/bg.jpg)"></div></body></html>'
+        assert _has_mixed_content(_soup(html), "https://example.com/") is True
+
+    def test_style_block_url_http(self) -> None:
+        """T-SA-15: HTTP url() in <style> block."""
+        html = '<html><head><style>.bg { background: url(http://cdn.com/bg.jpg); }</style></head><body></body></html>'
+        assert _has_mixed_content(_soup(html), "https://example.com/") is True
+
+    def test_inline_style_https_no_trigger(self) -> None:
+        """T-SA-15: HTTPS url() in style should not trigger."""
+        html = '<html><body><div style="background: url(https://cdn.com/bg.jpg)"></div></body></html>'
+        assert _has_mixed_content(_soup(html), "https://example.com/") is False
+
+    def test_data_uri_no_trigger(self) -> None:
+        """T-SA-15: data: URIs in style should not trigger."""
+        html = '<html><body><div style="background: url(data:image/png;base64,abc)"></div></body></html>'
+        assert _has_mixed_content(_soup(html), "https://example.com/") is False
+
 
 # ---------------------------------------------------------------------------
 # _is_ssr tests
@@ -391,21 +519,157 @@ class TestIsSsr:
     def test_page_with_lots_of_text_is_ssr(self) -> None:
         words = " ".join(["word"] * 200)
         html = f"<html><body><p>{words}</p></body></html>"
-        soup = _soup(html)
-        assert _is_ssr(soup) is True
+        assert _is_ssr(html) is True
 
     def test_page_with_only_scripts_is_not_ssr(self) -> None:
         html = '<html><body><script>var app = {};</script></body></html>'
-        soup = _soup(html)
-        assert _is_ssr(soup) is False
+        assert _is_ssr(html) is False
 
     def test_empty_body_is_not_ssr(self) -> None:
-        soup = _soup("<html><body></body></html>")
-        assert _is_ssr(soup) is False
+        assert _is_ssr("<html><body></body></html>") is False
 
     def test_no_body_returns_false(self) -> None:
-        soup = _soup("<html></html>")
-        assert _is_ssr(soup) is False
+        assert _is_ssr("<html></html>") is False
+
+
+# ---------------------------------------------------------------------------
+# T-SA-04 regression: DOM mutation must NOT corrupt shared soup
+# ---------------------------------------------------------------------------
+
+
+class TestDomMutationRegression:
+    """Verify that _extract_content_metrics and _is_ssr do not mutate the
+    shared soup object used by other extractors (T-SA-04 fix)."""
+
+    _HTML_WITH_SCRIPTS = textwrap.dedent("""\
+        <html><head><title>Test</title></head>
+        <body>
+          <script src="http://cdn.com/lib.js">var x = 1;</script>
+          <style>.foo { color: red; }</style>
+          <noscript>Enable JS</noscript>
+          <p>Some short content here.</p>
+          <a href="https://example.com/other">link</a>
+        </body></html>
+    """)
+
+    def test_soup_not_mutated_after_content_metrics(self) -> None:
+        """After _extract_content_metrics, soup must still have script tags."""
+        soup = _soup(self._HTML_WITH_SCRIPTS)
+        scripts_before = len(soup.find_all("script"))
+        styles_before = len(soup.find_all("style"))
+        assert scripts_before > 0
+        assert styles_before > 0
+
+        _extract_content_metrics(soup, self._HTML_WITH_SCRIPTS)
+
+        assert len(soup.find_all("script")) == scripts_before
+        assert len(soup.find_all("style")) == styles_before
+
+    def test_mixed_content_detected_after_content_metrics(self) -> None:
+        """_has_mixed_content must find http:// script src even after
+        content metrics extraction has run (the old bug)."""
+        soup = _soup(self._HTML_WITH_SCRIPTS)
+        _extract_content_metrics(soup, self._HTML_WITH_SCRIPTS)
+        assert _has_mixed_content(soup, "https://example.com/page") is True
+
+    def test_content_metrics_fallback_preserves_soup(self) -> None:
+        """When trafilatura fails (short content), fallback re-parses
+        internally without touching the original soup."""
+        short_html = "<html><body><script>big code</script><p>tiny</p></body></html>"
+        soup = _soup(short_html)
+        scripts_before = len(soup.find_all("script"))
+
+        with patch(
+            "core.site_audit.steps.s2_analyze_pages.trafilatura.extract",
+            return_value=None,
+        ):
+            word_count, _ = _extract_content_metrics(soup, short_html)
+
+        assert word_count >= 0
+        assert len(soup.find_all("script")) == scripts_before
+
+    def test_full_page_analysis_mixed_content_correct(self) -> None:
+        """End-to-end: analyze_single_page must detect mixed content on a
+        page with an http:// script src."""
+        result = analyze_single_page(
+            url="https://example.com/page",
+            html=self._HTML_WITH_SCRIPTS,
+            depth=0,
+            status_code=200,
+            redirect_url=None,
+            config=DEFAULT_AUDIT_CONFIG,
+        )
+        assert result.has_mixed_content is True
+
+
+# ---------------------------------------------------------------------------
+# T-SA-13: Author check page-type gating
+# ---------------------------------------------------------------------------
+
+
+class TestAuthorPageTypeGating:
+    """T-SA-13: check_author only fires for article-type pages."""
+
+    _MINIMAL_HTML = textwrap.dedent("""\
+        <!DOCTYPE html><html><head><title>Page</title></head>
+        <body><p>{words}</p></body></html>
+    """).format(words=" ".join(["word"] * 120))
+
+    _BLOG_HTML_WITH_AUTHOR = textwrap.dedent("""\
+        <!DOCTYPE html><html><head>
+          <title>Blog Post</title>
+          <meta name="author" content="Jane Doe"/>
+        </head>
+        <body><p>{words}</p></body></html>
+    """).format(words=" ".join(["word"] * 120))
+
+    def test_homepage_no_author_finding(self) -> None:
+        result = analyze_single_page(
+            url="https://example.com/",
+            html=self._MINIMAL_HTML, depth=0, status_code=200,
+            redirect_url=None, config=DEFAULT_AUDIT_CONFIG,
+        )
+        author_findings = [f for f in result.findings if f.finding_type == "missing_author"]
+        assert author_findings == []
+
+    def test_product_page_no_author_finding(self) -> None:
+        result = analyze_single_page(
+            url="https://example.com/product/widget",
+            html=self._MINIMAL_HTML, depth=1, status_code=200,
+            redirect_url=None, config=DEFAULT_AUDIT_CONFIG,
+        )
+        author_findings = [f for f in result.findings if f.finding_type == "missing_author"]
+        assert author_findings == []
+
+    def test_blog_page_missing_author_gets_finding(self) -> None:
+        result = analyze_single_page(
+            url="https://example.com/blog/my-post",
+            html=self._MINIMAL_HTML, depth=1, status_code=200,
+            redirect_url=None, config=DEFAULT_AUDIT_CONFIG,
+        )
+        author_findings = [f for f in result.findings if f.finding_type == "missing_author"]
+        assert len(author_findings) == 1
+
+    def test_blog_page_with_author_no_finding(self) -> None:
+        result = analyze_single_page(
+            url="https://example.com/blog/my-post",
+            html=self._BLOG_HTML_WITH_AUTHOR, depth=1, status_code=200,
+            redirect_url=None, config=DEFAULT_AUDIT_CONFIG,
+        )
+        author_findings = [f for f in result.findings if f.finding_type == "missing_author"]
+        assert author_findings == []
+
+    def test_author_still_extracted_for_non_article(self) -> None:
+        """Author data is extracted even when the finding is suppressed."""
+        result = analyze_single_page(
+            url="https://example.com/",
+            html=self._BLOG_HTML_WITH_AUTHOR, depth=0, status_code=200,
+            redirect_url=None, config=DEFAULT_AUDIT_CONFIG,
+        )
+        assert result.has_author is True
+        assert result.author_name == "Jane Doe"
+        author_findings = [f for f in result.findings if f.finding_type == "missing_author"]
+        assert author_findings == []
 
 
 # ---------------------------------------------------------------------------
@@ -674,3 +938,97 @@ class TestAnalyzeAllPages:
 
         # Should still return 2 results (one may be a default PageAuditResult)
         assert len(results) == 2
+
+
+# ---------------------------------------------------------------------------
+# T-SA-06: Performance dimension — check_ssr_content wiring
+# ---------------------------------------------------------------------------
+
+
+class TestPerformanceSsrFinding:
+    """Verify that check_ssr_content is wired into analyze_single_page
+    so the performance dimension actually generates findings (T-SA-06)."""
+
+    _CSR_HTML = "<html><body><script>var app = {};</script><p>tiny</p></body></html>"
+    _SSR_HTML = "<html><body><p>" + " ".join(["word"] * 200) + "</p></body></html>"
+
+    def test_csr_page_generates_performance_finding(self) -> None:
+        """A page with < 100 visible words should generate a possible_csr_page finding."""
+        result = analyze_single_page(
+            url=_URL, html=self._CSR_HTML, depth=0,
+            status_code=200, redirect_url=None, config=DEFAULT_AUDIT_CONFIG,
+        )
+        perf_findings = [
+            f for f in result.findings
+            if f.dimension == AuditDimension.performance
+        ]
+        assert len(perf_findings) >= 1
+        assert any(f.finding_type == "possible_csr_page" for f in perf_findings)
+        csr_finding = next(f for f in perf_findings if f.finding_type == "possible_csr_page")
+        assert csr_finding.severity == AuditCheckSeverity.high
+
+    def test_ssr_page_no_performance_finding(self) -> None:
+        """A well-rendered SSR page should NOT generate CSR findings."""
+        result = analyze_single_page(
+            url=_URL, html=self._SSR_HTML, depth=0,
+            status_code=200, redirect_url=None, config=DEFAULT_AUDIT_CONFIG,
+        )
+        perf_findings = [
+            f for f in result.findings
+            if f.finding_type == "possible_csr_page"
+        ]
+        assert perf_findings == []
+
+    def test_analyze_single_page_csr_finding_integration(self) -> None:
+        """End-to-end: CSR page should have performance findings in the final result."""
+        result = analyze_single_page(
+            url=_URL, html=self._CSR_HTML, depth=0,
+            status_code=200, redirect_url=None, config=DEFAULT_AUDIT_CONFIG,
+        )
+        # Performance dimension must NOT be empty
+        dims = {f.dimension for f in result.findings}
+        assert AuditDimension.performance in dims
+
+
+# ---------------------------------------------------------------------------
+# T-SA-07: Freshness findings go to freshness dimension (not E-E-A-T)
+# ---------------------------------------------------------------------------
+
+
+class TestFreshnessDimension:
+    """Verify that check_freshness assigns findings to the freshness dimension
+    and uses correct severity ordering (T-SA-07)."""
+
+    def test_freshness_2y_goes_to_freshness_dimension(self) -> None:
+        """Content > 2 years old → freshness dimension, medium severity."""
+        from core.site_audit.checks.eeat_signals import check_freshness
+        findings = check_freshness(_URL, "2023-01-01", None)
+        assert len(findings) == 1
+        assert findings[0].dimension == AuditDimension.freshness
+        assert findings[0].severity == AuditCheckSeverity.medium
+        assert findings[0].finding_type == "stale_content_2y"
+
+    def test_freshness_1y_goes_to_freshness_dimension(self) -> None:
+        """Content > 1 year but < 2 years old → freshness dimension, low severity."""
+        from core.site_audit.checks.eeat_signals import check_freshness
+        findings = check_freshness(_URL, "2025-01-01", None)
+        assert len(findings) == 1
+        assert findings[0].dimension == AuditDimension.freshness
+        assert findings[0].severity == AuditCheckSeverity.low
+        assert findings[0].finding_type == "stale_content_1y"
+
+    def test_freshness_recent_no_findings(self) -> None:
+        """Recent content (< 1 year) → no freshness findings."""
+        from core.site_audit.checks.eeat_signals import check_freshness
+        findings = check_freshness(_URL, "2025-12-01", None)
+        assert findings == []
+
+    def test_freshness_never_assigns_eeat_dimension(self) -> None:
+        """No freshness finding should ever have dimension=eeat."""
+        from core.site_audit.checks.eeat_signals import check_freshness
+        for date_str in ("2020-01-01", "2024-06-01", "2025-12-01"):
+            findings = check_freshness(_URL, date_str, None)
+            for f in findings:
+                assert f.dimension != AuditDimension.eeat, (
+                    f"Freshness finding {f.finding_type} has dimension=eeat for date {date_str}"
+                )
