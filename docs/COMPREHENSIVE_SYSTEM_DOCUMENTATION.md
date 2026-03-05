@@ -3,7 +3,7 @@
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
 > **Stack:** Python 3.12 · LangGraph · DeepAgents · FastAPI · Pydantic v2 · Langfuse v3
-> **Document Date:** 2026-02-28 (updated: daily LLM visibility tracker)
+> **Document Date:** 2026-03-06 (updated: Knowledge Base Phase 5 — Synthesis & Living Document)
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -48,6 +48,16 @@
    - 5.5 [Combined Pipeline Orchestrator](#55-combined-pipeline-orchestrator)
    - 5.6 [Cross-Stage Context Passing](#56-cross-stage-context-passing)
    - 5.7 [Perplexity Deep Research Integration](#57-perplexity-deep-research-integration)
+5c. [Knowledge Base Pipeline (Research v2)](#5c-knowledge-base-pipeline-research-v2)
+   - 5c.1 [Architecture — 3-Layer Knowledge Base](#5c1-architecture--3-layer-knowledge-base)
+   - 5c.2 [DAG Execution & 3 HITL Checkpoints](#5c2-dag-execution--3-hitl-checkpoints)
+   - 5c.3 [6 Specialist Agents](#5c3-6-specialist-agents)
+   - 5c.4 [KBStorage — Versioned Filesystem Store](#5c4-kbstorage--versioned-filesystem-store)
+   - 5c.5 [Staleness Tracking & Propagation (Phase 5)](#5c5-staleness-tracking--propagation-phase-5)
+   - 5c.6 [Delta Synthesis Mode (Phase 5)](#5c6-delta-synthesis-mode-phase-5)
+   - 5c.7 [Health & Refresh-Stale API Endpoints (Phase 5)](#5c7-health--refresh-stale-api-endpoints-phase-5)
+   - 5c.8 [Pydantic Models (17 Models)](#5c8-pydantic-models-17-models)
+   - 5c.9 [Test Coverage (260 tests)](#5c9-test-coverage-260-tests)
 6. [Pipeline 2: Gap Analysis](#6-pipeline-2-gap-analysis)
    - 6.1 [Step 1 — Embed Company Assets](#61-step-1--embed-company-assets)
    - 6.2 [Step 2 — Generate Queries](#62-step-2--generate-queries)
@@ -173,7 +183,7 @@ The **Content Strategy Engine** is a multi-agent AI platform that automates the 
 
 0. **Site Audit Pipeline** (implemented) — A 6-step deterministic pipeline that audits website AI-readiness across 8 dimensions (crawlability, performance, on-page SEO, content extractability/AEO, schema markup, E-E-A-T, freshness, security). Scores each dimension 0–100 using penalty-based deductions, computes a weighted overall score, assigns a letter grade (A–F), and generates actionable Markdown + JSON reports. 100% deterministic — no LLM calls.
 
-1. **Research Artifacts Pipeline** (implemented) — Uses LLM agents with web research tools to produce company context documents, audience persona profiles, and writing style guides. Each artifact goes through a human-in-the-loop approval flow (approve / revise / reject) before being finalized.
+1. **Research Artifacts Pipeline** (implemented) — Uses LLM agents with web research tools to produce company context documents, audience persona profiles, and writing style guides. Each artifact goes through a human-in-the-loop approval flow (approve / revise / reject) before being finalized. **Knowledge Base v2** (implemented 2026-03-05/06) replaces the monolithic agent with 5 specialist research agents, a versioned knowledge base (L2 docs), DAG-ordered execution with 3 HITL checkpoints, delta synthesis mode, staleness tracking with propagation, and health/refresh-stale API endpoints. 260 tests.
 
 2. **Gap Analysis Pipeline** (implemented) — An 8-step data pipeline that embeds a company's web content, generates buyer-intent search queries, searches four AI platforms (ChatGPT, Claude, Perplexity, Google AI Overview), enriches the citations those platforms return, embeds everything into a shared vector space, computes semantic proximity analysis (SPA), generates interactive visualizations, and produces a gap report with actionable content recommendations.
 
@@ -187,7 +197,7 @@ A **Settings Pages API** sprint (2026-02-27) added 11 new endpoints across 3 fea
 
 A **3-phase database migration** (2026-02-27/28) established a hybrid filesystem + PostgreSQL architecture: Phase 1 created 31 ORM tables, 16 repositories, and 4 Alembic migrations using pure SQLAlchemy 2.0. Phase 2 decomposed authentication into a three-layer architecture (pure utilities → service protocol → dual Json/Db implementations). Phase 3 applied the same protocol pattern across all data services (gap, brand, content, TaskStore) with SQL analytics repositories replacing Python-based JSON parsing for heavy aggregations. All phases use a single opt-in switch (`DATABASE_URL`) with automatic fallback to JSON-backed services.
 
-**~1978 tests (~1843 passed + 135 skipped), 1 pre-existing failure (PB-39).** Full coverage across all pipelines (including site audit), API endpoints, data retrieval layers, settings management, knowledge document upload, auth services, DB repositories, and service layer protocols. Site audit module adds 636 new tests.
+**~2479 tests, 1 pre-existing failure (PB-39).** Full coverage across all pipelines (including site audit and Knowledge Base), API endpoints, data retrieval layers, settings management, knowledge document upload, auth services, DB repositories, and service layer protocols. Knowledge Base module adds 260 tests (214 core + 46 API).
 
 **Current production clients analyzed:** Ramp (corporate spend management), Carta (equity management platform), and Mynd.
 
@@ -1362,6 +1372,149 @@ def research(
 - `401` / "Authorization" → Invalid/expired API key (clear error message)
 - `429` / "rate limit" → Quota exceeded (suggests checking billing)
 - Other exceptions → Re-raised with context
+
+---
+
+## 5c. Knowledge Base Pipeline (Research v2)
+
+The Knowledge Base replaces the monolithic Research Artifacts pipeline (§5) with a **3-layer architecture** of specialist research agents, versioned documents, and synthesized Company Profiles. Built across Phases 1–5 (2026-03-05/06) with 260 tests.
+
+### 5c.1 Architecture — 3-Layer Knowledge Base
+
+```
+Layer 1 (Raw Inputs):     Ephemeral — Perplexity/Claude research outputs (not persisted)
+Layer 2 (Knowledge Base): 5 typed, versioned docs — company_overview, customer_reviews,
+                          competitor_registry, weakness_analysis, brand_perception
+Layer 3 (Company Profile): Synthesized artifact at artifacts/company_context/{slug}.md
+```
+
+**Files:** `core/models/knowledge_base.py` (17 Pydantic models), `core/research/knowledge_base/` (storage, agents, pipeline, graph, tools)
+
+### 5c.2 DAG Execution & 3 HITL Checkpoints
+
+**Pipeline entry:** `run_knowledge_base_pipeline(input_data, task_store, event_bus, artifacts_root, auth_service)` in `core/research/knowledge_base/pipeline.py`
+
+**DAG execution order:**
+```
+Phase 1 (parallel):   company_overview + customer_reviews
+Phase 2 (sequential): competitor_scanner (needs company_overview_md)
+── HITL-1: review 3 docs ──
+Phase 3 (parallel):   weakness_analyst + brand_perception
+── HITL-2: review 2 docs ──
+Phase 4 (sequential): synthesis (reads all L2 docs → L3 Company Profile)
+── HITL-3: review synthesis ──
+DONE → promote company_context/{slug}.md (only on HITL-3 approve)
+```
+
+**3 modes:** `full` (all agents), `refresh` (stale docs only), `single` (one agent, skip HITL/synthesis).
+
+**HITL pattern:** Pipeline-with-inline-HITL (not monolithic graph). 2 LangGraph mini-graphs (`build_kb_doc_review_graph`, `build_kb_synthesis_review_graph`) for pause/resume. `run_kb_hitl_checkpoint()` async helper manages interrupts.
+
+**Revision flow:** On `revise` decision, pipeline re-runs affected agents with `## Reviewer Feedback\n{revision_note}` appended to user prompt.
+
+### 5c.3 6 Specialist Agents
+
+| Agent | Tier | Provider | File |
+|-------|------|----------|------|
+| Company Overview | 1 | Perplexity sonar-deep-research | `agents.py:run_company_overview_agent` |
+| Customer Reviews | 1 | Perplexity sonar-deep-research | `agents.py:run_customer_reviews_agent` |
+| Competitor Scanner | 1 | Perplexity sonar-deep-research | `agents.py:run_competitor_scanner_agent` |
+| Weakness Analyst | 1 | Perplexity sonar-deep-research | `agents.py:run_weakness_analyst_agent` |
+| Brand Perception | 2 | Anthropic Claude + web_search | `agents.py:run_brand_perception_agent` |
+| Synthesis | 3 | LangGraph create_react_agent + Claude Opus + read_file tool | `agents.py:run_synthesis_agent` |
+
+**Prompt registry:** Hub-with-local-fallback pattern in `core/research/prompts/*.py` (6 files). Each has `get_*_system_prompt()` (Hub getter) + `build_*_user_prompt()` (user message builder).
+
+### 5c.4 KBStorage — Versioned Filesystem Store
+
+**File:** `core/research/knowledge_base/storage.py`
+
+**Layout:**
+```
+artifacts/knowledge_base/{slug}/
+    _manifest.json          ← KBManifest (versions, timestamps, synthesis metadata)
+    company_overview/v1.md, v1.json
+    customer_reviews/v1.md, v1.json
+    competitor_registry/v1.md, v1.json
+    weakness_analysis/v1.md, v1.json
+    brand_perception/v1.md, v1.json
+    synthesis/v1.md
+```
+
+**Key methods:** `write_version()`, `read_version()`, `get_latest_version()`, `write_synthesis()`, `read_synthesis()`, `write_manifest()` (atomic via temp-file + `os.replace()`).
+
+### 5c.5 Staleness Tracking & Propagation (Phase 5)
+
+**DAG dependency graph** (`KB_DEPENDENCY_GRAPH` constant in `core/models/knowledge_base.py`):
+```python
+company_overview: []                                          # Root
+customer_reviews: []                                          # Root
+competitor_registry: [company_overview]                       # Depends on overview
+weakness_analysis: [company_overview, competitor_registry]    # Depends on 2
+brand_perception: [company_overview, customer_reviews, competitor_registry]  # Depends on 3
+```
+
+**Per-doc staleness thresholds** (`KB_DEFAULT_STALENESS_DAYS`): overview=90d, reviews=30d, competitor=90d, weakness=60d, brand=45d.
+
+**`get_staleness_report(threshold_override=None)`** → `KBHealthReport`:
+- Per-doc: missing, age-based, upstream-changed detection
+- Synthesis: needs refresh if any L2 doc updated after `synthesis_last_updated`
+- Score: `(fresh_count / 5) * 100`, penalized -10 if synthesis stale
+
+**`propagate_staleness(refreshed_doc_types)`** → reverse DAG BFS marks downstream docs as stale.
+
+**`get_changed_since_synthesis()`** → L2 docs updated after last synthesis.
+
+### 5c.6 Delta Synthesis Mode (Phase 5)
+
+When `mode == "refresh"` and a previous synthesis exists, the synthesis agent runs in **delta mode**:
+- Reads previous Company Profile via `read_file` tool
+- Receives only changed L2 docs (not all 5)
+- Prompt instructs: preserve unchanged sections, update based on new research
+
+**Delta prompts:** `DELTA_SYNTHESIS_SYSTEM_PROMPT` + `build_delta_synthesis_user_prompt()` in `core/research/prompts/synthesis.py`.
+
+**Fallback:** If no prior synthesis exists, falls back to full synthesis mode.
+
+### 5c.7 Health & Refresh-Stale API Endpoints (Phase 5)
+
+| Method | Path | Description | Auth |
+|--------|------|-------------|------|
+| `POST` | `/api/v1/knowledge-base/start` | Start KB pipeline (202/200) | member/superuser + tenant |
+| `GET` | `/api/v1/knowledge-base/{slug}/health` | Staleness report + score | auth + tenant |
+| `POST` | `/api/v1/knowledge-base/{slug}/refresh-stale` | Refresh only stale docs (202/200) | member/superuser + tenant |
+| `GET` | `/api/v1/knowledge-base/{run_id}/status` | Poll run status | auth + tenant |
+| `POST` | `/api/v1/knowledge-base/{run_id}/approve` | HITL approval | member/superuser + tenant |
+
+**Route ordering:** Static routes (`/{slug}/health`, `/{slug}/refresh-stale`) registered BEFORE dynamic routes (`/{run_id}/status`, `/{run_id}/approve`) to avoid FastAPI path collision.
+
+**Health endpoint:** Returns `KBHealthResponse` with per-doc health (status, version, age_days, threshold, stale_reason, dependencies), overall score (0-100), synthesis status, stale/missing doc lists. Optional `?threshold_override=N` query param.
+
+**Refresh-stale endpoint:** Checks staleness, returns 200 if all fresh ("All documents are fresh"), or 202 with topologically sorted stale doc list for DAG-order execution.
+
+**Write-before-approve fix (Codex CRITICAL):** Synthesis writes to `storage.write_synthesis()` (versioned KB internal), but `company_context/{slug}.md` only written inside HITL-3 approve branch. Reject leaves KB synthesis version but doesn't promote.
+
+### 5c.8 Pydantic Models (17 Models)
+
+**File:** `core/models/knowledge_base.py`
+
+Key models: `KBDocType` (enum), `KBDocEntry`, `KBManifest`, `KBDocVersion`, `KBDocHealth`, `KBHealthReport`, `KnowledgeBaseInput`, `KnowledgeBaseOutput`, `KBAgentResult`. All fields have defaults for backward compatibility.
+
+**API schemas** (`api/schemas/common.py`): `KnowledgeBaseStartRequest`, `KBDocHealthResponse`, `KBHealthResponse`, `KBRefreshStaleRequest`.
+
+### 5c.9 Test Coverage (260 tests)
+
+| File | Tests | Scope |
+|------|-------|-------|
+| `test_models_kb.py` | 17 | Model validation, DAG constants, serialization |
+| `test_storage.py` | 44 | Manifest CRUD, versioning, staleness report, propagation |
+| `test_tools.py` | 8 | read_file tool |
+| `test_prompts.py` | 27 | 6 prompt builders + revision notes + delta prompts |
+| `test_agents.py` | 44 | 6 agent functions + delta mode |
+| `test_graph_kb.py` | 22 | 2 HITL sub-graphs |
+| `test_pipeline_kb.py` | 40 | DAG execution, 3 modes, HITL, delta synthesis |
+| `test_knowledge_base.py` (API) | 46 | Start, status, approve, health, refresh-stale |
+| **Total** | **260** | |
 
 ---
 
@@ -7792,9 +7945,13 @@ def test_other_user_cannot_read_test_co_profile(self, other_client, test_company
 | 2026-03-02 | §7.6 | Added v1.3 artifact structure (linked.md, fact_checked.md, blueprints.json, planner_output.json) | T-ce-v13-refactor |
 | 2026-03-02 | §10 | Added LinkedDraft model, voice_tone_description on ContentOutline, FeedbackRoute literal, "eeat" dimension; added v1.3 models subsection (TopicSelection, ContentBlueprint, ContentGenerationInputV13, WorkerQueryContext, PlannerScorecard) | T-ce-v13-refactor |
 
+| 2026-03-06 | TOC | Added §5c Knowledge Base Pipeline (Research v2) with 9 subsection links | T-kb-phase5-synthesis-living-doc |
+| 2026-03-06 | §1 | Updated Executive Summary — ~2479 tests, Knowledge Base v2 description (5 specialist agents, DAG execution, delta synthesis, staleness tracking, 260 tests) | T-kb-phase5-synthesis-living-doc |
+| 2026-03-06 | §5c | **NEW SECTION** — Knowledge Base Pipeline: 9 subsections covering 3-layer architecture, DAG execution with 3 HITL checkpoints, 6 specialist agents, KBStorage versioned filesystem, staleness tracking & propagation (Phase 5), delta synthesis mode (Phase 5), health & refresh-stale endpoints (Phase 5), 17 Pydantic models, 260 tests. Codex-reviewed (CRITICAL write-before-approve fix, atomic manifest writes, DAG dependency population). | T-kb-phase5-synthesis-living-doc |
+
 ---
 
 *End of Comprehensive System Documentation*
-*Generated: 2026-03-02 (updated: v1.3 pipeline refactor — Phases 1-10)*
-*Total codebase files analyzed: ~320+*
-*Total lines of documentation: ~8100+*
+*Generated: 2026-03-06 (updated: Knowledge Base Phase 5 — Synthesis & Living Document)*
+*Total codebase files analyzed: ~330+*
+*Total lines of documentation: ~8300+*

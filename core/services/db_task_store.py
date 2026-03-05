@@ -18,7 +18,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.tasks.models import ApprovalRecord, PipelineTask, TaskStatus
+from api.tasks.models import ApprovalRecord, PipelineTask
+from core.shared_tools.task_status import TaskStatus
 from core.services.task_store import ApprovalWindowError, TaskConflictError, TaskNotFoundError
 
 logger = logging.getLogger(__name__)

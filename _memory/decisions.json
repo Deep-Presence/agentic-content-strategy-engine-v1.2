@@ -473,5 +473,71 @@
     "outcome": "8 new tests passing. Better dedup without breaking fetches.",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-KB-P2-1",
+    "timestamp": "2026-03-05",
+    "task": "Agent creation API — langgraph.prebuilt.create_react_agent vs langchain.agents.create_agent",
+    "approach": "Use langgraph.prebuilt.create_react_agent with prompt= parameter. Returns CompiledStateGraph.",
+    "rationale": "langchain.agents.create_agent exists but returns a different type (not CompiledStateGraph). The langgraph.prebuilt import is deprecated but stable and returns the expected type. Migration to new API requires test updates (type assertions).",
+    "alternatives_rejected": ["langchain.agents.create_agent (different return type, breaks test assertions)", "Raw LangGraph StateGraph builder (over-engineering for a simple tool-calling agent)"],
+    "outcome": "Synthesis agent builds and runs correctly. Deprecation warning is cosmetic.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-KB-P2-2",
+    "timestamp": "2026-03-05",
+    "task": "Brand Perception agent — Anthropic web_search tool type and pause_turn handling",
+    "approach": "web_search_20250305 server-side tool with _MAX_PAUSE_TURNS=5 iteration guard. api_key passed explicitly from settings.",
+    "rationale": "web_search_20250305 matches existing usage in core/gap_analysis/engines/claude.py:109. Unbounded pause_turn loop was a CRITICAL review finding (C-1). Explicit api_key matches planner.py:122 convention (C-2).",
+    "alternatives_rejected": ["web_search_20260209 (doesn't exist)", "No pause_turn limit (infinite loop risk)", "Rely on ANTHROPIC_API_KEY env var (breaks in .env.local-only envs)"],
+    "outcome": "Both C-1 and C-2 fixed. 32 agent tests passing including pause_turn limit test.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-KB-P2-3",
+    "timestamp": "2026-03-05",
+    "task": "Model string format for init_chat_model",
+    "approach": "Colon separator (anthropic:claude-opus-4-6). _build_model helper handles colon, slash, and bare formats.",
+    "rationale": "CX-1 from master plan: slash format fails provider inference in init_chat_model. Colon is the standard LangChain convention.",
+    "alternatives_rejected": ["Slash format anthropic/claude-opus-4-6 (fails provider inference)", "Bare model name (requires provider auto-detection)"],
+    "outcome": "Settings use colon format. _build_model handles all 3 formats for flexibility.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-KB-P3-1",
+    "timestamp": "2026-03-05",
+    "task": "KB orchestrator pattern — pipeline-with-inline-HITL vs monolithic LangGraph",
+    "approach": "Pipeline function owns execution flow. LangGraph mini-graphs only for HITL pause/resume (interrupt/Command). asyncio.gather for parallel agents.",
+    "rationale": "DAG phases involve asyncio.gather for parallel agents within phases, which is trivial in async Python but complex in LangGraph topology. Each HITL checkpoint needs different approval payloads. Mode handling (full/refresh/single) is conditional logic that belongs in the pipeline. Same pattern as pipeline_v13.py.",
+    "alternatives_rejected": ["Monolithic LangGraph StateGraph (complex topology for parallel phases, hard to handle 3 modes)", "Pure async pipeline with no LangGraph (lose interrupt/resume for HITL)"],
+    "outcome": "pipeline.py owns 4-phase DAG + 3 modes. graph.py provides 2 HITL sub-graphs (doc review shared for CP1/CP2, synthesis for CP3). run_kb_hitl_checkpoint helper mirrors graph_v13 pattern.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-KB-P3-2",
+    "timestamp": "2026-03-05",
+    "task": "Revision note injection — re-run agents with feedback vs re-run from scratch",
+    "approach": "Inject revision_note as '## Reviewer Feedback' section appended to user prompt. All 6 prompt builders + agents got backward-compatible Optional[str] param.",
+    "rationale": "Re-running from scratch wastes API calls and time. Reviewer feedback is specific and targeted — appending it to the prompt lets the agent address it in context of its full research. Backward-compatible (default None).",
+    "alternatives_rejected": ["Re-run agent from scratch (wasteful, loses context)", "Store revision notes in state and pass to synthesis only (loses per-doc specificity)"],
+    "outcome": "All 6 prompt builders append '## Reviewer Feedback' when revision_note is provided. Pipeline re-runs only the docs that received revise feedback. 9 tests cover injection + passthrough.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-KB-P3-3",
+    "timestamp": "2026-03-05",
+    "task": "HITL helper — self-contained in KB module vs extracted shared utility",
+    "approach": "Keep run_kb_hitl_checkpoint in core/research/knowledge_base/graph.py. Do not extract to shared utility yet.",
+    "rationale": "KB and content engine HITL have different state schemas, interrupt payloads, and approval semantics. Extracting a shared utility prematurely would create coupling. Can extract later when patterns stabilize.",
+    "alternatives_rejected": ["Extract to core/shared_tools/hitl.py (premature abstraction — KB and content engine differ enough)"],
+    "outcome": "KB HITL helper is self-contained. Mirrors graph_v13 pattern but is independent. Tested with 22 graph tests.",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]
