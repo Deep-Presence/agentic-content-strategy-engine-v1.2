@@ -903,3 +903,85 @@ async def run_content_v13_pipeline_task(
     finally:
         task_store.release_slug_lock(effective)
         task_store.remove_task_handle(task_id)
+
+
+# ── Knowledge Base pipeline runner ─────────────────────────────────
+
+
+async def run_kb_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+) -> None:
+    """Background task wrapper for Knowledge Base pipeline.
+
+    Acquires task_store semaphore, resolves scope, calls
+    run_knowledge_base_pipeline(), and handles completion/failure/cancellation.
+    """
+    from core.models.knowledge_base import KnowledgeBaseInput
+    from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            input_data = KnowledgeBaseInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.effective_slug,
+                company_id=getattr(request, "company_id", None),
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                seed_urls=getattr(request, "seed_urls", []),
+                internal_sources=getattr(request, "internal_sources", []),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+                refresh_docs=getattr(request, "refresh_docs", None),
+                staleness_threshold_days=getattr(request, "staleness_threshold_days", 30),
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+            )
+
+            output = await run_knowledge_base_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "synthesis_word_count": len(output.synthesis_md.split()) if output.synthesis_md else 0,
+                "agent_results": {
+                    k: {
+                        "word_count": v.word_count,
+                        "has_error": v.error is not None,
+                        "error": v.error,
+                    }
+                    for k, v in output.agent_results.items()
+                },
+                "company_profile_path": output.company_profile_path,
+                "produced_artifacts": [
+                    {"type": "knowledge_base", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("KB pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("KB pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)

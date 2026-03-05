@@ -1,24 +1,27 @@
 {
-  "sprint": "site-audit-p3-bugfixes",
-  "sprint_goal": "Fix 9 P3 bugs from combined manual + Codex review affecting site audit accuracy, AEO scoring, crawl deduplication, and API robustness",
-  "sprint_status": "COMPLETE — 9/9 fixes implemented. 82 new tests, 793 site audit tests passing. Codex-reviewed plan (14 findings, all incorporated). T-SA-25 dropped (already resolved).",
+  "sprint": "knowledge-base-v4",
+  "sprint_goal": "Implement 3-layer Knowledge Base architecture for company research — 5 specialist agents, versioned L2 docs, synthesis to L3 Company Profile",
+  "sprint_status": "Phase 3 COMPLETE — 58 new tests (151 total KB). Phase 4 (API router + schemas) deferred.",
   "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "LiteLLM wraps all LLM calls in content engine (workers, judges, agents)", "v1.0 pipeline preserved as-is — both pipelines coexist via separate API endpoints", "ContentBlueprint extends ContentBrief — transparent to all workers", "Workers modified in-place (not duplicated) — shared between v1.0 and v1.3", "_ensure_litellm_model() auto-prefixes model strings for backward compat", "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception", "Frontend renders its own charts from raw JSON (not iframes)", "No Supabase yet — filesystem artifacts are source of truth", "email-validator required for auth models (EmailStr)", "Double-underscore separator for effective slugs: {company}__{product}", "Default-deny middleware — all routes protected unless explicitly whitelisted", "core/ cannot import from api/ — shared code goes in core/shared_tools/", "DB layer is opt-in via DATABASE_URL — no engine creation at import time", "Repos flush only, DI session generator owns commit/rollback", "AuthServiceProtocol is the contract — all routers use get_auth_service dependency", "LangSmith is sole tracing backend — Langfuse fully removed", "Hub prompts opt-in via langsmith_use_hub=False — local Python prompts authoritative by default", "LangGraph span propagation via contextvars (not state injection — MemorySaver crashes)", "Section-level feedback is default loop — major direction change only from HITL-3 or semantic < 0.5"],
-  "active_branches": ["feat/front-back"],
+  "active_branches": ["research-agent-v1.2.0"],
   "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "trafilatura 1.6+ installed", "textstat 0.7+ installed", "LangGraph >=1.0 installed", "email-validator >=2.0 installed", "pdfplumber >=0.10 installed", "python-docx >=1.0 installed", "sqlalchemy[asyncio] >=2.0.30 installed", "asyncpg >=0.29 installed", "psycopg2-binary >=2.9 installed", "alembic >=1.13 installed", "pgvector >=0.3 installed", "litellm >=1.50", "langsmith >=0.2 (sole tracing backend — langfuse removed)", "python-dateutil >=2.9,<3 (robust date parsing in site audit)"],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/site_audit/pipeline.py (output_dir param, crawl-delay findings)",
-    "core/site_audit/config.py (__post_init__ validation, aeo_quick_answer fields)",
-    "core/site_audit/checks/eeat_signals.py (robust date parsing, page_type param)",
-    "core/site_audit/checks/extractability.py (Rule 3 wh-words, quick-answer rewrite)",
-    "core/site_audit/checks/schema_checks.py (Product + Speakable validators)",
-    "core/site_audit/steps/s1_discover.py (canonical_url, crawl-delay parsing)"
+    "core/models/knowledge_base.py (17 Pydantic models for KB architecture)",
+    "core/research/knowledge_base/storage.py (KBStorage — manifest, versioning, staleness, synthesis)",
+    "core/research/knowledge_base/graph.py (2 HITL sub-graphs + run_kb_hitl_checkpoint helper)",
+    "core/research/knowledge_base/pipeline.py (DAG orchestrator — 4 phases, 3 modes, 3 HITL checkpoints)",
+    "core/research/knowledge_base/agents.py (6 agent functions + revision_note support)",
+    "core/research/prompts/*.py (6 prompt files — Hub getters + user prompt builders + revision_note)",
+    "api/tasks/runner.py (run_kb_pipeline_task wrapper added)"
   ],
-  "last_completed": "Site Audit P3 Bug Fixes — 9 fixes: output_dir isolation, config validation, dateutil parsing, missing date (article), question-heading Rule 3, quick-answer 15-150, Product+Speakable schema, canonical_url dedup, crawl-delay parse+report. 82 new tests, 793 passing.",
+  "last_completed": "KB Phase 3 — Orchestrator: DAG execution (4 phases, 3 modes), 3 HITL checkpoints via pipeline-with-inline-HITL pattern, revision note injection, runner integration. 58 new tests, 151 total KB tests.",
+  "kb_phase3_plan_file": ".claude/plans/jazzy-wibbling-pelican.md",
+  "kb_phase1_2_plan_file": ".claude/plans/resilient-percolating-scroll.md",
   "deferred_issues_location": ".claude/sprints/pending/backlog.md",
   "deferred_feature2": ".claude/plans/cozy-twirling-mochi.md (Feature 2 — Content-Gap Integration)",
   "deferred_api_keys": "Phase 1D — API Key Configuration deferred to future sprint (RuntimeConfig passthrough + Fernet/KMS encryption)",
-  "test_count": 2317,
+  "test_count": 2429,
   "phases_completed": [
     "front-back Phase 1 — Foundation (auth, company model, registration)",
     "front-back Phase 2 — Gap Analysis Data Endpoints (6 endpoints, service layer, 61 tests)",
@@ -67,7 +70,13 @@
     "content-engine-v13 Phase D4 — DB persistence (persist_v13_planner_output + persist_v13_brief_approval, wired into pipeline_v13.py, 12 tests)",
     "content-engine-v13 Phase E2 — Integration testing (240+ new tests: context_router 25, llm_client 12, v13_models 10, strategic_planner 15, brief_builder 20, eeat_judge 10, tracing 8, evaluator 8, graph_v13 49, pipeline_v13 14, v13_persistence 12, api_content_v13 28, conftest fixtures)",
     "content-engine-v13 Pipeline Refactor Phases 1-10 — 25-gap closure: model fields (LinkedDraft, ContentBlueprint fields, voice_tone_description), prompt updates (planner rationale, brief builder 5 fields, outliner context, drafter link placeholders, fact checker verify-only), linker agent (NEW), dispatcher chain rewrite (outliner→drafter→linker→fact_checker), evaluator routing (3-tuple return, FeedbackRoute, no formatter/enricher cascade), HITL-3 feedback loops (edit→drafter max 2, reject→re-brief max 2, major_change→auto re-brief), docs (§7.2-7.6, §10). 5 new tests.",
-    "langsmith-migration — Langfuse eliminated. 5-phase migration: P0 backward-compat kwargs shim + contextvars, P1 16 import swaps, P2 graph_v13.py tracing + pipeline set_current_span, P3 prompt_registry.py + Hub getters in 11 prompt files, P4 langgraph.json, P5 cleanup. Codex-reviewed (6 critical corrections). 38 new tests."
+    "langsmith-migration — Langfuse eliminated. 5-phase migration: P0 backward-compat kwargs shim + contextvars, P1 16 import swaps, P2 graph_v13.py tracing + pipeline set_current_span, P3 prompt_registry.py + Hub getters in 11 prompt files, P4 langgraph.json, P5 cleanup. Codex-reviewed (6 critical corrections). 38 new tests.",
+    "knowledge-base Phase 1 — Foundation (17 models, KBStorage, shared tracing, 3 settings, 70 tests)",
+    "knowledge-base Phase 2 — Specialist Agents (6 prompts, 1 tool, 6 agents, 3 helpers, 54 tests, Codex-reviewed)",
+    "knowledge-base Phase 3 — Orchestrator (graph.py + pipeline.py, DAG execution, 3 HITL checkpoints, revision notes, runner, 58 tests)"
   ],
-  "phases_remaining": []
+  "phases_remaining": [
+    "knowledge-base Phase 4 — API Router + Schemas (POST /knowledge/{slug}/research/full, SSE, ~20-25 tests)",
+    "knowledge-base Phase 5 — Product Inheritance, Staleness Propagation, Delta Synthesis (~15-20 tests)"
+  ]
 }

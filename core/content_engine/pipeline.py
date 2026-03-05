@@ -173,7 +173,7 @@ async def _run_content_review_hitl(
     from core.content_engine.graph import build_content_review_graph
 
     # Import TaskStatus locally to avoid circular import
-    from api.tasks.models import TaskStatus
+    from core.shared_tools.task_status import TaskStatus
 
     brief_map = {b.brief_id: b for b in briefs}
     history_map = {h.brief_id: h for h in revision_histories}

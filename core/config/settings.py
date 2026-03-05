@@ -142,6 +142,13 @@ class Settings(BaseSettings):
     langsmith_use_hub: bool = False
     langsmith_hub_tag: str = "production"
 
+    # --- Research Knowledge Base ---
+    research_kb_project: str = "research-kb"
+    # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
+    research_kb_brand_perception_model: str = "claude-sonnet-4-5-20250929"
+    # Synthesis agent — init_chat_model(), needs provider:model format
+    research_kb_synthesis_model: str = "anthropic:claude-opus-4-6"
+
     # Legacy / optional
     tavily_api_key_company_context: str | None = None
 

@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from api.tasks.models import TaskStatus
+from core.shared_tools.task_status import TaskStatus
 from core.config.settings import settings
 from core.content_engine.brief_builder import build_briefs_parallel
 from core.content_engine.context_router import extract_scorecard, extract_worker_context

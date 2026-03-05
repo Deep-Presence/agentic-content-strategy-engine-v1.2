@@ -25,7 +25,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
-from api.tasks.models import TaskStatus
+from core.shared_tools.task_status import TaskStatus
 from core.content_engine.tracing_v13 import create_span, end_span, get_current_span
 
 logger = logging.getLogger(__name__)

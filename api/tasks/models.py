@@ -2,19 +2,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 
-class TaskStatus(str, Enum):
-    RUNNING = "running"
-    PENDING_APPROVAL = "pending_approval"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    FAILED_RESTART = "failed_restart"
+from core.shared_tools.task_status import TaskStatus  # noqa: F401  # re-export
 
 
 class ApprovalRecord(BaseModel):
@@ -33,7 +26,7 @@ class PipelineTask(BaseModel):
     """Represents a single pipeline run managed by the TaskStore."""
 
     task_id: str
-    pipeline: Literal["research", "gap_analysis", "content", "content_v13", "site_audit"]
+    pipeline: Literal["research", "gap_analysis", "content", "content_v13", "site_audit", "knowledge_base"]
     status: TaskStatus = TaskStatus.RUNNING
     company_slug: str = ""
     product_slug: Optional[str] = None
