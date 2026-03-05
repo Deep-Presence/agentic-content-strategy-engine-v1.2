@@ -43,6 +43,43 @@ L2_DOC_TYPES: tuple[KBDocType, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# DAG — upstream dependencies for each L2 document type.
+#
+# Used for: staleness propagation, topological sort for refresh ordering,
+# and populating KBDocEntry.dependencies in the manifest.
+#
+# NOTE: weakness_analysis and brand_perception run in parallel (Phase 3),
+# but brand_perception uses the *previous* version of weakness_analysis
+# from storage.  We list it as a data dependency for staleness purposes.
+# ---------------------------------------------------------------------------
+
+KB_DEPENDENCY_GRAPH: Dict[KBDocType, List[KBDocType]] = {
+    KBDocType.COMPANY_OVERVIEW: [],
+    KBDocType.CUSTOMER_REVIEWS: [],
+    KBDocType.COMPETITOR_REGISTRY: [KBDocType.COMPANY_OVERVIEW],
+    KBDocType.WEAKNESS_ANALYSIS: [
+        KBDocType.COMPANY_OVERVIEW,
+        KBDocType.COMPETITOR_REGISTRY,
+    ],
+    KBDocType.BRAND_PERCEPTION: [
+        KBDocType.COMPANY_OVERVIEW,
+        KBDocType.CUSTOMER_REVIEWS,
+        KBDocType.COMPETITOR_REGISTRY,
+    ],
+}
+
+
+# Per-doc-type default staleness thresholds (days).
+KB_DEFAULT_STALENESS_DAYS: Dict[KBDocType, int] = {
+    KBDocType.COMPANY_OVERVIEW: 90,
+    KBDocType.CUSTOMER_REVIEWS: 30,
+    KBDocType.COMPETITOR_REGISTRY: 90,
+    KBDocType.WEAKNESS_ANALYSIS: 60,
+    KBDocType.BRAND_PERCEPTION: 45,
+}
+
+
+# ---------------------------------------------------------------------------
 # Storage Models
 # ---------------------------------------------------------------------------
 
@@ -85,6 +122,38 @@ class KBManifest(BaseModel):
     documents: Dict[str, KBDocEntry] = Field(default_factory=dict)
     synthesis_version: int = 0
     synthesis_last_updated: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Health / Staleness Report Models
+# ---------------------------------------------------------------------------
+
+
+class KBDocHealth(BaseModel):
+    """Health status of a single KB document."""
+
+    doc_type: KBDocType = KBDocType.COMPANY_OVERVIEW
+    status: Literal["fresh", "stale", "missing"] = "missing"
+    current_version: int = 0
+    last_updated: Optional[datetime] = None
+    age_days: int = 0
+    staleness_threshold_days: int = 90
+    dependencies: List[KBDocType] = Field(default_factory=list)
+    stale_reason: Optional[str] = None  # "age_exceeded" | "upstream_changed"
+
+
+class KBHealthReport(BaseModel):
+    """Full KB health report for a company."""
+
+    slug: str = ""
+    overall_score: float = 0.0
+    doc_health: Dict[str, KBDocHealth] = Field(default_factory=dict)
+    synthesis_version: int = 0
+    synthesis_last_updated: Optional[datetime] = None
+    synthesis_needs_refresh: bool = False
+    stale_docs: List[str] = Field(default_factory=list)
+    missing_docs: List[str] = Field(default_factory=list)
+    last_full_refresh: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +205,7 @@ class KnowledgeBaseOutput(BaseModel):
     company_profile_path: str = ""
     knowledge_base_dir: str = ""
     total_execution_time_s: float = 0.0
+    changed_docs: List[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

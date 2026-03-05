@@ -483,7 +483,10 @@ class TestRunSynthesisAgent:
         mock_agent = MagicMock()
         mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
 
-        with patch("core.research.knowledge_base.agents.build_synthesis_agent", return_value=mock_agent):
+        with (
+            patch("core.research.knowledge_base.agents.create_react_agent", return_value=mock_agent),
+            patch("core.research.knowledge_base.agents._build_model", return_value=MagicMock()),
+        ):
             result = await run_synthesis_agent(
                 input_data=kb_input,
                 kb_base_dir=tmp_path,
@@ -511,7 +514,10 @@ class TestRunSynthesisAgent:
         mock_agent = MagicMock()
         mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
 
-        with patch("core.research.knowledge_base.agents.build_synthesis_agent", return_value=mock_agent):
+        with (
+            patch("core.research.knowledge_base.agents.create_react_agent", return_value=mock_agent),
+            patch("core.research.knowledge_base.agents._build_model", return_value=MagicMock()),
+        ):
             result = await run_synthesis_agent(
                 input_data=kb_input,
                 kb_base_dir=tmp_path,
@@ -532,8 +538,11 @@ class TestRunSynthesisAgent:
         mock_agent = MagicMock()
         mock_agent.ainvoke = AsyncMock(side_effect=asyncio.TimeoutError)
 
-        with patch("core.research.knowledge_base.agents.build_synthesis_agent", return_value=mock_agent):
-            with patch(f"{_TRACING_PATCH_BASE}.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+        with (
+            patch("core.research.knowledge_base.agents.create_react_agent", return_value=mock_agent),
+            patch("core.research.knowledge_base.agents._build_model", return_value=MagicMock()),
+            patch(f"{_TRACING_PATCH_BASE}.asyncio.wait_for", side_effect=asyncio.TimeoutError),
+        ):
                 result = await run_synthesis_agent(
                     input_data=kb_input,
                     kb_base_dir=tmp_path,
@@ -705,7 +714,10 @@ class TestSynthesisDocType:
         mock_agent = MagicMock()
         mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
 
-        with patch("core.research.knowledge_base.agents.build_synthesis_agent", return_value=mock_agent):
+        with (
+            patch("core.research.knowledge_base.agents.create_react_agent", return_value=mock_agent),
+            patch("core.research.knowledge_base.agents._build_model", return_value=MagicMock()),
+        ):
             result = await run_synthesis_agent(
                 input_data=kb_input,
                 kb_base_dir=tmp_path,
@@ -804,3 +816,158 @@ class TestPerplexityTimeoutForwarded:
 
         await run_company_overview_agent(kb_input, timeout_s=42.0)
         assert captured_kwargs.get("timeout_s") == 42.0
+
+
+# ---------------------------------------------------------------------------
+# Delta Synthesis Mode
+# ---------------------------------------------------------------------------
+
+_AGENTS_MOD = "core.research.knowledge_base.agents"
+
+
+def _mock_synthesis_agent() -> MagicMock:
+    """Build a mock agent whose ainvoke returns a valid synthesis response."""
+    mock_msg = MagicMock()
+    mock_msg.type = "ai"
+    mock_msg.content = "# Updated Profile"
+    mock_agent = MagicMock()
+    mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
+    return mock_agent
+
+
+class TestSynthesisAgentDeltaMode:
+    """Delta mode routing: delta_mode=True uses delta prompts, False uses full prompts."""
+
+    @pytest.mark.asyncio
+    async def test_delta_mode_uses_delta_prompt_builders(
+        self, kb_input: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        from core.research.knowledge_base.agents import run_synthesis_agent
+
+        with (
+            patch(f"{_AGENTS_MOD}.create_react_agent", return_value=_mock_synthesis_agent()),
+            patch(f"{_AGENTS_MOD}._build_model", return_value=MagicMock()),
+            patch(f"{_AGENTS_MOD}.get_delta_synthesis_system_prompt", return_value="delta sys") as mock_delta_sys,
+            patch(f"{_AGENTS_MOD}.build_delta_synthesis_user_prompt", return_value="delta user") as mock_delta_user,
+            patch(f"{_AGENTS_MOD}.get_synthesis_system_prompt", return_value="full sys") as mock_full_sys,
+            patch(f"{_AGENTS_MOD}.build_synthesis_user_prompt", return_value="full user") as mock_full_user,
+        ):
+            await run_synthesis_agent(
+                input_data=kb_input,
+                kb_base_dir=tmp_path,
+                available_docs={"company_overview": "p1", "customer_reviews": "p2", "competitor_registry": "p3"},
+                missing_docs=[],
+                timeout_s=10,
+                delta_mode=True,
+                changed_docs={"customer_reviews": "customer_reviews/v2.md"},
+                previous_synthesis_path="synthesis/v1.md",
+            )
+
+        mock_delta_sys.assert_called_once()
+        mock_delta_user.assert_called_once()
+        mock_full_sys.assert_not_called()
+        mock_full_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_full_mode_uses_full_prompt_builders(
+        self, kb_input: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        from core.research.knowledge_base.agents import run_synthesis_agent
+
+        with (
+            patch(f"{_AGENTS_MOD}.create_react_agent", return_value=_mock_synthesis_agent()),
+            patch(f"{_AGENTS_MOD}._build_model", return_value=MagicMock()),
+            patch(f"{_AGENTS_MOD}.get_delta_synthesis_system_prompt", return_value="delta sys") as mock_delta_sys,
+            patch(f"{_AGENTS_MOD}.build_delta_synthesis_user_prompt", return_value="delta user") as mock_delta_user,
+            patch(f"{_AGENTS_MOD}.get_synthesis_system_prompt", return_value="full sys") as mock_full_sys,
+            patch(f"{_AGENTS_MOD}.build_synthesis_user_prompt", return_value="full user") as mock_full_user,
+        ):
+            await run_synthesis_agent(
+                input_data=kb_input,
+                kb_base_dir=tmp_path,
+                available_docs={"company_overview": "p1", "customer_reviews": "p2", "competitor_registry": "p3"},
+                missing_docs=[],
+                timeout_s=10,
+                delta_mode=False,
+            )
+
+        mock_full_sys.assert_called_once()
+        mock_full_user.assert_called_once()
+        mock_delta_sys.assert_not_called()
+        mock_delta_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delta_mode_min_3_docs_still_required(
+        self, kb_input: KnowledgeBaseInput,
+    ) -> None:
+        from core.research.knowledge_base.agents import run_synthesis_agent
+
+        result = await run_synthesis_agent(
+            input_data=kb_input,
+            kb_base_dir=Path("/tmp/test"),
+            available_docs={"company_overview": "p1"},
+            missing_docs=["a", "b", "c", "d"],
+            delta_mode=True,
+            changed_docs={"company_overview": "p1"},
+            previous_synthesis_path="synthesis/v1.md",
+        )
+        assert result.error is not None
+        assert "minimum 3/5" in result.error
+
+    @pytest.mark.asyncio
+    async def test_delta_mode_missing_previous_path_errors(
+        self, kb_input: KnowledgeBaseInput,
+    ) -> None:
+        from core.research.knowledge_base.agents import run_synthesis_agent
+
+        result = await run_synthesis_agent(
+            input_data=kb_input,
+            kb_base_dir=Path("/tmp/test"),
+            available_docs={"company_overview": "p1", "customer_reviews": "p2", "competitor_registry": "p3"},
+            missing_docs=[],
+            delta_mode=True,
+            changed_docs={"customer_reviews": "p2"},
+            previous_synthesis_path=None,
+        )
+        assert result.error is not None
+        assert "previous_synthesis_path" in result.error
+
+    @pytest.mark.asyncio
+    async def test_delta_mode_passes_changed_and_unchanged(
+        self, kb_input: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        from core.research.knowledge_base.agents import run_synthesis_agent
+
+        captured_kwargs: Dict[str, Any] = {}
+
+        def _capture_delta_prompt(*args: Any, **kw: Any) -> str:
+            captured_kwargs.update(kw)
+            return "delta user prompt"
+
+        with (
+            patch(f"{_AGENTS_MOD}.create_react_agent", return_value=_mock_synthesis_agent()),
+            patch(f"{_AGENTS_MOD}._build_model", return_value=MagicMock()),
+            patch(f"{_AGENTS_MOD}.get_delta_synthesis_system_prompt", return_value="sys"),
+            patch(f"{_AGENTS_MOD}.build_delta_synthesis_user_prompt", side_effect=_capture_delta_prompt),
+        ):
+            await run_synthesis_agent(
+                input_data=kb_input,
+                kb_base_dir=tmp_path,
+                available_docs={
+                    "company_overview": "company_overview/v1.md",
+                    "customer_reviews": "customer_reviews/v2.md",
+                    "competitor_registry": "competitor_registry/v1.md",
+                },
+                missing_docs=["weakness_analysis"],
+                timeout_s=10,
+                delta_mode=True,
+                changed_docs={"customer_reviews": "customer_reviews/v2.md"},
+                previous_synthesis_path="synthesis/v1.md",
+            )
+
+        assert captured_kwargs["previous_synthesis_path"] == "synthesis/v1.md"
+        assert "customer_reviews" in captured_kwargs["changed_docs"]
+        # unchanged = available minus changed
+        assert "company_overview" in captured_kwargs["unchanged_docs"]
+        assert "competitor_registry" in captured_kwargs["unchanged_docs"]
+        assert "customer_reviews" not in captured_kwargs["unchanged_docs"]

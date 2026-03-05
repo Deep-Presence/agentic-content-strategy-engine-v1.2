@@ -22,6 +22,7 @@ import logging
 import re
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -239,6 +240,7 @@ async def run_knowledge_base_pipeline(
     storage = KBStorage(root, slug)
     mode, target_docs = _resolve_mode(input_data, storage)
     results: Dict[KBDocType, KBAgentResult] = {}
+    changed_doc_types: List[KBDocType] = []
 
     # Tracing
     trace_session = create_session(slug)
@@ -267,6 +269,7 @@ async def run_knowledge_base_pipeline(
 
             if not result.error:
                 storage.write_version(dt, result.content_md, result.content_json)
+                changed_doc_types.append(dt)
 
             _emit(event_bus, task_id, "kb_agent_complete", {
                 "agent": dt.value,
@@ -281,6 +284,7 @@ async def run_knowledge_base_pipeline(
                 agent_results={dt.value: result},
                 knowledge_base_dir=str(storage.base_dir),
                 total_execution_time_s=time.time() - start_time,
+                changed_docs=[d.value for d in changed_doc_types],
             )
             _emit(event_bus, task_id, "completed", {"pipeline": "knowledge_base"})
             end_span(trace_span, output={"mode": "single"})
@@ -314,6 +318,7 @@ async def run_knowledge_base_pipeline(
                 results[dt] = res
                 if not res.error:
                     storage.write_version(dt, res.content_md, res.content_json)
+                    changed_doc_types.append(dt)
                 _emit(event_bus, task_id, "kb_agent_complete", {
                     "agent": dt.value, "word_count": res.word_count,
                     "has_error": res.error is not None,
@@ -337,6 +342,7 @@ async def run_knowledge_base_pipeline(
                 storage.write_version(
                     KBDocType.COMPETITOR_REGISTRY, cs_result.content_md, cs_result.content_json,
                 )
+                changed_doc_types.append(KBDocType.COMPETITOR_REGISTRY)
             _emit(event_bus, task_id, "kb_agent_complete", {
                 "agent": "competitor_registry", "word_count": cs_result.word_count,
                 "has_error": cs_result.error is not None,
@@ -344,11 +350,13 @@ async def run_knowledge_base_pipeline(
             _emit(event_bus, task_id, "kb_phase_complete", {"phase": 2})
 
         # ── HITL-1: review Phase 1+2 docs ──
+        # Build graph once — reused for both HITL-1 and HITL-2
+        doc_review_graph = build_kb_doc_review_graph()
+
         cp1_docs = [KBDocType.COMPANY_OVERVIEW, KBDocType.CUSTOMER_REVIEWS, KBDocType.COMPETITOR_REGISTRY]
         cp1_doc_types = [dt for dt in cp1_docs if dt in results]
 
         if cp1_doc_types:
-            doc_review_graph = build_kb_doc_review_graph()
 
             hitl1_state = {
                 "doc_summaries": _build_doc_summaries(results, cp1_doc_types),
@@ -395,6 +403,8 @@ async def run_knowledge_base_pipeline(
                     results[dt] = revised
                     if not revised.error:
                         storage.write_version(dt, revised.content_md, revised.content_json)
+                        if dt not in changed_doc_types:
+                            changed_doc_types.append(dt)
 
         # Phase 3: weakness_analyst + brand_perception (parallel)
         phase3_agents = [
@@ -434,6 +444,7 @@ async def run_knowledge_base_pipeline(
                 results[dt] = res
                 if not res.error:
                     storage.write_version(dt, res.content_md, res.content_json)
+                    changed_doc_types.append(dt)
                 _emit(event_bus, task_id, "kb_agent_complete", {
                     "agent": dt.value, "word_count": res.word_count,
                     "has_error": res.error is not None,
@@ -488,30 +499,50 @@ async def run_knowledge_base_pipeline(
                     results[dt] = revised
                     if not revised.error:
                         storage.write_version(dt, revised.content_md, revised.content_json)
+                        if dt not in changed_doc_types:
+                            changed_doc_types.append(dt)
+
+        # Propagate staleness before synthesis
+        if changed_doc_types:
+            storage.propagate_staleness(changed_doc_types)
 
         # Phase 4: Synthesis
         _emit(event_bus, task_id, "kb_phase_start", {"phase": 4, "agents": ["synthesis"]})
         _update_task(task_store, task_id, current_step="phase_4_synthesis")
 
         available_docs, missing_docs = _collect_synthesis_inputs(storage)
+
+        # Delta synthesis: refresh mode + existing synthesis → incremental update
+        use_delta = False
+        previous_synthesis_path: Optional[str] = None
+        changed_docs_for_synth: Optional[Dict[str, str]] = None
+
+        if mode == "refresh" and storage.read_synthesis() is not None:
+            manifest = storage.read_manifest()
+            previous_synthesis_path = f"synthesis/v{manifest.synthesis_version}.md"
+            changed_docs_for_synth = {
+                dt.value: available_docs[dt.value]
+                for dt in changed_doc_types
+                if dt.value in available_docs
+            }
+            use_delta = True
+
         synthesis_result = await run_synthesis_agent(
             input_data,
             kb_base_dir=storage.base_dir,
             available_docs=available_docs,
             missing_docs=missing_docs,
             parent_span=trace_span,
+            delta_mode=use_delta,
+            changed_docs=changed_docs_for_synth,
+            previous_synthesis_path=previous_synthesis_path,
         )
 
         synthesis_md = ""
         if not synthesis_result.error:
             synthesis_md = synthesis_result.content_md
+            # Write synthesis version to KB storage (versioned draft)
             storage.write_synthesis(synthesis_md)
-
-            # Write L3 company_context artifact
-            profile_dir = root / "company_context"
-            profile_dir.mkdir(parents=True, exist_ok=True)
-            profile_path = profile_dir / f"{slug}.md"
-            profile_path.write_text(synthesis_md, encoding="utf-8")
 
         _emit(event_bus, task_id, "kb_agent_complete", {
             "agent": "synthesis", "word_count": synthesis_result.word_count,
@@ -544,6 +575,7 @@ async def run_knowledge_base_pipeline(
                     agent_results={dt.value: r for dt, r in results.items()},
                     knowledge_base_dir=str(storage.base_dir),
                     total_execution_time_s=time.time() - start_time,
+                    changed_docs=[d.value for d in changed_doc_types],
                 )
                 _emit(event_bus, task_id, "completed", {"pipeline": "knowledge_base"})
                 end_span(trace_span, output={"decision": "rejected_cp3"})
@@ -559,12 +591,26 @@ async def run_knowledge_base_pipeline(
                     missing_docs=missing_docs,
                     parent_span=trace_span,
                     revision_note=revision_note,
+                    delta_mode=use_delta,
+                    changed_docs=changed_docs_for_synth,
+                    previous_synthesis_path=previous_synthesis_path,
                 )
                 if not synthesis_result.error:
                     synthesis_md = synthesis_result.content_md
                     storage.write_synthesis(synthesis_md)
-                    profile_path = root / "company_context" / f"{slug}.md"
-                    profile_path.write_text(synthesis_md, encoding="utf-8")
+
+            # Promote approved synthesis to company_context
+            if synthesis_md:
+                profile_dir = root / "company_context"
+                profile_dir.mkdir(parents=True, exist_ok=True)
+                profile_path = profile_dir / f"{slug}.md"
+                profile_path.write_text(synthesis_md, encoding="utf-8")
+
+                # Update last_full_refresh for full mode
+                if mode == "full":
+                    manifest = storage.read_manifest()
+                    manifest.last_full_refresh = datetime.now(timezone.utc)
+                    storage.write_manifest(manifest)
 
         # Build output
         output = KnowledgeBaseOutput(
@@ -576,6 +622,7 @@ async def run_knowledge_base_pipeline(
             company_profile_path=str(root / "company_context" / f"{slug}.md"),
             knowledge_base_dir=str(storage.base_dir),
             total_execution_time_s=time.time() - start_time,
+            changed_docs=[d.value for d in changed_doc_types],
         )
 
         _emit(event_bus, task_id, "completed", {"pipeline": "knowledge_base"})

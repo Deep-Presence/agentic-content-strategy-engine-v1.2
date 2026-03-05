@@ -236,6 +236,8 @@ _PROMPT_MODULES = [
     "core.research.prompts.synthesis",
 ]
 
+_ALL_HUB_MODULES = _PROMPT_MODULES  # includes delta hub name via synthesis module
+
 
 class TestHubNames:
     """Each prompt file has a _HUB_NAME following the naming convention."""
@@ -260,3 +262,82 @@ class TestHubNames:
             assert hasattr(mod, "_HUB_NAME"), f"{mod_path} missing _HUB_NAME"
             assert isinstance(mod._HUB_NAME, str)
             assert len(mod._HUB_NAME) > 0
+
+
+# ---------------------------------------------------------------------------
+# Delta Synthesis Prompt
+# ---------------------------------------------------------------------------
+
+
+class TestDeltaSynthesisPrompt:
+    """Tests for the incremental/delta synthesis prompt builder."""
+
+    def test_delta_system_prompt_returns_string(self) -> None:
+        from core.research.prompts.synthesis import get_delta_synthesis_system_prompt
+
+        prompt = get_delta_synthesis_system_prompt()
+        assert isinstance(prompt, str)
+        assert len(prompt) > 50
+        assert "UPDATING" in prompt
+
+    def test_delta_user_prompt_includes_previous_path(
+        self, kb_input: KnowledgeBaseInput
+    ) -> None:
+        from core.research.prompts.synthesis import build_delta_synthesis_user_prompt
+
+        prompt = build_delta_synthesis_user_prompt(
+            kb_input,
+            previous_synthesis_path="synthesis/v2.md",
+            changed_docs={"customer_reviews": "customer_reviews/v3.md"},
+            unchanged_docs={"company_overview": "company_overview/v1.md"},
+            missing_docs=[],
+        )
+        assert "synthesis/v2.md" in prompt
+
+    def test_delta_user_prompt_includes_changed_and_unchanged(
+        self, kb_input: KnowledgeBaseInput
+    ) -> None:
+        from core.research.prompts.synthesis import build_delta_synthesis_user_prompt
+
+        prompt = build_delta_synthesis_user_prompt(
+            kb_input,
+            previous_synthesis_path="synthesis/v1.md",
+            changed_docs={
+                "customer_reviews": "customer_reviews/v3.md",
+                "brand_perception": "brand_perception/v2.md",
+            },
+            unchanged_docs={"company_overview": "company_overview/v1.md"},
+            missing_docs=["weakness_analysis"],
+        )
+        assert "Changed Documents" in prompt
+        assert "customer_reviews/v3.md" in prompt
+        assert "brand_perception/v2.md" in prompt
+        assert "Unchanged Documents" in prompt
+        assert "company_overview/v1.md" in prompt
+        assert "Weakness Analysis" in prompt
+
+    def test_delta_user_prompt_with_revision_note(
+        self, kb_input: KnowledgeBaseInput
+    ) -> None:
+        from core.research.prompts.synthesis import build_delta_synthesis_user_prompt
+
+        prompt = build_delta_synthesis_user_prompt(
+            kb_input,
+            previous_synthesis_path="synthesis/v1.md",
+            changed_docs={"customer_reviews": "customer_reviews/v2.md"},
+            unchanged_docs={},
+            missing_docs=[],
+            revision_note="Expand the competitive analysis section",
+        )
+        assert "## Reviewer Feedback" in prompt
+        assert "Expand the competitive analysis section" in prompt
+
+    def test_delta_hub_name_unique(self) -> None:
+        """Delta hub name must not collide with any other prompt hub name."""
+        from core.research.prompts.synthesis import _DELTA_HUB_NAME
+
+        all_names = []
+        for mod_path in _ALL_HUB_MODULES:
+            mod = importlib.import_module(mod_path)
+            all_names.append(mod._HUB_NAME)
+        assert _DELTA_HUB_NAME not in all_names

@@ -1,7 +1,7 @@
 {
-  "sprint": "knowledge-base-v4",
-  "sprint_goal": "Implement 3-layer Knowledge Base architecture for company research — 5 specialist agents, versioned L2 docs, synthesis to L3 Company Profile",
-  "sprint_status": "Phase 3 COMPLETE — 58 new tests (151 total KB). Phase 4 (API router + schemas) deferred.",
+  "sprint": "knowledge-base-v5",
+  "sprint_goal": "Phase 5 — Synthesis & Living Document: delta synthesis mode, DAG-aware staleness tracking with propagation, health/refresh-stale endpoints, write-before-approve fix",
+  "sprint_status": "Phase 5 COMPLETE — 7 tasks, 50 new tests, 260 KB tests total (214 core + 46 API). All Codex findings addressed.",
   "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "LiteLLM wraps all LLM calls in content engine (workers, judges, agents)", "v1.0 pipeline preserved as-is — both pipelines coexist via separate API endpoints", "ContentBlueprint extends ContentBrief — transparent to all workers", "Workers modified in-place (not duplicated) — shared between v1.0 and v1.3", "_ensure_litellm_model() auto-prefixes model strings for backward compat", "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception", "Frontend renders its own charts from raw JSON (not iframes)", "No Supabase yet — filesystem artifacts are source of truth", "email-validator required for auth models (EmailStr)", "Double-underscore separator for effective slugs: {company}__{product}", "Default-deny middleware — all routes protected unless explicitly whitelisted", "core/ cannot import from api/ — shared code goes in core/shared_tools/", "DB layer is opt-in via DATABASE_URL — no engine creation at import time", "Repos flush only, DI session generator owns commit/rollback", "AuthServiceProtocol is the contract — all routers use get_auth_service dependency", "LangSmith is sole tracing backend — Langfuse fully removed", "Hub prompts opt-in via langsmith_use_hub=False — local Python prompts authoritative by default", "LangGraph span propagation via contextvars (not state injection — MemorySaver crashes)", "Section-level feedback is default loop — major direction change only from HITL-3 or semantic < 0.5"],
   "active_branches": ["research-agent-v1.2.0"],
   "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "trafilatura 1.6+ installed", "textstat 0.7+ installed", "LangGraph >=1.0 installed", "email-validator >=2.0 installed", "pdfplumber >=0.10 installed", "python-docx >=1.0 installed", "sqlalchemy[asyncio] >=2.0.30 installed", "asyncpg >=0.29 installed", "psycopg2-binary >=2.9 installed", "alembic >=1.13 installed", "pgvector >=0.3 installed", "litellm >=1.50", "langsmith >=0.2 (sole tracing backend — langfuse removed)", "python-dateutil >=2.9,<3 (robust date parsing in site audit)"],
@@ -15,13 +15,14 @@
     "core/research/prompts/*.py (6 prompt files — Hub getters + user prompt builders + revision_note)",
     "api/tasks/runner.py (run_kb_pipeline_task wrapper added)"
   ],
-  "last_completed": "KB Phase 3 — Orchestrator: DAG execution (4 phases, 3 modes), 3 HITL checkpoints via pipeline-with-inline-HITL pattern, revision note injection, runner integration. 58 new tests, 151 total KB tests.",
+  "last_completed": "KB Phase 5 — Synthesis & Living Document: 7 tasks (DAG constants, staleness tracking, delta synthesis, health/refresh endpoints, write-before-approve fix). 50 new tests, 260 KB tests passing.",
+  "kb_phase5_plan_file": ".claude/plans/breezy-growing-flamingo.md",
   "kb_phase3_plan_file": ".claude/plans/jazzy-wibbling-pelican.md",
   "kb_phase1_2_plan_file": ".claude/plans/resilient-percolating-scroll.md",
   "deferred_issues_location": ".claude/sprints/pending/backlog.md",
   "deferred_feature2": ".claude/plans/cozy-twirling-mochi.md (Feature 2 — Content-Gap Integration)",
   "deferred_api_keys": "Phase 1D — API Key Configuration deferred to future sprint (RuntimeConfig passthrough + Fernet/KMS encryption)",
-  "test_count": 2429,
+  "test_count": 2479,
   "phases_completed": [
     "front-back Phase 1 — Foundation (auth, company model, registration)",
     "front-back Phase 2 — Gap Analysis Data Endpoints (6 endpoints, service layer, 61 tests)",
@@ -73,10 +74,11 @@
     "langsmith-migration — Langfuse eliminated. 5-phase migration: P0 backward-compat kwargs shim + contextvars, P1 16 import swaps, P2 graph_v13.py tracing + pipeline set_current_span, P3 prompt_registry.py + Hub getters in 11 prompt files, P4 langgraph.json, P5 cleanup. Codex-reviewed (6 critical corrections). 38 new tests.",
     "knowledge-base Phase 1 — Foundation (17 models, KBStorage, shared tracing, 3 settings, 70 tests)",
     "knowledge-base Phase 2 — Specialist Agents (6 prompts, 1 tool, 6 agents, 3 helpers, 54 tests, Codex-reviewed)",
-    "knowledge-base Phase 3 — Orchestrator (graph.py + pipeline.py, DAG execution, 3 HITL checkpoints, revision notes, runner, 58 tests)"
+    "knowledge-base Phase 3 — Orchestrator (graph.py + pipeline.py, DAG execution, 3 HITL checkpoints, revision notes, runner, 58 tests)",
+    "knowledge-base Phase 4 — API Router + Schemas + Review Fixes (3 endpoints, KnowledgeBaseStartRequest, nonce handling, 35 tests)",
+    "knowledge-base Phase 5 — Synthesis & Living Document (DAG constants, staleness tracking, delta synthesis, health/refresh endpoints, write-before-approve fix, 50 tests)"
   ],
   "phases_remaining": [
-    "knowledge-base Phase 4 — API Router + Schemas (POST /knowledge/{slug}/research/full, SSE, ~20-25 tests)",
-    "knowledge-base Phase 5 — Product Inheritance, Staleness Propagation, Delta Synthesis (~15-20 tests)"
+    "knowledge-base Phase 6 — Integration (wire to gap analysis, Daily Tracker, frontend)"
   ]
 }

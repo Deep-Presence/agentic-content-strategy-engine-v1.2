@@ -24,15 +24,21 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from core.models.knowledge_base import (
+    KB_DEFAULT_STALENESS_DAYS,
+    KB_DEPENDENCY_GRAPH,
     L2_DOC_TYPES,
     KBDocEntry,
+    KBDocHealth,
     KBDocType,
     KBDocVersion,
+    KBHealthReport,
     KBManifest,
 )
 
@@ -79,13 +85,23 @@ class KBStorage:
             return KBManifest(slug=self._slug)
 
     def write_manifest(self, manifest: KBManifest) -> None:
-        """Persist the manifest to disk."""
+        """Persist the manifest to disk (atomic via temp-file + os.replace)."""
         self._root.mkdir(parents=True, exist_ok=True)
         path = self._manifest_path()
-        path.write_text(
-            manifest.model_dump_json(indent=2),
-            encoding="utf-8",
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(self._root), suffix=".tmp", prefix="_manifest_",
         )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(manifest.model_dump_json(indent=2))
+            os.replace(tmp_path, str(path))
+        except BaseException:
+            # Clean up on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     # ------------------------------------------------------------------
     # Doc-type directory helpers
@@ -142,13 +158,14 @@ class KBStorage:
         word_count = len(content_md.split())
         now = datetime.now(timezone.utc)
 
-        # Update manifest entry
+        # Update manifest entry — dependencies always sourced from DAG constant
         manifest.documents[entry_key] = KBDocEntry(
             doc_type=doc_type,
             current_version=next_version,
             last_updated=now,
+            staleness_days=KB_DEFAULT_STALENESS_DAYS.get(doc_type, 90),
             status="fresh",
-            dependencies=entry.dependencies if entry else [],
+            dependencies=KB_DEPENDENCY_GRAPH.get(doc_type, []),
         )
         manifest.slug = manifest.slug or self._slug
 
@@ -297,3 +314,195 @@ class KBStorage:
             word_count=len(content_md.split()),
             sha256=hashlib.sha256(content_md.encode("utf-8")).hexdigest(),
         )
+
+    # ------------------------------------------------------------------
+    # Staleness Report & Propagation
+    # ------------------------------------------------------------------
+
+    def get_staleness_report(
+        self,
+        threshold_override: Optional[int] = None,
+    ) -> KBHealthReport:
+        """Generate a full health report for all KB documents.
+
+        Uses per-doc-type thresholds from KB_DEFAULT_STALENESS_DAYS,
+        or *threshold_override* if provided (applies globally).
+        """
+        manifest = self.read_manifest()
+        now = datetime.now(timezone.utc)
+
+        doc_health: Dict[str, KBDocHealth] = {}
+        stale_docs: List[str] = []
+        missing_docs: List[str] = []
+        fresh_count = 0
+
+        for dt in L2_DOC_TYPES:
+            entry = manifest.documents.get(dt.value)
+            threshold = (
+                threshold_override
+                if threshold_override is not None
+                else KB_DEFAULT_STALENESS_DAYS.get(dt, 90)
+            )
+
+            if not entry or entry.current_version == 0:
+                doc_health[dt.value] = KBDocHealth(
+                    doc_type=dt,
+                    status="missing",
+                    staleness_threshold_days=threshold,
+                    dependencies=KB_DEPENDENCY_GRAPH.get(dt, []),
+                )
+                missing_docs.append(dt.value)
+                continue
+
+            age_days = (
+                (now - entry.last_updated).days
+                if entry.last_updated
+                else 999
+            )
+
+            # Check upstream-changed staleness
+            stale_reason: Optional[str] = None
+            status: str = "fresh"
+
+            if entry.last_updated is None or age_days > threshold:
+                status = "stale"
+                stale_reason = "age_exceeded"
+            else:
+                # Check if any upstream dependency was updated after this doc
+                for dep in KB_DEPENDENCY_GRAPH.get(dt, []):
+                    dep_entry = manifest.documents.get(dep.value)
+                    if (
+                        dep_entry
+                        and dep_entry.last_updated
+                        and entry.last_updated
+                        and dep_entry.last_updated > entry.last_updated
+                    ):
+                        status = "stale"
+                        stale_reason = "upstream_changed"
+                        break
+
+            if status == "fresh":
+                fresh_count += 1
+            else:
+                stale_docs.append(dt.value)
+
+            doc_health[dt.value] = KBDocHealth(
+                doc_type=dt,
+                status=status,
+                current_version=entry.current_version,
+                last_updated=entry.last_updated,
+                age_days=age_days,
+                staleness_threshold_days=threshold,
+                dependencies=KB_DEPENDENCY_GRAPH.get(dt, []),
+                stale_reason=stale_reason,
+            )
+
+        # Synthesis freshness
+        synthesis_needs_refresh = False
+        if manifest.synthesis_version > 0 and manifest.synthesis_last_updated:
+            for dt in L2_DOC_TYPES:
+                entry = manifest.documents.get(dt.value)
+                if (
+                    entry
+                    and entry.last_updated
+                    and entry.last_updated > manifest.synthesis_last_updated
+                ):
+                    synthesis_needs_refresh = True
+                    break
+        elif manifest.synthesis_version == 0:
+            # Never synthesized — needs synthesis if any docs exist
+            synthesis_needs_refresh = any(
+                manifest.documents.get(dt.value)
+                and manifest.documents[dt.value].current_version > 0
+                for dt in L2_DOC_TYPES
+            )
+
+        # Score: (fresh / 5) * 100, penalized if synthesis stale
+        base_score = (fresh_count / len(L2_DOC_TYPES)) * 100
+        if synthesis_needs_refresh and base_score > 0:
+            base_score = max(base_score - 10, 0)
+
+        return KBHealthReport(
+            slug=self._slug,
+            overall_score=round(base_score, 1),
+            doc_health=doc_health,
+            synthesis_version=manifest.synthesis_version,
+            synthesis_last_updated=manifest.synthesis_last_updated,
+            synthesis_needs_refresh=synthesis_needs_refresh,
+            stale_docs=stale_docs,
+            missing_docs=missing_docs,
+            last_full_refresh=manifest.last_full_refresh,
+        )
+
+    def propagate_staleness(
+        self,
+        refreshed_doc_types: List[KBDocType],
+    ) -> List[KBDocType]:
+        """Mark downstream docs as stale when upstream docs were refreshed.
+
+        Returns the list of doc types that were marked stale.
+        """
+        if not refreshed_doc_types:
+            return []
+
+        manifest = self.read_manifest()
+        marked_stale: List[KBDocType] = []
+        refreshed_set = set(refreshed_doc_types)
+
+        # Build reverse DAG: for each doc type, find which doc types depend on it
+        reverse_dag: Dict[KBDocType, List[KBDocType]] = {dt: [] for dt in L2_DOC_TYPES}
+        for dt, deps in KB_DEPENDENCY_GRAPH.items():
+            for dep in deps:
+                reverse_dag[dep].append(dt)
+
+        # BFS from refreshed docs to find all downstream docs
+        queue = list(refreshed_set)
+        visited: set[KBDocType] = set(refreshed_set)
+
+        while queue:
+            current = queue.pop(0)
+            for downstream in reverse_dag.get(current, []):
+                if downstream in visited:
+                    continue
+                visited.add(downstream)
+
+                entry = manifest.documents.get(downstream.value)
+                if entry and entry.current_version > 0 and entry.status != "missing":
+                    entry.status = "stale"
+                    marked_stale.append(downstream)
+
+                queue.append(downstream)
+
+        if marked_stale:
+            self.write_manifest(manifest)
+            logger.info(
+                "KB/%s: propagated staleness from %s → marked stale: %s",
+                self._slug,
+                [dt.value for dt in refreshed_doc_types],
+                [dt.value for dt in marked_stale],
+            )
+
+        return marked_stale
+
+    def get_changed_since_synthesis(self) -> List[KBDocType]:
+        """Return L2 doc types updated after the last synthesis."""
+        manifest = self.read_manifest()
+        if manifest.synthesis_version == 0:
+            # Never synthesized — return all existing docs
+            return [
+                dt
+                for dt in L2_DOC_TYPES
+                if manifest.documents.get(dt.value)
+                and manifest.documents[dt.value].current_version > 0
+            ]
+
+        syn_time = manifest.synthesis_last_updated
+        if syn_time is None:
+            return list(L2_DOC_TYPES)
+
+        changed: List[KBDocType] = []
+        for dt in L2_DOC_TYPES:
+            entry = manifest.documents.get(dt.value)
+            if entry and entry.last_updated and entry.last_updated > syn_time:
+                changed.append(dt)
+        return changed

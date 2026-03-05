@@ -768,13 +768,25 @@ artifacts/knowledge_base/ramp__ramp-corporate-card/     # Product-level
 - **Plan file**: `.claude/plans/jazzy-wibbling-pelican.md`
 - **Decisions**: D-KB-P3-1 (pipeline-with-inline-HITL), D-KB-P3-2 (revision injection), D-KB-P3-3 (self-contained HITL helper)
 
-### Phase 4 — Synthesis & Living Document (Week 5-6)
+### Phase 4 — API Router + Schemas + Review Fixes ✅ COMPLETE
+- [x] `api/routers/knowledge_base.py` — 3 endpoints (POST /start, GET /status, POST /approve) with tenant isolation, pipeline guard, CX-3 revision note translation
+- [x] `api/schemas/common.py` — `KnowledgeBaseStartRequest` (mode, refresh_docs, single_doc, auto_approve_checkpoints, staleness_threshold_days)
+- [x] 28 tests: start (11), guard (4), status (3), approve (7), auth (3)
+- [x] **Review Fixes (KB-H1, KB-H2, KB-M1, KB-M3, CL-L1)**:
+  - KB-H1: Strengthened `_normalize_refresh_docs` validator — `mode=single` without `single_doc` → 422, `mode=refresh` without `refresh_docs` → 422, `mode=full` clears both fields
+  - KB-H2: Approval nonce handling — extract `checkpoint_nonce` from `approval_payload`, pass `expected_nonce` to `submit_approval()`, catch `ApprovalWindowError` → 409
+  - KB-M1: `auto_approve_checkpoints` field validator — rejects values not in `{1, 2, 3}`
+  - KB-M3: 7 new negative tests (3 mode validation, 3 auto_approve validation, 1 duplicate approval 409)
+  - CL-L1: Removed unused `MagicMock` import
+- [x] 35 total KB API tests passing (28 original + 7 review fixes)
+
+### Phase 5 — Synthesis & Living Document
 - [ ] Synthesis Agent (all L2 docs → Company Profile)
 - [ ] Delta synthesis mode
 - [ ] Staleness tracking + propagation
 - [ ] "Refresh Stale" endpoint and scheduled refresh
 
-### Phase 5 — Integration (Week 6-7)
+### Phase 6 — Integration
 - [ ] Wire synthesized Company Profile to existing gap analysis pipeline
 - [ ] Wire competitor registry to Daily Tracker
 - [ ] Frontend: Knowledge Base section in Brand Brain

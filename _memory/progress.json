@@ -1,6 +1,6 @@
 {
-  "current_sprint": "knowledge-base-v4",
-  "last_updated": "2026-03-05",
+  "current_sprint": "knowledge-base-v5",
+  "last_updated": "2026-03-06",
   "completed": [
     {
       "id": "T-kb-phase3-orchestrator",
@@ -506,6 +506,7 @@
     }
   ],
   "in_progress": [],
+  "_session_note_2026_03_05_kb_phase4_review_fixes": "KB Phase 4 Review Fixes: 3 HIGH + 2 MEDIUM issues from code review. KB-H1 schema validation (mode/single_doc/refresh_docs), KB-H2 approval nonce handling (ApprovalWindowError → 409), KB-M1 auto_approve_checkpoints validator, KB-M3 7 new negative tests, CL-L1 unused import. 35 KB API tests passing.",
   "_session_note_2026_03_05_kb_phase3": "Sprint v4: KB Phase 3 orchestrator complete. 2 new source files (graph.py, pipeline.py), 2 new test files (test_graph_kb.py, test_pipeline_kb.py), 10 modified files. 58 new tests, 151 KB tests total. Zero regressions. Plan: .claude/plans/jazzy-wibbling-pelican.md",
   "_session_note_2026_03_04_site_audit_p3": "Sprint v3: 9 P3 bug fixes for site audit pipeline. T-SA-32 output_dir, T-SA-31 config validation, T-SA-23 dateutil parsing, T-SA-24 missing date (article), T-SA-29 question-heading Rule 3, T-SA-30 quick-answer expansion, T-SA-26 Product+Speakable schema, T-SA-27 canonical_url, T-SA-28 crawl-delay. 82 new tests, 793 site audit tests passing. Codex-reviewed (14 findings all incorporated).",
   "_session_note_2026_03_02_codex_fixes": "Completed M1+M2+H8+H9 TDD fixes. M1: response=None sentinel in eeat_judge.py (+4 tests). M2: truncate_to_token_limit in linker+fact_enricher, max_length in schemas (+8 tests). H8: brief_decision_log in HITL-2 loop, all blueprints to persist (+8 tests). H9: evaluated 4-tuple threading at 4 locations (+4 tests). Total: 379 tests. review.md updated.",
@@ -1359,6 +1360,32 @@
       "tests_added": 55,
       "codex_review": "Codex gpt-5.3-codex + self-review. 2 CRITICAL fixed (C-1 pause_turn unbounded loop → _MAX_PAUSE_TURNS=5, C-2 missing api_key → settings.anthropic_api_key). 7 deferred (prompt injection, max_tokens stop_reason, thread leak, manifest race, deprecated import, test warnings, unused content_json). 1 rejected (symlink traversal — already safe). KBStorage slug traversal noted as Phase 1 scope.",
       "summary": "3-tier agent architecture: Tier 1 (Agents 1-4) Perplexity sonar-deep-research via asyncio.to_thread+wait_for, Tier 2 (Agent 5) Anthropic AsyncAnthropic+web_search_20250305 with pause_turn loop (max 5), Tier 3 (Synthesis) langgraph.prebuilt.create_react_agent+Claude Opus with read_file tool. Prompt registry pattern (Hub with local fallback). Partial failure policy: synthesis requires min 3/5 L2 docs. 124 KB tests passing (70 Phase 1 + 54 Phase 2)."
+    },
+    {
+      "id": "T-kb-phase5-synthesis-living-doc",
+      "task": "KB Phase 5 — Synthesis & Living Document: DAG constants, staleness tracking, delta synthesis, health/refresh endpoints, write-before-approve fix",
+      "sprint": "knowledge-base-v5",
+      "status": "done",
+      "completed_at": "2026-03-06",
+      "files_changed": [
+        "core/models/knowledge_base.py (KB_DEPENDENCY_GRAPH, KB_DEFAULT_STALENESS_DAYS, KBDocHealth, KBHealthReport, changed_docs field, L2_DOC_TYPES)",
+        "core/research/knowledge_base/storage.py (atomic writes, get_staleness_report, propagate_staleness, get_changed_since_synthesis, DAG-based deps)",
+        "core/research/prompts/synthesis.py (DELTA_SYNTHESIS_SYSTEM_PROMPT, get_delta_synthesis_system_prompt, build_delta_synthesis_user_prompt)",
+        "core/research/knowledge_base/agents.py (delta_mode, changed_docs, previous_synthesis_path params on run_synthesis_agent)",
+        "core/research/knowledge_base/pipeline.py (changed_doc_types tracking, delta synthesis detection, write-before-approve fix, propagate_staleness call, last_full_refresh, doc_review_graph unbound fix)",
+        "api/routers/knowledge_base.py (GET /{slug}/health, POST /{slug}/refresh-stale, _topological_sort_stale, _CHECKPOINT_DOC_TYPES, route ordering)",
+        "api/schemas/common.py (KBDocHealthResponse, KBHealthResponse, KBRefreshStaleRequest)",
+        "tests/research/knowledge_base/test_models_kb.py (7 new tests)",
+        "tests/research/knowledge_base/test_storage.py (15 new tests)",
+        "tests/research/knowledge_base/test_prompts.py (5 new tests)",
+        "tests/research/knowledge_base/test_agents.py (5 new tests + 3 fixes)",
+        "tests/research/knowledge_base/test_pipeline_kb.py (7 new tests)",
+        "tests/api/test_knowledge_base.py (11 new tests)"
+      ],
+      "tests_added": 50,
+      "test_total_kb": 260,
+      "codex_review": "Codex gpt-5.3-codex plan review. 5 CRITICAL/HIGH findings all addressed: (1) write-before-approve fix — synthesis promotes to company_context only after HITL-3 approve, regression test added. (2) De-scoped duplicate synthesis agent build. (3) staleness_threshold_days wired into stale-doc resolution. (4) Dependencies populated from DAG constant. (5) Atomic manifest writes via temp-file + os.replace. 3 deferred: product-level inheritance, delta synthesis structured output fields, in-process scheduler.",
+      "summary": "7-task Phase 5 completing KB as a living document. Task 1: DAG constant + staleness thresholds + KBDocHealth/KBHealthReport models. Task 2: Atomic manifest writes, get_staleness_report (per-doc thresholds, upstream-changed detection, synthesis freshness, score), propagate_staleness (reverse DAG BFS), get_changed_since_synthesis. Task 3: Delta synthesis prompts (system + user builder with changed/unchanged/missing doc paths). Task 4: run_synthesis_agent delta_mode=True with changed_docs + previous_synthesis_path routing. Task 5: Pipeline integration — changed_doc_types tracking across all phases, delta synthesis detection (refresh + existing synthesis → delta), write-before-approve CRITICAL fix (company_context only on HITL-3 approve), staleness propagation before synthesis, last_full_refresh on full mode, doc_review_graph unbound bug fix. Task 6: GET /{slug}/health endpoint with staleness report, score, per-doc health. Task 7: POST /{slug}/refresh-stale with topological sort, auto-fresh 200, 202 for stale docs. 260 KB tests passing (214 core + 46 API)."
     }
   ],
   "blocked": []

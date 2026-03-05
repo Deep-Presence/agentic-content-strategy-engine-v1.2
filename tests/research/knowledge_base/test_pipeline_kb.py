@@ -785,3 +785,185 @@ class TestRunKnowledgeBasePipeline:
             kb_input_auto_approve, artifacts_root=tmp_path,
         )
         assert output.synthesis_md == ""
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Delta Synthesis, Staleness Propagation, Write-Before-Approve Fix
+# ---------------------------------------------------------------------------
+
+
+class TestDeltaSynthesisIntegration:
+    """Pipeline routes to delta synthesis mode when refresh + existing synthesis."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_mode_with_existing_synthesis_uses_delta(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Refresh mode + prior synthesis → run_synthesis_agent called with delta_mode=True."""
+        from core.research.knowledge_base.storage import KBStorage
+
+        # Pre-populate storage with all 5 L2 docs + synthesis
+        storage = KBStorage(tmp_path, "test-co")
+        for dt in [KBDocType.COMPANY_OVERVIEW, KBDocType.CUSTOMER_REVIEWS,
+                    KBDocType.COMPETITOR_REGISTRY, KBDocType.WEAKNESS_ANALYSIS,
+                    KBDocType.BRAND_PERCEPTION]:
+            storage.write_version(dt, f"# {dt.value}\n\nExisting content.")
+        storage.write_synthesis("# Existing Synthesis\n\nPrior content.")
+
+        captured_synth: Dict[str, Any] = {}
+
+        async def _track_synth(input_data, kb_base_dir, available_docs, missing_docs, **kw):
+            captured_synth.update(kw)
+            captured_synth["available_docs"] = available_docs
+            return _make_result(KBDocType.SYNTHESIS, "# Updated Profile")
+
+        monkeypatch.setattr(f"{_PIPE}.run_synthesis_agent", _track_synth)
+
+        inp = KnowledgeBaseInput(
+            company_name="Test Co",
+            company_slug="test-co",
+            refresh_docs=[KBDocType.CUSTOMER_REVIEWS, KBDocType.BRAND_PERCEPTION],
+            auto_approve_checkpoints=[1, 2, 3],
+        )
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        await run_knowledge_base_pipeline(inp, artifacts_root=tmp_path)
+
+        assert captured_synth.get("delta_mode") is True
+        assert captured_synth.get("previous_synthesis_path") is not None
+        assert "synthesis/v1.md" in captured_synth["previous_synthesis_path"]
+
+    @pytest.mark.asyncio
+    async def test_full_mode_uses_full_synthesis(
+        self, kb_input_auto_approve: KnowledgeBaseInput, tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Full mode → delta_mode=False."""
+        captured_synth: Dict[str, Any] = {}
+
+        async def _track_synth(input_data, kb_base_dir, available_docs, missing_docs, **kw):
+            captured_synth.update(kw)
+            return _make_result(KBDocType.SYNTHESIS, "# Profile")
+
+        monkeypatch.setattr(f"{_PIPE}.run_synthesis_agent", _track_synth)
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        await run_knowledge_base_pipeline(kb_input_auto_approve, artifacts_root=tmp_path)
+
+        assert captured_synth.get("delta_mode") is False
+
+    @pytest.mark.asyncio
+    async def test_refresh_without_prior_synthesis_falls_back_to_full(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Refresh mode without prior synthesis → delta_mode=False."""
+        captured_synth: Dict[str, Any] = {}
+
+        async def _track_synth(input_data, kb_base_dir, available_docs, missing_docs, **kw):
+            captured_synth.update(kw)
+            return _make_result(KBDocType.SYNTHESIS, "# Profile")
+
+        monkeypatch.setattr(f"{_PIPE}.run_synthesis_agent", _track_synth)
+
+        inp = KnowledgeBaseInput(
+            company_name="Test Co",
+            company_slug="test-co",
+            refresh_docs=[KBDocType.CUSTOMER_REVIEWS, KBDocType.BRAND_PERCEPTION],
+            auto_approve_checkpoints=[1, 2, 3],
+        )
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        await run_knowledge_base_pipeline(inp, artifacts_root=tmp_path)
+
+        assert captured_synth.get("delta_mode") is False
+
+
+class TestStalenessAndChangedDocs:
+    """Pipeline propagates staleness and tracks changed_docs."""
+
+    @pytest.mark.asyncio
+    async def test_propagate_staleness_called(
+        self, kb_input_auto_approve: KnowledgeBaseInput, tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """propagate_staleness is called with changed doc types before synthesis."""
+        propagated: List[Any] = []
+
+        from core.research.knowledge_base.storage import KBStorage
+
+        original_propagate = KBStorage.propagate_staleness
+
+        def _track_propagate(self_storage, refreshed_doc_types):
+            propagated.append(list(refreshed_doc_types))
+            return original_propagate(self_storage, refreshed_doc_types)
+
+        monkeypatch.setattr(
+            "core.research.knowledge_base.pipeline.KBStorage.propagate_staleness",
+            _track_propagate,
+        )
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        await run_knowledge_base_pipeline(kb_input_auto_approve, artifacts_root=tmp_path)
+
+        assert len(propagated) == 1
+        assert len(propagated[0]) == 5  # All 5 docs changed in full mode
+
+    @pytest.mark.asyncio
+    async def test_full_mode_updates_last_full_refresh(
+        self, kb_input_auto_approve: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        """Full mode sets last_full_refresh in manifest after synthesis approved."""
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+        from core.research.knowledge_base.storage import KBStorage
+
+        await run_knowledge_base_pipeline(kb_input_auto_approve, artifacts_root=tmp_path)
+
+        storage = KBStorage(tmp_path, "test-co")
+        manifest = storage.read_manifest()
+        assert manifest.last_full_refresh is not None
+
+    @pytest.mark.asyncio
+    async def test_reject_at_cp3_does_not_write_company_context(
+        self, kb_input: KnowledgeBaseInput, tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CRITICAL: Reject at HITL-3 must NOT write company_context/{slug}.md."""
+        hitl_count = {"count": 0}
+
+        async def _approve_then_reject(graph, initial_state, thread_id, **kw):
+            hitl_count["count"] += 1
+            if hitl_count["count"] <= 2:
+                return {
+                    **initial_state,
+                    "decision": "approve",
+                    "approved_docs": list(initial_state.get("doc_summaries", {}).keys()),
+                }
+            return {**initial_state, "decision": "reject"}
+
+        monkeypatch.setattr(f"{_PIPE}.run_kb_hitl_checkpoint", _approve_then_reject)
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        output = await run_knowledge_base_pipeline(kb_input, artifacts_root=tmp_path)
+
+        profile_path = tmp_path / "company_context" / "test-co.md"
+        assert not profile_path.exists(), "company_context must NOT be written when HITL-3 rejects"
+
+    @pytest.mark.asyncio
+    async def test_changed_docs_populated_in_output(
+        self, kb_input_auto_approve: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        """Output.changed_docs lists all doc types that were written."""
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        output = await run_knowledge_base_pipeline(
+            kb_input_auto_approve, artifacts_root=tmp_path,
+        )
+        # Full mode: all 5 L2 docs should be in changed_docs
+        assert len(output.changed_docs) == 5
+        assert "company_overview" in output.changed_docs
+        assert "customer_reviews" in output.changed_docs

@@ -36,7 +36,9 @@ from core.research.prompts.customer_reviews import (
     get_customer_reviews_system_prompt,
 )
 from core.research.prompts.synthesis import (
+    build_delta_synthesis_user_prompt,
     build_synthesis_user_prompt,
+    get_delta_synthesis_system_prompt,
     get_synthesis_system_prompt,
 )
 from core.research.prompts.weakness_analyst import (
@@ -379,6 +381,9 @@ async def run_synthesis_agent(
     parent_span: Optional[Any] = None,
     timeout_s: float = 600.0,
     revision_note: Optional[str] = None,
+    delta_mode: bool = False,
+    changed_docs: Optional[Dict[str, str]] = None,
+    previous_synthesis_path: Optional[str] = None,
 ) -> KBAgentResult:
     """Run L2 → L3 synthesis — requires minimum 3 of 5 L2 docs.
 
@@ -389,6 +394,12 @@ async def run_synthesis_agent(
         missing_docs: List of doc_type.value strings that are missing.
         parent_span: Optional parent tracing span.
         timeout_s: Per-call timeout in seconds.
+        revision_note: Optional reviewer feedback from a previous version.
+        delta_mode: If True, use incremental synthesis (only read changed docs).
+        changed_docs: Dict mapping doc_type.value to file path for changed docs
+            (required when delta_mode=True).
+        previous_synthesis_path: Relative path to previous synthesis file
+            (required when delta_mode=True).
 
     Returns:
         KBAgentResult with synthesized company profile or error.
@@ -405,6 +416,13 @@ async def run_synthesis_agent(
             ),
         )
 
+    # Delta mode validation
+    if delta_mode and not previous_synthesis_path:
+        return KBAgentResult(
+            doc_type=KBDocType.SYNTHESIS,
+            error="Delta mode requires previous_synthesis_path",
+        )
+
     span = create_span(
         parent_span,
         "agent/synthesis",
@@ -412,14 +430,39 @@ async def run_synthesis_agent(
             "company": input_data.company_name,
             "available": list(available_docs.keys()),
             "missing": missing_docs,
+            "delta_mode": delta_mode,
         },
     )
     start = time.time()
     try:
-        agent = build_synthesis_agent(kb_base_dir=kb_base_dir)
-        user_prompt = build_synthesis_user_prompt(
-            input_data, available_docs, missing_docs, revision_note=revision_note,
+        # Build agent with appropriate system prompt
+        system_prompt = (
+            get_delta_synthesis_system_prompt() if delta_mode
+            else get_synthesis_system_prompt()
         )
+        model = _build_model(settings.research_kb_synthesis_model)
+        read_file = make_read_file_tool(kb_base_dir)
+        agent = create_react_agent(model, [read_file], prompt=system_prompt)
+
+        # Build user prompt based on mode
+        if delta_mode:
+            unchanged_docs = {
+                k: v for k, v in available_docs.items()
+                if k not in (changed_docs or {})
+            }
+            user_prompt = build_delta_synthesis_user_prompt(
+                input_data,
+                previous_synthesis_path=previous_synthesis_path or "",
+                changed_docs=changed_docs or {},
+                unchanged_docs=unchanged_docs,
+                missing_docs=missing_docs,
+                revision_note=revision_note,
+            )
+        else:
+            user_prompt = build_synthesis_user_prompt(
+                input_data, available_docs, missing_docs,
+                revision_note=revision_note,
+            )
 
         result = await asyncio.wait_for(
             agent.ainvoke({"messages": [("user", user_prompt)]}),
