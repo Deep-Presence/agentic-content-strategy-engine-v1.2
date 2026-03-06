@@ -27,8 +27,8 @@ _logger = logging.getLogger(__name__)
 def get_task_store(request: Request) -> TaskStoreProtocol:
     """Return the task store — JSON-backed TaskStore or DbTaskStore.
 
-    When DATABASE_URL is configured, this will return DbTaskStore.
-    For now, always returns the JSON-backed TaskStore.
+    Auto-selected at startup in ``app.py._init_task_store()``:
+    DbTaskStore when DATABASE_URL is set, else JSON-backed TaskStore.
     """
     return request.app.state.task_store
 
@@ -45,17 +45,53 @@ def get_auth_store(request: Request) -> AuthStore:
     return request.app.state.auth_store
 
 
-def get_auth_service(request: Request) -> AuthServiceProtocol:
-    """Return the auth service — JsonAuthService wrapping AuthStore.
+def _build_db_auth_service(request: Request) -> AuthServiceProtocol | None:
+    """Try to build a per-request DbAuthService.
 
-    When DATABASE_URL is configured, this will return DbAuthService.
-    For now, always returns JsonAuthService wrapping the existing AuthStore.
+    Returns None if db_session_factory is not available or import fails.
     """
-    # Check if a pre-built service is available (e.g., from dependency override)
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        return None
+    try:
+        from core.auth.db_service import DbAuthService
+        from core.db.repositories.auth_repo import AuthRepository
+        from core.db.repositories.company_repo import CompanyRepository
+        from core.db.repositories.invite_repo import InviteRepository
+        from core.db.repositories.pipeline_defaults_repo import PipelineDefaultsRepository
+        from core.db.repositories.product_repo import ProductRepository
+
+        session = sf()
+        secret_key = getattr(request.app.state, "secret_key", None)
+        if secret_key is None:
+            return None
+        return DbAuthService(
+            company_repo=CompanyRepository(session),
+            auth_repo=AuthRepository(session),
+            invite_repo=InviteRepository(session),
+            product_repo=ProductRepository(session),
+            defaults_repo=PipelineDefaultsRepository(session),
+            secret_key=secret_key,
+        )
+    except Exception:
+        _logger.debug("Failed to build DbAuthService", exc_info=True)
+        return None
+
+
+def get_auth_service(request: Request) -> AuthServiceProtocol:
+    """Return the auth service.
+
+    Priority: pre-built override → DbAuthService (DATABASE_URL) → JsonAuthService.
+    """
+    # 1. Pre-built override (tests, etc.)
     service = getattr(request.app.state, "auth_service", None)
     if service is not None:
         return service
-    # Default: wrap the existing AuthStore
+    # 2. Per-request DB service (when DATABASE_URL is set)
+    db_service = _build_db_auth_service(request)
+    if db_service is not None:
+        return db_service
+    # 3. Fallback: JSON-backed
     return JsonAuthService(request.app.state.auth_store)
 
 
@@ -182,16 +218,44 @@ def get_content_data_service(request: Request) -> ContentDataServiceProtocol:
     )
 
 
+def _build_db_site_audit_data_service(
+    request: Request,
+) -> SiteAuditDataServiceProtocol | None:
+    """Try to build a per-request DbSiteAuditDataService."""
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        return None
+    try:
+        from core.db.repositories.company_repo import CompanyRepository
+        from core.db.repositories.site_audit_repo import SiteAuditRepository
+        from core.services.db_site_audit_data import DbSiteAuditDataService
+
+        session = sf()
+        return DbSiteAuditDataService(
+            audit_repo=SiteAuditRepository(session),
+            company_repo=CompanyRepository(session),
+            artifacts_root=request.app.state.artifacts_root,
+        )
+    except Exception:
+        _logger.debug("Failed to build DbSiteAuditDataService", exc_info=True)
+        return None
+
+
 def get_site_audit_data_service(request: Request) -> SiteAuditDataServiceProtocol:
     """Return the site audit data service.
 
-    Checks for a pre-built service on app.state (e.g., from dependency
-    override in tests).  Falls back to JsonSiteAuditDataService which reads
-    from artifacts/site_audit/{slug}/{audit_id}/audit_result.json.
+    Priority: pre-built override → DbSiteAuditDataService (DATABASE_URL) →
+    JsonSiteAuditDataService.
     """
+    # 1. Pre-built override (tests, etc.)
     service = getattr(request.app.state, "site_audit_data_service", None)
     if service is not None:
         return service
+    # 2. Per-request DB service (when DATABASE_URL is set)
+    db_service = _build_db_site_audit_data_service(request)
+    if db_service is not None:
+        return db_service
+    # 3. Fallback: filesystem-backed
     return JsonSiteAuditDataService(
         artifacts_root=request.app.state.artifacts_root,
     )

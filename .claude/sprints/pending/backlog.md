@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-06 (Sprint v5 knowledge-base Phase 5 — Synthesis & Living Document)
-> **Total items:** 35
+> **Last synced:** 2026-03-06 (Sprint v6 audience-persona Phase F — Integration)
+> **Total items:** 37
 
 ## Critical (Fix Before Production)
 
@@ -239,6 +239,20 @@
 - **Date added:** 2026-03-04
 - **Description:** Actual crawl-delay enforcement requires a shared domain-level rate limiter (`asyncio.Lock` + timestamp tracking) to throttle requests per `Crawl-delay` directive. Currently only parsed and reported. Needs `_CrawlDelayLimiter` class with `async with limiter.acquire(domain):` pattern.
 - **Files affected:** `core/site_audit/steps/s1_discover.py`
+- **Blocked by:** nothing
+
+### PB-65: `_detect_personas()` in companies router + brand_data service reads legacy path only
+- **Source:** Phase F Codex review (deferred finding #1)
+- **Date added:** 2026-03-06
+- **Description:** `api/routers/companies.py:_detect_personas()` and `api/services/brand_data_service.py` still read from `artifacts/personas/` only. After AP migration, dashboard/UI won't show AP-generated personas. Should be updated to check `audience_personas/` first, with legacy fallback — same pattern as `resolve_artifacts()`.
+- **Files affected:** `api/routers/companies.py:56`, `api/services/brand_data_service.py`
+- **Blocked by:** nothing
+
+### PB-66: `PersonaStorage.list_persona_paths()` returns unsorted paths
+- **Source:** Phase F Codex review (deferred finding #2)
+- **Date added:** 2026-03-06
+- **Description:** `list_persona_paths()` returns paths in manifest dict insertion order, not sorted. This means prompt context order can drift between runs depending on when personas were added. Should add `sorted()` for deterministic ordering.
+- **Files affected:** `core/research/audience_persona/storage.py:263`
 - **Blocked by:** nothing
 
 ## Low Priority / Nice to Have

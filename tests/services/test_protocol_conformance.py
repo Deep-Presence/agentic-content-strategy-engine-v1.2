@@ -12,9 +12,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.services.gap_data import GapDataServiceProtocol
+from core.auth.service import AuthServiceProtocol
 from core.services.brand_data import BrandDataServiceProtocol
 from core.services.content_data import ContentDataServiceProtocol
+from core.services.gap_data import GapDataServiceProtocol
+from core.services.site_audit_data import SiteAuditDataServiceProtocol
 from core.services.task_store import TaskStoreProtocol
 
 
@@ -133,6 +135,86 @@ class TestProtocolCompleteness:
             for method in expected:
                 assert hasattr(cls, method), f"{cls.__name__} missing {method}"
 
+    def test_site_audit_protocol_methods(self):
+        expected = {
+            "get_audit_summary", "get_audit_detail", "list_audits",
+            "get_findings", "get_page_results", "audit_exists",
+            "get_latest_audit_id",
+        }
+        from core.services.json_site_audit_data import JsonSiteAuditDataService
+        from core.services.db_site_audit_data import DbSiteAuditDataService
+
+        for cls in (JsonSiteAuditDataService, DbSiteAuditDataService):
+            for method in expected:
+                assert hasattr(cls, method), f"{cls.__name__} missing {method}"
+
+    def test_auth_protocol_methods(self):
+        expected = {
+            "get_company_by_slug", "get_company_by_id", "get_company_by_domain",
+            "list_companies", "create_company", "update_company",
+            "get_product", "add_product", "update_product", "remove_product",
+            "get_user_by_email", "get_user_by_id", "list_users_for_company",
+            "create_user", "update_user",
+            "register_user", "create_invite", "redeem_invite",
+            "get_pipeline_defaults", "update_pipeline_defaults",
+            "create_access_token", "create_stream_token", "verify_token",
+        }
+        from core.auth.json_service import JsonAuthService
+        from core.auth.db_service import DbAuthService
+
+        for cls in (JsonAuthService, DbAuthService):
+            for method in expected:
+                assert hasattr(cls, method), f"{cls.__name__} missing {method}"
+
+
+# ── SiteAuditDataServiceProtocol ──────────────────────────────────────
+
+
+class TestSiteAuditDataProtocol:
+    """Verify both implementations satisfy SiteAuditDataServiceProtocol."""
+
+    def test_json_site_audit_data_is_protocol(self):
+        from core.services.json_site_audit_data import JsonSiteAuditDataService
+
+        instance = JsonSiteAuditDataService(artifacts_root=Path("/tmp"))
+        assert isinstance(instance, SiteAuditDataServiceProtocol)
+
+    def test_db_site_audit_data_is_protocol(self):
+        from core.services.db_site_audit_data import DbSiteAuditDataService
+
+        instance = DbSiteAuditDataService(
+            audit_repo=MagicMock(),
+            company_repo=MagicMock(),
+            artifacts_root=Path("/tmp"),
+        )
+        assert isinstance(instance, SiteAuditDataServiceProtocol)
+
+
+# ── AuthServiceProtocol ──────────────────────────────────────────────
+
+
+class TestAuthServiceProtocol:
+    """Verify both implementations satisfy AuthServiceProtocol."""
+
+    def test_json_auth_service_is_protocol(self):
+        from core.auth.json_service import JsonAuthService
+
+        instance = JsonAuthService(store=MagicMock())
+        assert isinstance(instance, AuthServiceProtocol)
+
+    def test_db_auth_service_is_protocol(self):
+        from core.auth.db_service import DbAuthService
+
+        instance = DbAuthService(
+            company_repo=MagicMock(),
+            auth_repo=MagicMock(),
+            invite_repo=MagicMock(),
+            product_repo=MagicMock(),
+            defaults_repo=MagicMock(),
+            secret_key="test-secret",
+        )
+        assert isinstance(instance, AuthServiceProtocol)
+
 
 # ── TaskStoreProtocol ────────────────────────────────────────────────
 
@@ -208,3 +290,21 @@ class TestDIWiring:
 
         hints = get_type_hints(get_task_store)
         assert hints["return"] is TaskStoreProtocol
+
+    def test_get_auth_service_annotation_is_protocol(self):
+        """get_auth_service return annotation is AuthServiceProtocol."""
+        from typing import get_type_hints
+
+        from api.dependencies import get_auth_service
+
+        hints = get_type_hints(get_auth_service)
+        assert hints["return"] is AuthServiceProtocol
+
+    def test_get_site_audit_data_service_annotation_is_protocol(self):
+        """get_site_audit_data_service return annotation is SiteAuditDataServiceProtocol."""
+        from typing import get_type_hints
+
+        from api.dependencies import get_site_audit_data_service
+
+        hints = get_type_hints(get_site_audit_data_service)
+        assert hints["return"] is SiteAuditDataServiceProtocol
