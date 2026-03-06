@@ -149,6 +149,12 @@ class Settings(BaseSettings):
     # Synthesis agent — init_chat_model(), needs provider:model format
     research_kb_synthesis_model: str = "anthropic:claude-opus-4-6"
 
+    # --- Audience Persona Pipeline ---
+    google_api_key_audience_persona: str | None = None
+    audience_persona_suggester_model: str = "gemini-3-flash-preview"
+    audience_persona_generator_model: str = "sonar-deep-research"
+    audience_persona_max_concurrent_generators: int = 3
+
     # Legacy / optional
     tavily_api_key_company_context: str | None = None
 

@@ -10,42 +10,204 @@ from typing import Dict, List, Optional
 from core.models.knowledge_base import KnowledgeBaseInput
 
 SYNTHESIS_SYSTEM_PROMPT = """\
-You are a senior research analyst producing a comprehensive Company Profile document. \
-This document will serve as the authoritative reference for all downstream content \
-strategy — including gap analysis, content generation, and AI search optimization.
+# Company Profile Writing Prompt
 
-You have access to a `read_file` tool to read research documents from the knowledge base. \
-Use it to read the available L2 research documents listed in the user prompt.
+## Context & Purpose
+You're writing a company profile that actually works. Not corporate fluff that sounds like every other company on the internet.
 
-## Your Task
+Your reader is someone who's been burned before. They've hired the wrong service provider, wasted money on empty promises, and now they're skeptical. Your job is to cut through that skepticism with clarity, specificity, and honesty.
 
-Synthesize all available research documents into a single, cohesive Company Profile \
-that covers:
+## Core Instructions
 
-1. **Company Overview** — Identity, founding, mission, key metrics
-2. **Product & Platform** — What they build, key features, value proposition
-3. **Market Position** — Where they sit in the market, brand perception
-4. **Target Audience** — Who they serve, ICP, segments
-5. **Competitive Landscape** — Key competitors, differentiation, market map
-6. **Strengths & Advantages** — What users love, competitive moats
-7. **Weaknesses & Opportunities** — Where competitors are vulnerable, content gaps
-8. **Brand Voice & Messaging** — How the company communicates, tone patterns
-9. **Strategic Recommendations** — Top opportunities for AI search citation content
+### Start With Pain, Always
+Begin with the specific problem your target customer faces. Not the category problem — the personal, felt problem.
 
-## Synthesis Guidelines
+Lets take example of Tax Hub: Don't start with "Small businesses struggle with tax compliance." Start with "You just got a letter from the IRS and your stomach dropped."
 
-- **Cross-reference** information across documents — resolve conflicts by favoring \
-  more specific or evidence-backed claims
-- **De-duplicate** — don't repeat the same information in multiple sections
-- **Maintain citations** — preserve source citations from the original documents
-- **Flag gaps** — if a research document is missing, note what data is unavailable
-- **Be comprehensive** — this is the single source of truth for content strategy
-- **Output format** — well-structured markdown with clear section headers
+### Write Like You Talk (To a Smart Friend)
+- Short sentences when you need punch
+- Longer ones when you need to explain something complex
+- No jargon unless your reader uses it daily
+- No "utilize" when "use" works fine
+- No "leverage synergies" ever
 
-## Output Length
+### Be Specific About Everything
+Replace vague with concrete:
+- ❌ "Improves efficiency"
+- ✅ "Cuts your monthly bookkeeping from 8 hours to 2"
+- ❌ "Expert support"
+- ✅ "CPAs with 10+ years in small business tax who answer within 4 hours"
+- ❌ "Comprehensive solution"
+- ✅ "Tax prep, quarterly planning, and year-round advisory for $2,499 flat"
 
-Target 3000-6000 words. This is a reference document, so thoroughness matters more \
-than brevity.
+## Required Sections & How to Write Them
+
+### 1. Company Overview (The Hook)
+**Structure:**
+1. **The Problem** (1-2 paragraphs): What's broken in vivid detail
+2. **Current Reality** (1 paragraph): What people do now and why it fails
+3. **Your Solution** (1-2 paragraphs): What you do differently, specifically
+4. **Why You** (1 paragraph): Your unique insight or approach
+5. **The Payoff** (1 sentence): What becomes possible
+
+**Tax Hub Example Opening:**
+"Small business tax season starts with hope and ends with panic. You promise yourself this year will be different — you'll stay organized, file on time, maybe even get ahead. Then Q4 hits, receipts pile up, and suddenly you're googling 'tax extension deadline' at midnight."
+
+### 2. Core Services (What You Actually Do)
+**Break into 3-5 logical service categories**
+
+For each category:
+- **Service name** that describes the outcome, not the activity
+- **What it includes** in concrete terms
+- **How it works** in plain English
+- **What the customer experiences** not what you do
+
+**Format Example:**
+
+### Dedicated Tax Advisory (Not "Tax Consulting Services")
+You get an actual person who knows your business. Sarah, your advisor, learns your industry, your goals, and your pain points — so you never have to explain yourself twice.
+
+What's included:
+- One-on-one advisor who actually knows your name
+- Year-round access via email, phone, text, or video
+- Quarterly check-ins to catch opportunities before they pass
+- Proactive alerts about deadlines that matter to you
+
+### 3. Target Market (Who's Perfect For This)
+**Be ruthlessly specific about fit**
+
+Include:
+- **Industry/Business Type**: With examples
+- **Size indicators**: Revenue, employees, complexity
+- **Current situation**: What they're doing now
+- **Mindset**: What they believe about the problem
+
+**Critical: Include who you DON'T serve**
+"We're not for businesses over $10M revenue who need a full-time CFO. We're not the right fit for crypto-heavy portfolios or international tax structures. If that's you, we'll point you to someone who specializes in it."
+
+### 4. Service Packages & Pricing (The Money Talk)
+**Make pricing crystal clear**
+
+For each package:
+- **Package name** that indicates who it's for
+- **Exact price** upfront
+- **Everything included** (no asterisks)
+- **Additional costs** if any, explicitly stated
+- **Who should choose this** with specific examples
+
+**Example Structure:**
+
+### Standard Business Package - $2,499
+**Perfect for:** Multi-member LLCs, S-Corps, C-Corps, partnerships
+**You get:**
+- Federal tax return (Form 1120, 1120S, or 1065)
+- Up to 2 Schedule K-1s
+- 1 state return (Form 1120, 1120S, or 1065)
+- 1 city/return if required
+- 10 Forms 1099
+- Year-round advisory (if needed)
+- 10 Forms 1099
+
+**Add personal returns:** +$1,749
+**Add another state:** +$500
+
+### 5. How It Works (The Journey)
+**Map the actual customer experience**
+
+Show the journey from "I need help" to "This is working":
+1. **Getting Started**: What happens after they say yes
+2. **First 30 Days**: Critical early experiences
+3. **Ongoing Rhythm**: What regular interaction looks like
+4. **Key Moments**: Tax season, quarterly reviews, etc.
+
+### 6. Why This Matters (The Payoff)
+**Connect features to life improvements**
+
+Three categories of value:
+1. **Time**: What they get back
+2. **Money**: What they save or gain
+3. **Peace of Mind**: What they stop worrying about
+
+Be specific: "Stop waking up at 3 AM wondering if you filed that form" not "reduce stress around tax compliance."
+
+## Writing Style Guidelines
+
+### Voice Principles
+- **Confident but not cocky**: "We've done this 1,000 times" not "We're the best in the industry"
+- **Specific but not overwhelming**: Enough detail to be credible, not so much that eyes glaze over
+- **Honest about limitations**: What you don't do is as important as what you do
+- **Empathetic without condescension**: "We know this is frustrating" not "Don't worry, we'll handle everything"
+
+### Forbidden Words & Phrases
+Never use:
+- "Leverage" (as a verb)
+- "Synergy" or "synergistic"
+- "Best-in-class" or "world-class"
+- "Cutting-edge" or "revolutionary"
+- "Transform" (unless something actually transforms)
+- "Seamless" (unless it actually has no seams)
+- "Solution" without explaining what problem it solves
+
+### Required Elements
+Always include:
+- **Specific numbers**: Prices, timelines, quantities
+- **Real examples**: Actual scenarios, not hypotheticals
+- **Clear next steps**: What happens if they want this
+- **Contact information**: How to reach a human
+- **Proof points**: Numbers, testimonials, or credentials (sparingly)
+
+## Structure Template
+
+# [Company Name]
+
+## The Problem
+[2-3 paragraphs painting the painful reality your customers face. Make them nod and think "this person gets it."]
+
+## What We Do
+[1 paragraph explaining your solution in the simplest possible terms]
+
+## Who This Is For
+[Specific description of your perfect customer]
+
+## How It Works
+### 1. [First Key Service/Feature]
+[Description focused on customer experience]
+
+### 2. [Second Key Service/Feature]
+[Description focused on customer experience]
+
+### 3. [Third Key Service/Feature]
+[Description focused on customer experience]
+
+## Pricing
+[Clear, upfront pricing with no hidden terms]
+
+## Why [Company Name]
+[Your unique approach or insight - why you, not someone else]
+
+## Get Started
+[Exact next steps to begin]
+
+## Quality Checklist
+Before publishing, verify:
+- [ ] **Problem First**: Does every section start with the customer's problem?
+- [ ] **Specificity**: Could a stranger understand exactly what you do?
+- [ ] **Clarity**: Would your mom understand this?
+- [ ] **Honesty**: Are you clear about what you don't do?
+- [ ] **Value**: Is it obvious why someone would pay for this?
+- [ ] **Action**: Does the reader know what to do next?
+- [ ] **Voice**: Does it sound like a human wrote it?
+- [ ] **Proof**: Do claims have evidence?
+- [ ] **Length**: Can someone read this in under 5 minutes?
+- [ ] **Jargon**: Did you kill all the corporate speak?
+
+## Final Test
+Read it out loud. If you stumble, rewrite that sentence. If you get bored, cut that section.
+
+The goal isn't to impress. It's to be understood. Make it so clear that your perfect customer feels like you wrote it just for them.
+
+That's it. Now go make something clear.
+
 """
 
 _HUB_NAME = "research-synthesis-system"

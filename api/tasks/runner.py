@@ -178,17 +178,35 @@ def resolve_artifacts(
             resolved["company_context_path"] = str(company_ctx)
             break
 
-    # Personas: try effective_slug first, then bare slug
-    personas_dir = artifacts_root / "personas"
-    if personas_dir.exists():
-        for lookup in candidates:
-            persona_files = sorted(
-                p for p in personas_dir.glob(f"{lookup}__persona-*.md")
-                if not p.name.endswith(".draft.md")
-            )
-            if persona_files:
-                resolved["persona_paths"] = [str(p) for p in persona_files]
-                break
+    # Personas: try NEW audience_personas/{slug}/ first, then legacy personas/
+    ap_found = False
+    for lookup in candidates:
+        ap_dir = artifacts_root / "audience_personas" / lookup
+        if (ap_dir / "_manifest.json").exists():
+            try:
+                from core.research.audience_persona.storage import PersonaStorage
+
+                ap_storage = PersonaStorage(artifacts_root, lookup)
+                ap_paths = ap_storage.list_persona_paths()
+                if ap_paths:
+                    resolved["persona_paths"] = ap_paths
+                    ap_found = True
+                    break
+            except Exception:
+                pass  # Fall through to legacy
+
+    # LEGACY fallback: artifacts/personas/{slug}__persona-*.md
+    if not ap_found:
+        personas_dir = artifacts_root / "personas"
+        if personas_dir.exists():
+            for lookup in candidates:
+                persona_files = sorted(
+                    p for p in personas_dir.glob(f"{lookup}__persona-*.md")
+                    if not p.name.endswith(".draft.md")
+                )
+                if persona_files:
+                    resolved["persona_paths"] = [str(p) for p in persona_files]
+                    break
 
     # Style guide
     for lookup in candidates:
@@ -984,4 +1002,156 @@ async def run_kb_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
         task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Audience Persona Pipeline
+# ═══════════════════════════════════════════════════════════════════════
+
+
+async def run_audience_persona_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Audience Persona pipeline."""
+    from core.models.audience_persona import AudiencePersonaInput
+    from core.research.audience_persona.pipeline import run_audience_persona_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            input_data = AudiencePersonaInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                max_personas=getattr(request, "max_personas", 5),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+            )
+
+            output = await run_audience_persona_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "briefs_suggested": output.briefs_suggested,
+                "briefs_approved": output.briefs_approved,
+                "profiles_generated": output.profiles_generated,
+                "persona_dir": output.persona_dir,
+                "produced_artifacts": [
+                    {"type": "audience_persona", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("AP pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("AP pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)
+
+
+async def run_single_persona_generator_task(
+    task_id: str,
+    persona_id: str,
+    slug: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    artifacts_root: Any = None,
+) -> None:
+    """Background task for standalone single-persona generation."""
+    from core.models.audience_persona import AudiencePersonaInput
+    from core.research.audience_persona.agents import run_persona_profile_generator
+    from core.research.audience_persona.pipeline import _preflight_check
+    from core.research.audience_persona.storage import PersonaStorage
+
+    try:
+        async with task_store.semaphore:
+            root = Path(artifacts_root) if artifacts_root else Path("artifacts")
+            storage = PersonaStorage(root, slug)
+            brief = storage.read_brief(persona_id)
+
+            if not brief:
+                raise ValueError(f"No brief found for persona_id={persona_id}")
+
+            # Derive base company slug (strip product suffix if present)
+            company_slug = slug.split("__")[0]
+
+            # Load context via preflight (effective_slug=slug for standalone)
+            company_md, reviews_md, kdocs_text, _ = await _preflight_check(
+                root, slug, company_slug,
+            )
+
+            # Build minimal input_data for the generator prompt
+            manifest = storage.read_manifest()
+            input_data = AudiencePersonaInput(
+                company_name=manifest.company_name or company_slug,
+                company_slug=company_slug,
+                product_slug=slug.split("__")[1] if "__" in slug else None,
+            )
+
+            result = await run_persona_profile_generator(
+                brief=brief,
+                input_data=input_data,
+                company_context_md=company_md,
+                customer_reviews_md=reviews_md,
+                knowledge_docs_text=kdocs_text,
+            )
+
+            if result.error:
+                raise RuntimeError(f"Profile generation failed: {result.error}")
+
+            storage.write_version(
+                persona_id,
+                persona_name=brief.persona_name,
+                content_md=result.content_md,
+                content_json=result.content_json,
+                kind="secondary",
+                created_by="manual",
+                tagline=brief.tagline,
+                status="pending_review",
+            )
+
+            task_store.update_task(
+                task_id,
+                status=TaskStatus.COMPLETED,
+                result={"persona_id": persona_id, "status": "pending_review"},
+            )
+
+    except asyncio.CancelledError:
+        logger.info("Single persona gen cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("Single persona gen failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(slug)
         task_store.remove_task_handle(task_id)

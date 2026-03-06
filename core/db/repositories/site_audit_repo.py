@@ -153,6 +153,64 @@ class SiteAuditRepository(SQLAlchemyRepository[SiteAuditModel]):
             **kwargs,
         )
 
+    async def get_latest_for_domain(
+        self,
+        company_id: _uuid.UUID | str,
+        domain: str,
+    ) -> SiteAuditModel | None:
+        """Return the most recently completed audit for a specific domain.
+
+        Args:
+            company_id: UUID of the company.
+            domain: Site domain to filter on.
+
+        Returns:
+            The newest completed :class:`SiteAuditModel` for *domain*,
+            or ``None`` if none exists.
+        """
+        cid = _uuid.UUID(str(company_id)) if isinstance(company_id, str) else company_id
+        stmt = (
+            select(SiteAuditModel)
+            .where(
+                SiteAuditModel.company_id == cid,
+                SiteAuditModel.site_domain == domain,
+                SiteAuditModel.status == PipelineStatus.completed,
+            )
+            .order_by(SiteAuditModel.created_at.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def exists_for_domain(
+        self,
+        company_id: _uuid.UUID | str,
+        domain: str,
+    ) -> bool:
+        """Check if at least one completed audit exists for *domain*.
+
+        Args:
+            company_id: UUID of the company.
+            domain: Site domain to check.
+
+        Returns:
+            True if a completed audit exists for the given domain.
+        """
+        from sqlalchemy import func as sa_func
+
+        cid = _uuid.UUID(str(company_id)) if isinstance(company_id, str) else company_id
+        stmt = (
+            select(sa_func.count())
+            .select_from(SiteAuditModel)
+            .where(
+                SiteAuditModel.company_id == cid,
+                SiteAuditModel.site_domain == domain,
+                SiteAuditModel.status == PipelineStatus.completed,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return (result.scalar() or 0) > 0
+
     async def bulk_insert_findings(
         self,
         audit_id: _uuid.UUID | str,

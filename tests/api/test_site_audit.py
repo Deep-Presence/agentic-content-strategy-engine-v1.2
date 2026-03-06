@@ -533,8 +533,9 @@ class TestGetAuditDetail:
     def test_not_found_404(
         self, client: TestClient, artifacts_root: Path
     ) -> None:
+        missing = "00000000-0000-0000-0000-000000000000"
         resp = client.get(
-            "/api/v1/site-audit/companies/test-co/audits/nonexistent"
+            f"/api/v1/site-audit/companies/test-co/audits/{missing}"
         )
         assert resp.status_code == 404
 
@@ -624,8 +625,9 @@ class TestGetFindings:
     def test_not_found_404(
         self, client: TestClient, artifacts_root: Path
     ) -> None:
+        missing = "00000000-0000-0000-0000-000000000000"
         resp = client.get(
-            "/api/v1/site-audit/companies/test-co/audits/nonexistent/findings"
+            f"/api/v1/site-audit/companies/test-co/audits/{missing}/findings"
         )
         assert resp.status_code == 404
 
@@ -685,8 +687,9 @@ class TestGetPageResults:
     def test_not_found_404(
         self, client: TestClient, artifacts_root: Path
     ) -> None:
+        missing = "00000000-0000-0000-0000-000000000000"
         resp = client.get(
-            "/api/v1/site-audit/companies/test-co/audits/nonexistent/pages"
+            f"/api/v1/site-audit/companies/test-co/audits/{missing}/pages"
         )
         assert resp.status_code == 404
 
@@ -764,8 +767,9 @@ class TestJsonSiteAuditDataService:
     ) -> None:
         from fastapi import HTTPException
 
+        missing = "00000000-0000-0000-0000-000000000000"
         with pytest.raises(HTTPException) as exc_info:
-            await service.get_audit_detail("test-co", "nonexistent")
+            await service.get_audit_detail("test-co", missing)
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
