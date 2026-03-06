@@ -72,6 +72,13 @@ from core.models.content_generation_v13 import (
 
 logger = logging.getLogger(__name__)
 
+# Lazy guard: CPS scorer may not be importable if torch is absent
+try:
+    from core.cps_model.scorer import get_cps_scorer
+except Exception:  # pragma: no cover
+    def get_cps_scorer():  # type: ignore[misc]
+        return None
+
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 _STAGE_NAMES_V13: Dict[int, str] = {
@@ -199,6 +206,81 @@ def _update_task(task_store: Any, task_id: Optional[str], **kwargs: Any) -> None
                     round(stage / _TOTAL_STAGES_V13 * 100, 1),
                 )
         task_store.update_task(task_id, **kwargs)
+
+
+# ── CPS Scoring Helper ────────────────────────────────────────────────
+
+
+async def _score_cps_batch(
+    evaluated: List[tuple],
+    blueprint_by_id: Dict[str, Any],
+    domain: str,
+    parent_span: Any,
+    event_bus: Any,
+    task_id: Optional[str],
+) -> Dict[str, Dict[str, Any]]:
+    """Score all evaluated content pieces with the CPS model.
+
+    Returns a dict mapping brief_id -> cps_result dict.
+    Gracefully returns empty dict on any failure.
+    """
+    import asyncio
+
+    scorer = get_cps_scorer()
+    if scorer is None:
+        logger.info("CPS scoring skipped: scorer unavailable")
+        return {}
+
+    cps_span = create_span(parent_span, "cps-scoring") if parent_span else None
+    cps_results: Dict[str, Dict[str, Any]] = {}
+    content_url = f"https://{domain}"
+
+    async def _score_one(brief_id: str, content: FormattedContent) -> tuple:
+        blueprint = blueprint_by_id.get(brief_id)
+        query_texts: List[str] = []
+        if blueprint and hasattr(blueprint, "target_queries") and blueprint.target_queries:
+            query_texts = [
+                tq.query_text for tq in blueprint.target_queries if tq.query_text
+            ]
+        if not query_texts:
+            query_texts = [content.title]
+
+        try:
+            result = await scorer.score_async(
+                query_texts=query_texts,
+                content_markdown=content.markdown,
+                content_url=content_url,
+            )
+            return brief_id, result
+        except Exception:
+            logger.warning("CPS scoring failed for %s", brief_id, exc_info=True)
+            return brief_id, None
+
+    tasks = [
+        _score_one(brief_id, final_content)
+        for brief_id, final_content, _history, _feedback_route in evaluated
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for item in results:
+        if isinstance(item, Exception):
+            continue
+        brief_id, result = item
+        if result is not None:
+            cps_results[brief_id] = result
+
+    if cps_span:
+        end_span(cps_span, output={
+            "scored_count": len(cps_results),
+            "total_count": len(evaluated),
+        })
+
+    _emit(event_bus, task_id, "cps_scoring_complete", {
+        "scored": len(cps_results),
+        "scores": {bid: data.get("cps_score") for bid, data in cps_results.items()},
+    })
+
+    return cps_results
 
 
 # ── HITL-3 Feedback Loop Helpers ──────────────────────────────────────
@@ -1035,6 +1117,22 @@ async def _run_pipeline_stages(
             for bid, fc in formatted_contents
         ]
 
+    # ── Stage 4.5: CPS Scoring ───────────────────────────────────
+    cps_results: Dict[str, Dict[str, Any]] = {}
+    if evaluated:
+        try:
+            _bp_map = {bp.brief_id: bp for bp in approved_blueprints}
+            cps_results = await _score_cps_batch(
+                evaluated=evaluated,
+                blueprint_by_id=_bp_map,
+                domain=input_data.domain,
+                parent_span=pipeline_trace,
+                event_bus=event_bus,
+                task_id=task_id,
+            )
+        except Exception:
+            logger.warning("CPS scoring batch failed, continuing without CPS", exc_info=True)
+
     # ── Stage 5: Final HITL Review ────────────────────────────────
     _MAX_EDIT_ATTEMPTS = 2
     _MAX_REBRIEFS = 2
@@ -1087,6 +1185,11 @@ async def _run_pipeline_stages(
                             for d in last_eval.dimensions
                         },
                     }
+                # CPS scored at Stage 4.5; may be stale after edit/rebrief loops
+                # (acceptable for v1 — CPS is informational, not a gate)
+                cps_data = cps_results.get(brief_id)
+                if cps_data:
+                    eval_summary["cps"] = cps_data
 
                 # HITL Checkpoint 3: Final Content Review
                 set_current_span(stage5_span)
@@ -1233,12 +1336,27 @@ async def _run_pipeline_stages(
             bd = _brief_dir(artifact_dir, final_content.brief_id)
             final_path = bd / "final.md"
             final_path.write_text(final_content.markdown, encoding="utf-8")
+            auto_eval: Dict[str, Any] = {}
+            if history.cycles:
+                last_eval = history.cycles[-1]
+                auto_eval = {
+                    "overall_score": last_eval.overall_score,
+                    "overall_passed": last_eval.overall_passed,
+                    "dimensions": {
+                        d.dimension: {"score": d.score, "passed": d.passed}
+                        for d in last_eval.dimensions
+                    },
+                }
+            cps_data = cps_results.get(_brief_id)
+            if cps_data:
+                auto_eval["cps"] = cps_data
             pieces.append(
                 ContentPiece(
                     brief_id=final_content.brief_id,
                     title=final_content.title,
                     status=ContentStatus.APPROVED,
                     final_markdown=final_content.markdown,
+                    eval_summary=auto_eval,
                     artifact_path=str(final_path.relative_to(_PROJECT_ROOT)),
                 )
             )

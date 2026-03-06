@@ -155,6 +155,10 @@ class Settings(BaseSettings):
     audience_persona_generator_model: str = "sonar-deep-research"
     audience_persona_max_concurrent_generators: int = 3
 
+    # --- CPS Model (Citation Signal Predictor) ---
+    cps_enabled: bool = True
+    cps_target_weight: float = 0.5
+
     # Legacy / optional
     tavily_api_key_company_context: str | None = None
 

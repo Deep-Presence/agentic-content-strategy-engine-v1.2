@@ -39,6 +39,8 @@ dependencies = [
     "psycopg2-binary>=2.9",
     "alembic>=1.13",
     "pgvector>=0.3",
+    # CPS model — Markdown-to-HTML conversion for feature extraction
+    "markdown>=3.5.0",
 ]
 
 [project.optional-dependencies]

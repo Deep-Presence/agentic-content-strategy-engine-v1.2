@@ -3,7 +3,7 @@
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
 > **Stack:** Python 3.12 · LangGraph · DeepAgents · FastAPI · Pydantic v2 · LangSmith · LiteLLM
-> **Document Date:** 2026-03-06 (updated: Content Engine V1.3, Knowledge Base Phases 1-5, Site Audit P3 bug fixes)
+> **Document Date:** 2026-03-07 (updated: Audience Persona pipeline v2, CPS standalone endpoint, CPS Model integration)
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -64,6 +64,16 @@
    - 5c.11 [Pydantic Models (17 Models)](#5c11-pydantic-models-17-models)
    - 5c.12 [LangSmith Tracing Integration](#5c12-langsmith-tracing-integration)
    - 5c.13 [Test Coverage (260 tests)](#5c13-test-coverage-260-tests)
+5d. [Audience Persona Pipeline (Research v3)](#5d-audience-persona-pipeline-research-v3)
+   - 5d.1 [Architecture — 2-Agent Pipeline with 2 HITL Checkpoints](#5d1-architecture--2-agent-pipeline-with-2-hitl-checkpoints)
+   - 5d.2 [Agent 1 — Persona Suggester (Gemini Flash)](#5d2-agent-1--persona-suggester-gemini-flash)
+   - 5d.3 [Agent 2 — Profile Generator (Perplexity Deep Research)](#5d3-agent-2--profile-generator-perplexity-deep-research)
+   - 5d.4 [HITL-1: Brief Approval Graph](#5d4-hitl-1-brief-approval-graph)
+   - 5d.5 [HITL-2: Profile Review Graph](#5d5-hitl-2-profile-review-graph)
+   - 5d.6 [PersonaStorage — Versioned Filesystem Store](#5d6-personastorage--versioned-filesystem-store)
+   - 5d.7 [Pydantic Models (9 Models)](#5d7-pydantic-models-9-models)
+   - 5d.8 [API Endpoints (7 Total)](#5d8-api-endpoints-7-total)
+   - 5d.9 [Test Coverage (232 tests)](#5d9-test-coverage-232-tests)
 6. [Pipeline 2: Gap Analysis](#6-pipeline-2-gap-analysis)
    - 6.1 [Step 1 — Embed Company Assets](#61-step-1--embed-company-assets)
    - 6.2 [Step 2 — Generate Queries](#62-step-2--generate-queries)
@@ -197,11 +207,11 @@ The **Content Strategy Engine** is a multi-agent AI platform that automates the 
 
 0. **Site Audit Pipeline** (implemented) — A 6-step deterministic pipeline that audits website AI-readiness across 8 dimensions (crawlability, performance, on-page SEO, content extractability/AEO, schema markup, E-E-A-T, freshness, security). Scores each dimension 0–100 using penalty-based deductions, computes a weighted overall score, assigns a letter grade (A–F), and generates actionable Markdown + JSON reports. 100% deterministic — no LLM calls.
 
-1. **Research Artifacts Pipeline** (implemented) — Uses LLM agents with web research tools to produce company context documents, audience persona profiles, and writing style guides. Each artifact goes through a human-in-the-loop approval flow (approve / revise / reject) before being finalized. **Knowledge Base v2** (implemented 2026-03-05/06) replaces the monolithic agent with 5 specialist research agents, a versioned knowledge base (L2 docs), DAG-ordered execution with 3 HITL checkpoints, delta synthesis mode, staleness tracking with propagation, and health/refresh-stale API endpoints. 260 tests.
+1. **Research Artifacts Pipeline** (implemented) — Uses LLM agents with web research tools to produce company context documents, audience persona profiles, and writing style guides. Each artifact goes through a human-in-the-loop approval flow (approve / revise / reject) before being finalized. **Knowledge Base v2** (implemented 2026-03-05/06) replaces the monolithic agent with 5 specialist research agents, a versioned knowledge base (L2 docs), DAG-ordered execution with 3 HITL checkpoints, delta synthesis mode, staleness tracking with propagation, and health/refresh-stale API endpoints. 260 tests. **Audience Persona Pipeline v2** (implemented 2026-03-06) is a 2-agent architecture: Agent 1 (Gemini Flash) suggests 3–7 persona briefs → HITL-1 per-brief approval → Agent 2 (Perplexity deep research) generates full persona profiles in parallel → HITL-2 per-profile review. PersonaStorage versioned filesystem, KB staleness integration, 7 API endpoints, 232 tests.
 
 2. **Gap Analysis Pipeline** (implemented) — An 8-step data pipeline that embeds a company's web content, generates buyer-intent search queries, searches four AI platforms (ChatGPT, Claude, Perplexity, Google AI Overview), enriches the citations those platforms return, embeds everything into a shared vector space, computes semantic proximity analysis (SPA), generates interactive visualizations, and produces a gap report with actionable content recommendations.
 
-3. **Content Generation Engine v1.3** (implemented) — A 6-stage async pipeline that consumes the outputs of Pipelines 1 and 2 to automatically generate optimized content pieces that close the identified citation gaps. Two-phase context loading (ContextRouter), Strategic Planner (topic selection), Brief Builder (parallel blueprint generation), Orchestrator-Workers (5-agent chain: Outliner → Drafter → Fact Enricher → Formatter → Linker), Evaluator-Optimizer loop (E-E-A-T + Style + Factual judges, max 2 revisions), and LangGraph HITL for human review. LiteLLM abstraction for all LLM calls, LangSmith tracing (Langfuse fully removed).
+3. **Content Generation Engine v1.3** (implemented) — A 6-stage async pipeline that consumes the outputs of Pipelines 1 and 2 to automatically generate optimized content pieces that close the identified citation gaps. Two-phase context loading (ContextRouter), Strategic Planner (topic selection), Brief Builder (parallel blueprint generation), Orchestrator-Workers (5-agent chain: Outliner → Drafter → Fact Enricher → Formatter → Linker), Evaluator-Optimizer loop (E-E-A-T + Style + Factual judges, max 2 revisions), **Stage 4.5 CPS Scoring** (Citation Signal Predictor — predicts AI engine citation probability 0.0–1.0 per piece), and LangGraph HITL for human review. LiteLLM abstraction for all LLM calls, LangSmith tracing (Langfuse fully removed). **Standalone CPS endpoint** (`POST /api/v1/cps/score`) available for ad-hoc scoring.
 
 Additionally, a **Reddit Human-in-the-Loop Monitor** (implemented) monitors subreddits for threads matching a company's ICP persona, drafts contextual replies, and sends notifications via Slack/Discord.
 
@@ -211,7 +221,7 @@ A **Settings Pages API** sprint (2026-02-27) added 11 new endpoints across 3 fea
 
 A **3-phase database migration** (2026-02-27/28) established a hybrid filesystem + PostgreSQL architecture: Phase 1 created 31 ORM tables, 16 repositories, and 4 Alembic migrations using pure SQLAlchemy 2.0. Phase 2 decomposed authentication into a three-layer architecture (pure utilities → service protocol → dual Json/Db implementations). Phase 3 applied the same protocol pattern across all data services (gap, brand, content, TaskStore) with SQL analytics repositories replacing Python-based JSON parsing for heavy aggregations. All phases use a single opt-in switch (`DATABASE_URL`) with automatic fallback to JSON-backed services.
 
-**~2479 tests, 1 pre-existing failure (PB-39).** Full coverage across all pipelines (including site audit and Knowledge Base), API endpoints, data retrieval layers, settings management, knowledge document upload, auth services, DB repositories, and service layer protocols. Knowledge Base module adds 260 tests (214 core + 46 API).
+**~2568 tests, 1 pre-existing failure (PB-39).** Full coverage across all pipelines (including site audit, Knowledge Base, and Audience Persona), API endpoints, data retrieval layers, settings management, knowledge document upload, auth services, DB repositories, service layer protocols, and CPS model. Knowledge Base module: 260 tests. Audience Persona module: 232 tests. CPS model: 44 tests (7 skipped without torch).
 
 **Current production clients analyzed:** Ramp (corporate spend management), Carta (equity management platform), and Mynd.
 
@@ -341,7 +351,9 @@ content-strategy-engine/
 │   ├── models/                            # Pydantic v2 data schemas (shared across pipelines)
 │   │   ├── __init__.py                    # Exports: DraftNotification, RedditMonitorInput, RedditThread
 │   │   ├── artifacts.py                   # SourceDoc, FactRow, CompanyResearchInput, CompanyContextArtifact
-│   │   ├── personas.py                    # PersonaResearchInput, PersonaArtifact (with to_markdown())
+│   │   ├── audience_persona.py           # PersonaBrief, PersonaManifest, PersonaProfileEntry,
+│   │   │                                  #   PersonaAgentResult, AudiencePersonaInput, AudiencePersonaOutput (9 models)
+│   │   ├── personas.py                    # PersonaResearchInput, PersonaArtifact (with to_markdown()) [v1 legacy]
 │   │   ├── style_guide.py                # StyleGuideResearchInput, WritingStyleGuideArtifact
 │   │   ├── gap_analysis.py               # 20+ models: GapAnalysisInput, SemanticUnit, QueryCluster,
 │   │   │                                  #   GeneratedQuery, CitationRef, PlatformResult, StructuralSignals,
@@ -350,6 +362,7 @@ content-strategy-engine/
 │   │   │                                  #   DiscoveredPage, SiteTreeNode, SiteDiscoveryResult
 │   │   ├── site_audit.py                 # SiteAuditInput, AuditFinding, PageAuditResult, DimensionScore, SiteAuditResult,
 │   │   │                                  #   SchemaDetectionResult, AEOReadinessResult, AIBotAccessResult, SitemapHealthResult
+│   │   ├── knowledge_base.py             # 17 KB models (KBManifest, KBDocVersion, etc.)
 │   │   ├── knowledge_docs.py             # KnowledgeDocument metadata model (upload tracking)
 │   │   ├── organization.py               # CompanyPipelineDefaults model (per-company pipeline overrides)
 │   │   └── reddit_hil.py                 # RedditMonitorInput, RedditThread, DraftNotification
@@ -377,21 +390,49 @@ content-strategy-engine/
 │   │
 │   ├── research/                          # Pipeline 1: Research Artifacts
 │   │   ├── __init__.py
-│   │   ├── agents/                        # DeepAgent definitions
+│   │   ├── agents/                        # DeepAgent definitions (v1 research agents)
 │   │   │   ├── __init__.py
 │   │   │   ├── base.py                    # get_store(), backend_factory(), _dbg(), artifact dir creation
 │   │   │   ├── company_research_agent.py  # Gemini + Perplexity, internet_search + read_local_text tools
 │   │   │   ├── persona_agent.py           # Gemini + Perplexity, 1-3 persona creation, ThreadPoolExecutor
 │   │   │   └── style_guide_agent.py       # Gemini + Perplexity, style guide creation, ThreadPoolExecutor
-│   │   ├── graphs/                        # LangGraph state machines
+│   │   ├── audience_persona/              # Audience Persona Pipeline v2 (2-agent architecture)
+│   │   │   ├── __init__.py
+│   │   │   ├── agents.py                  # Agent 1 (Gemini Flash suggester) + Agent 2 (Perplexity generator)
+│   │   │   ├── graph.py                   # 2 LangGraph HITL sub-graphs (brief review + profile review)
+│   │   │   ├── pipeline.py               # 4-phase orchestrator (preflight → suggest → generate → finalize)
+│   │   │   └── storage.py                 # PersonaStorage: versioned filesystem (manifest + brief + v{N}.md)
+│   │   ├── graphs/                        # LangGraph state machines (v1 research)
 │   │   │   ├── __init__.py
 │   │   │   ├── company_research.py        # Standalone company graph (agent→draft→approve→mirror)
 │   │   │   ├── persona_research.py        # Standalone persona graph (same pattern)
 │   │   │   ├── style_guide.py             # Standalone style guide graph (same pattern)
 │   │   │   └── pipeline.py                # Combined 3-stage orchestrator (company→persona→style)
+│   │   ├── prompts/                       # Prompt files for research agents
+│   │   │   ├── persona_suggester.py       # System + user prompts for AP Agent 1
+│   │   │   ├── persona_generator.py       # System + user prompts for AP Agent 2
+│   │   │   └── ...                        # KB agent prompts (6 files)
 │   │   └── tools/                         # Research-specific tools
 │   │       ├── __init__.py
 │   │       └── perplexity_client.py       # sonar-deep-research wrapper with citation formatting
+│   │
+│   ├── cps_model/                         # Citation Signal Predictor Model
+│   │   ├── __init__.py
+│   │   ├── config.py                      # TrainingConfig (Pydantic): loss, optimizer, encoder, predictor configs
+│   │   ├── scorer.py                      # CPSScorer: inference wrapper, from_checkpoint(), score_async()
+│   │   ├── best_model.pt                  # Trained model checkpoint (gitignored in prod)
+│   │   ├── scaler_params.npz             # Feature standardization params
+│   │   ├── model/
+│   │   │   ├── __init__.py
+│   │   │   ├── fusion_encoder.py          # FusionEncoder: 3-stream (semantic + sidecar + engine)
+│   │   │   ├── citation_predictor.py      # CitationPredictor: shared trunk + 4 per-engine heads
+│   │   │   └── feature_selector.py        # Feature selection configs (option_a/option_b)
+│   │   └── extractors/
+│   │       ├── __init__.py
+│   │       ├── base.py                    # BaseExtractor ABC
+│   │       ├── structural.py              # 12 HTML structure features (headers, lists, tables, etc.)
+│   │       ├── citability.py              # 9 text citability features (factual density, reading level, etc.)
+│   │       └── authority.py               # 9 URL authority features (domain, HTTPS, citations, etc.)
 │   │
 │   ├── gap_analysis/                      # Pipeline 2: Gap Analysis (8-step)
 │   │   ├── __init__.py
@@ -2165,6 +2206,189 @@ The KB pipeline uses the shared tracing module (`core/shared_tools/tracing.py`):
 
 ---
 
+## 5d. Audience Persona Pipeline (Research v3)
+
+### 5d.1 Architecture — 2-Agent Pipeline with 2 HITL Checkpoints
+
+**Files:** `core/research/audience_persona/pipeline.py` (orchestrator), `agents.py`, `graph.py`, `storage.py`
+
+The Audience Persona pipeline is a 2-agent architecture that replaces the monolithic persona research agent (§5.2) with a more structured approach. It produces detailed buyer persona profiles grounded in the company's Knowledge Base outputs.
+
+**Execution Flow:**
+```
+Phase 0: Preflight — validate KB outputs, load company context + reviews + knowledge docs
+    ↓
+Phase 1: Agent 1 (Gemini Flash) — Persona Suggester → 3-7 PersonaBriefs
+    ↓
+── HITL-1: Per-brief approval (approve / modify / reject + manual add) ──
+    ↓
+Phase 2: Agent 2 (Perplexity deep research) — Parallel Profile Generators
+    ↓
+── HITL-2: Per-profile review (approve / revise / reject) ──
+    ↓
+Phase 3: Finalize — update manifest, record KB synthesis version, emit completed
+```
+
+**Key Design Decisions:**
+- **Preflight check** validates Knowledge Base outputs exist before starting (company context required, customer reviews optional)
+- **KB staleness integration**: manifest records `kb_synthesis_version` — pipeline guard blocks re-runs unless KB has been updated
+- **Frozen ID map**: `_build_id_map()` creates deterministic `brief_id → persona_id` mapping with collision suffixing before parallel generation
+- **Semaphore-controlled concurrency**: `settings.audience_persona_max_concurrent_generators` limits parallel profile generators
+- **Storage lock**: `asyncio.Lock()` serializes filesystem writes during parallel generation
+
+### 5d.2 Agent 1 — Persona Suggester (Gemini Flash)
+
+**File:** `core/research/audience_persona/agents.py` → `run_persona_suggester()`
+
+**LLM:** Google Gemini Flash (`gemini-3-flash-preview`) via raw `google.genai` SDK
+**API Key:** `GOOGLE_API_KEY_AUDIENCE_PERSONA` (fallback: `GOOGLE_API_KEY_PERSONA_RESEARCH_DEEPAGENT`)
+
+**Input Context:**
+- Company context markdown (max 15K chars, from KB or company_context artifact)
+- Customer reviews markdown (max 10K chars, from KB)
+- Knowledge documents text (max 50K chars, from uploaded docs)
+- Additional constraints (optional user-provided guidance)
+
+**Output:** JSON array of 3–7 `PersonaBrief` objects with fields: `persona_name`, `tagline`, `description`, `rationale[]`
+
+**Error Handling:**
+- Response MIME type forced to `application/json`
+- Tolerant JSON parsing: strips code fences, finds `[...]` boundaries
+- Validates each brief (empty names rejected, duplicate names deduplicated)
+- Retry once on validation failure with repair prompt
+- Returns empty list on complete failure (never raises)
+
+### 5d.3 Agent 2 — Profile Generator (Perplexity Deep Research)
+
+**File:** `core/research/audience_persona/agents.py` → `run_persona_profile_generator()`
+
+**LLM:** Perplexity `sonar-deep-research` via `perplexity_client.research()`
+**Timeout:** 300s per persona
+
+**Input:** System + user prompt built from `PersonaBrief` + company context + reviews + knowledge docs
+**Output:** `PersonaAgentResult` with full persona profile markdown + optional structured JSON sidecar
+
+**Revision Support:** When `revision_note` is provided (from HITL-2 revise decision), the prompt includes `## Reviewer Feedback` section appended to the user prompt.
+
+**Error Handling:** Each generator runs independently — failures produce `PersonaAgentResult(error=...)` without blocking other generators.
+
+### 5d.4 HITL-1: Brief Approval Graph
+
+**File:** `core/research/audience_persona/graph.py` → `build_ap_brief_review_graph()`
+
+**State Schema:** `APBriefReviewState(TypedDict)` — `briefs`, `checkpoint`, `auto_approve`, `batch_decision`, `brief_reviews`, `added_briefs`, `approved_briefs`
+
+**Graph Nodes:** `present` → `gate` (interrupt) → route → END
+
+**Approval Decisions:**
+| Batch Decision | Behavior |
+|----------------|----------|
+| `approve_all` | All original briefs approved |
+| `reject_all` | No briefs approved — pipeline ends gracefully |
+| `partial` | Per-brief decisions: approve / modify / reject |
+
+**Partial Mode Rules (fail-closed):**
+- Unknown `brief_id`s silently skipped
+- Duplicate `brief_id`s: first-wins
+- Unreviewed briefs: rejected
+- Modified briefs require non-empty `persona_name`
+- Manually added briefs get unique IDs, `source="manual"`
+
+### 5d.5 HITL-2: Profile Review Graph
+
+**File:** `core/research/audience_persona/graph.py` → `build_ap_profile_review_graph()`
+
+**State Schema:** `APProfileReviewState(TypedDict)` — `profile_summaries`, `checkpoint`, `auto_approve`, `profile_reviews`, `approved_profiles`, `revision_requests`, `rejected_profiles`
+
+**Per-Profile Decisions:**
+| Decision | Action |
+|----------|--------|
+| `approve` | Profile marked as `fresh` in manifest |
+| `revise` | Re-run profile generator with `## Reviewer Feedback` appended |
+| `reject` | Profile marked as `archived` in manifest |
+
+**Fail-open policy:** Unreviewed profiles are approved (profiles already generated — safer to keep than discard).
+
+### 5d.6 PersonaStorage — Versioned Filesystem Store
+
+**File:** `core/research/audience_persona/storage.py`
+
+**Layout:**
+```
+artifacts/audience_personas/{slug}/
+    _manifest.json                    # PersonaManifest: slug, personas{}, kb_synthesis_version
+    {persona_id}/
+        brief.json                     # PersonaBrief (suggester output or manual entry)
+        v1.md                          # Profile version 1 (markdown)
+        v1.json                        # Structured sidecar (optional)
+        v2.md                          # Profile version 2 (revision)
+        ...
+```
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| `write_version()` | Writes new version file + updates manifest (SHA-256, word count, timestamps) |
+| `read_version(persona_id, version)` | Read specific version (md + optional json) |
+| `get_latest_version(persona_id)` | Read latest version from manifest |
+| `list_active_persona_ids()` | Return IDs with status `fresh`/`stale`/`pending_review` |
+| `list_persona_paths()` | Return paths to latest `.md` files (for content engine integration) |
+| `check_staleness(persona_id, threshold_days)` | Default 60 days |
+| `check_kb_staleness(kb_synthesis_version)` | Compare manifest's KB version vs current |
+| `mark_persona_status(persona_id, status)` | Update persona status in manifest |
+
+**Atomicity:** Manifest writes use `tempfile.mkstemp()` + `os.replace()` for crash safety. Version files are written before manifest update.
+
+### 5d.7 Pydantic Models (9 Models)
+
+**File:** `core/models/audience_persona.py`
+
+| Model | Fields | Purpose |
+|-------|--------|---------|
+| `PersonaBriefDecision` | Enum: approve, modify, reject | HITL-1 per-brief decision |
+| `PersonaProfileDecision` | Enum: approve, revise, reject | HITL-2 per-profile decision |
+| `PersonaBrief` | brief_id, persona_name, tagline, description, rationale[], source | Agent 1 output / manual entry |
+| `PersonaBriefReview` | brief_id, decision, modified_brief? | HITL-1 review item |
+| `PersonaProfileEntry` | persona_id, persona_name, tagline, kind (icp/secondary), current_version, status, sha256, word_count | Manifest entry |
+| `PersonaManifest` | slug, company_name, personas{}, kb_synthesis_version, kb_synthesis_updated_at | Top-level manifest |
+| `PersonaAgentResult` | brief_id, persona_name, content_md, content_json?, word_count, execution_time_s, error? | Agent 2 result |
+| `AudiencePersonaInput` | company_name, domain?, max_personas (3-7), auto_approve_checkpoints[], language, region? | Pipeline input |
+| `AudiencePersonaOutput` | slug, manifest, briefs_suggested, briefs_approved, profiles_generated, persona_results{} | Pipeline output |
+
+### 5d.8 API Endpoints (7 Total)
+
+**Router:** `api/routers/audience_persona.py` — prefix `/api/v1/audience-persona`
+**Schemas:** `api/schemas/audience_persona.py`
+
+| # | Method | Path | Description | Auth |
+|---|--------|------|-------------|------|
+| 1 | `POST` | `/start` | Launch AP pipeline (202) or skip if exists (200) | member/superuser |
+| 2 | `GET` | `/{run_id}/status` | Get pipeline status | any auth |
+| 3 | `POST` | `/{run_id}/approve/briefs` | HITL-1 brief approval | member/superuser |
+| 4 | `POST` | `/{run_id}/approve/profiles` | HITL-2 profile approval | member/superuser |
+| 5 | `POST` | `/{slug}/add-persona` | Standalone persona generation (202) | member/superuser |
+| 6 | `POST` | `/{slug}/personas/{persona_id}/approve` | Standalone approve/reject | member/superuser |
+| 7 | `GET` | `/{slug}/personas` | List all personas for a company | any auth |
+
+**Pipeline Guard:** If approved personas already exist AND KB hasn't been updated since last AP run, returns HTTP 200 with `already_exists=true`. Override with `force_rerun=true`.
+
+**Tenant Isolation:** All endpoints verify `company_slug` matches authenticated user's company.
+
+### 5d.9 Test Coverage (232 tests)
+
+| File | Tests | Scope |
+|------|-------|-------|
+| `tests/research/audience_persona/test_models_ap.py` | 30 | 9 Pydantic models, defaults, enums |
+| `tests/research/audience_persona/test_storage_ap.py` | 32 | PersonaStorage: manifest CRUD, versioning, staleness |
+| `tests/research/audience_persona/test_agents_ap.py` | 30 | Suggester + generator, retry logic, knowledge docs |
+| `tests/research/audience_persona/test_graph_ap.py` | 30 | 2 HITL graphs, auto-approve, interrupt/resume |
+| `tests/research/audience_persona/test_pipeline_ap.py` | 45 | Full pipeline: preflight, ID map, parallel gen, HITL flow |
+| `tests/research/audience_persona/test_prompts_ap.py` | 20 | Prompt builders, revision notes |
+| `tests/api/test_audience_persona_router.py` | 45 | 7 endpoints: start, status, approve, add-persona, list |
+| **Total** | **232** | |
+
+---
+
 ## 6. Pipeline 2: Gap Analysis
 
 ### Overview
@@ -3159,6 +3383,44 @@ class FeedbackRoute(str, Enum):
 `_run_targeted_revision()` chain: drafter (if needed) -> fact_checker (if needed) -> inline `_count_structural_elements()` (no formatter step).
 
 **Early-stop:** If score improvement < 0.02 between revision cycles, stop revising and flag as `"section_level"`.
+
+### 7.8.1 Stage 4.5 — CPS Scoring (Citation Signal Predictor)
+
+**Files:** `core/cps_model/scorer.py`, `core/content_engine/pipeline_v13.py` (Stage 4.5 block)
+
+After evaluator approval and before HITL-3 review, every content piece is scored by the CPS model to predict how likely it is to be cited by AI answer engines.
+
+**Architecture:**
+- **CPS Model** (~600K params): FusionEncoder (3-stream: semantic projection 1536→256, structural sidecar MLP, engine conditioning 4→16) → CitationPredictor (shared trunk + 4 per-engine heads)
+- **Feature Extraction**: 12 structural (HTML), 9 citability (text), 9 authority (URL) = 30 features, delegated to `core/cps_model/extractors/`
+- **Embeddings**: OpenAI `text-embedding-3-small` (1536-dim) via `async_embed_texts()`
+- **Output**: CPS score 0.0–1.0 per engine (ChatGPT, Claude, Gemini, Perplexity) + weighted average
+
+**Pipeline Integration:**
+```
+Stage 4 (Evaluator) → Stage 4.5 (CPS) → Stage 5 (HITL-3)
+```
+
+- `_score_cps_batch()` scores all evaluated pieces via `asyncio.gather()` with per-piece error handling
+- CPS results stored in `eval_summary["cps"]` (Dict[str, Any]) — no Pydantic model changes
+- CPS is **informational only** — does not gate approval/rejection
+- Graceful degradation: if `torch` is not installed or model checkpoint is missing, scoring is silently skipped
+
+**Return Schema:**
+```json
+{
+  "cps_score": 0.72,
+  "per_engine": {"chatgpt_search": 0.75, "claude_search": 0.68, "gemini_search": 0.71, "perplexity": 0.74},
+  "per_query": [{"query": "best CRM software", "cps_score": 0.72}],
+  "model_version": "v1",
+  "feature_config": "option_b_full31",
+  "target_weight": 0.5
+}
+```
+
+**Settings:** `cps_enabled` (bool, default True), `cps_target_weight` (float, default 0.5)
+
+**Tests:** 44 tests in `tests/cps_model/` (scorer + extractors) + `tests/content_engine/test_cps_integration.py` (pipeline integration)
 
 ### 7.9 Stage 5 — Human Review (LangGraph HITL)
 
@@ -4941,9 +5203,9 @@ scripts/run_server.py ← API entry point (uvicorn)
 ### Critical Issues
 
 #### 1. PARTIAL TEST COVERAGE (Significantly Improved)
-**Severity:** Low (downgraded from Critical — 2026-02-15, improved through 2026-02-28)
-**Description:** ~1978 total tests (~1843 passed + 135 skipped), 1 pre-existing failure (PB-39). **Site audit module: 636 tests** (585 core + 51 API — models, config, crawler, checks, schema, AEO, steps, repo, integration, API endpoints). Research pipeline: 109 tests. API layer: 526+ tests. Content engine: 57 tests. Gap analysis: comprehensive coverage. Database layer: 44 tests (auto-skip without `TEST_DATABASE_URL`). Reddit HIL still has zero tests.
-**Impact:** All major pipelines (including site audit), all API endpoints, settings management, knowledge document upload, and database layer have regression protection. Only Reddit HIL remains unprotected.
+**Severity:** Low (downgraded from Critical — 2026-02-15, improved through 2026-03-06)
+**Description:** ~2568 total tests, 1 pre-existing failure (PB-39). **Site audit module: 793 tests.** **Knowledge Base: 260 tests.** **Audience Persona: 232 tests.** **Content engine: 437 tests** (v1.0 + v1.3). **CPS model: 44 tests** (7 skipped without torch). Research pipeline: 109 tests. API layer: 526+ tests. Gap analysis: comprehensive coverage. Database layer: 44 tests (auto-skip without `TEST_DATABASE_URL`). Reddit HIL still has zero tests.
+**Impact:** All major pipelines (including site audit, knowledge base, audience persona, CPS model), all API endpoints, settings management, knowledge document upload, and database layer have regression protection. Only Reddit HIL remains unprotected.
 **Recommendation:** Add tests for Reddit HIL (webhook delivery, PRAW mocking). Run DB tests with `TEST_DATABASE_URL` in CI to validate full PostgreSQL integration.
 
 #### 2. InMemoryStore — Agent Memory Not Persistent
@@ -8950,9 +9212,15 @@ def test_other_user_cannot_read_test_co_profile(self, other_client, test_company
 | 2026-03-06 | §20 | Updated component maturity table: site audit 793 tests, content engine v1.3 437 tests, LangSmith tracing, KB 260 tests. Added 3 sprint entries (content-engine-v13, site-audit-p3-bugfixes, knowledge-base-v1-v5) | T-docs-xref |
 | 2026-03-06 | §A | Updated API key matrix: Langfuse → LangSmith, added 3 KB agent entries | T-docs-xref |
 
+| 2026-03-07 | TOC | Added §5d Audience Persona Pipeline (Research v3) with 9 subsection links | T-ap-docs |
+| 2026-03-07 | §1 | Updated Executive Summary — ~2568 tests, Audience Persona v2 description, CPS standalone endpoint, updated pipeline 3 description | T-ap-cps-docs |
+| 2026-03-07 | §4 | Added `core/models/audience_persona.py`, `core/research/audience_persona/` (5 files), `core/cps_model/` (9 files), `core/research/prompts/` persona files, `api/routers/audience_persona.py`, `api/routers/cps.py`, `api/schemas/audience_persona.py`, `api/schemas/cps.py` to directory structure | T-ap-cps-docs |
+| 2026-03-07 | §5d | **NEW SECTION** — Audience Persona Pipeline (Research v3): 9 subsections covering 2-agent architecture (Gemini Flash suggester + Perplexity generator), 2 HITL checkpoints (brief approval + profile review), PersonaStorage versioned filesystem, KB staleness integration, frozen ID map, 9 Pydantic models, 7 API endpoints, 232 tests | T-ap-phase-d |
+| 2026-03-07 | §18 | Updated test coverage: ~2568 tests with AP (232), KB (260), CPS (44), site audit (793), content engine (437) breakdowns | T-ap-cps-docs |
+
 ---
 
 *End of Comprehensive System Documentation*
-*Generated: 2026-03-06 (updated: Content Engine V1.3, Knowledge Base Phases 1-5, Site Audit P3 bug fixes)*
-*Total codebase files analyzed: ~350+*
+*Generated: 2026-03-07 (updated: Audience Persona Pipeline v2, CPS standalone endpoint, Content Engine V1.3, Knowledge Base Phases 1-5, Site Audit P3 bug fixes)*
+*Total codebase files analyzed: ~380+*
 *Total lines of documentation: ~9200+*

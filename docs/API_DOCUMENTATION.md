@@ -36,6 +36,14 @@
 | `POST` | `/api/v1/knowledge-base/{run_id}/approve` | Submit HITL approval (KB) | 200 |
 | `GET` | `/api/v1/knowledge-base/{slug}/health` | KB health & staleness report | 200 |
 | `POST` | `/api/v1/knowledge-base/{slug}/refresh-stale` | Refresh only stale KB docs | 202 |
+| `POST` | `/api/v1/audience-persona/start` | Launch audience persona pipeline | 202 |
+| `GET` | `/api/v1/audience-persona/{run_id}/status` | Get audience persona status | 200 |
+| `POST` | `/api/v1/audience-persona/{run_id}/approve/briefs` | HITL-1 brief approval (AP) | 200 |
+| `POST` | `/api/v1/audience-persona/{run_id}/approve/profiles` | HITL-2 profile approval (AP) | 200 |
+| `POST` | `/api/v1/audience-persona/{slug}/add-persona` | Add standalone persona | 202 |
+| `POST` | `/api/v1/audience-persona/{slug}/personas/{persona_id}/approve` | Approve/reject standalone persona | 200 |
+| `GET` | `/api/v1/audience-persona/{slug}/personas` | List all personas | 200 |
+| `POST` | `/api/v1/cps/score` | Score content for citation probability | 200 |
 | `GET` | `/api/v1/tasks` | List all tasks (with filters) | 200 |
 | `GET` | `/api/v1/tasks/{task_id}` | Get task detail | 200 |
 | `POST` | `/api/v1/tasks/{task_id}/cancel` | Cancel a running task | 200 |
@@ -1316,6 +1324,31 @@ Submit final content review after Workers + Evaluator produce the content.
 | `editor_notes` | string | No | `null` | Editing feedback (max 5000 chars) |
 | `rethink` | bool | No | `false` | If true on reject, trigger major direction change |
 
+**CPS Score in Review:** The HITL-3 review state includes a CPS (Citation Signal Predictor) score in `eval_summary.cps` when available. This predicts how likely the content is to be cited by AI answer engines (0.0–1.0). The CPS score is informational and does not gate approval.
+
+```json
+{
+  "eval_summary": {
+    "overall_score": 0.85,
+    "overall_passed": true,
+    "dimensions": { ... },
+    "cps": {
+      "cps_score": 0.72,
+      "per_engine": {
+        "chatgpt_search": 0.75,
+        "claude_search": 0.68,
+        "gemini_search": 0.71,
+        "perplexity": 0.74
+      },
+      "per_query": [{"query": "best CRM software", "cps_score": 0.72}],
+      "model_version": "v1",
+      "feature_config": "option_b_full31",
+      "target_weight": 0.5
+    }
+  }
+}
+```
+
 ---
 
 ## 13. Task Management
@@ -2168,7 +2201,367 @@ Per-competitor visibility metrics.
 
 ---
 
-## 21. Server-Sent Events (SSE)
+## 21. Audience Persona Pipeline
+
+### Start Audience Persona Pipeline
+
+```
+POST /api/v1/audience-persona/start
+```
+
+**Auth:** `member` or `superuser` (Bearer token required)
+
+**Request Body:**
+```json
+{
+  "company_name": "Ramp",
+  "domain": "ramp.com",
+  "product_slug": null,
+  "max_personas": 5,
+  "auto_approve_checkpoints": [],
+  "force_rerun": false,
+  "language": "en",
+  "region": null,
+  "additional_constraints": null
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `company_name` | string | Yes | Company name (derives slug) |
+| `domain` | string | Yes | Company domain |
+| `product_slug` | string | No | Product scope (creates `{slug}__{product}` effective slug) |
+| `max_personas` | int | No | 3-7 personas to generate (default: 5) |
+| `auto_approve_checkpoints` | int[] | No | Checkpoint numbers to auto-approve: `[1]` = briefs, `[2]` = profiles, `[1,2]` = both |
+| `force_rerun` | bool | No | Override pipeline guard (default: false) |
+| `language` | string | No | Output language (default: "en") |
+| `region` | string | No | Geographic focus |
+| `additional_constraints` | string | No | Custom guidance for persona generation |
+
+**Response (202 — Pipeline Launched):**
+```json
+{
+  "run_id": "550e8400-...",
+  "pipeline": "audience_persona",
+  "company_slug": "ramp",
+  "product_slug": null,
+  "effective_slug": "ramp",
+  "status": "running",
+  "created_at": "2026-03-06T..."
+}
+```
+
+**Response (200 — Already Exists):**
+When approved personas already exist and KB hasn't been updated since last AP run:
+```json
+{
+  "run_id": "existing-ramp",
+  "pipeline": "audience_persona",
+  "company_slug": "ramp",
+  "status": "already_exists",
+  "already_exists": true,
+  "message": "Audience personas already exist (3 approved). Pass force_rerun=true to re-run."
+}
+```
+
+### Get Audience Persona Status
+
+```
+GET /api/v1/audience-persona/{run_id}/status
+```
+
+**Auth:** Any authenticated user
+
+**Response:** Standard `TaskResponse` with `approval_payload` containing HITL stage details.
+
+### HITL-1: Brief Approval
+
+```
+POST /api/v1/audience-persona/{run_id}/approve/briefs
+```
+
+**Auth:** `member` or `superuser`
+
+Called when the pipeline pauses at HITL-1 (persona brief review). The `approval_payload` in the task status will contain the suggested briefs.
+
+**Request Body:**
+```json
+{
+  "batch_decision": "partial",
+  "brief_reviews": [
+    {
+      "brief_id": "pb-abc12345",
+      "decision": "approve"
+    },
+    {
+      "brief_id": "pb-def67890",
+      "decision": "modify",
+      "modified_brief": {
+        "persona_name": "VP of Engineering",
+        "tagline": "Technical decision-maker",
+        "description": "Updated description...",
+        "rationale": ["Updated rationale"]
+      }
+    },
+    {
+      "brief_id": "pb-ghi11111",
+      "decision": "reject"
+    }
+  ],
+  "added_briefs": [
+    {
+      "persona_name": "Startup Founder",
+      "tagline": "Early-stage bootstrapper",
+      "description": "A manually added persona...",
+      "rationale": ["Custom reason"]
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `batch_decision` | `"approve_all" \| "partial" \| "reject_all"` | Batch decision for all briefs |
+| `brief_reviews` | array | Per-brief decisions (required for `partial`) |
+| `brief_reviews[].decision` | `"approve" \| "modify" \| "reject"` | Decision for this brief |
+| `brief_reviews[].modified_brief` | object | Modified brief data (required for `modify`) |
+| `added_briefs` | array | Manually added persona briefs |
+
+**Response:**
+```json
+{
+  "status": "accepted",
+  "stage": "persona_brief_review",
+  "message": "Brief approval submitted: partial"
+}
+```
+
+### HITL-2: Profile Approval
+
+```
+POST /api/v1/audience-persona/{run_id}/approve/profiles
+```
+
+**Auth:** `member` or `superuser`
+
+Called when the pipeline pauses at HITL-2 (profile review). The `approval_payload` in the task status will contain profile summaries with content previews.
+
+**Request Body:**
+```json
+{
+  "profile_reviews": [
+    {
+      "persona_id": "vp-engineering",
+      "decision": "approve"
+    },
+    {
+      "persona_id": "startup-founder",
+      "decision": "revise",
+      "revision_note": "Add more detail about pain points with expense management."
+    },
+    {
+      "persona_id": "finance-director",
+      "decision": "reject"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `profile_reviews` | array | Per-profile decisions (min 1 required) |
+| `profile_reviews[].persona_id` | string | Persona ID (lowercase alphanumeric + hyphens) |
+| `profile_reviews[].decision` | `"approve" \| "revise" \| "reject"` | Decision for this profile |
+| `profile_reviews[].revision_note` | string | Feedback for revision (required for `revise`) |
+
+**Response:**
+```json
+{
+  "status": "accepted",
+  "stage": "persona_profile_review",
+  "message": "Profile approval submitted"
+}
+```
+
+### Add Standalone Persona
+
+```
+POST /api/v1/audience-persona/{slug}/add-persona
+```
+
+**Auth:** `member` or `superuser`
+
+Generates a single persona profile outside the pipeline flow. Creates a brief, runs Agent 2 (Perplexity deep research), and stores the result. The profile will need standalone approval afterwards.
+
+**Request Body:**
+```json
+{
+  "persona_name": "CFO at Series B Startup",
+  "tagline": "Budget-conscious finance leader",
+  "description": "A hands-on CFO at a fast-growing startup...",
+  "rationale": ["High-value segment", "Underserved by current content"]
+}
+```
+
+**Response (202):**
+```json
+{
+  "persona_id": "cfo-at-series-b-startup",
+  "task_id": "550e8400-..."
+}
+```
+
+### Approve/Reject Standalone Persona
+
+```
+POST /api/v1/audience-persona/{slug}/personas/{persona_id}/approve
+```
+
+**Auth:** `member` or `superuser`
+
+Approves or rejects a persona in `pending_review` status (e.g., after standalone add-persona generation).
+
+**Request Body:**
+```json
+{
+  "decision": "approve"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `decision` | `"approve" \| "reject"` | Approve sets status to `fresh`, reject sets to `archived` |
+
+**Response:**
+```json
+{
+  "persona_id": "cfo-at-series-b-startup",
+  "status": "fresh"
+}
+```
+
+### List Personas
+
+```
+GET /api/v1/audience-persona/{slug}/personas
+```
+
+**Auth:** Any authenticated user
+
+Returns all personas for a company with their current status, version, and word count.
+
+**Response:**
+```json
+{
+  "slug": "ramp",
+  "personas": [
+    {
+      "persona_id": "vp-engineering",
+      "persona_name": "VP of Engineering",
+      "tagline": "Technical decision-maker",
+      "kind": "icp",
+      "status": "fresh",
+      "current_version": 2,
+      "last_updated": "2026-03-06T...",
+      "created_by": "agent",
+      "word_count": 3200
+    }
+  ],
+  "total": 3
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `fresh` | Approved and current |
+| `stale` | Approved but outdated (>60 days or KB updated) |
+| `pending_review` | Generated, awaiting approval |
+| `archived` | Rejected or superseded |
+| `missing` | Expected but not yet generated |
+
+---
+
+## 22. CPS Scoring (Citation Signal Predictor)
+
+### Score Content
+
+```
+POST /api/v1/cps/score
+```
+
+**Auth:** Any authenticated user (Bearer token required)
+
+Scores markdown content for citation probability across 4 AI answer engines. Returns a CPS score (0.0–1.0) indicating how likely the content is to be cited when AI engines answer the given queries. Requires PyTorch and the model checkpoint to be available on the server.
+
+**Request Body:**
+```json
+{
+  "content_markdown": "# Best CRM Software for Small Business\n\nWhen choosing a CRM...",
+  "target_queries": [
+    "best CRM software",
+    "CRM for small business"
+  ],
+  "content_url": "https://example.com/crm-guide"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `content_markdown` | string | Yes | Markdown content to score (min 50 chars) |
+| `target_queries` | string[] | Yes | 1-10 search queries to score against |
+| `content_url` | string | No | URL for authority feature extraction (default: `https://example.com`) |
+
+**Response (200):**
+```json
+{
+  "cps_score": 0.72,
+  "per_engine": {
+    "chatgpt_search": 0.75,
+    "claude_search": 0.68,
+    "gemini_search": 0.71,
+    "perplexity": 0.74
+  },
+  "per_query": [
+    {"query": "best CRM software", "cps_score": 0.73},
+    {"query": "CRM for small business", "cps_score": 0.71}
+  ],
+  "model_version": "v1",
+  "feature_config": "option_a_top11",
+  "target_weight": 0.5
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `cps_score` | float | Overall citation probability (0.0–1.0) — average across all engines |
+| `per_engine` | object | Per-engine scores: `chatgpt_search`, `claude_search`, `gemini_search`, `perplexity` |
+| `per_query` | array | Per-query average scores across all engines |
+| `model_version` | string | Model version identifier |
+| `feature_config` | string | Feature selection config used (e.g., `option_a_top11`, `option_b_full31`) |
+| `target_weight` | float | Contrastive vs regression signal weight |
+
+**Score Interpretation:**
+
+| CPS Score | Interpretation |
+|-----------|----------------|
+| 0.0 – 0.2 | Very unlikely to be cited |
+| 0.2 – 0.4 | Low citation probability |
+| 0.4 – 0.6 | Moderate citation probability |
+| 0.6 – 0.8 | High citation probability |
+| 0.8 – 1.0 | Very high citation probability |
+
+**Error Responses:**
+- `503` — CPS scoring unavailable (torch not installed, model checkpoint missing, or CPS disabled in settings)
+- `500` — CPS scoring failed during inference
+
+**Notes:**
+- CPS scoring is also integrated into Content Engine v1.3 as Stage 4.5 (between evaluator and HITL-3). The standalone endpoint is for ad-hoc scoring outside the pipeline.
+- Settings: `cps_enabled` (bool, default `true`), `cps_target_weight` (float, default `0.5`)
+- The model extracts 30 features: 12 structural (HTML), 9 citability (text), 9 authority (URL)
+
+---
+
+## 23. Server-Sent Events (SSE)
 
 ### Endpoint
 
@@ -2192,6 +2585,9 @@ GET /api/v1/tasks/{task_id}/events
 | `completed` | `{ "pipeline": "..." }` | Pipeline finished successfully |
 | `failed` | `{ "error": "exception message" }` | Pipeline encountered an error |
 | `cancelled` | `{}` | Task was cancelled |
+| `ap_phase_start` | `{ "phase": 0-3, "agents": [...] }` | Audience Persona phase begins |
+| `ap_agent_complete` | `{ "agent": "...", "persona_name": "...", ... }` | AP agent finished |
+| `ap_phase_complete` | `{ "phase": 0-3 }` | AP phase finished |
 
 ### Terminal Events
 
@@ -2203,7 +2599,7 @@ The browser's `EventSource` automatically sends `Last-Event-ID` on reconnection.
 
 ---
 
-## 22. Error Handling
+## 24. Error Handling
 
 ### Error Response Shape
 
@@ -2231,7 +2627,7 @@ The browser's `EventSource` automatically sends `Last-Event-ID` on reconnection.
 
 ---
 
-## 23. Data Models Reference
+## 25. Data Models Reference
 
 ### Common Response Models
 
@@ -2574,9 +2970,99 @@ interface PipelineDefaultsResponse {
 }
 ```
 
+### Audience Persona Models
+
+```typescript
+interface AudiencePersonaStartRequest {
+  company_name: string;
+  domain: string;
+  product_slug?: string;
+  max_personas?: number;              // 3-7, default 5
+  auto_approve_checkpoints?: number[]; // [1]=briefs, [2]=profiles
+  force_rerun?: boolean;
+  language?: string;
+  region?: string;
+  additional_constraints?: string;
+}
+
+interface PersonaBriefApprovalRequest {
+  batch_decision: 'approve_all' | 'partial' | 'reject_all';
+  brief_reviews?: BriefReviewItem[];
+  added_briefs?: ManualBriefItem[];
+}
+
+interface BriefReviewItem {
+  brief_id: string;
+  decision: 'approve' | 'modify' | 'reject';
+  modified_brief?: ManualBriefItem;
+}
+
+interface ManualBriefItem {
+  persona_name: string;
+  tagline?: string;
+  description?: string;
+  rationale?: string[];
+}
+
+interface PersonaProfileApprovalRequest {
+  profile_reviews: ProfileReviewItem[];
+}
+
+interface ProfileReviewItem {
+  persona_id: string;                 // ^[a-z0-9][a-z0-9-]*$
+  decision: 'approve' | 'revise' | 'reject';
+  revision_note?: string;
+}
+
+interface PersonaListItem {
+  persona_id: string;
+  persona_name: string;
+  tagline: string;
+  kind: 'icp' | 'secondary';
+  status: 'fresh' | 'stale' | 'missing' | 'pending_review' | 'archived';
+  current_version: number;
+  last_updated: string | null;
+  created_by: 'agent' | 'manual' | 'hybrid';
+  word_count: number;
+}
+
+interface PersonaListResponse {
+  slug: string;
+  personas: PersonaListItem[];
+  total: number;
+}
+```
+
+### CPS Scoring Models
+
+```typescript
+interface CPSScoreRequest {
+  content_markdown: string;           // Min 50 chars
+  target_queries: string[];           // 1-10 queries
+  content_url?: string;               // Default: "https://example.com"
+}
+
+interface CPSScoreResponse {
+  cps_score: number;                  // 0.0-1.0 overall
+  per_engine: {
+    chatgpt_search: number;
+    claude_search: number;
+    gemini_search: number;
+    perplexity: number;
+  };
+  per_query: Array<{
+    query: string;
+    cps_score: number;
+  }>;
+  model_version: string;
+  feature_config: string;
+  target_weight: number;
+}
+```
+
 ---
 
-## 24. Artifact Directory Structure
+## 26. Artifact Directory Structure
 
 ```
 artifacts/
@@ -2630,6 +3116,18 @@ artifacts/
 │       ├── brand_perception.md
 │       └── synthesis.md
 │
+├── audience_personas/                   ← Versioned personas
+│   └── ramp/
+│       ├── _manifest.json               ← PersonaManifest (slug, personas{}, kb_synthesis_version)
+│       ├── vp-engineering/
+│       │   ├── brief.json               ← PersonaBrief (suggester output)
+│       │   ├── v1.md                    ← Profile version 1
+│       │   ├── v1.json                  ← Structured sidecar (optional)
+│       │   └── v2.md                    ← Profile version 2 (revision)
+│       └── startup-founder/
+│           ├── brief.json
+│           └── v1.md
+│
 ├── knowledge_docs/                      ← Uploaded documents
 │   └── ramp/
 │       ├── _index.json
@@ -2652,8 +3150,11 @@ artifacts/
 | Company context | `{slug}.md` | `ramp.md` |
 | Company context draft | `{slug}.draft.md` | `ramp.draft.md` |
 | Product-scoped | `{slug}__{product}.md` | `ramp__expense-mgmt.md` |
-| Persona (ICP) | `{slug}__persona-icp.md` | `ramp__persona-icp.md` |
-| Persona (secondary) | `{slug}__persona-secondary-{n}.md` | `ramp__persona-secondary-1.md` |
+| Persona (ICP) [v1] | `{slug}__persona-icp.md` | `ramp__persona-icp.md` |
+| Persona (secondary) [v1] | `{slug}__persona-secondary-{n}.md` | `ramp__persona-secondary-1.md` |
+| Audience Persona [v2] | `{slug}/{persona_id}/v{N}.md` | `ramp/vp-engineering/v1.md` |
+| Audience Persona brief | `{slug}/{persona_id}/brief.json` | `ramp/vp-engineering/brief.json` |
+| Audience Persona manifest | `{slug}/_manifest.json` | `ramp/_manifest.json` |
 | Style guide | `{slug}.md` | `ramp.md` |
 | Gap analysis | `{slug}/{file}` | `ramp/gap_report.json` |
 | Content | `{slug}/content/brief-{id}/{file}` | `ramp/content/brief-001/final.md` |
@@ -2670,3 +3171,4 @@ artifacts/
 | **Gap Analysis** | gap_analysis/{slug}/ | `gap_report.json` — structured data, `visualizations/*.html` |
 | **Content** | content/{slug}/ | `briefs.json` — brief list, `content/brief-{id}/final.md` |
 | **Content v1.3** | content/{slug}/ | Same as content pipeline |
+| **Audience Persona** | audience_personas/{slug}/ | `_manifest.json` — manifest, `{persona_id}/v{N}.md` — profiles |

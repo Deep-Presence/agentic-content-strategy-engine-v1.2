@@ -1,6 +1,6 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-06 (Sprint v6 audience-persona Phase F — Integration)
+> **Last synced:** 2026-03-06 (Sprint v8 CPS Model Integration)
 > **Total items:** 37
 
 ## Critical (Fix Before Production)

@@ -1,7 +1,7 @@
 {
-  "sprint": "audience-persona-v6-phase-d",
-  "sprint_goal": "Phase D — Audience Persona Pipeline Orchestrator: wire agents, HITL graphs, storage into end-to-end pipeline with preflight, parallel generators, frozen ID map, SSE events, tracing",
-  "sprint_status": "Phase D COMPLETE — 45 tests, all passing. Codex-reviewed (9 findings incorporated, 5 rejected, 3 deferred).",
+  "sprint": "cps-integration-v8",
+  "sprint_goal": "CPS Model Integration — Wire Citation Signal Predictor model into Content Engine v1.3 pipeline as Stage 4.5 (after evaluator, before HITL-3). Scorer wrapper, feature extraction, pipeline wiring, Codex review.",
+  "sprint_status": "COMPLETE — 44 tests (7 skipped, torch absent). Codex-reviewed (4 findings, 1 HIGH fixed: sidecar dim padding).",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
