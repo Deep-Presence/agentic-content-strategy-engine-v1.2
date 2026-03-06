@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.content_engine.tracing import create_span, end_span, log_score
+from core.content_engine.tracing_v13 import create_span, end_span, log_score
 from core.models.content_generation import (
     ContentBrief,
     DimensionResult,
@@ -395,7 +395,7 @@ def evaluate_structural(
     Args:
         content: The formatted content to evaluate.
         brief: The content brief with targets.
-        trace: Langfuse trace for instrumentation.
+        trace: Trace span for instrumentation.
 
     Returns:
         DimensionResult with structural evaluation.

@@ -91,3 +91,17 @@ Title: {title}
 Evaluate this article's style alignment against the style guide. Check specific \
 rules, not just general impressions. Cite exact passages that violate style guide rules.
 """
+
+
+# ---------------------------------------------------------------------------
+# Hub getter (opt-in via settings.langsmith_use_hub)
+# ---------------------------------------------------------------------------
+
+_HUB_NAME = "style-judge-system"
+
+
+def get_style_judge_system_prompt() -> str:
+    """Get style judge system prompt from Hub or local fallback."""
+    from core.content_engine.prompt_registry import get_prompt
+
+    return get_prompt(_HUB_NAME, STYLE_JUDGE_SYSTEM_PROMPT)

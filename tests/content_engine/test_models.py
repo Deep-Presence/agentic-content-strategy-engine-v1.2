@@ -343,6 +343,26 @@ class TestContentOutline:
         assert outline.has_table_section is True
         assert outline.has_key_takeaways is True
 
+    def test_voice_tone_description_default(self):
+        outline = ContentOutline(brief_id="b-1", title="Test")
+        assert outline.voice_tone_description == ""
+
+    def test_voice_tone_description_roundtrip(self):
+        outline = ContentOutline(
+            brief_id="b-1",
+            title="Test",
+            voice_tone_description="Professional, data-driven, approachable",
+        )
+        data = json.loads(outline.model_dump_json())
+        restored = ContentOutline(**data)
+        assert restored.voice_tone_description == "Professional, data-driven, approachable"
+
+    def test_backward_compat_without_voice_tone(self):
+        """Old JSON without voice_tone_description loads with default."""
+        old_data = {"brief_id": "b-1", "title": "Old", "sections": []}
+        outline = ContentOutline(**old_data)
+        assert outline.voice_tone_description == ""
+
 
 class TestContentDraft:
     def test_defaults(self):
@@ -361,6 +381,44 @@ class TestEnrichedDraft:
             facts_added=[{"claim": "X is Y", "source": "https://example.com"}],
         )
         assert len(e.facts_added) == 1
+
+
+class TestLinkedDraft:
+    def test_defaults(self):
+        from core.models.content_generation import LinkedDraft
+        ld = LinkedDraft()
+        assert ld.brief_id == ""
+        assert ld.markdown == ""
+        assert ld.internal_links_added == 0
+        assert ld.external_links_added == 0
+        assert ld.stats_resolved == 0
+
+    def test_full_construction(self):
+        from core.models.content_generation import LinkedDraft
+        ld = LinkedDraft(
+            brief_id="b-1",
+            title="Test",
+            markdown="# Hello [link](https://example.com)",
+            word_count=5,
+            internal_links_added=3,
+            external_links_added=5,
+            stats_resolved=2,
+        )
+        assert ld.internal_links_added == 3
+        assert ld.external_links_added == 5
+        assert ld.stats_resolved == 2
+
+    def test_json_roundtrip(self):
+        from core.models.content_generation import LinkedDraft
+        ld = LinkedDraft(
+            brief_id="b-1", title="T",
+            markdown="content", word_count=1,
+            internal_links_added=2, external_links_added=4,
+        )
+        data = json.loads(ld.model_dump_json())
+        restored = LinkedDraft(**data)
+        assert restored.internal_links_added == 2
+        assert restored.external_links_added == 4
 
 
 class TestFormattedContent:

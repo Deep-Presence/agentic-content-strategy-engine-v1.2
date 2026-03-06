@@ -231,16 +231,30 @@ def sample_formatted() -> FormattedContent:
 
 
 class MockAnthropicResponse:
-    """Mock for AsyncAnthropic.messages.create response."""
+    """Mock for AsyncAnthropic.messages.create response (v1.0 planner only)."""
 
     def __init__(self, text: str, input_tokens: int = 100, output_tokens: int = 200):
         self.content = [MagicMock(text=text)]
         self.usage = MagicMock(input_tokens=input_tokens, output_tokens=output_tokens)
 
 
+def _make_llm_response(text: str, input_tokens: int = 100, output_tokens: int = 200):
+    """Create an LLMResponse for mocking llm_call()."""
+    from core.models.content_generation_v13 import LLMResponse
+
+    return LLMResponse(
+        content=text,
+        model="test-model",
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        finish_reason="stop",
+    )
+
+
 @pytest.fixture
 def mock_anthropic_planner(sample_brief):
-    """Mock AsyncAnthropic that returns a valid PlannerOutput JSON."""
+    """Mock AsyncAnthropic that returns a valid PlannerOutput JSON (v1.0 planner)."""
     planner_output = PlannerOutput(
         briefs=[sample_brief],
         planning_metadata={"model": "test"},
@@ -258,58 +272,39 @@ def mock_anthropic_planner(sample_brief):
 
 @pytest.fixture
 def mock_anthropic_outliner(sample_outline):
-    """Mock AsyncAnthropic that returns a valid ContentOutline JSON."""
+    """Mock llm_call in outliner that returns a valid ContentOutline JSON."""
     response_text = json.dumps(sample_outline.model_dump(mode="json"), default=str)
-    mock_response = MockAnthropicResponse(response_text)
+    mock_response = _make_llm_response(response_text)
 
-    with patch("core.content_engine.workers.outliner.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-        mock_cls.return_value = mock_client
-        yield mock_cls
+    with patch("core.content_engine.workers.outliner.llm_call", new_callable=AsyncMock, return_value=mock_response):
+        yield
 
 
 @pytest.fixture
 def mock_anthropic_drafter(sample_draft):
-    """Mock AsyncAnthropic that returns markdown draft."""
-    mock_response = MockAnthropicResponse(sample_draft.markdown)
+    """Mock llm_call in drafter that returns markdown draft."""
+    mock_response = _make_llm_response(sample_draft.markdown)
 
-    with patch("core.content_engine.workers.drafter.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-        mock_cls.return_value = mock_client
-        yield mock_cls
+    with patch("core.content_engine.workers.drafter.llm_call", new_callable=AsyncMock, return_value=mock_response):
+        yield
 
 
 @pytest.fixture
 def mock_anthropic_formatter(sample_formatted):
-    """Mock AsyncAnthropic that returns formatted markdown."""
-    mock_response = MockAnthropicResponse(sample_formatted.markdown)
+    """Mock llm_call in formatter that returns formatted markdown."""
+    mock_response = _make_llm_response(sample_formatted.markdown)
 
-    with patch("core.content_engine.workers.formatter.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-        mock_cls.return_value = mock_client
-        yield mock_cls
+    with patch("core.content_engine.workers.formatter.llm_call", new_callable=AsyncMock, return_value=mock_response):
+        yield
 
 
 @pytest.fixture
 def mock_perplexity(sample_enriched):
-    """Mock httpx client that returns enriched content from Perplexity."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = {
-        "choices": [{"message": {"content": sample_enriched.markdown}}],
-        "usage": {"prompt_tokens": 100, "completion_tokens": 200},
-    }
-    mock_response.raise_for_status = MagicMock()
+    """Mock llm_call in fact_enricher that returns enriched content."""
+    mock_response = _make_llm_response(sample_enriched.markdown)
 
-    with patch("core.content_engine.workers.fact_enricher.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_cls.return_value = mock_client
-        yield mock_cls
+    with patch("core.content_engine.workers.fact_enricher.llm_call", new_callable=AsyncMock, return_value=mock_response):
+        yield
 
 
 @pytest.fixture
@@ -322,3 +317,251 @@ def mock_embeddings():
 
     with patch("core.content_engine.evaluator.semantic.async_embed_texts", side_effect=_mock_embed):
         yield
+
+
+# ---------------------------------------------------------------------------
+# v1.3 fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sample_analysis_json() -> Dict[str, Any]:
+    """Minimal analysis.json shape with 3 gaps, 2 clusters, 1 cluster_spec."""
+    return {
+        "gaps": [
+            {
+                "query_id": "q-001",
+                "query_text": "what is a 409A valuation",
+                "cluster_name": "equity",
+                "gap": 0.35,
+                "best_company_similarity": 0.55,
+                "avg_citation_similarity": 0.90,
+                "interpretation": "significant_gap",
+                "best_company_unit_text": "We offer cap table management.",
+                "top_cited_exemplars": [
+                    {
+                        "url": "https://example.com/409a",
+                        "similarity": 0.92,
+                        "authority_type": "industry_report",
+                        "snippet": "A 409A valuation is an independent appraisal.",
+                        "structural_signals": {"word_count": 2200, "header_count": 7},
+                    }
+                ],
+                "content_brief": {
+                    "target_format": "long_blog",
+                    "target_word_count": 1800,
+                },
+            },
+            {
+                "query_id": "q-002",
+                "query_text": "cap table management tools",
+                "cluster_name": "equity",
+                "gap": 0.10,
+                "best_company_similarity": 0.80,
+                "avg_citation_similarity": 0.90,
+                "interpretation": "roughly_equal",
+                "best_company_unit_text": "",
+                "top_cited_exemplars": [],
+                "content_brief": None,
+            },
+            {
+                "query_id": "q-003",
+                "query_text": "startup fundraising best practices",
+                "cluster_name": "fundraising",
+                "gap": 0.42,
+                "best_company_similarity": 0.45,
+                "avg_citation_similarity": 0.87,
+                "interpretation": "significant_gap",
+                "best_company_unit_text": "",
+                "top_cited_exemplars": [
+                    {
+                        "url": "https://vc.example.com/guide",
+                        "similarity": 0.88,
+                        "authority_type": "company_blog",
+                        "snippet": "Fundraising requires a clear pitch deck.",
+                        "structural_signals": {"word_count": 3000, "header_count": 10},
+                    },
+                    {
+                        "url": "https://startup.example.com/tips",
+                        "similarity": 0.85,
+                        "authority_type": "company_blog",
+                        "snippet": "",
+                        "structural_signals": {},
+                    },
+                ],
+                "content_brief": {
+                    "target_format": "how_to",
+                    "target_word_count": 2200,
+                },
+            },
+        ],
+        "cluster_specs": [
+            {
+                "cluster_name": "equity",
+                "dominant_content_type": "long_blog",
+                "dominant_authority_type": "industry_report",
+            },
+            {
+                "cluster_name": "fundraising",
+                "dominant_content_type": "how_to",
+                "dominant_authority_type": "company_blog",
+            },
+        ],
+    }
+
+
+@pytest.fixture
+def sample_scorecard():
+    """PlannerScorecard with 3 queries, 2 clusters."""
+    from core.models.content_generation_v13 import (
+        ClusterSummary,
+        PlannerScorecard,
+        QueryScorecard,
+    )
+
+    return PlannerScorecard(
+        queries=[
+            QueryScorecard(
+                query_id="q-001", query_text="what is a 409A valuation",
+                cluster_name="equity", gap=0.35,
+                best_company_similarity=0.55, avg_citation_similarity=0.90,
+                interpretation="significant_gap", exemplar_count=1, has_brief=True,
+            ),
+            QueryScorecard(
+                query_id="q-002", query_text="cap table management tools",
+                cluster_name="equity", gap=0.10,
+                best_company_similarity=0.80, avg_citation_similarity=0.90,
+                interpretation="roughly_equal", exemplar_count=0, has_brief=False,
+            ),
+            QueryScorecard(
+                query_id="q-003", query_text="startup fundraising best practices",
+                cluster_name="fundraising", gap=0.42,
+                best_company_similarity=0.45, avg_citation_similarity=0.87,
+                interpretation="significant_gap", exemplar_count=2, has_brief=True,
+            ),
+        ],
+        clusters=[
+            ClusterSummary(
+                cluster_name="equity", query_count=2, avg_gap=0.225,
+                max_gap=0.35, significant_gap_count=1,
+                dominant_content_type="long_blog",
+                dominant_authority_type="industry_report",
+            ),
+            ClusterSummary(
+                cluster_name="fundraising", query_count=1, avg_gap=0.42,
+                max_gap=0.42, significant_gap_count=1,
+                dominant_content_type="how_to",
+                dominant_authority_type="company_blog",
+            ),
+        ],
+        company_summary="TestCo provides equity management for startups.",
+        product_focus=None,
+        total_queries=3,
+        total_clusters=2,
+    )
+
+
+@pytest.fixture
+def sample_topic_selections():
+    """StrategicPlannerOutput with 2 selected topics."""
+    from core.models.content_generation_v13 import (
+        StrategicPlannerOutput,
+        TopicSelection,
+    )
+
+    return StrategicPlannerOutput(
+        selections=[
+            TopicSelection(
+                rank=1, query_ids=["q-001"],
+                query_texts=["what is a 409A valuation"],
+                cluster_name="equity",
+                rationale="High gap, strong exemplars",
+                estimated_impact="high",
+            ),
+            TopicSelection(
+                rank=2, query_ids=["q-003"],
+                query_texts=["startup fundraising best practices"],
+                cluster_name="fundraising",
+                rationale="Critical gap in fundraising content",
+                estimated_impact="medium",
+            ),
+        ],
+        selection_metadata={"model": "test-model", "total_tokens": 300},
+    )
+
+
+@pytest.fixture
+def sample_blueprint(sample_brief):
+    """ContentBlueprint extending sample_brief."""
+    from core.models.content_generation_v13 import BlueprintSection, ContentBlueprint
+
+    return ContentBlueprint(
+        brief_id=sample_brief.brief_id,
+        title=sample_brief.title,
+        target_queries=sample_brief.target_queries,
+        target_cluster=sample_brief.target_cluster,
+        content_format=sample_brief.content_format,
+        funnel_stage=sample_brief.funnel_stage,
+        word_count_range=sample_brief.word_count_range,
+        structural_targets=sample_brief.structural_targets,
+        key_topics=sample_brief.key_topics,
+        key_angles=sample_brief.key_angles,
+        exemplar_summaries=sample_brief.exemplar_summaries,
+        exemplar_themes=sample_brief.exemplar_themes,
+        sections=[
+            BlueprintSection(
+                heading="What Is a 409A Valuation?", level=2,
+                key_points=["Definition", "Legal basis"],
+                target_word_count=300,
+                structural_elements=["definition", "statistics"],
+                must_include=["IRS Section 409A reference"],
+            ),
+            BlueprintSection(
+                heading="Why Startups Need 409A Valuations", level=2,
+                key_points=["Compliance", "Tax implications"],
+                target_word_count=400,
+                structural_elements=["bullet_list"],
+                must_include=["Tax penalty risk"],
+            ),
+        ],
+        territory_queries=["409A valuation process", "equity comp guide"],
+        reading_hierarchy={"H2": 4, "H3": 2},
+        must_hit_checklist=["Define 409A", "Explain tax implications"],
+    )
+
+
+@pytest.fixture
+def sample_worker_context():
+    """WorkerQueryContext with full exemplar data."""
+    from core.models.content_generation_v13 import WorkerQueryContext
+
+    return WorkerQueryContext(
+        query_gap={
+            "query_id": "q-001",
+            "query_text": "what is a 409A valuation",
+            "cluster_name": "equity",
+            "gap": 0.35,
+            "best_company_similarity": 0.55,
+            "avg_citation_similarity": 0.90,
+            "interpretation": "significant_gap",
+        },
+        cluster_spec={
+            "cluster_name": "equity",
+            "dominant_content_type": "long_blog",
+            "dominant_authority_type": "industry_report",
+        },
+        exemplars=[
+            {
+                "url": "https://example.com/409a",
+                "similarity": 0.92,
+                "authority_type": "industry_report",
+                "snippet": "A 409A valuation is an independent appraisal.",
+                "structural_signals": {"word_count": 2200, "header_count": 7},
+            }
+        ],
+        gap_content_brief={
+            "target_format": "long_blog",
+            "target_word_count": 1800,
+        },
+        company_best_text="We offer cap table management.",
+    )

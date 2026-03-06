@@ -32,6 +32,16 @@ class TaskConflictError(Exception):
         super().__init__(message)
 
 
+class ApprovalWindowError(Exception):
+    """Raised when an approval is submitted outside the valid window.
+
+    Covers: stale nonce (TOCTOU/replay), or queue already consumed (duplicate).
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
 class TaskStore:
     """In-memory + JSON-file-backed task persistence.
 
@@ -64,18 +74,32 @@ class TaskStore:
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
-    def create_task(self, pipeline: str, company_slug: str) -> PipelineTask:
-        """Create a new task and acquire slug lock."""
-        self.acquire_slug_lock(company_slug)
+    def create_task(
+        self,
+        pipeline: str,
+        company_slug: str,
+        product_slug: Optional[str] = None,
+    ) -> PipelineTask:
+        """Create a new task and acquire slug lock.
+
+        When product_slug is set, the lock key is ``company_slug__product_slug``
+        so company-level and product-level runs can coexist.
+        """
+        effective = (
+            f"{company_slug}__{product_slug}" if product_slug else company_slug
+        )
+        self.acquire_slug_lock(effective)
 
         task_id = str(uuid.uuid4())
         task = PipelineTask(
             task_id=task_id,
             pipeline=pipeline,
             company_slug=company_slug,
+            product_slug=product_slug,
+            effective_slug=effective,
         )
         self._tasks[task_id] = task
-        self._slug_locks[company_slug] = task_id
+        self._slug_locks[effective] = task_id
         self._persist(task)
         return task
 
@@ -102,6 +126,8 @@ class TaskStore:
         self,
         pipeline: Optional[str] = None,
         status: Optional[str] = None,
+        company_slug: Optional[str] = None,
+        product_slug: Optional[str] = None,
     ) -> List[PipelineTask]:
         """List tasks with optional filters."""
         tasks = list(self._tasks.values())
@@ -109,6 +135,10 @@ class TaskStore:
             tasks = [t for t in tasks if t.pipeline == pipeline]
         if status:
             tasks = [t for t in tasks if t.status.value == status]
+        if company_slug:
+            tasks = [t for t in tasks if t.company_slug == company_slug]
+        if product_slug:
+            tasks = [t for t in tasks if t.product_slug == product_slug]
         return tasks
 
     # ── Slug Locks ────────────────────────────────────────────────────
@@ -151,16 +181,36 @@ class TaskStore:
 
     # ── HITL Approval ─────────────────────────────────────────────────
 
-    async def wait_for_approval(self, task_id: str) -> Dict[str, Any]:
+    async def wait_for_approval(
+        self, task_id: str, timeout: float = 86400
+    ) -> Dict[str, Any]:
         """Block until an approval is submitted for this task.
 
         Uses asyncio.Queue instead of Event to prevent lost-wakeup:
         submit_approval can be called before or after wait_for_approval
         and the message will still be delivered.
+
+        Args:
+            task_id: The task to wait for.
+            timeout: Max seconds to wait (default 24h). On timeout, returns
+                     a reject decision so the pipeline doesn't hang forever.
         """
         if task_id not in self._approval_queues:
             self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
-        data = await self._approval_queues[task_id].get()
+        try:
+            data = await asyncio.wait_for(
+                self._approval_queues[task_id].get(), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Approval timed out after %.0fs for task %s — auto-rejecting",
+                timeout,
+                task_id,
+            )
+            data = {
+                "decision": "reject",
+                "revision_note": f"Approval timed out after {int(timeout)}s",
+            }
         self._approval_queues.pop(task_id, None)
         return data
 
@@ -169,28 +219,81 @@ class TaskStore:
         task_id: str,
         decision: str,
         revision_note: Optional[str] = None,
+        stage: Optional[str] = None,
+        approval_data: Optional[Dict[str, Any]] = None,
+        expected_nonce: Optional[str] = None,
     ) -> None:
         """Submit an approval decision, unblocking wait_for_approval.
 
         If the queue doesn't exist yet (wait hasn't started), creates it
         and puts the data — the waiter will find it when it starts.
+        Also records the decision in the task's approval_history for audit.
+
+        Args:
+            approval_data: If provided, the full stage-specific approval dict
+                is placed on the queue (used by v1.3 content pipeline).
+                If None, a generic ``{decision, revision_note}`` dict is queued
+                (backward-compatible for research pipeline callers).
+            expected_nonce: If provided, validates that the task's current
+                ``approval_payload.checkpoint_nonce`` matches before queuing.
+                Prevents TOCTOU races and replay attacks.  Callers that don't
+                use nonces (research/content-v1.0) omit this parameter.
+
+        Raises:
+            TaskNotFoundError: If *task_id* is unknown.
+            ApprovalWindowError: If nonce mismatches or queue is already full
+                (duplicate submission).
         """
+        from api.tasks.models import ApprovalRecord
+
         if task_id not in self._tasks:
             raise TaskNotFoundError(task_id)
 
-        payload = {"decision": decision, "revision_note": revision_note}
+        task = self._tasks[task_id]
+
+        # Atomic nonce validation — prevents TOCTOU and replay.
+        # Nonce check + queue put are in the same synchronous function
+        # (no await between them), making them atomic in async Python.
+        if expected_nonce is not None:
+            current_nonce = (task.approval_payload or {}).get("checkpoint_nonce")
+            if current_nonce != expected_nonce:
+                raise ApprovalWindowError(
+                    f"Stale or replayed approval: nonce mismatch "
+                    f"(expected {expected_nonce}, current {current_nonce})"
+                )
+
+        # Record in approval history
+        resolved_stage = (
+            stage
+            or (task.approval_payload or {}).get("stage")
+            or task.current_step
+            or "unknown"
+        )
+        if resolved_stage == "unknown":
+            logger.warning(
+                "Approval for task %s has no stage info — recording as 'unknown'",
+                task_id,
+            )
+        record = ApprovalRecord(
+            task_id=task_id,
+            stage=resolved_stage,
+            decision=decision,
+            revision_note=revision_note,
+        )
+        task.approval_history.append(record)
+        task.updated_at = datetime.now(timezone.utc)
+        self._persist(task)
+
+        # Queue the full approval data if provided, else generic payload
+        payload = approval_data if approval_data is not None else {"decision": decision, "revision_note": revision_note}
         if task_id not in self._approval_queues:
             self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
         try:
             self._approval_queues[task_id].put_nowait(payload)
         except asyncio.QueueFull:
-            logger.warning("Approval queue full for task %s — replacing", task_id)
-            # Drain and re-put (only 1 slot)
-            try:
-                self._approval_queues[task_id].get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-            self._approval_queues[task_id].put_nowait(payload)
+            raise ApprovalWindowError(
+                f"Approval already submitted for task {task_id} — queue full"
+            )
 
     # ── Persistence ───────────────────────────────────────────────────
 

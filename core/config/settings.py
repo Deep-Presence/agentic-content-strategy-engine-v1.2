@@ -119,13 +119,77 @@ class Settings(BaseSettings):
         '{"pillar_page": 3, "comparison": 3, "long_blog": 2, "how_to": 2, "short_faq": 1}'
     )
 
-    # Langfuse (observability)
-    langfuse_public_key: str | None = None
-    langfuse_secret_key: str | None = None
-    langfuse_host: str = "https://us.cloud.langfuse.com"
+    # --- Content Engine v1.3 — LiteLLM model identifiers ---
+    # Provider-prefixed strings for LiteLLM routing
+    content_engine_v13_planner_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_brief_builder_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_worker_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_formatter_model: str = "anthropic/claude-haiku-4-5-20251001"
+    content_engine_v13_style_judge_model: str = "anthropic/claude-haiku-4-5-20251001"
+    content_engine_v13_factual_judge_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_eeat_judge_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_fact_enricher_model: str = "perplexity/sonar-pro"
+    content_engine_v13_linker_model: str = "perplexity/sonar-pro"
+
+    # --- Content Engine v1.3 — Pipeline defaults ---
+    content_engine_v13_max_topics: int = 6
+    content_engine_v13_max_concurrent_workers: int = 3
+
+    # --- LangSmith (observability + Hub) ---
+    langsmith_api_key: str | None = None
+    langsmith_workspace_id: str | None = None
+    langsmith_project: str = "content-engine"
+    langsmith_use_hub: bool = False
+    langsmith_hub_tag: str = "production"
+
+    # --- Research Knowledge Base ---
+    research_kb_project: str = "research-kb"
+    # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
+    research_kb_brand_perception_model: str = "claude-sonnet-4-5-20250929"
+    # Synthesis agent — init_chat_model(), needs provider:model format
+    research_kb_synthesis_model: str = "anthropic:claude-opus-4-6"
+
+    # --- Audience Persona Pipeline ---
+    google_api_key_audience_persona: str | None = None
+    audience_persona_suggester_model: str = "gemini-3-flash-preview"
+    audience_persona_generator_model: str = "sonar-deep-research"
+    audience_persona_max_concurrent_generators: int = 3
+
+    # --- CPS Model (Citation Signal Predictor) ---
+    cps_enabled: bool = True
+    cps_target_weight: float = 0.5
 
     # Legacy / optional
     tavily_api_key_company_context: str | None = None
+
+    # --- Database (PostgreSQL) ---
+    database_url: str | None = None  # postgresql+asyncpg://localhost:5432/deep_presence
+    database_echo: bool = False  # SQL logging
+    database_pool_size: int = 5
+    database_max_overflow: int = 10
+
+    # --- Auth ---
+    invite_ttl_days: int = 7  # Invite codes expire after 7 days
+
+    # --- Cache TTLs ---
+    platform_cache_ttl_days: int = 7  # Re-search platforms after 7 days
+    url_enrichment_cache_ttl_days: int = 14  # Re-scrape URLs after 14 days
+
+    # --- Site Audit (Pipeline 0) ---
+    site_audit_max_pages: int = 200  # Default max pages to crawl
+    site_audit_max_depth: int = 4  # Default BFS crawl depth
+    site_audit_concurrency: int = 30  # Concurrent page-analysis requests
+    site_audit_request_timeout: float = 15.0  # Per-request HTTP timeout (seconds)
+    site_audit_max_redirects: int = 5  # Max redirect hops before marking broken
+
+    @property
+    def database_url_sync(self) -> str | None:
+        """Derive sync URL from async URL for Alembic (avoids drift)."""
+        if not self.database_url:
+            return None
+        return self.database_url.replace("+asyncpg", "").replace(
+            "asyncpg://", "postgresql://"
+        )
 
     @property
     def effective_supabase_url(self) -> str | None:

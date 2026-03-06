@@ -6,8 +6,11 @@ import logging
 import re
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import List, Optional
+
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.gap_analysis.steps.s1_embed_assets import embed_company_assets
 from core.shared_tools.async_chroma_client import (
@@ -81,6 +84,16 @@ from core.gap_analysis.steps.s5_embed_content import embed_all, save_embeddings
 from core.gap_analysis.steps.s6_analyze import compute_gap_analysis
 from core.gap_analysis.steps.s7_visualize import generate_visualizations
 from core.gap_analysis.steps.s8_generate_report import generate_gap_report, save_report
+from core.gap_analysis.persistence import (
+    persist_s1,
+    persist_s2,
+    persist_s3,
+    persist_s4,
+    persist_s5,
+    persist_s6,
+    persist_s7,
+    persist_s8,
+)
 from core.models.gap_analysis import (
     AnalysisResult,
     EnrichedCitation,
@@ -116,6 +129,10 @@ def _load_json_list(path: Path, model_cls):
 async def run_gap_analysis(
     input_data: GapAnalysisInput,
     skip_steps: Optional[List[int]] = None,
+    *,
+    session_factory: Optional[async_sessionmaker] = None,
+    run_id: Optional[uuid.UUID] = None,
+    company_id: Optional[uuid.UUID] = None,
 ) -> GapReport:
     skip_steps = skip_steps or []
     slug = _company_slug(input_data)
@@ -155,6 +172,7 @@ async def run_gap_analysis(
     else:
         company_units = await embed_company_assets(input_data)
     logger.info("Step 1 completed: embed_company_assets (%.1fs)", time.monotonic() - step_start)
+    await persist_s1(session_factory, run_id, company_id, slug, company_units)
     _cli_step(1, time.monotonic() - step_start, skipped=1 in skip_steps)
 
     # Step 2: generate queries
@@ -169,6 +187,7 @@ async def run_gap_analysis(
             encoding="utf-8",
         )
     logger.info("Step 2 completed: generate_queries (%.1fs)", time.monotonic() - step_start)
+    await persist_s2(session_factory, run_id, company_id, slug, queries)
     _cli_step(2, time.monotonic() - step_start, skipped=2 in skip_steps)
 
     # Step 3: search platforms
@@ -190,6 +209,7 @@ async def run_gap_analysis(
         platform_results = await search_platforms(queries, input_data.platforms)
         save_platform_results(platform_results, artifact_dir / "platform_results")
     logger.info("Step 3 completed: search_platforms (%.1fs)", time.monotonic() - step_start)
+    await persist_s3(session_factory, run_id, company_id, slug, platform_results, queries)
     _cli_step(3, time.monotonic() - step_start, skipped=3 in skip_steps)
 
     # Step 4: enrich citations
@@ -204,6 +224,7 @@ async def run_gap_analysis(
         enriched = await enrich_citations(platform_results, query_lookup=query_lookup)
         save_enriched_citations(enriched, artifact_dir / "enriched_citations.json")
     logger.info("Step 4 completed: enrich_citations (%.1fs)", time.monotonic() - step_start)
+    await persist_s4(session_factory, run_id, company_id, slug, enriched)
     _cli_step(4, time.monotonic() - step_start, skipped=4 in skip_steps)
 
     # Step 5: embed content
@@ -222,6 +243,7 @@ async def run_gap_analysis(
         queries, enriched = await embed_all(queries, enriched, company_slug=slug)
         save_embeddings(queries, enriched, artifact_dir / "embeddings")
     logger.info("Step 5 completed: embed_content (%.1fs)", time.monotonic() - step_start)
+    await persist_s5(session_factory, run_id, company_id, slug, queries, enriched)
     _cli_step(5, time.monotonic() - step_start, skipped=5 in skip_steps)
 
     # Step 6: analyze
@@ -237,6 +259,7 @@ async def run_gap_analysis(
             json.dumps(analysis.model_dump(mode="json"), indent=2, default=str), encoding="utf-8"
         )
     logger.info("Step 6 completed: compute_gap_analysis (%.1fs)", time.monotonic() - step_start)
+    await persist_s6(session_factory, run_id, company_id, slug, analysis)
     _cli_step(6, time.monotonic() - step_start, skipped=6 in skip_steps)
 
     # Step 7: visualize
@@ -256,6 +279,7 @@ async def run_gap_analysis(
             json.dumps(visualization_paths, indent=2), encoding="utf-8"
         )
     logger.info("Step 7 completed: generate_visualizations (%.1fs)", time.monotonic() - step_start)
+    await persist_s7(session_factory, run_id, company_id, slug, visualization_paths)
     _cli_step(7, time.monotonic() - step_start, skipped=7 in skip_steps)
 
     # Step 8: report
@@ -282,6 +306,7 @@ async def run_gap_analysis(
         report.visualization_paths = list(visualization_paths.values())
         save_report(report, artifact_dir, analysis=analysis)
     logger.info("Step 8 completed: generate_gap_report (%.1fs)", time.monotonic() - step_start)
+    await persist_s8(session_factory, run_id, company_id, slug, report, analysis)
     _cli_step(8, time.monotonic() - step_start, skipped=8 in skip_steps)
 
     total = time.monotonic() - pipeline_start

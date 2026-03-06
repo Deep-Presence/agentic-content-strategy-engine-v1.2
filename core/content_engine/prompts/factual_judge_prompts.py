@@ -59,3 +59,17 @@ Topics: {topics_str}
 Evaluate the factual accuracy and grounding of this article.
 Flag any unsupported claims, outdated statistics, or questionable assertions.
 """
+
+
+# ---------------------------------------------------------------------------
+# Hub getter (opt-in via settings.langsmith_use_hub)
+# ---------------------------------------------------------------------------
+
+_HUB_NAME = "factual-judge-system"
+
+
+def get_factual_judge_system_prompt() -> str:
+    """Get factual judge system prompt from Hub or local fallback."""
+    from core.content_engine.prompt_registry import get_prompt
+
+    return get_prompt(_HUB_NAME, FACTUAL_JUDGE_SYSTEM_PROMPT)

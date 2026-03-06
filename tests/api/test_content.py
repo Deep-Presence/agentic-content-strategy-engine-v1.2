@@ -35,15 +35,15 @@ class TestStartContent:
         resp = client.post(
             "/api/v1/content/start",
             json={
-                "company_name": "Ramp",
-                "domain": "ramp.com",
+                "company_name": "Test Co",
+                "domain": "testco.com",
             },
         )
         assert resp.status_code == 202
         data = resp.json()
         assert "run_id" in data
         assert data["pipeline"] == "content"
-        assert data["company_slug"] == "ramp"
+        assert data["company_slug"] == "test-co"
         assert data["status"] == "running"
 
     def test_validation_error(self, client: TestClient) -> None:
@@ -56,12 +56,12 @@ class TestStartContent:
     def test_slug_conflict(
         self, client: TestClient, task_store: TaskStore, mock_content_runner
     ) -> None:
-        task_store.create_task("content", "ramp")
+        task_store.create_task("content", "test-co")
         resp = client.post(
             "/api/v1/content/start",
             json={
-                "company_name": "Ramp",
-                "domain": "ramp.com",
+                "company_name": "Test Co",
+                "domain": "testco.com",
             },
         )
         assert resp.status_code == 409
@@ -70,8 +70,8 @@ class TestStartContent:
         resp = client.post(
             "/api/v1/content/start",
             json={
-                "company_name": "Ramp",
-                "domain": "ramp.com",
+                "company_name": "Test Co",
+                "domain": "testco.com",
                 "auto_approve": True,
             },
         )
@@ -82,19 +82,19 @@ class TestContentStatus:
     def test_status_after_start(
         self, client: TestClient, task_store: TaskStore
     ) -> None:
-        task = task_store.create_task("content", "ramp")
+        task = task_store.create_task("content", "test-co")
         resp = client.get(f"/api/v1/content/{task.task_id}/status")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "running"
-        assert data["company_slug"] == "ramp"
+        assert data["company_slug"] == "test-co"
 
     def test_completed_status(
         self, client: TestClient, mock_content_runner
     ) -> None:
         resp = client.post(
             "/api/v1/content/start",
-            json={"company_name": "Ramp", "domain": "ramp.com"},
+            json={"company_name": "Test Co", "domain": "testco.com"},
         )
         run_id = resp.json()["run_id"]
         time.sleep(0.3)
@@ -112,7 +112,7 @@ class TestContentApproval:
     def test_approve_pending_task(
         self, client: TestClient, task_store: TaskStore, event_bus: EventBus
     ) -> None:
-        task = task_store.create_task("content", "ramp")
+        task = task_store.create_task("content", "test-co")
         task_store.update_task(
             task.task_id,
             status=TaskStatus.PENDING_APPROVAL,
@@ -129,7 +129,7 @@ class TestContentApproval:
     def test_approve_with_editor_notes(
         self, client: TestClient, task_store: TaskStore, event_bus: EventBus
     ) -> None:
-        task = task_store.create_task("content", "ramp")
+        task = task_store.create_task("content", "test-co")
         task_store.update_task(
             task.task_id,
             status=TaskStatus.PENDING_APPROVAL,
@@ -157,7 +157,7 @@ class TestContentApproval:
     def test_approve_non_pending_returns_409(
         self, client: TestClient, task_store: TaskStore
     ) -> None:
-        task = task_store.create_task("content", "ramp")
+        task = task_store.create_task("content", "test-co")
         resp = client.post(
             f"/api/v1/content/{task.task_id}/approve",
             json={"brief_id": "brief-1", "decision": "approve"},

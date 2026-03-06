@@ -96,3 +96,17 @@ Polish the formatting of this article. Ensure:
 
 Return the complete formatted article.
 """
+
+
+# ---------------------------------------------------------------------------
+# Hub getter (opt-in via settings.langsmith_use_hub)
+# ---------------------------------------------------------------------------
+
+_HUB_NAME = "formatter-system"
+
+
+def get_formatter_system_prompt() -> str:
+    """Get formatter system prompt from Hub or local fallback."""
+    from core.content_engine.prompt_registry import get_prompt
+
+    return get_prompt(_HUB_NAME, FORMATTER_SYSTEM_PROMPT)

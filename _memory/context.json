@@ -1,10 +1,46 @@
 {
-  "sprint": "v3-signals",
-  "sprint_goal": "Structural Signal Overhaul — upgrade S4/S6/S8 pipeline quality (enriched structural signals, per-query content briefs, expanded cluster specs, 3-tier output)",
-  "constraints": ["Backward compatibility with existing artifacts", "All Pydantic fields must have defaults", "Existing 3-file JSON contract preserved (additive only)", "Raw SDK clients for LLM calls (no LangChain wrappers)"],
-  "active_branches": ["feat/content-engine-v1.0.0"],
-  "environment_notes": ["Python 3.12", "async-first", "VS Code + Claude Code extension", "Playwright Chromium installed for CF bypass", "langfuse 3.14.1 installed", "trafilatura 1.6+ installed", "textstat 0.7+ installed"],
-  "current_clients": ["Ramp", "Carta"],
-  "key_files_in_flux": [],
-  "last_completed": "T-SSO-all — Structural Signal Overhaul (5 phases, 351 tests passing)"
+  "sprint": "cps-integration-v8",
+  "sprint_goal": "CPS Model Integration — Wire Citation Signal Predictor model into Content Engine v1.3 pipeline as Stage 4.5 (after evaluator, before HITL-3). Scorer wrapper, feature extraction, pipeline wiring, Codex review.",
+  "sprint_status": "COMPLETE — 44 tests (7 skipped, torch absent). Codex-reviewed (4 findings, 1 HIGH fixed: sidecar dim padding).",
+  "constraints": [
+    "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
+    "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
+    "LiteLLM wraps all LLM calls in content engine workers/judges/agents",
+    "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception",
+    "No Supabase yet — filesystem artifacts are source of truth",
+    "Double-underscore separator for effective slugs: {company}__{product}",
+    "Default-deny middleware — all routes protected unless explicitly whitelisted",
+    "core/ cannot import from api/ — shared code goes in core/shared_tools/",
+    "DB layer is opt-in via DATABASE_URL — repos flush only, DI session generator owns commit/rollback",
+    "AuthServiceProtocol is the contract — all routers use get_auth_service dependency",
+    "LangSmith is sole tracing backend — Langfuse fully removed",
+    "Hub prompts opt-in via langsmith_use_hub=False — local Python prompts authoritative by default"
+  ],
+  "active_branches": ["research-agent-v1.2.0"],
+  "environment_notes": [
+    "Python 3.12", "async-first", "VS Code + Claude Code extension",
+    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, pdfplumber >=0.10, python-docx >=1.0, python-dateutil >=2.9"
+  ],
+  "current_clients": ["Ramp", "Carta", "Mynd"],
+  "key_files_in_flux": [
+    "core/research/audience_persona/ (models, storage, agents, graph, pipeline)",
+    "core/research/knowledge_base/ (models, storage, agents, graph, pipeline)",
+    "core/research/prompts/*.py (prompt files with revision_note support)",
+    "api/tasks/runner.py (run_kb_pipeline_task wrapper)"
+  ],
+  "test_count": 2524,
+  "phases_completed_count": 33,
+  "recent_phases": [
+    "audience-persona Phase D — Pipeline Orchestrator (45 tests, 232 AP total)",
+    "knowledge-base Phase 5 — Synthesis & Living Document (50 tests)",
+    "knowledge-base Phase 4 — API Router + Schemas (35 tests)",
+    "knowledge-base Phase 3 — Orchestrator (58 tests)",
+    "site-audit P3 Bug Fixes (82 tests, 793 site audit tests total)"
+  ],
+  "phases_remaining": [
+    "audience-persona Phase E — API Router + Runner (~30 tests)",
+    "audience-persona Phase F — Integration (~20 tests)",
+    "knowledge-base Phase 6 — Integration (wire to gap analysis, Daily Tracker, frontend)"
+  ],
+  "deferred_issues_location": ".claude/sprints/pending/backlog.md"
 }

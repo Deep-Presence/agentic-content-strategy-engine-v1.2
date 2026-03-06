@@ -16,7 +16,7 @@ class TestSSEEvents:
     def test_sse_content_type(
         self, client: TestClient, task_store: TaskStore, event_bus: EventBus
     ) -> None:
-        task = task_store.create_task("gap_analysis", "ramp")
+        task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "pipeline_start", {"pipeline": "gap_analysis"})
         event_bus.publish(task.task_id, "completed", {})
 
@@ -27,7 +27,7 @@ class TestSSEEvents:
     def test_sse_replays_existing_events(
         self, client: TestClient, task_store: TaskStore, event_bus: EventBus
     ) -> None:
-        task = task_store.create_task("gap_analysis", "ramp")
+        task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "step_start", {"step": 1})
         event_bus.publish(task.task_id, "step_complete", {"step": 1})
         event_bus.publish(task.task_id, "completed", {})
@@ -46,7 +46,7 @@ class TestSSEEvents:
         self, client: TestClient, task_store: TaskStore, event_bus: EventBus
     ) -> None:
         """Stream should terminate after a completed event is replayed."""
-        task = task_store.create_task("gap_analysis", "ramp")
+        task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "pipeline_start", {"pipeline": "gap_analysis"})
         event_bus.publish(task.task_id, "completed", {"result": "done"})
 
@@ -62,7 +62,7 @@ class TestSSEEvents:
         self, client: TestClient, task_store: TaskStore, event_bus: EventBus
     ) -> None:
         """Stream should terminate after a failed event is replayed."""
-        task = task_store.create_task("gap_analysis", "ramp")
+        task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "step_start", {"step": 1})
         event_bus.publish(task.task_id, "failed", {"error": "boom"})
 

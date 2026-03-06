@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -129,6 +130,7 @@ def _collect_typed_embeddings(
             "type": "Query",
             "cluster_name": q.cluster_name,
             "hover_text": q.query_text,
+            "query_id": q.query_id,
         })
 
         # Top-N citations for this query, top-K paragraphs each
@@ -512,6 +514,163 @@ def plot_similarity_histogram(
 
 
 # ---------------------------------------------------------------------------
+# Pre-computed coordinate plotters (accept already-reduced 2D coords)
+# ---------------------------------------------------------------------------
+
+
+def _plot_typed_from_coords(
+    coords: np.ndarray,
+    meta: List[Dict],
+    output_path: Path,
+    method: str,
+) -> None:
+    """Plot typed embedding space from pre-computed 2D coordinates."""
+    if len(coords) == 0:
+        return
+    method_label = "t-SNE" if method == "tsne" else "UMAP"
+    fig = go.Figure()
+    for point_type in ["Citation", "Company", "Query"]:
+        cfg = _TYPE_CONFIG[point_type]
+        indices = [i for i, m in enumerate(meta) if m["type"] == point_type]
+        if not indices:
+            continue
+        fig.add_trace(go.Scatter(
+            x=coords[indices, 0],
+            y=coords[indices, 1],
+            mode="markers",
+            name=point_type,
+            text=[meta[i]["hover_text"] for i in indices],
+            hoverinfo="text+name",
+            marker=dict(
+                color=cfg["color"],
+                symbol=cfg["symbol"],
+                size=cfg["size"],
+                opacity=0.7,
+            ),
+        ))
+    fig.update_layout(
+        title=f"Query-Citation-Company Embedding Space ({method_label})",
+        xaxis_title=f"{method_label} 1",
+        yaxis_title=f"{method_label} 2",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    fig.write_html(output_path)
+
+
+def _plot_clustered_from_coords(
+    coords: np.ndarray,
+    meta: List[Dict],
+    output_path: Path,
+    method: str,
+) -> None:
+    """Plot cluster-colored embedding space from pre-computed 2D coordinates."""
+    if len(coords) == 0:
+        return
+    method_label = "t-SNE" if method == "tsne" else "UMAP"
+
+    cluster_names = sorted({
+        m["cluster_name"] for m in meta if m["type"] != "Company"
+    })
+    palette = px.colors.qualitative.T10
+    cluster_colors = {
+        name: palette[i % len(palette)]
+        for i, name in enumerate(cluster_names)
+    }
+    cluster_colors["Company"] = "red"
+
+    fig = go.Figure()
+    marker_symbols = {"Query": "circle", "Citation": "square", "Company": "triangle-up"}
+    marker_sizes = {"Query": 12, "Citation": 8, "Company": 10}
+    seen_legend: set = set()
+
+    for point_type in ["Citation", "Query", "Company"]:
+        for cluster in (cluster_names + ["Company"] if point_type == "Company" else cluster_names):
+            indices = [
+                i for i, m in enumerate(meta)
+                if m["type"] == point_type and m["cluster_name"] == cluster
+            ]
+            if not indices:
+                continue
+            legend_name = cluster if point_type != "Company" else "Company"
+            show_legend = legend_name not in seen_legend
+            seen_legend.add(legend_name)
+            fig.add_trace(go.Scatter(
+                x=coords[indices, 0],
+                y=coords[indices, 1],
+                mode="markers",
+                name=legend_name,
+                legendgroup=legend_name,
+                showlegend=show_legend,
+                text=[meta[i]["hover_text"] for i in indices],
+                hoverinfo="text+name",
+                marker=dict(
+                    color=cluster_colors.get(cluster, "gray"),
+                    symbol=marker_symbols[point_type],
+                    size=marker_sizes[point_type],
+                    opacity=0.7,
+                ),
+            ))
+
+    fig.update_layout(
+        title=f"Embedding Space by Cluster ({method_label})",
+        xaxis_title=f"{method_label} 1",
+        yaxis_title=f"{method_label} 2",
+        legend=dict(title="Cluster"),
+    )
+    fig.write_html(output_path)
+
+
+# ---------------------------------------------------------------------------
+# JSON projection export for frontend scatter plots
+# ---------------------------------------------------------------------------
+
+
+def _save_embedding_projections(
+    coords: np.ndarray,
+    meta: List[Dict],
+    output_dir: Path,
+    method: str,
+) -> None:
+    """Save 2D projection coordinates as JSON for frontend scatter plots.
+
+    Output format matches frontend EmbeddingPoint interface:
+    {method, point_count, points: [{x, y, type, id, label, cluster, cluster_id, query_id}]}
+    """
+    if len(coords) == 0:
+        return
+    q_idx = c_idx = co_idx = 0
+    points: List[Dict] = []
+    for i, m in enumerate(meta):
+        x_val = float(coords[i, 0])
+        y_val = float(coords[i, 1])
+        if np.isnan(x_val) or np.isnan(y_val) or np.isinf(x_val) or np.isinf(y_val):
+            continue
+        t = m["type"].lower()
+        if t == "query":
+            pid = f"q-{q_idx}"
+            q_idx += 1
+        elif t == "citation":
+            pid = f"c-{c_idx}"
+            c_idx += 1
+        else:
+            pid = f"co-{co_idx}"
+            co_idx += 1
+        points.append({
+            "x": round(x_val, 4),
+            "y": round(y_val, 4),
+            "type": t,
+            "id": pid,
+            "label": m["hover_text"],
+            "cluster": m["cluster_name"],
+            "cluster_id": m.get("cluster_id", m["cluster_name"]),
+            "query_id": m.get("query_id"),
+        })
+    payload = {"method": method, "point_count": len(points), "points": points}
+    output_path = output_dir / f"embedding_projections_{method}.json"
+    output_path.write_text(json.dumps(payload))
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -524,14 +683,14 @@ def generate_visualizations(
     output_dir: Path,
 ) -> Dict[str, str]:
     _ensure_dir(output_dir)
-    paths = {
+    paths: Dict[str, Path] = {
         # Existing Plotly (HTML)
         "embedding_space": output_dir / "embedding_space.html",
         "gap_heatmap": output_dir / "gap_heatmap.html",
         "gap_distribution": output_dir / "gap_distribution.html",
         "citation_treemap": output_dir / "citation_treemap.html",
         "cluster_radar": output_dir / "cluster_radar.html",
-        # New Plotly (HTML)
+        # Typed + clustered Plotly (HTML)
         "tsne_space": output_dir / "tsne_embedding_space.html",
         "umap_space": output_dir / "umap_embedding_space.html",
         "tsne_clustered": output_dir / "tsne_clustered.html",
@@ -539,18 +698,32 @@ def generate_visualizations(
         "similarity_distribution": output_dir / "similarity_distribution.html",
     }
 
-    # Existing plots
+    # Existing plots (use their own internal UMAP/collection)
     plot_embedding_space(queries, citations, company_units, paths["embedding_space"])
     plot_gap_heatmap(analysis, paths["gap_heatmap"])
     plot_gap_distribution(analysis, paths["gap_distribution"])
     plot_citation_treemap(analysis, paths["citation_treemap"])
     plot_cluster_radar(analysis, paths["cluster_radar"])
 
-    # New plots
-    plot_tsne_embedding_space(queries, citations, company_units, paths["tsne_space"])
-    plot_umap_embedding_space(queries, citations, company_units, paths["umap_space"])
-    plot_clustered_embedding_space(queries, citations, company_units, paths["tsne_clustered"], method="tsne")
-    plot_clustered_embedding_space(queries, citations, company_units, paths["umap_clustered"], method="umap")
+    # Compute typed embeddings ONCE, reduce ONCE per method, reuse everywhere
+    embeddings_arr, meta_list = _collect_typed_embeddings(queries, citations, company_units)
+    if len(embeddings_arr) >= 3:
+        umap_coords = _reduce_embeddings(embeddings_arr, "umap")
+        tsne_coords = _reduce_embeddings(embeddings_arr, "tsne")
+
+        # HTML plots from pre-computed coords
+        _plot_typed_from_coords(umap_coords, meta_list, paths["umap_space"], "umap")
+        _plot_typed_from_coords(tsne_coords, meta_list, paths["tsne_space"], "tsne")
+        _plot_clustered_from_coords(umap_coords, meta_list, paths["umap_clustered"], "umap")
+        _plot_clustered_from_coords(tsne_coords, meta_list, paths["tsne_clustered"], "tsne")
+
+        # JSON projections for frontend scatter (same coords — no drift)
+        _save_embedding_projections(umap_coords, meta_list, output_dir, "umap")
+        _save_embedding_projections(tsne_coords, meta_list, output_dir, "tsne")
+        paths["umap_projections_json"] = output_dir / "embedding_projections_umap.json"
+        paths["tsne_projections_json"] = output_dir / "embedding_projections_tsne.json"
+
+    # Similarity histogram (uses its own proximity pair computation)
     plot_similarity_histogram(queries, citations, paths["similarity_distribution"])
 
     return {k: str(v) for k, v in paths.items()}

@@ -26,11 +26,21 @@ dependencies = [
     "scipy",
     "httpx",
     "playwright",
+    "defusedxml>=0.7.0",
     "trafilatura>=1.6.0",
     "textstat>=0.7.0",
+    "python-dateutil>=2.9,<3",
     "fastapi>=0.115,<1.0",
     "uvicorn[standard]>=0.32,<1.0",
     "python-multipart>=0.0.12",
+    # Database (PostgreSQL + SQLAlchemy + Alembic)
+    "sqlalchemy[asyncio]>=2.0.30",
+    "asyncpg>=0.29",
+    "psycopg2-binary>=2.9",
+    "alembic>=1.13",
+    "pgvector>=0.3",
+    # CPS model — Markdown-to-HTML conversion for feature extraction
+    "markdown>=3.5.0",
 ]
 
 [project.optional-dependencies]

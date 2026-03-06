@@ -10,6 +10,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from core.research.graphs.persona_research import build_graph
 from core.models.personas import PersonaResearchInput
+from scripts._cli_approval import run_graph_with_approval
 
 
 def _parse_args() -> argparse.Namespace:
@@ -46,7 +47,6 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
 
-    graph = build_graph()
     inp = PersonaResearchInput(
         company_id=args.company_id,
         company_name=args.company_name,
@@ -60,7 +60,14 @@ def main() -> int:
         additional_constraints=args.constraints,
     )
 
-    out = graph.invoke({"input": inp, "auto_approve": args.auto_approve})
+    slug = inp.company_slug or inp.company_name.lower().replace(" ", "-")
+    initial_state = {"input": inp, "auto_approve": args.auto_approve}
+
+    out = run_graph_with_approval(
+        build_graph_fn=build_graph,
+        initial_state=initial_state,
+        thread_id=f"cli-persona-{slug}",
+    )
 
     agent_result = out.get("agent_result", {})
     written_paths = out.get("written_paths") or agent_result.get("written_paths") or []
@@ -71,6 +78,13 @@ def main() -> int:
     print("\n===== ARTIFACTS WRITTEN TO =====\n")
     for p in written_paths:
         print(f"  {p}")
+
+    if not written_paths:
+        decision = (out.get("approval_decision") or "").lower()
+        if decision == "reject":
+            print("  (rejected — no artifacts written)")
+        else:
+            print("  (none — check agent output for errors)")
 
     return 0
 

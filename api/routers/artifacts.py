@@ -1,4 +1,8 @@
-"""Artifact listing and retrieval endpoints."""
+"""Artifact listing and retrieval endpoints.
+
+All endpoints require authentication. Tenant isolation ensures users
+can only access artifacts belonging to their own company.
+"""
 from __future__ import annotations
 
 import json
@@ -8,10 +12,12 @@ from typing import Any, Dict, List
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
+from api.auth.dependencies import require_auth
 from api.dependencies import get_artifacts_root
+from core.models.organization import UserProfile
 
 router = APIRouter(prefix="/api/v1/artifacts", tags=["artifacts"])
 
@@ -22,12 +28,26 @@ _EXCLUDED_DIRS = {"chroma_db", "_logs", ".DS_Store"}
 _FLAT_TYPES = {"company_context", "personas", "style_guides"}
 
 
-def _slugs_from_flat_dir(type_dir: Path) -> set[str]:
-    """Extract company slugs from flat file naming convention.
+def _user_company_slug(request: Request) -> str:
+    """Extract the authenticated user's company slug from request state."""
+    slug = getattr(request.state, "company_slug", None)
+    if not slug:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return slug
 
-    Files like ramp.md, carta.md → slugs ramp, carta
-    Files like ramp__persona-icp.md → slug ramp
+
+def _slug_belongs_to_user(slug: str, company_slug: str) -> bool:
+    """Check if a slug (bare or effective) belongs to the user's company.
+
+    Handles both:
+      - bare slug: "ramp" matches company_slug "ramp"
+      - effective slug: "ramp__corporate-card" matches company_slug "ramp"
     """
+    return slug == company_slug or slug.startswith(f"{company_slug}__")
+
+
+def _slugs_from_flat_dir(type_dir: Path) -> set[str]:
+    """Extract company slugs from flat file naming convention."""
     slugs: set[str] = set()
     if not type_dir.is_dir():
         return slugs
@@ -55,9 +75,15 @@ def _slugs_from_nested_dir(type_dir: Path) -> set[str]:
 
 @router.get("/companies")
 def list_companies(
+    request: Request,
     artifacts_root: Path = Depends(get_artifacts_root),
+    _user: UserProfile = Depends(require_auth),
 ) -> Dict[str, List[str]]:
-    """List all company slugs aggregated across artifact types."""
+    """List company slugs visible to the authenticated user.
+
+    Returns only slugs belonging to the user's company (bare + effective).
+    """
+    company_slug = _user_company_slug(request)
     all_slugs: set[str] = set()
 
     for type_name in VALID_TYPES:
@@ -69,14 +95,18 @@ def list_companies(
         else:
             all_slugs |= _slugs_from_nested_dir(type_dir)
 
-    return {"companies": sorted(all_slugs)}
+    # Filter to only the user's company slugs
+    visible = sorted(s for s in all_slugs if _slug_belongs_to_user(s, company_slug))
+    return {"companies": visible}
 
 
 @router.get("/{artifact_type}/{slug}")
 def list_artifacts(
     artifact_type: str,
     slug: str,
+    request: Request,
     artifacts_root: Path = Depends(get_artifacts_root),
+    _user: UserProfile = Depends(require_auth),
 ) -> Dict[str, Any]:
     """List files for a given artifact type and company slug."""
     if not _SLUG_PATTERN.match(slug):
@@ -86,8 +116,12 @@ def list_artifacts(
             status_code=422, detail=f"Invalid artifact type: {artifact_type}. Valid: {sorted(VALID_TYPES)}"
         )
 
+    # Tenant isolation
+    company_slug = _user_company_slug(request)
+    if not _slug_belongs_to_user(slug, company_slug):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     if artifact_type in _FLAT_TYPES:
-        # Flat layout — find files matching this slug at the type dir root
         type_dir = artifacts_root / artifact_type
         if not type_dir.is_dir():
             raise HTTPException(status_code=404, detail=f"No artifacts of type {artifact_type}")
@@ -97,7 +131,6 @@ def list_artifacts(
             if not f.is_file() or f.name.startswith("."):
                 continue
             stem = f.stem
-            # Match slug.md or slug__*.md
             if stem == slug or stem.startswith(f"{slug}__"):
                 files.append({
                     "name": f.name,
@@ -109,7 +142,6 @@ def list_artifacts(
         return {"artifact_type": artifact_type, "slug": slug, "files": files}
 
     else:
-        # Nested layout — look inside type_dir/slug/
         slug_dir = artifacts_root / artifact_type / slug
         if not slug_dir.is_dir():
             raise HTTPException(status_code=404, detail=f"No {artifact_type} artifacts for {slug}")
@@ -132,7 +164,9 @@ def get_artifact_content(
     artifact_type: str,
     slug: str,
     filename: str,
+    request: Request,
     artifacts_root: Path = Depends(get_artifacts_root),
+    _user: UserProfile = Depends(require_auth),
 ) -> Any:
     """Retrieve artifact file content."""
     if not _SLUG_PATTERN.match(slug):
@@ -142,6 +176,11 @@ def get_artifact_content(
             status_code=422, detail=f"Invalid artifact type: {artifact_type}"
         )
 
+    # Tenant isolation
+    company_slug = _user_company_slug(request)
+    if not _slug_belongs_to_user(slug, company_slug):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     # Path traversal check
     if ".." in filename:
         raise HTTPException(status_code=400, detail="Path traversal not allowed")
@@ -149,6 +188,14 @@ def get_artifact_content(
     if artifact_type in _FLAT_TYPES:
         file_path = (artifacts_root / artifact_type / filename).resolve()
         expected_parent = (artifacts_root / artifact_type).resolve()
+
+        # C1 fix: verify filename belongs to the authorized slug (prevents IDOR)
+        stem = Path(filename).stem
+        # Strip .draft suffix for draft files (e.g., "ramp.draft" → "ramp")
+        if stem.endswith(".draft"):
+            stem = stem[: -len(".draft")]
+        if not (stem == slug or stem.startswith(f"{slug}__")):
+            raise HTTPException(status_code=403, detail="Access denied")
     else:
         file_path = (artifacts_root / artifact_type / slug / filename).resolve()
         expected_parent = (artifacts_root / artifact_type / slug).resolve()

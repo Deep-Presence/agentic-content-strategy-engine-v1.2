@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from langgraph.errors import GraphInterrupt
+from langgraph.checkpoint.memory import MemorySaver
 
 from core.research.graphs.company_research import build_graph as build_company_graph
 from core.research.graphs.persona_research import build_graph as build_persona_graph
@@ -30,12 +30,39 @@ def _log_event(stage: str, event: str, data: Dict[str, Any]) -> None:
     _LOG.info(json.dumps(payload))
 
 
-def _invoke_graph(app, state: Dict[str, Any]) -> Dict[str, Any]:
+def _has_interrupt(result: Dict[str, Any]) -> bool:
+    """Check if a LangGraph >=1.0 invoke result contains an interrupt.
+
+    LangGraph >=1.0 returns __interrupt__ in the result dict — it does NOT
+    raise GraphInterrupt.
+    """
+    return bool(result.get("__interrupt__"))
+
+
+def _get_interrupt_value(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract the first interrupt payload from a LangGraph invoke result."""
+    interrupts = result.get("__interrupt__", [])
+    if interrupts and hasattr(interrupts[0], "value"):
+        return interrupts[0].value
+    return {}
+
+
+def _invoke_graph(build_fn, state: Dict[str, Any], stage_name: str = "unknown") -> Dict[str, Any]:
+    """Invoke a research graph with checkpointer support.
+
+    Uses MemorySaver so interrupt() + Command(resume=...) works.
+    When auto_approve=True in state, the approval gate skips the interrupt
+    and graphs complete without pausing.
+    """
+    checkpointer = MemorySaver()
+    app = build_fn(checkpointer=checkpointer)
+    config = {"configurable": {"thread_id": f"pipeline-{stage_name}"}}
     try:
-        return app.invoke(state)
-    except GraphInterrupt as gi:
-        # Surface interrupt payload so caller/front-end can resume
-        return {"status": "interrupt", "values": gi.values}
+        result = app.invoke(state, config)
+        if _has_interrupt(result):
+            interrupt_values = _get_interrupt_value(result)
+            return {"status": "interrupt", "values": interrupt_values}
+        return result
     except Exception as exc:
         _log_event("pipeline", "graph_error", {"error": str(exc)})
         raise
@@ -46,8 +73,11 @@ def run_company_stage(
     *,
     auto_approve: bool = False,
 ) -> Dict[str, Any]:
-    app = build_company_graph()
-    return _invoke_graph(app, {"input": company_input, "auto_approve": auto_approve})
+    return _invoke_graph(
+        build_company_graph,
+        {"input": company_input, "auto_approve": auto_approve},
+        stage_name="company",
+    )
 
 
 def run_persona_stage(
@@ -55,8 +85,11 @@ def run_persona_stage(
     *,
     auto_approve: bool = False,
 ) -> Dict[str, Any]:
-    app = build_persona_graph()
-    return _invoke_graph(app, {"input": persona_input, "auto_approve": auto_approve})
+    return _invoke_graph(
+        build_persona_graph,
+        {"input": persona_input, "auto_approve": auto_approve},
+        stage_name="persona",
+    )
 
 
 def run_style_stage(
@@ -64,13 +97,19 @@ def run_style_stage(
     *,
     auto_approve: bool = False,
 ) -> Dict[str, Any]:
-    app = build_style_graph()
-    return _invoke_graph(app, {"input": style_input, "auto_approve": auto_approve})
+    return _invoke_graph(
+        build_style_graph,
+        {"input": style_input, "auto_approve": auto_approve},
+        stage_name="style",
+    )
 
 
 def run_reddit_hil_stage(reddit_input: RedditMonitorInput) -> Dict[str, Any]:
-    app = build_reddit_hil_graph()
-    return _invoke_graph(app, {"input": reddit_input})
+    return _invoke_graph(
+        build_reddit_hil_graph,
+        {"input": reddit_input},
+        stage_name="reddit_hil",
+    )
 
 
 def run_pipeline(

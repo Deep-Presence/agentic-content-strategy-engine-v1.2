@@ -15,7 +15,7 @@ from core.content_engine.prompts.planner_prompts import (
     PLANNER_SYSTEM_PROMPT,
     build_planner_user_prompt,
 )
-from core.content_engine.tracing import (
+from core.content_engine.tracing_v13 import (
     create_span,
     create_trace,
     end_span,
@@ -61,7 +61,7 @@ async def plan_content(
         gap_report_json: Gap report as dict.
         generation_spec_json: Content generation spec as dict.
         analysis_json: Full analysis results as dict.
-        session_id: Langfuse session ID.
+        session_id: Session ID.
 
     Returns:
         PlannerOutput with prioritized content briefs.
@@ -89,6 +89,16 @@ async def plan_content(
             user_id=input_data.domain,
         )
 
+    # Build product context block when product fields are set
+    product_context_md = ""
+    if input_data.product_slug and input_data.product_name:
+        from core.content_engine.prompts.planner_prompts import _PRODUCT_FOCUS_BLOCK
+        product_context_md = _PRODUCT_FOCUS_BLOCK.format(
+            product_name=input_data.product_name,
+            product_domain=input_data.domain or "N/A",
+            product_description=input_data.product_description or "N/A",
+        )
+
     # Build prompt
     user_prompt = build_planner_user_prompt(
         company_name=input_data.company_name,
@@ -100,6 +110,7 @@ async def plan_content(
         analysis_json=analysis_json,
         persona_mds=persona_mds,
         max_briefs=input_data.max_briefs,
+        product_context_md=product_context_md,
     )
 
     # Context window guard
@@ -136,7 +147,7 @@ async def plan_content(
         "output_tokens": response.usage.output_tokens,
     })
 
-    # Langfuse logging
+    # LangSmith logging
     log_generation(
         trace,
         name="plan_content",

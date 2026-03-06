@@ -305,7 +305,7 @@ def analysis_result() -> AnalysisResult:
                 best_company_similarity=0.45,
                 avg_citation_similarity=0.72,
                 gap=0.27,
-                interpretation="moderate_gap",
+                interpretation="gap_to_close",
                 top_cited_exemplars=[
                     CitationExemplar(
                         similarity=0.82,
@@ -328,7 +328,7 @@ def analysis_result() -> AnalysisResult:
                 best_company_similarity=0.35,
                 avg_citation_similarity=0.65,
                 gap=0.30,
-                interpretation="moderate_gap",
+                interpretation="gap_to_close",
             ),
             QueryGap(
                 query_id="q_3",
@@ -337,7 +337,7 @@ def analysis_result() -> AnalysisResult:
                 best_company_similarity=0.20,
                 avg_citation_similarity=0.55,
                 gap=0.35,
-                interpretation="large_gap",
+                interpretation="significant_gap",
             ),
         ],
         centroids=[],

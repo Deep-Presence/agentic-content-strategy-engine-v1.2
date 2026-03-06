@@ -1,7 +1,10 @@
 """Worker dispatcher — parallel content production via semaphore-controlled concurrency.
 
-Dispatches the 4-step worker chain per brief:
+v1.0 chain (dispatch_workers):
   Brief → Outliner (Sonnet) → Drafter (Sonnet) → Fact Enricher (Perplexity) → Formatter (Haiku)
+
+v1.3 chain (dispatch_workers_v13):
+  Brief → Outliner (Sonnet) → Drafter (Sonnet) → Linker (Perplexity) → Fact Checker (Perplexity)
 
 Uses asyncio.Semaphore for concurrency control (same pattern as s3_search_platforms.py).
 """
@@ -12,11 +15,11 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from core.config.settings import settings
 from core.content_engine.pipeline import _brief_dir, _cli_worker_progress
-from core.content_engine.tracing import create_span, create_trace, end_span, log_score, update_trace_output
+from core.content_engine.tracing_v13 import create_span, create_trace, end_span, log_score, update_trace_output
 from core.content_engine.workers.drafter import generate_draft
 from core.content_engine.workers.fact_enricher import enrich_with_facts
 from core.content_engine.workers.formatter import format_content
@@ -49,7 +52,7 @@ async def _run_worker_chain(
         input_data: Pipeline input for company details.
         style_guide_md: Company style guide.
         company_context_md: Company context.
-        session_id: Langfuse session ID.
+        session_id: Session ID.
         artifact_dir: Root artifact directory.
         semaphore: Concurrency limiter.
 
@@ -162,8 +165,8 @@ async def _run_worker_chain(
             if parent_span is not None:
                 end_span(trace, output=trace_output)
             else:
+                # update_trace_output ends the trace internally — no end_span needed
                 update_trace_output(trace, output=trace_output)
-                end_span(trace)
 
             return formatted
         except Exception as exc:
@@ -193,7 +196,7 @@ async def dispatch_workers(
         style_guide_md: Company style guide.
         company_context_md: Company context.
         max_concurrent: Max concurrent workers.
-        session_id: Langfuse session ID.
+        session_id: Session ID.
         artifact_dir: Root artifact directory.
 
     Returns:
@@ -238,3 +241,222 @@ async def dispatch_workers(
     )
 
     return formatted_contents
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# v1.3 Dispatcher — Outliner → Drafter → Linker → Fact Checker
+# ═══════════════════════════════════════════════════════════════════════
+
+
+async def _run_worker_chain_v13(
+    brief: ContentBrief,
+    worker_num: int,
+    input_data: ContentGenerationInput,
+    style_guide_md: str,
+    company_context_md: str,
+    artifact_dir: Path,
+    semaphore: asyncio.Semaphore,
+    site_pages: Optional[List[str]] = None,
+    parent_span: Optional[object] = None,
+) -> FormattedContent:
+    """Run the v1.3 4-step worker chain for a single brief.
+
+    Chain: Outliner → Drafter → Linker → Fact Checker
+    Uses v1.3 tracing (LangSmith) and structural count computation inline.
+
+    Args:
+        brief: Content brief to process.
+        worker_num: Worker number for logging.
+        input_data: Pipeline input for company details.
+        style_guide_md: Company style guide.
+        company_context_md: Company context.
+        artifact_dir: Root artifact directory.
+        semaphore: Concurrency limiter.
+        site_pages: Known site page URLs for internal linking.
+        parent_span: LangSmith parent span.
+
+    Returns:
+        FormattedContent for this brief.
+    """
+    from core.content_engine.workers.formatter import _count_structural_elements
+    from core.content_engine.workers.linker import link_content
+    from core.models.content_generation import ContentDraft
+
+    async with semaphore:
+        title_short = brief.title[:60]
+        display_title = title_short + ("..." if len(brief.title) > 60 else "")
+
+        span = create_span(
+            parent_span,
+            f"worker-chain/{brief.brief_id}",
+            metadata={
+                "brief_id": brief.brief_id,
+                "worker_num": worker_num,
+                "content_format": brief.content_format,
+            },
+        )
+
+        bdir = _brief_dir(artifact_dir, brief.brief_id)
+
+        try:
+            # Step 1: Outline
+            logger.info("Worker #%d: Outlining \"%s\"", worker_num, display_title)
+            outline = await generate_outline(
+                brief=brief,
+                company_context_md=company_context_md,
+                trace=span,
+            )
+            (bdir / "outline.json").write_text(
+                json.dumps(outline.model_dump(mode="json"), indent=2, default=str),
+                encoding="utf-8",
+            )
+
+            # Step 2: Draft
+            logger.info("Worker #%d: Drafting \"%s\"", worker_num, display_title)
+            draft = await generate_draft(
+                outline=outline,
+                brief=brief,
+                style_guide_md=style_guide_md,
+                company_context_md=company_context_md,
+                trace=span,
+            )
+            (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
+
+            # Step 3: Link
+            logger.info("Worker #%d: Linking \"%s\"", worker_num, display_title)
+            linked = await link_content(
+                draft=draft,
+                brief=brief,
+                company_name=input_data.company_name,
+                domain=input_data.domain,
+                site_pages=site_pages,
+                trace=span,
+            )
+            (bdir / "linked.md").write_text(linked.markdown, encoding="utf-8")
+
+            # Step 4: Fact Check (verify-only, no new content)
+            logger.info("Worker #%d: Fact checking \"%s\"", worker_num, display_title)
+            fact_check_draft = ContentDraft(
+                brief_id=linked.brief_id,
+                title=linked.title,
+                markdown=linked.markdown,
+                word_count=linked.word_count,
+            )
+            checked = await enrich_with_facts(
+                draft=fact_check_draft,
+                brief=brief,
+                company_name=input_data.company_name,
+                domain=input_data.domain,
+                trace=span,
+            )
+            (bdir / "fact_checked.md").write_text(checked.markdown, encoding="utf-8")
+
+            # Compute structural counts inline (no formatter step)
+            counts = _count_structural_elements(checked.markdown)
+            word_count = len(checked.markdown.split())
+
+            formatted = FormattedContent(
+                brief_id=checked.brief_id,
+                title=checked.title,
+                markdown=checked.markdown,
+                word_count=word_count,
+                **counts,
+            )
+
+            logger.info(
+                "Worker #%d: DONE (%d words, %d headers, %d citations)",
+                worker_num,
+                formatted.word_count,
+                formatted.header_count,
+                formatted.citation_count,
+            )
+
+            end_span(span, output={
+                "brief_id": formatted.brief_id,
+                "word_count": formatted.word_count,
+                "header_count": formatted.header_count,
+                "citation_count": formatted.citation_count,
+                "internal_links": linked.internal_links_added,
+                "external_links": linked.external_links_added,
+            })
+
+            return formatted
+        except Exception as exc:
+            end_span(span, error=str(exc)[:500])
+            raise
+
+
+async def dispatch_workers_v13(
+    briefs: List[ContentBrief],
+    input_data: ContentGenerationInput,
+    style_guide_md: str,
+    company_context_md: str,
+    max_concurrent: int = 3,
+    *,
+    artifact_dir: Path = Path("."),
+    site_pages: Optional[List[str]] = None,
+    parent_span: Optional[object] = None,
+) -> Tuple[List[Tuple[str, FormattedContent]], List[Dict[str, str]]]:
+    """Dispatch v1.3 worker chains in parallel.
+
+    Chain: Outliner → Drafter → Linker → Fact Checker
+    (v1.3 replaces Enricher→Formatter with Linker→FactChecker)
+
+    Args:
+        briefs: Content briefs to process.
+        input_data: Pipeline input for company details.
+        style_guide_md: Company style guide.
+        company_context_md: Company context.
+        max_concurrent: Max concurrent workers.
+        artifact_dir: Root artifact directory.
+        site_pages: Known site page URLs for internal linking.
+        parent_span: LangSmith parent span.
+
+    Returns:
+        Tuple of (successes, failures):
+          - successes: List of (brief_id, FormattedContent) tuples
+          - failures: List of {"brief_id": str, "error": str} dicts
+    """
+    semaphore = asyncio.Semaphore(max_concurrent)
+
+    tasks = [
+        _run_worker_chain_v13(
+            brief=brief,
+            worker_num=i + 1,
+            input_data=input_data,
+            style_guide_md=style_guide_md,
+            company_context_md=company_context_md,
+            artifact_dir=artifact_dir,
+            semaphore=semaphore,
+            site_pages=site_pages,
+            parent_span=parent_span,
+        )
+        for i, brief in enumerate(briefs)
+    ]
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    formatted_contents: List[Tuple[str, FormattedContent]] = []
+    failed_briefs: List[Dict[str, str]] = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logger.error(
+                "v1.3 worker for brief '%s' failed: %s",
+                briefs[i].brief_id,
+                result,
+            )
+            failed_briefs.append({
+                "brief_id": briefs[i].brief_id,
+                "error": str(result)[:500],
+            })
+        else:
+            formatted_contents.append((briefs[i].brief_id, result))
+
+    logger.info(
+        "v1.3 workers complete: %d/%d briefs (%d failed)",
+        len(formatted_contents),
+        len(briefs),
+        len(failed_briefs),
+    )
+
+    return formatted_contents, failed_briefs
