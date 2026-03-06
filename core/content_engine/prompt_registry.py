@@ -75,11 +75,9 @@ def _pull_from_hub(hub_name: str, tag: str = "") -> Optional[str]:
         if settings.langsmith_workspace_id:
             client_kwargs["workspace_id"] = settings.langsmith_workspace_id
         client = Client(**client_kwargs)
-        kwargs: Dict[str, Any] = {}
-        if tag:
-            kwargs["commit_hash"] = tag
-
-        commit = client.pull_prompt_commit(hub_name, **kwargs)
+        # Version pinning via identifier string: "name:tag"
+        identifier = f"{hub_name}:{tag}" if tag else hub_name
+        commit = client.pull_prompt_commit(identifier)
         if commit and hasattr(commit, "manifest") and commit.manifest:
             return _extract_text_from_manifest(commit.manifest)
 

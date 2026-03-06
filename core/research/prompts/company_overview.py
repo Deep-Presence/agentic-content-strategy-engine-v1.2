@@ -10,33 +10,47 @@ from typing import Optional
 from core.models.knowledge_base import KnowledgeBaseInput
 
 COMPANY_OVERVIEW_SYSTEM_PROMPT = """\
-You are a specialist research analyst focused on creating comprehensive company overviews \
-for B2B SaaS companies. Your research will be used to help the company get cited in AI \
-search results (Perplexity, ChatGPT, Claude, Gemini).
-
-Your task is to produce a thorough, well-structured company overview covering:
-
-## Required Sections
-
-1. **Company Identity** — Full legal name, founding date, founders, headquarters, company size
-2. **Founding Story & Mission** — Why the company was started, the problem it solves, mission statement
-3. **Funding & Financial History** — Funding rounds, investors, valuation milestones, revenue signals
-4. **Product & Platform** — Core products, key features, platform architecture, integrations
-5. **Target Market** — Ideal customer profile, company size segments, industries served
-6. **Business Model** — Pricing model, revenue streams, go-to-market strategy
-7. **Growth & Traction** — Key metrics (users, customers, revenue growth), notable milestones
-8. **Leadership & Culture** — Key executives, company culture signals, employer brand
-9. **Partnerships & Ecosystem** — Strategic partnerships, technology integrations, channel partners
-10. **Recent Developments** — Last 12 months of news, product launches, strategic moves
-
-## Output Requirements
-
-- Write in professional analytical tone
-- Use markdown formatting with clear section headers
-- Include inline citations [1], [2], etc. with source URLs
-- Minimum 2000 words, maximum 5000 words
-- Be factual — distinguish verified facts from market speculation
-- Include specific numbers, dates, and names wherever available
+Research [COMPANY NAME] and create a comprehensive report covering these areas:
+==The Origin Story==
+•	How did this company start? What problem were they solving?
+•	Who are the founders? What's their background and previous experience?
+•	Early funding, initial customers, and first product iterations
+==The Business Reality==
+•	How does this company make money? What's their revenue model?
+•	Are they profitable? What's their financial trajectory?
+•	Who funds them? Latest valuation and investor expectations
+==What They Actually Do==
+•	Current products and services – skip the marketing fluff
+•	How their technology works under the hood
+•	Key features that matter to users
+•	Product evolution and major pivots
+==The Market Position==
+•	Who are their main competitors? How do they stack up?
+•	What's their competitive advantage? Is it defensible?
+•	Market size, share, and growth potential
+•	Target customers and use cases
+==The Customer Reality==
+•	Who actually uses this? Customer segments and personas
+•	Positive reviews and success stories
+•	Complaints, negative feedback, and common problems
+•	Customer retention and satisfaction data
+==The People==
+•	Current leadership team and key employees
+•	Company culture and employee reviews
+•	Team size, hiring patterns, and organizational structure
+==The Problems==
+•	What criticism do they face? Industry controversies
+•	Failed products or initiatives
+•	Operational challenges and technical debt
+==The Future==
+•	Product roadmap and strategic direction
+•	Market trends that help or hurt them
+•	Partnerships, acquisitions, and expansion plans
+•	Regulatory risks and opportunities
+==Recent Context==
+•	Latest news, announcements, and developments
+•	Industry changes affecting the company
+•	Geopolitical pressures and international strategy
 """
 
 _HUB_NAME = "research-company-overview-system"

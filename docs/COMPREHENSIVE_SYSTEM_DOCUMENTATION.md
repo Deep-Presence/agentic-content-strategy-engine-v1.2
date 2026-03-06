@@ -2,8 +2,8 @@
 
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
-> **Stack:** Python 3.12 · LangGraph · DeepAgents · FastAPI · Pydantic v2 · Langfuse v3
-> **Document Date:** 2026-03-06 (updated: Knowledge Base Phase 5 — Synthesis & Living Document)
+> **Stack:** Python 3.12 · LangGraph · DeepAgents · FastAPI · Pydantic v2 · LangSmith · LiteLLM
+> **Document Date:** 2026-03-06 (updated: Content Engine V1.3, Knowledge Base Phases 1-5, Site Audit P3 bug fixes)
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -26,7 +26,9 @@
    - 4a.9 [Scoring Algorithm](#4a9-scoring-algorithm)
    - 4a.10 [Configuration](#4a10-configuration)
    - 4a.11 [Pydantic Models](#4a11-pydantic-models)
-   - 4a.12 [API Endpoints](#4a12-api-endpoints)
+   - 4a.12 [Pipeline Orchestration Details](#4a12-pipeline-orchestration-details)
+   - 4a.13 [API Endpoints](#4a13-api-endpoints)
+   - 4a.14 [P3 Bug Fixes & Improvements](#4a14-p3-bug-fixes--improvements)
 4b. [Daily LLM Visibility Tracker](#4b-daily-llm-visibility-tracker)
    - 4b.1 [Overview & Architecture](#4b1-overview--architecture)
    - 4b.2 [Module Architecture — Design Patterns](#4b2-module-architecture--design-patterns)
@@ -52,12 +54,16 @@
    - 5c.1 [Architecture — 3-Layer Knowledge Base](#5c1-architecture--3-layer-knowledge-base)
    - 5c.2 [DAG Execution & 3 HITL Checkpoints](#5c2-dag-execution--3-hitl-checkpoints)
    - 5c.3 [6 Specialist Agents](#5c3-6-specialist-agents)
-   - 5c.4 [KBStorage — Versioned Filesystem Store](#5c4-kbstorage--versioned-filesystem-store)
-   - 5c.5 [Staleness Tracking & Propagation (Phase 5)](#5c5-staleness-tracking--propagation-phase-5)
-   - 5c.6 [Delta Synthesis Mode (Phase 5)](#5c6-delta-synthesis-mode-phase-5)
-   - 5c.7 [Health & Refresh-Stale API Endpoints (Phase 5)](#5c7-health--refresh-stale-api-endpoints-phase-5)
-   - 5c.8 [Pydantic Models (17 Models)](#5c8-pydantic-models-17-models)
-   - 5c.9 [Test Coverage (260 tests)](#5c9-test-coverage-260-tests)
+   - 5c.4 [Prompt System — 6 Prompt Files with Hub Fallback](#5c4-prompt-system--6-prompt-files-with-hub-fallback)
+   - 5c.5 [KBStorage — Versioned Filesystem Store](#5c5-kbstorage--versioned-filesystem-store)
+   - 5c.6 [Staleness Tracking & Propagation](#5c6-staleness-tracking--propagation)
+   - 5c.7 [Delta Synthesis Mode](#5c7-delta-synthesis-mode)
+   - 5c.8 [read_file Tool](#5c8-read_file-tool)
+   - 5c.9 [HITL Mini-Graphs](#5c9-hitl-mini-graphs)
+   - 5c.10 [Health & Refresh-Stale API Endpoints](#5c10-health--refresh-stale-api-endpoints)
+   - 5c.11 [Pydantic Models (17 Models)](#5c11-pydantic-models-17-models)
+   - 5c.12 [LangSmith Tracing Integration](#5c12-langsmith-tracing-integration)
+   - 5c.13 [Test Coverage (260 tests)](#5c13-test-coverage-260-tests)
 6. [Pipeline 2: Gap Analysis](#6-pipeline-2-gap-analysis)
    - 6.1 [Step 1 — Embed Company Assets](#61-step-1--embed-company-assets)
    - 6.2 [Step 2 — Generate Queries](#62-step-2--generate-queries)
@@ -70,13 +76,21 @@
    - 6.9 [LLM Engine Abstraction](#69-llm-engine-abstraction)
    - 6.10 [Data Flow Between Steps](#610-data-flow-between-steps)
 7. [Pipeline 3: Content Generation Engine](#7-pipeline-3-content-generation-engine)
-   - 7.1 [Stage 1 — Strategic Planner](#71-stage-1--strategic-planner)
-   - 7.2 [Stage 2 — Content Workers (Orchestrator-Workers)](#72-stage-2--content-workers-orchestrator-workers)
-   - 7.3 [Stage 3 — Evaluator-Optimizer Loop](#73-stage-3--evaluator-optimizer-loop)
-   - 7.4 [Stage 4 — Human Review (LangGraph HITL)](#74-stage-4--human-review-langgraph-hitl)
-   - 7.5 [Langfuse Tracing Architecture](#75-langfuse-tracing-architecture)
-   - 7.6 [Artifact Structure](#76-artifact-structure)
-   - 7.7 [Utility Modules](#77-utility-modules)
+   - 7.1 [LiteLLM Client — Unified LLM Abstraction](#71-litellm-client--unified-llm-abstraction)
+   - 7.2 [LangSmith Prompt Registry — Hub-with-Local-Fallback](#72-langsmith-prompt-registry--hub-with-local-fallback)
+   - 7.3 [LangSmith Tracing Architecture (Replaces Langfuse)](#73-langsmith-tracing-architecture-replaces-langfuse)
+   - 7.4 [Stage 0 — Two-Phase Context Loading (ContextRouter)](#74-stage-0--two-phase-context-loading-contextrouter)
+   - 7.5 [Stage 1 — Strategic Planner (Agent 1)](#75-stage-1--strategic-planner-agent-1)
+   - 7.6 [Stage 2 — Brief Builder (Agent 2)](#76-stage-2--brief-builder-agent-2)
+   - 7.7 [Stage 3 — Content Workers (Orchestrator-Workers)](#77-stage-3--content-workers-orchestrator-workers)
+   - 7.8 [Stage 4 — Evaluator-Optimizer Loop](#78-stage-4--evaluator-optimizer-loop)
+   - 7.9 [Stage 5 — Human Review (LangGraph HITL)](#79-stage-5--human-review-langgraph-hitl)
+   - 7.10 [v1.0 Architecture (Preserved)](#710-v10-architecture-preserved)
+   - 7.11 [Entry Modes](#711-entry-modes)
+   - 7.12 [Pydantic Models — v1.3 (12 models)](#712-pydantic-models--v13-12-models)
+   - 7.13 [Artifact Structure](#713-artifact-structure)
+   - 7.14 [Utility Modules](#714-utility-modules)
+   - 7.15 [Input Sources](#715-input-sources)
 8. [Reddit Human-in-the-Loop Monitor](#8-reddit-human-in-the-loop-monitor)
 9. [Storage Architecture](#9-storage-architecture)
    - 9.1 [Filesystem Layer (Source of Truth)](#91-filesystem-layer-source-of-truth)
@@ -187,11 +201,11 @@ The **Content Strategy Engine** is a multi-agent AI platform that automates the 
 
 2. **Gap Analysis Pipeline** (implemented) — An 8-step data pipeline that embeds a company's web content, generates buyer-intent search queries, searches four AI platforms (ChatGPT, Claude, Perplexity, Google AI Overview), enriches the citations those platforms return, embeds everything into a shared vector space, computes semantic proximity analysis (SPA), generates interactive visualizations, and produces a gap report with actionable content recommendations.
 
-3. **Content Generation Engine** (implemented) — A 4-stage async pipeline that consumes the outputs of Pipelines 1 and 2 to automatically generate optimized content pieces that close the identified citation gaps. Uses Orchestrator-Workers pattern for parallel content production and Evaluator-Optimizer pattern for automated QA, with LangGraph HITL for human review.
+3. **Content Generation Engine v1.3** (implemented) — A 6-stage async pipeline that consumes the outputs of Pipelines 1 and 2 to automatically generate optimized content pieces that close the identified citation gaps. Two-phase context loading (ContextRouter), Strategic Planner (topic selection), Brief Builder (parallel blueprint generation), Orchestrator-Workers (5-agent chain: Outliner → Drafter → Fact Enricher → Formatter → Linker), Evaluator-Optimizer loop (E-E-A-T + Style + Factual judges, max 2 revisions), and LangGraph HITL for human review. LiteLLM abstraction for all LLM calls, LangSmith tracing (Langfuse fully removed).
 
 Additionally, a **Reddit Human-in-the-Loop Monitor** (implemented) monitors subreddits for threads matching a company's ICP persona, drafts contextual replies, and sends notifications via Slack/Discord.
 
-The system exposes both a **CLI** and a **FastAPI REST API** (implemented 2026-02-16, expanded 2026-02-25/26). All business logic lives in a `core/` Python package. The API layer (`api/`) wraps all three pipelines with async task runners, SSE event streaming for real-time progress, and HITL approval endpoints. A **front-back integration sprint** (2026-02-25/26) added 16 company-scoped data retrieval endpoints across 4 phases — authentication, gap analysis data, content brief data, and brand brain/run history — with a 3-module service layer, 50+ response models, and 343 new tests. Task state is persisted via a JSON-backed TaskStore. Artifacts are persisted to the local filesystem as the source of truth, with optional versioned mirroring to Supabase. LLM observability is provided by Langfuse v3 tracing throughout the content generation pipeline.
+The system exposes both a **CLI** and a **FastAPI REST API** (implemented 2026-02-16, expanded 2026-02-25/26). All business logic lives in a `core/` Python package. The API layer (`api/`) wraps all three pipelines with async task runners, SSE event streaming for real-time progress, and HITL approval endpoints. A **front-back integration sprint** (2026-02-25/26) added 16 company-scoped data retrieval endpoints across 4 phases — authentication, gap analysis data, content brief data, and brand brain/run history — with a 3-module service layer, 50+ response models, and 343 new tests. Task state is persisted via a JSON-backed TaskStore. Artifacts are persisted to the local filesystem as the source of truth, with optional versioned mirroring to Supabase. LLM observability is provided by **LangSmith** tracing across all pipelines — content engine, knowledge base, and research agents (Langfuse was fully removed 2026-03-02).
 
 A **Settings Pages API** sprint (2026-02-27) added 11 new endpoints across 3 features — team management, company profile editing, and pipeline defaults — plus a full **Knowledge Document Upload** system (5 endpoints, multipart file upload, text extraction, s1 pipeline integration, embedded status tracking). Shared modules (`core/shared_tools/text_extraction.py`, `core/shared_tools/knowledge_doc_metadata.py`) ensure consistent text extraction and thread-safe metadata coordination between the API service layer and the gap analysis pipeline.
 
@@ -261,7 +275,7 @@ Company Website + Internal Docs
 │           │                      │                          │            │
 │           ▼                      ▼                          ▼            │
 │  ┌─────────────────────────────────────────┐  ┌───────────────────────┐  │
-│  │           Artifact Storage               │  │  Langfuse v3         │  │
+│  │           Artifact Storage               │  │  LangSmith           │  │
 │  │  Filesystem (SoT) ◀──▶ Supabase Mirror  │  │  (LLM Observability) │  │
 │  │  ChromaDB (vectors)                      │  └───────────────────────┘  │
 │  └─────────────────────────────────────────┘                             │
@@ -298,7 +312,8 @@ Company Website + Internal Docs
 | **Web Crawling** | Playwright, httpx, BeautifulSoup4 | Site crawling and HTML extraction |
 | **Reddit** | PRAW (read-only) | Subreddit monitoring |
 | **Notifications** | Slack Block Kit, Discord Webhooks | Alert delivery |
-| **Observability** | Langfuse v3.14+ | LLM tracing, scoring, cost tracking |
+| **LLM Abstraction** | LiteLLM | Unified LLM call interface with auto-prefix routing (content engine) |
+| **Observability** | LangSmith (sole backend) | LLM tracing, scoring, prompt registry (Langfuse fully removed 2026-03-02) |
 
 ---
 
@@ -403,7 +418,7 @@ content-strategy-engine/
 │   │   ├── __init__.py
 │   │   ├── pipeline.py                    # Top-level async orchestrator (4-stage)
 │   │   ├── planner.py                     # Stage 1: Strategic Planner (Sonnet 4.5)
-│   │   ├── tracing.py                     # Langfuse instrumentation (lazy singleton)
+│   │   ├── tracing.py                     # LangSmith tracing (unified, shared across all pipelines)
 │   │   ├── utils.py                       # safe_parse, retry, token estimation
 │   │   ├── graph.py                       # Stage 4: LangGraph HITL review
 │   │   ├── workers/
@@ -645,20 +660,20 @@ content-strategy-engine/
 
 ### 4a.1 Overview & Architecture
 
-The Site Audit pipeline is a **100% deterministic** (no LLM calls) 6-step pipeline that audits a website's AI-readiness across 8 dimensions. It runs before the Gap Analysis pipeline and produces a comprehensive audit report with dimension scores, an overall grade, and actionable findings.
+The Site Audit pipeline is a **100% deterministic** (no LLM calls) 6-step pipeline that audits a website's AI-readiness across 8 dimensions. It runs before the Gap Analysis pipeline and produces a comprehensive audit report with dimension scores, an overall grade, and actionable findings. **793 tests** cover the entire module.
 
 **8 Audit Dimensions** (with weights summing to 1.0):
 
 | Dimension | Weight | What It Measures |
 |-----------|--------|------------------|
-| `crawlability` | 0.20 | robots.txt accessibility, sitemap quality, canonical tags, redirect chains |
-| `performance` | 0.10 | SSR content presence, Core Web Vitals (graceful degradation) |
-| `on_page_seo` | 0.15 | Title tags, meta descriptions, heading hierarchy, alt text, internal links |
-| `extractability` | 0.20 | AEO readiness — question headings, hooks, self-contained paragraphs, conciseness |
-| `schema_markup` | 0.10 | JSON-LD presence, schema type validation, coverage across pages |
-| `eeat` | 0.15 | Author attribution, citations/references, original research signals, recency |
-| `freshness` | 0.05 | Content recency signals |
-| `security` | 0.05 | HTTPS enforcement, mixed content, security headers (CSP, etc.) |
+| `crawlability` | 0.20 | robots.txt accessibility, sitemap quality, canonical tags, redirect chains, crawl-delay |
+| `performance` | 0.10 | SSR content presence, Core Web Vitals (graceful degradation via PageSpeed Insights API) |
+| `on_page_seo` | 0.15 | Title tags, meta descriptions, heading hierarchy, alt text, internal links, boilerplate detection |
+| `extractability` | 0.20 | AEO readiness — question headings, hooks, self-contained paragraphs, content patterns |
+| `schema_markup` | 0.10 | JSON-LD presence, 7 schema type validators, coverage across pages |
+| `eeat` | 0.15 | Author attribution, content freshness (dateutil parsing with DoS guard) |
+| `freshness` | 0.05 | Content recency signals (publish date, modified date, age thresholds) |
+| `security` | 0.05 | HTTPS enforcement, mixed content detection |
 
 **Pipeline flow:**
 
@@ -666,173 +681,445 @@ The Site Audit pipeline is a **100% deterministic** (no LLM calls) 6-step pipeli
 s1_discover → s2_analyze_pages → s3_check_schema → s4_check_aeo → s5_aggregate → s6_report
 ```
 
-- **s1 failure = hard fail** (no pages to analyze)
-- All other steps degrade gracefully — pipeline continues even if individual steps error
+**Failure modes:**
+- **s1 failure = hard fail** — returns `SiteAuditResult(status="failed")` immediately (no pages to analyse)
+- Steps 2–4 degrade gracefully — failures are caught, logged, and the step number is appended to `failed_steps`
+- If any steps fail, the pipeline sets `status="degraded"`, zeros out affected dimension scores via `_STEP_DIMENSION_MAP`, and recomputes the overall score conservatively
+- Step 6 (report) failure does not affect the result — the `SiteAuditResult` is already complete
 
-**Entry point:** `core/site_audit/pipeline.py` → `run_site_audit(input, output_dir, skip_steps, on_progress)`
+**Step-to-dimension mapping** (`_STEP_DIMENSION_MAP` in `pipeline.py`):
+```python
+{
+    2: ["crawlability", "on_page_seo", "security", "eeat", "freshness", "performance"],
+    3: ["schema_markup"],
+    4: ["extractability"],
+}
+```
+
+**Entry point:** `core/site_audit/pipeline.py` → `run_site_audit(input_data, config, on_progress, skip_steps, output_dir)`
+
+**Key parameters:**
+- `input_data: SiteAuditInput` — domain, max_pages, max_depth, optional feature flags
+- `config: AuditConfig = DEFAULT_AUDIT_CONFIG` — scoring thresholds and concurrency limits
+- `on_progress: Optional[Callable[[str], None]]` — callback for SSE streaming progress
+- `skip_steps: Optional[list[int]]` — step numbers to skip (e.g. `[3, 4]` to reuse cached results)
+- `output_dir: Optional[Path]` — defaults to `artifacts/site_audit/{effective_slug}/{audit_id}`
+
+**Effective slug derivation:** `{company_slug}__{product_slug}` (double underscore) when both are present, else `company_slug` only.
 
 ### 4a.2 Step 1 — Discover (s1_discover.py)
 
-**File:** `core/site_audit/steps/s1_discover.py` (~891 lines)
+**File:** `core/site_audit/steps/s1_discover.py`
 **Class:** `AsyncSiteCrawler`
 **Output:** `S1DiscoveryOutput` dataclass
 
-4-phase URL discovery:
-1. **robots.txt** — Parse User-Agent directives, extract sitemap URLs, detect AI bot policies (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot)
-2. **Sitemaps** — XML sitemap parsing (supports sitemap index files)
-3. **RSS/Atom feeds** — Feed discovery and URL extraction
-4. **BFS crawl** — Breadth-first HTML link extraction with configurable `max_pages`, `max_depth`, `request_timeout`
+**S1DiscoveryOutput fields:**
+- `pages_with_html: list[tuple[str, str]]` — (url, html) pairs for successfully fetched pages
+- `ai_bot_access: AIBotAccessResult` — AI crawler accessibility summary
+- `sitemap_health: SitemapHealthResult` — sitemap coverage and health
+- `crawl_depth_map: dict[str, int]` — `{normalized_url: BFS_depth}` for every discovered URL
+- `redirect_map: dict[str, str]` — `{original_url: final_url}` for redirected requests
+- `status_code_map: dict[str, int]` — `{url: http_status_code}` for every fetched URL
+- `robots_txt_raw: str` — raw robots.txt content
+- `discovered_urls: set[str]` — all normalized URLs found (superset of pages_with_html)
 
-**AI Bot Detection:** Produces `AIBotAccessResult` with per-bot boolean fields (`gptbot_allowed`, `claudebot_allowed`, etc.) and summary fields (`total_bots_checked`, `bots_allowed`, `bots_blocked`).
+**4-phase URL discovery:**
 
-**Sitemap Health:** Produces `SitemapHealthResult` with `has_sitemap`, `sitemap_count`, `sitemap_url_count`, `has_sitemap_index`.
+1. **robots.txt** — Fetch `/robots.txt`, parse User-Agent directives via `urllib.robotparser.RobotFileParser`, extract sitemap URLs, detect AI bot policies, check for `llms.txt`, parse `Crawl-delay` directive
+2. **Sitemaps** — Recursive XML sitemap parsing using `defusedxml.ElementTree` (security-hardened). Handles sitemap index files (recursive expansion). Probes common paths (`/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`, `/sitemap-index.xml`) if robots.txt lists none. Maximum XML body size: `_MAX_XML_BYTES = 10 MB`
+3. **RSS/Atom feeds** — Feed discovery and URL extraction from `<link>` tags
+4. **BFS crawl** — Breadth-first HTML link extraction using `httpx.AsyncClient` with `asyncio.Semaphore` concurrency control
 
-**Test isolation:** `_transport` parameter on `AsyncSiteCrawler.__init__()` accepts `httpx.MockTransport` for zero-network test runs.
+**URL Normalisation:**
+- `normalize_url(url)`: strips fragments, normalises scheme/host to lowercase, removes default ports (80/443), unquotes then re-quotes path
+- `canonical_url(url)`: applies all normalizations from `normalize_url()` PLUS sorts query parameters for order-invariant deduplication. This prevents duplicate crawls of URLs like `?a=1&b=2` vs `?b=2&a=1`
+- `is_same_domain(url, domain)`: www-stripped netloc comparison
 
-### 4a.3 Step 2 — Analyze Pages (s2_analyze_pages.py)
+**BFS deduplication:** Uses `canonical_url()` as the dedup key (stored in `_visited` set and `_depth_map`). The normalised form is used for actual fetching. Depth map always keeps the minimum depth for each canonical URL.
 
-**File:** `core/site_audit/steps/s2_analyze_pages.py` (~582 lines)
+**Skip extensions:** A frozenset `_SKIP_EXTENSIONS` of 30+ file extensions (`.pdf`, `.jpg`, `.css`, `.js`, etc.) that are skipped without fetching.
+
+**AI Bot Detection:** Checks 5 bots against robots.txt directives:
+- `GPTBot` (OpenAI), `ClaudeBot` (Anthropic), `PerplexityBot`, `Google-Extended`, `CCBot` (Common Crawl)
+- Produces `AIBotAccessResult` with per-bot boolean fields and `has_llms_txt`, `robots_txt_exists`, `crawl_delay_seconds`
+
+**Crawl-delay parsing** (`_parse_crawl_delay()`):
+- Extracts the first `Crawl-delay:` value from robots.txt using regex `r"(?:^|\n)\s*Crawl-delay:\s*(\d+\.?\d*)"` (case-insensitive)
+- Caps at `_MAX_CRAWL_DELAY = 300.0` seconds to prevent unbounded values
+- Returns `float | None` (None if no directive found)
+- Pipeline generates findings for excessive crawl-delay: `>30s` = medium severity, `>10s` = info severity
+
+**Sitemap Health:** Produces `SitemapHealthResult` with `has_sitemap`, `sitemap_url_count`, `sitemap_urls`, `sitemap_errors`, `has_sitemap_index`.
+
+**Test isolation:** `_transport` parameter on `AsyncSiteCrawler.__init__()` accepts `httpx.MockTransport` for zero-network test runs. Default user-agent: `"DeepPresence-SiteAudit/1.0"`.
+
+### 4a.3 Step 2 — Analyse Pages (s2_analyze_pages.py)
+
+**File:** `core/site_audit/steps/s2_analyze_pages.py`
 **Functions:** `analyze_single_page()` (sync, pure CPU) + `analyze_all_pages()` (async with `asyncio.Semaphore`)
 
-Runs all check functions from the `checks/` modules on each page:
-- Crawlability checks → `list[AuditFinding]`
-- On-page SEO checks → `list[AuditFinding]`
-- E-E-A-T signal checks → `list[AuditFinding]`
-- Security checks → `list[AuditFinding]`
-- Freshness checks → `list[AuditFinding]`
+`analyze_all_pages()` fans out page analysis via `asyncio.gather()` with a configurable semaphore (`config.page_analysis_concurrency`, default 30). Each page is analysed by `analyze_single_page()` which is synchronous and pure CPU (no I/O).
 
-Produces `PageAuditResult` per page with all findings collected.
+**Per-page signal extraction** (all via BeautifulSoup + trafilatura + textstat):
+- **Title**: `<title>` text and length
+- **Meta description**: fallback chain `name="description"` → `property="og:description"` → `name="twitter:description"`
+- **Headings**: all H1–H6 tags collected with level and text, heading hierarchy validation
+- **Images**: total count, with-alt count, without-alt count
+- **Links**: internal vs external link counts (domain-relative classification)
+- **Content**: word count via trafilatura text extraction, reading level via textstat
+- **Technical SEO**: canonical tag presence and URL, noindex/nofollow meta robots, SSR detection
+- **Security**: HTTPS check, mixed content detection (HTTP resources in HTTPS pages)
+- **Freshness/authority**: publish date (from `article:published_time`, `datePublished`, `og:updated_time`), modified date, author name/presence
+- **Author detection**: scans elements matching CSS class patterns `("author", "byline", "post-author", "entry-author", "article-author", "writer")`
+
+**Check function dispatch** per page:
+1. `check_status_code(url, status_code)` → crawlability
+2. `check_crawl_depth(url, depth)` → crawlability
+3. `check_canonical(url, has_canonical, canonical_url)` → crawlability
+4. `check_noindex(url, is_noindex)` → crawlability
+5. `check_title(url, title, title_length, config)` → on_page_seo
+6. `check_meta_description(url, meta_desc, meta_length, config)` → on_page_seo
+7. `check_h1(url, h1_count, h1_text)` → on_page_seo
+8. `check_heading_hierarchy(url, headings)` → on_page_seo
+9. `check_images(url, total, without_alt)` → on_page_seo
+10. `check_internal_links(url, count)` → on_page_seo
+11. `check_author(url, has_author)` → eeat
+12. `check_freshness(url, publish_date, modified_date, page_type)` → freshness
+13. `check_https(url)` → security
+14. `check_mixed_content(url, has_mixed_content)` → security
+15. `check_ssr_content(html, url)` → performance
+
+Produces `PageAuditResult` per page with all findings, signal values, and sub-results attached.
 
 ### 4a.4 Step 3 — Check Schema (s3_check_schema.py)
 
 **File:** `core/site_audit/steps/s3_check_schema.py`
 **Functions:** `detect_schema(html, url) -> SchemaDetectionResult` + `generate_schema_findings(url, result) -> list[AuditFinding]`
+**Skipped when:** `check_schema_validation=False` on input OR step 3 in `skip_steps`
 
-- Parses `<script type="application/ld+json">` blocks from HTML
-- Handles `@graph` arrays (explodes into individual items)
-- Per-block `try/except` isolation — malformed JSON doesn't crash the entire page
-- Validates schema `@type` against known types
-- Infers page type from schema types
+**Detection pipeline:**
+1. Parse all `<script type="application/ld+json">` blocks via `parse_jsonld_blocks()` — matches type with regex `r"^application/ld\+json\s*(;.*)?$"` (case-insensitive, handles charset suffix). Uses `tag.string` with fallback to `tag.get_text()` for multi-node script content
+2. Handle `@graph` containers (explodes nested items into flat list), JSON arrays, and standalone objects
+3. Extract and normalise `@type` values via `identify_schema_types()` — strips `http://schema.org/` and `https://schema.org/` URI prefixes, deduplicates while preserving order
+4. Run type-specific validation via `validate_schema_block()` dispatch — per-block `try/except` isolation
+5. Infer page type from URL via `infer_page_type(url, html)` — heuristic path matching
+
+**7 Schema Type Validators** (in `checks/schema_checks.py`):
+
+| Validator | Schema Type | Required Fields | Recommended Fields |
+|-----------|-------------|-----------------|-------------------|
+| `validate_article_schema()` | Article, BlogPosting | headline, author (with name), datePublished | image, dateModified |
+| `validate_faq_schema()` | FAQPage | mainEntity array with @type:Question, name, acceptedAnswer.text | — |
+| `validate_howto_schema()` | HowTo | name, step array (each with text or itemListElement) | — |
+| `validate_organization_schema()` | Organization | name, url | logo |
+| `validate_breadcrumb_schema()` | BreadcrumbList | itemListElement array with position, name (supports nested `item.name`) | — |
+| `validate_product_schema()` | Product | name, offers OR price+priceCurrency | description, image, brand, sku |
+| `validate_speakable_schema()` | Speakable, SpeakableSpecification | cssSelector OR xpath | name |
+
+**Known schema types** (recognised by the `KNOWN_SCHEMA_TYPES` frozenset): Organization, Article, BlogPosting, FAQPage, HowTo, Product, BreadcrumbList, LocalBusiness, Person, WebSite, WebPage, Speakable, SpeakableSpecification.
+
+**Finding generation** (`generate_schema_findings()`):
+- Homepage without Organization schema → **medium**
+- Article page without Article/BlogPosting schema → **high**
+- FAQ page without FAQPage schema → **high**
+- Product page without Product schema → **medium**
+- Any page without BreadcrumbList schema → **low**
+- Schema present with validation errors → **medium** per error
+
+**Page type inference** (`infer_page_type()`):
+- URL path heuristics applied in priority order: `/blog/`, `/posts/`, `/articles/` → `"article"`; `/product/`, `/shop/` → `"product"`; `/faq/`, `/help/` → `"faq"`; `/about/` → `"about"`; `/pricing/` → `"pricing"`; root path → `"homepage"`; default → `"page"`
+- Also checks trailing and leading path segments for match
 
 ### 4a.5 Step 4 — Check AEO (s4_check_aeo.py)
 
 **File:** `core/site_audit/steps/s4_check_aeo.py`
 **Function:** `analyze_aeo_readiness(html, url, config) -> tuple[AEOReadinessResult, list[AuditFinding]]`
 
-**AEO Readiness Score** (0–100), composite formula:
+This is the **differentiator** — traditional SEO tools don't check any of this. It scores how well content is structured for AI extraction as answer snippets.
+
+**AEO Snippet Readiness Score** (0–100), composite formula:
 
 ```
-score = question_heading_ratio × 25
-      + hook_ratio × 25
-      + self_contained_paragraph_ratio × 20
-      + paragraph_length_score × 15
-      + pattern_score (0–15)
+score = question_heading_ratio      × 25
+      + quick_answer_hook_ratio     × 25
+      + self_contained_para_ratio   × 20
+      + paragraph_length_score      × 15
+      + content_pattern_score       (0–15, uncapped input)
 ```
 
-Components:
-- **Question headings:** H2/H3/H4 ending in `?` or starting with interrogatives (what/how/why/when/where/which/can/does/is)
-- **Hooks:** First 2 sentences of paragraphs directly answering the heading's question
-- **Self-contained paragraphs:** Complete, standalone answer paragraphs (checked via `extractability.py`)
-- **Paragraph length:** Penalizes too-short (<50 words) and too-long (>300 words) paragraphs
-- **Patterns:** Numbered lists, definition lists, FAQ sections, comparison tables, step-by-step guides
+Score is clamped to `[0.0, 100.0]`.
+
+**Component 1 — Question Heading Classification** (`classify_heading_as_question()` in `extractability.py`):
+
+Three rules applied in priority order:
+1. **Question mark + start word**: heading ends with `?` AND starts with a recognised question word (21 words including what/how/why/when/where/who/which/can/does/is/are/should/will/do/have/has/could/would/might/may/did/was/were). Uses `\b` word boundary to prevent prefix false positives ("Whoever" is NOT a question).
+2. **Comparison patterns**: heading contains vs, versus, compared to, difference between, pros and cons, comparison (regex patterns, no trailing `?` required).
+3. **Wh-word headings without `?`**: core wh-words only (what/how/why/when/where/who/which), minimum 4 words to filter fragments like "How" or "What Now".
+
+**Component 2 — Quick Answer Hook Detection** (`detect_quick_answer_hook()` in `extractability.py`):
+
+After each question heading, searches up to 5 siblings for `<p>` elements (including `<p>` nested inside `<div>`/`<section>`/`<article>` containers). Word count must fall within `[config.aeo_quick_answer_min_words, config.aeo_quick_answer_max_words]` (default 15–150). Search stops at the next heading element (h1–h6) to prevent matching unrelated paragraphs. Skips non-content tags (`img`, `figure`, `picture`, `script`, `style`, `noscript`).
+
+**Component 3 — Self-Contained Paragraph Detection** (`is_self_contained_paragraph()` in `extractability.py`):
+
+A paragraph is self-contained if:
+- Word count in range 20–80 words
+- Does NOT start with a continuity marker (case-insensitive, word boundary): however, additionally, furthermore, moreover, in addition, as mentioned, as noted, as discussed, that said, on the other hand, meanwhile, nevertheless, consequently, therefore
+
+Only meaningful paragraphs (≥5 words) are evaluated. The ratio is `self_contained_count / meaningful_paragraph_count`.
+
+**Component 4 — Paragraph Length Score** (`_compute_paragraph_length_score()`):
+
+Returns a score in [0.0, 1.0]:
+- 1.0 if `avg_word_count` is within `[ideal_min, ideal_max]` (default 20–80)
+- Linear decay to 0.0 below range (at 0 words) or above range (at 2× ideal_max)
+- Guards against invalid config: `ideal_min <= 0` → `ideal_min = 1`
+
+**Component 5 — Content Pattern Score** (`_compute_content_pattern_score()`):
+
+| Pattern | Points | Detector |
+|---------|--------|----------|
+| FAQ section | +4 | `detect_faq_section()` — heading contains "FAQ"/"Frequently Asked Questions", `<dl>` presence, or 3+ question+answer pairs |
+| Definition opening | +3 | `detect_definition_opening()` — first paragraph matches "{Topic} is/are {definitional continuation}" or "{Topic} refers to..." with continuation word validation and non-topic-starter rejection |
+| Key takeaways | +3 | `detect_key_takeaways()` — heading with "Key Takeaways"/"Summary"/"TL;DR" followed by `<ul>`/`<ol>` |
+| Comparison table | +2 | `detect_comparison_table()` — `<table>` with 3+ rows, 2+ columns, comparison header terms |
+| Numbered steps | +2 | `detect_numbered_steps()` — `<ol>` with 3+ items, or 2+ headings matching "Step N:" pattern |
+| Table of contents | +1 | `detect_toc()` — CSS selector for id/class containing "toc"/"table-of-contents"/"contents" (case-insensitive), or `<nav>` with 3+ internal anchor links |
+
+Total capped at 15 points.
+
+**Definition opening detection** (`detect_definition_opening()`):
+- Matches `{topic (1–5 words)} is/are {continuation}` or `{topic} refers to {anything}`
+- After `is/are`, requires a definitional continuation word: articles (a/an/the), definitional verbs (defined/known/considered/described), quantifiers (one/any/not), adverbs (essentially/basically/generally/typically/commonly/often/primarily/specifically/usually/simply), or passive purpose verbs (used/designed/built/meant/intended)
+- Also accepts hyphenated compound terms (e.g., "machine-readable") as definitional
+- Rejects paragraphs starting with continuity markers or non-topic starters (there/it/our/we/you/they/my/your/his/her/its)
+
+**AEO Findings generated:**
+- `low_question_heading_ratio`: ratio < `config.aeo_min_question_heading_ratio` (default 0.3) → **medium**
+- `poor_aeo_readiness`: score < 30 → **high**
+- `moderate_aeo_readiness`: score 30–59 → **medium**
+- `no_self_contained_paragraphs`: ratio = 0 with meaningful paragraphs present → **medium**
+- `faq_page_missing_faq_structure`: URL inferred as FAQ page but no FAQ section detected → **medium**
 
 ### 4a.6 Step 5 — Aggregate (s5_aggregate.py)
 
 **File:** `core/site_audit/steps/s5_aggregate.py`
-**Function:** `aggregate_results(pages, schema_results, aeo_results, bot_access, sitemap_health, config) -> SiteAuditResult`
+**Function:** `aggregate_results(page_results, ai_bot_access, sitemap_health, domain, audit_id, config) -> SiteAuditResult`
 
-1. Collects all `AuditFinding` objects from pages, schema, and AEO steps
-2. Computes per-dimension scores via `scoring.compute_all_dimension_scores()`
-3. Computes weighted overall score via `scoring.compute_overall_score()`
-4. Assigns letter grade via `scoring.compute_grade()`
-5. Computes top findings — sorted by severity, deduplicated by type, with occurrence counts
-6. Computes AEO and schema summary statistics
+1. **Collect findings**: flatten all `AuditFinding` objects from all `PageAuditResult.findings`
+2. **Compute dimension scores**: `compute_all_dimension_scores(findings, config, pages_crawled)` — page-normalised scoring (see 4a.9)
+3. **Compute overall score**: `compute_overall_score(dimension_scores)` — weighted sum, clamped to [0, 100]
+4. **Assign grade**: `compute_grade(overall_score, config)` — threshold lookup
+5. **Compute breakdowns**: `findings_by_severity` and `findings_by_dimension` via `collections.Counter`
+6. **Compute AEO stats**: average snippet readiness score, average question heading ratio across all pages
+7. **Schema coverage**: count of pages where `schema_result.has_schema` is True
+8. **Top findings**: `_compute_top_findings(findings, max_count=10)` — sorted by severity (critical first), deduplicated by `finding_type`, each with occurrence count
 
 ### 4a.7 Step 6 — Report (s6_report.py)
 
 **File:** `core/site_audit/steps/s6_report.py`
 **Functions:** `generate_markdown_report(result) -> str` + `generate_report(result, output_dir) -> tuple[Path, Path]`
 
-Produces:
-- **report.md** — Markdown executive summary with sections for overall grade, dimension scores (bar chart via grade letters), AI bot access status, sitemap health, AEO readiness, top findings with recommendations
-- **audit_result.json** — Full `SiteAuditResult` serialized via `model_dump(mode="json")`
+`generate_report()` is async, creates `output_dir` if needed, writes two files:
 
-### 4a.8 Check Modules
+**report.md** — 7-section Markdown executive summary:
+1. **Header**: overall score, grade with emoji (A=🟢, B=🔵, C=🟡, D=🟠, F=🔴), pages crawled/discovered, total findings, duration
+2. **Dimension Scores**: pipe-delimited table with dimension label, raw score, weight, weighted score, finding count
+3. **AI Bot Access**: table of 5 bots with allowed/blocked status, robots.txt and llms.txt presence
+4. **Sitemap Health**: sitemap found, URL count, sitemap index, errors
+5. **AEO Readiness**: average snippet readiness, schema coverage ratio, average question heading ratio
+6. **Top Findings**: numbered list with severity badge, message, dimension, affected page count, recommendation
+7. **Findings by Severity**: bullet list of non-zero severity counts
 
-All in `core/site_audit/checks/` — pure functions returning `list[AuditFinding]`, zero I/O:
+**audit_result.json** — Full `SiteAuditResult` serialized via `model_dump(mode="json")` with `json.dumps(indent=2, default=str)`.
 
-| Module | Dimension | Key Checks |
-|--------|-----------|------------|
-| `crawlability.py` | crawlability | robots.txt accessible, sitemap exists, canonical present, redirect chain length |
-| `on_page_seo.py` | on_page_seo | Title tag present/length, meta description, H1 count, heading hierarchy, alt text on images, internal link count |
-| `eeat_signals.py` | eeat | Author name/bio present, citations/references, original research indicators, content date recency |
-| `security.py` | security | HTTPS enforced, mixed content, Content-Security-Policy header, X-Frame-Options |
-| `extractability.py` | extractability | Question heading classification, hook detection, self-contained paragraph evaluation |
-| `schema_checks.py` | schema_markup | JSON-LD block parsing, `@graph` handling, type validation, page type inference |
-| `performance.py` | performance | `check_ssr_content()` (sync, pure) + `fetch_core_web_vitals()` (async, graceful degradation) |
+### 4a.8 Check Modules — Detailed Reference
+
+All in `core/site_audit/checks/` — pure functions returning `list[AuditFinding]`, zero I/O.
+
+**crawlability.py** — 4 check functions:
+
+| Function | Finding Types | Severities |
+|----------|--------------|------------|
+| `check_status_code(url, status_code)` | `timeout_or_connection_error` (code=0), `server_error` (5xx), `client_error` (4xx), `redirect` (3xx) | high, critical, high, info |
+| `check_crawl_depth(url, depth, max_recommended=3)` | `excessive_crawl_depth` (>5), `deep_crawl_depth` (>3) | high, medium |
+| `check_canonical(url, has_canonical, canonical_url)` | `missing_canonical`, `canonical_mismatch` (canonical != page URL) | medium, high |
+| `check_noindex(url, is_noindex)` | `noindex_page` | info |
+
+**on_page_seo.py** — 6 check functions:
+
+| Function | Finding Types | Severities |
+|----------|--------------|------------|
+| `check_title(url, title, title_length, config)` | `missing_title`, `boilerplate_title`, `title_too_short`, `title_too_long` | critical, high, high, high |
+| `check_meta_description(url, meta_desc, meta_length, config)` | `missing_meta_description`, `meta_description_too_short`, `meta_description_too_long` | high, medium, medium |
+| `check_h1(url, h1_count, h1_text)` | `missing_h1`, `multiple_h1` | critical, high |
+| `check_heading_hierarchy(url, headings)` | `heading_hierarchy_skip` (lists all skip violations) | medium |
+| `check_images(url, total, without_alt)` | `images_missing_alt_majority` (>50%), `images_missing_alt` | high, medium |
+| `check_internal_links(url, count)` | `no_internal_links` | medium |
+
+Boilerplate title detection: frozenset `{"home", "untitled", "untitled document", "page", "new page", "index", "welcome"}`. Title length thresholds: `config.title_min_length` (default 30) to `config.title_max_length` (default 60). Meta description thresholds: `config.meta_min_length` (default 120) to `config.meta_max_length` (default 160).
+
+**eeat_signals.py** — 2 check functions:
+
+| Function | Finding Types | Severities |
+|----------|--------------|------------|
+| `check_author(url, has_author)` | `missing_author` | medium |
+| `check_freshness(url, publish_date, modified_date, page_type)` | `missing_date_metadata` (articles only), `stale_content_2y` (>730 days), `stale_content_1y` (>365 days) | low, medium, low |
+
+**Date parsing** (`_parse_date_robust()`):
+1. Reject strings > `_MAX_DATE_STR_LENGTH = 100` chars (DoS prevention for fuzzy parser)
+2. Try `dateutil.parser.isoparse()` first (ISO 8601 with timezones, Z suffix, fractional seconds — fastest, strictest)
+3. Fallback to `dateutil.parser.parse(fuzzy=False)` for human-readable dates
+4. Normalise timezone-naive results to UTC via `replace(tzinfo=timezone.utc)`
+5. Catches `ValueError`, `TypeError`, `OverflowError`
+
+**security.py** — 2 check functions:
+
+| Function | Finding Types | Severities |
+|----------|--------------|------------|
+| `check_https(url)` | `not_https` | critical |
+| `check_mixed_content(url, has_mixed_content)` | `mixed_content` | high |
+
+**performance.py** — 2 functions:
+
+| Function | Type | Finding Types | Severities |
+|----------|------|--------------|------------|
+| `check_ssr_content(html, url)` | sync, pure | `possible_csr_page` (< 100 visible words after stripping script/style/noscript/head) | high |
+| `fetch_core_web_vitals(url, api_key)` | async, I/O | CWV metric findings (LCP, INP, FID, CLS) | high/medium based on thresholds |
+
+CWV "good" thresholds: LCP ≤ 2500ms, FID ≤ 100ms, INP ≤ 200ms, CLS ≤ 0.1. `fetch_core_web_vitals()` returns `None` (graceful degradation) when API key is absent or request fails.
+
+**extractability.py** — 10 functions (see §4a.5 for detailed descriptions):
+
+Core functions: `classify_heading_as_question()`, `detect_quick_answer_hook()`, `is_self_contained_paragraph()`. Content pattern detectors: `detect_faq_section()`, `detect_definition_opening()`, `detect_key_takeaways()`, `detect_comparison_table()`, `detect_numbered_steps()`, `detect_toc()`. Helpers: `_get_visible_text()`, `_count_words()`.
+
+**schema_checks.py** — 12 functions:
+
+Core functions: `parse_jsonld_blocks()`, `identify_schema_types()`, `validate_schema_block()`, `infer_page_type()`. Type validators: `validate_article_schema()`, `validate_faq_schema()`, `validate_howto_schema()`, `validate_organization_schema()`, `validate_breadcrumb_schema()`, `validate_product_schema()`, `validate_speakable_schema()`. Helpers: `_normalize_schema_type()`.
 
 ### 4a.9 Scoring Algorithm
 
 **File:** `core/site_audit/scoring.py`
 
-**Penalty-based scoring:**
-1. Start at 100 for each dimension
-2. Deduct per finding by severity: `critical=10, high=5, medium=2, low=1, info=0`
-3. Clamp to `[0, 100]`
+**Page-normalised penalty-based scoring** (ensures large and small sites with the same issue rate receive comparable scores):
 
-**Overall score:** Weighted sum of dimension scores × dimension weights (weights sum to 1.0)
+1. **Separate findings**: site-level findings (`url=""`) from page-level findings (`url` set)
+2. **Site-level penalty**: sum of `config.penalty_for(severity)` for all site-level findings (applied once)
+3. **Page-level penalty**:
+   - Group page-level findings by URL
+   - Per-page: deduplicate by `finding_type` keeping the max severity penalty per type
+   - Compute per-page penalty sum
+   - Mean across ALL crawled pages (unaffected pages contribute 0): `mean_page_penalty = sum(page_penalties) / max(1, pages_crawled)`
+4. **Total penalty**: `site_penalty + mean_page_penalty`
+5. **Raw score**: `clamp(100.0 - total_penalty, 0.0, 100.0)`
+6. **Weighted score**: `raw_score × dimension_weight`
+
+**Overall score:** `sum(ds.weighted_score for ds in dimension_scores)`, clamped to [0, 100], rounded to 2 decimal places.
 
 **Grade thresholds:** A ≥ 90, B ≥ 75, C ≥ 60, D ≥ 40, F < 40
 
+**Default severity penalties:**
+```python
+{"critical": 10.0, "high": 5.0, "medium": 2.0, "low": 1.0, "info": 0.0}
+```
+
 **Functions:**
 ```python
-def compute_dimension_score(dimension, findings, config=DEFAULT_AUDIT_CONFIG) -> DimensionScore
-def compute_all_dimension_scores(findings, config=DEFAULT_AUDIT_CONFIG) -> list[DimensionScore]
+def compute_dimension_score(dimension, findings, config=DEFAULT_AUDIT_CONFIG, pages_crawled=1) -> DimensionScore
+def compute_all_dimension_scores(findings, config=DEFAULT_AUDIT_CONFIG, pages_crawled=1) -> list[DimensionScore]
 def compute_overall_score(dimension_scores) -> float
 def compute_grade(overall_score, config=DEFAULT_AUDIT_CONFIG) -> str
 ```
+
+`DimensionScore` output includes: dimension, score, weight, weighted_score, finding_count, and per-severity counts (critical_count, high_count, medium_count, low_count, info_count).
 
 ### 4a.10 Configuration
 
 **File:** `core/site_audit/config.py`
 
-`AuditConfig` — frozen dataclass (thread-safe):
-- `dimension_weights: dict[AuditDimension, float]` — must sum to 1.0 (assertion at module load)
-- `severity_penalties: dict[AuditCheckSeverity, int]` — deduction points per severity level
-- `grade_thresholds: list[tuple[float, str]]` — sorted descending by threshold
-- `grade_for_score(score) -> str` — compute grade from score
-- `penalty_for(severity) -> int` — get deduction points
+`AuditConfig` — frozen dataclass (`@dataclass(frozen=True)`, thread-safe):
 
-`DEFAULT_AUDIT_CONFIG` — module-level singleton used by all pipeline functions.
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dimension_weights` | `dict[str, float]` | 8 dimensions summing to 1.0 | Relative weight per dimension |
+| `grade_thresholds` | `dict[str, float]` | `{"A": 90.0, "B": 75.0, "C": 60.0, "D": 40.0}` | Minimum score per grade |
+| `severity_penalties` | `dict[str, float]` | `{"critical": 10.0, ...}` | Score deduction per finding |
+| `title_min_length` | `int` | 30 | Minimum `<title>` length (chars) |
+| `title_max_length` | `int` | 60 | Maximum `<title>` length (chars) |
+| `meta_min_length` | `int` | 120 | Minimum meta description length |
+| `meta_max_length` | `int` | 160 | Maximum meta description length |
+| `page_analysis_concurrency` | `int` | 30 | Max concurrent page-analysis tasks |
+| `request_timeout` | `float` | 15.0 | Per-request HTTP timeout (seconds) |
+| `max_redirects` | `int` | 5 | Max redirect hops before marking broken |
+| `aeo_min_question_heading_ratio` | `float` | 0.3 | Minimum fraction of question headings |
+| `aeo_ideal_paragraph_word_count_min` | `int` | 20 | Lower bound of ideal paragraph range |
+| `aeo_ideal_paragraph_word_count_max` | `int` | 80 | Upper bound of ideal paragraph range |
+| `aeo_quick_answer_min_words` | `int` | 15 | Min words for quick-answer hook |
+| `aeo_quick_answer_max_words` | `int` | 150 | Max words for quick-answer hook |
 
-**Settings additions** in `core/config/settings.py`:
-- `site_audit_max_pages: int = 50`
-- `site_audit_max_depth: int = 3`
-- `site_audit_request_timeout: float = 10.0`
-- `site_audit_concurrent_pages: int = 5`
-- `site_audit_user_agent: str = "DeepPresenceBot/1.0"`
+**Post-init validation** (`__post_init__`, 8 invariant checks):
+1. Dimension weights must sum to 1.0 (tolerance ±0.01)
+2. Required grades A/B/C/D must be present
+3. Grade thresholds must be monotonically decreasing (A ≥ B ≥ C ≥ D)
+4. `title_min_length ≤ title_max_length`
+5. `meta_min_length ≤ meta_max_length`
+6. All severity penalties ≥ 0
+7. `aeo_min_question_heading_ratio` in [0.0, 1.0]
+8. `aeo_ideal_paragraph_word_count_min ≤ aeo_ideal_paragraph_word_count_max`
+
+**Module-level assertion**: `DEFAULT_DIMENSION_WEIGHTS` sum checked at import time (tolerance 1e-9).
+
+**Methods:**
+- `weight_sum() -> float` — returns sum of dimension weights (useful for testing)
+- `grade_for_score(score) -> str` — derive letter grade from score
+- `penalty_for(severity) -> float` — get deduction for severity string (0.0 for unrecognised)
+
+`DEFAULT_AUDIT_CONFIG: AuditConfig = AuditConfig()` — module-level singleton used by all pipeline functions.
 
 ### 4a.11 Pydantic Models
 
 **File:** `core/models/site_audit.py`
 
-| Model | Description |
-|-------|-------------|
-| `AuditDimension` | Enum: crawlability, performance, on_page_seo, extractability, schema_markup, eeat, freshness, security |
-| `AuditCheckSeverity` | Enum: critical, high, medium, low, info |
-| `SiteAuditInput` | Input: domain (required), max_pages, max_depth, skip_steps |
-| `AuditFinding` | Single finding: dimension, severity, check_name, message, url, details |
-| `SchemaDetectionResult` | JSON-LD: has_schema, schema_types, schema_count, page_type |
-| `AEOReadinessResult` | AEO: overall_score, question_heading_ratio, hook_ratio, etc. |
-| `PageAuditResult` | Per-page: url, status_code, findings list, schema result, aeo result |
-| `AIBotAccessResult` | Bot access: gptbot_allowed, claudebot_allowed, etc. |
-| `SitemapHealthResult` | Sitemap: has_sitemap, sitemap_count, url_count |
-| `DimensionScore` | Score: dimension, score (0-100), grade, finding_count, finding_breakdown |
-| `SiteAuditResult` | Full result: domain, overall_score, grade, dimension_scores, pages, findings, bot_access, sitemap_health |
+**Enums:**
+- `AuditDimension(str, Enum)`: crawlability, performance, on_page_seo, extractability, schema_markup, eeat, freshness, security
+- `AuditCheckSeverity(str, Enum)`: critical, high, medium, low, info
 
-All fields have defaults for backward compatibility.
+**Input model:**
+- `SiteAuditInput`: company_name (required), domain (required), company_slug (auto-derived via `model_validator(mode="before")`), product_slug (validated: `^[a-z0-9][a-z0-9-]*$`), max_pages=200, max_depth=4, check_core_web_vitals=True, check_schema_validation=True, check_ai_bot_access=True
 
-### 4a.12 API Endpoints
+**Per-finding model:**
+- `AuditFinding`: finding_type, dimension, severity, message, recommendation, url (empty=site-level), details (dict)
+
+**Per-page sub-results:**
+- `SchemaDetectionResult`: has_schema, schema_types (list), raw_jsonld_blocks (list), validation_errors (list), inferred_page_type
+- `AEOReadinessResult`: snippet_readiness_score (0–100), question_heading_ratio, quick_answer_hook_count, self_contained_paragraph_ratio, avg_paragraph_word_count, content_patterns (dict[str, bool])
+
+**Per-page comprehensive result:**
+- `PageAuditResult`: 30+ fields grouped by HTTP metadata, on-page SEO, images, links, content, technical SEO, security, freshness/authority. Includes `schema_result: SchemaDetectionResult` (aliased as `"schema"`), `aeo: AEOReadinessResult`, `findings: list[AuditFinding]`. Config: `populate_by_name = True`.
+
+**Site-level aggregated results:**
+- `AIBotAccessResult`: 5 per-bot boolean fields (gptbot_allowed, claudebot_allowed, perplexitybot_allowed, google_extended_allowed, ccbot_allowed), has_llms_txt, robots_txt_exists, crawl_delay_seconds (float | None)
+- `SitemapHealthResult`: has_sitemap, sitemap_url_count, sitemap_urls (list), sitemap_errors (list), has_sitemap_index
+- `DimensionScore`: dimension, score (0–100), weight, weighted_score, finding_count, per-severity counts (critical/high/medium/low/info)
+- `SiteAuditResult`: 26 fields — audit_id, domain, overall_score, grade, pages_crawled, pages_discovered, duration_seconds, dimension_scores, ai_bot_access, sitemap_health, page_results, total_findings, findings_by_severity, findings_by_dimension, top_findings, avg_snippet_readiness, pages_with_schema, avg_question_heading_ratio, started_at, completed_at, status (pending/running/completed/failed/degraded), error_message, failed_steps (list[int]), degraded_dimensions (list[str])
+
+All fields have defaults for backward compatibility with existing JSON artefacts.
+
+### 4a.12 Pipeline Orchestration Details
+
+**File:** `core/site_audit/pipeline.py`
+
+`run_site_audit()` orchestrates all 6 steps sequentially:
+- Generates `audit_id` (UUID), records `started_at` and wall-clock `t0`
+- Each step is independently skippable via `skip_steps`
+- Progress callbacks via `_emit(on_progress, message)` — safely catches callback exceptions
+- Steps 3–4 run per-page in the pipeline loop: iterate over `page_results`, fetch HTML from `html_map`, run detection, extend page findings. Per-page failures are counted; if ALL pages fail for a step, the step is marked as failed
+- After step 5, checks for failed steps: computes degraded dimensions, zeros their scores, recomputes overall score and grade
+- After aggregation, generates crawl-delay findings from `ai_bot_access.crawl_delay_seconds`
+- Step 6 writes report to `output_dir` (async)
+- Finalises `completed_at`, `duration_seconds`, logs completion
+
+### 4a.13 API Endpoints
 
 **Router:** `api/routers/site_audit.py` (registered at `/api/v1/site-audit/` and `/api/v1/companies/{slug}/audits/`)
 
@@ -848,6 +1135,22 @@ All fields have defaults for backward compatibility.
 **Service:** `SiteAuditDataServiceProtocol` (runtime_checkable Protocol) + `JsonSiteAuditDataService` (filesystem-backed, FIFO cache)
 
 **Repository:** `SiteAuditRepository` in `core/db/repositories/site_audit_repo.py` (flush-only contract)
+
+### 4a.14 P3 Bug Fixes & Improvements (Sprint: site-audit-p3-bugfixes)
+
+82 tests added (793 total site audit tests). Key fixes:
+
+1. **Config validation** (`config.py`): Added `__post_init__` with 8 invariant checks — weight sum, required grades, monotonic grade thresholds, title/meta length bounds, non-negative penalties, AEO ratio range, AEO paragraph word count bounds. Prevents invalid configurations from silently producing wrong scores.
+
+2. **dateutil parsing** (`eeat_signals.py`): Replaced naive `datetime.fromisoformat()` with robust `_parse_date_robust()` — ISO 8601 first via `dateutil.parser.isoparse()`, then `dateutil.parser.parse(fuzzy=False)` fallback. Added `_MAX_DATE_STR_LENGTH = 100` guard against DoS via fuzzy parser. Catches `OverflowError` in addition to `ValueError`/`TypeError`. Normalises timezone-naive datetimes to UTC.
+
+3. **Canonical URL deduplication** (`s1_discover.py`): Added `canonical_url()` function that applies all `normalize_url()` transformations PLUS sorts query parameters via `parse_qsl()`/`urlencode(sorted(...))`. BFS enqueue, visited set, and link extraction all use `canonical_url()` as the dedup key, preventing duplicate crawls of URLs differing only in query parameter order.
+
+4. **Crawl-delay handling** (`s1_discover.py` + `pipeline.py`): Added `_parse_crawl_delay()` with regex extraction, `_MAX_CRAWL_DELAY = 300.0` cap, and `float | None` return. Added `crawl_delay_seconds` field to `AIBotAccessResult`. Pipeline generates crawl-delay findings: `>30s` = medium severity (`crawl_delay_excessive`), `>10s` = info severity (`crawl_delay_high`).
+
+5. **Schema validators** (`schema_checks.py`): Added `validate_product_schema()` (name + offers/price validation, 4 recommended field warnings), `validate_speakable_schema()` (cssSelector/xpath requirement), and enhanced `validate_breadcrumb_schema()` to handle nested `item.name` in addition to direct `name` field. Added Product and Speakable/SpeakableSpecification to `KNOWN_SCHEMA_TYPES` and `validate_schema_block()` dispatch.
+
+6. **AEO improvements** (`extractability.py` + `s4_check_aeo.py`): Extended question heading detection with wh-word headings without trailing `?` (core wh-words only, ≥4 words). Added comparison pattern detection (vs, versus, compared to, difference between, pros and cons). Enhanced definition opening detector with continuation word validation, non-topic-starter rejection, and hyphenated compound term support. Made quick-answer hook configurable via `config.aeo_quick_answer_min_words`/`max_words` (default 15–150). Added heading-bounded search (stops at next h1–h6). Added container search (div/section/article inner `<p>` scanning).
 
 ---
 
@@ -1377,106 +1680,384 @@ def research(
 
 ## 5c. Knowledge Base Pipeline (Research v2)
 
-The Knowledge Base replaces the monolithic Research Artifacts pipeline (§5) with a **3-layer architecture** of specialist research agents, versioned documents, and synthesized Company Profiles. Built across Phases 1–5 (2026-03-05/06) with 260 tests.
+The Knowledge Base replaces the monolithic Research Artifacts pipeline (§5) with a **3-layer architecture** of specialist research agents, versioned documents, and synthesized Company Profiles. Built across Phases 1-5 (2026-03-05/06) with **260 tests** (214 core + 46 API).
 
-### 5c.1 Architecture — 3-Layer Knowledge Base
+**Files:** `core/models/knowledge_base.py` (17 Pydantic models, 288 lines), `core/research/knowledge_base/` (5 modules: storage, agents, pipeline, graph, tools), `core/research/prompts/*.py` (6 prompt files), `api/routers/knowledge_base.py`, `api/schemas/common.py`
+
+### 5c.1 Architecture -- 3-Layer Knowledge Base
 
 ```
-Layer 1 (Raw Inputs):     Ephemeral — Perplexity/Claude research outputs (not persisted)
-Layer 2 (Knowledge Base): 5 typed, versioned docs — company_overview, customer_reviews,
-                          competitor_registry, weakness_analysis, brand_perception
+Layer 1 (Raw Inputs):     Ephemeral -- Perplexity/Claude research outputs (not persisted)
+                          Raw LLM outputs from each specialist agent
+Layer 2 (Knowledge Base): 5 typed, versioned docs:
+                            company_overview    -- Company positioning, products, market
+                            customer_reviews    -- User sentiment, themes, quotes
+                            competitor_registry -- Competitive landscape, market map
+                            weakness_analysis   -- Competitor weaknesses + opportunities
+                            brand_perception    -- Market position, strengths, challenges
 Layer 3 (Company Profile): Synthesized artifact at artifacts/company_context/{slug}.md
+                           Single comprehensive document combining all L2 intelligence
+                           Promoted ONLY after HITL-3 approve
 ```
 
-**Files:** `core/models/knowledge_base.py` (17 Pydantic models), `core/research/knowledge_base/` (storage, agents, pipeline, graph, tools)
+**Design principle:** Layer 1 is ephemeral (never persisted). Layer 2 is versioned and immutable (each version is a snapshot). Layer 3 is the single source of truth consumed by downstream pipelines (Gap Analysis, Content Engine).
 
 ### 5c.2 DAG Execution & 3 HITL Checkpoints
 
-**Pipeline entry:** `run_knowledge_base_pipeline(input_data, task_store, event_bus, artifacts_root, auth_service)` in `core/research/knowledge_base/pipeline.py`
+**Pipeline entry:**
+```python
+async def run_knowledge_base_pipeline(
+    input_data: KnowledgeBaseInput,
+    *,
+    task_id: Optional[str] = None,
+    task_store: Optional[Any] = None,
+    event_bus: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> KnowledgeBaseOutput
+```
+
+**File:** `core/research/knowledge_base/pipeline.py` (~639 lines)
 
 **DAG execution order:**
 ```
 Phase 1 (parallel):   company_overview + customer_reviews
-Phase 2 (sequential): competitor_scanner (needs company_overview_md)
-── HITL-1: review 3 docs ──
+                      (both are root nodes -- no dependencies)
+Phase 2 (sequential): competitor_scanner
+                      (needs company_overview_md from Phase 1)
+-- HITL-1: review 3 docs (company_overview, customer_reviews, competitor_registry) --
 Phase 3 (parallel):   weakness_analyst + brand_perception
-── HITL-2: review 2 docs ──
-Phase 4 (sequential): synthesis (reads all L2 docs → L3 Company Profile)
-── HITL-3: review synthesis ──
-DONE → promote company_context/{slug}.md (only on HITL-3 approve)
+                      (weakness needs overview + competitor; brand needs overview + reviews + competitor)
+-- HITL-2: review 2 docs (weakness_analysis, brand_perception) --
+Phase 4 (sequential): synthesis agent
+                      (reads ALL L2 docs -> produces L3 Company Profile)
+-- HITL-3: review synthesis --
+DONE -> promote company_context/{slug}.md (ONLY on HITL-3 approve)
 ```
 
-**3 modes:** `full` (all agents), `refresh` (stale docs only), `single` (one agent, skip HITL/synthesis).
+**3 execution modes** (resolved by `_resolve_mode(input_data, storage)`):
 
-**HITL pattern:** Pipeline-with-inline-HITL (not monolithic graph). 2 LangGraph mini-graphs (`build_kb_doc_review_graph`, `build_kb_synthesis_review_graph`) for pause/resume. `run_kb_hitl_checkpoint()` async helper manages interrupts.
+| Mode | Trigger | Agents Run | HITL | Synthesis |
+|------|---------|------------|------|-----------|
+| `full` | No `refresh_docs` specified | All 5 L2 agents | All 3 checkpoints | Full synthesis |
+| `refresh` | `refresh_docs` has 2+ types | Only specified agents | All 3 checkpoints | Delta synthesis (if prior exists) |
+| `single` | `refresh_docs` has exactly 1 type | One agent only | Skipped | Skipped |
 
-**Revision flow:** On `revise` decision, pipeline re-runs affected agents with `## Reviewer Feedback\n{revision_note}` appended to user prompt.
+**Mode resolution logic:**
+```python
+def _resolve_mode(input_data, storage) -> Tuple[str, List[KBDocType]]:
+    if input_data.refresh_docs:
+        if len(input_data.refresh_docs) == 1:
+            return "single", list(input_data.refresh_docs)
+        return "refresh", list(input_data.refresh_docs)
+    return "full", list(L2_DOC_TYPES)
+```
+
+**Slug resolution** (`_resolve_slug(input_data)`): Uses `input_data.company_slug` if set, otherwise derives from `company_name` via lowercasing + regex cleanup (remove non-alphanumeric, replace spaces with hyphens).
+
+**HITL pattern: Pipeline-with-inline-HITL** (not a monolithic graph). The pipeline owns DAG execution and calls HITL checkpoints as inline async pauses. Two LangGraph mini-graphs (`build_kb_doc_review_graph`, `build_kb_synthesis_review_graph`) handle the pause/resume mechanics. `run_kb_hitl_checkpoint()` is the async helper that invokes a graph, detects `__interrupt__` in the result dict (LangGraph >=1.0 model), waits for human input via TaskStore, and resumes the graph.
+
+**Auto-approve:** `input_data.auto_approve_checkpoints: List[int]` specifies which checkpoints (1, 2, 3) should be auto-approved. The auto_approve flag is passed into the HITL state dict.
+
+**HITL decision handling (all 3 checkpoints):**
+
+| Decision | Action |
+|----------|--------|
+| `approve` | Continue to next phase |
+| `revise` | Re-run affected agents with `revision_note` appended to prompt. `revision_notes` is a dict mapping `doc_type.value -> note_text`. Each revised agent receives `revision_note=note` parameter. |
+| `reject` | Build partial `KnowledgeBaseOutput` and return immediately. Pipeline terminates cleanly with whatever results exist. |
+
+**Revision flow detail:**
+1. Pipeline receives `revision_notes: Dict[str, str]` from HITL result
+2. For each `doc_type_str, note` in revision_notes:
+   - Validate `doc_type_str` is a valid `KBDocType` (skip with warning if not)
+   - Validate doc_type is in the current checkpoint scope (skip if not)
+   - Call `_run_single_agent(input_data, dt, storage, results, trace_span, revision_note=note)`
+   - Re-write version to storage if no error
+   - Add to `changed_doc_types` if not already present
+
+**Staleness propagation:** After all agents complete (before synthesis), the pipeline calls `storage.propagate_staleness(changed_doc_types)` to mark downstream docs as stale via reverse DAG BFS.
+
+**SSE events emitted:**
+- `pipeline_start` — at pipeline beginning
+- `kb_phase_start` — at each phase (1-4) with agent list
+- `kb_agent_complete` — after each agent with word_count, has_error
+- `kb_phase_complete` — after each phase
+- `completed` / `failed` — terminal events
+
+**Task store updates:** `current_step` updated at each phase transition (`initializing`, `phase_1`, `phase_2`, `phase_3`, `phase_4_synthesis`).
 
 ### 5c.3 6 Specialist Agents
 
-| Agent | Tier | Provider | File |
-|-------|------|----------|------|
-| Company Overview | 1 | Perplexity sonar-deep-research | `agents.py:run_company_overview_agent` |
-| Customer Reviews | 1 | Perplexity sonar-deep-research | `agents.py:run_customer_reviews_agent` |
-| Competitor Scanner | 1 | Perplexity sonar-deep-research | `agents.py:run_competitor_scanner_agent` |
-| Weakness Analyst | 1 | Perplexity sonar-deep-research | `agents.py:run_weakness_analyst_agent` |
-| Brand Perception | 2 | Anthropic Claude + web_search | `agents.py:run_brand_perception_agent` |
-| Synthesis | 3 | LangGraph create_react_agent + Claude Opus + read_file tool | `agents.py:run_synthesis_agent` |
+**File:** `core/research/knowledge_base/agents.py` (~526 lines)
 
-**Prompt registry:** Hub-with-local-fallback pattern in `core/research/prompts/*.py` (6 files). Each has `get_*_system_prompt()` (Hub getter) + `build_*_user_prompt()` (user message builder).
+**Three tiers** based on research capability:
 
-### 5c.4 KBStorage — Versioned Filesystem Store
+**Tier 1 -- Perplexity Deep Research (Agents 1-4):**
 
-**File:** `core/research/knowledge_base/storage.py`
+All four share a common runner `_run_perplexity_agent()` that:
+1. Creates a LangSmith span via `create_span()`
+2. Calls `perplexity_client.research(query=full_prompt)` via `asyncio.to_thread()` + `asyncio.wait_for(timeout_s)`
+3. Logs generation to LangSmith
+4. Returns `KBAgentResult` with content_md, word_count, execution_time_s
+5. Catches `asyncio.TimeoutError` and general exceptions -> returns `KBAgentResult(error=...)`
 
-**Layout:**
+Each agent function builds its prompt by combining system prompt (from `get_*_system_prompt()`) + user prompt (from `build_*_user_prompt()`) with a `\n\n` separator:
+
+| Agent | Function | Upstream Dependencies | Default Timeout |
+|-------|----------|----------------------|-----------------|
+| Company Overview | `run_company_overview_agent(input_data, parent_span, timeout_s=300, revision_note)` | None (root) | 300s |
+| Customer Reviews | `run_customer_reviews_agent(input_data, parent_span, timeout_s=300, revision_note)` | None (root) | 300s |
+| Competitor Scanner | `run_competitor_scanner_agent(input_data, company_overview_md, parent_span, timeout_s=300, revision_note)` | `company_overview_md` | 300s |
+| Weakness Analyst | `run_weakness_analyst_agent(input_data, company_overview_md, competitor_registry_md, parent_span, timeout_s=300, revision_note)` | `company_overview_md`, `competitor_registry_md` | 300s |
+
+**Tier 2 -- Anthropic SDK + Native Web Search (Agent 5: Brand Perception):**
+
+```python
+async def run_brand_perception_agent(
+    input_data: KnowledgeBaseInput,
+    upstream_docs: Dict[str, str],     # Up to 4 upstream L2 docs
+    parent_span, timeout_s=300.0,
+    max_web_searches=10,               # Server-side web search cap
+    revision_note=None,
+) -> KBAgentResult
+```
+
+Uses `anthropic.AsyncAnthropic` with the `web_search_20250305` server-side tool:
+```python
+tool_spec = {
+    "type": "web_search_20250305",
+    "name": "web_search",
+    "max_uses": max_web_searches,
+}
+```
+
+**Pause-turn loop handling:** Anthropic's server-side web_search tool can trigger `pause_turn` when the model hits its internal iteration limit. The agent handles this with a bounded continuation loop:
+```python
+_MAX_PAUSE_TURNS = 5
+while response.stop_reason == "pause_turn":
+    pause_turns += 1
+    if pause_turns >= _MAX_PAUSE_TURNS:
+        break  # Accept partial result
+    messages.append({"role": "assistant", "content": response.content})
+    response = await client.messages.create(...)
+```
+If `pause_turns >= _MAX_PAUSE_TURNS`, the result is marked `is_partial=True`.
+
+**Text extraction:** `_extract_text_with_citations(response)` filters response content blocks, keeping only `type="text"` blocks (filtering out `server_tool_use`, etc.), and joins with `\n\n`.
+
+**Model:** `settings.research_kb_brand_perception_model` (configurable, default Claude model)
+**Max tokens:** 8192 per call
+
+**Tier 3 -- LangGraph Synthesis Agent (Agent 6):**
+
+```python
+async def run_synthesis_agent(
+    input_data: KnowledgeBaseInput,
+    kb_base_dir: Path,                          # Root for read_file tool
+    available_docs: Dict[str, str],             # doc_type.value -> file path
+    missing_docs: List[str],                    # Missing doc_type.value strings
+    parent_span, timeout_s=600.0,
+    revision_note=None,
+    delta_mode: bool = False,                   # Incremental synthesis
+    changed_docs: Optional[Dict[str, str]] = None,
+    previous_synthesis_path: Optional[str] = None,
+) -> KBAgentResult
+```
+
+**Architecture:** Uses `langgraph.prebuilt.create_react_agent` with a LangChain chat model + a custom `read_file` tool. The synthesis agent can read any file within the KB directory via the tool.
+
+**Partial failure policy (CX-14):** Requires minimum 3 of 5 L2 docs to proceed. If fewer than 3 available, returns error immediately.
+
+**Delta mode validation:** If `delta_mode=True` but `previous_synthesis_path` is None, returns error.
+
+**Model building:** `_build_model(settings.research_kb_synthesis_model)` handles three format strings:
+- `"anthropic:claude-opus-4-6"` (colon separator)
+- `"anthropic/claude-opus-4-6"` (slash separator)
+- `"gpt-4o"` (bare model name -- provider inferred)
+
+Injects API keys from settings (not relying on env vars) for Anthropic, OpenAI, and Google providers.
+
+**Synthesis output extraction:** `_extract_synthesis_output(messages)` iterates messages in reverse, finds the last AI message, and extracts text from either string content or list-of-dicts content blocks.
+
+### 5c.4 Prompt System -- 6 Prompt Files with Hub Fallback
+
+**Files:** `core/research/prompts/` (6 files: `company_overview.py`, `customer_reviews.py`, `competitor_scanner.py`, `weakness_analyst.py`, `brand_perception.py`, `synthesis.py`)
+
+Each prompt file follows the **Hub-with-local-fallback pattern:**
+- `get_*_system_prompt() -> str` -- calls `get_prompt(HUB_NAME, LOCAL_FALLBACK)` from the prompt registry
+- `build_*_user_prompt(input_data, ..., revision_note=None) -> str` -- constructs the user message
+
+**Revision note injection:** All `build_*_user_prompt()` functions accept an optional `revision_note: str`. When provided, a section is appended:
+```
+## Reviewer Feedback
+{revision_note}
+```
+
+**Upstream context injection:** Agents that depend on upstream docs receive the full markdown of those docs in their user prompt. For example:
+- `build_competitor_scanner_user_prompt(input_data, company_overview_md, revision_note)` -- includes company overview
+- `build_weakness_analyst_user_prompt(input_data, company_overview_md, competitor_registry_md, revision_note)` -- includes overview + competitor data
+- `build_brand_perception_user_prompt(input_data, upstream_docs, revision_note)` -- includes up to 4 upstream docs
+
+**Synthesis prompts (special):**
+- `get_synthesis_system_prompt()` -- Full synthesis: combine all L2 docs into comprehensive Company Profile
+- `get_delta_synthesis_system_prompt()` -- Delta synthesis: update existing profile based on changed docs only
+- `build_synthesis_user_prompt(input_data, available_docs, missing_docs, revision_note)` -- Lists file paths for `read_file` tool
+- `build_delta_synthesis_user_prompt(input_data, previous_synthesis_path, changed_docs, unchanged_docs, missing_docs, revision_note)` -- Provides previous synthesis path + changed-only file paths
+
+### 5c.5 KBStorage -- Versioned Filesystem Store
+
+**File:** `core/research/knowledge_base/storage.py` (~509 lines)
+
+**Class:** `KBStorage(artifacts_root: Path, slug: str)`
+
+**Filesystem layout:**
 ```
 artifacts/knowledge_base/{slug}/
-    _manifest.json          ← KBManifest (versions, timestamps, synthesis metadata)
-    company_overview/v1.md, v1.json
-    customer_reviews/v1.md, v1.json
-    competitor_registry/v1.md, v1.json
-    weakness_analysis/v1.md, v1.json
-    brand_perception/v1.md, v1.json
-    synthesis/v1.md
+    _manifest.json                  # KBManifest (versions, timestamps, synthesis metadata)
+    company_overview/
+        v1.md                       # Version 1 markdown
+        v1.json                     # Version 1 structured JSON sidecar (optional)
+        v2.md                       # Version 2 (after revision)
+    customer_reviews/
+        v1.md, v1.json
+    competitor_registry/
+        v1.md, v1.json
+    weakness_analysis/
+        v1.md, v1.json
+    brand_perception/
+        v1.md, v1.json
+    synthesis/
+        v1.md                       # Synthesis versions (no JSON sidecar)
 ```
 
-**Key methods:** `write_version()`, `read_version()`, `get_latest_version()`, `write_synthesis()`, `read_synthesis()`, `write_manifest()` (atomic via temp-file + `os.replace()`).
+**Manifest operations:**
+- `read_manifest() -> KBManifest` -- Returns blank manifest if file doesn't exist or is corrupt
+- `write_manifest(manifest)` -- **Atomic write** via `tempfile.mkstemp()` + `os.replace()`. Creates temp file in same directory, writes content, then atomic rename. Cleans up temp file on failure via `os.unlink()` in except block.
 
-### 5c.5 Staleness Tracking & Propagation (Phase 5)
+**Version operations:**
+- `write_version(doc_type, content_md, content_json=None) -> int`:
+  1. Reads manifest to determine next version number (`entry.current_version + 1`, or 1 if new)
+  2. Creates doc type directory (`mkdir(parents=True, exist_ok=True)`)
+  3. Writes `v{N}.md` file
+  4. Writes `v{N}.json` sidecar if `content_json` provided
+  5. Computes SHA-256 hash and word count
+  6. Updates manifest entry with: doc_type, current_version, last_updated (UTC now), staleness_days (from `KB_DEFAULT_STALENESS_DAYS`), status="fresh", dependencies (from `KB_DEPENDENCY_GRAPH`)
+  7. Persists manifest **last** (atomicity -- if write fails, manifest is unchanged)
+  8. Returns version number
+
+- `read_version(doc_type, version) -> Optional[KBDocVersion]` -- Reads markdown + optional JSON sidecar, computes SHA-256
+- `get_latest_version(doc_type) -> Optional[KBDocVersion]` -- Reads current_version from manifest, then reads that version
+- `get_all_latest() -> Dict[KBDocType, Optional[KBDocVersion]]` -- Reads latest of every L2 doc type
+
+**Synthesis operations:**
+- `write_synthesis(content_md) -> int` -- Writes `synthesis/v{N}.md`, updates manifest `synthesis_version` and `synthesis_last_updated`
+- `read_synthesis(version=None) -> Optional[KBDocVersion]` -- Reads synthesis by version (latest if None)
+
+**Staleness checking:**
+- `check_staleness(doc_type, threshold_days=30) -> bool` -- Returns True if doc is missing, has no `last_updated`, or age exceeds threshold
+
+### 5c.6 Staleness Tracking & Propagation
 
 **DAG dependency graph** (`KB_DEPENDENCY_GRAPH` constant in `core/models/knowledge_base.py`):
 ```python
-company_overview: []                                          # Root
-customer_reviews: []                                          # Root
-competitor_registry: [company_overview]                       # Depends on overview
-weakness_analysis: [company_overview, competitor_registry]    # Depends on 2
-brand_perception: [company_overview, customer_reviews, competitor_registry]  # Depends on 3
+KB_DEPENDENCY_GRAPH: Dict[KBDocType, List[KBDocType]] = {
+    COMPANY_OVERVIEW: [],                                      # Root node
+    CUSTOMER_REVIEWS: [],                                      # Root node
+    COMPETITOR_REGISTRY: [COMPANY_OVERVIEW],                   # Depends on overview
+    WEAKNESS_ANALYSIS: [COMPANY_OVERVIEW, COMPETITOR_REGISTRY],# Depends on 2
+    BRAND_PERCEPTION: [COMPANY_OVERVIEW, CUSTOMER_REVIEWS,     # Depends on 3
+                       COMPETITOR_REGISTRY],
+}
 ```
 
-**Per-doc staleness thresholds** (`KB_DEFAULT_STALENESS_DAYS`): overview=90d, reviews=30d, competitor=90d, weakness=60d, brand=45d.
+**Note:** `weakness_analysis` and `brand_perception` run in parallel (Phase 3), but `brand_perception` uses the *previous* version of `weakness_analysis` from storage. Listed as a data dependency for staleness purposes.
 
-**`get_staleness_report(threshold_override=None)`** → `KBHealthReport`:
-- Per-doc: missing, age-based, upstream-changed detection
-- Synthesis: needs refresh if any L2 doc updated after `synthesis_last_updated`
-- Score: `(fresh_count / 5) * 100`, penalized -10 if synthesis stale
+**Per-doc staleness thresholds** (`KB_DEFAULT_STALENESS_DAYS`):
 
-**`propagate_staleness(refreshed_doc_types)`** → reverse DAG BFS marks downstream docs as stale.
+| Doc Type | Threshold | Rationale |
+|----------|-----------|-----------|
+| `company_overview` | 90 days | Company fundamentals change slowly |
+| `customer_reviews` | 30 days | Reviews appear frequently |
+| `competitor_registry` | 90 days | Market structure is stable |
+| `weakness_analysis` | 60 days | Competitive dynamics shift moderately |
+| `brand_perception` | 45 days | Brand perception shifts with reviews + news |
 
-**`get_changed_since_synthesis()`** → L2 docs updated after last synthesis.
+**`get_staleness_report(threshold_override=None) -> KBHealthReport`:**
 
-### 5c.6 Delta Synthesis Mode (Phase 5)
+For each L2 doc type, determines health status:
+1. **Missing:** No manifest entry or `current_version == 0`
+2. **Age-based staleness:** `(now - last_updated).days > threshold`
+3. **Upstream-changed staleness:** Any upstream dependency's `last_updated` is newer than this doc's `last_updated`
 
-When `mode == "refresh"` and a previous synthesis exists, the synthesis agent runs in **delta mode**:
-- Reads previous Company Profile via `read_file` tool
-- Receives only changed L2 docs (not all 5)
-- Prompt instructs: preserve unchanged sections, update based on new research
+Synthesis freshness: needs refresh if any L2 doc was updated after `synthesis_last_updated`, or if synthesis has never been run (version == 0) and any L2 docs exist.
 
-**Delta prompts:** `DELTA_SYNTHESIS_SYSTEM_PROMPT` + `build_delta_synthesis_user_prompt()` in `core/research/prompts/synthesis.py`.
+**Score formula:** `base_score = (fresh_count / 5) * 100`. If synthesis needs refresh and base_score > 0, deduct 10 points (clamped to 0).
 
-**Fallback:** If no prior synthesis exists, falls back to full synthesis mode.
+**`propagate_staleness(refreshed_doc_types: List[KBDocType]) -> List[KBDocType]`:**
 
-### 5c.7 Health & Refresh-Stale API Endpoints (Phase 5)
+Builds reverse DAG (for each doc type, which doc types depend on it), then runs **BFS from refreshed docs** to find all downstream docs. Marks each downstream doc's `entry.status = "stale"` in the manifest. Returns list of newly-stale doc types.
+
+**`get_changed_since_synthesis() -> List[KBDocType]`:**
+
+Returns L2 doc types whose `last_updated` is after `synthesis_last_updated`. If no synthesis exists (version == 0), returns all L2 docs that have at least one version.
+
+### 5c.7 Delta Synthesis Mode
+
+When `mode == "refresh"` and a previous synthesis exists, the synthesis agent runs in **delta mode** instead of full synthesis:
+
+**Trigger conditions (in pipeline.py):**
+```python
+use_delta = mode == "refresh" and storage.read_synthesis() is not None
+```
+
+**Delta mode inputs:**
+- `previous_synthesis_path`: Relative path like `"synthesis/v2.md"` -- the synthesis agent reads this via `read_file` tool
+- `changed_docs`: Dict mapping only changed doc types to their file paths
+- `unchanged_docs`: Automatically computed as `available_docs - changed_docs`
+
+**Delta synthesis prompts** (`core/research/prompts/synthesis.py`):
+- `get_delta_synthesis_system_prompt()` -- Instructs the agent to: read the previous Company Profile, identify sections affected by changed research, update those sections while preserving unchanged content
+- `build_delta_synthesis_user_prompt()` -- Provides: previous synthesis file path, changed doc file paths, unchanged doc file paths (for reference), missing docs list
+
+**Fallback:** If no prior synthesis exists (`storage.read_synthesis() is None`), falls back to full synthesis mode even in refresh mode.
+
+### 5c.8 read_file Tool
+
+**File:** `core/research/knowledge_base/tools.py`
+
+```python
+def make_read_file_tool(base_dir: Path) -> BaseTool:
+    """Create a LangChain tool for reading files from the KB directory."""
+```
+
+Creates a `@tool`-decorated function that accepts a relative file path and reads it from `base_dir`. Used by the synthesis agent to read L2 documents and previous synthesis versions. The tool is scoped to the KB base directory for security.
+
+### 5c.9 HITL Mini-Graphs
+
+**File:** `core/research/knowledge_base/graph.py`
+
+Two LangGraph mini-graphs (not the full pipeline graph -- these handle pause/resume only):
+
+**1. `build_kb_doc_review_graph()`** -- Used for HITL-1 and HITL-2
+- State: `doc_summaries`, `checkpoint`, `auto_approve`, `decision`, `revision_notes`
+- Nodes: `present_docs` -> `approval_gate` (interrupt) -> `route_decision`
+- If `auto_approve=True`, skips interrupt and returns `decision="approve"`
+
+**2. `build_kb_synthesis_review_graph()`** -- Used for HITL-3
+- State: `synthesis_preview`, `synthesis_word_count`, `checkpoint`, `auto_approve`, `decision`, `revision_note`
+- Same pattern as doc review but with synthesis-specific fields
+
+**`run_kb_hitl_checkpoint()`** -- Async helper:
+1. Invokes the graph with initial state
+2. Checks for `__interrupt__` in result (LangGraph >=1.0 interrupt model)
+3. If interrupted, emits SSE event, updates TaskStore status to `pending_approval`
+4. Waits for human input (TaskStore approval)
+5. Resumes graph with human decision
+6. Returns final state dict
+
+### 5c.10 Health & Refresh-Stale API Endpoints
+
+**Router:** `api/routers/knowledge_base.py`
 
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
@@ -1486,34 +2067,100 @@ When `mode == "refresh"` and a previous synthesis exists, the synthesis agent ru
 | `GET` | `/api/v1/knowledge-base/{run_id}/status` | Poll run status | auth + tenant |
 | `POST` | `/api/v1/knowledge-base/{run_id}/approve` | HITL approval | member/superuser + tenant |
 
-**Route ordering:** Static routes (`/{slug}/health`, `/{slug}/refresh-stale`) registered BEFORE dynamic routes (`/{run_id}/status`, `/{run_id}/approve`) to avoid FastAPI path collision.
+**Route ordering:** Static routes (`/{slug}/health`, `/{slug}/refresh-stale`) are registered **BEFORE** dynamic routes (`/{run_id}/status`, `/{run_id}/approve`) to avoid FastAPI path collision. Without this ordering, `health` would be interpreted as a `run_id`.
 
-**Health endpoint:** Returns `KBHealthResponse` with per-doc health (status, version, age_days, threshold, stale_reason, dependencies), overall score (0-100), synthesis status, stale/missing doc lists. Optional `?threshold_override=N` query param.
+**Health endpoint detail:**
+- Instantiates `KBStorage(artifacts_root, slug)`, calls `get_staleness_report(threshold_override)`
+- Returns `KBHealthResponse` with:
+  - `per_doc: Dict[str, KBDocHealthResponse]` -- status, version, age_days, threshold, stale_reason, dependencies
+  - `overall_score: float` -- 0-100
+  - `synthesis_version: int`, `synthesis_last_updated: Optional[datetime]`
+  - `synthesis_needs_refresh: bool`
+  - `stale_docs: List[str]`, `missing_docs: List[str]`
+- Optional query param: `?threshold_override=N` (applies globally to all doc types)
 
-**Refresh-stale endpoint:** Checks staleness, returns 200 if all fresh ("All documents are fresh"), or 202 with topologically sorted stale doc list for DAG-order execution.
+**Refresh-stale endpoint detail:**
+1. Gets staleness report
+2. If no stale or missing docs: returns HTTP 200 with `{"message": "All documents are fresh"}`
+3. If stale docs exist: launches background pipeline with `refresh_docs` set to stale doc types (topologically sorted for DAG-order execution), returns HTTP 202
 
-**Write-before-approve fix (Codex CRITICAL):** Synthesis writes to `storage.write_synthesis()` (versioned KB internal), but `company_context/{slug}.md` only written inside HITL-3 approve branch. Reject leaves KB synthesis version but doesn't promote.
+**Write-before-approve fix (Codex CRITICAL):** Synthesis is written to `storage.write_synthesis()` (versioned KB internal) immediately after the synthesis agent completes. However, the promoted file `company_context/{slug}.md` is **only written inside the HITL-3 approve branch**. If HITL-3 rejects, the KB synthesis version exists but is not promoted to the public-facing company context. This ensures rejected synthesis never leaks to downstream consumers.
 
-### 5c.8 Pydantic Models (17 Models)
+### 5c.11 Pydantic Models (17 Models)
 
-**File:** `core/models/knowledge_base.py`
+**File:** `core/models/knowledge_base.py` (288 lines)
 
-Key models: `KBDocType` (enum), `KBDocEntry`, `KBManifest`, `KBDocVersion`, `KBDocHealth`, `KBHealthReport`, `KnowledgeBaseInput`, `KnowledgeBaseOutput`, `KBAgentResult`. All fields have defaults for backward compatibility.
+**Enums and constants:**
+- `KBDocType(str, Enum)` -- 6 values: `COMPANY_OVERVIEW`, `CUSTOMER_REVIEWS`, `COMPETITOR_REGISTRY`, `WEAKNESS_ANALYSIS`, `BRAND_PERCEPTION`, `SYNTHESIS`
+- `L2_DOC_TYPES: tuple[KBDocType, ...]` -- The 5 L2 types (excludes synthesis)
+- `KB_DEPENDENCY_GRAPH: Dict[KBDocType, List[KBDocType]]` -- DAG edges
+- `KB_DEFAULT_STALENESS_DAYS: Dict[KBDocType, int]` -- Per-type thresholds
 
-**API schemas** (`api/schemas/common.py`): `KnowledgeBaseStartRequest`, `KBDocHealthResponse`, `KBHealthResponse`, `KBRefreshStaleRequest`.
+**Storage models:**
 
-### 5c.9 Test Coverage (260 tests)
+| Model | Fields | Purpose |
+|-------|--------|---------|
+| `KBDocVersion` | version, created_at, created_by, content_md, content_json, word_count, source_count, sha256 | Single version snapshot |
+| `KBDocEntry` | doc_type, current_version, last_updated, staleness_days, status (fresh/stale/missing), dependencies | Manifest entry per doc type |
+| `KBManifest` | slug, company_name, created_at, last_full_refresh, documents (Dict), synthesis_version, synthesis_last_updated | Top-level manifest |
+
+**Health models:**
+
+| Model | Fields | Purpose |
+|-------|--------|---------|
+| `KBDocHealth` | doc_type, status, current_version, last_updated, age_days, staleness_threshold_days, dependencies, stale_reason | Per-doc health status |
+| `KBHealthReport` | slug, overall_score, doc_health (Dict), synthesis_version, synthesis_last_updated, synthesis_needs_refresh, stale_docs, missing_docs, last_full_refresh | Full health report |
+
+**Agent I/O models:**
+
+| Model | Fields | Purpose |
+|-------|--------|---------|
+| `KBAgentResult` | doc_type, version, content_md, content_json, sources, word_count, execution_time_s, error, is_partial | Result from any agent |
+| `KnowledgeBaseInput` | company_name, domain, company_slug, company_id, product_slug, product_name, seed_urls, internal_sources, language, region, additional_constraints, refresh_docs, staleness_threshold_days, auto_approve_checkpoints | Pipeline input |
+| `KnowledgeBaseOutput` | slug, company_name, manifest, agent_results, synthesis_md, company_profile_path, knowledge_base_dir, total_execution_time_s, changed_docs | Pipeline output |
+
+**Per-agent structured output models:**
+
+| Model | Fields | Purpose |
+|-------|--------|---------|
+| `CustomerReview` | quote, source_platform, source_url, reviewer_role, sentiment (Literal), themes, date | Single review |
+| `CustomerReviewsStructured` | total_reviews_analyzed, reviews, sentiment_distribution, top_positive_themes, top_negative_themes, notable_quotes | Agent 2 output |
+| `CompetitorProfile` | name, domain, relevance (Literal), relevance_score, key_differentiators, market_position | Single competitor |
+| `CompetitorRegistryStructured` | direct_competitors, mindshare_competitors, market_map | Agent 3 output |
+| `CompetitorWeakness` | competitor_name, weakness_category, description, severity (Literal), evidence, opportunity_for_us | Single weakness |
+| `WeaknessAnalysisStructured` | per_competitor, systemic_industry_problems, strategic_opportunities | Agent 4 output |
+| `BrandPerceptionStructured` | market_position, brand_positioning, key_differentiators, strengths_liked_by_users, challenges_and_pain_points, strategic_recommendations | Agent 5 output |
+
+All fields have defaults for backward compatibility.
+
+**API schemas** (`api/schemas/common.py`):
+- `KnowledgeBaseStartRequest` -- company_name, domain, refresh_docs, auto_approve_checkpoints
+- `KBDocHealthResponse` -- status, version, age_days, threshold, stale_reason, dependencies
+- `KBHealthResponse` -- per_doc, overall_score, synthesis_version, synthesis_last_updated, synthesis_needs_refresh, stale_docs, missing_docs
+- `KBRefreshStaleRequest` -- threshold_override
+
+### 5c.12 LangSmith Tracing Integration
+
+The KB pipeline uses the shared tracing module (`core/shared_tools/tracing.py`):
+
+- `create_research_trace(slug)` -- Creates root trace under `research_kb_project` LangSmith project
+- Each agent creates a span: `agent/company-overview`, `agent/customer-reviews`, etc.
+- Each agent logs a generation with `log_generation()` (prompt truncated to 2000 chars)
+- Pipeline creates a root span: `kb-pipeline/{slug}` with mode and target_docs metadata
+- `flush()` called at pipeline end
+
+### 5c.13 Test Coverage (260 tests)
 
 | File | Tests | Scope |
 |------|-------|-------|
-| `test_models_kb.py` | 17 | Model validation, DAG constants, serialization |
-| `test_storage.py` | 44 | Manifest CRUD, versioning, staleness report, propagation |
-| `test_tools.py` | 8 | read_file tool |
-| `test_prompts.py` | 27 | 6 prompt builders + revision notes + delta prompts |
-| `test_agents.py` | 44 | 6 agent functions + delta mode |
-| `test_graph_kb.py` | 22 | 2 HITL sub-graphs |
-| `test_pipeline_kb.py` | 40 | DAG execution, 3 modes, HITL, delta synthesis |
-| `test_knowledge_base.py` (API) | 46 | Start, status, approve, health, refresh-stale |
+| `test_models_kb.py` | 17 | Model validation, DAG constants, serialization, all 17 models |
+| `test_storage.py` | 44 | Manifest CRUD, versioning, atomic writes, staleness report, propagation, changed_since_synthesis |
+| `test_tools.py` | 8 | read_file tool scoping, file reading, error handling |
+| `test_prompts.py` | 27 | 6 prompt builders + revision notes + delta prompts + Hub fallback |
+| `test_agents.py` | 44 | 6 agent functions, timeout handling, error paths, delta mode, pause_turn loop |
+| `test_graph_kb.py` | 22 | 2 HITL sub-graphs, auto-approve, interrupt/resume cycle |
+| `test_pipeline_kb.py` | 40 | DAG execution order, 3 modes (full/refresh/single), HITL decision handling, delta synthesis, revision flows |
+| `test_knowledge_base.py` (API) | 46 | Start (202/200/403/401/422), status, approve, health (per-doc + overall), refresh-stale (200 if fresh, 202 if stale) |
 | **Total** | **260** | |
 
 ---
@@ -1974,149 +2621,409 @@ GapAnalysisInput
 
 ## 7. Pipeline 3: Content Generation Engine
 
-**Status:** Implemented (v1.0 + v1.3). Branch: `feat/front-back`. 314 content engine tests + 28 API tests passing.
+**Status:** Implemented (v1.0 + v1.3). **437 content engine tests** (57 v1.0 + 257 v1.3 core + 28 v1.0 API + 28 v1.3 API + 38 LangSmith migration + 12 persistence + 17 prompt registry). All passing.
 
 **v1.0 Architecture:** 4-stage async pipeline using two Anthropic agent patterns:
 - **Orchestrator-Workers** — parallel content production with semaphore-controlled concurrency
 - **Evaluator-Optimizer** — 4-dimension quality gate with automated revision cycles
 
-**v1.3 Architecture:** 6-stage pipeline with two-phase context loading, 2 new agents, 3 HITL checkpoints, LiteLLM for all LLM calls, LangSmith tracing, E-E-A-T evaluation, and dual feedback loops. Both v1.0 and v1.3 coexist via separate API endpoints.
+**v1.3 Architecture:** 6-stage pipeline with two-phase context loading, 2 new agents (Strategic Planner + Brief Builder), 3 HITL checkpoints, LiteLLM abstraction for all LLM calls, LangSmith tracing (Langfuse fully removed), E-E-A-T evaluation, and dual feedback loops. Both v1.0 and v1.3 coexist via separate API endpoints (`/api/v1/content/` for v1.0, `/api/v1/content-v13/` for v1.3).
+
+**Key Architectural Change — Langfuse to LangSmith Migration (2026-03-02):**
+Langfuse was **fully removed** from the codebase and replaced with LangSmith as the sole tracing backend. The migration introduced `core/shared_tools/tracing.py` as a unified tracing module shared across all pipelines (content engine, research/KB, etc.). The old `core/content_engine/tracing.py` (Langfuse-based) was deleted. `core/content_engine/tracing_v13.py` is now a **re-export shim** that re-exports all functions from `core/shared_tools/tracing`, maintaining backward compatibility with all existing import sites.
 
 ```
 v1.3 Pipeline Flow:
-┌─────────────────────────────────────────────────────────────────────────┐
-│  [Stage 0] Two-Phase Context Loading (ContextRouter)                    │
-│    Phase 1: extract_scorecard() → PlannerScorecard (~11K tokens)        │
-│    Phase 2: extract_worker_context() → per-topic full context           │
-└──────────────────┬──────────────────────────────────────────────────────┘
-                   ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  [Stage 1] Strategic Planner Agent (LiteLLM)                            │
-│    Input: scorecard + company context + style guide                     │
-│    Output: StrategicPlannerOutput → List[TopicSelection]                │
-│    → HITL-1: Topic Approval (approve/modify/reject/retry)               │
-└──────────────────┬──────────────────────────────────────────────────────┘
-                   ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  [Stage 2] Brief Builder Agent (LiteLLM, parallel per topic)            │
-│    Input: TopicSelection + WorkerQueryContext                            │
-│    Output: List[ContentBlueprint] (extends ContentBrief)                │
-│    → HITL-2: Brief Approval (approve/feedback/reject per blueprint)      │
-└──────────────────┬──────────────────────────────────────────────────────┘
-                   ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  [Stage 3] Content Workers (v1.3 chain)                                 │
-│    Outliner → Drafter → Linker → Fact Checker (verify-only)             │
-│  [Stage 4] Evaluator-Optimizer (4+1 dimensions, dual feedback)          │
-│    + E-E-A-T (5th judge), section_level → drafter+fact_checker          │
-│    + major_change (semantic < 0.5) → auto re-brief                      │
-│  [Stage 5] HITL-3 Content Review (bounded retry loops)                  │
-│    edit (max 2) → drafter → re-evaluate → re-present                   │
-│    reject (max 2) → re-brief → re-dispatch → re-evaluate → re-present  │
-└─────────────────────────────────────────────────────────────────────────┘
++------------------------------------------------------------------------+
+|  [Stage 0] Two-Phase Context Loading (ContextRouter)                    |
+|    Phase 1: extract_scorecard() -> PlannerScorecard (~11K tokens)        |
+|    Phase 2: extract_worker_context() -> per-topic full context           |
++--------------------+---------------------------------------------------+
+                     v
++------------------------------------------------------------------------+
+|  [Stage 1] Strategic Planner Agent (LiteLLM)                            |
+|    Input: scorecard + company context + style guide                     |
+|    Output: StrategicPlannerOutput -> List[TopicSelection]                |
+|    -> HITL-1: Topic Approval (approve/modify/reject/retry)              |
++--------------------+---------------------------------------------------+
+                     v
++------------------------------------------------------------------------+
+|  [Stage 2] Brief Builder Agent (LiteLLM, parallel per topic)            |
+|    Input: TopicSelection + WorkerQueryContext                            |
+|    Output: List[ContentBlueprint] (extends ContentBrief)                |
+|    -> HITL-2: Brief Approval (approve/feedback/reject per blueprint)     |
++--------------------+---------------------------------------------------+
+                     v
++------------------------------------------------------------------------+
+|  [Stage 3] Content Workers (v1.3 chain)                                 |
+|    Outliner -> Drafter -> Linker -> Fact Checker (verify-only)           |
+|  [Stage 4] Evaluator-Optimizer (4+1 dimensions, dual feedback)          |
+|    + E-E-A-T (5th judge), section_level -> drafter+fact_checker         |
+|    + major_change (semantic < 0.5) -> auto re-brief                     |
+|  [Stage 5] HITL-3 Content Review (bounded retry loops)                  |
+|    edit (max 2) -> drafter -> re-evaluate -> re-present                 |
+|    reject (max 2) -> re-brief -> re-dispatch -> re-evaluate -> re-present|
++------------------------------------------------------------------------+
 
 Entry Modes:
   AUTONOMOUS: Full pipeline (stages 0-5), reads gap_analysis output
-  MANUAL: User prompt → inline WorkerQueryContext → stages 2-5
+  MANUAL: User prompt -> inline WorkerQueryContext -> stages 2-5
 ```
 
-**v1.3 New Files:**
-| File | Purpose |
-|------|---------|
-| `core/content_engine/context_router.py` | Two-phase context extraction (scorecard + worker context) |
-| `core/content_engine/strategic_planner.py` | Agent 1: Topic selection with ranking and metadata |
-| `core/content_engine/brief_builder.py` | Agent 2: Parallel blueprint generation per topic |
-| `core/content_engine/llm_client.py` | LiteLLM wrapper with auto-prefix and retry |
-| `core/content_engine/pipeline_v13.py` | 6-stage orchestrator with skip_stages support |
-| `core/content_engine/graph_v13.py` | 3 LangGraph HITL checkpoints (topic/brief/content) |
-| `core/content_engine/tracing_v13.py` | LangSmith tracing (graceful degradation when disabled) |
-| `core/content_engine/evaluator/eeat_judge.py` | E-E-A-T evaluation dimension |
-| `core/content_engine/prompts/strategic_planner_prompts.py` | Planner prompt templates |
-| `core/content_engine/prompts/brief_builder_prompts.py` | Brief builder prompt templates |
-| `core/content_engine/prompts/eeat_judge_prompts.py` | E-E-A-T judge prompt templates |
-| `core/models/content_generation_v13.py` | v1.3 Pydantic models |
-| `api/routers/content_v13.py` | 5 API endpoints (start, status, 3 approvals) |
-| `api/schemas/content_v13.py` | Request/response schemas |
+**v1.3 File Map (14 new files):**
+| File | Purpose | Lines |
+|------|---------|-------|
+| `core/content_engine/context_router.py` | Two-phase context extraction (scorecard + worker context) — pure data transform, no LLM, no I/O | ~338 |
+| `core/content_engine/strategic_planner.py` | Agent 1: Topic selection with ranking and metadata via LiteLLM | ~129 |
+| `core/content_engine/brief_builder.py` | Agent 2: Parallel blueprint generation per topic via LiteLLM | ~236 |
+| `core/content_engine/llm_client.py` | LiteLLM wrapper: auto-prefix routing, retry with jittered backoff, LangSmith callbacks | ~235 |
+| `core/content_engine/pipeline_v13.py` | 6-stage orchestrator with skip_stages support and entry mode routing | ~500+ |
+| `core/content_engine/graph_v13.py` | 3 LangGraph HITL checkpoints (topic/brief/content) | ~400+ |
+| `core/content_engine/tracing_v13.py` | Re-export shim — delegates to `core/shared_tools/tracing` | ~36 |
+| `core/content_engine/prompt_registry.py` | LangSmith Hub prompt fetching with thread-safe TTL cache + local fallback | ~146 |
+| `core/content_engine/evaluator/eeat_judge.py` | E-E-A-T evaluation dimension (LLM-as-Judge) | ~120 |
+| `core/content_engine/prompts/strategic_planner_prompts.py` | Planner system + user prompt templates | ~100+ |
+| `core/content_engine/prompts/brief_builder_prompts.py` | Brief builder system + user prompt templates | ~100+ |
+| `core/content_engine/prompts/eeat_judge_prompts.py` | E-E-A-T judge prompt templates | ~80 |
+| `core/models/content_generation_v13.py` | v1.3 Pydantic models (12 models, 271 lines) | ~271 |
+| `api/routers/content_v13.py` | 5 API endpoints (start, status, 3 approvals) | ~200+ |
 
 **v1.3 DB Persistence:** Two new functions in `core/content_engine/persistence.py`:
-- `persist_v13_planner_output()` → writes to `PipelineRunModel.config["v13_planner"]` JSONB
-- `persist_v13_brief_approval()` → writes to `PipelineRunModel.config["v13_briefs"]` JSONB
+- `persist_v13_planner_output()` — writes to `PipelineRunModel.config["v13_planner"]` JSONB
+- `persist_v13_brief_approval()` — writes to `PipelineRunModel.config["v13_briefs"]` JSONB
 
-**v1.0 Architecture (preserved):**
+### 7.1 LiteLLM Client — Unified LLM Abstraction
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  [1/4] Strategic Planner (Sonnet 4.5)                                │
-│    Input: gap report + generation spec + company context + personas  │
-│    Output: List[ContentBrief] — prioritized content assignments      │
-└──────────────────┬───────────────────────────────────────────────────┘
-                   │ spawns N worker chains (asyncio.Semaphore)
-                   ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  [2/4] Content Workers (parallel)                                    │
-│    Per brief: Outliner (Sonnet) → Drafter (Sonnet) →                 │
-│               Fact Enricher (Perplexity sonar-pro) →                 │
-│               Formatter (Haiku 4.5)                                  │
-│    Output: List[FormattedContent]                                    │
-└──────────────────┬───────────────────────────────────────────────────┘
-                   ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  [3/4] Evaluator-Optimizer Loop (max 2 revision cycles)              │
-│    4 dimensions in parallel: Structural (code) + Semantic (embed)    │
-│                               + Style (Haiku judge) + Factual        │
-│                                 (Sonnet judge)                       │
-│    Failed → compile feedback → revise → re-evaluate                  │
-│    Output: List[FormattedContent] + RevisionHistory                  │
-└──────────────────┬───────────────────────────────────────────────────┘
-                   ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  [4/4] Human Review (LangGraph HITL)                                 │
-│    interrupt() → approve / edit / reject per piece                   │
-│    auto_approve flag skips interrupt                                  │
-│    Output: List[ContentPiece] with status + final markdown           │
-└──────────────────────────────────────────────────────────────────────┘
-```
+**File:** `core/content_engine/llm_client.py`
 
-**Entry Point:** `core/content_engine/pipeline.py` → `run_content_generation(input_data)`
-**CLI:** `scripts/run_content_engine.py`
+All LLM calls in the v1.3 pipeline route through this module, replacing direct SDK calls (Anthropic `AsyncAnthropic`, httpx to Perplexity, etc.) with a single `llm_call()` function.
 
-**Input:**
-- `generation_spec.json` from Pipeline 2 (cluster content specs)
-- `gap_report.json` from Pipeline 2 (prioritized content recommendations)
-- Research artifacts from Pipeline 1 (company context, personas, style guide)
-- `analysis.json` from Pipeline 2 (semantic analysis data)
+**`_ensure_litellm_model(model: str) -> str`** — Auto-detects provider and prefixes model strings:
 
-**Output:**
-- Content pieces in `artifacts/content/{slug}/content/brief-{N}/final.md`
-- Run metadata in `artifacts/content/{slug}/run_metadata.json`
-- Per-brief artifacts: `outline.json`, `draft.md`, `enriched.md`, `formatted.md`, `eval_history.json`
-
-### 7.1 Stage 1 — Strategic Planner
-
-**File:** `core/content_engine/planner.py`
-**Prompts:** `core/content_engine/prompts/planner_prompts.py`
+| Model Prefix | Provider | Example |
+|--------------|----------|---------|
+| `claude-` | `anthropic/` | `claude-sonnet-4-5-20250929` → `anthropic/claude-sonnet-4-5-20250929` |
+| `sonar` | `perplexity/` | `sonar-pro` → `perplexity/sonar-pro` |
+| `gpt-`, `o1`, `o3` | `openai/` | `gpt-5.2-2025-12-11` → `openai/gpt-5.2-2025-12-11` |
+| `gemini-` | `google/` | `gemini-3-flash-preview` → `google/gemini-3-flash-preview` |
+| Already has `/` | unchanged | `anthropic/claude-sonnet-4-5-20250929` → unchanged |
+| Unknown | unchanged | passed through to LiteLLM for routing |
 
 ```python
-async def plan_content(
-    input_data: ContentGenerationInput,
-    company_context_md: str,
-    style_guide_md: str,
-    persona_mds: List[str],
-    gap_report_json: dict,
-    generation_spec_json: dict,
-    analysis_json: dict,
-    session_id: str = "",
-) -> PlannerOutput
+async def llm_call(
+    *,
+    model: str,                                    # LiteLLM model string
+    system: str,                                   # System prompt
+    user: str,                                     # User prompt
+    max_tokens: int = 4096,                        # Max output tokens
+    temperature: float = 0.0,                      # Sampling temperature
+    response_format: Optional[Type[BaseModel]] = None,  # Pydantic model for structured output
+    metadata: Optional[Dict[str, Any]] = None,     # Metadata (appears in LangSmith traces)
+    max_retries: int = 3,                          # Retry attempts on transient failures
+    base_delay: float = 1.0,                       # Base delay for exponential backoff
+) -> LLMResponse
 ```
 
-- **Model:** Sonnet 4.5 via `AsyncAnthropic` (raw SDK)
-- **Pattern:** Single LLM call with structured JSON output
-- **Context window guard:** `truncate_to_token_limit()` applied to company context and personas
-- **JSON parsing:** `safe_parse()` with code fence extraction and trailing comma cleanup
-- **Output:** `PlannerOutput` with `List[ContentBrief]` — each brief includes `word_count_range`, `structural_targets`, `target_queries`, `key_topics`, `key_angles`
-- **Tracing:** Langfuse generation logged under `planner` trace
+**Retry strategy:** Jittered exponential backoff: `delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay)`. All exceptions caught — final exception re-raised after exhausting retries.
 
-### 7.2 Stage 2 — Content Workers (Orchestrator-Workers)
+**LangSmith callback integration:**
+```python
+def configure_litellm_callbacks() -> None:
+    """Called once at pipeline startup."""
+    litellm.success_callback = ["langsmith"]
+    litellm.failure_callback = ["langsmith"]
+```
+LiteLLM auto-detects LangSmith when `LANGSMITH_API_KEY` env var is set. Configured via `configure_litellm_callbacks()` at pipeline startup.
+
+**LLMResponse model:**
+```python
+class LLMResponse(BaseModel):
+    content: str = ""
+    model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    finish_reason: str = ""
+```
+
+**Lazy import:** `litellm` is imported at module load but wrapped in try/except — tests can mock without installing the full package. If not installed, `llm_call()` raises `RuntimeError`.
+
+**Embedding pass-through:** `embed_texts(texts)` delegates to `core/shared_tools/async_embedding_client.async_embed_texts()`, keeping embedding calls consistent across v1.0 and v1.3.
+
+### 7.2 LangSmith Prompt Registry — Hub-with-Local-Fallback
+
+**File:** `core/content_engine/prompt_registry.py`
+
+Thread-safe, TTL-cached prompt fetching from LangSmith Hub with automatic local fallback.
+
+**Architecture:**
+```
+get_prompt(hub_name, local_fallback, tag)
+    |
+    +-- Hub disabled (settings.langsmith_use_hub=False)? -> return local_fallback
+    |
+    +-- Cache hit (within 5-min TTL)? -> return cached text
+    |
+    +-- Cache miss -> acquire _LOCK (threading.Lock)
+         |
+         +-- Double-check cache (another thread may have populated)
+         |
+         +-- Pull from Hub: Client.pull_prompt_commit("name:tag")
+         |    |
+         |    +-- Extract text via _extract_text_from_manifest()
+         |    |     Path 1: messages[0].kwargs.content
+         |    |     Path 2: messages[0].kwargs.prompt.kwargs.template
+         |    |     Path 3: messages[0].kwargs.template
+         |    |
+         |    +-- Success? -> cache and return
+         |    +-- Failure? -> return local_fallback (don't cache failures)
+```
+
+**Process-global state:**
+- `_CACHE: Dict[str, tuple[str, float]]` — key is `"{hub_name}:{tag}"`, value is `(text, fetched_at_epoch)`
+- `_CACHE_TTL = 300` (5 minutes)
+- `_LOCK = threading.Lock()` — ensures single-flight Hub pulls under contention
+
+**Configuration:**
+- `LANGSMITH_API_KEY` — required for Hub pulls
+- `settings.langsmith_use_hub = True` to enable (default: `False` — local prompts authoritative)
+- `settings.langsmith_hub_tag = "production"` for version pinning
+
+**Async wrapper:** `aget_prompt()` runs `get_prompt()` in thread pool via `asyncio.to_thread()`.
+
+**Usage pattern in prompt files:**
+```python
+from core.content_engine.prompt_registry import get_prompt
+_HUB_NAME = "outliner-system"
+def get_outliner_system_prompt() -> str:
+    return get_prompt(_HUB_NAME, OUTLINER_SYSTEM_PROMPT)
+```
+
+### 7.3 LangSmith Tracing Architecture (Replaces Langfuse)
+
+**File:** `core/shared_tools/tracing.py` (primary), `core/content_engine/tracing_v13.py` (re-export shim)
+
+**Migration:** Langfuse was **fully removed** (2026-03-02). LangSmith is now the sole tracing backend. The shared module lives in `core/shared_tools/tracing.py` and is used by both the content engine and the knowledge base pipeline. The old `tracing_v13.py` is a re-export shim for backward compatibility.
+
+**LangSmith integration uses `RunTree`** from `langsmith.run_trees`:
+- Each `RunTree` represents a trace or span
+- Parent-child hierarchy via `parent.create_child()`
+- `run_type` values: `"chain"` (pipeline/stage spans), `"llm"` (generation logging)
+- `post()` sends the run to LangSmith, `patch()` updates it, `end()` finalizes it
+
+**Context-var span propagation:**
+LangGraph graph nodes are sync functions whose state dicts are serialized by MemorySaver (msgpack). Putting a RunTree into state crashes with `TypeError: Type is not msgpack serializable`. Instead, `contextvars.ContextVar` propagates the current span out-of-band:
+```python
+_current_span: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar("langsmith_current_span", default=None)
+set_current_span(span)   # Set in async context before graph invocation
+get_current_span()       # Read in sync graph nodes
+```
+
+**Backward-compatible kwargs:** Every public function accepts OLD Langfuse kwargs (`input=`, `parent_span=`, `level=`, `status_message=`, `model_parameters=`, `user_id=`, `metadata=` on `end_span`) as keyword-only arguments. These are silently absorbed or mapped to LangSmith equivalents, so callers migrated by a simple import swap continue to work without callsite changes.
+
+**Trace hierarchy:**
+```
+Project: content-engine (configurable via LANGSMITH_PROJECT)
+  Session ID: content-{slug}-{timestamp}
+    Root RunTree: content-pipeline/{slug}  (run_type="chain")
+      +-- Stage Span: strategic-planner     (run_type="chain")
+      |     +-- Generation: select_topics   (run_type="llm")
+      +-- Stage Span: brief-builder-parallel
+      |     +-- Span: brief-builder/brief-001
+      |     |     +-- Generation: build_brief
+      |     +-- Span: brief-builder/brief-002
+      +-- Stage Span: workers
+      |     +-- Span: Worker #1 -> outliner/drafter/linker/fact_checker
+      +-- Stage Span: evaluator
+      |     +-- Span: evaluator/brief-001 -> eval dimensions
+      +-- Stage Span: review
+            +-- Score: human_decision
+```
+
+**Helper functions (all in `core/shared_tools/tracing.py`):**
+
+| Function | Purpose |
+|----------|---------|
+| `create_session(company_slug)` | Generate session ID: `"content-{slug}-{timestamp}"` |
+| `create_pipeline_trace(session_id, slug, ...)` | Create root RunTree with project name |
+| `create_trace(session_id, name, ...)` | Create standalone RunTree |
+| `create_research_trace(slug, ...)` | Create root trace for KB pipeline (uses `research_kb_project` setting) |
+| `create_span(parent, name, ...)` | Create child span under parent via `parent.create_child()` |
+| `end_span(span, output=, error=)` | Finalize span: `span.end()` + `span.patch()` |
+| `log_generation(parent, name, model, ...)` | Log LLM call as child span with `run_type="llm"` |
+| `log_score(parent, name, value, comment)` | Log score via `client.create_feedback()` |
+| `update_trace_output(trace, output)` | End root trace with final output |
+| `flush()` | No-op (LangSmith uses sync HTTP calls via post/patch) |
+| `set_current_span(span)` | Set span in contextvars |
+| `get_current_span()` | Get span from contextvars |
+
+**`log_score()` type handling:**
+- `float` → passed as `score` directly
+- `bool` → converted to `1.0` / `0.0`
+- `str` → stored in `comment` field (LangSmith feedback requires numeric score)
+
+**`log_generation()` truncation:** Input and output texts are truncated to 5000 chars before sending to prevent oversized payloads.
+
+**`end_span()` Langfuse compat:** If `level="ERROR"` and `error` is None, maps `status_message` to the error field.
+
+**Singleton client:** Cached `Client` instance initialized lazily with `api_key` and optional `workspace_id` from settings.
+
+**Graceful degradation:** All functions check `_is_enabled()` (requires `langsmith` package + `LANGSMITH_API_KEY` setting). All functions wrap operations in try/except and return None on failure — tracing unavailability never crashes the pipeline.
+
+### 7.4 Stage 0 — Two-Phase Context Loading (ContextRouter)
+
+**File:** `core/content_engine/context_router.py`
+
+A **pure data transformation module** — no LLM calls, no I/O, no imports from prompts/ or pipeline modules. Implements the key insight that different agents need different amounts of context:
+
+**Phase 1 — Scorecard Extraction (`extract_scorecard()`):**
+
+```python
+def extract_scorecard(
+    analysis_json: Dict[str, Any],      # Full AnalysisResult from analysis.json
+    company_context_md: str = "",        # First ~600 chars used
+    product_focus: Optional[str] = None,
+) -> PlannerScorecard
+```
+
+Iterates over `analysis_json["gaps"]` and `analysis_json["cluster_specs"]` to produce:
+- **Per-query scorecards** (`QueryScorecard`): ~50 tokens each. Fields: `query_id`, `query_text`, `cluster_name`, `gap`, `best_company_similarity`, `avg_citation_similarity`, `interpretation`, `exemplar_count`, `has_brief`.
+- **Per-cluster summaries** (`ClusterSummary`): ~60 tokens each. Aggregated from query scorecards by `cluster_name`. Fields: `cluster_name`, `query_count`, `avg_gap`, `max_gap`, `significant_gap_count`, `dominant_content_type`, `dominant_authority_type`.
+- **Company summary**: First ~600 chars of `company_context_md`.
+- **Product focus**: Optional product description for product-level runs.
+
+Total budget: ~11K tokens (200 queries x 50 = 10K + 15 clusters x 60 = 900 + company summary).
+
+**Phase 2 — Full Context Extraction (`extract_worker_context()`):**
+
+```python
+def extract_worker_context(
+    analysis_json: Dict[str, Any],
+    approved_query_ids: List[str],      # Only 4-6 approved queries, not 200
+) -> Dict[str, WorkerQueryContext]
+```
+
+Filters the gaps list to approved IDs only, pulls **complete** QueryGap data including `top_cited_exemplars` with `structural_signals`, and matches to `ClusterContentSpec` by `cluster_name`. Returns `WorkerQueryContext` per approved query with: `query_gap` (full dict), `cluster_spec`, `exemplars`, `gap_content_brief`, `company_best_text`.
+
+**Formatting functions:**
+- `format_scorecard_as_markdown(scorecard)` — Renders cluster overview + per-query table as markdown. Tables are more token-efficient than JSON for tabular data (no repeated keys). Query text truncated to 80 chars.
+- `format_worker_context_as_markdown(context)` — Renders gap analysis, company content, brief targets, exemplars with structural signals, and cluster spec as structured markdown sections.
+
+### 7.5 Stage 1 — Strategic Planner (Agent 1)
+
+**File:** `core/content_engine/strategic_planner.py`
+**Prompts:** `core/content_engine/prompts/strategic_planner_prompts.py`
+
+The Strategic Planner performs **triage only** — it does NOT produce content briefs (unlike v1.0). It selects the top-K highest-impact content opportunities from the full query scorecard.
+
+```python
+async def select_topics(
+    scorecard: PlannerScorecard,
+    *,
+    max_topics: int = 6,             # Number of topics to select
+    user_feedback: str = "",          # From HITL-1 retry
+    parent_span: Optional[Any] = None,
+) -> StrategicPlannerOutput
+```
+
+**Flow:**
+1. Format scorecard as markdown tables via `format_scorecard_as_markdown()`
+2. Build user prompt via `build_strategic_planner_user_prompt(scorecard_markdown, max_topics, user_feedback)`
+3. Truncate to 100K tokens via `truncate_to_token_limit()`
+4. Call LLM via `llm_call()` (model: `settings.content_engine_v13_planner_model`, temperature 0.0)
+5. Parse response via `safe_parse()` into `StrategicPlannerOutput`
+6. Enrich `selection_metadata` with model, token counts
+7. Log generation to LangSmith
+
+**Output — `StrategicPlannerOutput`:**
+- `selections: List[TopicSelection]` — ranked 4-6 content opportunities
+- `selection_metadata: Dict[str, Any]` — model info, token counts
+
+**`TopicSelection` model:**
+- `rank: int` — priority order
+- `query_ids: List[str]` — which queries this topic consolidates
+- `query_texts: List[str]` — human-readable query texts
+- `cluster_name: str` — which cluster this topic belongs to
+- `rationale: str` — WHY this topic was chosen (must cite gap evidence)
+- `consolidation_note: str` — how related queries were merged
+- `estimated_impact: Literal["high", "medium", "low"]`
+
+### 7.6 Stage 2 — Brief Builder (Agent 2)
+
+**File:** `core/content_engine/brief_builder.py`
+**Prompts:** `core/content_engine/prompts/brief_builder_prompts.py`
+
+The content architect agent. For each approved topic, receives **full** gap analysis detail (exemplar structural signals, content briefs, cluster specs) and produces a detailed `ContentBlueprint`.
+
+```python
+async def build_brief(
+    context: WorkerQueryContext,
+    topic_selection: TopicSelection,
+    *,
+    company_context_md: str = "",
+    persona_mds: Optional[List[str]] = None,
+    style_guide_md: str = "",
+    brief_id: str = "brief-001",
+    parent_span: Optional[Any] = None,
+) -> ContentBlueprint
+```
+
+**Flow:**
+1. Format full context as markdown via `format_worker_context_as_markdown()`
+2. Build user prompt via `build_brief_builder_user_prompt()` with context, company, personas, style, topic rationale, query IDs/texts, brief_id
+3. Truncate to 150K tokens (Sonnet 4.5 has 200K context window)
+4. Call LLM via `llm_call()` (model: `settings.content_engine_v13_brief_builder_model`, max_tokens=8192, temperature 0.0)
+5. Parse response via `safe_parse()` into `ContentBlueprint`
+6. Set `blueprint.brief_id = brief_id` and `blueprint.gap_context = context`
+7. Log generation to LangSmith
+
+**Parallel execution:**
+
+```python
+async def build_briefs_parallel(
+    contexts: Dict[str, WorkerQueryContext],
+    topics: List[TopicSelection],
+    *,
+    max_concurrent: int = 3,
+    brief_id_overrides: Optional[List[str]] = None,  # For re-briefs
+    ...
+) -> List[ContentBlueprint]
+```
+
+Uses `asyncio.Semaphore(max_concurrent)` + `asyncio.create_task()` + `asyncio.gather()`. Each topic runs its own Brief Builder instance concurrently. Follows the same pattern as `workers/dispatcher.py`.
+
+**`brief_id_overrides`:** Index-aligned with topics. Used for re-briefs to prevent collision with original `brief-001`. If shorter than topics, remaining topics get default `brief-{N:03d}` IDs.
+
+**Primary query selection:** Each topic may consolidate multiple queries. The first query's full context (`topic.query_ids[0]`) is used as the primary input to the Brief Builder. If no context found for the primary query, the brief is skipped with a warning.
+
+**`ContentBlueprint` model** (extends `ContentBrief`):
+```python
+class ContentBlueprint(ContentBrief):
+    sections: List[BlueprintSection] = []      # Section-level outline
+    territory_queries: List[str] = []          # Related queries covered
+    reading_hierarchy: Dict[str, int] = {}     # H2/H3/H4 structure
+    must_hit_checklist: List[str] = []         # Non-negotiable items
+    user_feedback: str = ""                    # From HITL-2
+    gap_context: Optional[WorkerQueryContext]  # Full gap data
+    gap_reasoning: List[str] = []              # 3 points on gap overcoming
+    tone_voice_description: str = ""           # Voice guidance
+    target_persona: str = ""                   # Target audience
+    buyer_stage: str = ""                      # Journey stage
+    intent_stage: str = ""                     # Search intent
+```
+
+**`BlueprintSection` model:**
+```python
+class BlueprintSection(BaseModel):
+    heading: str = ""
+    level: int = 2                             # H2, H3, etc.
+    key_points: List[str] = []
+    target_word_count: int = 300
+    structural_elements: List[str] = []        # Required elements
+    must_include: List[str] = []               # Non-negotiable items
+```
+
+### 7.7 Stage 3 — Content Workers (Orchestrator-Workers)
 
 **Dispatcher:** `core/content_engine/workers/dispatcher.py`
 
@@ -2147,39 +3054,29 @@ Uses `asyncio.Semaphore(max_concurrent)` + `asyncio.gather(return_exceptions=Tru
 
 | Step | File | Model | Function | Output |
 |------|------|-------|----------|--------|
-| 1. Outline | `workers/outliner.py` | Sonnet 4.5 | `generate_outline()` | `ContentOutline` |
-| 2. Draft | `workers/drafter.py` | Sonnet 4.5 | `generate_draft()` | `ContentDraft` |
-| 3. Link | `workers/linker.py` | Perplexity sonar-pro | `link_content()` | `LinkedDraft` |
-| 4. Fact Check | `workers/fact_enricher.py` | Perplexity sonar-pro | `enrich_with_facts()` | `EnrichedDraft` |
+| 1. Outline | `workers/outliner.py` | Sonnet 4.5 via LiteLLM | `generate_outline()` | `ContentOutline` |
+| 2. Draft | `workers/drafter.py` | Sonnet 4.5 via LiteLLM | `generate_draft()` | `ContentDraft` |
+| 3. Link | `workers/linker.py` | Perplexity sonar-pro via LiteLLM | `link_content()` | `LinkedDraft` |
+| 4. Fact Check | `workers/fact_enricher.py` | Perplexity sonar-pro via LiteLLM | `enrich_with_facts()` | `EnrichedDraft` |
 
-v1.3 replaces the Formatter step with a Linker agent that resolves `[INTERNAL-LINK]`, `[EXTERNAL-LINK]`, and `[STAT:]` placeholders. Structural counts are computed inline via `_count_structural_elements()`. The Fact Checker is rewritten from "enrich" to "verify-only" (no new content added).
+v1.3 replaces the Formatter step with a **Linker agent** that resolves `[INTERNAL-LINK]`, `[EXTERNAL-LINK]`, and `[STAT:]` placeholders. Structural counts are computed inline via `_count_structural_elements()`. The Fact Checker is rewritten from "enrich" to **"verify-only"** (no new content added).
 
 **Each step:**
 - Has its own prompt file in `core/content_engine/prompts/`
-- Logs a tracing span (v1.0: Langfuse, v1.3: LangSmith)
+- Logs a tracing span via LangSmith
 - Persists intermediate artifact to disk (v1.0: `outline.json`, `draft.md`, `enriched.md`, `formatted.md`; v1.3: `outline.json`, `draft.md`, `linked.md`, `fact_checked.md`)
 
-**Linker (v1.3):** Uses Perplexity sonar-pro to resolve link/stat placeholders. Accepts site pages from s1 discovery for internal link resolution. Gracefully skips if `PERPLEXITY_API_KEY` not set. Returns `LinkedDraft` with link/stat counts.
+**Linker (v1.3 only):** Uses Perplexity sonar-pro via LiteLLM to resolve link/stat placeholders. Accepts site pages from s1 discovery for internal link resolution. Gracefully skips if `PERPLEXITY_API_KEY` not set. Returns `LinkedDraft` with link/stat counts.
 
-**Fact Enricher (v1.0):** Uses httpx to call Perplexity API directly. Gracefully skips if `PERPLEXITY_API_KEY` not set (returns draft unchanged). Detects added citations via regex.
+**Fact Enricher (v1.0):** Uses httpx to call Perplexity API directly (raw SDK). Gracefully skips if `PERPLEXITY_API_KEY` not set (returns draft unchanged). Detects added citations via regex.
 
-**Fact Checker (v1.3):** Verify-only — replaces `[STAT:]` placeholders, verifies existing claims, flags unverifiable claims. Does NOT add new content.
+**Fact Checker (v1.3):** Verify-only mode — replaces `[STAT:]` placeholders, verifies existing claims, flags unverifiable claims. Does NOT add new content. Uses LiteLLM.
 
-**Formatter (v1.0 only):** Uses `_count_structural_elements(markdown)` for word count, header count, list count, stat count, and citation count using regex patterns.
+**Formatter (v1.0 only):** Uses `_count_structural_elements(markdown)` for word count, header count, list count, stat count, and citation count using regex patterns. Uses Haiku 4.5 via raw Anthropic SDK.
 
-**Drafter also provides:** `revise_draft()` — used during evaluator revision cycles and HITL-3 edit feedback to incorporate feedback.
+**Drafter `revise_draft()`:** Used during evaluator revision cycles and HITL-3 edit feedback to incorporate feedback. Both v1.0 and v1.3 use this method.
 
-**CLI Progress:**
-```
-  [2/4] Content Workers .......
-         Worker #1: Outlining "409A Valuation..."
-         Worker #1: Drafting "409A Valuation..."
-         Worker #2: Outlining "ASC 718 Explained..."
-         Worker #1: DONE (2,847 words, 8 headers, 12 citations)
-         Workers complete: 10/10 briefs ............ 142.5s
-```
-
-### 7.3 Stage 3 — Evaluator-Optimizer Loop
+### 7.8 Stage 4 — Evaluator-Optimizer Loop
 
 **Orchestrator:** `core/content_engine/evaluator/loop.py`
 
@@ -2198,7 +3095,7 @@ async def evaluate_and_optimize(
 ) -> tuple[FormattedContent, RevisionHistory, FeedbackRoute]
 ```
 
-Returns a 3-tuple: final content, revision history, and feedback route ("pass", "section_level", or "major_change").
+Returns a 3-tuple: final content, revision history, and feedback route (`"pass"`, `"section_level"`, or `"major_change"`).
 
 **4+1 Evaluation Dimensions (run in parallel via `asyncio.gather`):**
 
@@ -2228,21 +3125,29 @@ Score = passed_checks / total_checks. Passes if >= 0.8.
 
 **Factual Judge:** Evaluates claim accuracy, source quality, recency, completeness. Returns JSON with `score` (0-1) and `feedback`.
 
+**E-E-A-T Judge (v1.3 only):** Evaluates Experience, Expertise, Authoritativeness, and Trustworthiness signals. Returns JSON with `score` (0-1) and `feedback`. Uses Sonnet 4.5 as the judge model.
+
 **Revision Logic (v1.0 — `use_targeted_revision=False`):**
-1. If any dimension fails → compile feedback from all failed dimensions
-2. Re-run: `revise_draft()` → `enrich_with_facts()` → `format_content()` (skip Outliner)
+1. If any dimension fails -> compile feedback from all failed dimensions
+2. Re-run: `revise_draft()` -> `enrich_with_facts()` -> `format_content()` (skip Outliner)
 3. Re-evaluate all 4 dimensions
-4. If still failing after `max_cycles` → flag for HITL with eval results attached
+4. If still failing after `max_cycles` -> flag for HITL with eval results attached
 5. Early exit when `max_revision_cycles=0` (skip evaluator entirely)
 
 **Revision Logic (v1.3 — `use_targeted_revision=True`, dual feedback routing):**
 
-`FeedbackRoute = Literal["pass", "section_level", "major_change"]`
+`FeedbackRoute` enum (`core/models/content_generation_v13.py`):
+```python
+class FeedbackRoute(str, Enum):
+    PASS = "pass"                # All dimensions passed
+    SECTION_LEVEL = "section_level"  # Targeted fix
+    MAJOR_CHANGE = "major_change"    # Fundamental re-brief
+```
 
 `classify_feedback(dimensions)` routes based on failure severity:
-- **"pass"** — all dimensions passed, no revision needed
-- **"section_level"** — targeted fix: run only needed workers (drafter + fact_checker)
-- **"major_change"** — semantic score < 0.5, content direction fundamentally wrong → flag for re-brief
+- **`"pass"`** — all dimensions passed, no revision needed
+- **`"section_level"`** — targeted fix: run only needed workers (drafter + fact_checker)
+- **`"major_change"`** — semantic score < 0.5, content direction fundamentally wrong -> flag for re-brief
 
 `_get_targeted_revision_plan(dimensions)` determines workers:
 | Failed Dimension(s) | Workers Run |
@@ -2251,15 +3156,13 @@ Score = passed_checks / total_checks. Passes if >= 0.8.
 | factual only | `["fact_checker"]` |
 | drafter + any combo | `["drafter", "fact_checker"]` (always re-verify after drafter revises) |
 
-`_run_targeted_revision()` chain: drafter (if needed) → fact_checker (if needed) → inline `_count_structural_elements()` (no formatter step).
+`_run_targeted_revision()` chain: drafter (if needed) -> fact_checker (if needed) -> inline `_count_structural_elements()` (no formatter step).
 
-Early-stop: if score improvement < 0.02 between revision cycles, stop and flag as `"section_level"`.
+**Early-stop:** If score improvement < 0.02 between revision cycles, stop revising and flag as `"section_level"`.
 
-Return type: `Tuple[FormattedContent, RevisionHistory, FeedbackRoute]` — 3rd element signals to pipeline whether content passed, needs section-level fix, or needs re-brief.
+### 7.9 Stage 5 — Human Review (LangGraph HITL)
 
-### 7.4 Stage 4 — Human Review (LangGraph HITL)
-
-**File:** `core/content_engine/graph.py` (v1.0), `core/content_engine/pipeline_v13.py` Stage 5 (v1.3)
+**File:** `core/content_engine/graph.py` (v1.0), `core/content_engine/graph_v13.py` + `pipeline_v13.py` Stage 5 (v1.3)
 
 **v1.0 Graph HITL:**
 ```python
@@ -2273,27 +3176,35 @@ async def run_content_review(
 ) -> List[ContentPiece]
 ```
 
-**Graph nodes:** `present_content` → `approval_gate` (interrupt) → `route` → `finalize` / `apply_edits` / END
+**Graph nodes:** `present_content` -> `approval_gate` (interrupt) -> `route` -> `finalize` / `apply_edits` / END
 
 **Resume tokens:** `{"approval_decision": "approve"|"edit"|"reject", "editor_notes": "..."}`
 
 **`auto_approve` flag** skips interrupt (same pattern as research pipeline). Approved content saved to `final.md`.
 
-**v1.3 HITL-3 Feedback Loops (pipeline_v13.py Stage 5):**
+**v1.3 — Three HITL Checkpoints (graph_v13.py):**
 
-HITL-3 uses `run_hitl_checkpoint()` with bounded retry loops:
+| Checkpoint | Graph | When | Decisions |
+|------------|-------|------|-----------|
+| HITL-1 | `build_topic_approval_graph()` | After Strategic Planner | approve / modify / reject / retry |
+| HITL-2 | `build_brief_approval_graph()` | After Brief Builder | approve / feedback / reject (per blueprint) |
+| HITL-3 | `build_content_review_graph_v13()` | After Evaluator-Optimizer | approve / edit / reject (per piece) |
+
+All three use `run_hitl_checkpoint()` — an async helper that manages LangGraph interrupt/resume cycles via MemorySaver.
+
+**v1.3 HITL-3 Feedback Loops (pipeline_v13.py Stage 5):**
 
 | Decision | Action | Max Attempts | Constants |
 |----------|--------|--------------|-----------|
-| `"approve"` | Write `final.md`, status=APPROVED | — | — |
-| `"edit"` | Route to drafter with `[HUMAN REVIEW]` feedback → fact checker → re-evaluate → re-present | 2 | `_MAX_EDIT_ATTEMPTS = 2` |
-| `"reject"` | Route to brief builder for re-brief → re-dispatch workers → re-evaluate → re-present | 2 | `_MAX_REBRIEFS = 2` |
+| `"approve"` | Write `final.md`, status=APPROVED | -- | -- |
+| `"edit"` | Route to drafter with `[HUMAN REVIEW]` feedback -> fact checker -> re-evaluate -> re-present | 2 | `_MAX_EDIT_ATTEMPTS = 2` |
+| `"reject"` | Route to brief builder for re-brief -> re-dispatch workers -> re-evaluate -> re-present | 2 | `_MAX_REBRIEFS = 2` |
 
 **Edit flow** (`_apply_human_edits()`):
 1. `revise_draft(feedback=f"[HUMAN REVIEW]\n{editor_notes}")` — drafter incorporates human notes
 2. `enrich_with_facts()` — re-verify facts on revised content
 3. `_count_structural_elements()` — compute counts inline (no formatter step)
-4. Return `FormattedContent` → loop back to HITL-3 for re-approval
+4. Return `FormattedContent` -> loop back to HITL-3 for re-approval
 
 **Reject/Major-change flow** (`_rebrief_and_rerun()`):
 1. Create new `TopicSelection` with `rationale=f"Re-brief after rejection: {user_comment[:200]}"`
@@ -2301,94 +3212,160 @@ HITL-3 uses `run_hitl_checkpoint()` with bounded retry loops:
 3. `build_briefs_parallel()` — re-brief with original contexts
 4. `dispatch_workers_v13()` — full worker chain on new brief
 5. `evaluate_and_optimize()` — full evaluation
-6. Return 3-tuple → loop back to HITL-3 for approval
+6. Return 3-tuple -> loop back to HITL-3 for approval
 
 **Evaluator `major_change` signal:** When `evaluate_and_optimize()` returns `feedback_route="major_change"` (semantic < 0.5), the pipeline automatically triggers `_rebrief_and_rerun()` before presenting at HITL-3, counting against the re-brief limit.
 
 **Permanent rejection:** After exhausting edit or re-brief attempts, content is marked `ContentStatus.REJECTED` with no further retries.
 
-### 7.5 Langfuse Tracing Architecture
+### 7.10 v1.0 Architecture (Preserved)
 
-**File:** `core/content_engine/tracing.py`
-
-**SDK Version:** Langfuse v3.14+ (v3 API — **breaking change from v2**, migrated 2026-02-16)
-
-Lazy singleton `Langfuse` client — returns None if not configured (no-op when `LANGFUSE_PUBLIC_KEY` not set). All tracing functions catch exceptions internally and return None, so Langfuse unavailability never crashes the pipeline.
-
-**v2 → v3 Migration (Breaking Changes Applied):**
-
-| v2 API (removed) | v3 API (current) |
-|---|---|
-| `lf.trace()` | `lf.start_span()` + `span.update_trace(session_id=...)` |
-| `target.generation()` | `target.start_generation()` + `gen.end()` |
-| `target.span()` | `target.start_span()` |
-| `usage=` parameter | `usage_details=` parameter |
-| `span.end(**kwargs)` | `span.update(**kwargs)` then `span.end()` |
-
-**Note:** `start_generation()` is already deprecated in 3.14.1 in favor of `start_observation(as_type='generation')`. Current code uses `start_generation()` — monitor for future migration.
-
-**Hierarchy (v3 — Span-based, not Trace-based):**
 ```
-Session: content-gen-{slug}-{timestamp}     (implicit — created when trace references session_id)
-  └── Root Span: content-pipeline/{slug}    (acts as trace via update_trace())
-        ├── Stage Span: stage/1-planner
-        │     └── Span: planner → Generation: plan_content
-        ├── Stage Span: stage/2-workers
-        │     ├── Span: Worker #1 → outliner/drafter/fact_enricher/formatter
-        │     └── Span: Worker #2 → ...
-        ├── Stage Span: stage/3-evaluator
-        │     └── Span: evaluator/{brief_id} → eval_cycle_0 / revision_cycle_1 / ...
-        └── Stage Span: stage/4-review
-              └── Span: Review: {title} → Score: human_decision
++----------------------------------------------------------------------+
+|  [1/4] Strategic Planner (Sonnet 4.5)                                 |
+|    Input: gap report + generation spec + company context + personas   |
+|    Output: List[ContentBrief] -- prioritized content assignments      |
++------------------+---------------------------------------------------+
+                   | spawns N worker chains (asyncio.Semaphore)
+                   v
++----------------------------------------------------------------------+
+|  [2/4] Content Workers (parallel)                                     |
+|    Per brief: Outliner (Sonnet) -> Drafter (Sonnet) ->                |
+|               Fact Enricher (Perplexity sonar-pro) ->                 |
+|               Formatter (Haiku 4.5)                                   |
+|    Output: List[FormattedContent]                                     |
++------------------+---------------------------------------------------+
+                   v
++----------------------------------------------------------------------+
+|  [3/4] Evaluator-Optimizer Loop (max 2 revision cycles)               |
+|    4 dimensions in parallel: Structural (code) + Semantic (embed)     |
+|                               + Style (Haiku judge) + Factual         |
+|                                 (Sonnet judge)                        |
+|    Failed -> compile feedback -> revise -> re-evaluate                |
+|    Output: List[FormattedContent] + RevisionHistory                   |
++------------------+---------------------------------------------------+
+                   v
++----------------------------------------------------------------------+
+|  [4/4] Human Review (LangGraph HITL)                                  |
+|    interrupt() -> approve / edit / reject per piece                    |
+|    auto_approve flag skips interrupt                                   |
+|    Output: List[ContentPiece] with status + final markdown            |
++----------------------------------------------------------------------+
 ```
 
-**Key difference from v2:** In v3, there is no `lf.trace()` method. Instead, a root span is created with `lf.start_span()`, then `span.update_trace(session_id=..., tags=..., user_id=...)` promotes it to function as the trace. Child spans and generations nest under this root span.
+**v1.0 Entry Point:** `core/content_engine/pipeline.py` -> `run_content_generation(input_data)`
+**v1.0 CLI:** `scripts/run_content_engine.py`
 
-**Helper functions:** `create_session()`, `create_pipeline_trace()`, `log_generation()`, `create_span()`, `end_span()`, `update_trace_output()`, `log_score()`, `flush()`
+**v1.0 Planner** (`core/content_engine/planner.py`):
+- Model: Sonnet 4.5 via `AsyncAnthropic` (raw SDK)
+- Single LLM call with structured JSON output
+- Context window guard: `truncate_to_token_limit()`
+- JSON parsing: `safe_parse()` with code fence extraction and trailing comma cleanup
+- Output: `PlannerOutput` with `List[ContentBrief]`
 
-### 7.6 Artifact Structure
+### 7.11 Entry Modes
+
+**`EntryMode` enum:**
+- `AUTONOMOUS` — Full pipeline (stages 0-5), reads gap_analysis output automatically
+- `MANUAL` — User provides a topic prompt -> inline `WorkerQueryContext` -> stages 2-5 only
+
+**`ContentGenerationInputV13`** (extends `ContentGenerationInput`):
+```python
+class ContentGenerationInputV13(ContentGenerationInput):
+    entry_mode: EntryMode = EntryMode.AUTONOMOUS
+    max_topics: int = 6                              # Topics for autonomous planner
+    manual_prompt: Optional[str] = None              # Manual mode
+    manual_description: Optional[str] = None
+    manual_cluster: Optional[str] = None
+```
+
+### 7.12 Pydantic Models — v1.3 (12 models)
+
+**File:** `core/models/content_generation_v13.py` (271 lines)
+
+| Model | Purpose |
+|-------|---------|
+| `QueryScorecard` | Lightweight per-query summary (~50 tokens each) |
+| `ClusterSummary` | Per-cluster aggregate (~60 tokens each) |
+| `PlannerScorecard` | Complete scorecard for Agent 1 (~11K tokens total) |
+| `TopicSelection` | Single topic selected by Agent 1 |
+| `StrategicPlannerOutput` | Agent 1 output (selections + metadata) |
+| `WorkerQueryContext` | Full gap context for one approved query |
+| `BlueprintSection` | Section-level outline within blueprint |
+| `ContentBlueprint` | Extended `ContentBrief` from Agent 2 |
+| `EntryMode` | Enum: `AUTONOMOUS` / `MANUAL` |
+| `ManualPromptInput` | User input for manual mode |
+| `ContentGenerationInputV13` | Extended pipeline input |
+| `FeedbackRoute` | Enum: `PASS` / `SECTION_LEVEL` / `MAJOR_CHANGE` |
+| `LLMResponse` | Standardized LiteLLM response wrapper |
+
+All fields have defaults for backward compatibility with existing JSON artifacts.
+
+### 7.13 Artifact Structure
 
 **v1.0:**
 ```
 artifacts/content/{company-slug}/
-├── briefs.json                    # PlannerOutput (all briefs)
-├── content/
-│   └── brief-{N}/
-│       ├── outline.json           # ContentOutline
-│       ├── draft.md               # Raw draft markdown
-│       ├── enriched.md            # Fact-enriched markdown
-│       ├── formatted.md           # Style-formatted markdown
-│       ├── eval_history.json      # RevisionHistory
-│       └── final.md               # Approved content
-└── run_metadata.json              # ContentGenerationOutput
+  briefs.json                    # PlannerOutput (all briefs)
+  content/
+    brief-{N}/
+      outline.json               # ContentOutline
+      draft.md                   # Raw draft markdown
+      enriched.md                # Fact-enriched markdown
+      formatted.md               # Style-formatted markdown
+      eval_history.json          # RevisionHistory
+      final.md                   # Approved content
+  run_metadata.json              # ContentGenerationOutput
 ```
 
 **v1.3:**
 ```
 artifacts/content/{company-slug}/
-├── planner_output.json            # StrategicPlannerOutput (topics)
-├── blueprints.json                # List[ContentBlueprint] (briefs)
-├── content/
-│   └── brief-{N}/
-│       ├── outline.json           # ContentOutline (with voice_tone_description)
-│       ├── draft.md               # Raw draft with link placeholders
-│       ├── linked.md              # After Linker: resolved links
-│       ├── fact_checked.md        # After Fact Checker: verified claims
-│       ├── eval_history.json      # RevisionHistory
-│       └── final.md               # Approved content
-└── run_metadata.json              # ContentGenerationOutput
+  planner_output.json            # StrategicPlannerOutput (topics)
+  blueprints.json                # List[ContentBlueprint] (briefs)
+  content/
+    brief-{N}/
+      outline.json               # ContentOutline (with voice_tone_description)
+      draft.md                   # Raw draft with link placeholders
+      linked.md                  # After Linker: resolved links
+      fact_checked.md            # After Fact Checker: verified claims
+      eval_history.json          # RevisionHistory
+      final.md                   # Approved content
+  run_metadata.json              # ContentGenerationOutput
 ```
 
-### 7.7 Utility Modules
+### 7.14 Utility Modules
 
 **File:** `core/content_engine/utils.py`
 
 | Function | Purpose |
 |----------|---------|
-| `safe_parse(text, model_cls)` | Extract JSON from LLM response (code fences, trailing commas) → Pydantic model |
+| `safe_parse(text, model_cls)` | Extract JSON from LLM response (code fences, trailing commas) -> Pydantic model |
 | `_retry_async_anthropic(fn, max_retries, base_delay)` | Provider-agnostic retry with jittered exponential backoff (Anthropic + OpenAI errors) |
 | `_estimate_tokens(text)` | Approximate token count (chars / 3.5) |
-| `truncate_to_token_limit(text, max_tokens)` | Pre-flight context window guard — truncates by paragraph |
+| `truncate_to_token_limit(text, max_tokens, label)` | Pre-flight context window guard -- truncates by paragraph |
+
+### 7.15 Input Sources
+
+**v1.0 Input:**
+- `generation_spec.json` from Pipeline 2 (cluster content specs)
+- `gap_report.json` from Pipeline 2 (prioritized content recommendations)
+- Research artifacts from Pipeline 1 (company context, personas, style guide)
+- `analysis.json` from Pipeline 2 (semantic analysis data)
+
+**v1.3 Input (AUTONOMOUS mode):**
+- `analysis.json` from Pipeline 2 (semantic analysis data — used by ContextRouter)
+- Research artifacts from Pipeline 1/1b (company context, personas, style guide)
+- Gap analysis output drives topic selection through scorecard extraction
+
+**v1.3 Input (MANUAL mode):**
+- User-provided `manual_prompt`, `manual_description`, `manual_cluster`
+- Research artifacts from Pipeline 1/1b
+
+**Output (both versions):**
+- Content pieces in `artifacts/content/{slug}/content/brief-{N}/final.md`
+- Run metadata in `artifacts/content/{slug}/run_metadata.json`
+- Per-brief intermediate artifacts (outline, draft, linked/enriched, eval_history)
 
 ---
 
@@ -3097,13 +4074,17 @@ DraftNotification:   thread, fit_score (0.0-1.0), why_match, draft_markdown, met
 | `CONTENT_ENGINE_MAX_CONCURRENT_WORKERS` | `3` | Max parallel worker chains |
 | `CONTENT_ENGINE_MAX_REVISION_CYCLES` | `2` | Max eval-revise cycles |
 
-#### Observability (Langfuse)
+#### Observability (LangSmith — Sole Backend)
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `LANGFUSE_PUBLIC_KEY` | — | Langfuse project public key |
-| `LANGFUSE_SECRET_KEY` | — | Langfuse project secret key |
-| `LANGFUSE_HOST` | `https://us.cloud.langfuse.com` | Langfuse server URL |
+| `LANGSMITH_API_KEY` | — | LangSmith API key (required for tracing and Hub prompts) |
+| `LANGSMITH_PROJECT` | — | LangSmith project name for trace grouping |
+| `LANGSMITH_WORKSPACE_ID` | — | Optional workspace ID for multi-workspace setups |
+| `LANGSMITH_USE_HUB` | `false` | Enable LangSmith Hub prompt pulling (prompt registry) |
+| `LANGSMITH_HUB_TAG` | `production` | Version tag for Hub prompt pinning |
+
+> **Note:** Langfuse environment variables (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`) are no longer used. Langfuse was fully removed 2026-03-02.
 
 #### FastAPI API Server
 
@@ -3860,20 +4841,22 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 **Tradeoff:** More boilerplate per LLM call. No LangChain ecosystem integrations. Must handle JSON parsing and retry logic manually.
 
-### Decision 11: Langfuse for Observability (Not LangSmith)
+### Decision 11: LangSmith for Observability (Langfuse Removed)
 
-**Choice:** Langfuse for tracing and observability of content generation pipeline.
+**Choice:** LangSmith as the sole tracing backend across all pipelines (content engine, knowledge base, research agents).
 
-**Rationale:**
-- Open-source with self-hosting option
-- Session → Trace → Span → Generation hierarchy fits pipeline stages
-- Score tracking for eval dimensions
-- Cost tracking per generation
-- Graceful no-op when not configured (no hard dependency)
+**Original choice (2026-02-15):** Langfuse was initially chosen for its open-source self-hosting option and Session → Trace → Span → Generation hierarchy. Migrated from Langfuse v2 to v3 API (2026-02-16).
 
-**Tradeoff:** Separate from LangGraph ecosystem (which integrates with LangSmith). Requires additional API keys.
+**Migration to LangSmith (2026-03-02):** Langfuse was **fully removed**. LangSmith replaced it as the sole tracing backend. Rationale:
+- Native integration with LangGraph ecosystem (LangGraph Studio, prompt registry)
+- `RunTree` from `langsmith.run_trees` provides parent-child span hierarchy
+- LangSmith Hub prompt registry enables version-pinned prompt management
+- LiteLLM `success_callback = ["langsmith"]` provides automatic LLM call tracing
+- `contextvars.ContextVar` pattern solves LangGraph sync-node span propagation (RunTree can't be serialized by MemorySaver's msgpack)
+- Shared module `core/shared_tools/tracing.py` (~507 lines) used by ALL pipelines
+- Backward-compatible Langfuse kwargs absorbed silently — migration was import-swap only
 
-**Update (2026-02-16):** Migrated from Langfuse v2 API to v3 API (breaking change). Key difference: v3 removed `lf.trace()` entirely — now uses `lf.start_span()` + `span.update_trace(session_id=...)` to establish the trace. See §7.5 for full migration details.
+**Tradeoff:** No self-hosting option (cloud-only). Requires `LANGSMITH_API_KEY`. See §7.3 for full architecture.
 
 ### Decision 12: FastAPI Integration Architecture (D-API-1)
 
@@ -4025,11 +5008,10 @@ scripts/run_server.py ← API entry point (uvicorn)
 **Impact:** Mental overhead when reading code. Inconsistent error handling.
 **Recommendation:** Standardize to one pattern (preferably in the agent files, matching persona/style approach).
 
-#### 11. Langfuse v2 API Incompatibility — RESOLVED (2026-02-16)
+#### 11. Langfuse Removed — Replaced by LangSmith (2026-03-02)
 **Severity:** ~~High~~ Resolved
-**Description:** `tracing.py` was written for Langfuse v2 API (`lf.trace()`, `target.generation()`, `target.span()`) but Langfuse 3.14.1 was installed. v3 removed these methods entirely, causing all tracing to silently fail with `'Langfuse' object has no attribute 'trace'`.
-**Fix Applied:** Rewrote `tracing.py` to use v3 SDK API. See §7.5 for migration details.
-**Location:** `core/content_engine/tracing.py`
+**Description:** Originally written for Langfuse v2 API, then migrated to Langfuse v3 (2026-02-16). Langfuse was **fully removed** on 2026-03-02 and replaced by LangSmith as the sole tracing backend. The unified module `core/shared_tools/tracing.py` uses `RunTree` from `langsmith.run_trees` and is shared across all pipelines. Old `core/content_engine/tracing_v13.py` is a re-export shim for backward compatibility. See §7.3 for full architecture.
+**Location:** `core/shared_tools/tracing.py` (unified), `core/content_engine/tracing_v13.py` (shim)
 
 #### 12. TaskStore JSON Persistence — Single-Server Limitation
 **Severity:** Low (current), Medium (for production)
@@ -4148,13 +5130,13 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 | Component | Status | Maturity |
 |-----------|--------|----------|
-| **Site Audit (Pipeline 0)** | ✅ Implemented | **High — 6-step deterministic audit, 8 dimensions, penalty-based scoring, 636 tests** |
+| **Site Audit (Pipeline 0)** | ✅ Implemented | **High — 6-step deterministic audit, 8 dimensions, penalty-based scoring, 793 tests** |
 | Company Research Agent | ✅ Production | High — used for Ramp, Carta, Mynd |
 | Persona Research Agent | ✅ Production | High — ICP personas approved for Ramp, Carta |
 | Style Guide Research Agent | ✅ Functional | Medium — bugs fixed, awaiting approvals |
 | Research Pipeline Orchestrator | ✅ Functional | High — cross-stage wiring works, 109 tests |
 | Gap Analysis (8 steps) | ✅ Production | High — complete for Ramp, Carta |
-| Content Generation Engine | ✅ Implemented | Medium — 57 tests passing, awaiting live smoke test |
+| Content Generation Engine v1.3 | ✅ Implemented | **High — 6-stage pipeline, LiteLLM, E-E-A-T eval, 3 HITL, LangSmith tracing, 437 tests** |
 | **FastAPI REST API (core)** | ✅ Implemented | **High — 126 tests, SSE, HITL, all 4 pipelines** |
 | **API Data Endpoints (front-back)** | ✅ Implemented | **High — 16 endpoints, 179 tests, 4-phase sprint complete** |
 | **Product-Level Pipeline Execution** | ✅ Implemented | **High — product CRUD, effective_slug locking, per-product artifact dirs, product prompts, 114 tests** |
@@ -4165,7 +5147,8 @@ scripts/run_server.py ← API entry point (uvicorn)
 | Supabase Schema | ✅ Production | High — 4 migrations, RLS, HNSW |
 | Supabase Mirror | ✅ Functional | Medium — works but no SQLAlchemy ORM |
 | CLI Scripts | ✅ Functional | Medium — works but no error handling |
-| Langfuse Tracing (v3) | ✅ Functional | Medium — content engine traced, v3 API |
+| LangSmith Tracing (sole backend) | ✅ Implemented | **High — all pipelines traced, prompt registry, shared module (Langfuse removed)** |
+| **Knowledge Base (Pipeline 1b)** | ✅ Implemented | **High — 6-agent DAG, 3 HITL checkpoints, staleness tracking, delta synthesis, 260 tests** |
 
 ### Completed Sprints
 
@@ -4187,6 +5170,9 @@ scripts/run_server.py ← API entry point (uvicorn)
 | `service-layer-phase3` | `feat/front-back` | 2026-02-28 | 46 | 3 data service protocols, dual implementations, backfill → 1213 total |
 | `cleanup-taskstore-migration` | `feat/front-back` | 2026-02-28 | 129 | TaskStoreProtocol, DbTaskStore, Phase 4 persistence hooks → 1342 total |
 | **`site-audit`** | **`feat/front-back`** | **2026-02-28** | **636** | **Pipeline 0: 6-step deterministic audit, 8 dimensions, async BFS crawler, AEO readiness, penalty-based scoring, API layer → ~1978 total** |
+| **`content-engine-v13`** | **`feat/content-engine-v13`** | **2026-03-02** | **~437** | **v1.3 pipeline (6 stages, LiteLLM, E-E-A-T, 3 HITL, linker agent), LangSmith migration (Langfuse removed)** |
+| **`site-audit-p3-bugfixes`** | **`fix/site-audit-p3`** | **2026-03-04** | **82** | **P3 bug fixes: config validation, dateutil parsing, canonical URL, crawl-delay, schema validators, AEO improvements → 793 site audit tests** |
+| **`knowledge-base-v1-v5`** | **`research-agent-v1.2.0`** | **2026-03-06** | **260** | **KB Phases 1-5: 17 models, KBStorage, 6 agents, DAG orchestrator, 3 HITL, API router, staleness tracking, delta synthesis → ~2479 total** |
 
 ### What's Planned (Future Scope)
 
@@ -6273,7 +7259,10 @@ All 1127 existing tests (non-DB) pass unchanged — they use JSON-backed service
 | Content Engine: Style Judge | Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
 | Content Engine: Factual Judge | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
 | Content Engine: Semantic Eval | OpenAI | `OPENAI_API_KEY` | `text-embedding-3-small` |
-| Content Engine: Tracing | Langfuse | `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` | — |
+| Content Engine: Tracing | LangSmith | `LANGSMITH_API_KEY` | — |
+| Knowledge Base: 4 Perplexity Agents | Sonar | `PERPLEXITY_API_KEY` | `sonar-deep-research` |
+| Knowledge Base: Brand Perception | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` (with web_search tool) |
+| Knowledge Base: Synthesis | Gemini | `GOOGLE_API_KEY` | `gemini-3-flash-preview` (LangGraph react agent) |
 
 ---
 
@@ -7948,10 +8937,22 @@ def test_other_user_cannot_read_test_co_profile(self, other_client, test_company
 | 2026-03-06 | TOC | Added §5c Knowledge Base Pipeline (Research v2) with 9 subsection links | T-kb-phase5-synthesis-living-doc |
 | 2026-03-06 | §1 | Updated Executive Summary — ~2479 tests, Knowledge Base v2 description (5 specialist agents, DAG execution, delta synthesis, staleness tracking, 260 tests) | T-kb-phase5-synthesis-living-doc |
 | 2026-03-06 | §5c | **NEW SECTION** — Knowledge Base Pipeline: 9 subsections covering 3-layer architecture, DAG execution with 3 HITL checkpoints, 6 specialist agents, KBStorage versioned filesystem, staleness tracking & propagation (Phase 5), delta synthesis mode (Phase 5), health & refresh-stale endpoints (Phase 5), 17 Pydantic models, 260 tests. Codex-reviewed (CRITICAL write-before-approve fix, atomic manifest writes, DAG dependency population). | T-kb-phase5-synthesis-living-doc |
+| 2026-03-06 | §7 | **MAJOR REWRITE** — Content Engine V1.3: expanded from 7 subsections to 15 (7.1–7.15). Added LiteLLM client (auto-prefix routing, jittered backoff), LangSmith prompt registry (TTL-cached, double-checked locking), LangSmith tracing architecture (RunTree, contextvars propagation, backward-compat Langfuse kwargs), ContextRouter (two-phase loading, PlannerScorecard, WorkerQueryContext), Strategic Planner (topic selection, 100K token truncation), Brief Builder (parallel blueprints, semaphore, re-brief ID overrides), 5-agent worker chain (Outliner→Drafter→Fact Enricher→Formatter→Linker), Evaluator-Optimizer loop (3 judges, targeted revision, FeedbackRoute dispatch), HITL Stage 5 (per-brief approve/edit/reject/major_change/re-brief), v1.0 preservation, entry modes, 12 Pydantic models, artifact structure, utility modules, input sources | T-v13-docs |
+| 2026-03-06 | §5c | **MAJOR REWRITE** — Knowledge Base Pipeline: expanded from 9 subsections to 13 (5c.1–5c.13). Added prompt system (6 prompt files with Hub fallback), read_file tool, HITL mini-graphs (approve/revise/reject interrupt model), LangSmith tracing integration. Expanded agent details: 3-tier architecture (Perplexity/Anthropic+web_search/LangGraph react), brand perception pause_turn loop (_MAX_PAUSE_TURNS=5), synthesis partial failure policy (CX-14, min 3/5 L2 docs), atomic manifest writes (tempfile.mkstemp + os.replace) | T-kb-docs |
+| 2026-03-06 | §4a | **MAJOR REWRITE** — Site Audit: expanded from 12 subsections to 14 (4a.1–4a.14). Added P3 bug fix section, pipeline orchestration details, page-normalised scoring algorithm, detailed check function reference tables (21 finding types with severities), AEO composite scoring (5 components with weights), 7 schema validators, config dataclass (14 fields, 8 post-init validators), canonical URL deduplication, crawl-delay parsing/findings, dateutil robust parsing with DoS guard, 793 tests | T-site-audit-docs |
+| 2026-03-06 | Header | Updated stack: Langfuse v3 → LangSmith + LiteLLM. Updated document date description | T-docs-xref |
+| 2026-03-06 | TOC | Updated §4a (12→14 subsections), §5c (9→13 subsections), §7 (7→15 subsections) | T-docs-xref |
+| 2026-03-06 | §1 | Updated executive summary: Content Engine v1.3 description, LangSmith replaces Langfuse, updated test counts | T-docs-xref |
+| 2026-03-06 | §3 | Updated architecture diagram: Langfuse v3 → LangSmith, added LiteLLM to tech stack table | T-docs-xref |
+| 2026-03-06 | §11 | Updated env vars: Langfuse section replaced with LangSmith (5 vars) | T-docs-xref |
+| 2026-03-06 | §17 | Rewrote Decision 11: Langfuse → LangSmith migration rationale, RunTree, contextvars, shared module | T-docs-xref |
+| 2026-03-06 | §18 | Updated item 11: Langfuse v2 resolved → Langfuse removed, replaced by LangSmith | T-docs-xref |
+| 2026-03-06 | §20 | Updated component maturity table: site audit 793 tests, content engine v1.3 437 tests, LangSmith tracing, KB 260 tests. Added 3 sprint entries (content-engine-v13, site-audit-p3-bugfixes, knowledge-base-v1-v5) | T-docs-xref |
+| 2026-03-06 | §A | Updated API key matrix: Langfuse → LangSmith, added 3 KB agent entries | T-docs-xref |
 
 ---
 
 *End of Comprehensive System Documentation*
-*Generated: 2026-03-06 (updated: Knowledge Base Phase 5 — Synthesis & Living Document)*
-*Total codebase files analyzed: ~330+*
-*Total lines of documentation: ~8300+*
+*Generated: 2026-03-06 (updated: Content Engine V1.3, Knowledge Base Phases 1-5, Site Audit P3 bug fixes)*
+*Total codebase files analyzed: ~350+*
+*Total lines of documentation: ~9200+*

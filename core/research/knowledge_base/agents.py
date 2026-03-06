@@ -69,12 +69,29 @@ def _build_model(model_string: str, **kwargs: Any) -> Any:
     - ``"anthropic:claude-opus-4-6"`` (colon separator)
     - ``"anthropic/claude-opus-4-6"`` (slash separator)
     - ``"gpt-4o"`` (bare model name — provider inferred)
+
+    Injects API keys from settings so LangChain doesn't depend on env vars.
     """
+    provider = None
+    model_name = model_string
     if ":" in model_string:
         provider, model_name = model_string.split(":", 1)
-        return init_chat_model(model_name, model_provider=provider, **kwargs)
-    if "/" in model_string:
+    elif "/" in model_string:
         provider, model_name = model_string.split("/", 1)
+
+    # Inject API keys from settings — LangChain reads env vars directly,
+    # but our keys live in .env.local via pydantic-settings, not os.environ.
+    if provider == "anthropic" and "api_key" not in kwargs:
+        if settings.anthropic_api_key:
+            kwargs["api_key"] = settings.anthropic_api_key
+    elif provider == "openai" and "api_key" not in kwargs:
+        if settings.openai_api_key:
+            kwargs["api_key"] = settings.openai_api_key
+    elif provider == "google" and "api_key" not in kwargs:
+        if getattr(settings, "google_api_key", None):
+            kwargs["api_key"] = settings.google_api_key
+
+    if provider:
         return init_chat_model(model_name, model_provider=provider, **kwargs)
     return init_chat_model(model_string, **kwargs)
 
