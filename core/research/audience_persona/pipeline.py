@@ -37,12 +37,12 @@ from core.research.audience_persona.graph import (
     run_ap_hitl_checkpoint,
 )
 from core.research.audience_persona.storage import PersonaStorage
-from core.shared_tools.tracing import create_session, create_span, end_span, flush, log_generation
+from core.shared_tools.tracing import create_session, create_span, create_trace, end_span, flush, log_generation
 
 logger = logging.getLogger(__name__)
 
-_MAX_COMPANY_CONTEXT_CHARS = 15_000
-_MAX_CUSTOMER_REVIEWS_CHARS = 10_000
+_MAX_COMPANY_CONTEXT_CHARS = 60_000  # ~15k tokens
+_MAX_CUSTOMER_REVIEWS_CHARS = 40_000  # ~10k tokens
 
 
 # ---------------------------------------------------------------------------
@@ -222,8 +222,8 @@ async def run_audience_persona_pipeline(
     auto_approve_cps = set(input_data.auto_approve_checkpoints)
 
     # Tracing
-    create_session(slug)
-    trace_span = create_span(None, f"ap-pipeline/{slug}", input_data={
+    session_id = create_session(slug)
+    trace_span = create_trace(session_id, f"ap-pipeline/{slug}", input_data={
         "company": input_data.company_name, "max_personas": input_data.max_personas,
     })
 

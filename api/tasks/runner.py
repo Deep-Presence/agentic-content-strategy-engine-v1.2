@@ -18,7 +18,6 @@ from core.gap_analysis.pipeline import run_gap_analysis
 from core.auth.utils.domain import derive_slug
 from core.models.artifacts import CompanyResearchInput
 from core.models.gap_analysis import GapAnalysisInput
-from core.models.personas import PersonaResearchInput
 from core.models.style_guide import StyleGuideResearchInput
 
 logger = logging.getLogger(__name__)
@@ -540,7 +539,6 @@ async def run_research_pipeline_task(
     artifact paths — the runner chains them automatically.
     """
     from core.research.graphs.company_research import build_graph as build_company_graph
-    from core.research.graphs.persona_research import build_graph as build_persona_graph
     from core.research.graphs.style_guide import build_graph as build_style_graph
 
     company_slug = _derive_slug(request.company_name)
@@ -553,7 +551,6 @@ async def run_research_pipeline_task(
     # Map stages to artifact types
     _stage_to_artifact_type = {
         "company": "company_context",
-        "persona": "personas",
         "style_guide": "style_guides",
     }
 
@@ -562,7 +559,6 @@ async def run_research_pipeline_task(
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "research"})
 
             company_output_path: Optional[str] = None
-            persona_paths: List[str] = []
             completed_stages: List[str] = []
 
             # Stage 1: Company research
@@ -589,41 +585,16 @@ async def run_research_pipeline_task(
                     company_output_path = company_result.get("output_path")
                     completed_stages.append("company")
 
-            # Stage 2: Persona research
-            if "persona" in stages and "company" not in stages or "company" in completed_stages:
-                persona_input = PersonaResearchInput(
-                    company_name=request.company_name,
-                    domain=request.domain,
-                    company_slug=slug,
-                    company_context_path=company_output_path,
-                    internal_sources=request.internal_sources,
-                    max_personas=request.max_personas,
-                    language=request.language,
-                    region=request.region,
-                    additional_constraints=request.additional_constraints,
-                )
-                persona_state = {"input": persona_input.model_dump(mode="json"), "auto_approve": auto_approve}
-                persona_result = await _run_research_stage(
-                    "persona", build_persona_graph, persona_state,
-                    task_id, task_store, event_bus,
-                )
-                decision = (persona_result.get("approval_decision") or "").lower()
-                if decision == "reject":
-                    logger.info("Persona stage rejected — stopping pipeline")
-                else:
-                    persona_paths = persona_result.get("written_paths") or []
-                    completed_stages.append("persona")
-
-            # Stage 3: Style guide research (W1: use "style_guide" not "style")
+            # Stage 2: Style guide research
+            # Note: Persona research is now a separate pipeline (audience_persona).
             if "style_guide" in stages and (
-                "persona" not in stages or "persona" in completed_stages
+                "company" not in stages or "company" in completed_stages
             ):
                 style_input = StyleGuideResearchInput(
                     company_name=request.company_name,
                     domain=request.domain,
                     company_slug=slug,
                     company_context_path=company_output_path,
-                    persona_paths=persona_paths,
                     internal_sources=request.internal_sources,
                     language=request.language,
                     region=request.region,

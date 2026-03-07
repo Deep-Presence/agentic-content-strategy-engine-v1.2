@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.models.artifacts import CompanyResearchInput
-from core.models.personas import PersonaResearchInput
 from core.models.style_guide import StyleGuideResearchInput
 
 
@@ -26,21 +25,18 @@ def _reset_singletons():
     """Reset all module-level singletons in research agents before each test."""
     import core.research.agents.base as base_mod
     import core.research.agents.company_research_agent as company_mod
-    import core.research.agents.persona_agent as persona_mod
     import core.research.agents.style_guide_agent as style_mod
 
     orig = {
         "base_backend": base_mod._backend,
         "base_store": base_mod._store,
         "company_agent": company_mod._agent,
-        "persona_agent": persona_mod._agent,
         "style_agent": style_mod._agent,
     }
 
     base_mod._backend = None
     base_mod._store = None
     company_mod._agent = None
-    persona_mod._agent = None
     style_mod._agent = None
 
     yield
@@ -48,7 +44,6 @@ def _reset_singletons():
     base_mod._backend = orig["base_backend"]
     base_mod._store = orig["base_store"]
     company_mod._agent = orig["company_agent"]
-    persona_mod._agent = orig["persona_agent"]
     style_mod._agent = orig["style_agent"]
 
 
@@ -94,7 +89,6 @@ def mock_create_deep_agent(mock_deep_agent):
     agent = mock_deep_agent()
     with (
         patch("core.research.agents.company_research_agent.create_deep_agent", return_value=agent),
-        patch("core.research.agents.persona_agent.create_deep_agent", return_value=agent),
         patch("core.research.agents.style_guide_agent.create_deep_agent", return_value=agent),
     ):
         yield agent
@@ -110,7 +104,6 @@ def mock_google_chat_model():
     mock_model = MagicMock()
     with (
         patch("core.research.agents.company_research_agent.ChatGoogleGenerativeAI", return_value=mock_model),
-        patch("core.research.agents.persona_agent.ChatGoogleGenerativeAI", return_value=mock_model),
         patch("core.research.agents.style_guide_agent.ChatGoogleGenerativeAI", return_value=mock_model),
     ):
         yield mock_model
@@ -150,10 +143,9 @@ def mock_perplexity_research():
 def mock_research_settings():
     """Provides fake API keys for all research agent settings."""
     with patch("core.research.agents.company_research_agent.settings") as mock_company, \
-         patch("core.research.agents.persona_agent.settings") as mock_persona, \
          patch("core.research.agents.style_guide_agent.settings") as mock_style, \
          patch("core.research.agents.base.settings") as mock_base:
-        for m in (mock_company, mock_persona, mock_style, mock_base):
+        for m in (mock_company, mock_style, mock_base):
             m.google_api_key_company_deepagent = "fake-google-key"
             m.google_gemini_model_company_deepagent = "gemini-test"
             m.google_api_key_persona_research_deepagent = "fake-google-key"
@@ -187,10 +179,8 @@ def isolated_artifacts(tmp_path):
 
     modules_to_patch = [
         "core.research.graphs.company_research._PROJECT_ROOT",
-        "core.research.graphs.persona_research._PROJECT_ROOT",
         "core.research.graphs.style_guide._PROJECT_ROOT",
         "core.research.agents.base._PROJECT_ROOT",
-        "core.research.agents.persona_agent._PROJECT_ROOT",
         "core.research.agents.style_guide_agent._PROJECT_ROOT",
     ]
     patches = [patch(m, tmp_path) for m in modules_to_patch]
@@ -210,7 +200,6 @@ def mock_supabase_mirrors():
     """Patches all three mirror_*_if_configured functions to no-op."""
     with (
         patch("core.research.graphs.company_research.mirror_company_context_if_configured", return_value=None),
-        patch("core.research.graphs.persona_research.mirror_persona_if_configured", return_value=None),
         patch("core.research.graphs.style_guide.mirror_styleguide_if_configured", return_value=None),
     ):
         yield
@@ -225,17 +214,6 @@ def company_input() -> CompanyResearchInput:
     return CompanyResearchInput(
         company_name="Acme Corp",
         domain="acme.com",
-    )
-
-
-@pytest.fixture
-def persona_input() -> PersonaResearchInput:
-    return PersonaResearchInput(
-        company_name="Acme Corp",
-        domain="acme.com",
-        company_slug="acme-corp",
-        company_context_path="/artifacts/company_context/acme-corp.md",
-        max_personas=2,
     )
 
 

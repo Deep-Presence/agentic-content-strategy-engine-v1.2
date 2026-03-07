@@ -6,11 +6,9 @@ from typing import Any, Dict, List, Optional
 from langgraph.checkpoint.memory import MemorySaver
 
 from core.research.graphs.company_research import build_graph as build_company_graph
-from core.research.graphs.persona_research import build_graph as build_persona_graph
 from core.research.graphs.style_guide import build_graph as build_style_graph
 from core.reddit_hil.graph import build_graph as build_reddit_hil_graph
 from core.models.artifacts import CompanyResearchInput
-from core.models.personas import PersonaResearchInput
 from core.models.reddit_hil import RedditMonitorInput
 from core.models.style_guide import StyleGuideResearchInput
 
@@ -80,18 +78,6 @@ def run_company_stage(
     )
 
 
-def run_persona_stage(
-    persona_input: PersonaResearchInput,
-    *,
-    auto_approve: bool = False,
-) -> Dict[str, Any]:
-    return _invoke_graph(
-        build_persona_graph,
-        {"input": persona_input, "auto_approve": auto_approve},
-        stage_name="persona",
-    )
-
-
 def run_style_stage(
     style_input: StyleGuideResearchInput,
     *,
@@ -115,19 +101,20 @@ def run_reddit_hil_stage(reddit_input: RedditMonitorInput) -> Dict[str, Any]:
 def run_pipeline(
     *,
     company_input: CompanyResearchInput,
-    persona_input: Optional[PersonaResearchInput] = None,
     style_input: Optional[StyleGuideResearchInput] = None,
     auto_approve: bool = False,
 ) -> Dict[str, Any]:
     """
-    Pipeline flow: company_research -> persona_research -> style_guide.
+    Pipeline flow: company_research -> style_guide.
 
     Each stage follows: agent -> temporary draft written -> approval_gate -> route ->
       (write_and_mirror | agent | END).
 
-    On approve at company stage: write artifact, mirror, then run persona_research.
-    On approve at persona stage: write artifacts, mirror, then run style_guide.
+    On approve at company stage: write artifact, mirror, then run style_guide.
     On approve at style stage: write artifact, mirror, then complete.
+
+    Persona research is now handled by the separate Audience Persona pipeline
+    (core.research.audience_persona).
 
     If any stage interrupts for approval, returns immediately with status=interrupt,
     stage=<name>, values=<payload>. Caller should resume that stage with
@@ -142,26 +129,11 @@ def run_pipeline(
     company_output_path = company_res.get("output_path")
     _log_event("company", "complete", {"output_path": company_output_path})
 
-    # Persona stage (runs after company approves)
-    if persona_input:
-        persona_input = persona_input.model_copy(update={"company_context_path": company_output_path})
-        _log_event("persona", "start", {"auto_approve": auto_approve})
-        persona_res = run_persona_stage(persona_input, auto_approve=auto_approve)
-        if persona_res.get("status") == "interrupt":
-            _log_event("persona", "interrupt", {"values": persona_res.get("values", {})})
-            return {"stage": "persona", **persona_res}
-        # After write_and_mirror, written_paths are permanent paths (not drafts)
-        persona_paths = persona_res.get("written_paths") or []
-        _log_event("persona", "complete", {"written_paths": persona_paths})
-    else:
-        persona_paths = []
-
     # Style stage
     if style_input:
         style_input = style_input.model_copy(
             update={
                 "company_context_path": company_output_path,
-                "persona_paths": style_input.persona_paths or persona_paths,
             }
         )
         _log_event("style", "start", {"auto_approve": auto_approve})
@@ -176,6 +148,5 @@ def run_pipeline(
     return {
         "stage": "complete",
         "company": company_res,
-        "personas": persona_res if persona_input else None,
         "style": style_res if style_input else None,
     }

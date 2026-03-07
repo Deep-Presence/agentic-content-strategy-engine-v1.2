@@ -1,0 +1,70 @@
+{
+  "slug": "lovable",
+  "company_name": "Lovable",
+  "created_at": "2026-03-07T11:21:02.601355Z",
+  "last_full_run": "2026-03-07T11:23:31.728452Z",
+  "personas": {
+    "marcus": {
+      "persona_id": "marcus",
+      "persona_name": "Marcus",
+      "tagline": "CTO of a Series B tech company scaling engineering operations",
+      "kind": "secondary",
+      "current_version": 1,
+      "last_updated": "2026-03-07T11:21:02.601947Z",
+      "status": "fresh",
+      "created_by": "agent",
+      "word_count": 1658,
+      "sha256": "6579aa93c7f9cf700dd46449cda9f83b1e55796029842fa4ec4026ab8e961fc2"
+    },
+    "david": {
+      "persona_id": "david",
+      "persona_name": "David",
+      "tagline": "IT Director at mid-market manufacturing firm managing legacy infrastructure",
+      "kind": "icp",
+      "current_version": 1,
+      "last_updated": "2026-03-07T11:21:41.486098Z",
+      "status": "fresh",
+      "created_by": "agent",
+      "word_count": 1098,
+      "sha256": "c46c726637b95c5042c9abe62b66231e6299853e0c0c1a1413bb7ec9fc8aec29"
+    },
+    "sarah": {
+      "persona_id": "sarah",
+      "persona_name": "Sarah",
+      "tagline": "Head of Compliance at a scaling fintech startup",
+      "kind": "secondary",
+      "current_version": 1,
+      "last_updated": "2026-03-07T11:21:43.717951Z",
+      "status": "fresh",
+      "created_by": "agent",
+      "word_count": 1466,
+      "sha256": "219949f150939e9f4a27a67d02ddee6ea0bc41d887154108fad455346132f108"
+    },
+    "elena": {
+      "persona_id": "elena",
+      "persona_name": "Elena",
+      "tagline": "Lead Security Analyst at a regional bank consolidating vendor tools",
+      "kind": "secondary",
+      "current_version": 1,
+      "last_updated": "2026-03-07T11:22:21.206856Z",
+      "status": "fresh",
+      "created_by": "agent",
+      "word_count": 1934,
+      "sha256": "b16581389ad1a7d2389bf1c47f96b03b4301a9add176945b7d1a5f8c2c6b98d5"
+    },
+    "robert": {
+      "persona_id": "robert",
+      "persona_name": "Robert",
+      "tagline": "Founder of a boutique consultancy with high-value client data",
+      "kind": "secondary",
+      "current_version": 1,
+      "last_updated": "2026-03-07T11:23:31.690490Z",
+      "status": "fresh",
+      "created_by": "agent",
+      "word_count": 1164,
+      "sha256": "de1607bd1ac9f6e9ad2a2b417b35e967705fff6d02454ebab00c7dc7c6070fcd"
+    }
+  },
+  "kb_synthesis_version": 1,
+  "kb_synthesis_updated_at": "2026-03-07T11:23:31.728466Z"
+}

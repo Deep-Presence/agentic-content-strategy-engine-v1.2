@@ -26,22 +26,6 @@ class TestCompanyGraphCheckpointer:
         assert graph is not None
 
 
-class TestPersonaGraphCheckpointer:
-    def test_compiles_without_checkpointer(self) -> None:
-        from core.research.graphs.persona_research import build_graph
-
-        graph = build_graph()
-        assert graph is not None
-
-    def test_compiles_with_checkpointer(self) -> None:
-        from langgraph.checkpoint.memory import MemorySaver
-        from core.research.graphs.persona_research import build_graph
-
-        checkpointer = MemorySaver()
-        graph = build_graph(checkpointer=checkpointer)
-        assert graph is not None
-
-
 class TestStyleGuideGraphCheckpointer:
     def test_compiles_without_checkpointer(self) -> None:
         from core.research.graphs.style_guide import build_graph

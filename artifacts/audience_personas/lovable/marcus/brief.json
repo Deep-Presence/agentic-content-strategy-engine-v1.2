@@ -1,0 +1,12 @@
+{
+  "brief_id": "pb-1a944959",
+  "persona_name": "Marcus",
+  "tagline": "CTO of a Series B tech company scaling engineering operations",
+  "description": "Marcus is focused on maintaining development velocity while ensuring security doesn't become a bottleneck for his engineers.",
+  "rationale": [
+    "Marcus represents the 'Growth Persona'—a high-LTV segment that values API-first architecture and developer experience.",
+    "Recurring pain signals from the data suggest his team is frustrated with manual security reviews that delay product releases.",
+    "Investing in Marcus allows the company to move 'up-market' by proving the tool can handle complex, high-velocity environments."
+  ],
+  "source": "agent"
+}
