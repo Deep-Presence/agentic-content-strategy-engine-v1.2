@@ -7,18 +7,63 @@ import re
 import sys
 import time
 import uuid
+from collections import defaultdict
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.gap_analysis.steps.s1_embed_assets import embed_company_assets
+from core.models.gap_analysis import PlatformResult
 from core.shared_tools.async_chroma_client import (
     async_collection_exists,
     async_get_all_embeddings,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── Self-citation helpers ──────────────────────────────────────────
+
+
+def _normalize_domain(domain: str) -> str:
+    """Strip 'www.' prefix and lowercase a domain for comparison."""
+    return domain.lower().removeprefix("www.")
+
+
+def _flag_company_citations(
+    results: List[PlatformResult],
+    company_domain: Optional[str],
+) -> None:
+    """In-place: set is_company_citation=True for citations matching company domain."""
+    if not company_domain:
+        return
+    norm_company = _normalize_domain(company_domain)
+    for result in results:
+        for citation in result.citations:
+            citation_netloc = urlparse(str(citation.url)).netloc
+            norm_citation = _normalize_domain(citation_netloc)
+            if norm_citation == norm_company or norm_citation.endswith(
+                f".{norm_company}"
+            ):
+                citation.is_company_citation = True
+
+
+def _build_company_citation_map(
+    results: List[PlatformResult],
+) -> Dict[str, List[str]]:
+    """Build query_id → [engine1, engine2, ...] map from flagged citations.
+
+    Must be called BEFORE s4 dedup, since dedup collapses multi-engine info.
+    """
+    citation_map: Dict[str, List[str]] = defaultdict(list)
+    for result in results:
+        for citation in result.citations:
+            if citation.is_company_citation:
+                if result.engine not in citation_map[result.query_id]:
+                    citation_map[result.query_id].append(result.engine)
+    return dict(citation_map)
 
 # ── CLI progress helpers ────────────────────────────────────────────
 
@@ -96,6 +141,7 @@ from core.gap_analysis.persistence import (
 )
 from core.models.gap_analysis import (
     AnalysisResult,
+    CompanyPageAnalysis,
     EnrichedCitation,
     GapAnalysisInput,
     GapReport,
@@ -173,6 +219,22 @@ async def run_gap_analysis(
         company_units = await embed_company_assets(input_data)
     logger.info("Step 1 completed: embed_company_assets (%.1fs)", time.monotonic() - step_start)
     await persist_s1(session_factory, run_id, company_id, slug, company_units)
+
+    # Load company page analysis (produced by s1 alongside embeddings)
+    page_analysis_path = artifact_dir / "company_page_analysis.json"
+    page_analysis_lookup: Dict[str, CompanyPageAnalysis] = {}
+    if page_analysis_path.exists():
+        try:
+            raw = json.loads(page_analysis_path.read_text(encoding="utf-8"))
+            for item in raw:
+                pa = CompanyPageAnalysis(**item)
+                page_analysis_lookup[pa.url] = pa
+            logger.info(
+                "Loaded company page analysis: %d pages", len(page_analysis_lookup)
+            )
+        except Exception:
+            logger.warning("Failed to load company_page_analysis.json, skipping")
+
     _cli_step(1, time.monotonic() - step_start, skipped=1 in skip_steps)
 
     # Step 2: generate queries
@@ -209,6 +271,16 @@ async def run_gap_analysis(
         platform_results = await search_platforms(queries, input_data.platforms)
         save_platform_results(platform_results, artifact_dir / "platform_results")
     logger.info("Step 3 completed: search_platforms (%.1fs)", time.monotonic() - step_start)
+
+    # Flag company self-citations and build citation map (before s4 dedup)
+    _flag_company_citations(platform_results, input_data.domain)
+    company_citation_map = _build_company_citation_map(platform_results)
+    if company_citation_map:
+        logger.info(
+            "Self-citation detection: company cited for %d queries across platforms",
+            len(company_citation_map),
+        )
+
     await persist_s3(session_factory, run_id, company_id, slug, platform_results, queries)
     _cli_step(3, time.monotonic() - step_start, skipped=3 in skip_steps)
 
@@ -254,7 +326,13 @@ async def run_gap_analysis(
             **json.loads((artifact_dir / "analysis.json").read_text(encoding="utf-8"))
         )
     else:
-        analysis = compute_gap_analysis(queries, company_units, enriched)
+        analysis = compute_gap_analysis(
+            queries,
+            company_units,
+            enriched,
+            company_citation_map=company_citation_map,
+            page_analysis_lookup=page_analysis_lookup or None,
+        )
         (artifact_dir / "analysis.json").write_text(
             json.dumps(analysis.model_dump(mode="json"), indent=2, default=str), encoding="utf-8"
         )

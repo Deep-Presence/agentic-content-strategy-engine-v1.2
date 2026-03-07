@@ -74,6 +74,7 @@ def extract_scorecard(
                 interpretation=gap.get("interpretation", "") or "",
                 exemplar_count=len(exemplars),
                 has_brief=content_brief is not None,
+                company_cited=gap.get("company_cited", False),
             )
         )
 
@@ -184,6 +185,7 @@ def extract_worker_context(
             exemplars=exemplars,
             gap_content_brief=content_brief,
             company_best_text=gap.get("best_company_unit_text", "") or "",
+            company_best_url=gap.get("best_company_url", "") or "",
         )
 
     logger.info(
@@ -244,10 +246,10 @@ def format_scorecard_as_markdown(scorecard: PlannerScorecard) -> str:
     # --- Per-query table ---
     lines.append("## Query Scorecards")
     lines.append(
-        "| ID | Query | Cluster | Gap | Co. Sim | Cit. Sim | Class | Exemplars | Brief |"
+        "| ID | Query | Cluster | Gap | Co. Sim | Cit. Sim | Class | Exemplars | Brief | Cited |"
     )
     lines.append(
-        "|----|-------|---------|-----|---------|----------|-------|-----------|-------|"
+        "|----|-------|---------|-----|---------|----------|-------|-----------|-------|-------|"
     )
     for q in scorecard.queries:
         # Truncate query text to 80 chars for readability
@@ -256,7 +258,8 @@ def format_scorecard_as_markdown(scorecard: PlannerScorecard) -> str:
             f"| {q.query_id} | {qtext} | {q.cluster_name} "
             f"| {q.gap:.3f} | {q.best_company_similarity:.3f} "
             f"| {q.avg_citation_similarity:.3f} | {q.interpretation} "
-            f"| {q.exemplar_count} | {'Y' if q.has_brief else 'N'} |"
+            f"| {q.exemplar_count} | {'Y' if q.has_brief else 'N'} "
+            f"| {'Y' if q.company_cited else 'N'} |"
         )
     lines.append("")
 
@@ -291,12 +294,36 @@ def format_worker_context_as_markdown(
     lines.append(f"- **Company Similarity:** {gap.get('best_company_similarity', 0):.3f}")
     lines.append(f"- **Citation Similarity:** {gap.get('avg_citation_similarity', 0):.3f}")
     lines.append(f"- **Classification:** {gap.get('interpretation', '')}")
+    company_cited = gap.get("company_cited", False)
+    if company_cited:
+        platforms = gap.get("company_cited_platforms", [])
+        lines.append(f"- **Company Already Cited:** Yes (on {', '.join(platforms)})")
+    else:
+        lines.append("- **Company Already Cited:** No")
     lines.append("")
 
     # --- Company's current content ---
     if context.company_best_text:
         lines.append("## Company's Current Best Content")
+        if context.company_best_url:
+            lines.append(f"- **Source URL:** {context.company_best_url}")
         lines.append(context.company_best_text[:500])
+        lines.append("")
+
+    # --- Company page structural signals ---
+    company_signals = gap.get("best_company_structural_signals")
+    if company_signals:
+        lines.append("## Company Page Structure")
+        key_signals = [
+            "word_count", "header_count", "h2_count", "h3_count",
+            "list_item_count", "table_count", "has_faq_section",
+            "has_definition_opening", "has_key_takeaways", "has_step_by_step",
+            "paragraph_count", "avg_paragraph_length", "reading_level",
+            "stat_count", "citation_count", "authority_type", "content_type",
+        ]
+        for key in key_signals:
+            if key in company_signals:
+                lines.append(f"- **{key}:** {company_signals[key]}")
         lines.append("")
 
     # --- Content brief targets ---

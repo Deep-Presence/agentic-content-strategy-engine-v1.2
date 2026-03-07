@@ -1,6 +1,6 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-06 (Sprint v8 CPS Model Integration)
+> **Last synced:** 2026-03-07 (Sprint v9 Gap-Content Enrichment)
 > **Total items:** 37
 
 ## Critical (Fix Before Production)
@@ -189,7 +189,7 @@
 - **Date added:** 2026-02-25
 - **Description:** Requires s1 pipeline enhancement to crawl company pages for structural signals. Major work.
 - **Files affected:** `api/services/gap_data_service.py:285`
-- **Blocked by:** s1 pipeline enhancement
+- **Blocked by:** ~~s1 pipeline enhancement~~ — **Partially resolved 2026-03-07:** s1 now computes structural signals per company page (`company_page_analysis.json`), and `QueryGap.best_company_structural_signals` provides per-gap company signals. Remaining: `gap_data_service.py` aggregate endpoint needs to read `company_page_analysis.json` and compute `company_avg` from page-level signals.
 
 ### PB-9: Pagination allows `page > total_pages` (W7)
 - **Source:** Phase 1+2 code review — sprint front-back-integration

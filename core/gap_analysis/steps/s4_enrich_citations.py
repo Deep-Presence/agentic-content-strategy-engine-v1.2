@@ -443,6 +443,7 @@ async def enrich_citations(
                     "snippet": citation.snippet,
                     "query_id": result.query_id,
                     "engine": result.engine,
+                    "is_company_citation": citation.is_company_citation,
                 },
             ))
 
@@ -496,6 +497,7 @@ async def enrich_citations(
                 paragraphs=paragraphs,
                 best_paragraphs=[],
                 structural_signals=signals,
+                is_company_citation=meta.get("is_company_citation", False),
             )
         )
 
@@ -503,6 +505,15 @@ async def enrich_citations(
     if resolved_count:
         logger.info("Resolved %d redirect URLs to final destinations.", resolved_count)
     return enriched
+
+
+def compute_structural_signals(html: str) -> Tuple[List[str], StructuralSignals]:
+    """Public API for structural signal extraction from HTML.
+
+    Reusable by other steps (e.g. s1 for company page analysis).
+    Returns (paragraph_texts, StructuralSignals).
+    """
+    return _extract_paragraphs(html)
 
 
 def save_enriched_citations(enriched: List[EnrichedCitation], output_path: Path) -> None:

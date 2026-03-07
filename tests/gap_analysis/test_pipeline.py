@@ -243,3 +243,116 @@ class TestAsyncRunGapAnalysis:
             # Should raise since s1 failure means no data for subsequent steps
             with pytest.raises(RuntimeError, match="s1 exploded"):
                 await run_gap_analysis(input_data)
+
+
+# ---------------------------------------------------------------------------
+# Tests: Self-citation helpers
+# ---------------------------------------------------------------------------
+from core.models.gap_analysis import CitationRef
+
+
+class TestFlagCompanyCitations:
+    """Tests for _flag_company_citations helper."""
+
+    def test_flags_matching_domain(self):
+        from core.gap_analysis.pipeline import _flag_company_citations
+
+        results = [
+            PlatformResult(
+                engine="perplexity",
+                query_id="q1",
+                citations=[
+                    CitationRef(url="https://ramp.com/blog/post-1"),
+                    CitationRef(url="https://competitor.com/page"),
+                ],
+            ),
+        ]
+        _flag_company_citations(results, "ramp.com")
+        assert results[0].citations[0].is_company_citation is True
+        assert results[0].citations[1].is_company_citation is False
+
+    def test_handles_www_prefix(self):
+        from core.gap_analysis.pipeline import _flag_company_citations
+
+        results = [
+            PlatformResult(
+                engine="openai",
+                query_id="q1",
+                citations=[
+                    CitationRef(url="https://www.ramp.com/blog"),
+                ],
+            ),
+        ]
+        _flag_company_citations(results, "ramp.com")
+        assert results[0].citations[0].is_company_citation is True
+
+    def test_handles_subdomain(self):
+        from core.gap_analysis.pipeline import _flag_company_citations
+
+        results = [
+            PlatformResult(
+                engine="claude",
+                query_id="q1",
+                citations=[
+                    CitationRef(url="https://docs.ramp.com/api"),
+                ],
+            ),
+        ]
+        _flag_company_citations(results, "ramp.com")
+        assert results[0].citations[0].is_company_citation is True
+
+    def test_no_domain_skips_flagging(self):
+        from core.gap_analysis.pipeline import _flag_company_citations
+
+        results = [
+            PlatformResult(
+                engine="gemini",
+                query_id="q1",
+                citations=[CitationRef(url="https://ramp.com/x")],
+            ),
+        ]
+        _flag_company_citations(results, None)
+        assert results[0].citations[0].is_company_citation is False
+
+
+class TestBuildCompanyCitationMap:
+    """Tests for _build_company_citation_map helper."""
+
+    def test_builds_map_from_flagged_citations(self):
+        from core.gap_analysis.pipeline import _build_company_citation_map
+
+        results = [
+            PlatformResult(
+                engine="perplexity",
+                query_id="q1",
+                citations=[
+                    CitationRef(url="https://ramp.com/blog", is_company_citation=True),
+                    CitationRef(url="https://other.com", is_company_citation=False),
+                ],
+            ),
+            PlatformResult(
+                engine="openai",
+                query_id="q1",
+                citations=[
+                    CitationRef(url="https://ramp.com/page", is_company_citation=True),
+                ],
+            ),
+        ]
+        result = _build_company_citation_map(results)
+        assert "q1" in result
+        assert set(result["q1"]) == {"perplexity", "openai"}
+
+    def test_empty_when_no_company_citations(self):
+        from core.gap_analysis.pipeline import _build_company_citation_map
+
+        results = [
+            PlatformResult(
+                engine="gemini",
+                query_id="q1",
+                citations=[
+                    CitationRef(url="https://other.com", is_company_citation=False),
+                ],
+            ),
+        ]
+        result = _build_company_citation_map(results)
+        assert result == {}

@@ -33,7 +33,9 @@ import httpx
 from bs4 import BeautifulSoup
 
 from core.config.settings import settings
+from core.gap_analysis.steps.s4_enrich_citations import compute_structural_signals
 from core.models.gap_analysis import (
+    CompanyPageAnalysis,
     DiscoveredPage,
     DiscoverySource,
     GapAnalysisInput,
@@ -1217,6 +1219,45 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
     # --- Build semantic units ---
     discovery_lookup = {_normalize_url(p.url): p for p in discovery_result.pages}
     units = build_semantic_units(pages_with_html, discovery_lookup=discovery_lookup)
+
+    # --- Structural analysis of company pages (per-page, not per-chunk) ---
+    page_analyses: List[CompanyPageAnalysis] = []
+    for url, html in pages_with_html:
+        try:
+            _paragraphs, signals = compute_structural_signals(html)
+            page_title = None
+            dp = discovery_lookup.get(_normalize_url(url))
+            if dp:
+                page_title = dp.title
+            page_analyses.append(
+                CompanyPageAnalysis(
+                    url=url,
+                    title=page_title,
+                    structural_signals=signals,
+                    word_count=signals.word_count,
+                    paragraph_count=signals.paragraph_count,
+                )
+            )
+        except Exception:
+            logger.debug(
+                "[embed_company_assets] Structural analysis failed for %s", url
+            )
+
+    # Save company page analysis artifact
+    analysis_path = out_dir / "company_page_analysis.json"
+    analysis_path.write_text(
+        json.dumps(
+            [pa.model_dump(mode="json") for pa in page_analyses],
+            indent=2,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+    logger.info(
+        "[embed_company_assets] Structural analysis complete: %d/%d pages analyzed",
+        len(page_analyses),
+        len(pages_with_html),
+    )
 
     # --- Load knowledge documents (if any) ---
     if input_data.knowledge_doc_dir:

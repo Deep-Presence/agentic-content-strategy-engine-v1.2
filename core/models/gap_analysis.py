@@ -178,6 +178,7 @@ class CitationRef(BaseModel):
     snippet: Optional[str] = None
     confidence: Optional[float] = None
     source: Optional[str] = None
+    is_company_citation: bool = False
 
 
 class PlatformResult(BaseModel):
@@ -252,6 +253,21 @@ class StructuralSignals(BaseModel):
     named_entity_density: float = 0.0
 
 
+class CompanyPageAnalysis(BaseModel):
+    """Structural analysis of a company page (page-level, not chunk-level).
+
+    Computed during s1 by reusing the structural signal extraction from s4.
+    Stored as a separate artifact (company_page_analysis.json) to avoid
+    duplicating signals across the 10-20 SemanticUnit chunks per page.
+    """
+
+    url: str
+    title: Optional[str] = None
+    structural_signals: Optional[StructuralSignals] = None
+    word_count: int = 0
+    paragraph_count: int = 0
+
+
 class CitationExemplar(BaseModel):
     """A top-scoring cited page for a specific query."""
 
@@ -281,6 +297,7 @@ class EnrichedCitation(BaseModel):
     paragraphs: List[str] = Field(default_factory=list)
     best_paragraphs: List[ParagraphMatch] = Field(default_factory=list)
     structural_signals: Optional[StructuralSignals] = None
+    is_company_citation: bool = False
 
 
 class SpaResult(BaseModel):
@@ -333,12 +350,16 @@ class QueryGap(BaseModel):
     query_text: str
     best_company_unit: Optional[str] = None
     best_company_unit_text: Optional[str] = None
+    best_company_url: Optional[str] = None
     best_company_similarity: Optional[float] = None
     avg_citation_similarity: Optional[float] = None
     gap: Optional[float] = None
     interpretation: Optional[str] = None
     top_cited_exemplars: List[CitationExemplar] = Field(default_factory=list)
     content_brief: Optional[GapContentBrief] = None
+    best_company_structural_signals: Optional[Dict[str, Any]] = None
+    company_cited: bool = False
+    company_cited_platforms: List[str] = Field(default_factory=list)
 
 
 class ClusterContentSpec(BaseModel):

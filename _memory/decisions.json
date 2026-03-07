@@ -539,5 +539,38 @@
     "outcome": "KB HITL helper is self-contained. Mirrors graph_v13 pattern but is independent. Tested with 22 graph tests.",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-GCE-1",
+    "timestamp": "2026-03-07",
+    "task": "Self-citation handling in avg_citation_similarity",
+    "approach": "Keep company self-citations IN the avg_citation_similarity calculation. Add separate fields (company_cited, company_cited_platforms) as explicit signals for the content engine.",
+    "rationale": "avg_citation_similarity measures 'how well do cited pages align with the query.' The company being cited is a valid data point. Excluding it would break existing metric interpretation. Separate fields give the content engine explicit signal to adjust strategy (optimize vs create new).",
+    "alternatives_rejected": ["Exclude self-citations from avg_citation_similarity (breaks metric semantics, loses valid data point)"],
+    "outcome": "company_cited + company_cited_platforms fields on QueryGap. Strategic Planner and Brief Builder prompts updated to handle cited vs uncited strategies.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-GCE-2",
+    "timestamp": "2026-03-07",
+    "task": "Company structural analysis: per-page model vs per-chunk signals",
+    "approach": "Create separate CompanyPageAnalysis model (per-page) rather than adding StructuralSignals to SemanticUnit (per-chunk).",
+    "rationale": "SemanticUnit is per-chunk (10-20 per page). Duplicating 45-field StructuralSignals across all chunks wastes storage and is semantically wrong — structural signals describe a page, not a chunk. CompanyPageAnalysis is URL-keyed and stored once per page.",
+    "alternatives_rejected": ["Add structural_signals to SemanticUnit (wastes storage, semantically incorrect — signals are page-level not chunk-level)"],
+    "outcome": "CompanyPageAnalysis model in gap_analysis.py. s1 computes signals per page via s4's compute_structural_signals(). Saved to company_page_analysis.json. s6 attaches to QueryGap via URL lookup.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-GCE-3",
+    "timestamp": "2026-03-07",
+    "task": "Self-citation flagging timing — before or after s4 dedup",
+    "approach": "Flag company citations on PlatformResult BEFORE s4 enrichment, and build company_citation_map BEFORE s4 dedup.",
+    "rationale": "s4 dedup collapses multi-engine citations into a single EnrichedCitation. If flagging happens after dedup, we lose which engines cited the company. _flag_company_citations runs in pipeline.py after s3, _build_company_citation_map also runs before s4.",
+    "alternatives_rejected": ["Flag after s4 dedup (loses multi-engine information)"],
+    "outcome": "_flag_company_citations() and _build_company_citation_map() in pipeline.py, called between s3 and s4. is_company_citation carried through s4 dedup into EnrichedCitation.",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]

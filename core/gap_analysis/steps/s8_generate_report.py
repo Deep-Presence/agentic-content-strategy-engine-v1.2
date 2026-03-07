@@ -94,10 +94,22 @@ def _build_gap_report_md(
         lines.append("")
         lines.append(f"- **Cluster:** {gap.cluster_name or 'N/A'}")
         lines.append(f"- **Best Company Unit:** {gap.best_company_unit or 'N/A'} (sim={gap.best_company_similarity or 0:.4f})")
+        if gap.best_company_url:
+            lines.append(f"  - URL: {gap.best_company_url}")
         if gap.best_company_unit_text:
             lines.append(f"  - *\"{gap.best_company_unit_text[:150]}...\"*")
         lines.append(f"- **Avg Citation Similarity:** {gap.avg_citation_similarity or 0:.4f}")
         lines.append(f"- **Gap:** {gap.gap or 0:.4f} ({gap.interpretation})")
+        if gap.company_cited:
+            lines.append(f"- **Company Cited:** Yes (on {', '.join(gap.company_cited_platforms)})")
+        if gap.best_company_structural_signals:
+            ss = gap.best_company_structural_signals
+            lines.append(
+                f"- **Company Page Structure:** words={ss.get('word_count', 0)}, "
+                f"headers={ss.get('header_count', 0)}, "
+                f"lists={ss.get('list_item_count', 0)}, "
+                f"stats={ss.get('stat_count', 0)}"
+            )
         lines.append("")
 
         # Inline ContentBrief (Phase 3)

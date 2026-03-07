@@ -2455,10 +2455,21 @@ After website discovery and chunking, s1 checks for uploaded knowledge documents
 artifacts/knowledge_docs/{effective_slug}/  →  fallback to  →  artifacts/knowledge_docs/{company_slug}/
 ```
 
+**Company Page Structural Analysis (added 2026-03-07):**
+
+After `build_semantic_units()`, s1 computes structural signals for each crawled company page by reusing s4's `compute_structural_signals(html)` public wrapper. This enables the content engine to compare company page structure against top-cited exemplars (e.g., "your page has 3 headers, competitors have 8").
+
+- Iterates `pages_with_html` (URL, HTML pairs retained from crawl)
+- Calls `compute_structural_signals(html)` per page → returns `(paragraphs, StructuralSignals)`
+- Builds `CompanyPageAnalysis` objects: `url`, `title`, `structural_signals`, `word_count`, `paragraph_count`
+- Saves to `company_page_analysis.json`
+- Errors per page logged at DEBUG level but don't fail the pipeline
+
 **Outputs:**
 | File | Content |
 |------|---------|
 | `company_embeddings.json` | List of SemanticUnit with embedding_ids (no raw vectors) — includes both website and knowledge doc units |
+| `company_page_analysis.json` | List of CompanyPageAnalysis with ~45 structural signals per page (added 2026-03-07) |
 | `site_discovery/discovered_pages.json` | All discovered URLs with metadata |
 | `site_discovery/site_tree.json` | Hierarchical site structure |
 | `site_discovery/discovery_summary.json` | Discovery statistics |
@@ -2603,7 +2614,11 @@ artifacts/knowledge_docs/{effective_slug}/  →  fallback to  →  artifacts/kno
 
 **Dependencies added:** `trafilatura>=1.6.0` (content extraction), `textstat>=0.7.0` (Flesch-Kincaid reading level).
 
-**Output:** `enriched_citations.json` — List of `EnrichedCitation` with paragraphs and ~45 structural signals.
+**Public API (added 2026-03-07):** `compute_structural_signals(html: str) -> Tuple[List[str], StructuralSignals]` — Public wrapper around `_extract_paragraphs()` for reuse by s1 (company page analysis). Takes raw HTML, returns paragraphs list and full StructuralSignals.
+
+**Self-citation flag propagation:** `is_company_citation` flag from `CitationRef` (set by pipeline's `_flag_company_citations()` between s3 and s4) is carried through dedup into `EnrichedCitation.is_company_citation`.
+
+**Output:** `enriched_citations.json` — List of `EnrichedCitation` with paragraphs, ~45 structural signals, and `is_company_citation` flag.
 
 ---
 
@@ -2650,7 +2665,7 @@ artifacts/knowledge_docs/{effective_slug}/  →  fallback to  →  artifacts/kno
 For each query, find top-N (N=5) citations by best-paragraph similarity, compute average citation similarity.
 
 **2. Query-Company Similarity**
-For each query, find best-matching company semantic unit. Track best similarity + unit metadata.
+For each query, find best-matching company semantic unit. Track best similarity + unit metadata (ID, text snippet, and URL).
 
 **3. Gap Calculation**
 ```
@@ -2701,6 +2716,15 @@ Per cluster, generates actionable specs for the Content Generation Engine:
 - `min_bullets_per_list` — minimum list items across citations
 - `dominant_content_type`, `dominant_authority_type` — most common types via Counter
 - `exemplar_themes` — top terms via TF-IDF (scikit-learn TfidfVectorizer) on exemplar query texts, wrapped in try/except for empty-vocabulary edge case
+
+**9. Company URL Passthrough (added 2026-03-07)**
+Each `QueryGap` now includes `best_company_url` — the actual URL of the best-matching company page. Previously only `best_company_unit` (ID) and `best_company_unit_text` (200-char snippet) were stored. The URL enables the content engine to recommend "optimize this page" vs "create new page."
+
+**10. Self-Citation Detection (added 2026-03-07)**
+Accepts optional `company_citation_map: Dict[str, List[str]]` (query_id → list of engines that cited the company). Sets `company_cited: bool` and `company_cited_platforms: List[str]` on each `QueryGap`. Built from `_flag_company_citations()` and `_build_company_citation_map()` in `pipeline.py`, which run BEFORE s4 dedup to preserve multi-engine information.
+
+**11. Company Structural Signals (added 2026-03-07)**
+Accepts optional `page_analysis_lookup: Dict[str, CompanyPageAnalysis]` (URL → page analysis). Looks up the best company unit's URL in the lookup and attaches `best_company_structural_signals` (dict of ~45 signals) to each `QueryGap`. Enables structural comparison between company pages and top-cited exemplars.
 
 **Output:** `analysis.json` — Complete `AnalysisResult` object.
 
@@ -2755,7 +2779,7 @@ Per cluster, generates actionable specs for the Content Generation Engine:
 **Tier 3: Markdown Reports (Human-Readable)**
 
 *Phase A: Programmatic Reports*
-- `gap_report.md` — Summary + **top 25 gap briefs** (up from 10) with inline ContentBrief sections showing: target word count, reading level, recommended headers, content patterns (FAQ rate, table rate, key takeaways), dominant authority/content types. Remaining gaps (after 25) go in appendix table.
+- `gap_report.md` — Summary + **top 25 gap briefs** (up from 10) with inline ContentBrief sections showing: target word count, reading level, recommended headers, content patterns (FAQ rate, table rate, key takeaways), dominant authority/content types. Per-gap sections include company page URL (if available), self-citation status (which AI platforms cite the company), and company page structural summary (word count, headers, lists, paragraphs). Remaining gaps (after 25) go in appendix table.
 - `generation_spec.md` — Per-cluster content specs with expanded fields: FAQ rate, table rate, avg word count, avg paragraph word count, dominant content/authority types, exemplar themes
 
 *Phase B: LLM-Generated Summary*
@@ -2815,16 +2839,21 @@ class SearchEngine(ABC):
 GapAnalysisInput
   │
   ├── S1: domain, seed_urls ──────────────────────▶ company_embeddings.json + ChromaDB
+  │                                                   + company_page_analysis.json
   │                                                   │
   ├── S2: company_context_path, persona_paths ────▶ queries.json
   │                                                   │
   ├── S3: queries.json + platforms ────────────────▶ platform_results/{engine}.jsonl
+  │   └── _flag_company_citations(domain)              (is_company_citation flagged)
+  │   └── _build_company_citation_map()                (query_id → [engines])
   │                                                   │
   ├── S4: platform_results ────────────────────────▶ enriched_citations.json
   │                                                   │
   ├── S5: queries + citations ─────────────────────▶ embeddings/*.json + ChromaDB
   │                                                   │
   ├── S6: company_units + queries + citations ─────▶ analysis.json
+  │       + company_citation_map                       (best_company_url,
+  │       + page_analysis_lookup                        company_cited, structural_signals)
   │                                                   │
   ├── S7: all_data + analysis ─────────────────────▶ visualizations/*.html
   │                                                   │
@@ -3111,7 +3140,7 @@ def extract_scorecard(
 ```
 
 Iterates over `analysis_json["gaps"]` and `analysis_json["cluster_specs"]` to produce:
-- **Per-query scorecards** (`QueryScorecard`): ~50 tokens each. Fields: `query_id`, `query_text`, `cluster_name`, `gap`, `best_company_similarity`, `avg_citation_similarity`, `interpretation`, `exemplar_count`, `has_brief`.
+- **Per-query scorecards** (`QueryScorecard`): ~50 tokens each. Fields: `query_id`, `query_text`, `cluster_name`, `gap`, `best_company_similarity`, `avg_citation_similarity`, `interpretation`, `exemplar_count`, `has_brief`, `company_cited` (whether company is already cited by AI platforms for this query).
 - **Per-cluster summaries** (`ClusterSummary`): ~60 tokens each. Aggregated from query scorecards by `cluster_name`. Fields: `cluster_name`, `query_count`, `avg_gap`, `max_gap`, `significant_gap_count`, `dominant_content_type`, `dominant_authority_type`.
 - **Company summary**: First ~600 chars of `company_context_md`.
 - **Product focus**: Optional product description for product-level runs.
@@ -3127,11 +3156,11 @@ def extract_worker_context(
 ) -> Dict[str, WorkerQueryContext]
 ```
 
-Filters the gaps list to approved IDs only, pulls **complete** QueryGap data including `top_cited_exemplars` with `structural_signals`, and matches to `ClusterContentSpec` by `cluster_name`. Returns `WorkerQueryContext` per approved query with: `query_gap` (full dict), `cluster_spec`, `exemplars`, `gap_content_brief`, `company_best_text`.
+Filters the gaps list to approved IDs only, pulls **complete** QueryGap data including `top_cited_exemplars` with `structural_signals`, and matches to `ClusterContentSpec` by `cluster_name`. Returns `WorkerQueryContext` per approved query with: `query_gap` (full dict), `cluster_spec`, `exemplars`, `gap_content_brief`, `company_best_text`, `company_best_url` (source page URL for optimize-vs-create decisions).
 
 **Formatting functions:**
-- `format_scorecard_as_markdown(scorecard)` — Renders cluster overview + per-query table as markdown. Tables are more token-efficient than JSON for tabular data (no repeated keys). Query text truncated to 80 chars.
-- `format_worker_context_as_markdown(context)` — Renders gap analysis, company content, brief targets, exemplars with structural signals, and cluster spec as structured markdown sections.
+- `format_scorecard_as_markdown(scorecard)` — Renders cluster overview + per-query table as markdown. Tables are more token-efficient than JSON for tabular data (no repeated keys). Query text truncated to 80 chars. Includes `Cited` column showing self-citation status per query.
+- `format_worker_context_as_markdown(context)` — Renders gap analysis, company content (with source URL), company page structural signals vs exemplar comparison, self-citation status, brief targets, exemplars with structural signals, and cluster spec as structured markdown sections.
 
 ### 7.5 Stage 1 — Strategic Planner (Agent 1)
 
@@ -9218,9 +9247,16 @@ def test_other_user_cannot_read_test_co_profile(self, other_client, test_company
 | 2026-03-07 | §5d | **NEW SECTION** — Audience Persona Pipeline (Research v3): 9 subsections covering 2-agent architecture (Gemini Flash suggester + Perplexity generator), 2 HITL checkpoints (brief approval + profile review), PersonaStorage versioned filesystem, KB staleness integration, frozen ID map, 9 Pydantic models, 7 API endpoints, 232 tests | T-ap-phase-d |
 | 2026-03-07 | §18 | Updated test coverage: ~2568 tests with AP (232), KB (260), CPS (44), site audit (793), content engine (437) breakdowns | T-ap-cps-docs |
 
+| 2026-03-07 | §6.1 | Added Company Page Structural Analysis subsection — s1 computes ~45 structural signals per company page via s4's `compute_structural_signals()`, saves to `company_page_analysis.json` | D-GCE-2 |
+| 2026-03-07 | §6.4 | Added `compute_structural_signals()` public API, self-citation flag propagation through dedup | D-GCE-3 |
+| 2026-03-07 | §6.6 | Added items 9-11: company URL passthrough (`best_company_url`), self-citation detection (`company_cited`, `company_cited_platforms`), company structural signals (`best_company_structural_signals`) on QueryGap | D-GCE-1/2/3 |
+| 2026-03-07 | §6.8 | Updated gap report to include company page URL, self-citation status, and company page structural summary per gap | D-GCE-1/3 |
+| 2026-03-07 | §6.10 | Updated data flow diagram — `company_page_analysis.json` from s1, `_flag_company_citations` + `_build_company_citation_map` between s3/s4, enriched s6 inputs | D-GCE-all |
+| 2026-03-07 | §7.4 | Updated context router: `company_cited` in QueryScorecard, `company_best_url` in WorkerQueryContext, `Cited` column in scorecard markdown, structural comparison in worker context markdown | D-GCE-all |
+
 ---
 
 *End of Comprehensive System Documentation*
-*Generated: 2026-03-07 (updated: Audience Persona Pipeline v2, CPS standalone endpoint, Content Engine V1.3, Knowledge Base Phases 1-5, Site Audit P3 bug fixes)*
+*Generated: 2026-03-07 (updated: Gap Analysis → Content Engine data enrichment — 3 features)*
 *Total codebase files analyzed: ~380+*
-*Total lines of documentation: ~9200+*
+*Total lines of documentation: ~9300+*

@@ -1,7 +1,7 @@
 {
-  "current_sprint": "cps-integration-v8",
-  "last_updated": "2026-03-06",
-  "test_count": 2568,
+  "current_sprint": "gap-content-enrichment-v9",
+  "last_updated": "2026-03-07",
+  "test_count": 2592,
   "completed_sprints_summary": {
     "total_tasks_completed": 35,
     "sprints": [
@@ -77,6 +77,32 @@
     }
   ],
   "in_progress": [],
+  "recently_completed_gap_content_enrichment": {
+    "task": "Gap Analysis → Content Engine Data Enrichment: 3 features (company URL passthrough, structural analysis of company pages, self-citation detection)",
+    "completed_at": "2026-03-07",
+    "tests_added": 24,
+    "features": [
+      "F1: Company URL passthrough — SemanticUnit.url threaded through QueryGap.best_company_url → WorkerQueryContext.company_best_url → Brief Builder prompt",
+      "F2: Structural analysis of company pages — s4 compute_structural_signals() public wrapper reused in s1, CompanyPageAnalysis model, signals attached to QueryGap",
+      "F3: Self-citation detection — _flag_company_citations() + _build_company_citation_map() in pipeline, is_company_citation flag on CitationRef/EnrichedCitation, company_cited/company_cited_platforms on QueryGap, scorecard + planner/brief builder prompts updated"
+    ],
+    "files_modified": [
+      "core/models/gap_analysis.py",
+      "core/models/content_generation_v13.py",
+      "core/gap_analysis/steps/s1_embed_assets.py",
+      "core/gap_analysis/steps/s4_enrich_citations.py",
+      "core/gap_analysis/steps/s6_analyze.py",
+      "core/gap_analysis/steps/s8_generate_report.py",
+      "core/gap_analysis/pipeline.py",
+      "core/content_engine/context_router.py",
+      "core/content_engine/prompts/brief_builder_prompts.py",
+      "core/content_engine/prompts/strategic_planner_prompts.py",
+      "tests/gap_analysis/steps/test_s6_analyze.py",
+      "tests/gap_analysis/test_pipeline.py",
+      "tests/content_engine/conftest.py",
+      "tests/content_engine/test_context_router.py"
+    ]
+  },
   "recently_completed_cps": {
     "task": "CPS Model Integration — Stage 4.5 in Content Engine v1.3",
     "completed_at": "2026-03-06",

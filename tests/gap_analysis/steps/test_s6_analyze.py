@@ -288,3 +288,136 @@ class TestExemplarBloatPrevention:
                     assert exemplar.structural_signals.per_paragraph_word_counts == [], (
                         "Exemplar should not carry per_paragraph_word_counts (bloat prevention)"
                     )
+
+
+# ---------------------------------------------------------------------------
+# Tests: Feature 1 — Company URL passthrough
+# ---------------------------------------------------------------------------
+class TestCompanyUrlPassthrough:
+    """best_company_url should be populated from SemanticUnit.url."""
+
+    def test_best_company_url_set_from_unit(self):
+        from core.gap_analysis.steps.s6_analyze import compute_gap_analysis
+
+        queries = [_make_query("q1")]
+        enriched = [_make_enriched("https://a.com/p1", "q1")]
+        company = [
+            SemanticUnit(
+                unit_id="u1",
+                url="https://testco.com/blog/post",
+                text="Company page about expense management and automation solutions.",
+                embedding=_random_embedding(),
+            ),
+        ]
+        result = compute_gap_analysis(queries, company, enriched)
+        assert len(result.gaps) >= 1
+        assert result.gaps[0].best_company_url == "https://testco.com/blog/post"
+
+    def test_best_company_url_none_when_no_url(self):
+        from core.gap_analysis.steps.s6_analyze import compute_gap_analysis
+
+        queries = [_make_query("q1")]
+        enriched = [_make_enriched("https://a.com/p1", "q1")]
+        company = [_make_company_unit()]  # No URL set
+        result = compute_gap_analysis(queries, company, enriched)
+        assert result.gaps[0].best_company_url is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: Feature 3 — Self-citation detection
+# ---------------------------------------------------------------------------
+class TestSelfCitationDetection:
+    """company_cited and company_cited_platforms should be set from citation map."""
+
+    def test_company_cited_when_map_provided(self):
+        from core.gap_analysis.steps.s6_analyze import compute_gap_analysis
+
+        queries = [_make_query("q1")]
+        enriched = [_make_enriched("https://a.com/p1", "q1")]
+        company = [_make_company_unit()]
+        citation_map = {"q1": ["perplexity", "openai"]}
+
+        result = compute_gap_analysis(
+            queries, company, enriched, company_citation_map=citation_map
+        )
+        gap = result.gaps[0]
+        assert gap.company_cited is True
+        assert gap.company_cited_platforms == ["perplexity", "openai"]
+
+    def test_company_not_cited_when_absent(self):
+        from core.gap_analysis.steps.s6_analyze import compute_gap_analysis
+
+        queries = [_make_query("q1")]
+        enriched = [_make_enriched("https://a.com/p1", "q1")]
+        company = [_make_company_unit()]
+
+        result = compute_gap_analysis(
+            queries, company, enriched, company_citation_map={"q-other": ["gemini"]}
+        )
+        gap = result.gaps[0]
+        assert gap.company_cited is False
+        assert gap.company_cited_platforms == []
+
+    def test_company_citation_map_none_defaults_gracefully(self):
+        from core.gap_analysis.steps.s6_analyze import compute_gap_analysis
+
+        queries = [_make_query("q1")]
+        enriched = [_make_enriched("https://a.com/p1", "q1")]
+        company = [_make_company_unit()]
+
+        result = compute_gap_analysis(queries, company, enriched)
+        gap = result.gaps[0]
+        assert gap.company_cited is False
+        assert gap.company_cited_platforms == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: Feature 2 — Company structural signals
+# ---------------------------------------------------------------------------
+class TestCompanyStructuralSignals:
+    """best_company_structural_signals should be attached from page analysis."""
+
+    def test_structural_signals_attached(self):
+        from core.gap_analysis.steps.s6_analyze import compute_gap_analysis
+        from core.models.gap_analysis import CompanyPageAnalysis
+
+        queries = [_make_query("q1")]
+        enriched = [_make_enriched("https://a.com/p1", "q1")]
+        company = [
+            SemanticUnit(
+                unit_id="u1",
+                url="https://testco.com/blog",
+                text="Company page about expense management and automation solutions.",
+                embedding=_random_embedding(),
+            ),
+        ]
+        page_lookup = {
+            "https://testco.com/blog": CompanyPageAnalysis(
+                url="https://testco.com/blog",
+                structural_signals=StructuralSignals(
+                    word_count=900, header_count=4, list_item_count=10,
+                ),
+                word_count=900,
+                paragraph_count=8,
+            ),
+        }
+
+        result = compute_gap_analysis(
+            queries, company, enriched, page_analysis_lookup=page_lookup
+        )
+        gap = result.gaps[0]
+        assert gap.best_company_structural_signals is not None
+        assert gap.best_company_structural_signals["word_count"] == 900
+        assert gap.best_company_structural_signals["header_count"] == 4
+        # per_paragraph_word_counts should be stripped
+        assert "per_paragraph_word_counts" not in gap.best_company_structural_signals
+
+    def test_no_signals_when_no_lookup(self):
+        from core.gap_analysis.steps.s6_analyze import compute_gap_analysis
+
+        queries = [_make_query("q1")]
+        enriched = [_make_enriched("https://a.com/p1", "q1")]
+        company = [_make_company_unit()]
+
+        result = compute_gap_analysis(queries, company, enriched)
+        assert result.gaps[0].best_company_structural_signals is None

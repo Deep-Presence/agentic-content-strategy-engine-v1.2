@@ -338,6 +338,13 @@ def sample_analysis_json() -> Dict[str, Any]:
                 "avg_citation_similarity": 0.90,
                 "interpretation": "significant_gap",
                 "best_company_unit_text": "We offer cap table management.",
+                "best_company_url": "https://testco.com/cap-table",
+                "best_company_structural_signals": {
+                    "word_count": 800, "header_count": 3, "list_item_count": 5,
+                    "paragraph_count": 6, "stat_count": 1,
+                },
+                "company_cited": True,
+                "company_cited_platforms": ["perplexity", "openai"],
                 "top_cited_exemplars": [
                     {
                         "url": "https://example.com/409a",
@@ -544,6 +551,13 @@ def sample_worker_context():
             "best_company_similarity": 0.55,
             "avg_citation_similarity": 0.90,
             "interpretation": "significant_gap",
+            "best_company_url": "https://testco.com/cap-table",
+            "best_company_structural_signals": {
+                "word_count": 800, "header_count": 3, "list_item_count": 5,
+                "paragraph_count": 6, "stat_count": 1,
+            },
+            "company_cited": True,
+            "company_cited_platforms": ["perplexity", "openai"],
         },
         cluster_spec={
             "cluster_name": "equity",
@@ -564,4 +578,5 @@ def sample_worker_context():
             "target_word_count": 1800,
         },
         company_best_text="We offer cap table management.",
+        company_best_url="https://testco.com/cap-table",
     )

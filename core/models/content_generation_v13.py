@@ -42,6 +42,7 @@ class QueryScorecard(BaseModel):
     interpretation: str = ""
     exemplar_count: int = 0
     has_brief: bool = False
+    company_cited: bool = False
 
 
 class ClusterSummary(BaseModel):
@@ -134,6 +135,7 @@ class WorkerQueryContext(BaseModel):
     exemplars: List[Dict[str, Any]] = Field(default_factory=list)
     gap_content_brief: Optional[Dict[str, Any]] = None
     company_best_text: str = ""
+    company_best_url: str = ""
 
 
 class BlueprintSection(BaseModel):

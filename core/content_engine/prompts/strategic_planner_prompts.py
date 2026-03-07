@@ -37,6 +37,10 @@ downstream agents more signal to work with
 4. **Cluster diversity** — spread selections across clusters for broader coverage
 5. **Consolidation potential** — if 2-3 queries in the same cluster are closely \
 related, consolidate them into a single content piece
+6. **Self-citation status** — the "Cited" column shows whether the company is already \
+cited by AI platforms for this query. Cited queries may warrant an "optimize existing \
+page" strategy rather than net-new content creation. Uncited queries with large gaps \
+are the highest-impact new content opportunities
 
 ## What You DO NOT Do
 - You do NOT produce content briefs, outlines, or structural targets

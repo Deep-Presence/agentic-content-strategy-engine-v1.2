@@ -1,7 +1,7 @@
 {
-  "sprint": "cps-integration-v8",
-  "sprint_goal": "CPS Model Integration — Wire Citation Signal Predictor model into Content Engine v1.3 pipeline as Stage 4.5 (after evaluator, before HITL-3). Scorer wrapper, feature extraction, pipeline wiring, Codex review.",
-  "sprint_status": "COMPLETE — 44 tests (7 skipped, torch absent). Codex-reviewed (4 findings, 1 HIGH fixed: sidecar dim padding).",
+  "sprint": "gap-content-enrichment-v9",
+  "sprint_goal": "Gap Analysis → Content Engine Data Enrichment — 3 features: company URL passthrough, structural analysis of company pages, self-citation detection in AI search results.",
+  "sprint_status": "COMPLETE — 24 new tests, all 74 targeted tests passing. 14 files modified across models, pipeline steps, content engine, and tests.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -28,14 +28,14 @@
     "core/research/prompts/*.py (prompt files with revision_note support)",
     "api/tasks/runner.py (run_kb_pipeline_task wrapper)"
   ],
-  "test_count": 2524,
+  "test_count": 2592,
   "phases_completed_count": 33,
   "recent_phases": [
+    "gap-content-enrichment v9 — 3 features: URL passthrough, structural analysis, self-citation detection (24 tests)",
     "audience-persona Phase D — Pipeline Orchestrator (45 tests, 232 AP total)",
     "knowledge-base Phase 5 — Synthesis & Living Document (50 tests)",
     "knowledge-base Phase 4 — API Router + Schemas (35 tests)",
-    "knowledge-base Phase 3 — Orchestrator (58 tests)",
-    "site-audit P3 Bug Fixes (82 tests, 793 site audit tests total)"
+    "knowledge-base Phase 3 — Orchestrator (58 tests)"
   ],
   "phases_remaining": [
     "audience-persona Phase E — API Router + Runner (~30 tests)",
