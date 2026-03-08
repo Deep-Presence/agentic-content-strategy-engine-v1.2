@@ -2,7 +2,7 @@
 
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
-> **Stack:** Python 3.12 · LangGraph · DeepAgents · FastAPI · Pydantic v2 · LangSmith · LiteLLM
+> **Stack:** Python 3.12 · LangGraph · FastAPI · Pydantic v2 · LangSmith · LiteLLM
 > **Document Date:** 2026-03-07 (updated: Audience Persona pipeline v2, CPS standalone endpoint, CPS Model integration)
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
@@ -42,15 +42,8 @@
    - 4b.10 [DI Wiring](#4b10-di-wiring)
    - 4b.11 [Pydantic Models](#4b11-pydantic-models)
    - 4b.12 [ORM & Database](#4b12-orm--database)
-5. [Pipeline 1: Research Artifacts](#5-pipeline-1-research-artifacts)
-   - 5.1 [Company Context Research Agent](#51-company-context-research-agent)
-   - 5.2 [Audience Persona Research Agent](#52-audience-persona-research-agent)
-   - 5.3 [Writing Style Guide Research Agent](#53-writing-style-guide-research-agent)
-   - 5.4 [LangGraph State Machines — The Approval Flow](#54-langgraph-state-machines--the-approval-flow)
-   - 5.5 [Combined Pipeline Orchestrator](#55-combined-pipeline-orchestrator)
-   - 5.6 [Cross-Stage Context Passing](#56-cross-stage-context-passing)
-   - 5.7 [Perplexity Deep Research Integration](#57-perplexity-deep-research-integration)
-5c. [Knowledge Base Pipeline (Research v2)](#5c-knowledge-base-pipeline-research-v2)
+5. [Pipeline 1: Research Artifacts (REMOVED — old DeepAgents pipeline)](#5-pipeline-1-research-artifacts)
+5c. [Knowledge Base Pipeline (Pipeline 1a)](#5c-knowledge-base-pipeline-research-v2)
    - 5c.1 [Architecture — 3-Layer Knowledge Base](#5c1-architecture--3-layer-knowledge-base)
    - 5c.2 [DAG Execution & 3 HITL Checkpoints](#5c2-dag-execution--3-hitl-checkpoints)
    - 5c.3 [6 Specialist Agents](#5c3-6-specialist-agents)
@@ -64,7 +57,7 @@
    - 5c.11 [Pydantic Models (17 Models)](#5c11-pydantic-models-17-models)
    - 5c.12 [LangSmith Tracing Integration](#5c12-langsmith-tracing-integration)
    - 5c.13 [Test Coverage (260 tests)](#5c13-test-coverage-260-tests)
-5d. [Audience Persona Pipeline (Research v3)](#5d-audience-persona-pipeline-research-v3)
+5d. [Audience Persona Pipeline (Pipeline 1b)](#5d-audience-persona-pipeline-research-v3)
    - 5d.1 [Architecture — 2-Agent Pipeline with 2 HITL Checkpoints](#5d1-architecture--2-agent-pipeline-with-2-hitl-checkpoints)
    - 5d.2 [Agent 1 — Persona Suggester (Gemini Flash)](#5d2-agent-1--persona-suggester-gemini-flash)
    - 5d.3 [Agent 2 — Profile Generator (Perplexity Deep Research)](#5d3-agent-2--profile-generator-perplexity-deep-research)
@@ -104,7 +97,7 @@
 8. [Reddit Human-in-the-Loop Monitor](#8-reddit-human-in-the-loop-monitor)
 9. [Storage Architecture](#9-storage-architecture)
    - 9.1 [Filesystem Layer (Source of Truth)](#91-filesystem-layer-source-of-truth)
-   - 9.2 [DeepAgents Backend Routing (CompositeBackend)](#92-deepagents-backend-routing-compositebackend)
+   - 9.2 [DeepAgents Backend Routing (REMOVED)](#92-deepagents-backend-routing-removed)
    - 9.3 [ChromaDB Vector Store](#93-chromadb-vector-store)
    - 9.4 [Supabase Mirror (Optional DB Layer)](#94-supabase-mirror-optional-db-layer)
    - 9.5 [Storage Backend Abstraction (Interface)](#95-storage-backend-abstraction-interface)
@@ -309,7 +302,7 @@ Company Website + Internal Docs
 |-------|-----------|---------|
 | **Language** | Python 3.12+ | All business logic |
 | **API Framework** | FastAPI + Uvicorn | REST API with async task runners, SSE, HITL endpoints |
-| **Agent Framework** | DeepAgents | LLM agent creation with tool-use, backends, memory |
+| **Agent Framework** | Raw SDK clients + LangGraph | LLM agent creation with tool-use and HITL |
 | **Orchestration** | LangGraph v0.2+ | State machine graphs with interrupt-based human-in-the-loop |
 | **Data Validation** | Pydantic v2 | Input/output schemas, settings management |
 | **Web Research** | Perplexity SDK (sonar-deep-research) | Deep web research with citations |
@@ -388,26 +381,17 @@ content-strategy-engine/
 │   │       ├── s5_aggregate.py            # Dimension scoring, overall score, grade, top findings
 │   │       └── s6_report.py               # Markdown + JSON report generation
 │   │
-│   ├── research/                          # Pipeline 1: Research Artifacts
+│   ├── research/                          # Pipeline 1: Research Pipelines (KB + AP + VSG)
 │   │   ├── __init__.py
-│   │   ├── agents/                        # DeepAgent definitions (v1 research agents)
-│   │   │   ├── __init__.py
-│   │   │   ├── base.py                    # get_store(), backend_factory(), _dbg(), artifact dir creation
-│   │   │   ├── company_research_agent.py  # Gemini + Perplexity, internet_search + read_local_text tools
-│   │   │   ├── persona_agent.py           # Gemini + Perplexity, 1-3 persona creation, ThreadPoolExecutor
-│   │   │   └── style_guide_agent.py       # Gemini + Perplexity, style guide creation, ThreadPoolExecutor
-│   │   ├── audience_persona/              # Audience Persona Pipeline v2 (2-agent architecture)
-│   │   │   ├── __init__.py
+│   │   ├── knowledge_base/                # Pipeline 1a: 6-agent DAG, HITL, storage
+│   │   │   ├── storage.py, agents.py, pipeline.py, graph.py, tools.py
+│   │   ├── audience_persona/              # Pipeline 1b: 2-agent pipeline with 2 HITL checkpoints
 │   │   │   ├── agents.py                  # Agent 1 (Gemini Flash suggester) + Agent 2 (Perplexity generator)
 │   │   │   ├── graph.py                   # 2 LangGraph HITL sub-graphs (brief review + profile review)
 │   │   │   ├── pipeline.py               # 4-phase orchestrator (preflight → suggest → generate → finalize)
 │   │   │   └── storage.py                 # PersonaStorage: versioned filesystem (manifest + brief + v{N}.md)
-│   │   ├── graphs/                        # LangGraph state machines (v1 research)
-│   │   │   ├── __init__.py
-│   │   │   ├── company_research.py        # Standalone company graph (agent→draft→approve→mirror)
-│   │   │   ├── persona_research.py        # Standalone persona graph (same pattern)
-│   │   │   ├── style_guide.py             # Standalone style guide graph (same pattern)
-│   │   │   └── pipeline.py                # Combined 3-stage orchestrator (company→persona→style)
+│   │   ├── voice_style_guide/             # Pipeline 1c: 3-agent pipeline with 1 HITL checkpoint
+│   │   │   ├── agents.py, graph.py, pipeline.py, storage.py
 │   │   ├── prompts/                       # Prompt files for research agents
 │   │   │   ├── persona_suggester.py       # System + user prompts for AP Agent 1
 │   │   │   ├── persona_generator.py       # System + user prompts for AP Agent 2
@@ -569,7 +553,9 @@ content-strategy-engine/
 │   │   ├── content.py                     # POST /start, GET /status, POST /approve (pipeline execution)
 │   │   ├── content_data.py                # 3 GET endpoints: briefs, briefs/{id}, briefs/{id}/{stage}
 │   │   ├── brand_data.py                  # 2 GET endpoints: research/artifacts, runs
-│   │   ├── research.py                    # POST /start, GET /status, POST /approve (pipeline execution)
+│   │   ├── knowledge_base.py              # POST /start, GET /status, POST /approve (KB pipeline)
+│   │   ├── audience_persona.py            # POST /start, POST /approve (AP pipeline)
+│   │   ├── voice_style_guide.py           # POST /start, POST /approve (VSG pipeline)
 │   │   ├── events.py                      # GET /tasks/{task_id}/events (SSE streaming)
 │   │   ├── artifacts.py                   # GET /artifacts/companies, /{type}/{slug}
 │   │   ├── tasks.py                       # GET /tasks (+ total + company_slug filter), /{task_id}, POST /{task_id}/cancel
@@ -577,7 +563,7 @@ content-strategy-engine/
 │   │   └── knowledge_docs.py             # 5 endpoints: POST upload, GET list/detail/download, DELETE (Knowledge Docs)
 │   ├── schemas/
 │   │   ├── __init__.py
-│   │   ├── common.py                      # Shared request/response models (GapAnalysisStartInput, ResearchStartRequest, etc.)
+│   │   ├── common.py                      # Shared request/response models (GapAnalysisStartInput, KnowledgeBaseStartRequest, etc.)
 │   │   ├── company.py                     # CompanyProfileResponse, ProductSummary, ResearchArtifactSummary (Phase 1)
 │   │   ├── gap_data.py                    # 20+ models: GapSummaryResponse, QueryRow, ClusterSpecResponse, etc. (Phase 2)
 │   │   ├── content_data.py                # 12 models: ContentBriefListItem, EvalCycle, EmbeddingPoint, etc. (Phase 3)
@@ -597,10 +583,9 @@ content-strategy-engine/
 │       └── runner.py                      # Background task wrappers for all 3 pipelines + HITL interrupt/resume
 │
 ├── scripts/                               # CLI entry points (all use argparse)
-│   ├── run_company_research.py            # Standalone company research (74 lines)
-│   ├── run_persona_research.py            # Standalone persona research (80 lines)
-│   ├── run_style_guide_research.py        # Standalone style guide research (83 lines)
-│   ├── run_pipeline.py                    # Combined 3-stage research pipeline (132 lines)
+│   ├── run_kb.py                          # Knowledge base pipeline (6-agent DAG)
+│   ├── run_audience_persona.py            # Audience persona pipeline (2-agent)
+│   ├── run_voice_style_guide.py           # Voice style guide pipeline (3-agent)
 │   ├── run_gap_analysis.py                # Full 8-step gap analysis (74 lines)
 │   ├── run_gap_step.py                    # Individual gap step runner for debugging (340 lines)
 │   ├── resolve_vertexai_redirects.py      # Utility: resolve Vertex AI redirect URLs (140 lines)
@@ -1386,11 +1371,20 @@ Uses the **Strategy pattern** via `MetricCalculator` ABC (`core/daily_tracker/me
 
 ---
 
-## 5. Pipeline 1: Research Artifacts
+## 5. Pipeline 1: Research Artifacts (REMOVED)
 
-### Overview
+> **This section documents the old DeepAgents-based research pipeline which has been fully removed.**
+> It was replaced by three new pipelines: Knowledge Base (§5c), Audience Persona (§5d), and Voice Style Guide (§5e).
+> The old code, models (`core/models/artifacts.py`, `core/models/style_guide.py`), agents (`core/research/agents/`),
+> graphs (`core/research/graphs/`), API router (`api/routers/research.py`), and CLI scripts were deleted.
+> The `deepagents` dependency was also removed.
 
-The Research Artifacts Pipeline produces three foundational documents that feed into all downstream systems. Each stage uses a DeepAgent (LLM with tools) orchestrated by a LangGraph state machine with human-in-the-loop approval.
+<details>
+<summary>Historical reference (collapsed — old pipeline architecture)</summary>
+
+### Overview (Historical)
+
+The Research Artifacts Pipeline produced three foundational documents that fed into all downstream systems. Each stage used a DeepAgent (LLM with tools) orchestrated by a LangGraph state machine with human-in-the-loop approval.
 
 ```
 Stage 1: Company Context    Stage 2: Persona Research    Stage 3: Style Guide
@@ -1717,9 +1711,11 @@ def research(
 - `429` / "rate limit" → Quota exceeded (suggests checking billing)
 - Other exceptions → Re-raised with context
 
+</details>
+
 ---
 
-## 5c. Knowledge Base Pipeline (Research v2)
+## 5c. Knowledge Base Pipeline (Pipeline 1a)
 
 The Knowledge Base replaces the monolithic Research Artifacts pipeline (§5) with a **3-layer architecture** of specialist research agents, versioned documents, and synthesized Company Profiles. Built across Phases 1-5 (2026-03-05/06) with **260 tests** (214 core + 46 API).
 
@@ -3677,7 +3673,7 @@ LangGraph State Machine:
 
 **1. `load_artifacts`**
 - Loads 3 artifact files: company context, ICP persona, style guide
-- Uses DeepAgents-style virtual paths (`/artifacts/...`)
+- Reads artifact files from `artifacts/` directory
 - Max 400KB per artifact (prevents token explosion in LLM calls)
 - Raises error if any artifact missing
 
@@ -3750,28 +3746,11 @@ Mirror to Supabase                  ← Optional DB snapshot
 - Finals: `{slug}.md`
 - Slug derivation: `company_name.lower().replace(" ", "-")`
 
-### 9.2 DeepAgents Backend Routing (CompositeBackend)
+### 9.2 DeepAgents Backend Routing (REMOVED)
 
-**File:** `core/research/agents/base.py`
-
-When DeepAgents write files, the `CompositeBackend` routes writes to the appropriate storage:
-
-| Virtual Path Prefix | Backend | Physical Location |
-|---------------------|---------|-------------------|
-| `/artifacts/*` | `FilesystemBackend` | `content-strategy-engine/artifacts/` |
-| `/memories/*` | `StoreBackend` | In-memory (InMemoryStore singleton) |
-| Everything else | `StateBackend` | Per-thread scratchpad (ephemeral) |
-
-**Singleton Pattern:**
-```python
-_store = None
-
-def get_store():
-    global _store
-    if _store is None:
-        _store = InMemoryStore()
-    return _store
-```
+> The DeepAgents `CompositeBackend` and `base.py` were part of the old research pipeline, which has been fully removed.
+> The new research pipelines (KB, AP, VSG) use direct filesystem storage via their own `Storage` classes
+> (`KBStorage`, `PersonaStorage`, `VSGStorage`), each with versioned document management and manifest tracking.
 
 ### 9.3 ChromaDB Vector Store
 
@@ -3898,7 +3877,7 @@ class StorageBackend(ABC):
 - `S3Backend` / `GCSBackend` — Cloud storage for production
 - `SupabaseStorageBackend` — Supabase Storage buckets
 
-**Current Status:** Interface defined but no concrete backend classes implemented yet. The `DeepAgents.FilesystemBackend` is used directly in the research pipeline (separate from this abstraction).
+**Current Status:** Interface defined but no concrete backend classes implemented yet. The new research pipelines use their own versioned storage classes (`KBStorage`, `PersonaStorage`, `VSGStorage`).
 
 ### 9.6 Knowledge Document Storage (Added 2026-02-27)
 
@@ -5293,11 +5272,9 @@ scripts/run_server.py ← API entry point (uvicorn)
 **Impact:** Cannot swap storage backends as designed. Currently using DeepAgents' own `FilesystemBackend` directly.
 **Recommendation:** Implement `LocalFilesystemBackend` as the default, then cloud backends when needed.
 
-#### 10. Agent Invocation Pattern Inconsistency
-**Severity:** Low
-**Description:** Company agent uses ThreadPoolExecutor in the graph node (`company_research.py` line 149), while persona/style agents use ThreadPoolExecutor inside the agent function files themselves. Both work but follow different patterns.
-**Impact:** Mental overhead when reading code. Inconsistent error handling.
-**Recommendation:** Standardize to one pattern (preferably in the agent files, matching persona/style approach).
+#### 10. Old Research Pipeline Removed (2026-03-08)
+**Severity:** ~~Medium~~ Resolved
+**Description:** The old DeepAgents-based research pipeline (company research, persona research, style guide research) has been fully removed. All code in `core/research/agents/`, `core/research/graphs/`, `core/models/artifacts.py`, `core/models/style_guide.py`, `api/routers/research.py`, and associated scripts/tests deleted. The `deepagents` dependency removed from `pyproject.toml` and `requirements.txt`. Replaced by three new pipelines: Knowledge Base (§5c), Audience Persona (§5d), and Voice Style Guide (§5e).
 
 #### 11. Langfuse Removed — Replaced by LangSmith (2026-03-02)
 **Severity:** ~~High~~ Resolved
@@ -5476,7 +5453,7 @@ scripts/run_server.py ← API entry point (uvicorn)
 | 5 | **Supabase Migration** | Replace JSON AuthStore with Supabase, migrate task persistence | Auth system, Supabase schema |
 | 6 | **~~SQLAlchemy ORM~~** | ~~Replace raw Supabase client with ORM~~ — **DONE in sqlalchemy-migration + service-layer-phase3 sprints** | ✅ Complete |
 | 6 | **Reddit HIL Tests** | Only untested module (PRAW mocking, webhook delivery) | Existing codebase |
-| 7 | **Persistent Agent Store** | Replace InMemoryStore with durable storage | DeepAgents integration |
+| 7 | **DB Integration for New Research Pipelines** | Add PostgreSQL persistence for KB/AP/VSG | SQLAlchemy + Alembic |
 | 8 | **Cloud Storage Backends** | S3/GCS/Supabase Storage implementations | StorageBackend interface |
 | 9 | **Structured Logging** | JSON logging with correlation IDs | logging_config.py |
 | 10 | **CI/CD Pipeline** | Automated tests, linting, deployment | Tests + Docker |
@@ -5486,7 +5463,7 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 ## 21. REST API Layer (FastAPI)
 
-**Status:** Implemented (2026-02-16), expanded with data endpoints (2026-02-25/26), expanded with product-level support (2026-02-26), pipeline guard added (2026-02-27), production-grade route protection added (2026-02-27), **Settings Pages API + Knowledge Doc Upload added (2026-02-27)**. 1029 tests passing, 1 pre-existing failure (PB-39). All 3 pipelines wrapped + 16 company-scoped data retrieval endpoints + product CRUD endpoints + `?product_slug=` on all 11 data endpoints. `force_rerun` guard on `/gap-analysis/start` and `/research/start`. Default-deny ASGI middleware with RBAC, tenant isolation, invite flow, and stream tokens. **14 routers total** including settings (6 endpoints) and knowledge-docs (5 endpoints). Per-company pipeline defaults wired into the gap analysis runner.
+**Status:** Implemented (2026-02-16), expanded with data endpoints (2026-02-25/26), expanded with product-level support (2026-02-26), pipeline guard added (2026-02-27), production-grade route protection added (2026-02-27), **Settings Pages API + Knowledge Doc Upload added (2026-02-27)**. 1029 tests passing, 1 pre-existing failure (PB-39). All 3 pipelines wrapped + 16 company-scoped data retrieval endpoints + product CRUD endpoints + `?product_slug=` on all 11 data endpoints. `force_rerun` guard on `/gap-analysis/start`. Default-deny ASGI middleware with RBAC, tenant isolation, invite flow, and stream tokens. **14 routers total** including settings (6 endpoints) and knowledge-docs (5 endpoints). Per-company pipeline defaults wired into the gap analysis runner.
 
 **Architecture Decision:** D-API-1 — `asyncio.create_task()` (not Celery), JSON-file TaskStore, SSE for progress, `MemorySaver` checkpointer for HITL. See §17 Decision 12 for full rationale. Data endpoints added in D-FB-1 through D-FB-5.
 
@@ -5516,7 +5493,7 @@ def create_app() -> FastAPI:
 | `TaskConflictError` | 409 | `task_conflict` |
 | `PipelineError` | 500 | `pipeline_error` |
 
-**Routers (mounted in order, 14 total):** health, auth, companies, gap_analysis, gap_data, events, artifacts, research, content, content_data, brand_data, tasks, **settings**, **knowledge_docs**
+**Routers (mounted in order):** health, auth, companies, gap_analysis, gap_data, events, artifacts, content, content_v13, cps, content_data, brand_data, settings, knowledge_base, knowledge_docs, audience_persona, voice_style_guide, site_audit, daily_tracker, tasks
 
 ---
 
@@ -7529,11 +7506,12 @@ All 1127 existing tests (non-DB) pass unchanged — they use JSON-backed service
 
 | Component | Model | API Key Variable | Default Model |
 |-----------|-------|------------------|---------------|
-| Company Research Agent | Gemini | `GOOGLE_API_KEY_COMPANY_DEEPAGENT` | `gemini-3-flash-preview` |
-| Persona Research Agent | Gemini | `GOOGLE_API_KEY_PERSONA_RESEARCH_DEEPAGENT` | `gemini-3-flash-preview` |
-| Style Guide Research Agent | Gemini | `GOOGLE_API_KEY_STYLE_GUIDE_RESEARCH_DEEPAGENT` | `gemini-3-flash-preview` |
-| DeepAgents (default) | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
-| Perplexity Research | Sonar | `PERPLEXITY_API_KEY` | `sonar-deep-research` |
+| KB Agents (Perplexity) | Sonar | `PERPLEXITY_API_KEY` | `sonar-deep-research` |
+| KB Brand Perception | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
+| KB Synthesis | Gemini | `GOOGLE_API_KEY` | `gemini-3-flash-preview` |
+| AP Agent 1 (Suggester) | Gemini | `GOOGLE_API_KEY_AUDIENCE_PERSONA` | `gemini-3-flash-preview` |
+| AP Agent 2 (Generator) | Perplexity | `PERPLEXITY_API_KEY` | `sonar-deep-research` |
+| VSG Agents | Gemini/Perplexity/Claude | Various | `gemini-3-flash-preview` / `sonar-deep-research` / `claude-sonnet-4-5-20250929` |
 | Embeddings | OpenAI | `OPENAI_API_KEY` | `text-embedding-3-small` |
 | Gap: Query Generation | OpenAI | `OPENAI_API_KEY` | `gpt-5.2-2025-12-11` |
 | Gap: Report Generation | OpenAI | `OPENAI_API_KEY` | `gpt-5.2-2025-12-11` |
@@ -7615,11 +7593,11 @@ artifacts/gap_analysis/{slug}/
 - **async/await** for all I/O-bound operations (API calls, file ops, DB)
 - **Naming:** Files: `snake_case.py` · Classes: `PascalCase` · Functions/vars: `snake_case` · Constants: `UPPER_SNAKE_CASE`
 
-### DeepAgents Patterns
-- Use `system_prompt=` parameter (NOT `system_message=`)
-- Wrap ALL `agent.invoke()` calls in `ThreadPoolExecutor(max_workers=1)`
-- Agents return JSON: `{"written_paths": [...], "notes": "..."}` for persona/style
-- Support patch-style updates for existing artifacts (read → edit sections → write back)
+### Research Pipeline Patterns (KB / AP / VSG)
+- Raw SDK clients for all LLM calls (no DeepAgents or LangChain wrappers)
+- Each pipeline has its own Storage class (`KBStorage`, `PersonaStorage`, `VSGStorage`) with versioned docs + manifests
+- LangGraph mini-graphs for HITL pause/resume within each pipeline
+- `auto_approve` flag to skip HITL interrupts in CLI scripts
 
 ### LangGraph Patterns
 - State is a plain dict (not a TypedDict or Pydantic model — flexibility over safety)
@@ -7642,10 +7620,10 @@ artifacts/gap_analysis/{slug}/
 ### Import Convention
 ```python
 from core.config.settings import settings
-from core.models.artifacts import CompanyResearchInput, CompanyContextArtifact
 from core.models.personas import PersonaResearchInput, PersonaArtifact
-from core.research.agents.base import get_backend, get_store
-from core.research.graphs.company_research import build_graph
+from core.research.knowledge_base.pipeline import run_kb_pipeline
+from core.research.audience_persona.pipeline import run_ap_pipeline
+from core.research.voice_style_guide.pipeline import run_vsg_pipeline
 from core.gap_analysis.pipeline import run_gap_analysis
 from core.shared_tools.embedding_client import embed_texts
 from core.shared_tools.chroma_client import upsert_embeddings
@@ -8777,12 +8755,12 @@ async def start_gap_analysis(body: GapAnalysisStartRequest,
 **Why `_derive_slug()` comparison (not direct string comparison on company_name):**
 Company names may differ in casing or punctuation ("Ramp" vs "ramp") but derive to the same slug. The slug comparison normalizes this.
 
-**Parameter naming in research and content routers:**
+**Parameter naming in pipeline routers:**
 
 The `request` parameter name conflicts with FastAPI's auto-injected `Request` when both a Pydantic body model and `Request` are in the function signature. Solution: rename body parameter to `body` and Request to `http_request`:
 
 ```python
-async def start_research(body: ResearchStartRequest, http_request: Request, ...):
+async def start_pipeline(body: PipelineStartRequest, http_request: Request, ...):
 ```
 
 ### 24.11 Task & SSE Tenant Isolation (Codex C3)

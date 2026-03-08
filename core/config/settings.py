@@ -36,9 +36,6 @@ class Settings(BaseSettings):
     perplexity_deep_research_model: str = "sonar-deep-research"
     perplexity_search_model: str = "sonar-pro"
 
-    # DeepAgents / LLM
-    deepagents_model: str ="claude-sonnet-4-5-20250929"
-
     # OpenAI
     openai_api_key: str | None = None
     embedding_model: str = "text-embedding-3-small"
@@ -47,15 +44,9 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     brave_search_api_key: str | None = None
 
-    # Google / Gemini – Company Research
+    # Google / Gemini – Legacy API key fallbacks (used by Reddit HIL + Audience Persona)
     google_api_key_company_deepagent: str | None = None
-    google_gemini_model_company_deepagent: str = "gemini-3-flash-preview"
-    # Google / Gemini – Persona Research
     google_api_key_persona_research_deepagent: str | None = None
-    google_persona_deepagents_model: str ="gemini-3-flash-preview"
-    # Google / Gemini – Style Guide Research
-    google_api_key_style_guide_research_deepagent: str | None = None
-    google_style_guide_deepagents_model: str ="gemini-3-flash-preview"
 
     # Google / Gemini – Gap Analysis
     google_api_key_gap_analysis: str | None = None

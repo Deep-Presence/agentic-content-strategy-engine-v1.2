@@ -210,13 +210,6 @@ class TestRoleBasedAccess:
         )
         assert resp.status_code == 403
 
-    def test_viewer_cannot_start_research(self, viewer_client: TestClient) -> None:
-        resp = viewer_client.post(
-            "/api/v1/research/start",
-            json={"company_name": "Test Co", "domain": "testco.com"},
-        )
-        assert resp.status_code == 403
-
     def test_viewer_cannot_start_content(self, viewer_client: TestClient) -> None:
         resp = viewer_client.post(
             "/api/v1/content/start",
@@ -267,16 +260,6 @@ class TestRoleBasedAccess:
     ) -> None:
         resp = client.post(
             "/api/v1/gap-analysis/start",
-            json={"company_name": "Test Co", "domain": "testco.com"},
-        )
-        assert resp.status_code == 202
-
-    @patch("api.routers.research.asyncio.create_task", return_value=MagicMock())
-    def test_superuser_can_start_research(
-        self, _mock_create_task: MagicMock, superuser_client: TestClient
-    ) -> None:
-        resp = superuser_client.post(
-            "/api/v1/research/start",
             json={"company_name": "Test Co", "domain": "testco.com"},
         )
         assert resp.status_code == 202

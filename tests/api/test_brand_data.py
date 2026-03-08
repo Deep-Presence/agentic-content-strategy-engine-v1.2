@@ -582,36 +582,6 @@ class TestRunHistory:
         assert run["steps_completed"] == 4
         assert run["total_steps"] == 8
 
-    def test_research_completed_3_of_3(
-        self, client: TestClient, task_store: TaskStore
-    ):
-        _create_task(
-            task_store,
-            "research",
-            "test-co",
-            status=TaskStatus.COMPLETED,
-            result={"stage": "complete"},
-        )
-        resp = client.get(self.URL.format(slug="test-co"))
-        run = resp.json()["runs"][0]
-        assert run["steps_completed"] == 3
-        assert run["total_steps"] == 3
-
-    def test_research_running_at_persona(
-        self, client: TestClient, task_store: TaskStore
-    ):
-        _create_task(
-            task_store,
-            "research",
-            "test-co",
-            status=TaskStatus.RUNNING,
-            current_step="persona",
-        )
-        resp = client.get(self.URL.format(slug="test-co"))
-        run = resp.json()["runs"][0]
-        assert run["steps_completed"] == 2
-        assert run["total_steps"] == 3
-
     def test_content_completed_4_of_4(
         self, client: TestClient, task_store: TaskStore
     ):

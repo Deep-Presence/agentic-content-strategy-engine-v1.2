@@ -23,7 +23,6 @@ from core.db.repositories.pipeline_repo import PipelineRepository
 # Map DB PipelineType → total steps (for progress bar)
 _PIPELINE_TOTAL_STEPS: Dict[str, int] = {
     "gap_analysis": 8,
-    "research": 3,
     "content": 4,
 }
 
