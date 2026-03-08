@@ -1126,3 +1126,77 @@ async def run_single_persona_generator_task(
     finally:
         task_store.release_slug_lock(slug)
         task_store.remove_task_handle(task_id)
+
+
+# ---------------------------------------------------------------------------
+# Voice Style Guide Pipeline
+# ---------------------------------------------------------------------------
+
+
+async def run_voice_style_guide_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Voice Style Guide pipeline."""
+    from core.models.voice_style_guide import VoiceStyleGuideInput
+    from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            input_data = VoiceStyleGuideInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                max_authors=getattr(request, "max_authors", 3),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+            )
+
+            output = await run_voice_style_guide_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "authors_discovered": output.authors_discovered,
+                "authors_approved": output.authors_approved,
+                "authors_researched": output.authors_researched,
+                "guide_generated": output.guide_generated,
+                "guide_dir": output.guide_dir,
+                "style_guide_path": output.style_guide_path,
+                "produced_artifacts": [
+                    {"type": "voice_style_guide", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("VSG pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("VSG pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)

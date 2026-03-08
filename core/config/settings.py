@@ -155,6 +155,12 @@ class Settings(BaseSettings):
     audience_persona_generator_model: str = "sonar-deep-research"
     audience_persona_max_concurrent_generators: int = 3
 
+    # --- Voice Style Guide Pipeline ---
+    google_api_key_voice_style_guide: str | None = None  # fallback to google_api_key_audience_persona
+    voice_style_guide_discovery_model: str = "google/gemini-3-flash-preview"
+    voice_style_guide_synthesis_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    voice_style_guide_max_concurrent_researchers: int = 3
+
     # --- CPS Model (Citation Signal Predictor) ---
     cps_enabled: bool = True
     cps_target_weight: float = 0.5

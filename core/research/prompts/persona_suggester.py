@@ -107,7 +107,8 @@ def build_persona_suggester_user_prompt(
     # --- Company Overview ---
     parts.append("### Company Overview")
     if company_context_md:
-        parts.append(company_context_md[:60_000])  # ~15k tokens
+        parts.append(company_context_md[:80_000])  # ~15k tokens
+        print(company_context_md[:80_000])
     else:
         parts.append("No company context available. Rely on other signals below.")
     parts.append("")

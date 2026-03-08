@@ -1,12 +1,12 @@
 {
-  "brief_id": "pb-31664f8c",
+  "brief_id": "pb-b2b9f757",
   "persona_name": "Elena",
-  "tagline": "Lead Security Analyst at a regional bank consolidating vendor tools",
-  "description": "Elena is a power user who manages daily alerts and is currently suffering from 'tool fatigue' across multiple disconnected platforms.",
+  "tagline": "Pragmatic Senior Developer using Lovable for rapid full-stack scaffolding",
+  "description": "A professional coder who hates 'boring setup work' and uses AI to generate the first 70% of a project before ejecting to a local IDE.",
   "rationale": [
-    "Review data indicates a strong desire for a 'single pane of glass' view, a need Elena prioritizes over specific niche features.",
-    "She is the primary evaluator for renewals; if the tool doesn't fit her daily workflow, the company risks churn regardless of executive buy-in.",
-    "Strategically valuable for product-led growth, as her advocacy can drive expansion into other departments within the bank."
+    "Hacker News and G2 reviews show developers use Lovable to 'scaffold projects rapidly' and then transition to Cursor or VS Code for the final 30%.",
+    "Elena faces the pain of repetitive boilerplate (Supabase setup, Auth, UI components); Lovable's GitHub sync and clean React/TypeScript output solve this 'setup friction'.",
+    "Retaining this persona is essential to combat the '70% problem' perception; they provide the technical validation needed to move Lovable beyond a 'toy' status into a professional tool."
   ],
   "source": "agent"
 }
