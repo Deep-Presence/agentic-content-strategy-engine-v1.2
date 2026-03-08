@@ -323,12 +323,12 @@ class TestVoiceStyleGuideInput:
         # min 2
         with pytest.raises(Exception):
             VoiceStyleGuideInput(company_name="X", max_authors=1)
-        # max 5
+        # max 3
         with pytest.raises(Exception):
-            VoiceStyleGuideInput(company_name="X", max_authors=6)
+            VoiceStyleGuideInput(company_name="X", max_authors=4)
         # valid boundaries
         VoiceStyleGuideInput(company_name="X", max_authors=2)
-        VoiceStyleGuideInput(company_name="X", max_authors=5)
+        VoiceStyleGuideInput(company_name="X", max_authors=3)
 
     def test_serialization_roundtrip(self):
         i = VoiceStyleGuideInput(

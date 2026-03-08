@@ -190,6 +190,247 @@ class TestValidationHelpers:
         # Invalid
         assert _parse_json_array("not json") == []
 
+    def test_parse_json_array_empty_text(self) -> None:
+        from core.research.voice_style_guide.agents import _parse_json_array
+
+        assert _parse_json_array("") == []
+        assert _parse_json_array("   ") == []
+        assert _parse_json_array(None) == []  # type: ignore[arg-type]
+
+    def test_parse_json_array_error_object(self) -> None:
+        from core.research.voice_style_guide.agents import _parse_json_array
+
+        error_json = json.dumps({"error": True, "error_type": "insufficient_input", "message": "too thin"})
+        assert _parse_json_array(error_json) == []
+
+    # ── Per-persona schema (new prompt format) ──
+
+    def test_parse_json_array_per_persona_schema(self) -> None:
+        """New per-persona schema: {"personas": [{"recommended_authors": [...]}]}."""
+        from core.research.voice_style_guide.agents import _parse_json_array
+
+        payload = json.dumps({
+            "personas": [
+                {
+                    "persona_title": "VP Finance",
+                    "recommended_authors": [
+                        {
+                            "author_name": "Morgan Housel",
+                            "bio": "Financial writer.",
+                            "resonance_rationale": "Story-driven style.",
+                            "key_works": [{"title": "Psychology of Money", "type": "book", "relevance": "relevant"}],
+                        },
+                        {
+                            "author_name": "Ann Handley",
+                            "bio": "Content marketing expert.",
+                            "resonance_rationale": "Practical writing advice.",
+                            "key_works": [{"title": "Everybody Writes", "type": "book", "relevance": "relevant"}],
+                        },
+                    ],
+                },
+                {
+                    "persona_title": "CFO Startup",
+                    "recommended_authors": [
+                        {
+                            "author_name": "Morgan Housel",
+                            "bio": "Financial writer.",
+                            "resonance_rationale": "Clear finance voice.",
+                            "key_works": [{"title": "Same as Ever", "type": "book", "relevance": "relevant"}],
+                        },
+                        {
+                            "author_name": "Seth Godin",
+                            "bio": "Marketing guru.",
+                            "resonance_rationale": "Punchy, concise writing.",
+                            "key_works": [{"title": "Purple Cow", "type": "book", "relevance": "relevant"}],
+                        },
+                    ],
+                },
+            ],
+            "cross_persona_synthesis": {"shared_authors": []},
+            "metadata": {
+                "total_personas_processed": 2,
+                "total_unique_authors_recommended": 3,
+                "authors_requiring_research": [
+                    {"author_name": "Morgan Housel", "priority": "HIGH", "research_focus": "financial writing"},
+                ],
+            },
+        })
+        result = _parse_json_array(payload)
+        # Should extract 3 unique authors (Morgan Housel deduplicated)
+        names = [r.get("name") for r in result]
+        assert len(result) == 3
+        assert "Morgan Housel" in names
+        assert "Ann Handley" in names
+        assert "Seth Godin" in names
+
+    def test_parse_json_array_per_persona_deduplicates(self) -> None:
+        """Same author across multiple personas should appear once."""
+        from core.research.voice_style_guide.agents import _parse_json_array
+
+        payload = json.dumps({
+            "personas": [
+                {
+                    "persona_title": "Persona A",
+                    "recommended_authors": [
+                        {"author_name": "Gene Kim", "bio": "DevOps author."},
+                    ],
+                },
+                {
+                    "persona_title": "Persona B",
+                    "recommended_authors": [
+                        {"author_name": "Gene Kim", "bio": "DevOps author."},
+                        {"author_name": "Sahil Lavingia", "bio": "Founder."},
+                    ],
+                },
+            ],
+        })
+        result = _parse_json_array(payload)
+        names = [r.get("name") for r in result]
+        assert names.count("Gene Kim") == 1
+        assert "Sahil Lavingia" in names
+        assert len(result) == 2
+
+    def test_parse_json_array_per_persona_empty_authors(self) -> None:
+        """Personas with empty recommended_authors should not break parsing."""
+        from core.research.voice_style_guide.agents import _parse_json_array
+
+        payload = json.dumps({
+            "personas": [
+                {"persona_title": "Empty", "recommended_authors": []},
+                {
+                    "persona_title": "Has Author",
+                    "recommended_authors": [
+                        {"author_name": "Test Author", "bio": "desc"},
+                    ],
+                },
+            ],
+        })
+        result = _parse_json_array(payload)
+        assert len(result) == 1
+        assert result[0].get("name") == "Test Author"
+
+    def test_parse_json_array_per_persona_missing_recommended_authors_key(self) -> None:
+        """Persona entry without recommended_authors key should be skipped."""
+        from core.research.voice_style_guide.agents import _parse_json_array
+
+        payload = json.dumps({
+            "personas": [
+                {"persona_title": "No authors key"},
+                {
+                    "persona_title": "Has Author",
+                    "recommended_authors": [
+                        {"author_name": "Valid Author", "bio": "desc"},
+                    ],
+                },
+            ],
+        })
+        result = _parse_json_array(payload)
+        assert len(result) == 1
+
+    def test_parse_json_array_per_persona_non_list_personas(self) -> None:
+        """If personas is not a list, fall back gracefully."""
+        from core.research.voice_style_guide.agents import _parse_json_array
+
+        payload = json.dumps({"personas": "not a list"})
+        result = _parse_json_array(payload)
+        # Falls through to dict-fallback (no recommended_authors key)
+        assert result == [{"personas": "not a list"}]
+
+    def test_parse_json_array_per_persona_with_metadata_fallback(self) -> None:
+        """If personas all have empty authors, metadata.authors_requiring_research used as fallback."""
+        from core.research.voice_style_guide.agents import _parse_json_array
+
+        payload = json.dumps({
+            "personas": [
+                {"persona_title": "Empty", "recommended_authors": []},
+            ],
+            "metadata": {
+                "authors_requiring_research": [
+                    {"author_name": "Fallback Author", "priority": "HIGH", "research_focus": "focus"},
+                ],
+            },
+        })
+        result = _parse_json_array(payload)
+        assert len(result) == 1
+        assert result[0].get("name") == "Fallback Author"
+
+    # ── Old set-level schema (backward compat) ──
+
+    def test_parse_json_array_set_level_recommended_authors(self) -> None:
+        """Old schema: {"recommended_authors": [...]} still works."""
+        from core.research.voice_style_guide.agents import _parse_json_array
+
+        payload = json.dumps({
+            "recommended_authors": [
+                {"author_name": "Gene Kim", "bio": "DevOps pioneer."},
+                {"author_name": "Sahil Lavingia", "bio": "Founder."},
+            ],
+        })
+        result = _parse_json_array(payload)
+        assert len(result) == 2
+        assert result[0].get("name") == "Gene Kim"
+
+    # ── _map_discovery_author per-persona fields ──
+
+    def test_map_discovery_author_per_persona_fields(self) -> None:
+        """New per-persona fields should be mapped correctly."""
+        from core.research.voice_style_guide.agents import _map_discovery_author
+
+        raw = {
+            "author_name": "Robert M. Lee",
+            "bio": "ICS/OT security expert, founded Dragos.",
+            "resonance_rationale": "Speaks directly to SCADA security fears.",
+            "key_works": [
+                {"title": "SANS ICS515", "type": "course", "relevance": "ICS defense framework"},
+            ],
+            "voice_style_implications": {
+                "tonal_quality": "practitioner bluntness",
+                "rhetorical_pattern": "war stories before frameworks",
+                "content_format_signal": "long-form case studies",
+            },
+            "persona_facet_addressed": "operational fear of catastrophic breach",
+            "high_score_count": 5,
+        }
+        mapped = _map_discovery_author(raw)
+        assert mapped["name"] == "Robert M. Lee"
+        assert mapped["description"] == "ICS/OT security expert, founded Dragos."
+        assert mapped["resonance_rationale"] == "Speaks directly to SCADA security fears."
+        assert mapped["famous_works"] == ["SANS ICS515"]
+
+    def test_map_discovery_author_backward_compat(self) -> None:
+        """Old schema fields (selection_rationale) still map correctly."""
+        from core.research.voice_style_guide.agents import _map_discovery_author
+
+        raw = {
+            "author_name": "Gene Kim",
+            "bio": "DevOps pioneer.",
+            "selection_rationale": "Phoenix Project resonates with IT ops.",
+            "key_works": [{"title": "Phoenix Project", "type": "book", "relevance": "manufacturing IT"}],
+        }
+        mapped = _map_discovery_author(raw)
+        assert mapped["name"] == "Gene Kim"
+        assert mapped["resonance_rationale"] == "Phoenix Project resonates with IT ops."
+
+    def test_parse_json_array_code_fences_with_per_persona(self) -> None:
+        """Per-persona JSON wrapped in markdown code fences."""
+        from core.research.voice_style_guide.agents import _parse_json_array, _strip_code_fences
+
+        inner = json.dumps({
+            "personas": [
+                {
+                    "persona_title": "Test",
+                    "recommended_authors": [
+                        {"author_name": "Test Author", "bio": "desc"},
+                    ],
+                },
+            ],
+        })
+        fenced = f"```json\n{inner}\n```"
+        cleaned = _strip_code_fences(fenced)
+        result = _parse_json_array(cleaned)
+        assert len(result) == 1
+        assert result[0].get("name") == "Test Author"
+
 
 # ── Author Discovery Agent ───────────────────────────────────────────
 

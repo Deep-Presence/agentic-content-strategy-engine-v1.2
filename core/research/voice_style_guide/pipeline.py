@@ -97,7 +97,12 @@ def _update_task(
 
 
 def _slugify_author_name(name: str) -> str:
-    """Convert author name to a URL-safe slug for directory naming."""
+    """Convert author name to a URL-safe slug for directory naming.
+
+    NOTE: Keep in sync with ``_slugify_name`` in ``agents.py``.
+    Both are intentionally kept local to avoid a cross-module import
+    cycle (agents ← pipeline would be circular via graph imports).
+    """
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower().strip())
     return slug.strip("-") or "unknown"
 
@@ -258,7 +263,7 @@ async def run_voice_style_guide_pipeline(
             )
 
         # Write discovery artifact
-        storage.write_discovery(briefs)
+        await asyncio.to_thread(storage.write_discovery, briefs)
 
         _emit(event_bus, task_id, "vsg_agent_complete", {
             "agent": "author_discovery",
@@ -345,8 +350,11 @@ async def run_voice_style_guide_pipeline(
 
                 if not result.error:
                     async with storage_lock:
-                        storage.write_author_brief(author_id, author)
-                        storage.write_author_research(
+                        await asyncio.to_thread(
+                            storage.write_author_brief, author_id, author,
+                        )
+                        await asyncio.to_thread(
+                            storage.write_author_research,
                             author_id, author.name, result.content_md,
                         )
 
@@ -439,7 +447,9 @@ async def run_voice_style_guide_pipeline(
 
         # Write guide + promote
         source_authors = list(author_research_mds.keys())
-        storage.write_guide(guide_md, source_authors=source_authors)
+        await asyncio.to_thread(
+            storage.write_guide, guide_md, source_authors=source_authors,
+        )
 
         _emit(event_bus, task_id, "vsg_agent_complete", {
             "agent": "voice_synthesis",
@@ -455,7 +465,9 @@ async def run_voice_style_guide_pipeline(
         _update_task(task_store, task_id, current_step="phase_4_finalize")
 
         # Promote to style_guides/
-        style_guide_path = storage.promote_to_style_guides(root) or ""
+        style_guide_path = await asyncio.to_thread(
+            storage.promote_to_style_guides, root,
+        ) or ""
 
         # Update manifest
         manifest = storage.read_manifest()

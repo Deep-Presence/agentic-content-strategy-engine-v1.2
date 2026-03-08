@@ -92,11 +92,11 @@ class TestAuthorDiscoveryPrompts:
             AUTHOR_DISCOVERY_SYSTEM_PROMPT,
         )
 
-        assert "Literary Strategist" in AUTHOR_DISCOVERY_SYSTEM_PROMPT
-        assert "Audience-First Analysis" in AUTHOR_DISCOVERY_SYSTEM_PROMPT
-        assert "Author Evaluation Criteria" in AUTHOR_DISCOVERY_SYSTEM_PROMPT
-        assert "Portfolio Diversity" in AUTHOR_DISCOVERY_SYSTEM_PROMPT
-        assert "JSON array" in AUTHOR_DISCOVERY_SYSTEM_PROMPT
+        assert "Persona-Author Resonance Analyst" in AUTHOR_DISCOVERY_SYSTEM_PROMPT
+        assert "Persona Decomposition" in AUTHOR_DISCOVERY_SYSTEM_PROMPT
+        assert "Author-Persona Resonance Scoring" in AUTHOR_DISCOVERY_SYSTEM_PROMPT
+        assert "Differentiation Check" in AUTHOR_DISCOVERY_SYSTEM_PROMPT
+        assert "valid JSON" in AUTHOR_DISCOVERY_SYSTEM_PROMPT
 
     def test_build_user_prompt_structure(
         self, vsg_input: VoiceStyleGuideInput, company_context_md: str, persona_mds: list[str],
@@ -194,13 +194,13 @@ class TestAuthorResearchPrompts:
             AUTHOR_RESEARCH_SYSTEM_PROMPT,
         )
 
-        assert "Voice & Tone Signature" in AUTHOR_RESEARCH_SYSTEM_PROMPT
-        assert "Sentence Architecture" in AUTHOR_RESEARCH_SYSTEM_PROMPT
-        assert "Vocabulary & Language Choices" in AUTHOR_RESEARCH_SYSTEM_PROMPT
-        assert "Rhetorical Techniques" in AUTHOR_RESEARCH_SYSTEM_PROMPT
-        assert "Structural Patterns" in AUTHOR_RESEARCH_SYSTEM_PROMPT
-        assert "Audience Engagement Style" in AUTHOR_RESEARCH_SYSTEM_PROMPT
-        assert "Signature Moves" in AUTHOR_RESEARCH_SYSTEM_PROMPT
+        assert "Style Markers Table" in AUTHOR_RESEARCH_SYSTEM_PROMPT
+        assert "Evidence Library" in AUTHOR_RESEARCH_SYSTEM_PROMPT
+        assert "Lexicon Map" in AUTHOR_RESEARCH_SYSTEM_PROMPT
+        assert "Analogy Rules" in AUTHOR_RESEARCH_SYSTEM_PROMPT
+        assert "Structure & Hook Patterns" in AUTHOR_RESEARCH_SYSTEM_PROMPT
+        assert "Audience Handling" in AUTHOR_RESEARCH_SYSTEM_PROMPT
+        assert "Quant Kit" in AUTHOR_RESEARCH_SYSTEM_PROMPT
 
     def test_build_user_prompt_structure(
         self,
@@ -302,16 +302,14 @@ class TestVoiceSynthesisPrompts:
             VOICE_SYNTHESIS_SYSTEM_PROMPT,
         )
 
-        assert "Voice & Tone" in VOICE_SYNTHESIS_SYSTEM_PROMPT
-        assert "Channel Variations" in VOICE_SYNTHESIS_SYSTEM_PROMPT
-        assert "Show vs. Tell" in VOICE_SYNTHESIS_SYSTEM_PROMPT
-        assert "Sentence & Language Choices" in VOICE_SYNTHESIS_SYSTEM_PROMPT
-        assert "Jargon / Terminology Rules" in VOICE_SYNTHESIS_SYSTEM_PROMPT
-        assert "Audience Resonance" in VOICE_SYNTHESIS_SYSTEM_PROMPT
-        assert "Product Positioning" in VOICE_SYNTHESIS_SYSTEM_PROMPT
-        assert "Do / Don't" in VOICE_SYNTHESIS_SYSTEM_PROMPT
-        assert "Formatting & Structure" in VOICE_SYNTHESIS_SYSTEM_PROMPT
-        assert "Sample Snippets" in VOICE_SYNTHESIS_SYSTEM_PROMPT
+        assert "Voice Identity" in VOICE_SYNTHESIS_SYSTEM_PROMPT
+        assert "Voice Registers" in VOICE_SYNTHESIS_SYSTEM_PROMPT
+        assert "Style Metrics" in VOICE_SYNTHESIS_SYSTEM_PROMPT
+        assert "Sentence & Structure Rules" in VOICE_SYNTHESIS_SYSTEM_PROMPT
+        assert "Lexicon" in VOICE_SYNTHESIS_SYSTEM_PROMPT
+        assert "Analogy & Empathy Patterns" in VOICE_SYNTHESIS_SYSTEM_PROMPT
+        assert "Anti-Patterns & Drift Checklist" in VOICE_SYNTHESIS_SYSTEM_PROMPT
+        assert "Worked Examples" in VOICE_SYNTHESIS_SYSTEM_PROMPT
 
     def test_build_user_prompt_structure(
         self,

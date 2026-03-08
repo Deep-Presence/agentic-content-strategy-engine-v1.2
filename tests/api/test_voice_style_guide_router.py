@@ -112,7 +112,7 @@ class TestStartVoiceStyleGuide:
     def test_start_custom_max_authors(self, client, mock_vsg_runner):
         resp = client.post(
             f"{PREFIX}/start",
-            json={**MINIMAL_PAYLOAD, "max_authors": 5},
+            json={**MINIMAL_PAYLOAD, "max_authors": 3},
         )
         assert resp.status_code == 202
 

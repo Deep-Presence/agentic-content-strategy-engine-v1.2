@@ -414,10 +414,10 @@ def build_voice_synthesis_user_prompt(
     parts.append("2. **Ground** every guideline in the audience personas' needs and preferences")
     parts.append("3. **Be actionable** — a content writer should immediately apply these rules")
     parts.append("4. **Be specific** — concrete rules, not vague principles")
-    parts.append("5. **Attribute** techniques to source authors where relevant")
+    parts.append("5. **Synthesize** techniques into an original voice without naming source authors")
     parts.append("")
     parts.append(
-        "Cover all 10 sections from the system prompt. "
+        "Cover all 8 sections from the system prompt (Voice Identity through Worked Examples). "
         "Output the complete guide as a single markdown document."
     )
 

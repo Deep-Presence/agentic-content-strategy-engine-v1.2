@@ -9,6 +9,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.schemas.common import _check_product_slug
+from core.models.voice_style_guide import VSG_MAX_AUTHORS_LIMIT, VSG_MIN_AUTHORS
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +29,7 @@ class VoiceStyleGuideStartRequest(BaseModel):
     def _validate_product_slug(cls, v: Optional[str]) -> Optional[str]:
         return _check_product_slug(v)
 
-    max_authors: int = Field(default=3, ge=2, le=5)
+    max_authors: int = Field(default=VSG_MAX_AUTHORS_LIMIT, ge=VSG_MIN_AUTHORS, le=VSG_MAX_AUTHORS_LIMIT)
     auto_approve_checkpoints: List[int] = Field(
         default_factory=list,
         description="Checkpoint numbers to auto-approve (1=authors)",

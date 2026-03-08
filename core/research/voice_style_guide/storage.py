@@ -42,6 +42,24 @@ class VoiceStyleGuideStorage:
         self._root = Path(artifacts_root) / "voice_style_guide" / slug
         self._slug = slug
 
+    @staticmethod
+    def _atomic_write(path: Path, content: str) -> None:
+        """Write content to *path* atomically via temp-file + os.replace."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(path.parent), suffix=".tmp", prefix=path.stem + "_",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_path, str(path))
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -76,20 +94,7 @@ class VoiceStyleGuideStorage:
     def write_manifest(self, manifest: VoiceStyleGuideManifest) -> None:
         """Persist the manifest to disk (atomic via temp-file + os.replace)."""
         self._root.mkdir(parents=True, exist_ok=True)
-        path = self._manifest_path()
-        fd, tmp_path = tempfile.mkstemp(
-            dir=str(self._root), suffix=".tmp", prefix="_manifest_",
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(manifest.model_dump_json(indent=2))
-            os.replace(tmp_path, str(path))
-        except BaseException:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        self._atomic_write(self._manifest_path(), manifest.model_dump_json(indent=2))
 
     # ------------------------------------------------------------------
     # Discovery artifact
@@ -115,7 +120,7 @@ class VoiceStyleGuideStorage:
 
         path = disc_dir / f"v{version}.json"
         data = [b.model_dump(mode="json") for b in briefs]
-        path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+        self._atomic_write(path, json.dumps(data, indent=2, default=str))
 
         manifest.slug = manifest.slug or self._slug
         self.write_manifest(manifest)
@@ -149,9 +154,7 @@ class VoiceStyleGuideStorage:
         """Write an author brief to {author_id}/brief.json."""
         d = self._author_dir(author_id)
         d.mkdir(parents=True, exist_ok=True)
-        (d / "brief.json").write_text(
-            brief.model_dump_json(indent=2), encoding="utf-8",
-        )
+        self._atomic_write(d / "brief.json", brief.model_dump_json(indent=2))
 
     def read_author_brief(self, author_id: str) -> Optional[AuthorBrief]:
         """Read an author brief. Returns None if missing."""
@@ -190,7 +193,7 @@ class VoiceStyleGuideStorage:
         author_dir.mkdir(parents=True, exist_ok=True)
 
         md_path = self._research_md_path(author_id, next_version)
-        md_path.write_text(content_md, encoding="utf-8")
+        self._atomic_write(md_path, content_md)
 
         sha = hashlib.sha256(content_md.encode("utf-8")).hexdigest()
         word_count = len(content_md.split())
@@ -257,7 +260,7 @@ class VoiceStyleGuideStorage:
         guide_dir.mkdir(parents=True, exist_ok=True)
 
         md_path = self._guide_md_path(next_version)
-        md_path.write_text(content_md, encoding="utf-8")
+        self._atomic_write(md_path, content_md)
 
         sha = hashlib.sha256(content_md.encode("utf-8")).hexdigest()
         word_count = len(content_md.split())
@@ -306,7 +309,7 @@ class VoiceStyleGuideStorage:
         sg_dir = Path(artifacts_root) / "style_guides"
         sg_dir.mkdir(parents=True, exist_ok=True)
         target = sg_dir / f"{self._slug}.md"
-        target.write_text(guide_md, encoding="utf-8")
+        self._atomic_write(target, guide_md)
 
         logger.info("VSG/%s: promoted guide to %s", self._slug, target)
         return str(target)

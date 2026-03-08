@@ -270,7 +270,7 @@ async def run_vsg_hitl_checkpoint(
         if task_store and task_id:
             task_store.update_task(
                 task_id,
-                status=TaskStatus.PENDING_APPROVAL.value,
+                status=TaskStatus.PENDING_APPROVAL,
                 approval_payload={
                     "stage": stage_name,
                     "checkpoint_nonce": checkpoint_nonce,
@@ -283,7 +283,7 @@ async def run_vsg_hitl_checkpoint(
 
             task_store.update_task(
                 task_id,
-                status=TaskStatus.RUNNING.value,
+                status=TaskStatus.RUNNING,
                 current_step=stage_name,
                 approval_payload=None,
             )

@@ -14,6 +14,10 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+# Single source of truth for author count constraints across the pipeline.
+VSG_MIN_AUTHORS: int = 2
+VSG_MAX_AUTHORS_LIMIT: int = 3
+
 
 # ---------------------------------------------------------------------------
 # Stage 1 — Author Discovery
@@ -110,7 +114,7 @@ class VoiceStyleGuideInput(BaseModel):
     company_slug: Optional[str] = None
     product_slug: Optional[str] = None
     product_name: Optional[str] = None
-    max_authors: int = Field(default=3, ge=2, le=5)
+    max_authors: int = Field(default=VSG_MAX_AUTHORS_LIMIT, ge=VSG_MIN_AUTHORS, le=VSG_MAX_AUTHORS_LIMIT)
     language: str = "en"
     region: Optional[str] = None
     additional_constraints: Optional[str] = None

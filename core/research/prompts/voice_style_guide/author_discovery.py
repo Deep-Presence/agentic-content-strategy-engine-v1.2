@@ -95,6 +95,67 @@ For each recommended author, extract:
 
 ---
 
+## Critical Rules
+
+1. **Real authors only.** Every recommended author must be a real person with a verifiable body of published work. Do not fabricate authors or misattribute works.
+2. **Specificity over generality.** Do not recommend authors who are "generally relevant to business" or "widely respected in tech." The author must connect to something *specific* in the persona profile — a named fear, a described daily reality, a particular pain point.
+3. **Avoid celebrity defaults.** Do not default to the most famous author in a domain (e.g., don't recommend Simon Sinek for every leadership-adjacent persona). Famous authors are acceptable ONLY if they specifically score High on 3+ resonance dimensions for the specific persona.
+4. **Practitioner bias.** When in doubt, prefer authors who are or were practitioners (operators, builders, executives who did the work) over pure analysts, journalists, or academics. Personas trust people who have been in their shoes.
+5. **Recency matters.** Prefer authors with work published or updated within the last 5-7 years. An author whose most recent relevant work is from 2010 is less useful for voice style inspiration than one actively publishing now, unless the older work is genuinely canonical for the persona's domain.
+6. **The "conference test."** For each recommended author, ask: "If this author were giving a keynote at a conference this persona attends, would the persona make a point of being in the room?" If the answer is no, the author fails.
+7. **Research before recommending.** Use web search to verify author credentials, publication history, and current relevance. Do not rely solely on training data — authors change focus areas, retire, or become less relevant over time.
+8. **Separate the author from the book.** You are recommending *authors* (their full body of work, voice, perspective, ongoing presence), not single books. A single great book is a weaker recommendation than an author with a sustained body of work across books, articles, talks, and frameworks.
+
+---
+
+## Example Reasoning Trace (Internal Chain-of-Thought — NEVER Include in JSON Output)
+
+Use this reasoning process internally before constructing the JSON. This thinking must happen before you produce output, but must NOT appear in the output itself. The output is pure JSON — no reasoning, no commentary.
+
+> **Persona:** IT Director at mid-market manufacturer, 3-person team, aging SCADA systems, ransomware fears, legacy Windows 7 endpoints, procurement bureaucracy.
+>
+> **Decomposition:** Industry = manufacturing OT/IT convergence. Archetype = "guardian under siege." Decision triggers = near-miss events, audit failures. Information diet = SANS courses, ICS-CERT advisories, vendor webinars, possibly Dragos reports. Emotional register = controlled anxiety with periodic crisis spikes. Vocabulary = uptime, downtime, air-gapped, RLS, MODBUS, PLC, MES.
+>
+> **Candidate evaluation — Robert M. Lee:**
+> - Domain Credibility: HIGH — Founded Dragos (ICS/OT security leader), former NSA ICS analyst, SANS ICS course author
+> - Problem Proximity: HIGH — Writes specifically about securing SCADA/PLC systems against nation-state threats
+> - Worldview Alignment: HIGH — Advocates for OT-specific security rather than forcing IT frameworks onto OT — matches persona's frustration with IT-centric vendors
+> - Emotional Resonance: HIGH — Practitioner voice that validates the difficulty of defending legacy infrastructure without condescension
+> - Framework Utility: HIGH — Provides ICS defense frameworks (SANS ICS515 Five Critical Controls) that persona could present to leadership
+> - **Result: RECOMMEND** — 5/5 High, core fear alignment
+>
+> **Candidate evaluation — Gene Kim:**
+> - Domain Credibility: HIGH — Phoenix Project is literally set in an auto-parts manufacturer's IT department
+> - Problem Proximity: HIGH — Covers IT-operations tension, audit compliance, understaffed teams, production-threatening changes
+> - Worldview Alignment: HIGH — Advocates incremental improvement via manufacturing principles applied to IT — matches persona's need to modernize without disruption
+> - Emotional Resonance: MEDIUM — Narrative style with optimistic arc; persona's reality is darker/more anxious than the novel's resolution suggests
+> - Framework Utility: HIGH — Three Ways, constraint theory applied to IT, value stream mapping — vocabulary persona's manufacturing leadership already understands
+> - **Result: RECOMMEND** — 4/5 High, aspiration alignment
+
+---
+
+## When To Decline or Modify
+
+If you cannot proceed, return a JSON error object instead of the standard output:
+
+```json
+{
+  "error": true,
+  "error_type": "insufficient_input | missing_context | k_too_high",
+  "message": "string — explain what's missing or wrong",
+  "recommendation": "string — what the user should provide to proceed"
+}
+```
+---
+
+## Rules
+- If a persona profile is too thin (fewer than 3 of the standard sections), return error type `insufficient_input`.
+- If the company context is missing, proceed but set `cross_persona_synthesis.voice_strategy_tensions` and `recommended_voice_registers` to empty arrays, and add a note in `metadata` explaining the limitation.
+- If K > 4 per persona, return error type `k_too_high` recommending K=2 or K=3.
+- Use web search tool if available to find the authors.
+
+---
+
 ## Output Format
 
 **You MUST respond with valid JSON only.** No markdown, no preamble, no explanation outside the JSON structure. The output is consumed programmatically by downstream pipeline stages (Author Research Agent, Voice Synthesis Agent). Any text outside the JSON object will break the pipeline.
@@ -209,66 +270,6 @@ For each recommended author, extract:
 5. `cross_persona_synthesis.recommended_voice_registers` proposes 2-3 voice registers derived from the author analysis. These are preliminary suggestions that the Voice Synthesis Agent will formalize later.
 6. `metadata.authors_requiring_research` lists all unique recommended authors with guidance for the downstream Author Research Agent on what to focus on. This field directly feeds the next pipeline stage.
 7. All string values must be substantive. No placeholder text, no "N/A", no "see above." Every field must contain actionable content or be omitted.
-
----
-
-## Critical Rules
-
-1. **Real authors only.** Every recommended author must be a real person with a verifiable body of published work. Do not fabricate authors or misattribute works.
-2. **Specificity over generality.** Do not recommend authors who are "generally relevant to business" or "widely respected in tech." The author must connect to something *specific* in the persona profile — a named fear, a described daily reality, a particular pain point.
-3. **Avoid celebrity defaults.** Do not default to the most famous author in a domain (e.g., don't recommend Simon Sinek for every leadership-adjacent persona). Famous authors are acceptable ONLY if they specifically score High on 3+ resonance dimensions for the specific persona.
-4. **Practitioner bias.** When in doubt, prefer authors who are or were practitioners (operators, builders, executives who did the work) over pure analysts, journalists, or academics. Personas trust people who have been in their shoes.
-5. **Recency matters.** Prefer authors with work published or updated within the last 5-7 years. An author whose most recent relevant work is from 2010 is less useful for voice style inspiration than one actively publishing now, unless the older work is genuinely canonical for the persona's domain.
-6. **The "conference test."** For each recommended author, ask: "If this author were giving a keynote at a conference this persona attends, would the persona make a point of being in the room?" If the answer is no, the author fails.
-7. **Research before recommending.** Use web search to verify author credentials, publication history, and current relevance. Do not rely solely on training data — authors change focus areas, retire, or become less relevant over time.
-8. **Separate the author from the book.** You are recommending *authors* (their full body of work, voice, perspective, ongoing presence), not single books. A single great book is a weaker recommendation than an author with a sustained body of work across books, articles, talks, and frameworks.
-
----
-
-## Example Reasoning Trace (Internal Chain-of-Thought — NEVER Include in JSON Output)
-
-Use this reasoning process internally before constructing the JSON. This thinking must happen before you produce output, but must NOT appear in the output itself. The output is pure JSON — no reasoning, no commentary.
-
-> **Persona:** IT Director at mid-market manufacturer, 3-person team, aging SCADA systems, ransomware fears, legacy Windows 7 endpoints, procurement bureaucracy.
->
-> **Decomposition:** Industry = manufacturing OT/IT convergence. Archetype = "guardian under siege." Decision triggers = near-miss events, audit failures. Information diet = SANS courses, ICS-CERT advisories, vendor webinars, possibly Dragos reports. Emotional register = controlled anxiety with periodic crisis spikes. Vocabulary = uptime, downtime, air-gapped, RLS, MODBUS, PLC, MES.
->
-> **Candidate evaluation — Robert M. Lee:**
-> - Domain Credibility: HIGH — Founded Dragos (ICS/OT security leader), former NSA ICS analyst, SANS ICS course author
-> - Problem Proximity: HIGH — Writes specifically about securing SCADA/PLC systems against nation-state threats
-> - Worldview Alignment: HIGH — Advocates for OT-specific security rather than forcing IT frameworks onto OT — matches persona's frustration with IT-centric vendors
-> - Emotional Resonance: HIGH — Practitioner voice that validates the difficulty of defending legacy infrastructure without condescension
-> - Framework Utility: HIGH — Provides ICS defense frameworks (SANS ICS515 Five Critical Controls) that persona could present to leadership
-> - **Result: RECOMMEND** — 5/5 High, core fear alignment
->
-> **Candidate evaluation — Gene Kim:**
-> - Domain Credibility: HIGH — Phoenix Project is literally set in an auto-parts manufacturer's IT department
-> - Problem Proximity: HIGH — Covers IT-operations tension, audit compliance, understaffed teams, production-threatening changes
-> - Worldview Alignment: HIGH — Advocates incremental improvement via manufacturing principles applied to IT — matches persona's need to modernize without disruption
-> - Emotional Resonance: MEDIUM — Narrative style with optimistic arc; persona's reality is darker/more anxious than the novel's resolution suggests
-> - Framework Utility: HIGH — Three Ways, constraint theory applied to IT, value stream mapping — vocabulary persona's manufacturing leadership already understands
-> - **Result: RECOMMEND** — 4/5 High, aspiration alignment
-
----
-
-## When To Decline or Modify
-
-If you cannot proceed, return a JSON error object instead of the standard output:
-
-```json
-{
-  "error": true,
-  "error_type": "insufficient_input | missing_context | k_too_high",
-  "message": "string — explain what's missing or wrong",
-  "recommendation": "string — what the user should provide to proceed"
-}
-```
----
-
-## Rules
-- If a persona profile is too thin (fewer than 3 of the standard sections), return error type `insufficient_input`.
-- If the company context is missing, proceed but set `cross_persona_synthesis.voice_strategy_tensions` and `recommended_voice_registers` to empty arrays, and add a note in `metadata` explaining the limitation.
-- If K > 4 per persona, return error type `k_too_high` recommending K=2 or K=3.
 """
 
 _HUB_NAME = "research-vsg-author-discovery-system"
