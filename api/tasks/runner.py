@@ -951,3 +951,77 @@ async def run_voice_style_guide_pipeline_task(
     finally:
         task_store.release_slug_lock(scope.effective_slug)
         task_store.remove_task_handle(task_id)
+
+
+# ---------------------------------------------------------------------------
+# Topic Discovery Pipeline
+# ---------------------------------------------------------------------------
+
+
+async def run_topic_discovery_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Topic Discovery pipeline."""
+    from core.models.topic_discovery import TopicDiscoveryInput
+    from core.topic_discovery.pipeline import run_topic_discovery_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            input_data = TopicDiscoveryInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+                max_expansion_rounds=getattr(request, "max_expansion_rounds", 4),
+                dedup_threshold=getattr(request, "dedup_threshold", 0.85),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+            )
+
+            output = await run_topic_discovery_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "taxonomy_version": output.taxonomy_version,
+                "matrix_version": output.matrix_version,
+                "total_subdomains": output.taxonomy.total_subdomains if output.taxonomy else 0,
+                "total_assignments": output.matrix.total_assignments if output.matrix else 0,
+                "coverage_score": output.taxonomy.coverage_score if output.taxonomy else 0.0,
+                "produced_artifacts": [
+                    {"type": "topic_discovery", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("TD pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("TD pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)

@@ -97,3 +97,42 @@ class TrackingStatus(str, Enum):
     pending = "pending"
     completed = "completed"
     failed = "failed"
+
+
+# ── Topic Discovery ─────────────────────────────────────────────────
+class TDStatus(str, Enum):
+    draft = "draft"
+    hitl_pending = "hitl_pending"
+    approved = "approved"
+    archived = "archived"
+
+
+class BuyerStage(str, Enum):
+    tofu = "tofu"
+    mofu = "mofu"
+    bofu = "bofu"
+
+
+class IntentType(str, Enum):
+    informational = "informational"
+    commercial = "commercial"
+    navigational = "navigational"
+    transactional = "transactional"
+
+
+class AudienceSegmentType(str, Enum):
+    individual_persona = "individual_persona"
+    team_group = "team_group"
+
+
+class RelevanceCell(str, Enum):
+    relevant = "relevant"
+    marginal = "marginal"
+    irrelevant = "irrelevant"
+
+
+class TopicAssignmentStatus(str, Enum):
+    not_started = "not_started"
+    in_gap_analysis = "in_gap_analysis"
+    content_produced = "content_produced"
+    published = "published"

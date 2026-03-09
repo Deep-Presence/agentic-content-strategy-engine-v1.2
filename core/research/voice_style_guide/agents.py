@@ -421,12 +421,12 @@ async def run_author_discovery(
             tools=[_web_search_tool],
             timeout_s=timeout_s,
         )
-        _sep = "=" * 60
-        print(f"\n{_sep}\n  AUTHOR DISCOVERY RAW LLM OUTPUT\n{_sep}\n{raw_text}\n{_sep}\n")
-        logger.info(
-            "Author discovery raw response length=%d, first 500 chars: %s",
-            len(raw_text), raw_text[:500],
-        )
+        # _sep = "=" * 60
+        # print(f"\n{_sep}\n  AUTHOR DISCOVERY RAW LLM OUTPUT\n{_sep}\n{raw_text}\n{_sep}\n")
+        # logger.info(
+        #     "Author discovery raw response length=%d, first 500 chars: %s",
+        #     len(raw_text), raw_text[:500],
+        # )
         log_generation(
             span, "vsg-author-discovery", model,
             user_prompt[:2000], raw_text[:2000],

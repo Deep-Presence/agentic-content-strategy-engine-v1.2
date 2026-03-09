@@ -151,6 +151,14 @@ class Settings(BaseSettings):
     voice_style_guide_synthesis_model: str = "anthropic/claude-sonnet-4-6"
     voice_style_guide_max_concurrent_researchers: int = 3
 
+    # --- Topic Discovery Pipeline ---
+    topic_discovery_brainstorm_model: str = "anthropic/claude-sonnet-4-6"
+    topic_discovery_dedup_model: str = "anthropic/claude-haiku-4-5-20251001"
+    topic_discovery_max_expansion_rounds: int = 4
+    topic_discovery_dedup_threshold: float = 0.85
+    topic_discovery_max_concurrent_sources: int = 4
+    topic_discovery_source_timeout_s: float = 120.0
+
     # --- CPS Model (Citation Signal Predictor) ---
     cps_enabled: bool = True
     cps_target_weight: float = 0.5
