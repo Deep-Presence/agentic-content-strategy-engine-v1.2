@@ -5,7 +5,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
@@ -15,7 +15,9 @@ from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.topic_discovery import (
     ApprovalResponseTD,
     MatrixApprovalRequest,
+    MatrixReadResponse,
     TaxonomyApprovalRequest,
+    TaxonomyReadResponse,
     TopicDiscoveryStartRequest,
 )
 from api.tasks.event_bus import EventBus
@@ -157,12 +159,14 @@ async def start_topic_discovery(
 @router.get("/{run_id}/status")
 async def get_topic_discovery_status(
     run_id: str,
+    http_request: Request,
     _user: UserProfile = Depends(require_auth),
     task_store: TaskStoreProtocol = Depends(get_task_store),
 ) -> TaskResponse:
     task = task_store.get_task(run_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if task.company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
     return TaskResponse(
         run_id=task.task_id,
         pipeline=task.pipeline,
@@ -187,16 +191,22 @@ async def get_topic_discovery_status(
 async def approve_taxonomy(
     run_id: str,
     body: TaxonomyApprovalRequest,
+    http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
 ) -> ApprovalResponseTD:
     task = task_store.get_task(run_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if task.company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     _validate_approval_window(task, "td_taxonomy_review")
 
     nonce = (task.approval_payload or {}).get("checkpoint_nonce")
+    if not nonce:
+        raise HTTPException(
+            status_code=409, detail="No active approval checkpoint"
+        )
 
     approval_data = {
         "batch_decision": body.batch_decision,
@@ -229,16 +239,22 @@ async def approve_taxonomy(
 async def approve_matrix(
     run_id: str,
     body: MatrixApprovalRequest,
+    http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
 ) -> ApprovalResponseTD:
     task = task_store.get_task(run_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if task.company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     _validate_approval_window(task, "td_matrix_review")
 
     nonce = (task.approval_payload or {}).get("checkpoint_nonce")
+    if not nonce:
+        raise HTTPException(
+            status_code=409, detail="No active approval checkpoint"
+        )
 
     approval_data = {
         "batch_decision": body.batch_decision,
@@ -269,22 +285,29 @@ async def approve_matrix(
 @router.get("/{slug}/taxonomy")
 async def get_latest_taxonomy(
     slug: str,
+    http_request: Request,
     _user: UserProfile = Depends(require_auth),
     artifacts_root: Path = Depends(get_artifacts_root),
-) -> Dict[str, Any]:
+) -> TaxonomyReadResponse:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
     storage = TopicDiscoveryStorage(artifacts_root, slug)
     taxonomy = storage.get_latest_taxonomy()
     if taxonomy is None:
         raise HTTPException(status_code=404, detail="No taxonomy found")
 
     manifest = storage.read_manifest()
-    return {
-        "slug": slug,
-        "taxonomy": taxonomy.model_dump(mode="json"),
-        "version": manifest.taxonomy_version,
-        "total_subdomains": taxonomy.total_subdomains,
-        "coverage_score": taxonomy.coverage_score,
-    }
+    return TaxonomyReadResponse(
+        slug=slug,
+        taxonomy=taxonomy.model_dump(mode="json"),
+        version=manifest.taxonomy_version,
+        total_subdomains=taxonomy.total_subdomains,
+        coverage_score=taxonomy.coverage_score,
+    )
 
 
 # ── Endpoint 6: GET /{slug}/matrix ───────────────────────────────────
@@ -293,18 +316,25 @@ async def get_latest_taxonomy(
 @router.get("/{slug}/matrix")
 async def get_latest_matrix(
     slug: str,
+    http_request: Request,
     _user: UserProfile = Depends(require_auth),
     artifacts_root: Path = Depends(get_artifacts_root),
-) -> Dict[str, Any]:
+) -> MatrixReadResponse:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
     storage = TopicDiscoveryStorage(artifacts_root, slug)
     matrix = storage.get_latest_matrix()
     if matrix is None:
         raise HTTPException(status_code=404, detail="No matrix found")
 
     manifest = storage.read_manifest()
-    return {
-        "slug": slug,
-        "matrix": matrix.model_dump(mode="json"),
-        "version": manifest.matrix_version,
-        "total_assignments": matrix.total_assignments,
-    }
+    return MatrixReadResponse(
+        slug=slug,
+        matrix=matrix.model_dump(mode="json"),
+        version=manifest.matrix_version,
+        total_assignments=matrix.total_assignments,
+    )

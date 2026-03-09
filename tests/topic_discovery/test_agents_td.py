@@ -14,6 +14,7 @@ import pytest
 
 from core.models.topic_discovery import (
     CaptureRecaptureResult,
+    PerSourceCoverage,
     SourceResult,
     SubdomainCandidate,
     TDSource,
@@ -22,8 +23,12 @@ from core.models.topic_discovery import (
 from core.topic_discovery.agents import (
     _cosine_similarity,
     _count_frequency_classes,
+    _count_frequency_classes_by_round,
+    _count_total_round_observations,
     _count_tree_stats,
     _parse_hierarchy_nodes,
+    _parse_json_response,
+    _safe_float,
     _strip_code_fences,
     compute_all_coverage_metrics,
     compute_capture_recapture,
@@ -100,48 +105,111 @@ class TestSampleCoverage:
 
 class TestComputeAllCoverageMetrics:
     def test_basic_computation(self):
+        """Two sources with overlap → pairwise CR + per-source coverage."""
         sr_a = SourceResult(
             source=TDSource.source_a,
             candidates=[
-                SubdomainCandidate(name="expense mgmt", source=TDSource.source_a),
-                SubdomainCandidate(name="corporate cards", source=TDSource.source_a),
-                SubdomainCandidate(name="compliance", source=TDSource.source_a),
+                SubdomainCandidate(name="expense mgmt", source=TDSource.source_a, round_number=1),
+                SubdomainCandidate(name="corporate cards", source=TDSource.source_a, round_number=1),
+                SubdomainCandidate(name="compliance", source=TDSource.source_a, round_number=2),
             ],
-            singletons=1,
+            total_rounds=2,
+            singletons=2,  # cards, compliance each in 1 round
             doubletons=0,
+            chao1_estimate=5.0,
+            source_sample_coverage=0.33,
         )
         sr_b = SourceResult(
             source=TDSource.source_b,
             candidates=[
-                SubdomainCandidate(name="expense mgmt", source=TDSource.source_b),
-                SubdomainCandidate(name="budgeting", source=TDSource.source_b),
+                SubdomainCandidate(name="expense mgmt", source=TDSource.source_b, round_number=1),
+                SubdomainCandidate(name="budgeting", source=TDSource.source_b, round_number=1),
             ],
-            singletons=1,
+            total_rounds=1,
+            singletons=2,
             doubletons=0,
+            chao1_estimate=3.0,
+            source_sample_coverage=0.0,
         )
         result = compute_all_coverage_metrics([sr_a, sr_b])
         assert isinstance(result, CaptureRecaptureResult)
         assert result.observed_count == 4  # expense, cards, compliance, budgeting
         assert len(result.pairwise_estimates) >= 1
-        assert result.total_singletons == 2
+        # Per-source coverage populated
+        assert "source_a" in result.per_source_coverage
+        assert "source_b" in result.per_source_coverage
+        assert result.per_source_coverage["source_a"].chao1_estimate == 5.0
+        assert result.per_source_coverage["source_b"].source == TDSource.source_b
+        # Aggregate = min of per-source coverages with coverage > 0
+        # Source B has 0.0 coverage (single round, all singletons) → excluded
+        assert result.aggregate_sample_coverage == 0.33
+        # Backward-compat field mirrors aggregate
+        assert result.sample_coverage == result.aggregate_sample_coverage
 
     def test_empty_sources(self):
         result = compute_all_coverage_metrics([])
         assert result.observed_count == 0
         assert result.median_estimate == 0.0
+        assert result.per_source_coverage == {}
+        assert result.aggregate_sample_coverage == 0.0
 
     def test_no_overlap_no_pairwise(self):
         sr_a = SourceResult(
             source=TDSource.source_a,
-            candidates=[SubdomainCandidate(name="A", source=TDSource.source_a)],
+            candidates=[SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1)],
+            total_rounds=1,
+            singletons=1,
+            doubletons=0,
+            chao1_estimate=1.0,
+            source_sample_coverage=0.0,
         )
         sr_b = SourceResult(
             source=TDSource.source_b,
-            candidates=[SubdomainCandidate(name="B", source=TDSource.source_b)],
+            candidates=[SubdomainCandidate(name="B", source=TDSource.source_b, round_number=1)],
+            total_rounds=1,
+            singletons=1,
+            doubletons=0,
+            chao1_estimate=1.0,
+            source_sample_coverage=0.0,
         )
         result = compute_all_coverage_metrics([sr_a, sr_b])
         assert result.observed_count == 2
         assert len(result.pairwise_estimates) == 0
+
+    def test_per_source_coverage_independent(self):
+        """Cross-source overlap must NOT affect within-source metrics."""
+        # Source A: "X" in rounds 1+2 (doubleton), "Y" in round 1 (singleton)
+        sr_a = SourceResult(
+            source=TDSource.source_a,
+            candidates=[
+                SubdomainCandidate(name="X", source=TDSource.source_a, round_number=1),
+                SubdomainCandidate(name="X", source=TDSource.source_a, round_number=2),
+                SubdomainCandidate(name="Y", source=TDSource.source_a, round_number=1),
+            ],
+            total_rounds=2,
+            singletons=1,   # Y
+            doubletons=1,    # X
+            chao1_estimate=2.5,
+            source_sample_coverage=0.67,
+        )
+        # Source B: "X" also in round 1 (same topic, different source)
+        sr_b = SourceResult(
+            source=TDSource.source_b,
+            candidates=[
+                SubdomainCandidate(name="X", source=TDSource.source_b, round_number=1),
+            ],
+            total_rounds=1,
+            singletons=1,
+            doubletons=0,
+            chao1_estimate=1.0,
+            source_sample_coverage=0.0,
+        )
+        result = compute_all_coverage_metrics([sr_a, sr_b])
+        # Source A's per-source coverage should reflect what was passed in,
+        # not be contaminated by Source B's "X"
+        assert result.per_source_coverage["source_a"].singletons == 1
+        assert result.per_source_coverage["source_a"].doubletons == 1
+        assert result.per_source_coverage["source_a"].chao1_estimate == 2.5
 
 
 # ── Helper Functions ─────────────────────────────────────────────────────
@@ -199,6 +267,92 @@ class TestCountFrequencyClasses:
         singletons, doubletons = _count_frequency_classes([])
         assert singletons == 0
         assert doubletons == 0
+
+
+class TestCountFrequencyClassesByRound:
+    """Test round-level frequency counting (correct unit for Chao1 within a source)."""
+
+    def test_single_round_all_singletons(self):
+        """All names in 1 round → all singletons."""
+        candidates = [
+            SubdomainCandidate(name="A", round_number=1),
+            SubdomainCandidate(name="B", round_number=1),
+        ]
+        s, d = _count_frequency_classes_by_round(candidates)
+        assert s == 2
+        assert d == 0
+
+    def test_name_in_two_rounds_is_doubleton(self):
+        """A name appearing in round 1 and round 2 → doubleton."""
+        candidates = [
+            SubdomainCandidate(name="A", round_number=1),
+            SubdomainCandidate(name="A", round_number=2),
+            SubdomainCandidate(name="B", round_number=1),
+        ]
+        s, d = _count_frequency_classes_by_round(candidates)
+        assert s == 1  # B in 1 round
+        assert d == 1  # A in 2 rounds
+
+    def test_name_in_three_rounds_neither(self):
+        """A name in 3+ rounds is neither singleton nor doubleton."""
+        candidates = [
+            SubdomainCandidate(name="A", round_number=1),
+            SubdomainCandidate(name="A", round_number=2),
+            SubdomainCandidate(name="A", round_number=3),
+        ]
+        s, d = _count_frequency_classes_by_round(candidates)
+        assert s == 0
+        assert d == 0
+
+    def test_duplicate_in_same_round_counts_once(self):
+        """LLM returns same name twice in one round → still 1 round presence."""
+        candidates = [
+            SubdomainCandidate(name="A", round_number=1),
+            SubdomainCandidate(name="A", round_number=1),
+            SubdomainCandidate(name="A", round_number=2),
+        ]
+        s, d = _count_frequency_classes_by_round(candidates)
+        assert s == 0
+        assert d == 1  # A in 2 distinct rounds
+
+    def test_case_insensitive(self):
+        candidates = [
+            SubdomainCandidate(name="Expense Mgmt", round_number=1),
+            SubdomainCandidate(name="expense mgmt", round_number=2),
+        ]
+        s, d = _count_frequency_classes_by_round(candidates)
+        assert s == 0
+        assert d == 1
+
+    def test_empty(self):
+        s, d = _count_frequency_classes_by_round([])
+        assert s == 0
+        assert d == 0
+
+
+class TestCountTotalRoundObservations:
+    """Test the denominator N for Good-Turing: total (name, round) incidences."""
+
+    def test_basic(self):
+        candidates = [
+            SubdomainCandidate(name="A", round_number=1),
+            SubdomainCandidate(name="A", round_number=2),
+            SubdomainCandidate(name="B", round_number=1),
+        ]
+        # A in 2 rounds + B in 1 round = 3
+        assert _count_total_round_observations(candidates) == 3
+
+    def test_duplicate_same_round_counted_once(self):
+        candidates = [
+            SubdomainCandidate(name="A", round_number=1),
+            SubdomainCandidate(name="A", round_number=1),  # same round
+            SubdomainCandidate(name="A", round_number=2),
+        ]
+        # A in rounds {1, 2} = 2 observations
+        assert _count_total_round_observations(candidates) == 2
+
+    def test_empty(self):
+        assert _count_total_round_observations([]) == 0
 
 
 class TestParseHierarchyNodes:
@@ -297,14 +451,16 @@ class TestSourceABrainstorm:
         assert result.source == TDSource.source_a
 
     @pytest.mark.asyncio
-    async def test_malformed_json_returns_error(self, mock_litellm):
+    async def test_malformed_json_graceful_recovery(self, mock_litellm):
+        """M2: Malformed JSON is handled gracefully — no error, 0 candidates."""
         mock_litellm.acompletion = AsyncMock(
             return_value=_make_mock_response("NOT JSON")
         )
         result = await run_source_a_company_brainstorm(
             "context", max_rounds=1, timeout_s=10.0
         )
-        assert result.error is not None
+        assert result.error is None
+        assert len(result.candidates) == 0
 
     @pytest.mark.asyncio
     async def test_empty_subdomains_stops_iteration(self, mock_litellm):
@@ -356,6 +512,27 @@ class TestSourceCSitemaps:
         assert result.source == TDSource.source_c
         assert len(result.candidates) == 1
         assert result.total_rounds == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_sitemap_skips_llm_call(self, mock_litellm):
+        """H5: Empty sitemap data should skip LLM call entirely."""
+        mock_litellm.acompletion = AsyncMock()
+        result = await run_source_c_competitor_sitemaps("", "ramp.com", timeout_s=10.0)
+        assert result.source == TDSource.source_c
+        assert len(result.candidates) == 0
+        assert result.total_rounds == 0
+        assert result.error is None
+        mock_litellm.acompletion.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_whitespace_sitemap_skips_llm_call(self, mock_litellm):
+        """H5: Whitespace-only sitemap data should skip LLM call."""
+        mock_litellm.acompletion = AsyncMock()
+        result = await run_source_c_competitor_sitemaps("  \n  ", "ramp.com", timeout_s=10.0)
+        assert result.source == TDSource.source_c
+        assert len(result.candidates) == 0
+        assert result.total_rounds == 0
+        mock_litellm.acompletion.assert_not_called()
 
 
 class TestSourceDAdversarial:
@@ -485,3 +662,307 @@ class TestTopicGeneration:
         assert isinstance(result[0], TopicAssignment)
         assert result[0].topic_text == "Best expense tools for startups"
         assert result[0].priority_score == 0.9
+
+
+# ── H4: revision_note threading tests ─────────────────────────────────
+
+
+class TestPromptBuilderRevisionNote:
+    """H4: Verify prompt builders accept and render revision_note."""
+
+    def test_source_a_revision_note(self):
+        from core.topic_discovery.prompts.source_a_company import build_source_a_user_prompt
+        prompt = build_source_a_user_prompt("company ctx", revision_note="add compliance topics")
+        assert "## Reviewer Feedback" in prompt
+        assert "add compliance topics" in prompt
+
+    def test_source_b_revision_note(self):
+        from core.topic_discovery.prompts.source_b_persona import build_source_b_user_prompt
+        prompt = build_source_b_user_prompt("personas", "company ctx", revision_note="more fintech")
+        assert "## Reviewer Feedback" in prompt
+        assert "more fintech" in prompt
+
+    def test_source_c_revision_note(self):
+        from core.topic_discovery.prompts.source_c_sitemap import build_source_c_user_prompt
+        prompt = build_source_c_user_prompt("sitemap data", "ramp.com", revision_note="missing security")
+        assert "## Reviewer Feedback" in prompt
+        assert "missing security" in prompt
+
+    def test_source_d_revision_note(self):
+        from core.topic_discovery.prompts.source_d_adversarial import build_source_d_user_prompt
+        prompt = build_source_d_user_prompt("company ctx", "regulatory expert", revision_note="add GDPR")
+        assert "## Reviewer Feedback" in prompt
+        assert "add GDPR" in prompt
+
+    def test_no_revision_note_omits_section(self):
+        from core.topic_discovery.prompts.source_a_company import build_source_a_user_prompt
+        prompt = build_source_a_user_prompt("company ctx")
+        assert "## Reviewer Feedback" not in prompt
+
+    def test_none_revision_note_omits_section(self):
+        from core.topic_discovery.prompts.source_a_company import build_source_a_user_prompt
+        prompt = build_source_a_user_prompt("company ctx", revision_note=None)
+        assert "## Reviewer Feedback" not in prompt
+
+
+class TestRevisionNoteInAgents:
+    """H4: Verify agent functions thread revision_note to LLM messages."""
+
+    @pytest.mark.asyncio
+    async def test_source_a_revision_note_in_llm_messages(self, mock_litellm):
+        response_json = json.dumps({"subdomains": []})
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response(response_json)
+        )
+        await run_source_a_company_brainstorm(
+            "context", max_rounds=1, timeout_s=10.0,
+            revision_note="add compliance topics",
+        )
+        call_args = mock_litellm.acompletion.call_args
+        user_msg = call_args.kwargs["messages"][1]["content"]
+        assert "## Reviewer Feedback" in user_msg
+        assert "add compliance topics" in user_msg
+
+    @pytest.mark.asyncio
+    async def test_source_b_revision_note_in_llm_messages(self, mock_litellm):
+        response_json = json.dumps({"subdomains": []})
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response(response_json)
+        )
+        await run_source_b_persona_brainstorm(
+            "personas", "company ctx", max_rounds=1, timeout_s=10.0,
+            revision_note="focus on procurement",
+        )
+        call_args = mock_litellm.acompletion.call_args
+        user_msg = call_args.kwargs["messages"][1]["content"]
+        assert "## Reviewer Feedback" in user_msg
+        assert "focus on procurement" in user_msg
+
+    @pytest.mark.asyncio
+    async def test_source_d_revision_note_in_llm_messages(self, mock_litellm):
+        response_json = json.dumps({"subdomains": []})
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response(response_json)
+        )
+        await run_source_d_adversarial(
+            "context", ["existing"],
+            specialist_lenses=["regulatory expert"],
+            max_rounds=1, timeout_s=10.0,
+            revision_note="explore tax implications",
+        )
+        call_args = mock_litellm.acompletion.call_args
+        user_msg = call_args.kwargs["messages"][1]["content"]
+        assert "## Reviewer Feedback" in user_msg
+        assert "explore tax implications" in user_msg
+
+
+# ── M1: Round accounting tests ─────────────────────────────────────────
+
+
+class TestM1RoundAccounting:
+    """M1: Source agents must report actual rounds executed, not max_rounds."""
+
+    @pytest.mark.asyncio
+    async def test_source_a_early_break_reports_actual_rounds(self, mock_litellm):
+        """Round 1 returns candidates, round 2 returns empty → breaks.
+        total_rounds should be 2 (both rounds executed), not max_rounds=4."""
+        r1 = json.dumps({"subdomains": [
+            {"name": "expense mgmt", "description": "d", "confidence": 0.9},
+        ]})
+        r2 = json.dumps({"subdomains": []})
+        mock_litellm.acompletion = AsyncMock(
+            side_effect=[_make_mock_response(r1), _make_mock_response(r2)]
+        )
+        result = await run_source_a_company_brainstorm(
+            "context", max_rounds=4, timeout_s=10.0
+        )
+        assert result.total_rounds == 2
+        assert len(result.candidates) == 1
+        assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_source_a_full_rounds_reports_max(self, mock_litellm):
+        """All 3 rounds produce candidates → total_rounds == 3."""
+        resp = json.dumps({"subdomains": [
+            {"name": "topic", "description": "d", "confidence": 0.8},
+        ]})
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response(resp)
+        )
+        result = await run_source_a_company_brainstorm(
+            "context", max_rounds=3, timeout_s=10.0
+        )
+        assert result.total_rounds == 3
+        assert mock_litellm.acompletion.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_source_a_exception_mid_round_reports_actual(self, mock_litellm):
+        """Round 1 succeeds, round 2 throws → total_rounds == 2
+        (round 2 was attempted even though it failed)."""
+        r1 = json.dumps({"subdomains": [
+            {"name": "expense mgmt", "description": "d", "confidence": 0.9},
+        ]})
+        mock_litellm.acompletion = AsyncMock(
+            side_effect=[_make_mock_response(r1), asyncio.TimeoutError()]
+        )
+        result = await run_source_a_company_brainstorm(
+            "context", max_rounds=4, timeout_s=10.0
+        )
+        assert result.total_rounds == 2  # round 2 attempted (counter incremented)
+        assert result.error is not None
+        assert len(result.candidates) == 1
+
+    @pytest.mark.asyncio
+    async def test_source_b_early_break_reports_actual_rounds(self, mock_litellm):
+        """Source B: early break → total_rounds reflects actual execution."""
+        r1 = json.dumps({"subdomains": [
+            {"name": "budgeting", "description": "d", "confidence": 0.7},
+        ]})
+        r2 = json.dumps({"subdomains": []})
+        mock_litellm.acompletion = AsyncMock(
+            side_effect=[_make_mock_response(r1), _make_mock_response(r2)]
+        )
+        result = await run_source_b_persona_brainstorm(
+            "personas", "company", max_rounds=4, timeout_s=10.0
+        )
+        assert result.total_rounds == 2
+        assert len(result.candidates) == 1
+
+    @pytest.mark.asyncio
+    async def test_source_d_rounds_capped_by_max_rounds(self, mock_litellm):
+        """5 specialist lenses but max_rounds=2 → total_rounds == 2 (not 5)."""
+        resp = json.dumps({"subdomains": [
+            {"name": "compliance", "description": "d", "confidence": 0.6},
+        ]})
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response(resp)
+        )
+        result = await run_source_d_adversarial(
+            "context", ["existing"],
+            specialist_lenses=["a", "b", "c", "d", "e"],
+            max_rounds=2, timeout_s=10.0,
+        )
+        assert result.total_rounds == 2
+        assert mock_litellm.acompletion.call_count == 2
+
+
+# ── M2: Safe JSON parsing tests ────────────────────────────────────────
+
+
+class TestParseJsonResponse:
+    """M2: _parse_json_response must return None on malformed JSON, not raise."""
+
+    def test_valid_json(self):
+        result = _parse_json_response('{"key": "value"}')
+        assert result == {"key": "value"}
+
+    def test_malformed_json_returns_none(self):
+        result = _parse_json_response("NOT JSON AT ALL")
+        assert result is None
+
+    def test_empty_string_returns_none(self):
+        result = _parse_json_response("")
+        assert result is None
+
+    def test_code_fences_stripped(self):
+        result = _parse_json_response('```json\n{"ok": true}\n```')
+        assert result == {"ok": True}
+
+
+class TestSafeFloat:
+    """M2: _safe_float coerces values safely with a fallback default."""
+
+    def test_valid_float(self):
+        assert _safe_float(0.9, 0.5) == 0.9
+
+    def test_valid_int(self):
+        assert _safe_float(1, 0.5) == 1.0
+
+    def test_valid_string_number(self):
+        assert _safe_float("0.75", 0.5) == 0.75
+
+    def test_invalid_string_returns_default(self):
+        assert _safe_float("not a number", 0.5) == 0.5
+
+    def test_none_returns_default(self):
+        assert _safe_float(None, 0.5) == 0.5
+
+    def test_empty_string_returns_default(self):
+        assert _safe_float("", 0.5) == 0.5
+
+
+class TestM2MalformedJsonRecovery:
+    """M2: Malformed JSON mid-round should not lose prior candidates."""
+
+    @pytest.mark.asyncio
+    async def test_source_a_malformed_json_mid_round_keeps_prior(self, mock_litellm):
+        """R1 returns valid JSON with 2 candidates, R2 returns garbage.
+        Should keep R1 candidates and not error."""
+        r1 = json.dumps({"subdomains": [
+            {"name": "expense mgmt", "description": "d", "confidence": 0.9},
+            {"name": "cards", "description": "d", "confidence": 0.8},
+        ]})
+        r2_bad = "NOT VALID JSON {{{}"
+        mock_litellm.acompletion = AsyncMock(
+            side_effect=[_make_mock_response(r1), _make_mock_response(r2_bad)]
+        )
+        result = await run_source_a_company_brainstorm(
+            "context", max_rounds=4, timeout_s=10.0
+        )
+        assert result.error is None
+        assert len(result.candidates) == 2
+        assert result.candidates[0].name == "expense mgmt"
+
+    @pytest.mark.asyncio
+    async def test_source_d_malformed_json_one_lens_continues(self, mock_litellm):
+        """Lens 1 returns valid, lens 2 returns garbage → keeps lens 1 candidates."""
+        r1 = json.dumps({"subdomains": [
+            {"name": "SOC2", "description": "d", "confidence": 0.6},
+        ]})
+        r2_bad = "<<<GARBAGE>>>"
+        mock_litellm.acompletion = AsyncMock(
+            side_effect=[_make_mock_response(r1), _make_mock_response(r2_bad)]
+        )
+        result = await run_source_d_adversarial(
+            "context", ["existing"],
+            specialist_lenses=["regulatory", "accessibility"],
+            max_rounds=2, timeout_s=10.0,
+        )
+        assert result.error is None
+        assert len(result.candidates) == 1
+        assert result.candidates[0].name == "SOC2"
+
+    @pytest.mark.asyncio
+    async def test_hierarchy_malformed_json_returns_empty_tree(self, mock_litellm):
+        """Hierarchy construction with garbage JSON → empty tree."""
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response("NOT JSON")
+        )
+        tree = await run_hierarchy_construction(
+            ["sub1", "sub2"], "fintech", timeout_s=10.0
+        )
+        assert tree.domain_name == "fintech"
+        assert tree.total_subdomains == 0
+        assert len(tree.root_nodes) == 0
+
+    @pytest.mark.asyncio
+    async def test_relevance_malformed_json_returns_empty(self, mock_litellm):
+        """Relevance filtering with garbage JSON → empty list."""
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response("BAD JSON")
+        )
+        result = await run_relevance_filtering(
+            "sub1", [{"buyer_stage": "tofu"}], "context", timeout_s=10.0
+        )
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_topic_gen_malformed_json_returns_empty(self, mock_litellm):
+        """Topic generation with garbage JSON → empty list."""
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response("BAD JSON")
+        )
+        result = await run_topic_generation(
+            "sub1", "tofu", "informational", "CFO", "context", timeout_s=10.0
+        )
+        assert result == []

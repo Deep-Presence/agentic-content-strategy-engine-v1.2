@@ -9,6 +9,7 @@ Mirrors build_vsg_author_review_graph() from voice_style_guide/graph.py.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import time
 import uuid
@@ -133,11 +134,19 @@ def _process_taxonomy_edits(
             if node:
                 root_nodes = _remove_node(root_nodes, node_id)
                 if new_parent_id:
-                    _add_child_to_node(root_nodes, new_parent_id, node)
+                    added = _add_child_to_node(root_nodes, new_parent_id, node)
+                    if not added:
+                        # Target parent not found — re-attach at root to avoid data loss
+                        logger.warning(
+                            "Reparent: target parent %s not found, attaching %s at root",
+                            new_parent_id, node_id,
+                        )
+                        root_nodes.append(node)
                 else:
                     root_nodes.append(node)
 
     taxonomy["root_nodes"] = root_nodes
+    _normalize_tree_metadata(taxonomy)
     return taxonomy
 
 
@@ -189,6 +198,42 @@ def _extract_node(
     return None
 
 
+def _set_depths(nodes: List[Dict[str, Any]], depth: int = 0) -> None:
+    """Recursively set correct depth and sort_order on every node."""
+    for i, node in enumerate(nodes):
+        node["depth"] = depth
+        node["sort_order"] = i
+        _set_depths(node.get("children", []), depth + 1)
+
+
+def _count_nodes_and_max_depth(
+    nodes: List[Dict[str, Any]],
+) -> tuple:
+    """Count total nodes and max depth in a serialized tree."""
+    if not nodes:
+        return 0, 0
+    total = 0
+    max_d = 0
+    for node in nodes:
+        total += 1
+        max_d = max(max_d, node.get("depth", 0))
+        child_total, child_max = _count_nodes_and_max_depth(
+            node.get("children", [])
+        )
+        total += child_total
+        max_d = max(max_d, child_max)
+    return total, max_d
+
+
+def _normalize_tree_metadata(taxonomy: Dict[str, Any]) -> None:
+    """Recompute depths, sort_order, total_subdomains, max_depth after edits."""
+    root_nodes = taxonomy.get("root_nodes", [])
+    _set_depths(root_nodes, depth=0)
+    total, max_depth = _count_nodes_and_max_depth(root_nodes)
+    taxonomy["total_subdomains"] = total
+    taxonomy["max_depth"] = max_depth
+
+
 def _taxonomy_gate(state: Dict[str, Any]) -> Dict[str, Any]:
     """Pause for human taxonomy review via interrupt().
 
@@ -222,9 +267,9 @@ def _taxonomy_gate(state: Dict[str, Any]) -> Dict[str, Any]:
     user_feedback = resume.get("user_feedback", "")
 
     if decision == "modify" and user_edits:
-        taxonomy = _process_taxonomy_edits(dict(taxonomy), user_edits)
+        taxonomy = _process_taxonomy_edits(copy.deepcopy(taxonomy), user_edits)
 
-    approved_taxonomy = taxonomy if decision != "retry" else {}
+    approved_taxonomy = taxonomy if decision in ("approve", "modify") else {}
 
     return {
         **state,
@@ -371,13 +416,15 @@ def _matrix_gate(state: Dict[str, Any]) -> Dict[str, Any]:
     user_edits = resume.get("user_edits", [])
 
     if decision == "modify" and user_edits:
-        matrix = _process_matrix_edits(dict(matrix), user_edits)
+        matrix = _process_matrix_edits(copy.deepcopy(matrix), user_edits)
+
+    approved_matrix = matrix if decision in ("approve", "modify") else {}
 
     return {
         **state,
         "batch_decision": decision,
         "user_edits": user_edits,
-        "approved_matrix": matrix,
+        "approved_matrix": approved_matrix,
     }
 
 
@@ -427,7 +474,7 @@ async def run_td_hitl_checkpoint(
 ) -> Dict[str, Any]:
     """Run a TD HITL checkpoint graph, handling interrupt/resume.
 
-    Mirrors run_vsg_hitl_checkpoint().
+    Mirrors run_kb_hitl_checkpoint() from knowledge_base/graph.py.
     """
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -436,34 +483,65 @@ async def run_td_hitl_checkpoint(
     while _has_interrupt(result):
         interrupt_val = _get_interrupt_value(result)
 
-        nonce = str(uuid.uuid4())
+        checkpoint_nonce = str(uuid.uuid4())
 
-        if task_store and task_id:
-            await task_store.update_task(
-                task_id,
-                status=TaskStatus.PENDING_APPROVAL,
-                current_stage=stage_name,
-                meta={
-                    "approval_nonce": nonce,
-                    "interrupt_payload": interrupt_val,
-                },
-            )
+        logger.info(
+            "TD HITL %s: interrupt at stage=%s, status=%s",
+            stage_name,
+            interrupt_val.get("stage", "unknown"),
+            interrupt_val.get("status", "unknown"),
+        )
 
+        # Publish SSE event (sync)
         if event_bus and task_id:
-            await event_bus.emit(
+            event_bus.publish(
                 task_id,
+                "pending_approval",
                 {
-                    "type": "hitl_required",
                     "stage": stage_name,
-                    "nonce": nonce,
-                    "payload": interrupt_val,
+                    "checkpoint_nonce": checkpoint_nonce,
+                    **interrupt_val,
                 },
             )
 
+        # Update task store with pending status (sync)
         if task_store and task_id:
-            approval = await task_store.wait_for_approval(task_id, nonce)
+            task_store.update_task(
+                task_id,
+                status=TaskStatus.PENDING_APPROVAL.value,
+                approval_payload={
+                    "stage": stage_name,
+                    "checkpoint_nonce": checkpoint_nonce,
+                    **interrupt_val,
+                },
+            )
+
+        # Wait for human decision (async)
+        if task_store and task_id:
+            approval = await task_store.wait_for_approval(task_id)
+
+            # Reset status to RUNNING and clear approval_payload
+            task_store.update_task(
+                task_id,
+                status=TaskStatus.RUNNING.value,
+                current_step=stage_name,
+                approval_payload=None,
+            )
         else:
+            # CLI/auto mode fallback
+            logger.warning("No task_store for TD HITL %s — auto-approving", stage_name)
             approval = {"batch_decision": "approve"}
+
+        # Publish approval received event (sync)
+        if event_bus and task_id:
+            event_bus.publish(
+                task_id,
+                "approval_received",
+                {
+                    "stage": stage_name,
+                    "decision": approval.get("batch_decision", "unknown"),
+                },
+            )
 
         result = await asyncio.to_thread(
             graph.invoke, Command(resume=approval), config

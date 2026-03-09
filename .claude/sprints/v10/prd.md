@@ -581,3 +581,179 @@ Phase H (Integration, after G) ────────────────�
 | Source C network hangs | Per-domain 10s timeout + graceful skip |
 | LiteLLM pause_turn runaway | `_MAX_PAUSE_TURNS = 5` cap |
 | Migration conflicts with other branches | Check `down_revision` chain before merge |
+
+---
+
+## Post-Implementation Review (Codex gpt-5.3-codex)
+
+**Date:** 2026-03-09
+**Reviewed by:** Codex (gpt-5.3-codex) — 5 focused passes (~848K tokens)
+**Passes:** agents.py, pipeline.py, graph.py, data layer (models+storage+repo), API layer (router+schemas)
+
+---
+
+### CRITICAL — Production Blockers (4 findings) — **ALL RESOLVED**
+
+All 4 were in `core/topic_discovery/graph.py` → `run_td_hitl_checkpoint()`. **Fixed in sprint v10 hotfix (2026-03-09).**
+
+| ID | Finding | Location | Fix | Status |
+|----|---------|----------|-----|--------|
+| C1 | `await` on sync `task_store.update_task()` — `TypeError` crash | graph.py:462 | Removed `await`, use `.value`, `approval_payload` with `checkpoint_nonce` key | **RESOLVED** |
+| C2 | `event_bus.emit()` does not exist — `AttributeError` | graph.py:450 | Use sync `event_bus.publish(task_id, "pending_approval", payload)` | **RESOLVED** |
+| C3 | Nonce passed as timeout to `wait_for_approval()` — `TypeError` | graph.py:474 | Call `await task_store.wait_for_approval(task_id)` without nonce arg | **RESOLVED** |
+| C4 | Nonce/stage payload contract mismatch — approvals can't validate | graph.py:462-482 ↔ routers/topic_discovery.py:203 | Store `approval_payload={"stage": ..., "checkpoint_nonce": ...}`, add RUNNING reset + `approval_received` event | **RESOLVED** |
+
+**Root cause:** TD HITL helper was written against a different contract than KB/AP/VSG. Resolved by rewriting `run_td_hitl_checkpoint()` to mirror `run_kb_hitl_checkpoint()` exactly. Tests updated in `test_graph_td.py` (mock types corrected from `AsyncMock` to `MagicMock` for sync calls, new assertions for 2x `update_task` + 2x `publish`).
+
+---
+
+### HIGH — Correctness & Security (11 findings, 3 resolved)
+
+| ID | Finding | Location | Fix | Status |
+|----|---------|----------|-----|--------|
+| H1 | **SECURITY:** Cross-tenant task data + approval access on run_id endpoints | routers/topic_discovery.py:160,190,232 | Added `http_request: Request` param + `task.company_slug != user_company_slug` → 403 on status, approve/taxonomy, approve/matrix | **RESOLVED** |
+| H2 | **SECURITY:** Cross-tenant artifact read leak on `/{slug}/taxonomy` and `/{slug}/matrix` | routers/topic_discovery.py:272,296 | Added slug ownership check (`slug == company_slug or slug.startswith(f"{company_slug}__")`) for effective_slug support | **RESOLVED** |
+| H3 | Taxonomy retry off-by-one + approved-draft inconsistency | pipeline.py:418-426,626 | Changed `>` to `>=` for retry limit; explicitly approve taxonomy + write to storage on exhaustion | **RESOLVED** |
+| H4 | HITL retry feedback collected but never used in S1 regeneration | pipeline.py:420,427; agents.py; prompts/*.py | Added `revision_note` param to all 4 prompt builders + 4 agent functions; pipeline threads `user_feedback or None` to source calls on retry | **RESOLVED** |
+| H5 | Source C invoked with empty sitemap data — hallucination risk | agents.py:321 | Early-return guard in `run_source_c_competitor_sitemaps()` — returns 0-candidate `SourceResult` without LLM call when `sitemap_data` is empty/whitespace | **RESOLVED** |
+| H6 | Coverage math statistically inconsistent (Chao1/Sample Coverage) | agents.py:750-751 | Separated estimators by level: Chao1/Good-Turing within each source across expansion rounds; capture-recapture between sources. Added `PerSourceCoverage` model, `_count_frequency_classes_by_round()`, per-source Chao1/coverage on `SourceResult`, `aggregate_sample_coverage` on `CaptureRecaptureResult`. | **RESOLVED** |
+| H7 | S3 aggregate counters drift on partial failures | pipeline.py:512,531-538 | Return per-subdomain `(assignments, counts)` and aggregate only successful results | **RESOLVED** |
+| H8 | Taxonomy reparent can silently drop nodes (data loss) | graph.py:129 | Validate target parent exists before `_remove_node()`; reject edit if not found | **RESOLVED** |
+| H9 | Shallow copy in taxonomy edit path mutates shared state | graph.py:225,101 | Use `copy.deepcopy(taxonomy)` before applying edits | **RESOLVED** |
+| H10 | Tree metadata inconsistent after edits (depth, counts, max_depth) | graph.py:106,140 | Post-edit normalization pass to recalc depths/order and aggregate counts | **RESOLVED** |
+| H11 | Timeout approvals interpreted as implicit approve | graph.py:227,376 | Changed gate functions to whitelist `("approve", "modify")` — unknown/timeout decisions produce empty `approved_taxonomy`/`approved_matrix` | **RESOLVED** |
+
+---
+
+### MEDIUM — Robustness (10 findings, 6 resolved)
+
+| ID | Finding | Location | Fix | Status |
+|----|---------|----------|-----|--------|
+| M1 | Round accounting incorrect — reports `max_rounds` not actual rounds executed | agents.py:221,291,426 | Added `rounds_executed` counter to Source A/B/D, incremented per loop iteration, used in SourceResult | **RESOLVED** |
+| M2 | LLM JSON parsing brittle — one malformed field fails entire stage | agents.py:209,279,547 | `_parse_json_response()` now returns `None` on JSONDecodeError; added `_safe_float()` helper; all 8 callers handle `None` gracefully (break/continue/return empty) | **RESOLVED** |
+| M3 | Blocking filesystem I/O on event loop | pipeline.py:250,620,630 | Wrapped company context `read_text()`, `storage.read_manifest()`, `storage.write_manifest()` in `asyncio.to_thread()` | **RESOLVED** |
+| M4 | Artifact version mismatch (filename version ≠ JSON payload version) | storage.py:182,234 | `write_taxonomy()` and `write_matrix()` now use `model_copy(update={"version": version})` before serialization | **RESOLVED** |
+| M5 | `get_by_effective_slug` can throw `MultipleResultsFound` | repository.py:34 | Changed to `scalars().first()` with `ORDER BY created_at DESC` to return latest discovery | **RESOLVED** |
+| M6 | Migration/ORM nullability drift — NULLs possible where ORM expects non-null | 0006 migration vs ORM models | Add `nullable=False` + server defaults for required columns | OPEN |
+| M7 | Storage path traversal — `slug=".."` escapes root | storage.py:41 | Validate slug against strict regex + `resolved.is_relative_to(base)` | OPEN |
+| M8 | Pydantic fields without defaults (`company_name: str`) | models/topic_discovery.py:107 | Add `= ""` default, enforce requiredness at API boundary | OPEN |
+| M9 | Matrix edit schemas accept invalid enum values as free strings | schemas/topic_discovery.py:79,87 | Use discriminated unions per op + typed enums | OPEN |
+| M10 | Nonce anti-replay check optional (`None` disables validation) | routers/topic_discovery.py:203,245 | Hard-fail 409 if `checkpoint_nonce` missing from `approval_payload` | **RESOLVED** |
+
+---
+
+### LOW — Code Quality (4 findings)
+
+| ID | Finding | Location | Fix |
+|----|---------|----------|-----|
+| L1 | Unused imports/dead code (`_emit_async`, `create_span`, `db_session` arg) | pipeline.py:108,45,208 | Remove or wire properly |
+| L2 | Request schemas accept extra fields silently | schemas/topic_discovery.py:19 | Add `model_config = ConfigDict(extra="forbid")` |
+| L3 | Dead `if not task:` check after `get_task()` (already raises) | routers/topic_discovery.py:163 | Remove dead code |
+| L4 | Taxonomy/matrix read endpoints return untyped `Dict[str, Any]` | routers/topic_discovery.py:274,298 | Define response models |
+
+---
+
+### Open Architectural Questions
+
+| # | Question | Recommendation |
+|---|----------|----------------|
+| Q1 | Should TD reuse the exact same `run_hitl_checkpoint()` helper as KB/AP/VSG? | **Yes** — eliminates C1-C4 in one refactor |
+| Q2 | Chao1 vs Chao2 for coverage estimation? | Decide: abundance-based Chao1 (pooled counts) or incidence-based Chao2 (source/sample incidence). Current hybrid is statistically unstable. |
+| Q3 | Orphan policy on parent delete — hard-delete subtree or promote children? | Define explicitly; current behavior is hard-delete |
+| Q4 | Should `topic_discoveries` be unique per `effective_slug` or append-only per run? | Repository and index strategy currently conflict — resolve |
+| Q5 | Should taxonomy/matrix versions be immutable snapshots? | Current storage allows overwrite — define versioning policy |
+
+---
+
+### Recommended Fix Priority
+
+**Immediate (before any production use):** ✅ **ALL RESOLVED (2026-03-09)**
+1. ~~Rewrite `run_td_hitl_checkpoint()` to match KB/AP/VSG contract (C1-C4, H11)~~ — **DONE**
+2. ~~Add tenant isolation checks on all endpoints (H1, H2)~~ — **DONE**
+3. ~~Hard-fail on missing nonce (M10)~~ — **DONE**
+
+**Before first client run:** ✅ **H3, H4, H5, H7, H8, H9, H10 RESOLVED (2026-03-09)**
+4. ~~Fix retry semantics (H3, H4)~~ — **DONE**
+5. ~~Skip Source C when empty (H5)~~ — **DONE**
+6. ~~Fix reparent data loss (H8) + shallow copy (H9) + metadata recompute (H10)~~ — **DONE**
+7. ~~Fix S3 counter drift (H7)~~ — **DONE**
+8. Storage path traversal guard (M7)
+
+**Before GA:**
+9. Fix coverage math (H6)
+10. All MEDIUM items (M1-M9)
+11. All LOW items (L1-L4)
+
+---
+
+### Test Coverage Gaps Identified
+
+1. **No integration test with real `TaskStore` + `EventBus`** for manual HITL path — tests use `AsyncMock`, masking C1-C4 (**Partially addressed:** graph tests now use `MagicMock` for sync calls + `AsyncMock` only for `wait_for_approval`, matching actual API. New `test_timeout_rejection_does_not_approve` test for H11.)
+2. ~~**No cross-tenant test** verifying slug/run_id ownership enforcement~~ — **RESOLVED:** Added 7 cross-tenant tests: `test_status_tenant_isolation_403`, `test_approve_taxonomy_tenant_isolation_403`, `test_approve_matrix_tenant_isolation_403`, `test_taxonomy_tenant_isolation_403`, `test_taxonomy_effective_slug_other_company_blocked`, `test_matrix_tenant_isolation_403`, `test_matrix_effective_slug_other_company_blocked`
+3. ~~**No test for reparent to non-existent parent** (H8 data loss scenario)~~ — **RESOLVED:** Added `TestReparentSafety` (3 tests) + `TestDeepCopyIsolation` (2 tests) + `TestTreeMetadataNormalization` (10 tests) + `TestS3CounterDrift` (1 test)
+4. **No test for concurrent version writes** (M5 race condition)
+5. **No test for path traversal** with malicious slug values (M7)
+6. ~~**No test for missing nonce**~~ — **RESOLVED:** Added `test_approve_taxonomy_missing_nonce_409` and `test_approve_matrix_missing_nonce_409`
+
+---
+
+## Hotfix Log
+
+### 2026-03-09 — Codex Review Hotfix (C1-C4, H1, H2, H11, M10)
+
+**8 issues resolved** across 4 files. All 270 topic_discovery tests passing (227 core + 43 API).
+
+**Files modified:**
+
+| File | Changes |
+|------|---------|
+| `core/topic_discovery/graph.py` | Rewrote `run_td_hitl_checkpoint()` to match KB/AP/VSG contract: sync `update_task()` + `event_bus.publish()`, correct `wait_for_approval()` signature, `approval_payload` with `checkpoint_nonce`, post-approval RUNNING reset + `approval_received` event. Hardened `_taxonomy_gate()` and `_matrix_gate()` to whitelist `("approve", "modify")` for approved output. |
+| `api/routers/topic_discovery.py` | Added `http_request: Request` param + tenant isolation check on all 5 non-start endpoints: status (run_id), approve/taxonomy (run_id), approve/matrix (run_id), get taxonomy (slug), get matrix (slug). Slug-based reads support effective_slug (`company__product`). Added nonce hard-fail (409) on both approval endpoints. |
+| `tests/topic_discovery/test_graph_td.py` | Fixed mock types (`MagicMock` for sync calls, `AsyncMock` only for `wait_for_approval`). Updated assertions for 2x `update_task` + 2x `publish`. Added `test_timeout_rejection_does_not_approve` for H11. |
+| `tests/api/test_topic_discovery.py` | Added 9 new tests: 3 cross-tenant (run_id), 4 cross-tenant (slug + effective_slug), 2 nonce-missing. Updated 5 existing approval tests to include `checkpoint_nonce`. Fixed 2 not-found tests to use own-tenant slug. |
+
+### 2026-03-09 — H3, H4, H5 Fixes
+
+**3 issues resolved** across 8 files. All 301 topic_discovery tests passing (258 core + 43 API).
+
+**Files modified:**
+
+| File | Changes |
+|------|---------|
+| `core/topic_discovery/agents.py` | H5: Early-return guard in `run_source_c_competitor_sitemaps()` for empty sitemap data. H4: Added `revision_note: Optional[str] = None` to all 4 source agent functions, threaded to prompt builders. |
+| `core/topic_discovery/prompts/source_a_company.py` | H4: Added `revision_note` param to `build_source_a_user_prompt()`, appends `## Reviewer Feedback` section when non-None. |
+| `core/topic_discovery/prompts/source_b_persona.py` | H4: Same pattern for Source B. |
+| `core/topic_discovery/prompts/source_c_sitemap.py` | H4: Same pattern for Source C. |
+| `core/topic_discovery/prompts/source_d_adversarial.py` | H4: Same pattern for Source D. |
+| `core/topic_discovery/pipeline.py` | H3: Changed `>` to `>=` for retry limit. Explicitly approve taxonomy + write to storage on exhaustion. H4: Thread `revision_note=user_feedback or None` to all 4 source calls. |
+| `tests/topic_discovery/test_agents_td.py` | Added 13 tests: 2 H5 (empty sitemap guard), 6 H4 prompt builder (revision_note render/omit), 3 H4 agent (revision_note in LLM messages), 2 H5 whitespace. |
+| `tests/topic_discovery/test_pipeline_td.py` | Added 3 tests: 1 H4 (retry threads feedback to sources), 2 H3 (retry exhaustion count + approved status). |
+
+### 2026-03-09 — H7, H8, H9, H10 Fixes
+
+**4 issues resolved** across 4 files. All 317 topic_discovery tests passing (274 core + 43 API). +16 new tests.
+
+**Files modified:**
+
+| File | Changes |
+|------|---------|
+| `core/topic_discovery/graph.py` | H9: `import copy`, replaced `dict(taxonomy)` / `dict(matrix)` with `copy.deepcopy()` in `_taxonomy_gate()` and `_matrix_gate()`. H8: Reparent now checks `_add_child_to_node()` return value; re-attaches at root if target parent not found (prevents data loss). H10: Added `_set_depths()`, `_count_nodes_and_max_depth()`, `_normalize_tree_metadata()` — post-edit normalization pass called at end of `_process_taxonomy_edits()` to fix depth, sort_order, total_subdomains, max_depth. |
+| `core/topic_discovery/pipeline.py` | H7: Removed `nonlocal total_relevant, total_irrelevant` pattern. `_process_subdomain()` now returns `(assignments, relevant_count, irrelevant_count)` tuple. Outer loop only aggregates counts from successful (non-exception) results, making counters atomically consistent with assignments. |
+| `tests/topic_discovery/test_graph_td.py` | Added 15 tests: `TestReparentSafety` (3: nonexistent parent preserves node, valid parent works, null parent to root), `TestDeepCopyIsolation` (2: taxonomy/matrix modify don't mutate original), `TestTreeMetadataNormalization` (10: add/delete update total, child depth correct, reparent updates depth, max_depth updated, sort_order recomputed, standalone normalize/set_depths/count helpers). |
+| `tests/topic_discovery/test_pipeline_td.py` | Added 1 test: `TestS3CounterDrift::test_partial_subdomain_failure_counters_consistent` — verifies counters exclude failed subdomains. |
+
+### 2026-03-09 — M1, M2, M3, M4, M5 Fixes
+
+**5 issues resolved** across 4 source files + 3 test files. All 346 topic_discovery tests passing (300 core + 2 skipped repo + 43 API). +27 new tests.
+
+**Files modified:**
+
+| File | Changes |
+|------|---------|
+| `core/topic_discovery/agents.py` | M1: Added `rounds_executed` counter to Source A, B, D loops. Replaces `total_rounds=max_rounds` / `total_rounds=len(specialist_lenses)` with `total_rounds=rounds_executed` in both success and error return paths. M2: `_parse_json_response()` now catches `JSONDecodeError`/`ValueError` and returns `None` instead of raising. Added `_safe_float()` helper. All 8 callers updated: Source A/B break on `None`, Source C returns empty SourceResult, Source D continues to next lens, hierarchy/relevance/topic_gen return empty. Replaced 6 bare `float()` calls with `_safe_float()`. |
+| `core/topic_discovery/pipeline.py` | M3: Wrapped 3 blocking filesystem I/O calls in `asyncio.to_thread()`: company context `read_text()` (line 250), `storage.read_manifest()` (line 620), `storage.write_manifest()` (line 630). |
+| `core/topic_discovery/storage.py` | M4: `write_taxonomy()` and `write_matrix()` now sync the model's internal version field before serialization via `model_copy(update={"version": version})`. Original model not mutated. |
+| `core/topic_discovery/repository.py` | M5: `get_by_effective_slug()` changed from `scalar_one_or_none()` to `scalars().first()` with `ORDER BY created_at DESC`. Returns latest discovery, never throws `MultipleResultsFound`. |
+| `tests/topic_discovery/test_agents_td.py` | Added 22 tests: `TestM1RoundAccounting` (5: early break A/B, full rounds A, exception A, capped D), `TestParseJsonResponse` (4: valid/malformed/empty/fenced), `TestSafeFloat` (6: float/int/string/invalid/none/empty), `TestM2MalformedJsonRecovery` (5: mid-round A, one-lens D, hierarchy/relevance/topic_gen empty). Updated `test_malformed_json_returns_error` → `test_malformed_json_graceful_recovery`. |
+| `tests/topic_discovery/test_storage_td.py` | Added 7 tests: M4 taxonomy (3: auto-increment sync, explicit sync, no-mutate), M4 matrix (2: auto-increment sync, explicit sync), M5 repository (2: uses scalars().first(), orders by created_at). |
+| `tests/topic_discovery/test_pipeline_td.py` | No new tests needed — M3 changes verified by existing happy-path tests that now exercise the `asyncio.to_thread()` paths. |

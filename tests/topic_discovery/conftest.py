@@ -65,7 +65,7 @@ def sample_subdomain_candidates() -> list[SubdomainCandidate]:
 
 @pytest.fixture
 def sample_source_result() -> SourceResult:
-    """A SourceResult with 3 candidates."""
+    """A SourceResult with 5 candidates across 3 rounds."""
     return SourceResult(
         source=TDSource.source_a,
         candidates=[
@@ -80,6 +80,8 @@ def sample_source_result() -> SourceResult:
         total_rounds=3,
         singletons=2,
         doubletons=1,
+        chao1_estimate=7.0,
+        source_sample_coverage=0.6,
         execution_time_s=12.5,
     )
 

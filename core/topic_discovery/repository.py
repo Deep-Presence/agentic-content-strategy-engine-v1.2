@@ -30,12 +30,14 @@ class TopicDiscoveryRepository(SQLAlchemyRepository[TopicDiscoveryModel]):
     async def get_by_effective_slug(
         self, effective_slug: str
     ) -> Optional[TopicDiscoveryModel]:
-        """Find a discovery by effective_slug."""
-        stmt = select(TopicDiscoveryModel).where(
-            TopicDiscoveryModel.effective_slug == effective_slug
+        """Find the latest discovery by effective_slug."""
+        stmt = (
+            select(TopicDiscoveryModel)
+            .where(TopicDiscoveryModel.effective_slug == effective_slug)
+            .order_by(TopicDiscoveryModel.created_at.desc())
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     async def get_by_company(
         self, company_id: _uuid.UUID | str

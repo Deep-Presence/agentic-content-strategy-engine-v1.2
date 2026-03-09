@@ -14,6 +14,7 @@ from core.models.topic_discovery import (
     BuyerStage,
     CaptureRecaptureResult,
     IntentType,
+    PerSourceCoverage,
     RelevanceCell,
     SourceResult,
     SubdomainCandidate,
@@ -111,9 +112,10 @@ class TestTopicDiscoveryInput:
         assert restored.company_name == inp.company_name
         assert restored.domain == inp.domain
 
-    def test_company_name_required(self):
-        with pytest.raises(Exception):
-            TopicDiscoveryInput()
+    def test_topic_discovery_input_default_company_name(self):
+        """M8: company_name defaults to '' for backward compat."""
+        inp = TopicDiscoveryInput()
+        assert inp.company_name == ""
 
 
 # ── SubdomainCandidate ────────────────────────────────────────────────────
@@ -157,6 +159,8 @@ class TestSourceResult:
         assert sr.source == TDSource.source_a
         assert sr.candidates == []
         assert sr.total_rounds == 0
+        assert sr.chao1_estimate == 0.0
+        assert sr.source_sample_coverage == 0.0
         assert sr.error is None
 
     def test_with_candidates(self, sample_source_result):
@@ -174,6 +178,54 @@ class TestSourceResult:
         sr = SourceResult(error="Timeout after 120s")
         assert sr.error == "Timeout after 120s"
 
+    def test_new_coverage_fields(self):
+        sr = SourceResult(
+            source=TDSource.source_b,
+            chao1_estimate=12.5,
+            source_sample_coverage=0.85,
+        )
+        assert sr.chao1_estimate == 12.5
+        assert sr.source_sample_coverage == 0.85
+
+    def test_backward_compat_old_json(self):
+        """Old JSON without new fields deserializes with defaults."""
+        old = {"source": "source_a", "candidates": [], "total_rounds": 2,
+               "singletons": 1, "doubletons": 0, "execution_time_s": 5.0}
+        sr = SourceResult(**old)
+        assert sr.chao1_estimate == 0.0
+        assert sr.source_sample_coverage == 0.0
+
+
+# ── PerSourceCoverage ────────────────────────────────────────────────────
+
+
+class TestPerSourceCoverage:
+    def test_defaults(self):
+        psc = PerSourceCoverage()
+        assert psc.source == TDSource.source_a
+        assert psc.singletons == 0
+        assert psc.doubletons == 0
+        assert psc.observed == 0
+        assert psc.total_observations == 0
+        assert psc.chao1_estimate == 0.0
+        assert psc.sample_coverage == 0.0
+
+    def test_roundtrip(self):
+        psc = PerSourceCoverage(
+            source=TDSource.source_d,
+            singletons=3,
+            doubletons=1,
+            observed=10,
+            total_observations=14,
+            chao1_estimate=14.5,
+            sample_coverage=0.79,
+        )
+        data = json.loads(psc.model_dump_json())
+        restored = PerSourceCoverage(**data)
+        assert restored.source == TDSource.source_d
+        assert restored.chao1_estimate == 14.5
+        assert restored.sample_coverage == 0.79
+
 
 # ── CaptureRecaptureResult ───────────────────────────────────────────────
 
@@ -184,6 +236,9 @@ class TestCaptureRecaptureResult:
         assert cr.median_estimate == 0.0
         assert cr.meets_target is False
         assert cr.coverage_target == 0.95
+        assert cr.per_source_coverage == {}
+        assert cr.aggregate_sample_coverage == 0.0
+        assert cr.aggregate_chao1_ratio == 0.0
 
     def test_with_data(self):
         cr = CaptureRecaptureResult(
@@ -200,6 +255,19 @@ class TestCaptureRecaptureResult:
         assert cr.sample_coverage == 0.96
         assert cr.meets_target is True
 
+    def test_with_per_source_coverage(self):
+        psc_a = PerSourceCoverage(
+            source=TDSource.source_a, singletons=2, observed=10,
+            chao1_estimate=12.0, sample_coverage=0.92,
+        )
+        cr = CaptureRecaptureResult(
+            per_source_coverage={"source_a": psc_a},
+            aggregate_sample_coverage=0.92,
+            aggregate_chao1_ratio=0.83,
+        )
+        assert cr.per_source_coverage["source_a"].chao1_estimate == 12.0
+        assert cr.aggregate_sample_coverage == 0.92
+
     def test_roundtrip(self):
         cr = CaptureRecaptureResult(
             pairwise_estimates={"a_b": 112.0},
@@ -211,6 +279,43 @@ class TestCaptureRecaptureResult:
         restored = CaptureRecaptureResult(**data)
         assert restored.median_estimate == 112.0
         assert restored.pairwise_estimates["a_b"] == 112.0
+
+    def test_roundtrip_with_per_source(self):
+        psc = PerSourceCoverage(
+            source=TDSource.source_b, singletons=3, chao1_estimate=8.0,
+        )
+        cr = CaptureRecaptureResult(
+            per_source_coverage={"source_b": psc},
+            aggregate_sample_coverage=0.88,
+        )
+        data = json.loads(cr.model_dump_json())
+        restored = CaptureRecaptureResult(**data)
+        assert "source_b" in restored.per_source_coverage
+        assert restored.per_source_coverage["source_b"].singletons == 3
+        assert restored.aggregate_sample_coverage == 0.88
+
+    def test_backward_compat_old_json(self):
+        """Old JSON without new fields deserializes with defaults."""
+        old_data = {
+            "pairwise_estimates": {"a_b": 100.0},
+            "median_estimate": 100.0,
+            "estimate_range": [100.0, 100.0],
+            "chao1_lower_bound": 95.0,
+            "sample_coverage": 0.93,
+            "observed_count": 90,
+            "total_singletons": 5,
+            "total_doubletons": 3,
+            "coverage_target": 0.95,
+            "meets_target": False,
+        }
+        cr = CaptureRecaptureResult(**old_data)
+        # Old fields preserved
+        assert cr.sample_coverage == 0.93
+        assert cr.total_singletons == 5
+        # New fields get defaults
+        assert cr.per_source_coverage == {}
+        assert cr.aggregate_sample_coverage == 0.0
+        assert cr.aggregate_chao1_ratio == 0.0
 
 
 # ── SubdomainNode (recursive) ────────────────────────────────────────────
@@ -439,6 +544,74 @@ class TestTopicDiscoveryOutput:
             status=TopicDiscoveryStatus.draft,
         )
         assert o.error == "Missing company context"
+
+
+# ── Cross-Model Integration ──────────────────────────────────────────────
+
+
+# ── M6: ORM server_default + nullable alignment ────────────────────────
+
+
+class TestM6OrmServerDefaults:
+    """M6: ORM columns that map as non-nullable must have server_default + nullable=False."""
+
+    def _get_column(self, model_cls, col_name):
+        """Get the SA Column object from an ORM model."""
+        return model_cls.__table__.columns[col_name]
+
+    def test_taxonomy_tree_total_subdomains(self):
+        from core.db.models.topic_discovery import TaxonomyTreeModel
+        col = self._get_column(TaxonomyTreeModel, "total_subdomains")
+        assert col.server_default is not None, "Missing server_default"
+        assert col.nullable is False, "Must be non-nullable"
+
+    def test_taxonomy_tree_max_depth(self):
+        from core.db.models.topic_discovery import TaxonomyTreeModel
+        col = self._get_column(TaxonomyTreeModel, "max_depth")
+        assert col.server_default is not None
+        assert col.nullable is False
+
+    def test_subdomain_node_depth(self):
+        from core.db.models.topic_discovery import SubdomainNodeModel
+        col = self._get_column(SubdomainNodeModel, "depth")
+        assert col.server_default is not None
+        assert col.nullable is False
+
+    def test_subdomain_node_is_manually_added(self):
+        from core.db.models.topic_discovery import SubdomainNodeModel
+        col = self._get_column(SubdomainNodeModel, "is_manually_added")
+        assert col.server_default is not None
+        assert col.nullable is False
+
+    def test_subdomain_node_sort_order(self):
+        from core.db.models.topic_discovery import SubdomainNodeModel
+        col = self._get_column(SubdomainNodeModel, "sort_order")
+        assert col.server_default is not None
+        assert col.nullable is False
+
+    def test_topic_assignment_matrix_version(self):
+        from core.db.models.topic_discovery import TopicAssignmentModel
+        col = self._get_column(TopicAssignmentModel, "matrix_version")
+        assert col.server_default is not None
+        assert col.nullable is False
+
+    def test_topic_assignment_is_manually_added(self):
+        from core.db.models.topic_discovery import TopicAssignmentModel
+        col = self._get_column(TopicAssignmentModel, "is_manually_added")
+        assert col.server_default is not None
+        assert col.nullable is False
+
+    def test_topic_discovery_taxonomy_version(self):
+        from core.db.models.topic_discovery import TopicDiscoveryModel
+        col = self._get_column(TopicDiscoveryModel, "taxonomy_version")
+        assert col.server_default is not None
+        assert col.nullable is False
+
+    def test_topic_discovery_matrix_version(self):
+        from core.db.models.topic_discovery import TopicDiscoveryModel
+        col = self._get_column(TopicDiscoveryModel, "matrix_version")
+        assert col.server_default is not None
+        assert col.nullable is False
 
 
 # ── Cross-Model Integration ──────────────────────────────────────────────

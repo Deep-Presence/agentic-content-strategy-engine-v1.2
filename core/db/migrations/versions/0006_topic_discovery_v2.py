@@ -70,11 +70,11 @@ def upgrade() -> None:
     )
     op.add_column(
         "topic_discoveries",
-        sa.Column("taxonomy_version", sa.Integer, server_default="0"),
+        sa.Column("taxonomy_version", sa.Integer, nullable=False, server_default="0"),
     )
     op.add_column(
         "topic_discoveries",
-        sa.Column("matrix_version", sa.Integer, server_default="0"),
+        sa.Column("matrix_version", sa.Integer, nullable=False, server_default="0"),
     )
     op.add_column(
         "topic_discoveries",
@@ -122,8 +122,8 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("version", sa.Integer, nullable=False, server_default="1"),
-        sa.Column("total_subdomains", sa.Integer, server_default="0"),
-        sa.Column("max_depth", sa.Integer, server_default="0"),
+        sa.Column("total_subdomains", sa.Integer, nullable=False, server_default="0"),
+        sa.Column("max_depth", sa.Integer, nullable=False, server_default="0"),
         sa.Column("coverage_score", sa.Float, nullable=True),
         sa.Column("chao1_estimate", sa.Float, nullable=True),
         sa.Column("capture_recapture_est", postgresql.JSONB, nullable=True),
@@ -165,11 +165,11 @@ def upgrade() -> None:
         ),
         sa.Column("name", sa.String, nullable=False),
         sa.Column("description", sa.Text, nullable=True),
-        sa.Column("depth", sa.Integer, server_default="0"),
+        sa.Column("depth", sa.Integer, nullable=False, server_default="0"),
         sa.Column("source_provenance", postgresql.JSONB, nullable=True),
         sa.Column("confidence", sa.Float, nullable=True),
-        sa.Column("is_manually_added", sa.Boolean, server_default="false"),
-        sa.Column("sort_order", sa.Integer, server_default="0"),
+        sa.Column("is_manually_added", sa.Boolean, nullable=False, server_default="false"),
+        sa.Column("sort_order", sa.Integer, nullable=False, server_default="0"),
         sa.Column("metadata_json", postgresql.JSONB, nullable=True),
         sa.Column(
             "created_at",
@@ -198,7 +198,7 @@ def upgrade() -> None:
             sa.ForeignKey("topic_discoveries.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("matrix_version", sa.Integer, server_default="1"),
+        sa.Column("matrix_version", sa.Integer, nullable=False, server_default="1"),
         sa.Column(
             "subdomain_node_id",
             postgresql.UUID(as_uuid=True),
@@ -234,7 +234,7 @@ def upgrade() -> None:
             topic_assignment_status_enum,
             server_default="not_started",
         ),
-        sa.Column("is_manually_added", sa.Boolean, server_default="false"),
+        sa.Column("is_manually_added", sa.Boolean, nullable=False, server_default="false"),
         sa.Column("metadata_json", postgresql.JSONB, nullable=True),
         sa.Column(
             "created_at",

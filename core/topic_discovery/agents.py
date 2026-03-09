@@ -26,6 +26,7 @@ from core.models.topic_discovery import (
     BuyerStage,
     CaptureRecaptureResult,
     IntentType,
+    PerSourceCoverage,
     RelevanceCell,
     SourceResult,
     SubdomainCandidate,
@@ -155,9 +156,24 @@ async def _run_completion(
 
 
 def _parse_json_response(raw_text: str) -> Any:
-    """Parse JSON from LLM response, stripping code fences."""
+    """Parse JSON from LLM response, stripping code fences.
+
+    Returns None on parse failure (logged, never fatal).
+    """
     cleaned = _strip_code_fences(raw_text)
-    return json.loads(cleaned)
+    try:
+        return json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("TD: failed to parse LLM JSON response: %.200s", cleaned)
+        return None
+
+
+def _safe_float(value: Any, default: float = 0.5) -> float:
+    """Coerce a value to float, returning default on failure."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 # ---------------------------------------------------------------------------
@@ -171,15 +187,18 @@ async def run_source_a_company_brainstorm(
     max_rounds: int = 4,
     model: Optional[str] = None,
     timeout_s: float = 120.0,
+    revision_note: Optional[str] = None,
 ) -> SourceResult:
     """Source A: Company-perspective subdomain brainstorm (iterative expansion)."""
     model = model or settings.topic_discovery_brainstorm_model
     t0 = time.monotonic()
     all_candidates: List[SubdomainCandidate] = []
     previous_names: List[str] = []
+    rounds_executed = 0
 
     try:
         for round_num in range(1, max_rounds + 1):
+            rounds_executed += 1
             messages = [
                 {"role": "system", "content": get_source_a_system_prompt()},
                 {
@@ -188,6 +207,7 @@ async def run_source_a_company_brainstorm(
                         company_context,
                         round_number=round_num,
                         previous_subdomains=previous_names if round_num > 1 else None,
+                        revision_note=revision_note,
                     ),
                 },
             ]
@@ -195,6 +215,8 @@ async def run_source_a_company_brainstorm(
                 model=model, messages=messages, timeout_s=timeout_s
             )
             parsed = _parse_json_response(raw_text)
+            if parsed is None:
+                break
             subdomains = parsed.get("subdomains", [])
             if not isinstance(subdomains, list):
                 subdomains = []
@@ -206,7 +228,7 @@ async def run_source_a_company_brainstorm(
                         description=sd.get("description", ""),
                         source=TDSource.source_a,
                         round_number=round_num,
-                        confidence=float(sd.get("confidence", 0.5)),
+                        confidence=_safe_float(sd.get("confidence", 0.5)),
                     )
                     all_candidates.append(c)
                     previous_names.append(c.name)
@@ -214,20 +236,27 @@ async def run_source_a_company_brainstorm(
             if not subdomains:
                 break
 
-        singletons, doubletons = _count_frequency_classes(all_candidates)
+        singletons, doubletons = _count_frequency_classes_by_round(all_candidates)
+        unique_names = {c.name.lower().strip() for c in all_candidates if c.name}
+        observed = len(unique_names)
+        total_obs = _count_total_round_observations(all_candidates)
+        chao1 = compute_chao1_lower_bound(observed, singletons, doubletons)
+        sc = compute_sample_coverage(singletons, total_obs)
         return SourceResult(
             source=TDSource.source_a,
             candidates=all_candidates,
-            total_rounds=max_rounds,
+            total_rounds=rounds_executed,
             singletons=singletons,
             doubletons=doubletons,
+            chao1_estimate=chao1,
+            source_sample_coverage=sc,
             execution_time_s=time.monotonic() - t0,
         )
     except Exception as exc:
         return SourceResult(
             source=TDSource.source_a,
             candidates=all_candidates,
-            total_rounds=max_rounds,
+            total_rounds=rounds_executed,
             execution_time_s=time.monotonic() - t0,
             error=str(exc),
         )
@@ -240,15 +269,18 @@ async def run_source_b_persona_brainstorm(
     max_rounds: int = 4,
     model: Optional[str] = None,
     timeout_s: float = 120.0,
+    revision_note: Optional[str] = None,
 ) -> SourceResult:
     """Source B: Audience-perspective subdomain brainstorm (iterative expansion)."""
     model = model or settings.topic_discovery_brainstorm_model
     t0 = time.monotonic()
     all_candidates: List[SubdomainCandidate] = []
     previous_names: List[str] = []
+    rounds_executed = 0
 
     try:
         for round_num in range(1, max_rounds + 1):
+            rounds_executed += 1
             messages = [
                 {"role": "system", "content": get_source_b_system_prompt()},
                 {
@@ -258,6 +290,7 @@ async def run_source_b_persona_brainstorm(
                         company_context,
                         round_number=round_num,
                         previous_subdomains=previous_names if round_num > 1 else None,
+                        revision_note=revision_note,
                     ),
                 },
             ]
@@ -265,6 +298,8 @@ async def run_source_b_persona_brainstorm(
                 model=model, messages=messages, timeout_s=timeout_s
             )
             parsed = _parse_json_response(raw_text)
+            if parsed is None:
+                break
             subdomains = parsed.get("subdomains", [])
             if not isinstance(subdomains, list):
                 subdomains = []
@@ -276,7 +311,7 @@ async def run_source_b_persona_brainstorm(
                         description=sd.get("description", ""),
                         source=TDSource.source_b,
                         round_number=round_num,
-                        confidence=float(sd.get("confidence", 0.5)),
+                        confidence=_safe_float(sd.get("confidence", 0.5)),
                     )
                     all_candidates.append(c)
                     previous_names.append(c.name)
@@ -284,20 +319,27 @@ async def run_source_b_persona_brainstorm(
             if not subdomains:
                 break
 
-        singletons, doubletons = _count_frequency_classes(all_candidates)
+        singletons, doubletons = _count_frequency_classes_by_round(all_candidates)
+        unique_names = {c.name.lower().strip() for c in all_candidates if c.name}
+        observed = len(unique_names)
+        total_obs = _count_total_round_observations(all_candidates)
+        chao1 = compute_chao1_lower_bound(observed, singletons, doubletons)
+        sc = compute_sample_coverage(singletons, total_obs)
         return SourceResult(
             source=TDSource.source_b,
             candidates=all_candidates,
-            total_rounds=max_rounds,
+            total_rounds=rounds_executed,
             singletons=singletons,
             doubletons=doubletons,
+            chao1_estimate=chao1,
+            source_sample_coverage=sc,
             execution_time_s=time.monotonic() - t0,
         )
     except Exception as exc:
         return SourceResult(
             source=TDSource.source_b,
             candidates=all_candidates,
-            total_rounds=max_rounds,
+            total_rounds=rounds_executed,
             execution_time_s=time.monotonic() - t0,
             error=str(exc),
         )
@@ -309,8 +351,19 @@ async def run_source_c_competitor_sitemaps(
     *,
     model: Optional[str] = None,
     timeout_s: float = 120.0,
+    revision_note: Optional[str] = None,
 ) -> SourceResult:
     """Source C: Extract subdomains from competitor sitemap/URL structure."""
+    # H5: Guard against empty sitemap data — skip LLM call entirely
+    if not sitemap_data or not sitemap_data.strip():
+        logger.info("TD Source C: no sitemap data provided, skipping LLM call")
+        return SourceResult(
+            source=TDSource.source_c,
+            candidates=[],
+            total_rounds=0,
+            execution_time_s=0.0,
+        )
+
     model = model or settings.topic_discovery_dedup_model
     t0 = time.monotonic()
 
@@ -319,13 +372,22 @@ async def run_source_c_competitor_sitemaps(
             {"role": "system", "content": get_source_c_system_prompt()},
             {
                 "role": "user",
-                "content": build_source_c_user_prompt(sitemap_data, company_domain),
+                "content": build_source_c_user_prompt(
+                    sitemap_data, company_domain, revision_note=revision_note,
+                ),
             },
         ]
         _, raw_text = await _run_completion(
             model=model, messages=messages, timeout_s=timeout_s
         )
         parsed = _parse_json_response(raw_text)
+        if parsed is None:
+            return SourceResult(
+                source=TDSource.source_c,
+                candidates=[],
+                total_rounds=1,
+                execution_time_s=time.monotonic() - t0,
+            )
         subdomains = parsed.get("subdomains", [])
         if not isinstance(subdomains, list):
             subdomains = []
@@ -339,14 +401,24 @@ async def run_source_c_competitor_sitemaps(
                         description=sd.get("description", ""),
                         source=TDSource.source_c,
                         round_number=1,
-                        confidence=float(sd.get("confidence", 0.5)),
+                        confidence=_safe_float(sd.get("confidence", 0.5)),
                     )
                 )
 
+        singletons, doubletons = _count_frequency_classes_by_round(candidates)
+        unique_names = {c.name.lower().strip() for c in candidates if c.name}
+        observed = len(unique_names)
+        total_obs = _count_total_round_observations(candidates)
+        chao1 = compute_chao1_lower_bound(observed, singletons, doubletons)
+        sc = compute_sample_coverage(singletons, total_obs)
         return SourceResult(
             source=TDSource.source_c,
             candidates=candidates,
             total_rounds=1,
+            singletons=singletons,
+            doubletons=doubletons,
+            chao1_estimate=chao1,
+            source_sample_coverage=sc,
             execution_time_s=time.monotonic() - t0,
         )
     except Exception as exc:
@@ -366,12 +438,14 @@ async def run_source_d_adversarial(
     max_rounds: int = 4,
     model: Optional[str] = None,
     timeout_s: float = 120.0,
+    revision_note: Optional[str] = None,
 ) -> SourceResult:
     """Source D: Adversarial diversity pass using specialist lenses."""
     model = model or settings.topic_discovery_brainstorm_model
     t0 = time.monotonic()
     all_candidates: List[SubdomainCandidate] = []
     previous_names = list(existing_subdomains)
+    rounds_executed = 0
 
     if specialist_lenses is None:
         specialist_lenses = [
@@ -386,6 +460,7 @@ async def run_source_d_adversarial(
         for round_num, lens in enumerate(specialist_lenses, 1):
             if round_num > max_rounds:
                 break
+            rounds_executed += 1
             messages = [
                 {"role": "system", "content": get_source_d_system_prompt()},
                 {
@@ -395,6 +470,7 @@ async def run_source_d_adversarial(
                         lens,
                         round_number=round_num,
                         previous_subdomains=previous_names,
+                        revision_note=revision_note,
                     ),
                 },
             ]
@@ -402,6 +478,8 @@ async def run_source_d_adversarial(
                 model=model, messages=messages, timeout_s=timeout_s
             )
             parsed = _parse_json_response(raw_text)
+            if parsed is None:
+                continue
             subdomains = parsed.get("subdomains", [])
             if not isinstance(subdomains, list):
                 subdomains = []
@@ -414,25 +492,32 @@ async def run_source_d_adversarial(
                         source=TDSource.source_d,
                         round_number=round_num,
                         specialist_lens=lens,
-                        confidence=float(sd.get("confidence", 0.5)),
+                        confidence=_safe_float(sd.get("confidence", 0.5)),
                     )
                     all_candidates.append(c)
                     previous_names.append(c.name)
 
-        singletons, doubletons = _count_frequency_classes(all_candidates)
+        singletons, doubletons = _count_frequency_classes_by_round(all_candidates)
+        unique_names = {c.name.lower().strip() for c in all_candidates if c.name}
+        observed = len(unique_names)
+        total_obs = _count_total_round_observations(all_candidates)
+        chao1 = compute_chao1_lower_bound(observed, singletons, doubletons)
+        sc = compute_sample_coverage(singletons, total_obs)
         return SourceResult(
             source=TDSource.source_d,
             candidates=all_candidates,
-            total_rounds=len(specialist_lenses),
+            total_rounds=rounds_executed,
             singletons=singletons,
             doubletons=doubletons,
+            chao1_estimate=chao1,
+            source_sample_coverage=sc,
             execution_time_s=time.monotonic() - t0,
         )
     except Exception as exc:
         return SourceResult(
             source=TDSource.source_d,
             candidates=all_candidates,
-            total_rounds=len(specialist_lenses),
+            total_rounds=rounds_executed,
             execution_time_s=time.monotonic() - t0,
             error=str(exc),
         )
@@ -514,6 +599,8 @@ async def run_hierarchy_construction(
         model=model, messages=messages, timeout_s=timeout_s
     )
     parsed = _parse_json_response(raw_text)
+    if parsed is None:
+        parsed = {"taxonomy": []}
 
     root_nodes = _parse_hierarchy_nodes(parsed.get("taxonomy", []))
     total, max_depth = _count_tree_stats(root_nodes)
@@ -545,7 +632,7 @@ def _parse_hierarchy_nodes(
             sort_order=i,
             children=children,
             source_provenance=nd.get("source_provenance", {}),
-            confidence=float(nd.get("confidence", 0.5)),
+            confidence=_safe_float(nd.get("confidence", 0.5)),
         )
         result.append(node)
     return result
@@ -597,6 +684,8 @@ async def run_relevance_filtering(
         model=model, messages=messages, temperature=0.3, timeout_s=timeout_s
     )
     parsed = _parse_json_response(raw_text)
+    if parsed is None:
+        return []
     results = parsed.get("classifications", [])
     if not isinstance(results, list):
         return []
@@ -630,6 +719,8 @@ async def run_topic_generation(
         model=model, messages=messages, timeout_s=timeout_s
     )
     parsed = _parse_json_response(raw_text)
+    if parsed is None:
+        return []
     topics = parsed.get("topics", [])
     if not isinstance(topics, list):
         return []
@@ -646,7 +737,7 @@ async def run_topic_generation(
                 intent_type=IntentType(intent_type),
                 audience_segment=audience_segment,
                 relevance=RelevanceCell.relevant,
-                priority_score=float(t.get("priority_score", 0.5)),
+                priority_score=_safe_float(t.get("priority_score", 0.5)),
                 priority_factors=t.get("priority_factors", {}),
             )
         )
@@ -709,10 +800,12 @@ def compute_all_coverage_metrics(
 ) -> CaptureRecaptureResult:
     """Compute all coverage metrics from source results.
 
-    Performs pairwise capture-recapture across all source pairs,
-    computes Chao1, and sample coverage from aggregated frequency data.
+    - Pairwise capture-recapture across source pairs (between-source).
+    - Per-source Chao1/sample coverage from within-source round-level
+      frequency classes (pre-computed on each SourceResult).
+    - Aggregate coverage = min of per-source sample coverages.
     """
-    # Extract name sets per source
+    # Extract name sets per source (for CR — unchanged)
     source_sets: Dict[str, set[str]] = {}
     for sr in source_results:
         names = {c.name.lower().strip() for c in sr.candidates if c.name}
@@ -746,24 +839,54 @@ def compute_all_coverage_metrics(
         all_names |= names
     observed = len(all_names)
 
-    # Aggregate singletons and doubletons
+    # Build per-source coverage from pre-computed source values
+    per_source: Dict[str, PerSourceCoverage] = {}
+    for sr in source_results:
+        if sr.total_rounds > 0:
+            per_source[sr.source.value] = PerSourceCoverage(
+                source=sr.source,
+                singletons=sr.singletons,
+                doubletons=sr.doubletons,
+                observed=len(source_sets.get(sr.source.value, set())),
+                total_observations=_count_total_round_observations(sr.candidates),
+                chao1_estimate=sr.chao1_estimate,
+                sample_coverage=sr.source_sample_coverage,
+            )
+
+    # Aggregate: use minimum per-source coverage (most conservative)
+    coverages = [
+        psc.sample_coverage for psc in per_source.values()
+        if psc.sample_coverage > 0
+    ]
+    agg_coverage = min(coverages) if coverages else 0.0
+
+    chao1_ratios = [
+        psc.observed / psc.chao1_estimate
+        for psc in per_source.values()
+        if psc.chao1_estimate > 0
+    ]
+    agg_chao1_ratio = min(chao1_ratios) if chao1_ratios else 0.0
+
+    # Deprecated fields — sum for backward compat
     total_singletons = sum(sr.singletons for sr in source_results)
     total_doubletons = sum(sr.doubletons for sr in source_results)
-    total_candidates = sum(len(sr.candidates) for sr in source_results)
-
-    chao1 = compute_chao1_lower_bound(observed, total_singletons, total_doubletons)
-    coverage = compute_sample_coverage(total_singletons, total_candidates)
 
     return CaptureRecaptureResult(
         pairwise_estimates=pairwise,
         median_estimate=median,
         estimate_range=[min(estimates, default=0.0), max(estimates, default=0.0)],
-        chao1_lower_bound=chao1,
-        sample_coverage=coverage,
+        chao1_lower_bound=max(
+            (psc.chao1_estimate for psc in per_source.values()), default=0.0,
+        ),
+        sample_coverage=agg_coverage,
         observed_count=observed,
         total_singletons=total_singletons,
         total_doubletons=total_doubletons,
-        meets_target=coverage >= 0.95,
+        coverage_target=0.95,
+        meets_target=agg_coverage >= 0.95,
+        per_source_coverage=per_source,
+        aggregate_sample_coverage=agg_coverage,
+        aggregate_chao1_ratio=agg_chao1_ratio,
     )
 
 
@@ -775,10 +898,50 @@ def compute_all_coverage_metrics(
 def _count_frequency_classes(
     candidates: List[SubdomainCandidate],
 ) -> Tuple[int, int]:
-    """Count singletons and doubletons from candidate names across rounds."""
+    """Count singletons and doubletons from candidate names (raw frequency)."""
     from collections import Counter
 
     name_counts = Counter(c.name.lower().strip() for c in candidates if c.name)
     singletons = sum(1 for v in name_counts.values() if v == 1)
     doubletons = sum(1 for v in name_counts.values() if v == 2)
     return singletons, doubletons
+
+
+def _count_frequency_classes_by_round(
+    candidates: List[SubdomainCandidate],
+) -> Tuple[int, int]:
+    """Count singletons/doubletons by round presence (not raw frequency).
+
+    A singleton = a unique name that appeared in exactly 1 round.
+    A doubleton = a unique name that appeared in exactly 2 rounds.
+    This is the correct unit for Chao1 within a single source,
+    where each expansion round is a repeated draw from the same process.
+    """
+    from collections import defaultdict
+
+    name_rounds: Dict[str, set] = defaultdict(set)
+    for c in candidates:
+        if c.name:
+            name_rounds[c.name.lower().strip()].add(c.round_number)
+
+    singletons = sum(1 for rounds in name_rounds.values() if len(rounds) == 1)
+    doubletons = sum(1 for rounds in name_rounds.values() if len(rounds) == 2)
+    return singletons, doubletons
+
+
+def _count_total_round_observations(
+    candidates: List[SubdomainCandidate],
+) -> int:
+    """Count total (name, round) incidences — denominator N for Good-Turing.
+
+    Each unique name contributes the number of distinct rounds it appeared in.
+    Duplicates within the same round are counted once.
+    """
+    from collections import defaultdict
+
+    name_rounds: Dict[str, set] = defaultdict(set)
+    for c in candidates:
+        if c.name:
+            name_rounds[c.name.lower().strip()].add(c.round_number)
+
+    return sum(len(rounds) for rounds in name_rounds.values())

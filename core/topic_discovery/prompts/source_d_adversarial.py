@@ -177,6 +177,7 @@ def build_source_d_user_prompt(
     *,
     round_number: int = 1,
     previous_subdomains: list[str] | None = None,
+    revision_note: str | None = None,
 ) -> str:
     """Build user prompt for Source D adversarial subdomain discovery.
 
@@ -254,5 +255,17 @@ def build_source_d_user_prompt(
         "Return your response as a JSON object matching the schema specified in "
         "your instructions. Do NOT include any text outside the JSON object."
     )
+
+    # --- Reviewer Feedback (if retrying after HITL) ---
+    if revision_note:
+        parts.append("")
+        parts.append("---")
+        parts.append("")
+        parts.append(
+            "## Reviewer Feedback\n\n"
+            "A previous version of the taxonomy was reviewed and a retry was "
+            "requested. Address the following feedback:\n\n"
+            f"{revision_note}"
+        )
 
     return "\n".join(parts)

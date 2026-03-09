@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -34,12 +35,19 @@ from core.models.topic_discovery import (
 
 logger = logging.getLogger(__name__)
 
+_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
+
 
 class TopicDiscoveryStorage:
     """Read / write / version topic discovery artifacts on the filesystem."""
 
     def __init__(self, artifacts_root: Path, slug: str) -> None:
-        self._root = Path(artifacts_root) / "topic_discovery" / slug
+        if not slug or not _SLUG_PATTERN.match(slug):
+            raise ValueError(
+                f"Invalid slug: {slug!r}. "
+                "Must match ^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$"
+            )
+        self._root = Path(artifacts_root).resolve() / "topic_discovery" / slug
         self._slug = slug
 
     @staticmethod
@@ -179,10 +187,11 @@ class TopicDiscoveryStorage:
         if version == 0:
             version = self.get_latest_taxonomy_version() + 1
         path = self._taxonomy_dir() / f"v{version}.json"
-        self._atomic_write(path, tree.model_dump_json(indent=2))
+        synced = tree.model_copy(update={"version": version})
+        self._atomic_write(path, synced.model_dump_json(indent=2))
         logger.info(
             "TD/%s: wrote taxonomy v%d (%d subdomains)",
-            self._slug, version, tree.total_subdomains,
+            self._slug, version, synced.total_subdomains,
         )
         return version
 
@@ -231,10 +240,11 @@ class TopicDiscoveryStorage:
         if version == 0:
             version = self.get_latest_matrix_version() + 1
         path = self._matrix_dir() / f"v{version}.json"
-        self._atomic_write(path, matrix.model_dump_json(indent=2))
+        synced = matrix.model_copy(update={"version": version})
+        self._atomic_write(path, synced.model_dump_json(indent=2))
         logger.info(
             "TD/%s: wrote matrix v%d (%d assignments)",
-            self._slug, version, matrix.total_assignments,
+            self._slug, version, synced.total_assignments,
         )
         return version
 

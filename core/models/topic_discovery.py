@@ -104,7 +104,7 @@ class TopicAssignmentStatus(str, Enum):
 class TopicDiscoveryInput(BaseModel):
     """Input for the Topic Discovery pipeline orchestrator."""
 
-    company_name: str
+    company_name: str = ""
     domain: Optional[str] = None
     company_slug: Optional[str] = None
     company_id: Optional[str] = None
@@ -162,6 +162,8 @@ class SourceResult(BaseModel):
     total_rounds: int = 0
     singletons: int = 0
     doubletons: int = 0
+    chao1_estimate: float = 0.0
+    source_sample_coverage: float = 0.0
     execution_time_s: float = 0.0
     error: Optional[str] = None
 
@@ -171,12 +173,25 @@ class SourceResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class PerSourceCoverage(BaseModel):
+    """Chao1/sample-coverage within a single source across its rounds."""
+
+    source: TDSource = TDSource.source_a
+    singletons: int = 0
+    doubletons: int = 0
+    observed: int = 0
+    total_observations: int = 0
+    chao1_estimate: float = 0.0
+    sample_coverage: float = 0.0
+
+
 class CaptureRecaptureResult(BaseModel):
     """Statistical coverage metrics from Multi-Source Capture-Recapture."""
 
     pairwise_estimates: Dict[str, float] = Field(default_factory=dict)
     median_estimate: float = 0.0
     estimate_range: List[float] = Field(default_factory=list)
+    # Deprecated: kept for backward compat with old JSON artifacts
     chao1_lower_bound: float = 0.0
     sample_coverage: float = 0.0
     observed_count: int = 0
@@ -184,6 +199,10 @@ class CaptureRecaptureResult(BaseModel):
     total_doubletons: int = 0
     coverage_target: float = 0.95
     meets_target: bool = False
+    # New: per-source coverage metrics (correct statistical approach)
+    per_source_coverage: Dict[str, PerSourceCoverage] = Field(default_factory=dict)
+    aggregate_sample_coverage: float = 0.0
+    aggregate_chao1_ratio: float = 0.0
 
 
 class SubdomainNode(BaseModel):

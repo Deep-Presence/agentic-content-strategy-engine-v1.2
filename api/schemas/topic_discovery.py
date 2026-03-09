@@ -6,9 +6,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.schemas.common import _check_product_slug
+from core.models.topic_discovery import BuyerStage, IntentType
 
 
 # ---------------------------------------------------------------------------
@@ -18,6 +19,8 @@ from api.schemas.common import _check_product_slug
 
 class TopicDiscoveryStartRequest(BaseModel):
     """Launch the Topic Discovery pipeline."""
+
+    model_config = ConfigDict(extra="forbid")
 
     company_name: str
     domain: str
@@ -59,6 +62,8 @@ class TopicDiscoveryStartRequest(BaseModel):
 class TaxonomyEditItem(BaseModel):
     """A single edit operation on the taxonomy."""
 
+    model_config = ConfigDict(extra="forbid")
+
     op: Literal["add", "delete", "rename", "reparent"]
     node_id: Optional[str] = None
     parent_id: Optional[str] = None
@@ -71,6 +76,8 @@ class TaxonomyEditItem(BaseModel):
 class TaxonomyApprovalRequest(BaseModel):
     """Request body for HITL-1 taxonomy approval."""
 
+    model_config = ConfigDict(extra="forbid")
+
     batch_decision: Literal["approve", "modify", "retry"]
     user_edits: List[TaxonomyEditItem] = Field(default_factory=list)
     user_feedback: Optional[str] = None
@@ -79,19 +86,23 @@ class TaxonomyApprovalRequest(BaseModel):
 class MatrixEditItem(BaseModel):
     """A single edit operation on the matrix."""
 
+    model_config = ConfigDict(extra="forbid")
+
     op: Literal["adjust_priority", "remove", "add"]
     assignment_id: Optional[str] = None
     new_priority: Optional[float] = None
     topic_text: Optional[str] = None
     subdomain_name: Optional[str] = None
-    buyer_stage: Optional[str] = None
-    intent_type: Optional[str] = None
+    buyer_stage: Optional[BuyerStage] = None
+    intent_type: Optional[IntentType] = None
     audience_segment: Optional[str] = None
     priority_score: Optional[float] = None
 
 
 class MatrixApprovalRequest(BaseModel):
     """Request body for HITL-2 matrix approval."""
+
+    model_config = ConfigDict(extra="forbid")
 
     batch_decision: Literal["approve", "modify"]
     user_edits: List[MatrixEditItem] = Field(default_factory=list)
@@ -108,3 +119,22 @@ class ApprovalResponseTD(BaseModel):
     status: str = "accepted"
     stage: str = ""
     message: Optional[str] = None
+
+
+class TaxonomyReadResponse(BaseModel):
+    """Response for GET /{slug}/taxonomy."""
+
+    slug: str = ""
+    taxonomy: Dict[str, Any] = Field(default_factory=dict)
+    version: int = 0
+    total_subdomains: int = 0
+    coverage_score: float = 0.0
+
+
+class MatrixReadResponse(BaseModel):
+    """Response for GET /{slug}/matrix."""
+
+    slug: str = ""
+    matrix: Dict[str, Any] = Field(default_factory=dict)
+    version: int = 0
+    total_assignments: int = 0

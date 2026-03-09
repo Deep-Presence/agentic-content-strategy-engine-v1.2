@@ -116,11 +116,14 @@ class TestCoverage:
             median_estimate=112.0,
             sample_coverage=0.94,
             observed_count=100,
+            aggregate_sample_coverage=0.94,
+            aggregate_chao1_ratio=0.85,
         )
         storage.write_coverage(metrics, version=1)
         restored = storage.read_coverage(version=1)
         assert restored is not None
         assert restored.median_estimate == 112.0
+        assert restored.aggregate_sample_coverage == 0.94
 
     def test_read_missing_coverage_returns_none(self, storage):
         assert storage.read_coverage(version=1) is None
@@ -190,6 +193,28 @@ class TestTaxonomy:
         (tax_dir / "v_bad.json").write_text("{}")
         assert storage.get_latest_taxonomy_version() == 1
 
+    def test_auto_increment_syncs_taxonomy_version(self, storage, sample_taxonomy):
+        """M4: Auto-incremented filename version must match JSON payload version."""
+        storage.write_taxonomy(sample_taxonomy)  # v1
+        v2 = storage.write_taxonomy(sample_taxonomy)  # v2
+        assert v2 == 2
+        restored = storage.read_taxonomy(version=2)
+        assert restored is not None
+        assert restored.version == 2  # Must match filename, not original
+
+    def test_explicit_version_syncs_taxonomy(self, storage, sample_taxonomy):
+        """M4: Explicit version=5 must be written into JSON payload."""
+        storage.write_taxonomy(sample_taxonomy, version=5)
+        restored = storage.read_taxonomy(version=5)
+        assert restored is not None
+        assert restored.version == 5
+
+    def test_write_taxonomy_does_not_mutate_original(self, storage, sample_taxonomy):
+        """M4: model_copy must not mutate the original object."""
+        original_version = sample_taxonomy.version
+        storage.write_taxonomy(sample_taxonomy, version=99)
+        assert sample_taxonomy.version == original_version
+
 
 # ── Matrix ───────────────────────────────────────────────────────────────
 
@@ -229,6 +254,22 @@ class TestMatrix:
         (mat_dir / "v1.json").write_text("NOT JSON")
         assert storage.read_matrix(version=1) is None
 
+    def test_auto_increment_syncs_matrix_version(self, storage, sample_matrix):
+        """M4: Auto-incremented filename version must match JSON payload version."""
+        storage.write_matrix(sample_matrix)  # v1
+        v2 = storage.write_matrix(sample_matrix)  # v2
+        assert v2 == 2
+        restored = storage.read_matrix(version=2)
+        assert restored is not None
+        assert restored.version == 2
+
+    def test_explicit_version_syncs_matrix(self, storage, sample_matrix):
+        """M4: Explicit version=3 must be written into JSON payload."""
+        storage.write_matrix(sample_matrix, version=3)
+        restored = storage.read_matrix(version=3)
+        assert restored is not None
+        assert restored.version == 3
+
 
 # ── Properties ───────────────────────────────────────────────────────────
 
@@ -256,3 +297,60 @@ class TestAtomicWrite:
         storage._atomic_write(path, '{"v": 1}')
         storage._atomic_write(path, '{"v": 2}')
         assert json.loads(path.read_text()) == {"v": 2}
+
+
+# ── M7: Slug path traversal guard ───────────────────────────────────────
+
+
+class TestM7SlugValidation:
+    """M7: Storage must reject slugs that could escape the artifacts root."""
+
+    def test_slug_path_traversal_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="Invalid slug"):
+            TopicDiscoveryStorage(tmp_path, "../../../etc")
+
+    def test_slug_dots_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="Invalid slug"):
+            TopicDiscoveryStorage(tmp_path, "test.co")
+
+    def test_slug_spaces_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="Invalid slug"):
+            TopicDiscoveryStorage(tmp_path, "test co")
+
+    def test_slug_empty_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="Invalid slug"):
+            TopicDiscoveryStorage(tmp_path, "")
+
+    def test_slug_slashes_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="Invalid slug"):
+            TopicDiscoveryStorage(tmp_path, "test/co")
+
+    def test_slug_effective_slug_accepted(self, tmp_path):
+        s = TopicDiscoveryStorage(tmp_path, "test-co__product")
+        assert s.slug == "test-co__product"
+
+    def test_slug_bare_slug_accepted(self, tmp_path):
+        s = TopicDiscoveryStorage(tmp_path, "test-co")
+        assert s.slug == "test-co"
+
+
+# ── M5: Repository query safety ─────────────────────────────────────────
+
+
+class TestM5RepositoryQuerySafety:
+    """M5: get_by_effective_slug uses scalars().first() + ORDER BY, not scalar_one_or_none()."""
+
+    def test_get_by_effective_slug_uses_scalars_first(self):
+        """Verify the method uses .scalars().first() instead of .scalar_one_or_none()."""
+        import inspect
+        from core.topic_discovery.repository import TopicDiscoveryRepository
+        source = inspect.getsource(TopicDiscoveryRepository.get_by_effective_slug)
+        assert "scalars().first()" in source
+        assert "scalar_one_or_none" not in source
+
+    def test_get_by_effective_slug_orders_by_created_at(self):
+        """Verify the query orders by created_at DESC to get latest."""
+        import inspect
+        from core.topic_discovery.repository import TopicDiscoveryRepository
+        source = inspect.getsource(TopicDiscoveryRepository.get_by_effective_slug)
+        assert "created_at.desc()" in source

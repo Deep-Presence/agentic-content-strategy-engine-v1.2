@@ -204,6 +204,12 @@ class TestGetTDStatus:
         resp = client.get(f"{PREFIX}/nonexistent-123/status")
         assert resp.status_code == 404
 
+    def test_status_tenant_isolation_403(self, client, task_store):
+        """Cannot view status of another company's task."""
+        task = task_store.create_task("topic_discovery", "other-co")
+        resp = client.get(f"{PREFIX}/{task.task_id}/status")
+        assert resp.status_code == 403
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # POST /{run_id}/approve/taxonomy
@@ -220,6 +226,7 @@ class TestApproveTaxonomy:
             status=TaskStatus.PENDING_APPROVAL,
             approval_payload={
                 "stage": "td_taxonomy_review",
+                "checkpoint_nonce": "test-nonce",
                 "taxonomy": {"root_nodes": []},
             },
         )
@@ -238,7 +245,7 @@ class TestApproveTaxonomy:
         task_store.update_task(
             task.task_id,
             status=TaskStatus.PENDING_APPROVAL,
-            approval_payload={"stage": "td_taxonomy_review"},
+            approval_payload={"stage": "td_taxonomy_review", "checkpoint_nonce": "test-nonce"},
         )
 
         resp = client.post(
@@ -258,7 +265,7 @@ class TestApproveTaxonomy:
         task_store.update_task(
             task.task_id,
             status=TaskStatus.PENDING_APPROVAL,
-            approval_payload={"stage": "td_taxonomy_review"},
+            approval_payload={"stage": "td_taxonomy_review", "checkpoint_nonce": "test-nonce"},
         )
 
         resp = client.post(
@@ -299,6 +306,38 @@ class TestApproveTaxonomy:
         )
         assert resp.status_code == 404
 
+    def test_approve_taxonomy_tenant_isolation_403(self, client, task_store):
+        """Cannot approve taxonomy of another company's task."""
+        task = task_store.create_task("topic_discovery", "other-co")
+        task_store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={
+                "stage": "td_taxonomy_review",
+                "checkpoint_nonce": "n1",
+            },
+        )
+        resp = client.post(
+            f"{PREFIX}/{task.task_id}/approve/taxonomy",
+            json={"batch_decision": "approve"},
+        )
+        assert resp.status_code == 403
+
+    def test_approve_taxonomy_missing_nonce_409(self, client, task_store):
+        """Approval fails if no checkpoint_nonce in approval_payload."""
+        task = task_store.create_task("topic_discovery", "test-co")
+        task_store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={"stage": "td_taxonomy_review"},
+        )
+        resp = client.post(
+            f"{PREFIX}/{task.task_id}/approve/taxonomy",
+            json={"batch_decision": "approve"},
+        )
+        assert resp.status_code == 409
+        assert "No active approval checkpoint" in resp.json()["detail"]
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # POST /{run_id}/approve/matrix
@@ -313,7 +352,7 @@ class TestApproveMatrix:
         task_store.update_task(
             task.task_id,
             status=TaskStatus.PENDING_APPROVAL,
-            approval_payload={"stage": "td_matrix_review"},
+            approval_payload={"stage": "td_matrix_review", "checkpoint_nonce": "test-nonce"},
         )
 
         resp = client.post(
@@ -330,7 +369,7 @@ class TestApproveMatrix:
         task_store.update_task(
             task.task_id,
             status=TaskStatus.PENDING_APPROVAL,
-            approval_payload={"stage": "td_matrix_review"},
+            approval_payload={"stage": "td_matrix_review", "checkpoint_nonce": "test-nonce"},
         )
 
         resp = client.post(
@@ -365,6 +404,38 @@ class TestApproveMatrix:
             json={"batch_decision": "approve"},
         )
         assert resp.status_code == 404
+
+    def test_approve_matrix_tenant_isolation_403(self, client, task_store):
+        """Cannot approve matrix of another company's task."""
+        task = task_store.create_task("topic_discovery", "other-co")
+        task_store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={
+                "stage": "td_matrix_review",
+                "checkpoint_nonce": "n1",
+            },
+        )
+        resp = client.post(
+            f"{PREFIX}/{task.task_id}/approve/matrix",
+            json={"batch_decision": "approve"},
+        )
+        assert resp.status_code == 403
+
+    def test_approve_matrix_missing_nonce_409(self, client, task_store):
+        """Approval fails if no checkpoint_nonce in approval_payload."""
+        task = task_store.create_task("topic_discovery", "test-co")
+        task_store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={"stage": "td_matrix_review"},
+        )
+        resp = client.post(
+            f"{PREFIX}/{task.task_id}/approve/matrix",
+            json={"batch_decision": "approve"},
+        )
+        assert resp.status_code == 409
+        assert "No active approval checkpoint" in resp.json()["detail"]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -407,8 +478,18 @@ class TestGetLatestTaxonomy:
         assert data["coverage_score"] == 0.85
 
     def test_taxonomy_not_found(self, client):
-        resp = client.get(f"{PREFIX}/nonexistent-slug/taxonomy")
+        resp = client.get(f"{PREFIX}/test-co/taxonomy")
         assert resp.status_code == 404
+
+    def test_taxonomy_tenant_isolation_403(self, client):
+        """Cannot read taxonomy of another company."""
+        resp = client.get(f"{PREFIX}/other-co/taxonomy")
+        assert resp.status_code == 403
+
+    def test_taxonomy_effective_slug_other_company_blocked(self, client):
+        """Cannot read taxonomy using effective slug of another company."""
+        resp = client.get(f"{PREFIX}/other-co__product/taxonomy")
+        assert resp.status_code == 403
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -449,8 +530,18 @@ class TestGetLatestMatrix:
         assert data["total_assignments"] == 1
 
     def test_matrix_not_found(self, client):
-        resp = client.get(f"{PREFIX}/nonexistent-slug/matrix")
+        resp = client.get(f"{PREFIX}/test-co/matrix")
         assert resp.status_code == 404
+
+    def test_matrix_tenant_isolation_403(self, client):
+        """Cannot read matrix of another company."""
+        resp = client.get(f"{PREFIX}/other-co/matrix")
+        assert resp.status_code == 403
+
+    def test_matrix_effective_slug_other_company_blocked(self, client):
+        """Cannot read matrix using effective slug of another company."""
+        resp = client.get(f"{PREFIX}/other-co__product/matrix")
+        assert resp.status_code == 403
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -488,3 +579,126 @@ class TestSchemaValidation:
     def test_start_missing_required_fields(self, client):
         resp = client.post(f"{PREFIX}/start", json={})
         assert resp.status_code == 422
+
+    # ── M9: Invalid enum values rejected ─────────────────────────────
+
+    def test_matrix_edit_invalid_buyer_stage_422(self, client):
+        """M9: buyer_stage must be a valid BuyerStage enum value."""
+        resp = client.post(
+            f"{PREFIX}/some-task/approve/matrix",
+            json={
+                "batch_decision": "modify",
+                "user_edits": [
+                    {"op": "add", "buyer_stage": "invalid_stage", "topic_text": "x"},
+                ],
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_matrix_edit_invalid_intent_type_422(self, client):
+        """M9: intent_type must be a valid IntentType enum value."""
+        resp = client.post(
+            f"{PREFIX}/some-task/approve/matrix",
+            json={
+                "batch_decision": "modify",
+                "user_edits": [
+                    {"op": "add", "intent_type": "garbage", "topic_text": "x"},
+                ],
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_matrix_edit_valid_enums_accepted(self, client):
+        """M9: Valid enum values pass schema validation (may fail downstream)."""
+        resp = client.post(
+            f"{PREFIX}/some-task/approve/matrix",
+            json={
+                "batch_decision": "modify",
+                "user_edits": [
+                    {"op": "add", "buyer_stage": "tofu", "intent_type": "informational"},
+                ],
+            },
+        )
+        # Not 422 — schema accepted. Downstream may give 404/409.
+        assert resp.status_code != 422
+
+    # ── L2: Extra fields rejected ────────────────────────────────────
+
+    def test_start_extra_fields_rejected_422(self, client, mock_td_runner):
+        """L2: Extra fields on start request must be rejected."""
+        resp = client.post(
+            f"{PREFIX}/start",
+            json={**MINIMAL_PAYLOAD, "bogus_field": True},
+        )
+        assert resp.status_code == 422
+
+    def test_taxonomy_approval_extra_fields_rejected_422(self, client):
+        """L2: Extra fields on taxonomy approval must be rejected."""
+        resp = client.post(
+            f"{PREFIX}/some-task/approve/taxonomy",
+            json={
+                "batch_decision": "approve",
+                "extra_field": "should_fail",
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_matrix_approval_extra_fields_rejected_422(self, client):
+        """L2: Extra fields on matrix approval must be rejected."""
+        resp = client.post(
+            f"{PREFIX}/some-task/approve/matrix",
+            json={
+                "batch_decision": "approve",
+                "extra_field": "should_fail",
+            },
+        )
+        assert resp.status_code == 422
+
+    # ── L4: Typed response models ────────────────────────────────────
+
+    def test_taxonomy_response_has_typed_fields(self, client, artifacts_root):
+        """L4: Taxonomy response validates against TaxonomyReadResponse."""
+        from api.schemas.topic_discovery import TaxonomyReadResponse
+        from core.topic_discovery.storage import TopicDiscoveryStorage
+        from core.models.topic_discovery import TaxonomyTree, SubdomainNode
+
+        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
+        tree = TaxonomyTree(
+            domain_name="test",
+            root_nodes=[SubdomainNode(name="A")],
+            total_subdomains=1,
+            coverage_score=0.9,
+        )
+        ver = storage.write_taxonomy(tree)
+        manifest = storage.read_manifest()
+        manifest.taxonomy_version = ver
+        storage.write_manifest(manifest)
+
+        resp = client.get(f"{PREFIX}/test-co/taxonomy")
+        assert resp.status_code == 200
+        data = TaxonomyReadResponse(**resp.json())
+        assert data.slug == "test-co"
+        assert data.total_subdomains == 1
+        assert data.coverage_score == 0.9
+
+    def test_matrix_response_has_typed_fields(self, client, artifacts_root):
+        """L4: Matrix response validates against MatrixReadResponse."""
+        from api.schemas.topic_discovery import MatrixReadResponse
+        from core.topic_discovery.storage import TopicDiscoveryStorage
+        from core.models.topic_discovery import TopicAssignmentMatrix, TopicAssignment
+
+        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
+        matrix = TopicAssignmentMatrix(
+            assignments=[TopicAssignment(topic_text="test")],
+            total_assignments=1,
+        )
+        ver = storage.write_matrix(matrix)
+        manifest = storage.read_manifest()
+        manifest.matrix_version = ver
+        storage.write_manifest(manifest)
+
+        resp = client.get(f"{PREFIX}/test-co/matrix")
+        assert resp.status_code == 200
+        data = MatrixReadResponse(**resp.json())
+        assert data.slug == "test-co"
+        assert data.total_assignments == 1

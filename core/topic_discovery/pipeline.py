@@ -42,7 +42,6 @@ from core.models.topic_discovery import (
 from core.research.audience_persona.storage import PersonaStorage
 from core.shared_tools.tracing import (
     create_session,
-    create_span,
     create_trace,
     end_span,
     flush,
@@ -103,20 +102,6 @@ def _emit(
     """Null-safe SSE event publish."""
     if event_bus and task_id:
         event_bus.publish(task_id, event_type, data)
-
-
-async def _emit_async(
-    event_bus: Optional[Any],
-    task_id: Optional[str],
-    event_type: str,
-    data: Dict[str, Any],
-) -> None:
-    """Null-safe async SSE event publish."""
-    if event_bus and task_id:
-        if hasattr(event_bus, "emit"):
-            await event_bus.emit(task_id, {"type": event_type, **data})
-        else:
-            event_bus.publish(task_id, event_type, data)
 
 
 def _update_task(
@@ -205,7 +190,6 @@ async def run_topic_discovery_pipeline(
     task_store: Optional[Any] = None,
     event_bus: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
-    db_session: Optional[Any] = None,
 ) -> TopicDiscoveryOutput:
     """Run the Topic Discovery pipeline.
 
@@ -247,7 +231,7 @@ async def run_topic_discovery_pipeline(
         for check_slug in (effective_slug, company_slug):
             ctx_path = root / "company_context" / f"{check_slug}.md"
             if ctx_path.exists():
-                company_md = ctx_path.read_text(encoding="utf-8")
+                company_md = await asyncio.to_thread(ctx_path.read_text, encoding="utf-8")
                 break
 
         if not company_md.strip():
@@ -285,17 +269,21 @@ async def run_topic_discovery_pipeline(
             _update_task(task_store, task_id, current_step="phase_1_multi_source")
 
             # Run sources A, B, C in parallel
+            _revision = user_feedback or None
             source_a_task = run_source_a_company_brainstorm(
                 company_md, max_rounds=max_rounds, timeout_s=timeout_s,
+                revision_note=_revision,
             )
             source_b_task = run_source_b_persona_brainstorm(
                 persona_summaries, company_md, max_rounds=max_rounds, timeout_s=timeout_s,
+                revision_note=_revision,
             )
 
             # Source C: competitor sitemaps (placeholder data for now)
             sitemap_data = ""  # TODO: fetch sitemaps from seed_urls
             source_c_task = run_source_c_competitor_sitemaps(
                 sitemap_data, domain, timeout_s=timeout_s,
+                revision_note=_revision,
             )
 
             results_abc = await asyncio.gather(
@@ -327,6 +315,7 @@ async def run_topic_discovery_pipeline(
 
             source_d_result = await run_source_d_adversarial(
                 company_md, existing_names, max_rounds=max_rounds, timeout_s=timeout_s,
+                revision_note=_revision,
             )
             source_results.append(source_d_result)
             _emit(event_bus, task_id, "td_source_complete", {
@@ -377,7 +366,7 @@ async def run_topic_discovery_pipeline(
             taxonomy = await run_hierarchy_construction(deduped_names, domain)
 
             # Enrich taxonomy with coverage data
-            taxonomy.coverage_score = coverage.sample_coverage
+            taxonomy.coverage_score = coverage.aggregate_sample_coverage
             taxonomy.chao1_estimate = coverage.chao1_lower_bound
             taxonomy.capture_recapture_est = coverage.model_dump(mode="json")
 
@@ -387,7 +376,7 @@ async def run_topic_discovery_pipeline(
             _emit(event_bus, task_id, "td_phase_complete", {
                 "phase": 2,
                 "total_subdomains": taxonomy.total_subdomains,
-                "coverage_score": coverage.sample_coverage,
+                "coverage_score": coverage.aggregate_sample_coverage,
             })
 
             # =============================================================
@@ -418,10 +407,15 @@ async def run_topic_discovery_pipeline(
             if decision == "retry":
                 taxonomy_retry_count += 1
                 user_feedback = hitl1_result.get("user_feedback", "")
-                if taxonomy_retry_count > _MAX_TAXONOMY_RETRIES:
+                if taxonomy_retry_count >= _MAX_TAXONOMY_RETRIES:
                     logger.warning(
-                        "TD/%s: max taxonomy retries (%d) exceeded, approving as-is",
+                        "TD/%s: max taxonomy retries (%d) reached, approving as-is",
                         effective_slug, _MAX_TAXONOMY_RETRIES,
+                    )
+                    # H3: Explicitly approve the last-generated taxonomy
+                    taxonomy.status = TopicDiscoveryStatus.approved
+                    tax_version = await asyncio.to_thread(
+                        storage.write_taxonomy, taxonomy,
                     )
                     break
                 logger.info(
@@ -472,9 +466,13 @@ async def run_topic_discovery_pipeline(
         # Process each subdomain
         semaphore = asyncio.Semaphore(settings.topic_discovery_max_concurrent_sources)
 
-        async def _process_subdomain(subdomain: str) -> List[TopicAssignment]:
-            nonlocal total_relevant, total_irrelevant
+        async def _process_subdomain(
+            subdomain: str,
+        ) -> tuple:
+            """Return (assignments, relevant_count, irrelevant_count) for one subdomain."""
             assignments: List[TopicAssignment] = []
+            sd_relevant = 0
+            sd_irrelevant = 0
 
             # Build dimension combinations for this subdomain
             dimensions = []
@@ -506,10 +504,10 @@ async def run_topic_discovery_pipeline(
                 relevance = relevance_map.get(key, "relevant")
 
                 if relevance == "irrelevant":
-                    total_irrelevant += 1
+                    sd_irrelevant += 1
                     continue
 
-                total_relevant += 1
+                sd_relevant += 1
 
                 async with semaphore:
                     topics = await run_topic_generation(
@@ -522,7 +520,7 @@ async def run_topic_discovery_pipeline(
                     )
                 assignments.extend(topics)
 
-            return assignments
+            return assignments, sd_relevant, sd_irrelevant
 
         # Run subdomain processing with concurrency
         subdomain_tasks = [_process_subdomain(sd) for sd in subdomain_names]
@@ -535,7 +533,10 @@ async def run_topic_discovery_pipeline(
                     effective_slug, subdomain_names[i], res,
                 )
             else:
-                all_assignments.extend(res)
+                sd_assignments, sd_relevant, sd_irrelevant = res
+                all_assignments.extend(sd_assignments)
+                total_relevant += sd_relevant
+                total_irrelevant += sd_irrelevant
 
         # Build matrix
         distributions = _compute_distributions(all_assignments)
@@ -600,7 +601,7 @@ async def run_topic_discovery_pipeline(
         _update_task(task_store, task_id, current_step="phase_4_finalize")
 
         # Update manifest
-        manifest = storage.read_manifest()
+        manifest = await asyncio.to_thread(storage.read_manifest)
         manifest.slug = company_slug
         manifest.effective_slug = effective_slug
         manifest.company_name = input_data.company_name
@@ -610,7 +611,7 @@ async def run_topic_discovery_pipeline(
         manifest.matrix_version = mat_version
         manifest.last_updated = datetime.now(timezone.utc).isoformat()
         manifest.source_results_written = [sr.source.value for sr in source_results]
-        storage.write_manifest(manifest)
+        await asyncio.to_thread(storage.write_manifest, manifest)
 
         output = TopicDiscoveryOutput(
             slug=company_slug,
@@ -631,7 +632,7 @@ async def run_topic_discovery_pipeline(
         end_span(trace_span, output={
             "total_subdomains": taxonomy.total_subdomains,
             "total_assignments": len(all_assignments),
-            "coverage_score": coverage.sample_coverage,
+            "coverage_score": coverage.aggregate_sample_coverage,
         })
         flush()
         return output
