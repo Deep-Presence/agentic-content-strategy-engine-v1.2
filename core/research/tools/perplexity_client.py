@@ -9,8 +9,13 @@ from typing import Any, Dict
 from core.config.settings import settings
 
 
-def _client():
-    """Lazy import to avoid top-level dependency failure."""
+def _client(timeout_s: float = 300.0):
+    """Lazy import to avoid top-level dependency failure.
+
+    Args:
+        timeout_s: HTTP-level timeout in seconds. Ensures the underlying
+            thread terminates when asyncio.wait_for cancels the coroutine.
+    """
     from perplexity import Perplexity
 
     api_key = settings.perplexity_api_key
@@ -18,7 +23,11 @@ def _client():
         raise RuntimeError(
             "PERPLEXITY_API_KEY is not set. Get your key at https://perplexity.ai/account/api"
         )
-    return Perplexity(api_key=api_key)
+    try:
+        return Perplexity(api_key=api_key, timeout=timeout_s)
+    except TypeError:
+        # SDK version doesn't support timeout param — fall back gracefully
+        return Perplexity(api_key=api_key)
 
 
 def research(
@@ -27,6 +36,7 @@ def research(
     search_depth: str = "advanced",
     include_raw_content: bool = False,
     include_answer: bool = True,
+    timeout_s: float = 300.0,
     **kwargs: Any,
 ) -> str:
     """
@@ -35,7 +45,7 @@ def research(
     Conducts autonomous multi-step retrieval, synthesis, and reasoning.
     Returns research text with inline citations [1], [2], etc.
     """
-    client = _client()
+    client = _client(timeout_s=timeout_s)
     model = settings.perplexity_deep_research_model
 
     try:
@@ -77,6 +87,7 @@ def search(
     search_depth: str = "advanced",
     include_raw_content: bool = False,
     include_answer: bool = True,
+    timeout_s: float = 300.0,
     **kwargs: Any,
 ) -> str:
     """Alias for research (Perplexity Deep Research covers both search and deep research)."""
@@ -86,5 +97,6 @@ def search(
         search_depth=search_depth,
         include_raw_content=include_raw_content,
         include_answer=include_answer,
+        timeout_s=timeout_s,
         **kwargs,
     )

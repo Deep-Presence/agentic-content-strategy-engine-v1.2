@@ -1,0 +1,3450 @@
+{
+  "task_id": "2a986545-7ab2-4770-bf7d-00a42b12d7f0",
+  "pipeline": "gap_analysis",
+  "status": "completed",
+  "company_slug": "carta",
+  "current_step": null,
+  "progress_pct": null,
+  "created_at": "2026-02-16T21:31:06.710470Z",
+  "updated_at": "2026-02-17T00:12:24.223604Z",
+  "result": {
+    "report_md": "## Executive Summary\n\nThe company shows a modest citation advantage overall (t=1.65) but it is not statistically reliable yet (p=0.104), indicating AI search engines may cite it in some contexts but do not consistently prefer it. Content proximity to what AI engines cite is slightly behind the citation centroid (company mean similarity 0.652 vs citation mean 0.667), suggesting the company\u2019s pages are close to the \u201cshape\u201d of citable answers but still missing key signals. The strongest relative po",
+    "report_json": {
+      "executive_summary": "The company shows a modest citation advantage overall (t=1.65) but it is not statistically reliable yet (p=0.104), indicating AI search engines may cite it in some contexts but do not consistently prefer it. Content proximity to what AI engines cite is slightly behind the citation centroid (company mean similarity 0.652 vs citation mean 0.667), suggesting the company\u2019s pages are close to the \u201cshape\u201d of citable answers but still missing key signals. The strongest relative position is in Definition queries (highest cluster similarity at 0.744), implying the company performs well when explaining concepts. The weakest and highest-impact gap is Branded Evaluation\u2014especially direct competitor comparisons (largest gap 0.1931)\u2014where AI engines tend to cite structured comparison sources. Across clusters, the dominant authority pattern is commercial/media citations, so winning citations will likely depend on publishing highly-structured pages with explicit stats and third-party references rather than purely opinionated brand claims.",
+      "recommendations": [
+        {
+          "title_idea": "Carta vs Pulley for Cap Table Management (2026): Features, Pricing, Compliance, and Which Teams Each Fits",
+          "target_cluster": "Branded Evaluation",
+          "structural_signals": "Use clear H2/H3 sections (Overview, Key Differences, Feature-by-Feature, Pricing, Compliance/Security, Support, Best for), comparison tables and bulleted pros/cons lists, quantified stats where available (e.g., pricing ranges, implementation time, user/review metrics), and dense third-party citations (commercial/media + any relevant nonprofit/government guidance). Keep within typical cluster length (~308\u20135475 words).",
+          "expected_impact": "Closes the single largest gap (q_36) by matching the exact comparison format AI answers tend to cite, increasing the likelihood of being selected as the canonical \u201cvs\u201d reference for branded evaluation prompts."
+        },
+        {
+          "title_idea": "Equity Management Platforms vs Traditional Transfer Agents: Decision Guide + Cost/Process Comparison",
+          "target_cluster": "Category Comparison",
+          "structural_signals": "Lead with a definition/summary box, then structured sections with tables (responsibilities, timelines, costs, risk/compliance), bullet checklists for \u201cwhen you need each,\u201d 2\u20134 concrete examples, and stats plus citations from commercial/media sources. Stay in the 108\u201311601 word range.",
+          "expected_impact": "Directly targets a high-gap query (q_12) and provides the comparison scaffolding AI engines extract for \u201cvs\u201d questions, improving citations across adjacent category-comparison prompts."
+        },
+        {
+          "title_idea": "How to Choose a Cap Table Management Tool for a Venture-Backed Startup: A 12-Point Evaluation Checklist",
+          "target_cluster": "Decision Criteria",
+          "structural_signals": "Use a numbered criteria framework, scannable headers per criterion, a weighted scoring template/table, \u201cmust-have vs nice-to-have\u201d lists, and supporting stats/citations (e.g., audit readiness, compliance, data security benchmarks) aligned to commercial/media authority patterns. Allow for long-form if needed (44\u2013114443 words) but keep the core checklist near the top.",
+          "expected_impact": "Addresses a major decision-criteria gap (q_16) with an extractable rubric that AI systems can quote verbatim, improving the company\u2019s usefulness as a neutral evaluator rather than a vendor pitch."
+        },
+        {
+          "title_idea": "Messy Cap Table Cleanup Before Series A/B: Step-by-Step Checklist, Common Errors, and a Timeline",
+          "target_cluster": "Problem/Awareness",
+          "structural_signals": "Problem framing + symptom checklist, step-by-step remediation plan with timelines, bulleted \u201ccommon pitfalls,\u201d a before/after example scenario, and stats/citations (e.g., diligence delay drivers, typical cleanup tasks) referenced to credible commercial/media sources. Fit within 168\u201381962 words with strong headings for each step.",
+          "expected_impact": "Closes a high-intent operational gap (q_26) and positions the company as the cited source for pre-fundraising readiness answers that AI engines frequently assemble from checklist-style pages."
+        },
+        {
+          "title_idea": "Best Cap Table Management Software for Startups in 2026: Criteria-Based Rankings + Use-Case Shortlists",
+          "target_cluster": "Best-of/Consideration",
+          "structural_signals": "Provide transparent methodology (criteria + weighting), shortlist tables by startup stage/use case, bulleted pros/cons per tool, and supporting stats/citations (reviews, adoption indicators, pricing bands) from commercial/media sources. Keep within 134\u20137816 words and ensure each tool section has consistent subheaders for easy extraction.",
+          "expected_impact": "Targets a prominent \u201cbest-of\u201d gap (q_31) where AI engines often cite listicles with explicit methodology; this can become a recurring annual asset that accumulates citations over time."
+        }
+      ],
+      "proximity_stats": {
+        "citation_similarity_mean": 0.6669397004357095,
+        "citation_similarity_median": 0.6613488366827749,
+        "company_similarity_mean": 0.651781326821244,
+        "company_similarity_median": 0.6429128512464422,
+        "per_cluster": {
+          "Mechanism": {
+            "mean": 0.6507251573968751,
+            "std": 0.06393812943609117,
+            "min": 0.4787733933949807,
+            "max": 0.8559142954434759,
+            "count": 75
+          },
+          "Boundary": {
+            "mean": 0.6625089712328832,
+            "std": 0.07531354484159106,
+            "min": 0.5171053468032113,
+            "max": 0.8464163569658435,
+            "count": 75
+          },
+          "Category Comparison": {
+            "mean": 0.6676606547158149,
+            "std": 0.059204684593186535,
+            "min": 0.538685295891077,
+            "max": 0.8264305078053431,
+            "count": 75
+          },
+          "Decision Criteria": {
+            "mean": 0.6670751953558239,
+            "std": 0.0859291971772608,
+            "min": 0.4563509667506704,
+            "max": 0.8845676460375707,
+            "count": 75
+          },
+          "Definition": {
+            "mean": 0.743808655452461,
+            "std": 0.0736619420636623,
+            "min": 0.4841257876104971,
+            "max": 0.9245917615482258,
+            "count": 75
+          },
+          "Problem/Awareness": {
+            "mean": 0.6548166379710353,
+            "std": 0.07247572615280493,
+            "min": 0.4538093996665815,
+            "max": 0.7900453650679942,
+            "count": 75
+          },
+          "Best-of/Consideration": {
+            "mean": 0.6523779090259432,
+            "std": 0.10727943872343888,
+            "min": 0.43111820172864534,
+            "max": 0.8713774773594114,
+            "count": 75
+          },
+          "Branded Evaluation": {
+            "mean": 0.6590057023609913,
+            "std": 0.09328181933204001,
+            "min": 0.3245762699317095,
+            "max": 0.829258057374568,
+            "count": 75
+          },
+          "Feature Verification": {
+            "mean": 0.6444784204095575,
+            "std": 0.05501126593095976,
+            "min": 0.5166674846554274,
+            "max": 0.7990748849011716,
+            "count": 75
+          }
+        }
+      },
+      "spa_results": [
+        {
+          "cluster_id": null,
+          "cluster_name": "all",
+          "t_stat": 1.6504557999478051,
+          "p_value": 0.10436738112601056,
+          "mean_citation_similarity": 0.6669397004357095,
+          "mean_company_similarity": 0.651781326821244,
+          "effect": "citation_advantage"
+        }
+      ],
+      "gaps": [
+        {
+          "query_id": "q_36",
+          "cluster_name": "Branded Evaluation",
+          "query_text": "Carta vs Pulley cap table management comparison",
+          "best_company_unit": "unit_8",
+          "best_company_unit_text": "With Carta, I can review a high volume of data in a fraction of the time. Because the same data powers both fund administration and tax reporting, I can work in one system throughout. It expedites the",
+          "best_company_similarity": 0.5123013773749074,
+          "avg_citation_similarity": 0.7054344599334954,
+          "gap": 0.19313308255858797,
+          "interpretation": "significant_gap",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8254,
+              "domain": "www.bizbot.com",
+              "url": "https://www.bizbot.com/blog/carta-vs-pulley-cap-table-software-comparison/",
+              "snippet": "Carta vs Pulley Cap Table Software Comparison Chart",
+              "structural_signals": {
+                "word_count": 2478,
+                "paragraph_count": 61,
+                "header_count": 34,
+                "list_item_count": 18,
+                "stat_count": 95,
+                "citation_count": 33,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7623,
+              "domain": "www.hirechore.com",
+              "url": "https://www.hirechore.com/startups/carta-vs-pulley-how-to-choose-the-best-cap-table-management-solution-for-your-startup",
+              "snippet": "Carta vs. Pulley: Comparison of Features Between Carta and Pulley",
+              "structural_signals": {
+                "word_count": 2597,
+                "paragraph_count": 128,
+                "header_count": 53,
+                "list_item_count": 49,
+                "stat_count": 16,
+                "citation_count": 109,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7623,
+              "domain": "www.hirechore.com",
+              "url": "https://www.hirechore.com/startups/carta-vs-pulley-how-to-choose-the-best-cap-table-management-solution-for-your-startup",
+              "snippet": "Carta vs. Pulley: Comparison of Features Between Carta and Pulley",
+              "structural_signals": {
+                "word_count": 2597,
+                "paragraph_count": 128,
+                "header_count": 53,
+                "list_item_count": 49,
+                "stat_count": 16,
+                "citation_count": 109,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_12",
+          "cluster_name": "Category Comparison",
+          "query_text": "Equity management platforms vs traditional transfer agents: when do you need each?",
+          "best_company_unit": "unit_2603",
+          "best_company_unit_text": "Good equity management is critical to your company\u2019s success. If you\u2019re considering offering equity or starting to build your company\u2019s equity plan right now, an equity management platform can help. D",
+          "best_company_similarity": 0.5515461853960546,
+          "avg_citation_similarity": 0.674092278460313,
+          "gap": 0.12254609306425845,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8264,
+              "domain": "www.nthround.com",
+              "url": "https://www.nthround.com/blog/equity-management-platforms-vs-registered-transfer-agents-whats-best-for-private-companies",
+              "snippet": "Comparing Equity Management Platforms and Transfer Agents",
+              "structural_signals": {
+                "word_count": 1200,
+                "paragraph_count": 38,
+                "header_count": 20,
+                "list_item_count": 14,
+                "stat_count": 0,
+                "citation_count": 102,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7484,
+              "domain": "www.nthround.com",
+              "url": "https://www.nthround.com/blog/equity-management-platforms-vs-registered-transfer-agents-whats-best-for-private-companies",
+              "snippet": "Cost is another significant factor. While transfer agents provide valuable services, they often come with substantial fees. Equity management platforms, on the other hand, typically offer more cost-effective solutions by streamlining internal processes. For large private companies, the cost savings ",
+              "structural_signals": {
+                "word_count": 1200,
+                "paragraph_count": 38,
+                "header_count": 20,
+                "list_item_count": 14,
+                "stat_count": 0,
+                "citation_count": 102,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7282,
+              "domain": "www.nthround.com",
+              "url": "https://www.nthround.com/blog/equity-management-platforms-vs-registered-transfer-agents-whats-best-for-private-companies",
+              "snippet": "However, for many large, established private companies and family businesses, the need for a transfer agent is diminishing. These companies benefit more from comprehensive equity management platforms that are tailored to their unique needs, providing greater control and transparency over their equit",
+              "structural_signals": {
+                "word_count": 1200,
+                "paragraph_count": 38,
+                "header_count": 20,
+                "list_item_count": 14,
+                "stat_count": 0,
+                "citation_count": 102,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_16",
+          "cluster_name": "Decision Criteria",
+          "query_text": "How to choose a cap table management tool for a venture-backed startup",
+          "best_company_unit": "unit_4267",
+          "best_company_unit_text": "Once you begin hiring employees and raising new rounds of financing, a cap table management software is the way to go. Instead of you having to remember to update your cap table and send the latest ve",
+          "best_company_similarity": 0.6783724420552314,
+          "avg_citation_similarity": 0.7841026399772064,
+          "gap": 0.10573019792197502,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8846,
+              "domain": "pulley.com",
+              "url": "https://pulley.com/blog-posts/best-cap-table-management-software",
+              "snippet": "How to choose the right cap table software for your startup",
+              "structural_signals": {
+                "word_count": 1599,
+                "paragraph_count": 59,
+                "header_count": 24,
+                "list_item_count": 65,
+                "stat_count": 7,
+                "citation_count": 125,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8846,
+              "domain": "pulley.com",
+              "url": "https://pulley.com/blog-posts/best-cap-table-management-software",
+              "snippet": "How to choose the right cap table software for your startup",
+              "structural_signals": {
+                "word_count": 1599,
+                "paragraph_count": 59,
+                "header_count": 24,
+                "list_item_count": 65,
+                "stat_count": 7,
+                "citation_count": 125,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.868,
+              "domain": "founderscpa.com",
+              "url": "https://founderscpa.com/blog/8-cap-table-tools-for-startups",
+              "snippet": "What to consider when choosing the right cap table management tool",
+              "structural_signals": {
+                "word_count": 1570,
+                "paragraph_count": 42,
+                "header_count": 19,
+                "list_item_count": 42,
+                "stat_count": 10,
+                "citation_count": 64,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_26",
+          "cluster_name": "Problem/Awareness",
+          "query_text": "How can I clean up a messy cap table before a Series A or Series B round?",
+          "best_company_unit": "unit_5237",
+          "best_company_unit_text": "Cap table management tips from a startup lawyer: Before, during and after investment When it comes to fundraising, founders want to dedicate time to pitching their vision while investors are focused o",
+          "best_company_similarity": 0.6429128512464422,
+          "avg_citation_similarity": 0.7360095731590345,
+          "gap": 0.09309672191259233,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.79,
+              "domain": "www.cakeequity.com",
+              "url": "https://www.cakeequity.com/guides/clean-cap-table",
+              "snippet": "How to set up a clean cap table (and not mess it up!)",
+              "structural_signals": {
+                "word_count": 2105,
+                "paragraph_count": 67,
+                "header_count": 23,
+                "list_item_count": 47,
+                "stat_count": 4,
+                "citation_count": 133,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.78,
+              "domain": "www.cakeequity.com",
+              "url": "https://www.cakeequity.com/guides/clean-cap-table",
+              "snippet": "What does a clean cap table look like in the early stages",
+              "structural_signals": {
+                "word_count": 2105,
+                "paragraph_count": 67,
+                "header_count": 23,
+                "list_item_count": 47,
+                "stat_count": 4,
+                "citation_count": 133,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7663,
+              "domain": "www.cakeequity.com",
+              "url": "https://www.cakeequity.com/guides/clean-cap-table",
+              "snippet": "What does a clean cap table look like in the later stages",
+              "structural_signals": {
+                "word_count": 2105,
+                "paragraph_count": 67,
+                "header_count": 23,
+                "list_item_count": 47,
+                "stat_count": 4,
+                "citation_count": 133,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_31",
+          "cluster_name": "Best-of/Consideration",
+          "query_text": "Best cap table management software for startups in 2026",
+          "best_company_unit": "unit_4267",
+          "best_company_unit_text": "Once you begin hiring employees and raising new rounds of financing, a cap table management software is the way to go. Instead of you having to remember to update your cap table and send the latest ve",
+          "best_company_similarity": 0.6742720919579978,
+          "avg_citation_similarity": 0.7636821426004861,
+          "gap": 0.0894100506424883,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.866,
+              "domain": "story.law",
+              "url": "https://story.law/blog/best-cap-table-management-software-2026?utm_source=openai",
+              "snippet": "Q: What are the best cap table management software options in 2026?",
+              "structural_signals": {
+                "word_count": 2467,
+                "paragraph_count": 135,
+                "header_count": 20,
+                "list_item_count": 140,
+                "stat_count": 41,
+                "citation_count": 36,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.866,
+              "domain": "story.law",
+              "url": "https://story.law/blog/best-cap-table-management-software-2026",
+              "snippet": "Q: What are the best cap table management software options in 2026?",
+              "structural_signals": {
+                "word_count": 2467,
+                "paragraph_count": 135,
+                "header_count": 20,
+                "list_item_count": 140,
+                "stat_count": 41,
+                "citation_count": 36,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8048,
+              "domain": "www.cakeequity.com",
+              "url": "https://www.cakeequity.com/guides/best-cap-table-software",
+              "snippet": "Choosing the best cap table management software for your startup",
+              "structural_signals": {
+                "word_count": 2537,
+                "paragraph_count": 93,
+                "header_count": 35,
+                "list_item_count": 58,
+                "stat_count": 32,
+                "citation_count": 128,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_25",
+          "cluster_name": "Definition",
+          "query_text": "What is a liquidation preference and how does it impact founder proceeds?",
+          "best_company_unit": "unit_2784",
+          "best_company_unit_text": "Liquidation Preference = OIP x # of Outstanding Preferred Shares When a company exits, preferred shareholders are required to be paid out according to their place in the liquidation stack before commo",
+          "best_company_similarity": 0.6934453300654321,
+          "avg_citation_similarity": 0.7640349781909652,
+          "gap": 0.07058964812553314,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8399,
+              "domain": "growthequityinterviewguide.com",
+              "url": "https://growthequityinterviewguide.com/venture-capital/venture-capital-term-sheets/liquidation-preference",
+              "snippet": "How does liquidation preference impact founders and employees?",
+              "structural_signals": {
+                "word_count": 2296,
+                "paragraph_count": 72,
+                "header_count": 24,
+                "list_item_count": 75,
+                "stat_count": 44,
+                "citation_count": 116,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "docs"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8054,
+              "domain": "growthequityinterviewguide.com",
+              "url": "https://growthequityinterviewguide.com/venture-capital/venture-capital-term-sheets/liquidation-preference",
+              "snippet": "Liquidation preference can affect the amount founders and employees receive from a company exit. If a significant portion of proceeds goes to investors due to liquidation preference terms, common shareholders, which often include founders and employees, may receive less or even nothing.",
+              "structural_signals": {
+                "word_count": 2296,
+                "paragraph_count": 72,
+                "header_count": 24,
+                "list_item_count": 75,
+                "stat_count": 44,
+                "citation_count": 116,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "docs"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7852,
+              "domain": "growthequityinterviewguide.com",
+              "url": "https://growthequityinterviewguide.com/venture-capital/venture-capital-term-sheets/liquidation-preference",
+              "snippet": "Liquidation preferences can have significant implications for founders and employees. In cases where a company sells for less than the capital raised, investors might take all proceeds, leaving nothing for common shareholders.",
+              "structural_signals": {
+                "word_count": 2296,
+                "paragraph_count": 72,
+                "header_count": 24,
+                "list_item_count": 75,
+                "stat_count": 44,
+                "citation_count": 116,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "docs"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_7",
+          "cluster_name": "Boundary",
+          "query_text": "What compliance requirements apply to issuing equity to contractors or international employees?",
+          "best_company_unit": "unit_2593",
+          "best_company_unit_text": "ASC 718 is a set of accounting standards that outline the steps your company must follow when reporting employee U.S. stock-based compensation or other equity interests on an income statement. Account",
+          "best_company_similarity": 0.5836304920847581,
+          "avg_citation_similarity": 0.6540963736359728,
+          "gap": 0.07046588155121469,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7507,
+              "domain": "www.deel.com",
+              "url": "https://www.deel.com/blog/how-to-offer-equity-perks-internationally/",
+              "snippet": "How can companies ensure compliance with local laws when granting equity?",
+              "structural_signals": {
+                "word_count": 1493,
+                "paragraph_count": 86,
+                "header_count": 23,
+                "list_item_count": 46,
+                "stat_count": 4,
+                "citation_count": 108,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6981,
+              "domain": "www.deel.com",
+              "url": "https://www.deel.com/blog/how-to-offer-equity-perks-internationally/",
+              "snippet": "Before issuing equity in a new country, check securities, exchange control, and labor rules; non-compliance can trigger penalties and bar future grants. Many jurisdictions require filings, translations, employer registrations, or employee notices. A consistent global plan with localized addenda simp",
+              "structural_signals": {
+                "word_count": 1493,
+                "paragraph_count": 86,
+                "header_count": 23,
+                "list_item_count": 46,
+                "stat_count": 4,
+                "citation_count": 108,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6837,
+              "domain": "www.deel.com",
+              "url": "https://www.deel.com/blog/how-to-offer-equity-perks-internationally/",
+              "snippet": "Companies can grant equity to full-time employees, contractors , and EOR hires, but each category carries distinct legal, tax, and documentation requirements.",
+              "structural_signals": {
+                "word_count": 1493,
+                "paragraph_count": 86,
+                "header_count": 23,
+                "list_item_count": 46,
+                "stat_count": 4,
+                "citation_count": 108,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_11",
+          "cluster_name": "Category Comparison",
+          "query_text": "Cap table management software vs spreadsheet cap table: what are the real differences?",
+          "best_company_unit": "unit_4268",
+          "best_company_unit_text": "Traditionally, the legal ownership of a private company \u201clived\u201d on paper shares issued to founders, investors, and employees. Some of the biggest venture-backed private companies still have their lawy",
+          "best_company_similarity": 0.6765252439208659,
+          "avg_citation_similarity": 0.7417003269354832,
+          "gap": 0.06517508301461727,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8013,
+              "domain": "www.optioincentives.com",
+              "url": "https://www.optioincentives.com/resource-hub/a-guide-to-cap-table-management",
+              "snippet": "The Solution: Spreadsheets or Cap Table management software?",
+              "structural_signals": {
+                "word_count": 976,
+                "paragraph_count": 40,
+                "header_count": 11,
+                "list_item_count": 56,
+                "stat_count": 0,
+                "citation_count": 67,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7803,
+              "domain": "ltse.com",
+              "url": "https://ltse.com/insights/what-to-look-for-in-cap-table-software",
+              "snippet": "Spreadsheets force you to create multiple versions of your cap table. Cap table software, on the other hand, updates your cap table automatically, ensuring that no matter how many updates you make, you\u2019ll always have just one cap table to refer to.",
+              "structural_signals": {
+                "word_count": 731,
+                "paragraph_count": 20,
+                "header_count": 16,
+                "list_item_count": 6,
+                "stat_count": 3,
+                "citation_count": 107,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7803,
+              "domain": "ltse.com",
+              "url": "https://ltse.com/insights/what-to-look-for-in-cap-table-software",
+              "snippet": "Spreadsheets force you to create multiple versions of your cap table. Cap table software, on the other hand, updates your cap table automatically, ensuring that no matter how many updates you make, you\u2019ll always have just one cap table to refer to.",
+              "structural_signals": {
+                "word_count": 731,
+                "paragraph_count": 20,
+                "header_count": 16,
+                "list_item_count": 6,
+                "stat_count": 3,
+                "citation_count": 107,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_28",
+          "cluster_name": "Problem/Awareness",
+          "query_text": "How do we set a fair strike price for new employee option grants?",
+          "best_company_unit": "unit_3902",
+          "best_company_unit_text": "Myth : The lower the strike price, the better. Reality : An artificially low strike price is a major red flag for auditors and the IRS. The goal is to set the lowest defensible price to protect your e",
+          "best_company_similarity": 0.6009190612470059,
+          "avg_citation_similarity": 0.6655542680390247,
+          "gap": 0.06463520679201884,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7813,
+              "domain": "pulley.com",
+              "url": "https://pulley.com/guides/stock-option-strike-price",
+              "snippet": "How to set a strike price for employee stock options",
+              "structural_signals": {
+                "word_count": 1971,
+                "paragraph_count": 50,
+                "header_count": 12,
+                "list_item_count": 9,
+                "stat_count": 31,
+                "citation_count": 122,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7813,
+              "domain": "pulley.com",
+              "url": "https://pulley.com/guides/stock-option-strike-price",
+              "snippet": "How to set a strike price for employee stock options",
+              "structural_signals": {
+                "word_count": 1971,
+                "paragraph_count": 50,
+                "header_count": 12,
+                "list_item_count": 9,
+                "stat_count": 31,
+                "citation_count": 122,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7059,
+              "domain": "pulley.com",
+              "url": "https://pulley.com/guides/stock-option-strike-price",
+              "snippet": "What is the strike price of an employee stock option?",
+              "structural_signals": {
+                "word_count": 1971,
+                "paragraph_count": 50,
+                "header_count": 12,
+                "list_item_count": 9,
+                "stat_count": 31,
+                "citation_count": 122,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_19",
+          "cluster_name": "Decision Criteria",
+          "query_text": "Key criteria for selecting equity administration software for global teams",
+          "best_company_unit": "unit_2601",
+          "best_company_unit_text": "Stay organized . The right technology tools enable you to spend less time on paperwork and more time building your company. Scale with ease . With one platform, all your equity and liquidity informati",
+          "best_company_similarity": 0.5569408472074054,
+          "avg_citation_similarity": 0.6187510070737684,
+          "gap": 0.06181015986636296,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7111,
+              "domain": "www.xumane.com",
+              "url": "https://www.xumane.com/blog/things-to-consider-when-selecting-equity-management-software",
+              "snippet": "5 Key Criteria to Consider When Selecting Equity Management Software",
+              "structural_signals": {
+                "word_count": 1298,
+                "paragraph_count": 52,
+                "header_count": 9,
+                "list_item_count": 70,
+                "stat_count": 11,
+                "citation_count": 61,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.682,
+              "domain": "www.xumane.com",
+              "url": "https://www.xumane.com/blog/things-to-consider-when-selecting-equity-management-software",
+              "snippet": "Check out the key criteria to consider when selecting the best software for equity management.",
+              "structural_signals": {
+                "word_count": 1298,
+                "paragraph_count": 52,
+                "header_count": 9,
+                "list_item_count": 70,
+                "stat_count": 11,
+                "citation_count": 61,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6694,
+              "domain": "www.optioincentives.com",
+              "url": "https://www.optioincentives.com/resource-hub/best-equity-management-software",
+              "snippet": "The right equity management platform should fit your plans, work across every country where you grant, and connect cleanly to HR, payroll, and finance. Done well, equity administration becomes accurate, transparent, and far less manual \u2014 so finance, HR, and legal can spend more time on strategy and ",
+              "structural_signals": {
+                "word_count": 6241,
+                "paragraph_count": 242,
+                "header_count": 45,
+                "list_item_count": 140,
+                "stat_count": 48,
+                "citation_count": 66,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_6",
+          "cluster_name": "Boundary",
+          "query_text": "What are the risks of managing a cap table in spreadsheets as the company scales?",
+          "best_company_unit": "unit_4227",
+          "best_company_unit_text": "However, spreadsheets aren\u2019t really scalable; high-growth businesses are likely to outgrow this model pretty quickly, especially as they reach institutional investment rounds led by venture capitalist",
+          "best_company_similarity": 0.6929046733058561,
+          "avg_citation_similarity": 0.7530114495939194,
+          "gap": 0.06010677628806327,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8096,
+              "domain": "www.vestd.com",
+              "url": "https://www.vestd.com/blog/cap-table-mistakes-to-avoid-at-all-costs",
+              "snippet": "Managing your cap table in a spreadsheet may seem fine at first, but all too often this leads to small errors that can have detrimental consequences for your business.",
+              "structural_signals": {
+                "word_count": 2050,
+                "paragraph_count": 82,
+                "header_count": 16,
+                "list_item_count": 163,
+                "stat_count": 15,
+                "citation_count": 323,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7795,
+              "domain": "www.qapita.com",
+              "url": "https://www.qapita.com/sg/blog/why-cap-tables-hard-to-manage-in-spreadsheets",
+              "snippet": "Why spreadsheets struggle with cap table management",
+              "structural_signals": {
+                "word_count": 1112,
+                "paragraph_count": 32,
+                "header_count": 19,
+                "list_item_count": 39,
+                "stat_count": 4,
+                "citation_count": 155,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7795,
+              "domain": "www.qapita.com",
+              "url": "https://www.qapita.com/sg/blog/why-cap-tables-hard-to-manage-in-spreadsheets",
+              "snippet": "Why spreadsheets struggle with cap table management",
+              "structural_signals": {
+                "word_count": 1112,
+                "paragraph_count": 32,
+                "header_count": 19,
+                "list_item_count": 39,
+                "stat_count": 4,
+                "citation_count": 155,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_17",
+          "cluster_name": "Decision Criteria",
+          "query_text": "Cap table software evaluation checklist for CFOs and finance teams",
+          "best_company_unit": "unit_4267",
+          "best_company_unit_text": "Once you begin hiring employees and raising new rounds of financing, a cap table management software is the way to go. Instead of you having to remember to update your cap table and send the latest ve",
+          "best_company_similarity": 0.6341608176309476,
+          "avg_citation_similarity": 0.6907480036393631,
+          "gap": 0.0565871860084155,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8602,
+              "domain": "www.equitylist.co",
+              "url": "https://www.equitylist.co/blog-post/cap-table-software-checklist",
+              "snippet": "Cap table software buying checklist for your startup",
+              "structural_signals": {
+                "word_count": 2170,
+                "paragraph_count": 82,
+                "header_count": 44,
+                "list_item_count": 38,
+                "stat_count": 16,
+                "citation_count": 224,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7721,
+              "domain": "www.equitylist.co",
+              "url": "https://www.equitylist.co/blog-post/cap-table-software-checklist",
+              "snippet": "Looking for cap table software? Use this in-depth buying checklist to evaluate tools across compliance, ESOP management, equity modeling, and investor reporting.",
+              "structural_signals": {
+                "word_count": 2170,
+                "paragraph_count": 82,
+                "header_count": 44,
+                "list_item_count": 38,
+                "stat_count": 16,
+                "citation_count": 224,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7424,
+              "domain": "www.cubesoftware.com",
+              "url": "https://www.cubesoftware.com/blog/cap-table-management-tools",
+              "snippet": "Cap table management made easy: Tools and techniques for finance leaders",
+              "structural_signals": {
+                "word_count": 2525,
+                "paragraph_count": 76,
+                "header_count": 30,
+                "list_item_count": 153,
+                "stat_count": 0,
+                "citation_count": 238,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_13",
+          "cluster_name": "Category Comparison",
+          "query_text": "409A valuation from a software provider vs a boutique valuation firm: pros and cons",
+          "best_company_unit": "unit_3896",
+          "best_company_unit_text": "Choosing a provider of 409A valuation services is about finding a long-term partner who understands the startup journey. You want a firm that can provide an accurate, defensible valuation while making",
+          "best_company_similarity": 0.6214375774022685,
+          "avg_citation_similarity": 0.6766859681858646,
+          "gap": 0.05524839078359611,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7162,
+              "domain": "eqvista.com",
+              "url": "https://eqvista.com/most-trusted-409a-valuation-firms/",
+              "snippet": "When selecting a 409A valuation provider, startups face a fundamental choice between established valuation firms and independent freelance consultants.",
+              "structural_signals": {
+                "word_count": 2896,
+                "paragraph_count": 81,
+                "header_count": 20,
+                "list_item_count": 125,
+                "stat_count": 66,
+                "citation_count": 116,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7054,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/spend-trends/startup/409a-valuation",
+              "snippet": "What to consider when choosing a 409A valuation provider",
+              "structural_signals": {
+                "word_count": 5631,
+                "paragraph_count": 94,
+                "header_count": 63,
+                "list_item_count": 64,
+                "stat_count": 118,
+                "citation_count": 89,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7054,
+              "domain": "www.brex.com",
+              "url": "https://www.brex.com/spend-trends/startup/409a-valuation",
+              "snippet": "What to consider when choosing a 409A valuation provider",
+              "structural_signals": {
+                "word_count": 5631,
+                "paragraph_count": 94,
+                "header_count": 63,
+                "list_item_count": 64,
+                "stat_count": 118,
+                "citation_count": 89,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_21",
+          "cluster_name": "Definition",
+          "query_text": "What is cap table management software?",
+          "best_company_unit": "unit_493",
+          "best_company_unit_text": "Once you begin hiring employees and raising new rounds of financing, a cap table management software is the way to go. Instead of you having to remember to update your cap table and send the latest ve",
+          "best_company_similarity": 0.7569550295424885,
+          "avg_citation_similarity": 0.8082069173033091,
+          "gap": 0.05125188776082057,
+          "interpretation": "gap_to_close",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.9246,
+              "domain": "ltse.com",
+              "url": "https://ltse.com/insights/what-is-a-capitalization-table",
+              "snippet": "What is cap table management software, and how does it work?",
+              "structural_signals": {
+                "word_count": 1795,
+                "paragraph_count": 48,
+                "header_count": 17,
+                "list_item_count": 31,
+                "stat_count": 29,
+                "citation_count": 113,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "docs"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.845,
+              "domain": "wowsglobal.com",
+              "url": "https://wowsglobal.com/resources/blogs-insights/why-every-startup-needs-a-cap-table-management-software/",
+              "snippet": "A: A cap table management software is a digital platform that helps startup founders and company management to efficiently manage their capitalization table, which is a record of the company's ownership and equity distribution.",
+              "structural_signals": {
+                "word_count": 2569,
+                "paragraph_count": 73,
+                "header_count": 48,
+                "list_item_count": 57,
+                "stat_count": 7,
+                "citation_count": 80,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8435,
+              "domain": "wowsglobal.com",
+              "url": "https://wowsglobal.com/resources/blogs-insights/why-every-startup-needs-a-cap-table-management-software/",
+              "snippet": "A: A cap table management software helps founders by providing an easy-to-use platform to manage their company's equity ownership, make informed decisions regarding equity grants and dilution, and attract the best talent through stock options and equity incentives.",
+              "structural_signals": {
+                "word_count": 2569,
+                "paragraph_count": 73,
+                "header_count": 48,
+                "list_item_count": 57,
+                "stat_count": 7,
+                "citation_count": 80,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_1",
+          "cluster_name": "Mechanism",
+          "query_text": "How do cap table management tools calculate dilution after a priced round?",
+          "best_company_unit": "unit_4627",
+          "best_company_unit_text": "Add details of any unpriced instruments (e.g. CLNs, ASAs or SAFEs) \u2013 including the value, discount (if applicable) and dilution terms Add details of any unpriced instruments (e.g. CLNs, ASAs or SAFEs)",
+          "best_company_similarity": 0.6181204917315424,
+          "avg_citation_similarity": 0.6550956035108634,
+          "gap": 0.036975111779321,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7571,
+              "domain": "foresight.is",
+              "url": "https://foresight.is/docs/anti-dilution/",
+              "snippet": "How does the Cap Table and Exit Waterfall Tool calculate anti-dilution?",
+              "structural_signals": {
+                "word_count": 1516,
+                "paragraph_count": 47,
+                "header_count": 14,
+                "list_item_count": 73,
+                "stat_count": 3,
+                "citation_count": 96,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "docs"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7416,
+              "domain": "foresight.is",
+              "url": "https://foresight.is/docs/anti-dilution/",
+              "snippet": "How does the Cap Table and Exit Waterfall Tool calculate anti-dilution? #",
+              "structural_signals": {
+                "word_count": 1516,
+                "paragraph_count": 47,
+                "header_count": 14,
+                "list_item_count": 73,
+                "stat_count": 3,
+                "citation_count": 96,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "docs"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7031,
+              "domain": "foresight.is",
+              "url": "https://foresight.is/docs/anti-dilution/",
+              "snippet": "How does anti-dilution protections impact cap tables?",
+              "structural_signals": {
+                "word_count": 1516,
+                "paragraph_count": 47,
+                "header_count": 14,
+                "list_item_count": 73,
+                "stat_count": 3,
+                "citation_count": 96,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "docs"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_8",
+          "cluster_name": "Boundary",
+          "query_text": "Common mistakes that cause cap table inaccuracies during fundraising and secondary sales",
+          "best_company_unit": "unit_5242",
+          "best_company_unit_text": "\u201cIf you have a messy cap table that you\u2019re not consistently updating, you don\u2019t really have a cap table at all,\u201d Spooner continues. \u201cThere\u2019s no source of truth.\u201d Taking care of the details will make i",
+          "best_company_similarity": 0.6687265564953997,
+          "avg_citation_similarity": 0.7052307256990168,
+          "gap": 0.0365041692036171,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8464,
+              "domain": "blog.promise.legal",
+              "url": "https://blog.promise.legal/startup-central/why-cap-table-accuracy-becomes-a-crisis-only-when-its-too-late/?utm_source=openai",
+              "snippet": "Common Cap Table Mistakes That Blow Up During Fundraising and Exits",
+              "structural_signals": {
+                "word_count": 1270,
+                "paragraph_count": 68,
+                "header_count": 15,
+                "list_item_count": 48,
+                "stat_count": 6,
+                "citation_count": 33,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8138,
+              "domain": "www.zeccarosslaw.com",
+              "url": "https://www.zeccarosslaw.com/cap-table-chaos-6-legal-mistakes-that-can-cost-you-in-due-diligence",
+              "snippet": "Understand the most common cap table mistakes that slow down or derail fundraising",
+              "structural_signals": {
+                "word_count": 652,
+                "paragraph_count": 28,
+                "header_count": 10,
+                "list_item_count": 18,
+                "stat_count": 2,
+                "citation_count": 11,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8042,
+              "domain": "trica.co",
+              "url": "https://trica.co/equity/blog/us/cap-table-management-key-mistakes-avoid/",
+              "snippet": "Critical Mistakes to Avoid in Cap Table Management",
+              "structural_signals": {
+                "word_count": 797,
+                "paragraph_count": 21,
+                "header_count": 27,
+                "list_item_count": 57,
+                "stat_count": 1,
+                "citation_count": 102,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_45",
+          "cluster_name": "Feature Verification",
+          "query_text": "Do equity administration systems provide employee equity portals for viewing vesting and exercising options?",
+          "best_company_unit": "unit_4110",
+          "best_company_unit_text": "Easily view, track, and issue equity on a secure platform that grows alongside your business. No more spreadsheets, no more errors. Manage company ownership Cap table and security holder management Is",
+          "best_company_similarity": 0.5930552364274652,
+          "avg_citation_similarity": 0.6265245148379525,
+          "gap": 0.0334692784104873,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7207,
+              "domain": "www.esofund.com",
+              "url": "https://www.esofund.com/blog/understanding-equity-portals-shareworks",
+              "snippet": "An equity portal is a secure online platform where employees can view, track, and manage their stock options and other equity holdings. For many startups, equity portals have become essential tools for transparency and communication around stock-based compensation. By offering a centralized place fo",
+              "structural_signals": {
+                "word_count": 775,
+                "paragraph_count": 23,
+                "header_count": 13,
+                "list_item_count": 3,
+                "stat_count": 3,
+                "citation_count": 53,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7207,
+              "domain": "www.esofund.com",
+              "url": "https://www.esofund.com/blog/understanding-equity-portals-carta",
+              "snippet": "An equity portal is a secure online platform where employees can view, track, and manage their stock options and other equity holdings. For many startups, equity portals have become essential tools for transparency and communication around stock-based compensation. By offering a centralized place fo",
+              "structural_signals": {
+                "word_count": 1274,
+                "paragraph_count": 41,
+                "header_count": 18,
+                "list_item_count": 14,
+                "stat_count": 9,
+                "citation_count": 54,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6922,
+              "domain": "www.cakeequity.com",
+              "url": "https://www.cakeequity.com/guides/best-equity-management-software",
+              "snippet": "An employee equity portal gives team members direct access to their equity holdings, vesting schedules, and ownership value \u2014 without requiring a Slack message to the founder for an update. A strong portal turns equity from a confusing line item into a tangible motivator.",
+              "structural_signals": {
+                "word_count": 2771,
+                "paragraph_count": 96,
+                "header_count": 33,
+                "list_item_count": 46,
+                "stat_count": 53,
+                "citation_count": 141,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_38",
+          "cluster_name": "Branded Evaluation",
+          "query_text": "Carta vs Ledgy for global equity plans",
+          "best_company_unit": "unit_438",
+          "best_company_unit_text": "Carta scales with venture-backed companies, from formation through IPO. We also help over two million shareholders manage equity. When you standardise on Carta with your clients or portfolio company, ",
+          "best_company_similarity": 0.6154105707250105,
+          "avg_citation_similarity": 0.6472894856699813,
+          "gap": 0.03187891494497086,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7322,
+              "domain": "www.glencoyne.com",
+              "url": "https://www.glencoyne.com/guides/equity-management-carta-competitors?utm_source=openai",
+              "snippet": "Ledgy: While Carta dominates in the US, Ledgy has established itself as a leader in the UK and Europe. Used by over 2,500 companies (Source: Ledgy, 2023), its platform is built with a global-first mindset. This is particularly important for managing multi-country employee share plan tools and naviga",
+              "structural_signals": {
+                "word_count": 1396,
+                "paragraph_count": 27,
+                "header_count": 11,
+                "list_item_count": 7,
+                "stat_count": 19,
+                "citation_count": 36,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6907,
+              "domain": "www.softwaresuggest.com",
+              "url": "https://www.softwaresuggest.com/compare/carta-investors-vs-ledgy",
+              "snippet": "Key features of Carta include cap table management, valuation services, equity plan management, scenario modeling, 409a valuations, board management, while Ledgy offers features, such as cap table management, equity plan management, scenario modeling, employee participation.",
+              "structural_signals": {
+                "word_count": 455,
+                "paragraph_count": 19,
+                "header_count": 17,
+                "list_item_count": 107,
+                "stat_count": 1,
+                "citation_count": 72,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6858,
+              "domain": "www.softwaresuggest.com",
+              "url": "https://www.softwaresuggest.com/compare/carta-investors-vs-ledgy",
+              "snippet": "Compare between Carta and Ledgy based on their key features and functionalities to pick the right one for your business.",
+              "structural_signals": {
+                "word_count": 455,
+                "paragraph_count": 19,
+                "header_count": 17,
+                "list_item_count": 107,
+                "stat_count": 1,
+                "citation_count": 72,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_14",
+          "cluster_name": "Category Comparison",
+          "query_text": "Equity compensation management tools vs HRIS equity modules: what do you lose or gain?",
+          "best_company_unit": "unit_3827",
+          "best_company_unit_text": "Stay organized . The right technology tools enable you to spend less time on paperwork and more time building your company. Scale with ease . With one platform, all your equity and liquidity informati",
+          "best_company_similarity": 0.5816398946460103,
+          "avg_citation_similarity": 0.6082835818133182,
+          "gap": 0.026643687167307917,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6602,
+              "domain": "ravio.com",
+              "url": "https://ravio.com/blog/hris-compensation-module-vs-dedicated-compensation-software",
+              "snippet": "What HRIS compensation modules offer and where they fall short",
+              "structural_signals": {
+                "word_count": 4520,
+                "paragraph_count": 184,
+                "header_count": 65,
+                "list_item_count": 52,
+                "stat_count": 6,
+                "citation_count": 148,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6524,
+              "domain": "www.brightplan.com",
+              "url": "https://www.brightplan.com/why-equity-compensation-planning-capabilities-are-beneficial-for-hr-teams/",
+              "snippet": "When an employer decides to offer an equity compensation benefit to their employees, most often the management and implementation of this program lies solely on the shoulders of HR teams, who may have limited resources. Without the proper support, HR teams are faced with challenges such as the inabi",
+              "structural_signals": {
+                "word_count": 1075,
+                "paragraph_count": 22,
+                "header_count": 8,
+                "list_item_count": 35,
+                "stat_count": 6,
+                "citation_count": 50,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6414,
+              "domain": "ravio.com",
+              "url": "https://ravio.com/blog/hris-compensation-module-vs-dedicated-compensation-software",
+              "snippet": "HRIS compensation vs dedicated compensation management software [at a glance]",
+              "structural_signals": {
+                "word_count": 4520,
+                "paragraph_count": 184,
+                "header_count": 65,
+                "list_item_count": 52,
+                "stat_count": 6,
+                "citation_count": 148,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_40",
+          "cluster_name": "Branded Evaluation",
+          "query_text": "Pulley vs Carta vs Shareworks which is best for Series B+ companies",
+          "best_company_unit": "unit_438",
+          "best_company_unit_text": "Carta scales with venture-backed companies, from formation through IPO. We also help over two million shareholders manage equity. When you standardise on Carta with your clients or portfolio company, ",
+          "best_company_similarity": 0.6269654852842458,
+          "avg_citation_similarity": 0.6511956799908344,
+          "gap": 0.024230194706588604,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6972,
+              "domain": "research.contrary.com",
+              "url": "https://research.contrary.com/company/pulley",
+              "snippet": "Competition is fierce in the equity management space, as there are a finite number of startups in need of cap table management in any given year. Despite its recent issues, Carta still controls a much larger market share than Pulley, with eight times as many customers ( 40K vs. 5K ), and Carta\u2019s fre",
+              "structural_signals": {
+                "word_count": 4321,
+                "paragraph_count": 76,
+                "header_count": 29,
+                "list_item_count": 19,
+                "stat_count": 137,
+                "citation_count": 189,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6825,
+              "domain": "pulley.com",
+              "url": "https://pulley.com/compare/pulley-vs-shareworks",
+              "snippet": "Shareworks is designed for large enterprises. Pulley is designed for founders and finance teams.",
+              "structural_signals": {
+                "word_count": 1405,
+                "paragraph_count": 90,
+                "header_count": 13,
+                "list_item_count": 52,
+                "stat_count": 17,
+                "citation_count": 124,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6825,
+              "domain": "pulley.com",
+              "url": "https://pulley.com/compare/pulley-vs-shareworks",
+              "snippet": "Shareworks is designed for large enterprises. Pulley is designed for founders and finance teams.",
+              "structural_signals": {
+                "word_count": 1405,
+                "paragraph_count": 90,
+                "header_count": 13,
+                "list_item_count": 52,
+                "stat_count": 17,
+                "citation_count": 124,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_42",
+          "cluster_name": "Feature Verification",
+          "query_text": "Can equity management software generate ASC 718 / IFRS 2 expense reports automatically?",
+          "best_company_unit": "unit_3152",
+          "best_company_unit_text": "Calculating share-based payment expenses can be a time-consuming task, especially as your company grows. When you need to account for different vesting schedules, valuations, market conditions and cha",
+          "best_company_similarity": 0.6212734193276657,
+          "avg_citation_similarity": 0.6443274144871693,
+          "gap": 0.023053995159503682,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7991,
+              "domain": "www.cakeequity.com",
+              "url": "https://www.cakeequity.com/changelog/stock-based-compensation-report?utm_source=openai",
+              "snippet": "Generate ASC 718 or IFRS 2* expense reports directly from your equity data, streamlining your accounting workflows and ensuring accurate financial reporting.",
+              "structural_signals": {
+                "word_count": 241,
+                "paragraph_count": 15,
+                "header_count": 5,
+                "list_item_count": 37,
+                "stat_count": 3,
+                "citation_count": 100,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "research"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7247,
+              "domain": "eqvista.com",
+              "url": "https://eqvista.com/services/asc-718/",
+              "snippet": "Get audit-ready and GAAP compliant ASC 718 stock expense report from Eqvista.",
+              "structural_signals": {
+                "word_count": 1009,
+                "paragraph_count": 33,
+                "header_count": 17,
+                "list_item_count": 84,
+                "stat_count": 25,
+                "citation_count": 98,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7021,
+              "domain": "insightsoftware.com",
+              "url": "https://insightsoftware.com/blog/best-practices-for-asc-718-reporting/",
+              "snippet": "As the number of employees in your organization grows, as members of your workforce come and go, and as the inputs to stock valuation fluctuate, the challenges of managing your ASC 718 reporting can quickly overwhelm you. This can often result in poorly managed data, spreadsheet formula errors, and ",
+              "structural_signals": {
+                "word_count": 2601,
+                "paragraph_count": 64,
+                "header_count": 17,
+                "list_item_count": 119,
+                "stat_count": 40,
+                "citation_count": 181,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_33",
+          "cluster_name": "Best-of/Consideration",
+          "query_text": "Best 409A valuation providers for venture-backed startups",
+          "best_company_unit": "unit_3896",
+          "best_company_unit_text": "Choosing a provider of 409A valuation services is about finding a long-term partner who understands the startup journey. You want a firm that can provide an accurate, defensible valuation while making",
+          "best_company_similarity": 0.7411703388266702,
+          "avg_citation_similarity": 0.744675363509932,
+          "gap": 0.0035050246832618592,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8714,
+              "domain": "www.hirechore.com",
+              "url": "https://www.hirechore.com/startups/best-409a-valuation-providers-for-startups",
+              "snippet": "Best 409A Valuation Providers for Startups in 2025",
+              "structural_signals": {
+                "word_count": 2873,
+                "paragraph_count": 128,
+                "header_count": 65,
+                "list_item_count": 44,
+                "stat_count": 90,
+                "citation_count": 107,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8256,
+              "domain": "www.hirechore.com",
+              "url": "https://www.hirechore.com/startups/best-409a-valuation-providers-for-startups",
+              "snippet": "How to Choose the Right 409A Valuation Provider for Your Startup",
+              "structural_signals": {
+                "word_count": 2873,
+                "paragraph_count": 128,
+                "header_count": 65,
+                "list_item_count": 44,
+                "stat_count": 90,
+                "citation_count": 107,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8213,
+              "domain": "www.qapita.com",
+              "url": "https://www.qapita.com/blog/top-409a-valuation-providers-for-companies-in-2026",
+              "snippet": "7 best 409A valuation providers for startups in 2026",
+              "structural_signals": {
+                "word_count": 2078,
+                "paragraph_count": 89,
+                "header_count": 23,
+                "list_item_count": 83,
+                "stat_count": 69,
+                "citation_count": 154,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_44",
+          "cluster_name": "Feature Verification",
+          "query_text": "Can cap table tools model liquidation waterfalls and investor payout scenarios?",
+          "best_company_unit": "unit_480",
+          "best_company_unit_text": "Exit scenarios model outcomes for shareholders in liquidity events like acquisitions or initial public offerings (IPOs) . This section of your cap table models payout distributions based on ownership,",
+          "best_company_similarity": 0.6671063638379793,
+          "avg_citation_similarity": 0.6694438166613854,
+          "gap": 0.0023374528234061387,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7472,
+              "domain": "www.equitylist.co",
+              "url": "https://www.equitylist.co/blog-post/waterfall-analysis",
+              "snippet": "Learn how cap table waterfall modelling works and how liquidation preferences and participation rights impact the payout for investors, founders, and employees.",
+              "structural_signals": {
+                "word_count": 887,
+                "paragraph_count": 30,
+                "header_count": 14,
+                "list_item_count": 33,
+                "stat_count": 4,
+                "citation_count": 202,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7386,
+              "domain": "foresight.is",
+              "url": "https://foresight.is/cap-table/",
+              "snippet": "The base cap table and exit waterfall can also be used to scenario modeling future rounds and exit distributions to shareholders, and built to be easy to use from an export of a share register from any of the online cap table management platforms.",
+              "structural_signals": {
+                "word_count": 7275,
+                "paragraph_count": 179,
+                "header_count": 153,
+                "list_item_count": 74,
+                "stat_count": 12,
+                "citation_count": 217,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7209,
+              "domain": "foresight.is",
+              "url": "https://foresight.is/cap-table/",
+              "snippet": "The cap table and exit waterfall are intended to be instructional tools to analyze how raising investment capital impacts cap tables, ownership, and proceeds at exit to shareholders of a company. Use in Microsoft Excel or Google Sheets; all cells and formulas are unlocked for editing and transparenc",
+              "structural_signals": {
+                "word_count": 7275,
+                "paragraph_count": 179,
+                "header_count": 153,
+                "list_item_count": 74,
+                "stat_count": 12,
+                "citation_count": 217,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_43",
+          "cluster_name": "Feature Verification",
+          "query_text": "Do cap table platforms support SAFE notes, convertible notes, and pro rata tracking?",
+          "best_company_unit": "unit_3651",
+          "best_company_unit_text": "A common mistake many early-stage entrepreneurs make is neglecting to properly record their outstanding SAFEs. Each SAFE you issue might have a different valuation cap or conversion discount, and if y",
+          "best_company_similarity": 0.6589484932541535,
+          "avg_citation_similarity": 0.6610088342807537,
+          "gap": 0.002060341026600243,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.757,
+              "domain": "growthequityinterviewguide.com",
+              "url": "https://growthequityinterviewguide.com/venture-capital/venture-capital-term-sheets/vc-cap-table",
+              "snippet": "How do convertible notes and SAFEs impact the cap table?",
+              "structural_signals": {
+                "word_count": 3560,
+                "paragraph_count": 116,
+                "header_count": 24,
+                "list_item_count": 101,
+                "stat_count": 32,
+                "citation_count": 115,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "docs"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6988,
+              "domain": "growthequityinterviewguide.com",
+              "url": "https://growthequityinterviewguide.com/venture-capital/venture-capital-term-sheets/vc-cap-table",
+              "snippet": "Including convertible notes and SAFEs in cap tables is also crucial to understanding their potential impact on ownership. Key details to track include:",
+              "structural_signals": {
+                "word_count": 3560,
+                "paragraph_count": 116,
+                "header_count": 24,
+                "list_item_count": 101,
+                "stat_count": 32,
+                "citation_count": 115,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "docs"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6782,
+              "domain": "www.equitylist.co",
+              "url": "https://www.equitylist.co/blog-post/safes-vs-convertible-notes",
+              "snippet": "Track all your SAFEs and convertible notes in one centralized dashboard.",
+              "structural_signals": {
+                "word_count": 2097,
+                "paragraph_count": 77,
+                "header_count": 35,
+                "list_item_count": 51,
+                "stat_count": 25,
+                "citation_count": 208,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_2",
+          "cluster_name": "Mechanism",
+          "query_text": "How does electronic equity grant issuance and acceptance work for employees?",
+          "best_company_unit": "unit_2246",
+          "best_company_unit_text": "If they have previously registered, they will be prompted to login and accept their awards BEFORE ACCEPTING: Employees can review the details of their award(s) and report any discrepancies directly to",
+          "best_company_similarity": 0.6192088634690003,
+          "avg_citation_similarity": 0.6196055413174357,
+          "gap": 0.00039667784843544496,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6822,
+              "domain": "kaaria.ai",
+              "url": "https://kaaria.ai/blog/pulley-alternatives/",
+              "snippet": "Streamlined equity issuance and grant workflows: Create, send, and manage equity grants to employees and advisors with automated document generation and e-signatures.",
+              "structural_signals": {
+                "word_count": 1936,
+                "paragraph_count": 90,
+                "header_count": 42,
+                "list_item_count": 48,
+                "stat_count": 18,
+                "citation_count": 65,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6647,
+              "domain": "www.esignglobal.com",
+              "url": "https://www.esignglobal.com/blog/electronic-signature-employee-stock-option-grants",
+              "snippet": "In the fast-paced world of corporate finance and employee compensation, stock option grants represent a critical tool for attracting and retaining talent. These grants allow employees to purchase company shares at a predetermined price, aligning their interests with long-term business success. Howev",
+              "structural_signals": {
+                "word_count": 2532,
+                "paragraph_count": 25,
+                "header_count": 11,
+                "list_item_count": 291,
+                "stat_count": 35,
+                "citation_count": 95,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6477,
+              "domain": "www.naspp.com",
+              "url": "https://www.naspp.com/blog/grant-acceptance-policies?utm_source=openai",
+              "snippet": "The short answer here is that there is no legal requirement that employees (or other grant recipients) accept their grants (at least not in the United States, laws outside the US can vary\u2014consult your advisors). Companies could simply notify employees of their equity awards and not require any ackno",
+              "structural_signals": {
+                "word_count": 2425,
+                "paragraph_count": 38,
+                "header_count": 7,
+                "list_item_count": 100,
+                "stat_count": 22,
+                "citation_count": 100,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_3",
+          "cluster_name": "Mechanism",
+          "query_text": "How does a 409A valuation process work and what inputs do valuation providers use?",
+          "best_company_unit": "unit_3890",
+          "best_company_unit_text": "There are three standard methodologies providers use during a 409A: market approach, income approach, and asset approach. Appraisers consider factors such as a company\u2019s current assets, its cash flows",
+          "best_company_similarity": 0.7387178049680602,
+          "avg_citation_similarity": 0.7373466045134517,
+          "gap": -0.0013712004546084788,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8559,
+              "domain": "www.sharp409a.com",
+              "url": "https://www.sharp409a.com/blogs/how-409a-valuation-providers-determine-fair-value/",
+              "snippet": "How 409A Valuation Providers Determine Fair Value?",
+              "structural_signals": {
+                "word_count": 1032,
+                "paragraph_count": 41,
+                "header_count": 22,
+                "list_item_count": 68,
+                "stat_count": 39,
+                "citation_count": 81,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8224,
+              "domain": "www.sharp409a.com",
+              "url": "https://www.sharp409a.com/blogs/how-409a-valuation-providers-determine-fair-value/",
+              "snippet": "Home \u00bb 409a Valuation \u00bb How 409A Valuation Providers Determine Fair Value?",
+              "structural_signals": {
+                "word_count": 1032,
+                "paragraph_count": 41,
+                "header_count": 22,
+                "list_item_count": 68,
+                "stat_count": 39,
+                "citation_count": 81,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7392,
+              "domain": "www.morganstanley.com",
+              "url": "https://www.morganstanley.com/atwork/articles/409a-valuation-faq",
+              "snippet": "What information does a private company need to provide for a 409A valuation?",
+              "structural_signals": {
+                "word_count": 2007,
+                "paragraph_count": 52,
+                "header_count": 21,
+                "list_item_count": 68,
+                "stat_count": 29,
+                "citation_count": 104,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_30",
+          "cluster_name": "Problem/Awareness",
+          "query_text": "How do we prepare cap table and equity records for a financial statement audit?",
+          "best_company_unit": "unit_3784",
+          "best_company_unit_text": "Once you\u2019ve hired an auditor, the next step is to compile your documentation. You will be emailed a document called a PBC (Prepared By Client list). This is a list of documents your auditor will need ",
+          "best_company_similarity": 0.6480844937139751,
+          "avg_citation_similarity": 0.6452773835959397,
+          "gap": -0.002807110118035472,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7015,
+              "domain": "bennettfinancials.com",
+              "url": "https://bennettfinancials.com/saas-founder-tax-strategy-cap-table-and-financial-statement-essentials/",
+              "snippet": "How to keep your cap table and financial statements aligned",
+              "structural_signals": {
+                "word_count": 2532,
+                "paragraph_count": 79,
+                "header_count": 45,
+                "list_item_count": 67,
+                "stat_count": 51,
+                "citation_count": 70,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6943,
+              "domain": "graphitefinancial.com",
+              "url": "https://graphitefinancial.com/blog/startup-due-diligence-financial-checklist/?utm_source=openai",
+              "snippet": "Organizing Your Cap Table and Equity Documentation",
+              "structural_signals": {
+                "word_count": 4933,
+                "paragraph_count": 184,
+                "header_count": 29,
+                "list_item_count": 116,
+                "stat_count": 17,
+                "citation_count": 133,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6904,
+              "domain": "shaycpa.com",
+              "url": "https://shaycpa.com/what-is-a-cap-table-how-does-it-impact-my-financials/",
+              "snippet": "On the accounting side, when we\u2019re preparing a startup\u2019s financial statements, we need to make sure that the cap table is accurately reflected on their balance sheet. Specifically, your cap table needs to reconcile to your balance sheet and other financial statements.",
+              "structural_signals": {
+                "word_count": 1321,
+                "paragraph_count": 40,
+                "header_count": 18,
+                "list_item_count": 97,
+                "stat_count": 19,
+                "citation_count": 108,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_9",
+          "cluster_name": "Boundary",
+          "query_text": "What are the limitations of cap table software for complex preferred terms (participation, caps, multiple liquidation preferences)?",
+          "best_company_unit": "unit_4254",
+          "best_company_unit_text": "Exit scenarios model outcomes for shareholders in liquidity events like acquisitions or initial public offerings (IPOs) . This section of your cap table models payout distributions based on ownership,",
+          "best_company_similarity": 0.6277589851758364,
+          "avg_citation_similarity": 0.6223114522300642,
+          "gap": -0.00544753294577216,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6777,
+              "domain": "www.allied.vc",
+              "url": "https://www.allied.vc/guides/modelling-liquidation-preferences-in-cap-tables",
+              "snippet": "How can founders ensure their cap tables accurately reflect liquidation preferences and avoid common mistakes?",
+              "structural_signals": {
+                "word_count": 4309,
+                "paragraph_count": 125,
+                "header_count": 28,
+                "list_item_count": 15,
+                "stat_count": 56,
+                "citation_count": 101,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6554,
+              "domain": "www.allied.vc",
+              "url": "https://www.allied.vc/guides/modelling-liquidation-preferences-in-cap-tables",
+              "snippet": "To keep cap tables precise and account for all liquidation preferences , founders need to fully grasp key terms like participating and non-participating preferences, along with how these affect payout structures. Accurately modeling these terms ensures the rights of investors are correctly reflected",
+              "structural_signals": {
+                "word_count": 4309,
+                "paragraph_count": 125,
+                "header_count": 28,
+                "list_item_count": 15,
+                "stat_count": 56,
+                "citation_count": 101,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6451,
+              "domain": "www.allied.vc",
+              "url": "https://www.allied.vc/guides/modelling-liquidation-preferences-in-cap-tables",
+              "snippet": "While most modern deals use pari passu structures, older agreements might include stacked preferences, which prioritize payouts to later investment rounds. Your cap table must accurately reflect these distinctions.",
+              "structural_signals": {
+                "word_count": 4309,
+                "paragraph_count": 125,
+                "header_count": 28,
+                "list_item_count": 15,
+                "stat_count": 56,
+                "citation_count": 101,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_27",
+          "cluster_name": "Problem/Awareness",
+          "query_text": "How can we track equity grants and option exercises without manual spreadsheets?",
+          "best_company_unit": "unit_4110",
+          "best_company_unit_text": "Easily view, track, and issue equity on a secure platform that grows alongside your business. No more spreadsheets, no more errors. Manage company ownership Cap table and security holder management Is",
+          "best_company_similarity": 0.6368512183370869,
+          "avg_citation_similarity": 0.6300970867601264,
+          "gap": -0.006754131576960476,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7154,
+              "domain": "www.sliceglobal.com",
+              "url": "https://www.sliceglobal.com/product/equity-grants",
+              "snippet": "Track and Report on All Equity Grants in Real-Time, From Issuance to Vesting",
+              "structural_signals": {
+                "word_count": 460,
+                "paragraph_count": 27,
+                "header_count": 32,
+                "list_item_count": 0,
+                "stat_count": 0,
+                "citation_count": 75,
+                "has_headers": true,
+                "has_lists": false,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6922,
+              "domain": "www.sliceglobal.com",
+              "url": "https://www.sliceglobal.com/product/equity-grants",
+              "snippet": "Automate all your equity workflows, from board approvals to option exercises and grant letters. Streamline processes, reduce manual effort, and ensure compliance.",
+              "structural_signals": {
+                "word_count": 460,
+                "paragraph_count": 27,
+                "header_count": 32,
+                "list_item_count": 0,
+                "stat_count": 0,
+                "citation_count": 75,
+                "has_headers": true,
+                "has_lists": false,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6863,
+              "domain": "www.sliceglobal.com",
+              "url": "https://www.sliceglobal.com/product/exercise-options?utm_source=openai",
+              "snippet": "Generate equity exercise notices based on accurate, automatically tracked grant data, ensuring every detail is precise and compliant with local regulations.",
+              "structural_signals": {
+                "word_count": 434,
+                "paragraph_count": 27,
+                "header_count": 32,
+                "list_item_count": 0,
+                "stat_count": 1,
+                "citation_count": 75,
+                "has_headers": true,
+                "has_lists": false,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_20",
+          "cluster_name": "Decision Criteria",
+          "query_text": "How to evaluate cap table tools for secondary transactions and tender offers",
+          "best_company_unit": "unit_480",
+          "best_company_unit_text": "Exit scenarios model outcomes for shareholders in liquidity events like acquisitions or initial public offerings (IPOs) . This section of your cap table models payout distributions based on ownership,",
+          "best_company_similarity": 0.6116328549236686,
+          "avg_citation_similarity": 0.6021630961411001,
+          "gap": -0.009469758782568505,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6964,
+              "domain": "www.imboard.ai",
+              "url": "https://www.imboard.ai/blog/best-cap-table-management-software-for-startups",
+              "snippet": "What Features Should You Evaluate in Cap Table Management Software?",
+              "structural_signals": {
+                "word_count": 2299,
+                "paragraph_count": 88,
+                "header_count": 27,
+                "list_item_count": 54,
+                "stat_count": 33,
+                "citation_count": 49,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6791,
+              "domain": "www.imboard.ai",
+              "url": "https://www.imboard.ai/blog/best-cap-table-management-software-for-startups",
+              "snippet": "How do I choose the right cap table tool for board governance?",
+              "structural_signals": {
+                "word_count": 2299,
+                "paragraph_count": 88,
+                "header_count": 27,
+                "list_item_count": 54,
+                "stat_count": 33,
+                "citation_count": 49,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6498,
+              "domain": "www.imboard.ai",
+              "url": "https://www.imboard.ai/blog/best-cap-table-management-software-for-startups",
+              "snippet": "What are the essential features to look for in cap table management software?",
+              "structural_signals": {
+                "word_count": 2299,
+                "paragraph_count": 88,
+                "header_count": 27,
+                "list_item_count": 54,
+                "stat_count": 33,
+                "citation_count": 49,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_15",
+          "cluster_name": "Category Comparison",
+          "query_text": "Private company cap table tools vs public company equity administration software comparison",
+          "best_company_unit": "unit_4110",
+          "best_company_unit_text": "Easily view, track, and issue equity on a secure platform that grows alongside your business. No more spreadsheets, no more errors. Manage company ownership Cap table and security holder management Is",
+          "best_company_similarity": 0.6473625391173379,
+          "avg_citation_similarity": 0.6375411181840956,
+          "gap": -0.00982142093324223,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6982,
+              "domain": "www.equitylist.co",
+              "url": "https://www.equitylist.co/blog-post/top-5-cap-table-management-software-for-startups",
+              "snippet": "Explore top cap table management software solutions for startups and enterprises. Compare features, pricing, and user feedback for EquityList, Carta, Pulley, Ledgy, and Trica Equity.",
+              "structural_signals": {
+                "word_count": 1569,
+                "paragraph_count": 65,
+                "header_count": 9,
+                "list_item_count": 56,
+                "stat_count": 24,
+                "citation_count": 213,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6729,
+              "domain": "ledgy.com",
+              "url": "https://ledgy.com/cap-table",
+              "snippet": "Why do companies need cap table management software?",
+              "structural_signals": {
+                "word_count": 928,
+                "paragraph_count": 63,
+                "header_count": 46,
+                "list_item_count": 0,
+                "stat_count": 1,
+                "citation_count": 163,
+                "has_headers": true,
+                "has_lists": false,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.671,
+              "domain": "www.saltox.co",
+              "url": "https://www.saltox.co/resources/articles/top-7-cap-table-management-tools",
+              "snippet": "As the landscape of business and remote work continues to evolve in 2024, effective cap table management can save lots of time for companies early on. The seven equity management tools highlighted in this article offer many features and functionalities to meet the diverse needs of startups and growi",
+              "structural_signals": {
+                "word_count": 1713,
+                "paragraph_count": 45,
+                "header_count": 13,
+                "list_item_count": 13,
+                "stat_count": 13,
+                "citation_count": 47,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_41",
+          "cluster_name": "Feature Verification",
+          "query_text": "Do cap table management tools support multiple share classes and complex preferred terms?",
+          "best_company_unit": "unit_4262",
+          "best_company_unit_text": "Differentiate between share classes and associated rights or preferences. Differentiate between share classes and associated rights or preferences. A cap table is a dynamic, living document that chang",
+          "best_company_similarity": 0.6336256454986006,
+          "avg_citation_similarity": 0.6210875217805261,
+          "gap": -0.012538123718074501,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6933,
+              "domain": "stripe.com",
+              "url": "https://stripe.com/en-br/resources/more/cap-tables-for-startups-explained-what-they-are-and-how-they-work",
+              "snippet": "Multiple classes of shares: At this stage, your cap table might have multiple classes of common and preferred shares, stock options, convertible notes, and possibly warrants.",
+              "structural_signals": {
+                "word_count": 4109,
+                "paragraph_count": 142,
+                "header_count": 70,
+                "list_item_count": 431,
+                "stat_count": 16,
+                "citation_count": 370,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6933,
+              "domain": "stripe.com",
+              "url": "https://stripe.com/en-br/resources/more/cap-tables-for-startups-explained-what-they-are-and-how-they-work",
+              "snippet": "Multiple classes of shares: At this stage, your cap table might have multiple classes of common and preferred shares, stock options, convertible notes, and possibly warrants.",
+              "structural_signals": {
+                "word_count": 4109,
+                "paragraph_count": 142,
+                "header_count": 70,
+                "list_item_count": 431,
+                "stat_count": 16,
+                "citation_count": 370,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6566,
+              "domain": "www.allied.vc",
+              "url": "https://www.allied.vc/guides/modelling-liquidation-preferences-in-cap-tables",
+              "snippet": "Cap tables track ownership, share classes, and liquidation terms, making them essential for modeling payouts.",
+              "structural_signals": {
+                "word_count": 4309,
+                "paragraph_count": 125,
+                "header_count": 28,
+                "list_item_count": 15,
+                "stat_count": 56,
+                "citation_count": 101,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "guide"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_24",
+          "cluster_name": "Definition",
+          "query_text": "What is a stock option pool and how does it affect dilution?",
+          "best_company_unit": "unit_1851",
+          "best_company_unit_text": "Employee option pools : Incoming investors usually require companies to create a stock option pool . The timing of when the stock option pool gets created determines which shares are diluted. For exam",
+          "best_company_similarity": 0.7579467378903465,
+          "avg_citation_similarity": 0.7434759856426367,
+          "gap": -0.014470752247709773,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7987,
+              "domain": "ledgy.com",
+              "url": "https://ledgy.com/blog/pre-and-post-money-option-pools",
+              "snippet": "Employee stock option pools are a critical component of your company's equity scheme. That's why it's so important to understand how an option pool can effect company valuations and the dilution of existing shareholders. Let's get started.",
+              "structural_signals": {
+                "word_count": 1950,
+                "paragraph_count": 74,
+                "header_count": 20,
+                "list_item_count": 0,
+                "stat_count": 42,
+                "citation_count": 150,
+                "has_headers": true,
+                "has_lists": false,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7833,
+              "domain": "www.angellist.com",
+              "url": "https://www.angellist.com/learn/employee-option-pool",
+              "snippet": "The creation of the option pool will naturally result in dilution . This is because the option pool will comprise a certain percentage of the total equity ownership\u2014meaning the other equity holders must have their total stake reduced to accommodate this new equity.",
+              "structural_signals": {
+                "word_count": 2017,
+                "paragraph_count": 61,
+                "header_count": 28,
+                "list_item_count": 47,
+                "stat_count": 34,
+                "citation_count": 89,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7798,
+              "domain": "www.qapita.com",
+              "url": "https://www.qapita.com/blog/option-pool",
+              "snippet": "5. Impact of option pool on dilution : Every time your company issues new shares from the option pool, existing shareholders are diluted. This includes founders and early investors. Careful planning in creating and expanding the pool is essential to avoid excessive dilution . Understanding the balan",
+              "structural_signals": {
+                "word_count": 2723,
+                "paragraph_count": 61,
+                "header_count": 24,
+                "list_item_count": 37,
+                "stat_count": 25,
+                "citation_count": 161,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_32",
+          "cluster_name": "Best-of/Consideration",
+          "query_text": "Best equity management platforms for companies with international employees",
+          "best_company_unit": "unit_517",
+          "best_company_unit_text": "Easily view, track and manage equity on a secure platform that scales with you. No more spreadsheets, no more errors. Manage company ownership Cap table and security holder management Generate local f",
+          "best_company_similarity": 0.6319583075754565,
+          "avg_citation_similarity": 0.6128344276001758,
+          "gap": -0.019123879975280644,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6937,
+              "domain": "www.optioincentives.com",
+              "url": "https://www.optioincentives.com/lp/equity-management",
+              "snippet": "Our platform supports all aspects of Equity Management including: International shareholding and trading Valuations and IFRS 2 reporting Administration for all types of equity compensation",
+              "structural_signals": {
+                "word_count": 618,
+                "paragraph_count": 37,
+                "header_count": 17,
+                "list_item_count": 49,
+                "stat_count": 2,
+                "citation_count": 58,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6937,
+              "domain": "www.optioincentives.com",
+              "url": "https://www.optioincentives.com/lp/equity-management",
+              "snippet": "Our platform supports all aspects of Equity Management including: International shareholding and trading Valuations and IFRS 2 reporting Administration for all types of equity compensation",
+              "structural_signals": {
+                "word_count": 618,
+                "paragraph_count": 37,
+                "header_count": 17,
+                "list_item_count": 49,
+                "stat_count": 2,
+                "citation_count": 58,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6763,
+              "domain": "www.equitylist.co",
+              "url": "https://www.equitylist.co/carta-alternative?utm_source=openai",
+              "snippet": "We are a global equity management solution, supporting companies in the US, India, Southeast Asia, Middle East, and Europe. Our platform is designed to handle multi-jurisdiction compliance and workflows.",
+              "structural_signals": {
+                "word_count": 1127,
+                "paragraph_count": 37,
+                "header_count": 25,
+                "list_item_count": 33,
+                "stat_count": 18,
+                "citation_count": 96,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_22",
+          "cluster_name": "Definition",
+          "query_text": "What is a 409A valuation and when is it required?",
+          "best_company_unit": "unit_3878",
+          "best_company_unit_text": "Learn everything you need to know about 409A valuations including what they are, when you need a valuation, valuation methodologies, and the full process. A 409A valuation is an independent appraisal ",
+          "best_company_similarity": 0.7975379988377659,
+          "avg_citation_similarity": 0.7688719354272381,
+          "gap": -0.028666063410527798,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8005,
+              "domain": "valadvisor.com",
+              "url": "https://valadvisor.com/legal-and-tax-implications-of-non-compliant-409a-valuations/",
+              "snippet": "409A Valuation is essential for Startups and private companies that frequently include stock options in their compensation packages. A 409A valuation protects the company and its employees from unanticipated tax liabilities and penalties by determining a fair market value for these options. Appropri",
+              "structural_signals": {
+                "word_count": 1290,
+                "paragraph_count": 40,
+                "header_count": 26,
+                "list_item_count": 30,
+                "stat_count": 37,
+                "citation_count": 47,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7978,
+              "domain": "www.lucid.now",
+              "url": "https://www.lucid.now/blog/tax-compliance-for-409a-valuations/",
+              "snippet": "What is a 409A Valuation? An independent appraisal of your company\u2019s common stock FMV, required for equity compensation plans like stock options and RSUs.",
+              "structural_signals": {
+                "word_count": 2881,
+                "paragraph_count": 80,
+                "header_count": 32,
+                "list_item_count": 59,
+                "stat_count": 39,
+                "citation_count": 44,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7918,
+              "domain": "digits.com",
+              "url": "https://digits.com/blog/409a-valuations-startups/",
+              "snippet": "A 409A valuation is a necessary third-party assessment of the fair market value (FMV) of your company\u2019s common stock. It\u2019s primarily used to keep stock options or equity awards in line with IRS regulations.",
+              "structural_signals": {
+                "word_count": 2161,
+                "paragraph_count": 77,
+                "header_count": 29,
+                "list_item_count": 116,
+                "stat_count": 50,
+                "citation_count": 94,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_39",
+          "cluster_name": "Branded Evaluation",
+          "query_text": "Carta vs Eqvista cap table software pricing and features",
+          "best_company_unit": "unit_438",
+          "best_company_unit_text": "Carta scales with venture-backed companies, from formation through IPO. We also help over two million shareholders manage equity. When you standardise on Carta with your clients or portfolio company, ",
+          "best_company_similarity": 0.6830119532592541,
+          "avg_citation_similarity": 0.6519740417762973,
+          "gap": -0.03103791148295687,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7886,
+              "domain": "eqvista.com",
+              "url": "https://eqvista.com/carta-alternative-eqvista-for-cap-table-management/",
+              "snippet": "With Eqvista, you may choose an affordable solution that works for various demands and budgets. If you\u2019re seeking a Carta competitor with transparent pricing, Eqvista offers the Freemium, Premium, and Enterprise plans, which are our most extensive offerings.",
+              "structural_signals": {
+                "word_count": 1628,
+                "paragraph_count": 46,
+                "header_count": 12,
+                "list_item_count": 101,
+                "stat_count": 48,
+                "citation_count": 119,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7566,
+              "domain": "slashdot.org",
+              "url": "https://slashdot.org/software/comparison/Carta-vs-Eqvista/",
+              "snippet": "What\u2019s the difference between Carta and Eqvista? Compare Carta vs. Eqvista in 2026 by cost, reviews, features, integrations, deployment, target market, support options, trial offers, training options, years in business, region, and more using the chart below.",
+              "structural_signals": {
+                "word_count": 1578,
+                "paragraph_count": 14,
+                "header_count": 59,
+                "list_item_count": 36,
+                "stat_count": 19,
+                "citation_count": 143,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "nonprofit",
+                "content_type": null
+              },
+              "authority_type": "nonprofit"
+            },
+            {
+              "similarity": 0.7385,
+              "domain": "eqvista.com",
+              "url": "https://eqvista.com/carta-alternative-eqvista-for-cap-table-management/",
+              "snippet": "As a strong Carta competitor. Eqvista differentiates itself with an unrivaled solution in a market cluttered with cap table and equity management systems.",
+              "structural_signals": {
+                "word_count": 1628,
+                "paragraph_count": 46,
+                "header_count": 12,
+                "list_item_count": 101,
+                "stat_count": 48,
+                "citation_count": 119,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_18",
+          "cluster_name": "Decision Criteria",
+          "query_text": "What questions should we ask vendors about 409A valuations and audit support?",
+          "best_company_unit": "unit_3896",
+          "best_company_unit_text": "Choosing a provider of 409A valuation services is about finding a long-term partner who understands the startup journey. You want a firm that can provide an accurate, defensible valuation while making",
+          "best_company_similarity": 0.6711949242589517,
+          "avg_citation_similarity": 0.6396112299476818,
+          "gap": -0.03158369431126984,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7116,
+              "domain": "ltse.com",
+              "url": "https://ltse.com/insights/what-to-look-for-in-409a-valuation-firms",
+              "snippet": "In our article, we\u2019ll walk you through why outsourcing your 409A valuation to an independent appraiser is preferable over doing it in-house. Then we\u2019ll go through key questions you should ask any potential 409A valuator to assess their suitability.",
+              "structural_signals": {
+                "word_count": 1279,
+                "paragraph_count": 29,
+                "header_count": 22,
+                "list_item_count": 0,
+                "stat_count": 27,
+                "citation_count": 109,
+                "has_headers": true,
+                "has_lists": false,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6809,
+              "domain": "eqvista.com",
+              "url": "https://eqvista.com/409a-valuation/",
+              "snippet": "Absolutely, Our experts provide consulting services to guide you through the 409A valuation process, ensuring you understand each step and how it impacts your company\u2019s financial planning. Our support team is highly responsive and typically replies to inquiries within 24 hours to address any questio",
+              "structural_signals": {
+                "word_count": 3244,
+                "paragraph_count": 104,
+                "header_count": 38,
+                "list_item_count": 100,
+                "stat_count": 91,
+                "citation_count": 104,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6784,
+              "domain": "ltse.com",
+              "url": "https://ltse.com/insights/what-to-look-for-in-409a-valuation-firms",
+              "snippet": "Obtaining a 409A valuation is a critical step for startups looking to distribute equity or raise funding. While the process can be complex and time-consuming, valuation firms offer a stress-free solution with their specialized expertise. However, selecting the right valuation provider requires caref",
+              "structural_signals": {
+                "word_count": 1279,
+                "paragraph_count": 29,
+                "header_count": 22,
+                "list_item_count": 0,
+                "stat_count": 27,
+                "citation_count": 109,
+                "has_headers": true,
+                "has_lists": false,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_10",
+          "cluster_name": "Boundary",
+          "query_text": "What are Carta's limitations for managing international equity plans and global tax reporting?",
+          "best_company_unit": "unit_2298",
+          "best_company_unit_text": "Compliance and security: Carta ensures compliance with regulations and provides a secure environment for handling sensitive financial data Approach year-end with ease by utilizing Carta to manage tax ",
+          "best_company_similarity": 0.6149445448761806,
+          "avg_citation_similarity": 0.5778948550054428,
+          "gap": -0.037049689870737756,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.616,
+              "domain": "remote.com",
+              "url": "https://remote.com/blog/partnerships/remote-equity-carta",
+              "snippet": "Remote\u2019s relationships with local equity tax experts in countries around the world and Carta\u2019s world-class team of in-house equity experts cut through the confusion of international equity grants. \u200cWe provide fast, timely, and easy-to-understand guidance on your entire equity program.",
+              "structural_signals": {
+                "word_count": 1458,
+                "paragraph_count": 38,
+                "header_count": 9,
+                "list_item_count": 155,
+                "stat_count": 10,
+                "citation_count": 228,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6106,
+              "domain": "blog.promise.legal",
+              "url": "https://blog.promise.legal/startup-central/carta-cap-tables-how-founders-avoid-legal-and-diligence-problems/",
+              "snippet": "Foreign recipients & terminations: Carta administers; counsel addresses securities, tax, and local-law issues.",
+              "structural_signals": {
+                "word_count": 1642,
+                "paragraph_count": 73,
+                "header_count": 13,
+                "list_item_count": 52,
+                "stat_count": 7,
+                "citation_count": 28,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6079,
+              "domain": "community.carta.com",
+              "url": "https://community.carta.com/blogs/pilar-picone/2024/02/27/onboarding-non-us-companies",
+              "snippet": "As mentioned previously, even though Carta is not a registered transfer agent outside of the United States, our platform offers many functional features to help you track your equity through cap table management, portfolio sharing , SAFE financing , scenario modeling , 490a valuations , and much mor",
+              "structural_signals": {
+                "word_count": 902,
+                "paragraph_count": 29,
+                "header_count": 19,
+                "list_item_count": 24,
+                "stat_count": 13,
+                "citation_count": 53,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_4",
+          "cluster_name": "Mechanism",
+          "query_text": "How do cap table platforms handle option pools, refresh grants, and cancellations?",
+          "best_company_unit": "unit_485",
+          "best_company_unit_text": "\u2192 Data Desk: Learn more in Carta's Founder Ownership Report for 2025 If your company has raised funds, the investor equity section will record the total investment amount, the total number of shares p",
+          "best_company_similarity": 0.673953959354126,
+          "avg_citation_similarity": 0.635257961866223,
+          "gap": -0.03869599748790309,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6866,
+              "domain": "www.re-cap.com",
+              "url": "https://www.re-cap.com/blog/cap-table-management-startup",
+              "snippet": "Your cap table tracks granted options separately from available options. If you have a 1,000,000 share option pool and grant 200,000 options to your first engineer, your cap table shows 200,000 options granted, 800,000 available for future grants.",
+              "structural_signals": {
+                "word_count": 4309,
+                "paragraph_count": 145,
+                "header_count": 63,
+                "list_item_count": 57,
+                "stat_count": 153,
+                "citation_count": 190,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6631,
+              "domain": "www.imboard.ai",
+              "url": "https://www.imboard.ai/blog/cap-table-meaning-control-map",
+              "snippet": "Series A: option pool refresh, pro rata mechanics, and control math",
+              "structural_signals": {
+                "word_count": 2493,
+                "paragraph_count": 118,
+                "header_count": 21,
+                "list_item_count": 80,
+                "stat_count": 34,
+                "citation_count": 48,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6595,
+              "domain": "www.re-cap.com",
+              "url": "https://www.re-cap.com/blog/cap-table-management-startup",
+              "snippet": "Follow cap table management best practices: update in real-time, maintain a single source of truth, document everything, run scenario analyses, communicate clearly with stakeholders, plan option pool refreshes, and prepare for continuous due diligence.",
+              "structural_signals": {
+                "word_count": 4309,
+                "paragraph_count": 145,
+                "header_count": 63,
+                "list_item_count": 57,
+                "stat_count": 153,
+                "citation_count": 190,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_5",
+          "cluster_name": "Mechanism",
+          "query_text": "How do equity management systems generate board consents and equity grant documents?",
+          "best_company_unit": "unit_2278",
+          "best_company_unit_text": "All equity award issuances and many other actions require board approval. Use our streamlined process to save you time. With board consents on Carta, you can: Create your own templates or use our pre-",
+          "best_company_similarity": 0.6474307210097161,
+          "avg_citation_similarity": 0.6063200757764016,
+          "gap": -0.041110645233314536,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6613,
+              "domain": "www.equitylist.co",
+              "url": "https://www.equitylist.co/solutions/founder",
+              "snippet": "SAFE approvals, FMV valuations, option grants, and plan endorsements require formal board consent. EquityList brings these approvals into one streamlined workflow.",
+              "structural_signals": {
+                "word_count": 1117,
+                "paragraph_count": 33,
+                "header_count": 18,
+                "list_item_count": 33,
+                "stat_count": 9,
+                "citation_count": 87,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6599,
+              "domain": "help.angelliststack.com",
+              "url": "https://help.angelliststack.com/platform/platform-tools/board-consents",
+              "snippet": "What features does AngelList Equity provide for board consents?",
+              "structural_signals": {
+                "word_count": 131,
+                "paragraph_count": 10,
+                "header_count": 8,
+                "list_item_count": 24,
+                "stat_count": 0,
+                "citation_count": 36,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6544,
+              "domain": "help.angelliststack.com",
+              "url": "https://help.angelliststack.com/platform/platform-tools/board-consents",
+              "snippet": "\u200b What features does AngelList Equity provide for board consents?",
+              "structural_signals": {
+                "word_count": 131,
+                "paragraph_count": 10,
+                "header_count": 8,
+                "list_item_count": 24,
+                "stat_count": 0,
+                "citation_count": 36,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": false,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_29",
+          "cluster_name": "Problem/Awareness",
+          "query_text": "How can we model dilution scenarios for different fundraising terms?",
+          "best_company_unit": "unit_1870",
+          "best_company_unit_text": "Investors may ask you to allocate more than you need, but if you create a hiring plan, you can always show how you came up with your ideal pool size, which may help with negotiations. Before signing a",
+          "best_company_similarity": 0.6394534904751917,
+          "avg_citation_similarity": 0.597144878301051,
+          "gap": -0.042308612174140725,
+          "interpretation": "roughly_equal",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7695,
+              "domain": "qubit.capital",
+              "url": "https://qubit.capital/blog/equity-dilution-ai-founders",
+              "snippet": "estimate dilution for each future funding round and model a few scenarios",
+              "structural_signals": {
+                "word_count": 3850,
+                "paragraph_count": 127,
+                "header_count": 46,
+                "list_item_count": 93,
+                "stat_count": 48,
+                "citation_count": 129,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7064,
+              "domain": "www.equitylist.co",
+              "url": "https://www.equitylist.co/blog-post/simulate-funding-scenarios",
+              "snippet": "The goal is to understand how different fundraising paths change dilution and long-term ownership.",
+              "structural_signals": {
+                "word_count": 1826,
+                "paragraph_count": 91,
+                "header_count": 32,
+                "list_item_count": 79,
+                "stat_count": 122,
+                "citation_count": 210,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6642,
+              "domain": "www.svb.com",
+              "url": "https://www.svb.com/startup-insights/startup-equity/startup-equity-dilution/",
+              "snippet": "Balancing fundraising and dilution: A strategic approach",
+              "structural_signals": {
+                "word_count": 2693,
+                "paragraph_count": 48,
+                "header_count": 9,
+                "list_item_count": 133,
+                "stat_count": 29,
+                "citation_count": 239,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_34",
+          "cluster_name": "Best-of/Consideration",
+          "query_text": "Best cap table software for handling secondary sales and tender offers",
+          "best_company_unit": "unit_4267",
+          "best_company_unit_text": "Once you begin hiring employees and raising new rounds of financing, a cap table management software is the way to go. Instead of you having to remember to update your cap table and send the latest ve",
+          "best_company_similarity": 0.6397253228035233,
+          "avg_citation_similarity": 0.5723749019803429,
+          "gap": -0.06735042082318043,
+          "interpretation": "company_wins",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.6998,
+              "domain": "www.bizbot.com",
+              "url": "https://www.bizbot.com/blog/carta-vs-pulley-cap-table-software-comparison/",
+              "snippet": "What Software Is Used For Cap Tables? - BusinessGuide360.com",
+              "structural_signals": {
+                "word_count": 2478,
+                "paragraph_count": 61,
+                "header_count": 34,
+                "list_item_count": 18,
+                "stat_count": 94,
+                "citation_count": 33,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6753,
+              "domain": "startupsavant.com",
+              "url": "https://startupsavant.com/service-reviews/best-equity-management-software-for-startups",
+              "snippet": "Cap Table Management Software: Provides free tools to manage company ownership, including issuing options, cap table tracking, and more.",
+              "structural_signals": {
+                "word_count": 3388,
+                "paragraph_count": 163,
+                "header_count": 53,
+                "list_item_count": 210,
+                "stat_count": 52,
+                "citation_count": 166,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6508,
+              "domain": "startupsavant.com",
+              "url": "https://startupsavant.com/service-reviews/best-equity-management-software-for-startups",
+              "snippet": "Cap Table Management: Keep your cap table in check with features for versioning and potential scenario projections.",
+              "structural_signals": {
+                "word_count": 3388,
+                "paragraph_count": 163,
+                "header_count": 53,
+                "list_item_count": 210,
+                "stat_count": 52,
+                "citation_count": 166,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_37",
+          "cluster_name": "Branded Evaluation",
+          "query_text": "Carta vs Shareworks equity administration for private companies",
+          "best_company_unit": "unit_298",
+          "best_company_unit_text": "Carta supports share plan management for non-UK companies in many ways, including HR integrations, online granting, employee dashboards and support for warrants, phantom shares and RSUs. Yes, you need",
+          "best_company_similarity": 0.7136065353321238,
+          "avg_citation_similarity": 0.6391348444343472,
+          "gap": -0.07447169089777661,
+          "interpretation": "company_wins",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.8293,
+              "domain": "sparkco.ai",
+              "url": "https://sparkco.ai/blog/carta-vs-shareworks-enterprise-equity-management-solutions",
+              "snippet": "Carta and Shareworks both provide robust equity management solutions, but they cater to different organizational needs. Carta is renowned for its all-in-one platform that includes 409A valuations and comprehensive cap table management, making it ideal for rapidly scaling enterprises. Shareworks, on ",
+              "structural_signals": {
+                "word_count": 5475,
+                "paragraph_count": 148,
+                "header_count": 67,
+                "list_item_count": 69,
+                "stat_count": 98,
+                "citation_count": 46,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8205,
+              "domain": "sparkco.ai",
+              "url": "https://sparkco.ai/blog/carta-vs-shareworks-enterprise-equity-management-solutions",
+              "snippet": "Carta stands out as a comprehensive, all-in-one solution perfectly suited for companies aiming for simplicity and scalability. Its integrated platform supports various needs, from cap table management to compliance and 409A valuations, all while offering a seamless user experience. On the other hand",
+              "structural_signals": {
+                "word_count": 5475,
+                "paragraph_count": 148,
+                "header_count": 67,
+                "list_item_count": 69,
+                "stat_count": 98,
+                "citation_count": 46,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.8171,
+              "domain": "sparkco.ai",
+              "url": "https://sparkco.ai/blog/carta-vs-shareworks-enterprise-equity-management-solutions",
+              "snippet": "Carta and Shareworks are both robust platforms designed to manage equity with precision and efficiency. However, their architectural differences cater to varied organizational needs:",
+              "structural_signals": {
+                "word_count": 5475,
+                "paragraph_count": 148,
+                "header_count": 67,
+                "list_item_count": 69,
+                "stat_count": 98,
+                "citation_count": 46,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_35",
+          "cluster_name": "Best-of/Consideration",
+          "query_text": "Best equity administration software for CFOs who need audit-ready reporting",
+          "best_company_unit": "unit_590",
+          "best_company_unit_text": "Meet the software suite that gives PE fund CFOs unprecedented visibility, precision and control. Streamline equity management across entities Vesting schedules, hurdles, liquidity events Access data f",
+          "best_company_similarity": 0.673171620309438,
+          "avg_citation_similarity": 0.5683227094387789,
+          "gap": -0.10484891087065906,
+          "interpretation": "company_wins",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7128,
+              "domain": "insightsoftware.com",
+              "url": "https://insightsoftware.com/equity-management/",
+              "snippet": "Your Complete Solution for Equity Administration & Reporting",
+              "structural_signals": {
+                "word_count": 1966,
+                "paragraph_count": 71,
+                "header_count": 32,
+                "list_item_count": 117,
+                "stat_count": 6,
+                "citation_count": 175,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6404,
+              "domain": "insightsoftware.com",
+              "url": "https://insightsoftware.com/equity-management/",
+              "snippet": "Modern equity management software automates essential processes such as stock plan administration, cap table maintenance, ESPP tracking, and regulatory reporting. This saves time and reduces manual workloads for finance, HR, and legal teams, all while ensuring data accuracy and real-time visibility.",
+              "structural_signals": {
+                "word_count": 1966,
+                "paragraph_count": 71,
+                "header_count": 32,
+                "list_item_count": 117,
+                "stat_count": 6,
+                "citation_count": 175,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6148,
+              "domain": "insightsoftware.com",
+              "url": "https://insightsoftware.com/equity-management/",
+              "snippet": "Streamlined Equity Management Software: Balancing Ownership and Growth",
+              "structural_signals": {
+                "word_count": 1966,
+                "paragraph_count": 71,
+                "header_count": 32,
+                "list_item_count": 117,
+                "stat_count": 6,
+                "citation_count": 175,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": null
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        },
+        {
+          "query_id": "q_23",
+          "cluster_name": "Definition",
+          "query_text": "What is equity administration and what does an equity admin team do?",
+          "best_company_unit": "unit_3825",
+          "best_company_unit_text": "Equity administrators are the people responsible for maintaining compliance and overseeing your equity management system and processes. This includes maintenance of your company\u2019s cap table and 409A v",
+          "best_company_similarity": 0.7542403147765361,
+          "avg_citation_similarity": 0.6344534606981558,
+          "gap": -0.1197868540783803,
+          "interpretation": "company_wins",
+          "top_cited_exemplars": [
+            {
+              "similarity": 0.7212,
+              "domain": "www.equitymethods.com",
+              "url": "https://www.equitymethods.com/articles/building-a-high-impact-stock-administration-function/",
+              "snippet": "Equity administration is a specialized area requiring technical knowledge about award structures and securities rules, operational know-how on how shares and taxes must be processed, and hands-on systems experience, effectuating all the relevant procedures. In this regard, equity-related actions imp",
+              "structural_signals": {
+                "word_count": 2120,
+                "paragraph_count": 55,
+                "header_count": 6,
+                "list_item_count": 88,
+                "stat_count": 13,
+                "citation_count": 83,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.7212,
+              "domain": "www.equitymethods.com",
+              "url": "https://www.equitymethods.com/articles/building-a-high-impact-stock-administration-function/",
+              "snippet": "Equity administration is a specialized area requiring technical knowledge about award structures and securities rules, operational know-how on how shares and taxes must be processed, and hands-on systems experience, effectuating all the relevant procedures. In this regard, equity-related actions imp",
+              "structural_signals": {
+                "word_count": 2120,
+                "paragraph_count": 55,
+                "header_count": 6,
+                "list_item_count": 88,
+                "stat_count": 13,
+                "citation_count": 83,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            },
+            {
+              "similarity": 0.6965,
+              "domain": "www.qapita.com",
+              "url": "https://www.qapita.com/blog/equity-plan-administration-complete-guide",
+              "snippet": "Equity plan administrators play a vital role in ensuring compliance, effective communication, accurate record-keeping, and collaboration with cross-functional teams. By prioritizing equity plan administration, companies can set themselves up for long-term success.",
+              "structural_signals": {
+                "word_count": 1405,
+                "paragraph_count": 43,
+                "header_count": 31,
+                "list_item_count": 37,
+                "stat_count": 6,
+                "citation_count": 149,
+                "has_headers": true,
+                "has_lists": true,
+                "has_numbers": true,
+                "authority_type": "commercial_or_media",
+                "content_type": "blog_or_article"
+              },
+              "authority_type": "commercial_or_media"
+            }
+          ]
+        }
+      ],
+      "decision_metrics": {
+        "total_queries": 45,
+        "total_citations": 651,
+        "avg_gap": 0.015158373614465452
+      }
+    },
+    "visualization_paths": [
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/carta/visualizations/embedding_space.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/carta/visualizations/gap_heatmap.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/carta/visualizations/gap_distribution.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/carta/visualizations/citation_treemap.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/carta/visualizations/cluster_radar.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/carta/visualizations/tsne_embedding_space.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/carta/visualizations/umap_embedding_space.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/carta/visualizations/tsne_clustered.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/carta/visualizations/umap_clustered.html",
+      "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/gap_analysis/carta/visualizations/similarity_distribution.html"
+    ],
+    "resolved_artifacts": {
+      "company_context_path": "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/company_context/carta.md",
+      "persona_paths": [
+        "/Users/aryankeshri/Documents/Deep_Presence/product/content-strategy-engine/artifacts/personas/carta__persona-icp.md"
+      ],
+      "style_guide_path": null
+    },
+    "produced_artifacts": [
+      {
+        "type": "gap_analysis",
+        "slug": "carta"
+      }
+    ]
+  },
+  "error": null,
+  "approval_payload": null,
+  "approval_history": []
+}

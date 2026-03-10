@@ -1,0 +1,568 @@
+{
+  "audit_id": "a85a4ac4-3f0a-4b2e-961a-26c2a1f3d876",
+  "domain": "example.com",
+  "overall_score": 96.65,
+  "grade": "A",
+  "pages_crawled": 2,
+  "pages_discovered": 2,
+  "duration_seconds": 0.0,
+  "dimension_scores": [
+    {
+      "dimension": "crawlability",
+      "score": 96.5,
+      "weight": 0.2,
+      "weighted_score": 19.3,
+      "finding_count": 2,
+      "critical_count": 0,
+      "high_count": 1,
+      "medium_count": 1,
+      "low_count": 0,
+      "info_count": 0
+    },
+    {
+      "dimension": "performance",
+      "score": 97.5,
+      "weight": 0.1,
+      "weighted_score": 9.75,
+      "finding_count": 1,
+      "critical_count": 0,
+      "high_count": 1,
+      "medium_count": 0,
+      "low_count": 0,
+      "info_count": 0
+    },
+    {
+      "dimension": "on_page_seo",
+      "score": 92.0,
+      "weight": 0.15,
+      "weighted_score": 13.8,
+      "finding_count": 5,
+      "critical_count": 0,
+      "high_count": 2,
+      "medium_count": 3,
+      "low_count": 0,
+      "info_count": 0
+    },
+    {
+      "dimension": "extractability",
+      "score": 95.5,
+      "weight": 0.2,
+      "weighted_score": 19.1,
+      "finding_count": 3,
+      "critical_count": 0,
+      "high_count": 1,
+      "medium_count": 2,
+      "low_count": 0,
+      "info_count": 0
+    },
+    {
+      "dimension": "schema_markup",
+      "score": 97.0,
+      "weight": 0.1,
+      "weighted_score": 9.7,
+      "finding_count": 4,
+      "critical_count": 0,
+      "high_count": 0,
+      "medium_count": 2,
+      "low_count": 2,
+      "info_count": 0
+    },
+    {
+      "dimension": "eeat",
+      "score": 100.0,
+      "weight": 0.15,
+      "weighted_score": 15.0,
+      "finding_count": 0,
+      "critical_count": 0,
+      "high_count": 0,
+      "medium_count": 0,
+      "low_count": 0,
+      "info_count": 0
+    },
+    {
+      "dimension": "freshness",
+      "score": 100.0,
+      "weight": 0.05,
+      "weighted_score": 5.0,
+      "finding_count": 0,
+      "critical_count": 0,
+      "high_count": 0,
+      "medium_count": 0,
+      "low_count": 0,
+      "info_count": 0
+    },
+    {
+      "dimension": "security",
+      "score": 100.0,
+      "weight": 0.05,
+      "weighted_score": 5.0,
+      "finding_count": 0,
+      "critical_count": 0,
+      "high_count": 0,
+      "medium_count": 0,
+      "low_count": 0,
+      "info_count": 0
+    }
+  ],
+  "ai_bot_access": {
+    "gptbot_allowed": true,
+    "claudebot_allowed": true,
+    "perplexitybot_allowed": true,
+    "google_extended_allowed": true,
+    "ccbot_allowed": true,
+    "has_llms_txt": false,
+    "robots_txt_exists": true
+  },
+  "sitemap_health": {
+    "has_sitemap": true,
+    "sitemap_url_count": 10,
+    "sitemap_urls": [],
+    "sitemap_errors": [],
+    "has_sitemap_index": false
+  },
+  "page_results": [
+    {
+      "url": "https://example.com/",
+      "status_code": 200,
+      "crawl_depth": 0,
+      "redirect_url": null,
+      "title": "How to Optimize Your Website for AI Search Engines",
+      "title_length": 50,
+      "meta_description": "Learn how to optimize your website for AI search engines like ChatGPT, Perplexity, and Claude. This comprehensive guide covers structured data, content formatting, and AEO best practices for maximum visibility.",
+      "meta_description_length": 210,
+      "h1_count": 1,
+      "h1_text": "How to Optimize Your Website for AI Search Engines",
+      "heading_hierarchy_valid": true,
+      "headings": [
+        {
+          "level": "h1",
+          "text": "How to Optimize Your Website for AI Search Engines"
+        },
+        {
+          "level": "h2",
+          "text": "What is Answer Engine Optimization?"
+        },
+        {
+          "level": "h2",
+          "text": "Why does AEO matter for B2B companies?"
+        },
+        {
+          "level": "h2",
+          "text": "How to Structure Your Content"
+        },
+        {
+          "level": "h3",
+          "text": "Use Question Headings"
+        },
+        {
+          "level": "h3",
+          "text": "Add Structured Data"
+        },
+        {
+          "level": "h2",
+          "text": "Key Takeaways"
+        }
+      ],
+      "image_count": 0,
+      "images_with_alt": 0,
+      "images_without_alt": 0,
+      "internal_link_count": 0,
+      "external_link_count": 0,
+      "word_count": 201,
+      "reading_level": 11.164670050761423,
+      "is_ssr": true,
+      "has_canonical": true,
+      "canonical_url": "https://example.com/blog/optimize-for-ai",
+      "is_noindex": false,
+      "is_nofollow": false,
+      "has_https": true,
+      "has_mixed_content": false,
+      "publish_date": null,
+      "modified_date": null,
+      "has_author": true,
+      "author_name": "By Jane Doe | February 1, 2026",
+      "schema_result": {
+        "has_schema": true,
+        "schema_types": [
+          "Article"
+        ],
+        "raw_jsonld_blocks": [
+          {
+            "@context": "https://schema.org",
+            "@type": "Article",
+            "headline": "How to Optimize Your Website for AI Search Engines",
+            "author": {
+              "@type": "Person",
+              "name": "Jane Doe"
+            },
+            "datePublished": "2026-02-01",
+            "dateModified": "2026-02-15"
+          }
+        ],
+        "validation_errors": [
+          "Article/BlogPosting missing recommended field: image"
+        ],
+        "inferred_page_type": "homepage"
+      },
+      "aeo": {
+        "snippet_readiness_score": 66.81,
+        "question_heading_ratio": 0.2857,
+        "quick_answer_hook_count": 2,
+        "self_contained_paragraph_ratio": 0.8333,
+        "avg_paragraph_word_count": 25.0,
+        "content_patterns": {
+          "faq_section": false,
+          "definition_opening": false,
+          "key_takeaways": true,
+          "comparison_table": false,
+          "numbered_steps": false,
+          "toc": false
+        }
+      },
+      "findings": [
+        {
+          "finding_type": "meta_description_too_long",
+          "dimension": "on_page_seo",
+          "severity": "medium",
+          "message": "Meta description is too long (210 chars; maximum: 160).",
+          "recommendation": "Shorten the meta description to 160 characters or fewer to avoid truncation.",
+          "url": "https://example.com/",
+          "details": {
+            "meta_length": 210,
+            "max": 160
+          }
+        },
+        {
+          "finding_type": "no_internal_links",
+          "dimension": "on_page_seo",
+          "severity": "medium",
+          "message": "Page has no internal links.",
+          "recommendation": "Add at least 2\u20133 internal links to related pages. Internal links help AI crawlers discover related content and distribute link equity across the site.",
+          "url": "https://example.com/",
+          "details": {
+            "internal_link_count": 0
+          }
+        },
+        {
+          "finding_type": "canonical_mismatch",
+          "dimension": "crawlability",
+          "severity": "high",
+          "message": "Canonical URL 'https://example.com/blog/optimize-for-ai' differs from the page URL 'https://example.com/'.",
+          "recommendation": "Verify this is intentional (e.g. pagination or syndicated content). If not, update the canonical to point to this page's URL.",
+          "url": "https://example.com/",
+          "details": {
+            "canonical_url": "https://example.com/blog/optimize-for-ai"
+          }
+        },
+        {
+          "finding_type": "missing_organization_schema",
+          "dimension": "schema_markup",
+          "severity": "medium",
+          "message": "Homepage is missing Organization schema markup. AI engines use Organization schema to establish entity identity.",
+          "recommendation": "Add an Organization JSON-LD block to your homepage with at least name, url, and logo properties.",
+          "url": "https://example.com/",
+          "details": {
+            "page_type": "homepage",
+            "found_types": [
+              "Article"
+            ]
+          }
+        },
+        {
+          "finding_type": "missing_breadcrumb_schema",
+          "dimension": "schema_markup",
+          "severity": "low",
+          "message": "Page is missing BreadcrumbList schema.",
+          "recommendation": "Add a BreadcrumbList JSON-LD block to help AI engines understand the page's position in the site hierarchy.",
+          "url": "https://example.com/",
+          "details": {
+            "page_type": "homepage",
+            "found_types": [
+              "Article"
+            ]
+          }
+        },
+        {
+          "finding_type": "schema_validation_error",
+          "dimension": "schema_markup",
+          "severity": "medium",
+          "message": "Schema validation error: Article/BlogPosting missing recommended field: image",
+          "recommendation": "Fix the schema markup error to ensure AI engines can parse and trust the structured data on this page.",
+          "url": "https://example.com/",
+          "details": {
+            "validation_error": "Article/BlogPosting missing recommended field: image"
+          }
+        },
+        {
+          "finding_type": "low_question_heading_ratio",
+          "dimension": "extractability",
+          "severity": "medium",
+          "message": "Only 29% of headings are phrased as questions (threshold: 30%). Question-format headings improve AI snippet extraction.",
+          "recommendation": "Rephrase at least 30% of subheadings as questions that your audience is actually asking (e.g. 'How does X work?' instead of 'About X'). This increases the likelihood of appearing in AI-generated answers.",
+          "url": "https://example.com/",
+          "details": {
+            "question_heading_ratio": 0.2857142857142857,
+            "threshold": 0.3,
+            "total_headings": 7,
+            "question_headings": 2
+          }
+        }
+      ]
+    },
+    {
+      "url": "https://example.com/about",
+      "status_code": 200,
+      "crawl_depth": 1,
+      "redirect_url": null,
+      "title": "About Us",
+      "title_length": 8,
+      "meta_description": "",
+      "meta_description_length": 0,
+      "h1_count": 1,
+      "h1_text": "About Us",
+      "heading_hierarchy_valid": true,
+      "headings": [
+        {
+          "level": "h1",
+          "text": "About Us"
+        }
+      ],
+      "image_count": 0,
+      "images_with_alt": 0,
+      "images_without_alt": 0,
+      "internal_link_count": 0,
+      "external_link_count": 0,
+      "word_count": 8,
+      "reading_level": 0.0,
+      "is_ssr": false,
+      "has_canonical": false,
+      "canonical_url": null,
+      "is_noindex": false,
+      "is_nofollow": false,
+      "has_https": true,
+      "has_mixed_content": false,
+      "publish_date": null,
+      "modified_date": null,
+      "has_author": false,
+      "author_name": null,
+      "schema_result": {
+        "has_schema": false,
+        "schema_types": [],
+        "raw_jsonld_blocks": [],
+        "validation_errors": [],
+        "inferred_page_type": "about"
+      },
+      "aeo": {
+        "snippet_readiness_score": 0.0,
+        "question_heading_ratio": 0.0,
+        "quick_answer_hook_count": 0,
+        "self_contained_paragraph_ratio": 0.0,
+        "avg_paragraph_word_count": 0.0,
+        "content_patterns": {
+          "faq_section": false,
+          "definition_opening": false,
+          "key_takeaways": false,
+          "comparison_table": false,
+          "numbered_steps": false,
+          "toc": false
+        }
+      },
+      "findings": [
+        {
+          "finding_type": "title_too_short",
+          "dimension": "on_page_seo",
+          "severity": "high",
+          "message": "Title is too short (8 chars; minimum: 30).",
+          "recommendation": "Expand the title to at least 30 characters to improve keyword coverage and click-through rates.",
+          "url": "https://example.com/about",
+          "details": {
+            "title_length": 8,
+            "min": 30
+          }
+        },
+        {
+          "finding_type": "missing_meta_description",
+          "dimension": "on_page_seo",
+          "severity": "high",
+          "message": "Page is missing a meta description.",
+          "recommendation": "Add a meta description between 120 and 160 characters summarising the page content.",
+          "url": "https://example.com/about",
+          "details": {}
+        },
+        {
+          "finding_type": "no_internal_links",
+          "dimension": "on_page_seo",
+          "severity": "medium",
+          "message": "Page has no internal links.",
+          "recommendation": "Add at least 2\u20133 internal links to related pages. Internal links help AI crawlers discover related content and distribute link equity across the site.",
+          "url": "https://example.com/about",
+          "details": {
+            "internal_link_count": 0
+          }
+        },
+        {
+          "finding_type": "possible_csr_page",
+          "dimension": "performance",
+          "severity": "high",
+          "message": "Page may be client-side rendered \u2014 only 6 visible words detected. AI crawlers cannot extract content from CSR pages.",
+          "recommendation": "Ensure the page is server-side rendered (SSR) or uses static site generation (SSG). AI bots typically do not execute JavaScript, so CSR pages appear blank to them. Implement SSR or pre-rendering to make content accessible.",
+          "url": "https://example.com/about",
+          "details": {
+            "visible_word_count": 6,
+            "threshold": 100
+          }
+        },
+        {
+          "finding_type": "missing_canonical",
+          "dimension": "crawlability",
+          "severity": "medium",
+          "message": "Page is missing a canonical URL tag.",
+          "recommendation": "Add ``<link rel='canonical' href='...' />`` to the ``<head>`` to prevent duplicate content issues.",
+          "url": "https://example.com/about",
+          "details": {}
+        },
+        {
+          "finding_type": "missing_breadcrumb_schema",
+          "dimension": "schema_markup",
+          "severity": "low",
+          "message": "Page is missing BreadcrumbList schema.",
+          "recommendation": "Add a BreadcrumbList JSON-LD block to help AI engines understand the page's position in the site hierarchy.",
+          "url": "https://example.com/about",
+          "details": {
+            "page_type": "about",
+            "found_types": []
+          }
+        },
+        {
+          "finding_type": "low_question_heading_ratio",
+          "dimension": "extractability",
+          "severity": "medium",
+          "message": "Only 0% of headings are phrased as questions (threshold: 30%). Question-format headings improve AI snippet extraction.",
+          "recommendation": "Rephrase at least 30% of subheadings as questions that your audience is actually asking (e.g. 'How does X work?' instead of 'About X'). This increases the likelihood of appearing in AI-generated answers.",
+          "url": "https://example.com/about",
+          "details": {
+            "question_heading_ratio": 0.0,
+            "threshold": 0.3,
+            "total_headings": 1,
+            "question_headings": 0
+          }
+        },
+        {
+          "finding_type": "poor_aeo_readiness",
+          "dimension": "extractability",
+          "severity": "high",
+          "message": "AEO snippet readiness score is 0/100 \u2014 poor. This page is unlikely to be cited in AI search results.",
+          "recommendation": "Improve content structure for AI extraction: add question-format headings followed by direct 40-60 word answer paragraphs, ensure paragraphs stand alone without needing prior context, and add structured sections like FAQ, Key Takeaways, or How-To steps.",
+          "url": "https://example.com/about",
+          "details": {
+            "snippet_readiness_score": 0.0
+          }
+        }
+      ]
+    }
+  ],
+  "total_findings": 15,
+  "findings_by_severity": {
+    "medium": 8,
+    "high": 5,
+    "low": 2
+  },
+  "findings_by_dimension": {
+    "on_page_seo": 5,
+    "crawlability": 2,
+    "schema_markup": 4,
+    "extractability": 3,
+    "performance": 1
+  },
+  "top_findings": [
+    {
+      "finding_type": "canonical_mismatch",
+      "dimension": "crawlability",
+      "severity": "high",
+      "message": "Canonical URL 'https://example.com/blog/optimize-for-ai' differs from the page URL 'https://example.com/'.",
+      "recommendation": "Verify this is intentional (e.g. pagination or syndicated content). If not, update the canonical to point to this page's URL.",
+      "count": 1
+    },
+    {
+      "finding_type": "title_too_short",
+      "dimension": "on_page_seo",
+      "severity": "high",
+      "message": "Title is too short (8 chars; minimum: 30).",
+      "recommendation": "Expand the title to at least 30 characters to improve keyword coverage and click-through rates.",
+      "count": 1
+    },
+    {
+      "finding_type": "missing_meta_description",
+      "dimension": "on_page_seo",
+      "severity": "high",
+      "message": "Page is missing a meta description.",
+      "recommendation": "Add a meta description between 120 and 160 characters summarising the page content.",
+      "count": 1
+    },
+    {
+      "finding_type": "possible_csr_page",
+      "dimension": "performance",
+      "severity": "high",
+      "message": "Page may be client-side rendered \u2014 only 6 visible words detected. AI crawlers cannot extract content from CSR pages.",
+      "recommendation": "Ensure the page is server-side rendered (SSR) or uses static site generation (SSG). AI bots typically do not execute JavaScript, so CSR pages appear blank to them. Implement SSR or pre-rendering to make content accessible.",
+      "count": 1
+    },
+    {
+      "finding_type": "poor_aeo_readiness",
+      "dimension": "extractability",
+      "severity": "high",
+      "message": "AEO snippet readiness score is 0/100 \u2014 poor. This page is unlikely to be cited in AI search results.",
+      "recommendation": "Improve content structure for AI extraction: add question-format headings followed by direct 40-60 word answer paragraphs, ensure paragraphs stand alone without needing prior context, and add structured sections like FAQ, Key Takeaways, or How-To steps.",
+      "count": 1
+    },
+    {
+      "finding_type": "meta_description_too_long",
+      "dimension": "on_page_seo",
+      "severity": "medium",
+      "message": "Meta description is too long (210 chars; maximum: 160).",
+      "recommendation": "Shorten the meta description to 160 characters or fewer to avoid truncation.",
+      "count": 1
+    },
+    {
+      "finding_type": "no_internal_links",
+      "dimension": "on_page_seo",
+      "severity": "medium",
+      "message": "Page has no internal links.",
+      "recommendation": "Add at least 2\u20133 internal links to related pages. Internal links help AI crawlers discover related content and distribute link equity across the site.",
+      "count": 2
+    },
+    {
+      "finding_type": "missing_organization_schema",
+      "dimension": "schema_markup",
+      "severity": "medium",
+      "message": "Homepage is missing Organization schema markup. AI engines use Organization schema to establish entity identity.",
+      "recommendation": "Add an Organization JSON-LD block to your homepage with at least name, url, and logo properties.",
+      "count": 1
+    },
+    {
+      "finding_type": "schema_validation_error",
+      "dimension": "schema_markup",
+      "severity": "medium",
+      "message": "Schema validation error: Article/BlogPosting missing recommended field: image",
+      "recommendation": "Fix the schema markup error to ensure AI engines can parse and trust the structured data on this page.",
+      "count": 1
+    },
+    {
+      "finding_type": "low_question_heading_ratio",
+      "dimension": "extractability",
+      "severity": "medium",
+      "message": "Only 29% of headings are phrased as questions (threshold: 30%). Question-format headings improve AI snippet extraction.",
+      "recommendation": "Rephrase at least 30% of subheadings as questions that your audience is actually asking (e.g. 'How does X work?' instead of 'About X'). This increases the likelihood of appearing in AI-generated answers.",
+      "count": 2
+    }
+  ],
+  "avg_snippet_readiness": 33.41,
+  "pages_with_schema": 1,
+  "avg_question_heading_ratio": 0.1429,
+  "started_at": "2026-03-03T21:54:14.323973Z",
+  "completed_at": null,
+  "status": "completed",
+  "error_message": null,
+  "failed_steps": [],
+  "degraded_dimensions": []
+}

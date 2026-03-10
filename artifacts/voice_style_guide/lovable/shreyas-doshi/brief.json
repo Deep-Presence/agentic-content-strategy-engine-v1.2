@@ -1,0 +1,16 @@
+{
+  "author_id": "shreyas-doshi",
+  "name": "Shreyas Doshi",
+  "description": "Shreyas Doshi is a former product management leader at Stripe, Twitter, Google, and Yahoo — where he served as Stripe's first PM Manager and was instrumental in establishing product management as a function at one of the world's most admired fintech companies. He has spent 15 years as a practitioner PM and PM leader at top-tier technology companies. Since 2020, he has built a following of 400,000+ across Twitter/X, LinkedIn, and Maven — publishing frameworks on product strategy, organizational navigation, and PM career development that are widely cited as among the most practically useful in the field. His LNO Framework (Leverage, Neutral, Overhead task classification), pre-mortem methodology, and three-levels-of-product-work model are used by senior PMs and product leaders at companies globally.",
+  "famous_works": [
+    "Good Product Managers, Great Product Managers",
+    "LNO Framework (Leverage, Neutral, Overhead)",
+    "How to Use Pre-mortems to Prevent Problems, Blunders, and Disasters",
+    "Managing Your PM Career in 2025 and Beyond (Maven Course)",
+    "Three Levels of Product Work (Impact, Execution, Optics)",
+    "Shreyas Doshi on Lenny's Podcast"
+  ],
+  "resonance_rationale": "Shreyas Doshi is the practitioner voice most trusted by senior product managers navigating the specific tension Lovable's Marcus personas face daily: how to move fast, validate ideas, and ship prototypes inside organizations that are structurally optimized for slowness. His writing style — concise, framework-dense, delivered in numbered threads and comparison tables designed to be screenshot and shared in Slack — mirrors exactly how Marcus communicates internally. His frameworks are not abstract; they are the kind of ready-to-deploy vocabulary a Director of Innovation uses in a steering committee presentation to justify a new tool without triggering a 4-month procurement review. Unlike most business authors who write for founders or CEOs, Shreyas writes explicitly for operators inside larger systems who must create accountability and move fast without direct authority — which maps precisely to both Marcus-Enterprise (Director navigating Fortune 500 governance) and Marcus-PM (Intrapreneur dodging IT bureaucracy). His credibility derives entirely from practitioner experience at Stripe, Google, and Twitter, making him an insider-practitioner rather than an analyst — the source type both Marcus personas trust most. His active presence across Twitter/X, LinkedIn, Maven, and podcast appearances means Lovable's content team can study a rich, continuously updated body of voice examples across multiple formats.",
+  "work_persona_mapping": [],
+  "source": "agent"
+}

@@ -1,0 +1,46 @@
+{
+  "sprint": "gap-content-enrichment-v9",
+  "sprint_goal": "Gap Analysis → Content Engine Data Enrichment — 3 features: company URL passthrough, structural analysis of company pages, self-citation detection in AI search results.",
+  "sprint_status": "COMPLETE — 24 new tests, all 74 targeted tests passing. 14 files modified across models, pipeline steps, content engine, and tests.",
+  "constraints": [
+    "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
+    "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
+    "LiteLLM wraps all LLM calls in content engine workers/judges/agents",
+    "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception",
+    "No Supabase yet — filesystem artifacts are source of truth",
+    "Double-underscore separator for effective slugs: {company}__{product}",
+    "Default-deny middleware — all routes protected unless explicitly whitelisted",
+    "core/ cannot import from api/ — shared code goes in core/shared_tools/",
+    "DB layer is opt-in via DATABASE_URL — repos flush only, DI session generator owns commit/rollback",
+    "AuthServiceProtocol is the contract — all routers use get_auth_service dependency",
+    "LangSmith is sole tracing backend — Langfuse fully removed",
+    "Hub prompts opt-in via langsmith_use_hub=False — local Python prompts authoritative by default"
+  ],
+  "active_branches": ["research-agent-v1.2.0"],
+  "environment_notes": [
+    "Python 3.12", "async-first", "VS Code + Claude Code extension",
+    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, pdfplumber >=0.10, python-docx >=1.0, python-dateutil >=2.9"
+  ],
+  "current_clients": ["Ramp", "Carta", "Mynd"],
+  "key_files_in_flux": [
+    "core/research/audience_persona/ (models, storage, agents, graph, pipeline)",
+    "core/research/knowledge_base/ (models, storage, agents, graph, pipeline)",
+    "core/research/prompts/*.py (prompt files with revision_note support)",
+    "api/tasks/runner.py (run_kb_pipeline_task wrapper)"
+  ],
+  "test_count": 2592,
+  "phases_completed_count": 33,
+  "recent_phases": [
+    "gap-content-enrichment v9 — 3 features: URL passthrough, structural analysis, self-citation detection (24 tests)",
+    "audience-persona Phase D — Pipeline Orchestrator (45 tests, 232 AP total)",
+    "knowledge-base Phase 5 — Synthesis & Living Document (50 tests)",
+    "knowledge-base Phase 4 — API Router + Schemas (35 tests)",
+    "knowledge-base Phase 3 — Orchestrator (58 tests)"
+  ],
+  "phases_remaining": [
+    "audience-persona Phase E — API Router + Runner (~30 tests)",
+    "audience-persona Phase F — Integration (~20 tests)",
+    "knowledge-base Phase 6 — Integration (wire to gap analysis, Daily Tracker, frontend)"
+  ],
+  "deferred_issues_location": ".claude/sprints/pending/backlog.md"
+}

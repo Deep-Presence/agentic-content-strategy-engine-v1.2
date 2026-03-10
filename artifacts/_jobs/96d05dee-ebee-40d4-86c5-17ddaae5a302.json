@@ -1,0 +1,37 @@
+{
+  "task_id": "96d05dee-ebee-40d4-86c5-17ddaae5a302",
+  "pipeline": "content",
+  "status": "completed",
+  "company_slug": "webflow",
+  "current_step": null,
+  "progress_pct": null,
+  "created_at": "2026-02-19T04:40:37.640388Z",
+  "updated_at": "2026-02-19T04:55:36.159812Z",
+  "result": {
+    "company_slug": "webflow",
+    "total_briefs": 2,
+    "total_approved": 2,
+    "total_rejected": 0,
+    "pieces": [
+      {
+        "brief_id": "brief-001",
+        "title": "How to Build a Website Without Code: The Complete No-Code Guide for 2025",
+        "status": "approved"
+      },
+      {
+        "brief_id": "brief-002",
+        "title": "Design System to Production Website: How to Maintain Brand Consistency at Scale",
+        "status": "approved"
+      }
+    ],
+    "produced_artifacts": [
+      {
+        "type": "content",
+        "slug": "webflow"
+      }
+    ]
+  },
+  "error": null,
+  "approval_payload": null,
+  "approval_history": []
+}

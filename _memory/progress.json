@@ -1,0 +1,170 @@
+{
+  "current_sprint": "gap-content-enrichment-v9",
+  "last_updated": "2026-03-07",
+  "test_count": 2592,
+  "completed_sprints_summary": {
+    "total_tasks_completed": 35,
+    "sprints": [
+      {"sprint": "v3-async", "date": "2026-02-15", "summary": "Async pipeline conversion (12 tasks), Playwright CF bypass, content engine v1.0"},
+      {"sprint": "v3-signals", "date": "2026-02-18", "summary": "Structural Signal Overhaul — S4 dual-soup, ~45 signals, GapContentBrief, 3-tier output"},
+      {"sprint": "api-v1", "date": "2026-02-24", "summary": "FastAPI REST API, SSE events, HITL fix, Codex review fixes, approval flow"},
+      {"sprint": "front-back-integration", "date": "2026-02-26", "summary": "Auth foundation, gap/content/brand data endpoints, research tests (109), product pipeline (5 phases), review fixes"},
+      {"sprint": "route-protection", "date": "2026-02-27", "summary": "Default-deny ASGI middleware, RBAC, tenant isolation, invite flow, stream tokens, security fixes"},
+      {"sprint": "settings-knowledge-docs", "date": "2026-02-27", "summary": "Settings API (team/profile/pipeline-defaults), knowledge doc upload + s1 integration"},
+      {"sprint": "sqlalchemy-migration", "date": "2026-02-27", "summary": "Phase 1 — 31 ORM tables, Alembic migrations, 8 repos, DI wiring"},
+      {"sprint": "auth-migration-phase2", "date": "2026-02-28", "summary": "AuthServiceProtocol, JsonAuthService, DbAuthService, utility extraction, DI switch"},
+      {"sprint": "service-layer-phase3", "date": "2026-02-28", "summary": "3 service protocols, 6 implementations (Json+Db), 2 new repos, backfill script"},
+      {"sprint": "cleanup-taskstore-migration", "date": "2026-02-28", "summary": "TaskStoreProtocol, DbTaskStore write-through, ApiTaskModel ORM, startup recovery"},
+      {"sprint": "phase4-persistence", "date": "2026-02-28", "summary": "Pipeline DB write hooks (persist_s1-s8, content persistence), backfill spec fields"},
+      {"sprint": "site-audit", "date": "2026-03-01", "summary": "Pipeline 0 — 6-step deterministic audit, 8 dimensions, penalty scoring, async crawler, 636 tests"},
+      {"sprint": "content-engine-v13", "date": "2026-03-02", "summary": "v1.3 pipeline (6 stages, LiteLLM, E-E-A-T, 3 HITL, linker agent, 10-phase refactor), LangSmith migration"},
+      {"sprint": "knowledge-base-v1-v5", "date": "2026-03-06", "summary": "KB phases 1-5: 17 models, KBStorage, 6 agents, DAG orchestrator, 3 HITL, API router, staleness tracking, delta synthesis. 260 KB tests"},
+      {"sprint": "audience-persona-v6-a-c", "date": "2026-03-06", "summary": "AP phases A-C: 9 Pydantic models, PersonaStorage, 2 agents (suggester + generator), 2 HITL graphs, prompts. 187 AP tests"}
+    ]
+  },
+  "completed": [
+    {
+      "id": "T-ap-phase-d",
+      "task": "Audience Persona Phase D — Pipeline Orchestrator: preflight, 2-phase agent execution, 2 HITL checkpoints, parallel generators, frozen ID map, SSE events, tracing. Codex-reviewed (9 findings incorporated)",
+      "sprint": "audience-persona-v6-phase-d",
+      "status": "done",
+      "completed_at": "2026-03-06",
+      "tests_added": 45,
+      "test_total_ap": 232
+    },
+    {
+      "id": "T-kb-phase5",
+      "task": "Knowledge Base Phase 5 — Synthesis & Living Document: DAG constants, staleness tracking, delta synthesis, health/refresh endpoints, write-before-approve fix",
+      "sprint": "knowledge-base-v5",
+      "status": "done",
+      "completed_at": "2026-03-06",
+      "tests_added": 50,
+      "test_total_kb": 260
+    },
+    {
+      "id": "T-kb-phase4",
+      "task": "Knowledge Base Phase 4 — API Router + Schemas + Review Fixes (3 endpoints, nonce handling, 35 tests)",
+      "sprint": "knowledge-base-v4",
+      "status": "done",
+      "completed_at": "2026-03-05",
+      "tests_added": 35
+    },
+    {
+      "id": "T-kb-phase3-orchestrator",
+      "task": "Knowledge Base Phase 3 — Orchestrator: DAG execution, 3 HITL checkpoints, revision notes, runner integration",
+      "sprint": "knowledge-base-v4",
+      "status": "done",
+      "completed_at": "2026-03-05",
+      "tests_added": 58,
+      "test_total_kb": 151
+    },
+    {
+      "id": "T-site-audit-p3-bugfixes",
+      "task": "Site Audit P3 Bug Fixes — 9 fixes, Codex-reviewed (14 findings incorporated)",
+      "sprint": "site-audit-p3-bugfixes",
+      "status": "done",
+      "completed_at": "2026-03-04",
+      "tests_added": 82,
+      "test_total_site_audit": 793
+    },
+    {
+      "id": "T-langsmith-migration",
+      "task": "LangSmith migration — Langfuse eliminated, prompt registry, LangGraph Studio",
+      "sprint": "langsmith-migration",
+      "status": "done",
+      "completed_at": "2026-03-02",
+      "tests_added": 38
+    }
+  ],
+  "in_progress": [],
+  "recently_completed_gap_content_enrichment": {
+    "task": "Gap Analysis → Content Engine Data Enrichment: 3 features (company URL passthrough, structural analysis of company pages, self-citation detection)",
+    "completed_at": "2026-03-07",
+    "tests_added": 24,
+    "features": [
+      "F1: Company URL passthrough — SemanticUnit.url threaded through QueryGap.best_company_url → WorkerQueryContext.company_best_url → Brief Builder prompt",
+      "F2: Structural analysis of company pages — s4 compute_structural_signals() public wrapper reused in s1, CompanyPageAnalysis model, signals attached to QueryGap",
+      "F3: Self-citation detection — _flag_company_citations() + _build_company_citation_map() in pipeline, is_company_citation flag on CitationRef/EnrichedCitation, company_cited/company_cited_platforms on QueryGap, scorecard + planner/brief builder prompts updated"
+    ],
+    "files_modified": [
+      "core/models/gap_analysis.py",
+      "core/models/content_generation_v13.py",
+      "core/gap_analysis/steps/s1_embed_assets.py",
+      "core/gap_analysis/steps/s4_enrich_citations.py",
+      "core/gap_analysis/steps/s6_analyze.py",
+      "core/gap_analysis/steps/s8_generate_report.py",
+      "core/gap_analysis/pipeline.py",
+      "core/content_engine/context_router.py",
+      "core/content_engine/prompts/brief_builder_prompts.py",
+      "core/content_engine/prompts/strategic_planner_prompts.py",
+      "tests/gap_analysis/steps/test_s6_analyze.py",
+      "tests/gap_analysis/test_pipeline.py",
+      "tests/content_engine/conftest.py",
+      "tests/content_engine/test_context_router.py"
+    ]
+  },
+  "recently_completed_cps": {
+    "task": "CPS Model Integration — Stage 4.5 in Content Engine v1.3",
+    "completed_at": "2026-03-06",
+    "tests_added": 44,
+    "files_created": [
+      "core/cps_model/__init__.py",
+      "core/cps_model/model/__init__.py",
+      "core/cps_model/extractors/__init__.py",
+      "core/cps_model/scorer.py",
+      "tests/cps_model/__init__.py",
+      "tests/cps_model/test_scorer.py",
+      "tests/cps_model/test_extractors.py",
+      "tests/content_engine/test_cps_integration.py"
+    ],
+    "files_modified": [
+      "core/content_engine/pipeline_v13.py",
+      "core/config/settings.py",
+      "pyproject.toml",
+      "docs/COMPREHENSIVE_SYSTEM_DOCUMENTATION.md",
+      "docs/API_DOCUMENTATION.md"
+    ]
+  },
+  "recently_completed_docs": {
+    "task": "Comprehensive documentation update — Content Engine V1.3 (§7), Knowledge Base (§5c), Site Audit (§4a), cross-references (Langfuse→LangSmith, TOC, changelog)",
+    "completed_at": "2026-03-06",
+    "file": "docs/COMPREHENSIVE_SYSTEM_DOCUMENTATION.md",
+    "changes": [
+      "Rewrote §7 Content Engine V1.3 (~15 subsections, 6-stage pipeline, LiteLLM, E-E-A-T, 3 HITL)",
+      "Rewrote §5c Knowledge Base (~13 subsections, 6-agent DAG, 3 HITL, staleness, delta synthesis)",
+      "Rewrote §4a Site Audit (~14 subsections, 6 steps, penalty scoring, AEO, schema validators, P3 bug fixes)",
+      "Updated executive summary, architecture diagram, tech stack table",
+      "Replaced all Langfuse references with LangSmith (Decision 11, env vars, known issues)",
+      "Updated TOC subsection counts, component maturity table, API key matrix",
+      "Added 13 changelog entries",
+      "Updated footer with new date and line count"
+    ]
+  },
+  "pending": [
+    {
+      "id": "T-async-13",
+      "task": "Test Playwright fallback on carta.com (run step 1)",
+      "sprint": "v3-async",
+      "status": "pending"
+    },
+    {
+      "id": "T-api-cleanup-4",
+      "task": "Add runner-level tests for produced_artifacts in research and content runners",
+      "sprint": "api-v1",
+      "status": "pending"
+    },
+    {
+      "id": "T-sso-followup-1",
+      "task": "Add max(1, concurrency) guard in s4_enrich_citations",
+      "sprint": "v3-signals",
+      "status": "pending"
+    },
+    {
+      "id": "T-sso-followup-2",
+      "task": "Add try/except around _cosine_similarity for dimension mismatch in s6_analyze",
+      "sprint": "v3-signals",
+      "status": "pending"
+    }
+  ],
+  "blocked": []
+}

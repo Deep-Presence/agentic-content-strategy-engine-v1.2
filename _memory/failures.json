@@ -1,0 +1,83 @@
+[
+  {
+    "id": "F1",
+    "timestamp": "2026-02-15",
+    "what_broke": "Carta company_embeddings.json was empty — BFS crawl returned nothing",
+    "root_cause": "BFS queue never seeded with base_url when no seed_urls provided + carta.com behind Cloudflare JS challenge.",
+    "fix_applied": "Always append base_url to priority_queue. Added 3-tier fallback: httpx → Playwright headless Chromium → Wayback Machine.",
+    "lesson": "Always seed BFS with base_url. Major sites use Cloudflare — need headless browser fallback.",
+    "files_affected": ["core/gap_analysis/steps/s1_embed_assets.py"]
+  },
+  {
+    "id": "F3",
+    "timestamp": "2026-02-18",
+    "what_broke": "Trafilatura flattens structural HTML elements — ordered_list_count, table_count all zero",
+    "root_cause": "trafilatura.extract() converts <ol>, <dl>, <table> into <p> tags. Counting on trafilatura output yields 0.",
+    "fix_applied": "Dual-soup architecture: trafilatura for text extraction, semantic-tag-only scoping for element counting.",
+    "lesson": "trafilatura is for text, NOT structural HTML analysis. Always use original HTML for counting.",
+    "files_affected": ["core/gap_analysis/steps/s4_enrich_citations.py"]
+  },
+  {
+    "id": "F4",
+    "timestamp": "2026-02-18",
+    "what_broke": "textstat.flesch_kincaid_grade() failed — NLTK cmudict not found",
+    "root_cause": "textstat depends on NLTK cmudict corpus, not downloaded. SSL cert issue blocked auto-download.",
+    "fix_applied": "Manual download + try/except guard with default 0.0 on failure.",
+    "lesson": "textstat depends on NLTK corpora. Ensure cmudict is available in deployment.",
+    "files_affected": ["core/gap_analysis/steps/s4_enrich_citations.py"]
+  },
+  {
+    "id": "F5",
+    "timestamp": "2026-02-24",
+    "what_broke": "Persona/style guide agents produce .draft.md files never promoted to .md",
+    "root_cause": "LangGraph >=1.0 changed interrupt model — invoke returns __interrupt__ in dict instead of raising GraphInterrupt. CLI scripts caught dead exception.",
+    "fix_applied": "Created shared _cli_approval.py helper. Replaced GraphInterrupt catch with __interrupt__ dict check.",
+    "lesson": "LangGraph >=1.0: interrupt() returns __interrupt__ in result dict, not GraphInterrupt exception.",
+    "files_affected": ["scripts/_cli_approval.py", "core/research/graphs/pipeline.py"]
+  },
+  {
+    "id": "F7",
+    "timestamp": "2026-02-25",
+    "what_broke": "math domain error in _pearson() — math.sqrt received negative value",
+    "root_cause": "Floating-point cancellation makes the product slightly negative (~-1e-15).",
+    "fix_applied": "Guard: if product <= 0: return 0.0 before math.sqrt().",
+    "lesson": "Any math.sqrt() on computed product needs negative-value guard for floating-point imprecision.",
+    "files_affected": ["api/services/gap_data_service.py"]
+  },
+  {
+    "id": "F8",
+    "timestamp": "2026-02-25",
+    "what_broke": "25 registration tests failed after adding password min_length=8",
+    "root_cause": "Existing tests used short passwords like 'p1', 'pass'. Pydantic validation rejected with 422.",
+    "fix_applied": "Updated API-level test passwords to meet 8-char minimum. Store-level tests keep short passwords (different layer).",
+    "lesson": "When adding validation constraints to request models, check all test fixtures using those models.",
+    "files_affected": ["tests/api/test_registration.py"]
+  },
+  {
+    "id": "F9",
+    "timestamp": "2026-02-28",
+    "what_broke": "Type annotation assertion failure — annotation was string, not class",
+    "root_cause": "`from __future__ import annotations` makes annotations strings at runtime. inspect.signature().return_annotation returns string.",
+    "fix_applied": "Use typing.get_type_hints() instead of inspect.signature().return_annotation.",
+    "lesson": "Never use inspect.signature().return_annotation with `from __future__ import annotations`. Use get_type_hints().",
+    "files_affected": ["tests/services/test_protocol_conformance.py"]
+  },
+  {
+    "id": "F10",
+    "timestamp": "2026-02-28",
+    "what_broke": "DB tests showed ERROR instead of SKIP without TEST_DATABASE_URL",
+    "root_cause": "conftest.py pytestmark doesn't propagate to all test files in the directory.",
+    "fix_applied": "Added pytestmark auto-skip directly to each DB test file.",
+    "lesson": "Every tests/db/ file must include its own pytestmark auto-skip.",
+    "files_affected": ["tests/db/test_task_repo.py"]
+  },
+  {
+    "id": "F11",
+    "timestamp": "2026-02-28",
+    "what_broke": "RuntimeError: no running event loop in DbTaskStore sync tests",
+    "root_cause": "asyncio.create_task() in sync methods requires a running event loop. Patching instance method doesn't intercept before create_task.",
+    "fix_applied": "Patch asyncio.create_task at module level, make tests async.",
+    "lesson": "Patch asyncio.create_task at module level, not instance method. Tests must be async for event loop context.",
+    "files_affected": ["tests/services/test_db_task_store.py"]
+  }
+]

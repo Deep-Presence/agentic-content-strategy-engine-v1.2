@@ -8,6 +8,7 @@ Example:
     --persona-path /artifacts/personas/acme_icp.md
 """
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
@@ -60,7 +61,15 @@ def main() -> int:
         platforms=platforms,
     )
 
-    report = run_gap_analysis(input_data=input_data, skip_steps=skip_steps)
+    # Event-loop detection: use nest_asyncio if already in a running loop (Jupyter)
+    try:
+        asyncio.get_running_loop()
+        import nest_asyncio
+        nest_asyncio.apply()
+    except RuntimeError:
+        pass  # No running loop — normal CLI execution
+
+    report = asyncio.run(run_gap_analysis(input_data=input_data, skip_steps=skip_steps))
     print("\n" + "=" * 60)
     print("Gap analysis complete")
     print("=" * 60)

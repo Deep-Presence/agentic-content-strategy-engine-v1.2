@@ -1,0 +1,1027 @@
+"""Background task wrappers for pipeline execution."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from api.tasks.event_bus import EventBus
+from api.tasks.models import TaskStatus
+from core.services.task_store import TaskStoreProtocol
+from core.gap_analysis.pipeline import run_gap_analysis
+from core.auth.utils.domain import derive_slug
+from core.models.gap_analysis import GapAnalysisInput
+
+logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]  # content-strategy-engine/
+
+
+# ── Scope resolution ──────────────────────────────────────────────────
+
+
+@dataclass
+class RunScope:
+    """Resolved scope for a single pipeline run."""
+
+    company_slug: str
+    product_slug: Optional[str]
+    effective_slug: str  # artifact dirs + lock key
+    product_name: Optional[str]
+    product_description: Optional[str]
+    product_domain: Optional[str]
+
+
+def _resolve_scope(
+    company_slug: str,
+    product_slug: Optional[str],
+    auth_store: Optional[Any] = None,
+) -> RunScope:
+    """Resolve a RunScope from company_slug + product_slug.
+
+    Looks up product details from auth_store when product_slug is set.
+    Sync version — kept for CLI compatibility.
+    """
+    effective = f"{company_slug}__{product_slug}" if product_slug else company_slug
+    product_name: Optional[str] = None
+    product_description: Optional[str] = None
+    product_domain: Optional[str] = None
+
+    if product_slug and auth_store:
+        product = auth_store.get_product(company_slug, product_slug)
+        if product:
+            product_name = product.name
+            product_description = product.description
+            product_domain = product.domain
+
+    return RunScope(
+        company_slug=company_slug,
+        product_slug=product_slug,
+        effective_slug=effective,
+        product_name=product_name,
+        product_description=product_description,
+        product_domain=product_domain,
+    )
+
+
+async def _resolve_scope_async(
+    company_slug: str,
+    product_slug: Optional[str],
+    auth_service: Optional[Any] = None,
+) -> RunScope:
+    """Async version of _resolve_scope using AuthServiceProtocol."""
+    effective = f"{company_slug}__{product_slug}" if product_slug else company_slug
+    product_name: Optional[str] = None
+    product_description: Optional[str] = None
+    product_domain: Optional[str] = None
+
+    if product_slug and auth_service:
+        product = await auth_service.get_product(company_slug, product_slug)
+        if product:
+            product_name = product.name
+            product_description = product.description
+            product_domain = product.domain
+
+    return RunScope(
+        company_slug=company_slug,
+        product_slug=product_slug,
+        effective_slug=effective,
+        product_name=product_name,
+        product_description=product_description,
+        product_domain=product_domain,
+    )
+
+
+def _derive_slug(company_name: str, company_slug: Optional[str] = None) -> str:
+    if company_slug:
+        return company_slug
+    return derive_slug(company_name) or company_name.lower()
+
+
+def resolve_artifacts(
+    slug: str,
+    artifacts_root: Path,
+    effective_slug: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Auto-discover approved research artifacts for a company slug.
+
+    Only resolves final (approved) artifacts — ignores .draft.md files.
+
+    When ``effective_slug`` is provided and differs from ``slug``, applies the
+    product-level fallback chain for each artifact type:
+      1. Artifact scoped to effective_slug (product-specific)
+      2. Artifact scoped to slug (company-level)
+      3. None
+
+    Returns a dict with resolved paths and a summary for the API response.
+    """
+    resolved: Dict[str, Any] = {
+        "company_context_path": None,
+        "persona_paths": [],
+        "style_guide_path": None,
+    }
+
+    # Build lookup candidates: [effective_slug, slug] if different, else [slug]
+    candidates = [effective_slug, slug] if effective_slug and effective_slug != slug else [slug]
+
+    # Company context
+    for lookup in candidates:
+        company_ctx = artifacts_root / "company_context" / f"{lookup}.md"
+        if company_ctx.exists():
+            resolved["company_context_path"] = str(company_ctx)
+            break
+
+    # Personas: try NEW audience_personas/{slug}/ first, then legacy personas/
+    ap_found = False
+    for lookup in candidates:
+        ap_dir = artifacts_root / "audience_personas" / lookup
+        if (ap_dir / "_manifest.json").exists():
+            try:
+                from core.research.audience_persona.storage import PersonaStorage
+
+                ap_storage = PersonaStorage(artifacts_root, lookup)
+                ap_paths = ap_storage.list_persona_paths()
+                if ap_paths:
+                    resolved["persona_paths"] = ap_paths
+                    ap_found = True
+                    break
+            except Exception:
+                pass  # Fall through to legacy
+
+    # LEGACY fallback: artifacts/personas/{slug}__persona-*.md
+    if not ap_found:
+        personas_dir = artifacts_root / "personas"
+        if personas_dir.exists():
+            for lookup in candidates:
+                persona_files = sorted(
+                    p for p in personas_dir.glob(f"{lookup}__persona-*.md")
+                    if not p.name.endswith(".draft.md")
+                )
+                if persona_files:
+                    resolved["persona_paths"] = [str(p) for p in persona_files]
+                    break
+
+    # Style guide
+    for lookup in candidates:
+        style_guide = artifacts_root / "style_guides" / f"{lookup}.md"
+        if style_guide.exists():
+            resolved["style_guide_path"] = str(style_guide)
+            break
+
+    return resolved
+
+
+async def _resolve_db_context(
+    company_slug: str,
+    effective_slug: str,
+) -> tuple[Optional[async_sessionmaker], Optional[uuid.UUID], Optional[uuid.UUID]]:
+    """Resolve session_factory, run_id, and company_id for DB persistence.
+
+    Returns (None, None, None) if DATABASE_URL is not set or company not in DB.
+    Never raises — all failures are logged and result in disabled DB writes.
+    """
+    try:
+        from core.config.settings import settings
+
+        if not settings.database_url:
+            return None, None, None
+
+        from core.db.engine import get_session_factory
+        from core.db.repositories.company_repo import CompanyRepository
+
+        sf = get_session_factory()
+        run_id = uuid.uuid4()
+
+        async with sf() as session:
+            repo = CompanyRepository(session)
+            company = await repo.get_by_slug(company_slug)
+            if company is None:
+                logger.warning(
+                    "Company '%s' not found in DB — skipping DB persistence",
+                    company_slug,
+                )
+                return None, None, None
+            company_id = company.id
+
+        return sf, run_id, company_id
+    except Exception:
+        logger.warning("DB context resolution failed — continuing without DB", exc_info=True)
+        return None, None, None
+
+
+async def _create_pipeline_run(
+    session_factory: async_sessionmaker,
+    run_id: uuid.UUID,
+    company_id: uuid.UUID,
+    effective_slug: str,
+    pipeline_type_str: str,
+) -> None:
+    """Create a PipelineRunModel record in the DB."""
+    try:
+        from core.db.enums import PipelineStatus, PipelineType
+        from core.db.models.pipelines import PipelineRunModel
+
+        pipeline_type = PipelineType(pipeline_type_str)
+        async with session_factory() as session:
+            run = PipelineRunModel(
+                id=run_id,
+                company_id=company_id,
+                effective_slug=effective_slug,
+                pipeline_type=pipeline_type,
+                status=PipelineStatus.running,
+                started_at=datetime.now(tz=timezone.utc),
+            )
+            session.add(run)
+            await session.commit()
+    except Exception:
+        logger.warning("Failed to create PipelineRunModel — continuing", exc_info=True)
+
+
+async def _mark_pipeline_run_failed(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[uuid.UUID],
+    error: str,
+) -> None:
+    """Mark a PipelineRunModel as failed."""
+    if session_factory is None or run_id is None:
+        return
+    try:
+        from core.db.enums import PipelineStatus
+        from core.db.models.pipelines import PipelineRunModel
+
+        async with session_factory() as session:
+            run = await session.get(PipelineRunModel, run_id)
+            if run:
+                run.status = PipelineStatus.failed
+                run.error_message = error[:2000] if error else None
+                run.completed_at = datetime.now(tz=timezone.utc)
+                await session.commit()
+    except Exception:
+        logger.warning("Failed to mark PipelineRunModel as failed", exc_info=True)
+
+
+async def run_gap_pipeline_task(
+    task_id: str,
+    request: Any,
+    artifacts_root: Path,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+) -> None:
+    """Background task wrapper for gap analysis pipeline.
+
+    Accepts the simplified GapAnalysisStartRequest, auto-resolves research
+    artifact paths from disk, and constructs GapAnalysisInput internally.
+    """
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    # Resolve DB context for Phase 4 persistence
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "gap_analysis",
+        )
+
+    try:
+        async with task_store.semaphore:
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "gap_analysis"})
+
+            # Research artifacts: fallback chain (product-specific → company-level)
+            resolved = resolve_artifacts(
+                scope.company_slug,
+                artifacts_root,
+                effective_slug=scope.effective_slug,
+            )
+
+            # S1 domain: use product domain when available (D4 — Replace strategy)
+            domain = request.domain
+            if scope.product_domain:
+                domain = scope.product_domain
+
+            # Knowledge docs: product-level → company-level fallback
+            knowledge_doc_dir: Optional[str] = None
+            kdocs_base = artifacts_root / "knowledge_docs"
+            for candidate_slug in [scope.effective_slug, scope.company_slug]:
+                candidate_dir = kdocs_base / candidate_slug
+                if candidate_dir.is_dir() and (candidate_dir / "_metadata.json").exists():
+                    knowledge_doc_dir = str(candidate_dir)
+                    break
+
+            # Merge company pipeline defaults for Optional fields: request
+            # values take precedence, then company defaults.  Non-optional
+            # request fields (max_queries, platforms) are always present so
+            # they pass through directly.
+            _defaults = (await auth_service.get_pipeline_defaults(scope.company_slug)) if auth_service else None
+
+            input_data = GapAnalysisInput(
+                company_name=request.company_name,
+                domain=domain,
+                company_slug=scope.effective_slug,  # artifact dir uses effective slug
+                seed_urls=request.seed_urls or [f"https://{domain}/"],
+                company_context_path=resolved["company_context_path"],
+                persona_paths=resolved["persona_paths"],
+                style_guide_path=resolved["style_guide_path"],
+                max_queries=request.max_queries,
+                platforms=request.platforms,
+                language=request.language,
+                region=request.region,
+                additional_constraints=request.additional_constraints,
+                max_crawl_pages=(
+                    request.max_crawl_pages
+                    or (_defaults.max_crawl_pages if _defaults else None)
+                ),
+                max_crawl_depth=(
+                    request.max_crawl_depth
+                    or (_defaults.max_crawl_depth if _defaults else None)
+                ),
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                product_description=scope.product_description,
+                knowledge_doc_dir=knowledge_doc_dir,
+            )
+
+            report = await run_gap_analysis(
+                input_data=input_data,
+                skip_steps=request.skip_steps,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+            result = {
+                "report_md": report.report_md or None,
+                "report_json": report.report_json,
+                "visualization_paths": report.visualization_paths,
+                "resolved_artifacts": resolved,
+                "produced_artifacts": [
+                    {"type": "gap_analysis", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result
+            )
+            event_bus.publish(task_id, "completed", {"pipeline": "gap_analysis"})
+    except asyncio.CancelledError:
+        logger.info("Gap analysis pipeline cancelled: task_id=%s", task_id)
+        # Status already set by cancel endpoint; just ensure slug lock released
+    except Exception as exc:
+        logger.exception("Gap analysis pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc)
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)
+
+
+# ── Research pipeline runner ─────────────────────────────────────────
+
+
+# ── Content generation pipeline runner ───────────────────────────────
+
+
+async def run_site_audit_task(
+    task_id: str,
+    request: Any,
+    artifacts_root: Path,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+) -> None:
+    """Background task wrapper for site audit pipeline.
+
+    Derives slugs from the request, emits SSE events, calls the site audit
+    pipeline (when implemented), persists results, and updates the task store.
+    All exceptions are caught so the background task never crashes silently.
+
+    Args:
+        task_id: The task UUID created by the router.
+        request: SiteAuditStartRequest with company_name, domain, and options.
+        artifacts_root: Filesystem root for artifact persistence.
+        task_store: Task persistence store.
+        event_bus: SSE event bus for real-time progress streaming.
+        auth_service: Optional auth service for product lookups.
+    """
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "site_audit"})
+
+            try:
+                from core.site_audit.pipeline import run_site_audit
+                from core.models.site_audit import SiteAuditInput
+
+                input_data = SiteAuditInput(
+                    company_name=request.company_name,
+                    domain=request.domain,
+                    company_slug=scope.effective_slug,
+                    product_slug=scope.product_slug,
+                    max_pages=getattr(request, "max_pages", 200),
+                    max_depth=getattr(request, "max_depth", 4),
+                    check_core_web_vitals=getattr(request, "check_core_web_vitals", True),
+                    check_schema_validation=getattr(request, "check_schema_validation", True),
+                    check_ai_bot_access=getattr(request, "check_ai_bot_access", True),
+                )
+
+                audit_result = await run_site_audit(input_data)
+
+                # Persist audit_result.json
+                import json
+                out_dir = (
+                    artifacts_root
+                    / "site_audit"
+                    / scope.effective_slug
+                    / audit_result.audit_id
+                )
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / "audit_result.json").write_text(
+                    audit_result.model_dump_json(indent=2), encoding="utf-8"
+                )
+
+                result = {
+                    "audit_id": audit_result.audit_id,
+                    "domain": audit_result.domain,
+                    "overall_score": audit_result.overall_score,
+                    "grade": audit_result.grade,
+                    "pages_crawled": audit_result.pages_crawled,
+                    "status": audit_result.status,
+                    "produced_artifacts": [
+                        {"type": "site_audit", "slug": scope.effective_slug},
+                    ],
+                }
+
+                # Propagate degraded pipeline info into task result
+                if audit_result.status == "degraded":
+                    result["degraded"] = True
+                    result["failed_steps"] = audit_result.failed_steps
+                    result["degraded_dimensions"] = audit_result.degraded_dimensions
+            except (ImportError, NotImplementedError):
+                # Pipeline not yet wired — record a placeholder result
+                logger.warning(
+                    "run_site_audit not available (pipeline not yet implemented): task_id=%s",
+                    task_id,
+                )
+                result = {
+                    "audit_id": "",
+                    "domain": request.domain,
+                    "status": "not_implemented",
+                    "produced_artifacts": [],
+                }
+
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result
+            )
+            event_bus.publish(task_id, "completed", {"pipeline": "site_audit"})
+
+    except asyncio.CancelledError:
+        logger.info("Site audit pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("Site audit pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc)
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)
+
+
+async def run_content_pipeline_task(
+    task_id: str,
+    input_data: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+) -> None:
+    """Background task wrapper for content generation pipeline.
+
+    Passes task_store and event_bus through to run_content_generation() so
+    Stage 4 can use HITL interrupt/resume when auto_approve is False.
+    """
+    from core.content_engine.pipeline import run_content_generation
+
+    # Read effective_slug from the persisted task (set by create_task at launch)
+    _task = task_store.get_task(task_id)
+    effective = _task.effective_slug or _task.company_slug or _derive_slug(input_data.company_name)
+    company_slug = _task.company_slug or _derive_slug(input_data.company_name)
+
+    # Resolve DB context for Phase 4 persistence
+    session_factory, run_id, company_id = await _resolve_db_context(
+        company_slug, effective
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            effective, "content",
+        )
+
+    try:
+        async with task_store.semaphore:
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "content"})
+
+            output = await run_content_generation(
+                input_data=input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            result = {
+                "company_slug": output.company_slug,
+                "total_briefs": output.total_briefs,
+                "total_approved": output.total_approved,
+                "total_rejected": output.total_rejected,
+                "pieces": [
+                    {
+                        "brief_id": p.brief_id,
+                        "title": p.title,
+                        "status": p.status.value if hasattr(p.status, "value") else str(p.status),
+                    }
+                    for p in output.pieces
+                ],
+                "produced_artifacts": [
+                    {"type": "content", "slug": effective},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result
+            )
+            event_bus.publish(task_id, "completed", {"pipeline": "content"})
+
+    except asyncio.CancelledError:
+        logger.info("Content generation pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("Content generation pipeline failed: %s", exc)
+        task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        task_store.release_slug_lock(effective)
+        task_store.remove_task_handle(task_id)
+
+
+async def run_content_v13_pipeline_task(
+    task_id: str,
+    input_data: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+) -> None:
+    """Background task wrapper for v1.3 content generation pipeline.
+
+    Follows the same semaphore + slug-lock + handle pattern as
+    run_content_pipeline_task. Enforces the global max-3-concurrent
+    semaphore and registers the task handle for cancellation.
+    """
+    from core.content_engine.pipeline_v13 import run_content_generation_v13
+
+    _task = task_store.get_task(task_id)
+    effective = _task.effective_slug or _task.company_slug or _derive_slug(input_data.company_name)
+    company_slug = _task.company_slug or _derive_slug(input_data.company_name)
+
+    session_factory, run_id, company_id = await _resolve_db_context(company_slug, effective)
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id, effective, "content_v13"
+        )
+
+    try:
+        async with task_store.semaphore:
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "content_v13"})
+
+            output = await run_content_generation_v13(
+                input_data=input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            result = {
+                "company_slug": output.company_slug,
+                "total_briefs": output.total_briefs,
+                "total_approved": output.total_approved,
+                "total_rejected": output.total_rejected,
+                "pieces": [
+                    {
+                        "brief_id": p.brief_id,
+                        "title": p.title,
+                        "status": p.status.value if hasattr(p.status, "value") else str(p.status),
+                    }
+                    for p in output.pieces
+                ],
+                "produced_artifacts": [{"type": "content_v13", "slug": effective}],
+            }
+            task_store.update_task(task_id, status=TaskStatus.COMPLETED, result=result)
+            event_bus.publish(task_id, "completed", {"pipeline": "content_v13"})
+
+    except asyncio.CancelledError:
+        logger.info("Content v1.3 pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("Content v1.3 pipeline failed: %s", exc)
+        task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        task_store.release_slug_lock(effective)
+        task_store.remove_task_handle(task_id)
+
+
+# ── Knowledge Base pipeline runner ─────────────────────────────────
+
+
+async def run_kb_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+) -> None:
+    """Background task wrapper for Knowledge Base pipeline.
+
+    Acquires task_store semaphore, resolves scope, calls
+    run_knowledge_base_pipeline(), and handles completion/failure/cancellation.
+    """
+    from core.models.knowledge_base import KnowledgeBaseInput
+    from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            input_data = KnowledgeBaseInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.effective_slug,
+                company_id=getattr(request, "company_id", None),
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                seed_urls=getattr(request, "seed_urls", []),
+                internal_sources=getattr(request, "internal_sources", []),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+                refresh_docs=getattr(request, "refresh_docs", None),
+                staleness_threshold_days=getattr(request, "staleness_threshold_days", 30),
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+            )
+
+            output = await run_knowledge_base_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "synthesis_word_count": len(output.synthesis_md.split()) if output.synthesis_md else 0,
+                "agent_results": {
+                    k: {
+                        "word_count": v.word_count,
+                        "has_error": v.error is not None,
+                        "error": v.error,
+                    }
+                    for k, v in output.agent_results.items()
+                },
+                "company_profile_path": output.company_profile_path,
+                "produced_artifacts": [
+                    {"type": "knowledge_base", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("KB pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("KB pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Audience Persona Pipeline
+# ═══════════════════════════════════════════════════════════════════════
+
+
+async def run_audience_persona_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Audience Persona pipeline."""
+    from core.models.audience_persona import AudiencePersonaInput
+    from core.research.audience_persona.pipeline import run_audience_persona_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            input_data = AudiencePersonaInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                max_personas=getattr(request, "max_personas", 5),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+            )
+
+            output = await run_audience_persona_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "briefs_suggested": output.briefs_suggested,
+                "briefs_approved": output.briefs_approved,
+                "profiles_generated": output.profiles_generated,
+                "persona_dir": output.persona_dir,
+                "produced_artifacts": [
+                    {"type": "audience_persona", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("AP pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("AP pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)
+
+
+async def run_single_persona_generator_task(
+    task_id: str,
+    persona_id: str,
+    slug: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    artifacts_root: Any = None,
+) -> None:
+    """Background task for standalone single-persona generation."""
+    from core.models.audience_persona import AudiencePersonaInput
+    from core.research.audience_persona.agents import run_persona_profile_generator
+    from core.research.audience_persona.pipeline import _preflight_check
+    from core.research.audience_persona.storage import PersonaStorage
+
+    try:
+        async with task_store.semaphore:
+            root = Path(artifacts_root) if artifacts_root else Path("artifacts")
+            storage = PersonaStorage(root, slug)
+            brief = storage.read_brief(persona_id)
+
+            if not brief:
+                raise ValueError(f"No brief found for persona_id={persona_id}")
+
+            # Derive base company slug (strip product suffix if present)
+            company_slug = slug.split("__")[0]
+
+            # Load context via preflight (effective_slug=slug for standalone)
+            company_md, reviews_md, kdocs_text, _ = await _preflight_check(
+                root, slug, company_slug,
+            )
+
+            # Build minimal input_data for the generator prompt
+            manifest = storage.read_manifest()
+            input_data = AudiencePersonaInput(
+                company_name=manifest.company_name or company_slug,
+                company_slug=company_slug,
+                product_slug=slug.split("__")[1] if "__" in slug else None,
+            )
+
+            result = await run_persona_profile_generator(
+                brief=brief,
+                input_data=input_data,
+                company_context_md=company_md,
+                customer_reviews_md=reviews_md,
+                knowledge_docs_text=kdocs_text,
+            )
+
+            if result.error:
+                raise RuntimeError(f"Profile generation failed: {result.error}")
+
+            storage.write_version(
+                persona_id,
+                persona_name=brief.persona_name,
+                content_md=result.content_md,
+                content_json=result.content_json,
+                kind="secondary",
+                created_by="manual",
+                tagline=brief.tagline,
+                status="pending_review",
+            )
+
+            task_store.update_task(
+                task_id,
+                status=TaskStatus.COMPLETED,
+                result={"persona_id": persona_id, "status": "pending_review"},
+            )
+
+    except asyncio.CancelledError:
+        logger.info("Single persona gen cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("Single persona gen failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(slug)
+        task_store.remove_task_handle(task_id)
+
+
+# ---------------------------------------------------------------------------
+# Voice Style Guide Pipeline
+# ---------------------------------------------------------------------------
+
+
+async def run_voice_style_guide_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Voice Style Guide pipeline."""
+    from core.models.voice_style_guide import VoiceStyleGuideInput
+    from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            input_data = VoiceStyleGuideInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                max_authors=getattr(request, "max_authors", 3),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+            )
+
+            output = await run_voice_style_guide_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "authors_discovered": output.authors_discovered,
+                "authors_approved": output.authors_approved,
+                "authors_researched": output.authors_researched,
+                "guide_generated": output.guide_generated,
+                "guide_dir": output.guide_dir,
+                "style_guide_path": output.style_guide_path,
+                "produced_artifacts": [
+                    {"type": "voice_style_guide", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("VSG pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("VSG pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)
+
+
+# ---------------------------------------------------------------------------
+# Topic Discovery Pipeline
+# ---------------------------------------------------------------------------
+
+
+async def run_topic_discovery_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Topic Discovery pipeline."""
+    from core.models.topic_discovery import TopicDiscoveryInput
+    from core.topic_discovery.pipeline import run_topic_discovery_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            input_data = TopicDiscoveryInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+                max_expansion_rounds=getattr(request, "max_expansion_rounds", 4),
+                dedup_threshold=getattr(request, "dedup_threshold", 0.85),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+            )
+
+            output = await run_topic_discovery_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "taxonomy_version": output.taxonomy_version,
+                "matrix_version": output.matrix_version,
+                "total_subdomains": output.taxonomy.total_subdomains if output.taxonomy else 0,
+                "total_assignments": output.matrix.total_assignments if output.matrix else 0,
+                "coverage_score": output.taxonomy.coverage_score if output.taxonomy else 0.0,
+                "produced_artifacts": [
+                    {"type": "topic_discovery", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("TD pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("TD pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)

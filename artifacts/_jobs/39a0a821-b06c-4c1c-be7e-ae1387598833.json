@@ -1,0 +1,31 @@
+{
+  "task_id": "39a0a821-b06c-4c1c-be7e-ae1387598833",
+  "pipeline": "research",
+  "status": "completed",
+  "company_slug": "webflow",
+  "current_step": "style_guide",
+  "progress_pct": null,
+  "created_at": "2026-02-18T22:43:07.032497Z",
+  "updated_at": "2026-02-18T22:52:57.287626Z",
+  "result": {
+    "stage": "complete",
+    "company_output_path": "/artifacts/company_context/webflow.md",
+    "produced_artifacts": [
+      {
+        "type": "company_context",
+        "slug": "webflow"
+      },
+      {
+        "type": "personas",
+        "slug": "webflow"
+      },
+      {
+        "type": "style_guides",
+        "slug": "webflow"
+      }
+    ]
+  },
+  "error": null,
+  "approval_payload": null,
+  "approval_history": []
+}
