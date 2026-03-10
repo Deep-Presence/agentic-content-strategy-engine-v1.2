@@ -20,7 +20,7 @@ from api.exceptions import (
 )
 from api.auth.middleware import AuthMiddleware
 from api.auth.store import AuthStore
-from api.routers import artifacts, audience_persona, auth, brand_data, companies, content, content_data, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, research, settings, site_audit as site_audit_router, tasks
+from api.routers import artifacts, audience_persona, auth, brand_data, companies, content, content_data, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, settings, site_audit as site_audit_router, tasks, topic_discovery, voice_style_guide
 from api.tasks.event_bus import EventBus
 from api.tasks.store import TaskConflictError, TaskNotFoundError, TaskStore
 
@@ -159,7 +159,6 @@ def create_app() -> FastAPI:
     app.include_router(gap_data.router)
     app.include_router(events.router)
     app.include_router(artifacts.router)
-    app.include_router(research.router)
     app.include_router(content.router)
     app.include_router(content_v13.router)
     app.include_router(cps.router)
@@ -169,6 +168,8 @@ def create_app() -> FastAPI:
     app.include_router(knowledge_base.router)
     app.include_router(knowledge_docs.router)
     app.include_router(audience_persona.router)
+    app.include_router(voice_style_guide.router)
+    app.include_router(topic_discovery.router)
     app.include_router(site_audit_router.router)
     app.include_router(daily_tracker.router)
     app.include_router(tasks.router)

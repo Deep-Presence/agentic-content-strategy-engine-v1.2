@@ -107,7 +107,8 @@ def build_persona_suggester_user_prompt(
     # --- Company Overview ---
     parts.append("### Company Overview")
     if company_context_md:
-        parts.append(company_context_md[:15_000])
+        parts.append(company_context_md[:80_000])  # ~15k tokens
+        print(company_context_md[:80_000])
     else:
         parts.append("No company context available. Rely on other signals below.")
     parts.append("")
@@ -117,7 +118,7 @@ def build_persona_suggester_user_prompt(
     # --- Customer Reviews ---
     parts.append("### Customer Reviews")
     if customer_reviews_md:
-        parts.append(customer_reviews_md[:10_000])
+        parts.append(customer_reviews_md[:40_000])  # ~10k tokens
     else:
         parts.append("No customer reviews available.")
     parts.append("")
@@ -127,7 +128,7 @@ def build_persona_suggester_user_prompt(
     # --- Support / Issue Tickets ---
     parts.append("### Support / Issue Tickets")
     if support_tickets_md:
-        parts.append(support_tickets_md[:10_000])
+        parts.append(support_tickets_md[:40_000])  # ~10k tokens
     else:
         parts.append("No support tickets available.")
     parts.append("")
@@ -137,7 +138,7 @@ def build_persona_suggester_user_prompt(
     # --- Sales Call Transcripts / Notes ---
     parts.append("### Sales Call Transcripts / Notes")
     if sales_transcripts_md:
-        parts.append(sales_transcripts_md[:15_000])
+        parts.append(sales_transcripts_md[:60_000])  # ~15k tokens
     else:
         parts.append("No sales call transcripts available.")
     parts.append("")
@@ -150,7 +151,7 @@ def build_persona_suggester_user_prompt(
 
     if knowledge_docs_text:
         additional_parts.append("**Internal Documents (uploaded by company):**")
-        additional_parts.append(knowledge_docs_text[:50_000])
+        additional_parts.append(knowledge_docs_text[:200_000])  # ~50k tokens
         additional_parts.append("")
 
     if input_data.domain:

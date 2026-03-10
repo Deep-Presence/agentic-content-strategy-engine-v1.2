@@ -132,17 +132,51 @@ def _detect_artifact(
 def _detect_personas(
     artifacts_root: Path, slug: str
 ) -> List[PersonaArtifact]:
-    """Find all persona files for a slug, read content, detect status.
+    """Find all persona profiles for a slug, read content, detect status.
 
-    Pattern: {slug}__persona-{id}.md (approved) or
-             {slug}__persona-{id}.draft.md (draft)
+    Tries the new audience_personas/ storage first (manifest-based, versioned),
+    then falls back to the legacy personas/ directory (flat files).
     """
+    # --- New audience_personas/ path (primary) ---
+    try:
+        from core.research.audience_persona.storage import PersonaStorage
+
+        ap_storage = PersonaStorage(artifacts_root, slug)
+        manifest = ap_storage.read_manifest()
+        if manifest.personas:
+            personas: List[PersonaArtifact] = []
+            for pid, entry in manifest.personas.items():
+                if entry.status not in ("fresh", "stale") or entry.current_version == 0:
+                    continue
+                md_path = ap_storage.base_dir / pid / f"v{entry.current_version}.md"
+                if not md_path.exists():
+                    continue
+                try:
+                    content = md_path.read_text(encoding="utf-8")
+                except OSError:
+                    logger.warning("Failed to read persona file %s", md_path)
+                    continue
+                personas.append(
+                    PersonaArtifact(
+                        id=pid,
+                        name=entry.persona_name or pid.replace("-", " ").title(),
+                        type=entry.kind,
+                        content=content,
+                        status="approved",
+                        updated_at=entry.last_updated.isoformat() if entry.last_updated else _mtime_iso(md_path),
+                    )
+                )
+            if personas:
+                return personas
+    except Exception:
+        logger.debug("audience_personas/ lookup failed for %s, trying legacy", slug)
+
+    # --- Legacy personas/ fallback (flat file pattern) ---
     personas_dir = artifacts_root / "personas"
     if not personas_dir.is_dir():
         return []
 
     prefix = f"{slug}__"
-    # Collect approved and draft files, keyed by persona_id
     approved_files: Dict[str, Path] = {}
     draft_files: Dict[str, Path] = {}
 
@@ -151,13 +185,10 @@ def _detect_personas(
             continue
         if not f.name.startswith(prefix):
             continue
-
-        # Path traversal protection
         if not f.is_relative_to(personas_dir):
             continue
 
-        # Extract persona ID — only accept persona-* files (Codex CX-4)
-        suffix = f.name[len(prefix):]  # e.g., "persona-icp.md" or "persona-icp.draft.md"
+        suffix = f.name[len(prefix):]
         if not suffix.startswith("persona-"):
             continue
 
@@ -168,9 +199,8 @@ def _detect_personas(
             persona_id = suffix[:-len(".md")]
             approved_files[persona_id] = f
 
-    # Merge: approved wins over draft
     all_ids = sorted(set(approved_files.keys()) | set(draft_files.keys()))
-    personas: List[PersonaArtifact] = []
+    personas_legacy: List[PersonaArtifact] = []
 
     for persona_id in all_ids:
         if persona_id in approved_files:
@@ -186,13 +216,10 @@ def _detect_personas(
             logger.warning("Failed to read persona file %s", path)
             continue
 
-        # Type: "icp" if "icp" appears in the persona_id
         persona_type = "icp" if "icp" in persona_id else "secondary"
-
-        # Name: title-case the id, replacing hyphens with spaces
         name = persona_id.replace("-", " ").title()
 
-        personas.append(
+        personas_legacy.append(
             PersonaArtifact(
                 id=persona_id,
                 name=name,
@@ -203,7 +230,7 @@ def _detect_personas(
             )
         )
 
-    return personas
+    return personas_legacy
 
 
 def get_research_artifacts(
@@ -229,7 +256,6 @@ def get_research_artifacts(
 
 _PIPELINE_TOTAL_STEPS: Dict[str, int] = {
     "gap_analysis": 8,
-    "research": 3,
     "content": 4,
 }
 
@@ -242,12 +268,6 @@ _GAP_STEP_MAP: Dict[str, int] = {
     "s6_analyze": 6,
     "s7_visualize": 7,
     "s8_generate_report": 8,
-}
-
-_RESEARCH_STEP_MAP: Dict[str, int] = {
-    "company": 1,
-    "persona": 2,
-    "style_guide": 3,
 }
 
 # Map backend statuses to frontend-compatible set (Codex finding #4)
@@ -298,8 +318,6 @@ def _infer_steps_completed(task: PipelineTask) -> int:
 
     if pipeline == "gap_analysis":
         return _GAP_STEP_MAP.get(step, 0)
-    elif pipeline == "research":
-        return _RESEARCH_STEP_MAP.get(step, 0)
     elif pipeline == "content":
         # Content steps are "stage 1" .. "stage 4"
         try:

@@ -62,8 +62,8 @@ def build_competitor_scanner_user_prompt(
         revision_note: Optional reviewer feedback from a previous version.
     """
     # Truncate upstream doc to avoid excessive prompt length
-    overview_truncated = company_overview_md[:12000]
-    if len(company_overview_md) > 12000:
+    overview_truncated = company_overview_md[:48_000]  # ~12k tokens
+    if len(company_overview_md) > 48_000:
         overview_truncated += "\n\n[... truncated for brevity ...]"
 
     parts = [

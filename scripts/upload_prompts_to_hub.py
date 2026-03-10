@@ -31,6 +31,9 @@ PROMPTS = [
     ("strategic-planner-system", "core.content_engine.prompts.strategic_planner_prompts", "STRATEGIC_PLANNER_SYSTEM_PROMPT"),
     ("brief-builder-system", "core.content_engine.prompts.brief_builder_prompts", "BRIEF_BUILDER_SYSTEM_PROMPT"),
     ("linker-system", "core.content_engine.prompts.linker_prompts", "LINKER_SYSTEM_PROMPT"),
+    # Audience Persona pipeline
+    ("research-persona-suggester-system", "core.research.prompts.persona_suggester", "PERSONA_SUGGESTER_SYSTEM_PROMPT"),
+    ("research-persona-generator-system", "core.research.prompts.persona_generator", "PERSONA_GENERATOR_SYSTEM_PROMPT"),
 ]
 
 
@@ -77,6 +80,7 @@ def main() -> None:
                 hub_name,
                 object=prompt_obj,
                 description=f"System prompt: {constant_name} from {module_path}",
+                commit_tags=["production"],
             )
             print(f"[OK] Uploaded: {hub_name} ({char_count:,} chars)")
         except Exception as exc:

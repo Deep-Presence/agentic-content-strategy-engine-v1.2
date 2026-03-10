@@ -92,8 +92,8 @@ def build_brand_perception_user_prompt(
         content = upstream_docs.get(doc_type, "")
         if content:
             # Truncate each doc to keep total prompt manageable
-            truncated = content[:10000]
-            if len(content) > 10000:
+            truncated = content[:40_000]  # ~10k tokens
+            if len(content) > 40_000:
                 truncated += "\n\n[... truncated for brevity ...]"
             parts.append(f"\n## {label}\n\n{truncated}")
         else:

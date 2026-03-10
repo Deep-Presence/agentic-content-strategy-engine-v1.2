@@ -408,41 +408,6 @@ class TestContentGenerationInputProductFields:
 
 
 # ---------------------------------------------------------------------------
-# Unit: CompanyResearchInput product fields
-# ---------------------------------------------------------------------------
-
-class TestCompanyResearchInputProductFields:
-    def test_defaults(self) -> None:
-        from core.models.artifacts import CompanyResearchInput
-        inp = CompanyResearchInput(company_name="Ramp")
-        assert inp.product_slug is None
-        assert inp.product_name is None
-        assert inp.product_description is None
-
-    def test_fields_set(self) -> None:
-        from core.models.artifacts import CompanyResearchInput
-        inp = CompanyResearchInput(
-            company_name="Ramp",
-            product_slug="card",
-            product_name="Card",
-            product_description="desc",
-        )
-        assert inp.product_slug == "card"
-
-    def test_json_roundtrip(self) -> None:
-        from core.models.artifacts import CompanyResearchInput
-        import json
-        inp = CompanyResearchInput(
-            company_name="Ramp",
-            product_slug="card",
-            product_name="Card",
-        )
-        data = json.loads(inp.model_dump_json())
-        restored = CompanyResearchInput(**data)
-        assert restored.product_slug == "card"
-
-
-# ---------------------------------------------------------------------------
 # API integration: product_slug validator rejects invalid values (P0)
 # ---------------------------------------------------------------------------
 
@@ -475,17 +440,6 @@ class TestProductSlugValidation:
                 },
             ).status_code
 
-    def _start_research(self, client: TestClient, product_slug: str) -> int:
-        with patch("api.routers.research.asyncio.create_task") as m:
-            m.return_value = MagicMock()
-            return client.post(
-                "/api/v1/research/start",
-                json={
-                    "company_name": "Test Co",
-                    "product_slug": product_slug,
-                },
-            ).status_code
-
     def _start_content(self, client: TestClient, product_slug: str) -> int:
         with patch("api.routers.content.asyncio.create_task") as m:
             m.return_value = MagicMock()
@@ -503,15 +457,6 @@ class TestProductSlugValidation:
     ) -> None:
         for bad in self._INVALID_SLUGS:
             status = self._start_gap(app_client, bad)
-            assert status == 422, (
-                f"Expected 422 for product_slug={bad!r}, got {status}"
-            )
-
-    def test_research_rejects_invalid_product_slug(
-        self, app_client: TestClient
-    ) -> None:
-        for bad in self._INVALID_SLUGS:
-            status = self._start_research(app_client, bad)
             assert status == 422, (
                 f"Expected 422 for product_slug={bad!r}, got {status}"
             )

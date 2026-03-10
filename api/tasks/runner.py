@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -16,10 +16,7 @@ from api.tasks.models import TaskStatus
 from core.services.task_store import TaskStoreProtocol
 from core.gap_analysis.pipeline import run_gap_analysis
 from core.auth.utils.domain import derive_slug
-from core.models.artifacts import CompanyResearchInput
 from core.models.gap_analysis import GapAnalysisInput
-from core.models.personas import PersonaResearchInput
-from core.models.style_guide import StyleGuideResearchInput
 
 logger = logging.getLogger(__name__)
 
@@ -99,44 +96,6 @@ async def _resolve_scope_async(
         product_description=product_description,
         product_domain=product_domain,
     )
-
-
-def _enrich_interrupt_with_draft_content(
-    interrupt_values: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Normalize interrupt payload — read draft files and inject artifact_md if missing.
-
-    Company graph sends artifact_md directly; persona/style_guide graphs only send
-    draft_paths. This ensures the frontend always receives artifact_md in the SSE event.
-    """
-    if interrupt_values.get("artifact_md"):
-        return interrupt_values  # Already present (company graph)
-
-    draft_paths: List[str] = interrupt_values.get("draft_paths", [])
-    draft_path: Optional[str] = interrupt_values.get("draft_path")
-    if draft_path and not draft_paths:
-        draft_paths = [draft_path]
-
-    if not draft_paths:
-        return interrupt_values
-
-    combined: List[str] = []
-    for p in draft_paths:
-        full = _PROJECT_ROOT / p.lstrip("/")
-        if full.exists():
-            try:
-                content = full.read_text(encoding="utf-8")
-                if content.strip():
-                    combined.append(content)
-            except Exception as exc:
-                logger.warning("Failed to read draft %s: %s", p, exc)
-
-    interrupt_values["artifact_md"] = "\n\n---\n\n".join(combined) if combined else ""
-    if not combined:
-        logger.warning("No draft content found for paths: %s", draft_paths)
-        interrupt_values["enrichment_warning"] = f"Draft files not found on disk: {draft_paths}"
-
-    return interrupt_values
 
 
 def _derive_slug(company_name: str, company_slug: Optional[str] = None) -> str:
@@ -428,243 +387,6 @@ async def run_gap_pipeline_task(
 
 
 # ── Research pipeline runner ─────────────────────────────────────────
-
-
-def _has_interrupt(result: Dict[str, Any]) -> bool:
-    """Check if a LangGraph invoke result contains an interrupt.
-
-    LangGraph >=1.0: graph.invoke() does NOT raise GraphInterrupt — it returns
-    normally with ``__interrupt__`` in the result dict when a node calls interrupt().
-    See: https://docs.langchain.com/oss/python/langgraph/interrupts
-    """
-    return bool(result.get("__interrupt__"))
-
-
-def _get_interrupt_value(result: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract the first interrupt payload from a LangGraph invoke result."""
-    interrupts = result.get("__interrupt__", [])
-    if interrupts and hasattr(interrupts[0], "value"):
-        return interrupts[0].value
-    return {}
-
-
-async def _run_research_stage(
-    stage_name: str,
-    build_graph_fn: Callable[..., Any],
-    initial_state: Dict[str, Any],
-    task_id: str,
-    task_store: TaskStoreProtocol,
-    event_bus: EventBus,
-) -> Dict[str, Any]:
-    """Run a single research stage with HITL interrupt/resume support.
-
-    Uses MemorySaver for checkpointing so interrupt() + Command(resume=...) works.
-    Research graphs are synchronous, so we wrap in asyncio.to_thread().
-
-    LangGraph >=1.0: graph.invoke() returns normally with ``__interrupt__`` in the
-    result dict when a node calls interrupt() — it does NOT raise GraphInterrupt.
-    See: https://github.com/langchain-ai/langgraph/issues/3675
-    """
-    from langgraph.checkpoint.memory import MemorySaver
-    from langgraph.types import Command
-
-    checkpointer = MemorySaver()
-    graph = build_graph_fn(checkpointer=checkpointer)
-    config = {"configurable": {"thread_id": f"{task_id}-{stage_name}"}}
-
-    event_bus.publish(task_id, "stage_start", {"stage": stage_name})
-    task_store.update_task(task_id, current_step=stage_name)
-
-    # First invocation
-    result = await asyncio.to_thread(graph.invoke, initial_state, config)
-
-    # If graph paused at approval gate, handle HITL loop
-    if _has_interrupt(result):
-        interrupt_values = _get_interrupt_value(result)
-        interrupt_values = _enrich_interrupt_with_draft_content(interrupt_values)
-
-        task_store.update_task(
-            task_id,
-            status=TaskStatus.PENDING_APPROVAL,
-            approval_payload={"stage": stage_name, **interrupt_values},
-        )
-        event_bus.publish(task_id, "pending_approval", {"stage": stage_name, **interrupt_values})
-
-        # Wait for human decision
-        while True:
-            approval = await task_store.wait_for_approval(task_id)
-            decision = approval["decision"]
-            revision_note = approval.get("revision_note")
-
-            task_store.update_task(task_id, status=TaskStatus.RUNNING, current_step=stage_name, approval_payload=None)
-            event_bus.publish(task_id, "approval_received", {"stage": stage_name, "decision": decision})
-
-            # Resume the graph with the approval decision
-            resume_value = {"approval_decision": decision}
-            if revision_note:
-                resume_value["revision_note"] = revision_note
-
-            result = await asyncio.to_thread(
-                graph.invoke, Command(resume=resume_value), config
-            )
-
-            if not _has_interrupt(result):
-                break  # Completed without another interrupt
-
-            # Another interrupt (e.g., revise → agent → approval_gate again)
-            interrupt_values = _get_interrupt_value(result)
-            interrupt_values = _enrich_interrupt_with_draft_content(interrupt_values)
-            task_store.update_task(
-                task_id,
-                status=TaskStatus.PENDING_APPROVAL,
-                approval_payload={"stage": stage_name, **interrupt_values},
-            )
-            event_bus.publish(task_id, "pending_approval", {"stage": stage_name, **interrupt_values})
-            continue
-
-    event_bus.publish(task_id, "stage_complete", {"stage": stage_name})
-    return result
-
-
-async def run_research_pipeline_task(
-    task_id: str,
-    request: Any,
-    task_store: TaskStoreProtocol,
-    event_bus: EventBus,
-    auth_service: Optional[Any] = None,
-) -> None:
-    """Background task wrapper for research pipeline (company → persona → style).
-
-    Accepts the simplified ResearchStartRequest and constructs per-stage
-    core model inputs internally. The frontend never needs to know about
-    artifact paths — the runner chains them automatically.
-    """
-    from core.research.graphs.company_research import build_graph as build_company_graph
-    from core.research.graphs.persona_research import build_graph as build_persona_graph
-    from core.research.graphs.style_guide import build_graph as build_style_graph
-
-    company_slug = _derive_slug(request.company_name)
-    product_slug = getattr(request, "product_slug", None)
-    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
-    slug = scope.effective_slug  # persona/style_guide graphs use this for output paths
-    stages = request.stages
-    auto_approve = request.auto_approve
-
-    # Map stages to artifact types
-    _stage_to_artifact_type = {
-        "company": "company_context",
-        "persona": "personas",
-        "style_guide": "style_guides",
-    }
-
-    try:
-        async with task_store.semaphore:
-            event_bus.publish(task_id, "pipeline_start", {"pipeline": "research"})
-
-            company_output_path: Optional[str] = None
-            persona_paths: List[str] = []
-            completed_stages: List[str] = []
-
-            # Stage 1: Company research
-            if "company" in stages:
-                company_input = CompanyResearchInput(
-                    company_name=request.company_name,
-                    domain=request.domain,
-                    seed_urls=request.seed_urls or [f"https://{request.domain}/"],
-                    internal_sources=request.internal_sources,
-                    language=request.language,
-                    region=request.region,
-                    additional_constraints=request.additional_constraints,
-                )
-                company_state = {"input": company_input.model_dump(mode="json"), "auto_approve": auto_approve}
-                company_result = await _run_research_stage(
-                    "company", build_company_graph, company_state,
-                    task_id, task_store, event_bus,
-                )
-                # Check if stage was rejected — early exit
-                decision = (company_result.get("approval_decision") or "").lower()
-                if decision == "reject":
-                    logger.info("Company stage rejected — stopping pipeline")
-                else:
-                    company_output_path = company_result.get("output_path")
-                    completed_stages.append("company")
-
-            # Stage 2: Persona research
-            if "persona" in stages and "company" not in stages or "company" in completed_stages:
-                persona_input = PersonaResearchInput(
-                    company_name=request.company_name,
-                    domain=request.domain,
-                    company_slug=slug,
-                    company_context_path=company_output_path,
-                    internal_sources=request.internal_sources,
-                    max_personas=request.max_personas,
-                    language=request.language,
-                    region=request.region,
-                    additional_constraints=request.additional_constraints,
-                )
-                persona_state = {"input": persona_input.model_dump(mode="json"), "auto_approve": auto_approve}
-                persona_result = await _run_research_stage(
-                    "persona", build_persona_graph, persona_state,
-                    task_id, task_store, event_bus,
-                )
-                decision = (persona_result.get("approval_decision") or "").lower()
-                if decision == "reject":
-                    logger.info("Persona stage rejected — stopping pipeline")
-                else:
-                    persona_paths = persona_result.get("written_paths") or []
-                    completed_stages.append("persona")
-
-            # Stage 3: Style guide research (W1: use "style_guide" not "style")
-            if "style_guide" in stages and (
-                "persona" not in stages or "persona" in completed_stages
-            ):
-                style_input = StyleGuideResearchInput(
-                    company_name=request.company_name,
-                    domain=request.domain,
-                    company_slug=slug,
-                    company_context_path=company_output_path,
-                    persona_paths=persona_paths,
-                    internal_sources=request.internal_sources,
-                    language=request.language,
-                    region=request.region,
-                    additional_constraints=request.additional_constraints,
-                )
-                style_state = {"input": style_input.model_dump(mode="json"), "auto_approve": auto_approve}
-                style_result = await _run_research_stage(
-                    "style_guide", build_style_graph, style_state,
-                    task_id, task_store, event_bus,
-                )
-                decision = (style_result.get("approval_decision") or "").lower()
-                if decision != "reject":
-                    completed_stages.append("style_guide")
-
-            # W3: Only report actually completed stages as produced artifacts
-            produced = [
-                {"type": _stage_to_artifact_type[s], "slug": slug}
-                for s in completed_stages
-                if s in _stage_to_artifact_type
-            ]
-
-            task_store.update_task(
-                task_id,
-                status=TaskStatus.COMPLETED,
-                result={
-                    "stage": "complete",
-                    "company_output_path": company_output_path,
-                    "produced_artifacts": produced,
-                },
-            )
-            event_bus.publish(task_id, "completed", {"pipeline": "research"})
-
-    except asyncio.CancelledError:
-        logger.info("Research pipeline cancelled: task_id=%s", task_id)
-    except Exception as exc:
-        logger.exception("Research pipeline failed: %s", exc)
-        task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
-        event_bus.publish(task_id, "failed", {"error": str(exc)})
-    finally:
-        task_store.release_slug_lock(scope.effective_slug)
-        task_store.remove_task_handle(task_id)
 
 
 # ── Content generation pipeline runner ───────────────────────────────
@@ -1154,4 +876,152 @@ async def run_single_persona_generator_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
         task_store.release_slug_lock(slug)
+        task_store.remove_task_handle(task_id)
+
+
+# ---------------------------------------------------------------------------
+# Voice Style Guide Pipeline
+# ---------------------------------------------------------------------------
+
+
+async def run_voice_style_guide_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Voice Style Guide pipeline."""
+    from core.models.voice_style_guide import VoiceStyleGuideInput
+    from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            input_data = VoiceStyleGuideInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                max_authors=getattr(request, "max_authors", 3),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+            )
+
+            output = await run_voice_style_guide_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "authors_discovered": output.authors_discovered,
+                "authors_approved": output.authors_approved,
+                "authors_researched": output.authors_researched,
+                "guide_generated": output.guide_generated,
+                "guide_dir": output.guide_dir,
+                "style_guide_path": output.style_guide_path,
+                "produced_artifacts": [
+                    {"type": "voice_style_guide", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("VSG pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("VSG pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
+        task_store.remove_task_handle(task_id)
+
+
+# ---------------------------------------------------------------------------
+# Topic Discovery Pipeline
+# ---------------------------------------------------------------------------
+
+
+async def run_topic_discovery_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Topic Discovery pipeline."""
+    from core.models.topic_discovery import TopicDiscoveryInput
+    from core.topic_discovery.pipeline import run_topic_discovery_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    try:
+        async with task_store.semaphore:
+            input_data = TopicDiscoveryInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+                max_expansion_rounds=getattr(request, "max_expansion_rounds", 4),
+                dedup_threshold=getattr(request, "dedup_threshold", 0.85),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+            )
+
+            output = await run_topic_discovery_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "taxonomy_version": output.taxonomy_version,
+                "matrix_version": output.matrix_version,
+                "total_subdomains": output.taxonomy.total_subdomains if output.taxonomy else 0,
+                "total_assignments": output.matrix.total_assignments if output.matrix else 0,
+                "coverage_score": output.taxonomy.coverage_score if output.taxonomy else 0.0,
+                "produced_artifacts": [
+                    {"type": "topic_discovery", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("TD pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("TD pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(scope.effective_slug)
         task_store.remove_task_handle(task_id)

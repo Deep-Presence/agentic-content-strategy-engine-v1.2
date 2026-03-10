@@ -80,7 +80,11 @@ class TestPipelineTask:
         assert restored.company_slug == task.company_slug
 
     def test_pipeline_literal_validation(self) -> None:
-        for valid in ("research", "gap_analysis", "content"):
+        for valid in (
+            "research", "gap_analysis", "content", "content_v13",
+            "site_audit", "knowledge_base", "audience_persona",
+            "voice_style_guide", "topic_discovery",
+        ):
             task = PipelineTask(task_id="t", pipeline=valid, company_slug="x")
             assert task.pipeline == valid
 

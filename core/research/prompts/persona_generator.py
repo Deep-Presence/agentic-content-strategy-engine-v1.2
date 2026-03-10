@@ -117,15 +117,15 @@ def build_persona_generator_user_prompt(
     parts.append("")
 
     parts.append("## Company Context")
-    parts.append(company_context_md[:15_000] if company_context_md else "No company context available.")
+    parts.append(company_context_md[:60_000] if company_context_md else "No company context available.")  # ~15k tokens
     parts.append("")
 
     parts.append("## Customer Reviews & Feedback")
-    parts.append(customer_reviews_md[:10_000] if customer_reviews_md else "No customer reviews available.")
+    parts.append(customer_reviews_md[:40_000] if customer_reviews_md else "No customer reviews available.")  # ~10k tokens
     parts.append("")
 
     parts.append("## Internal Documents")
-    parts.append(knowledge_docs_text[:50_000] if knowledge_docs_text else "No internal documents provided.")
+    parts.append(knowledge_docs_text[:200_000] if knowledge_docs_text else "No internal documents provided.")  # ~50k tokens
     parts.append("")
 
     parts.append("## Requirements")

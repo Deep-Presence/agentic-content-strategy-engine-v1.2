@@ -36,9 +36,6 @@ class Settings(BaseSettings):
     perplexity_deep_research_model: str = "sonar-deep-research"
     perplexity_search_model: str = "sonar-pro"
 
-    # DeepAgents / LLM
-    deepagents_model: str ="claude-sonnet-4-5-20250929"
-
     # OpenAI
     openai_api_key: str | None = None
     embedding_model: str = "text-embedding-3-small"
@@ -47,15 +44,9 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     brave_search_api_key: str | None = None
 
-    # Google / Gemini – Company Research
+    # Google / Gemini – Legacy API key fallbacks (used by Reddit HIL + Audience Persona)
     google_api_key_company_deepagent: str | None = None
-    google_gemini_model_company_deepagent: str = "gemini-3-flash-preview"
-    # Google / Gemini – Persona Research
     google_api_key_persona_research_deepagent: str | None = None
-    google_persona_deepagents_model: str ="gemini-3-flash-preview"
-    # Google / Gemini – Style Guide Research
-    google_api_key_style_guide_research_deepagent: str | None = None
-    google_style_guide_deepagents_model: str ="gemini-3-flash-preview"
 
     # Google / Gemini – Gap Analysis
     google_api_key_gap_analysis: str | None = None
@@ -154,6 +145,19 @@ class Settings(BaseSettings):
     audience_persona_suggester_model: str = "gemini-3-flash-preview"
     audience_persona_generator_model: str = "sonar-deep-research"
     audience_persona_max_concurrent_generators: int = 3
+
+    # --- Voice Style Guide Pipeline ---
+    voice_style_guide_discovery_model: str = "anthropic/claude-sonnet-4-6"
+    voice_style_guide_synthesis_model: str = "anthropic/claude-sonnet-4-6"
+    voice_style_guide_max_concurrent_researchers: int = 3
+
+    # --- Topic Discovery Pipeline ---
+    topic_discovery_brainstorm_model: str = "anthropic/claude-sonnet-4-6"
+    topic_discovery_dedup_model: str = "anthropic/claude-haiku-4-5-20251001"
+    topic_discovery_max_expansion_rounds: int = 4
+    topic_discovery_dedup_threshold: float = 0.85
+    topic_discovery_max_concurrent_sources: int = 4
+    topic_discovery_source_timeout_s: float = 120.0
 
     # --- CPS Model (Citation Signal Predictor) ---
     cps_enabled: bool = True

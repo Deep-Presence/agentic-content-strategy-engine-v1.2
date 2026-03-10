@@ -1,0 +1,14 @@
+{
+  "author_id": "leila-hormozi",
+  "name": "Leila Hormozi",
+  "description": "Leila Hormozi is co-founder and CEO of Acquisition.com, a holding company managing a portfolio generating $250M+ in annual revenue. She founded and scaled three companies across software, service, e-commerce, and brick-and-mortar industries to $120M+ in cumulative sales without taking on outside capital. She is widely recognized for expertise in scaling businesses through operational infrastructure and management systems — her investment thesis at Acquisition.com focuses specifically on asset-light, high-cash-flow, sales-focused digital product companies. She maintains an active content presence across LinkedIn, YouTube, and the 'Build with Leila Hormozi' podcast, publishing operational frameworks on constraint identification, team scaling, management accountability, and unit economics that are directly applicable to bootstrapped and early-growth business builders.",
+  "famous_works": [
+    "Build with Leila Hormozi (Podcast)",
+    "Acquisition.com YouTube Channel",
+    "Acquisition.com Scaling Workshops",
+    "LinkedIn Content Library (Leila Hormozi)"
+  ],
+  "resonance_rationale": "Leila Hormozi is the definitive practitioner voice on building high-margin, asset-light businesses at scale without outside capital — which is the exact archetype Lovable's Harry (AI-native agency owner) and Arjun (emerging market bootstrapped founder) are trying to become. Her credibility is entirely practitioner-derived: she built $120M+ in cumulative sales across four industries without VC backing, which means she has solved the exact problems these personas face (margin compression, team scaling, operational systems, constraint identification) with her own money on the line. Her communication style — direct, numbers-first, consequence-explicit, zero hedging — mirrors how Harry thinks about his business in unit economics rather than inspiration. For Marcus-Enterprise, her frameworks on building management systems that generate measurable performance give him the financial language to justify innovation spend to Finance and Operations stakeholders who respond to ROI arguments, not vision narratives. For Sabrine, her personal narrative of building from zero without external capital provides psychological permission and a proof-of-concept that the bootstrapped path is viable. Her active, high-volume content presence across YouTube, LinkedIn, and podcast means Lovable's content team has rich, current voice examples to study across multiple formats — and her audience overlaps significantly with the operator-class founders and agency builders who represent Lovable's highest-value customer segments.",
+  "work_persona_mapping": [],
+  "source": "agent"
+}

@@ -123,14 +123,14 @@ class TestSuggesterUserPrompt:
         assert "Focus on mid-market" in prompt
 
     def test_truncates_company_context(self) -> None:
-        long_ctx = "x " * 20_000
+        long_ctx = "x " * 80_000  # 160k chars, exceeds ~15k token limit (60k chars)
         prompt = build_persona_suggester_user_prompt(
             self._make_input(), long_ctx, "rev"
         )
         assert len(prompt) < len(long_ctx)
 
     def test_truncates_customer_reviews(self) -> None:
-        long_rev = "y " * 20_000
+        long_rev = "y " * 80_000  # 160k chars, exceeds ~10k token limit (40k chars)
         prompt = build_persona_suggester_user_prompt(
             self._make_input(), "ctx", long_rev
         )
@@ -268,8 +268,8 @@ class TestGeneratorUserPrompt:
         assert "Focus on enterprise" in prompt
 
     def test_truncates_contexts(self) -> None:
-        long_ctx = "x " * 20_000
-        long_rev = "y " * 20_000
+        long_ctx = "x " * 80_000  # 160k chars, exceeds ~15k token limit (60k chars)
+        long_rev = "y " * 80_000  # 160k chars, exceeds ~10k token limit (40k chars)
         prompt = build_persona_generator_user_prompt(
             self._make_brief(), self._make_input(), long_ctx, long_rev
         )

@@ -53,12 +53,10 @@ OPENAI_API_KEY=sk-...                           # Embeddings + gap analysis sear
 ANTHROPIC_API_KEY=sk-ant-...                     # Content engine + gap analysis search
 PERPLEXITY_API_KEY=pplx-...                      # Deep research + fact enrichment
 
-# Google Gemini — one key per agent (rate-limit isolation)
-GOOGLE_API_KEY_COMPANY_DEEPAGENT=AIza...         # Research: company context
-GOOGLE_API_KEY_PERSONA_RESEARCH_DEEPAGENT=AIza...# Research: personas
-GOOGLE_API_KEY_STYLE_GUIDE_RESEARCH_DEEPAGENT=AIza...  # Research: style guide
+# Google Gemini — one key per pipeline (rate-limit isolation)
 GOOGLE_API_KEY_GAP_ANALYSIS=AIza...              # Gap analysis: Gemini search engine
 GOOGLE_API_KEY_AUDIENCE_PERSONA=AIza...          # Audience persona pipeline
+GOOGLE_API_KEY_REDDIT_HIL=AIza...                # Reddit HIL monitor
 
 # --- Optional ---
 LANGSMITH_API_KEY=ls-...                         # Tracing (LangSmith)
@@ -104,13 +102,12 @@ All pipeline endpoints are async — they return a `task_id` immediately. Stream
 | POST | `/api/v1/auth/register` | Register a new company |
 | POST | `/api/v1/auth/login` | Login |
 | POST | `/api/v1/site-audit/start` | Launch site audit |
-| POST | `/api/v1/research/start` | Launch research pipeline |
-| POST | `/api/v1/research/{run_id}/approve` | HITL: approve/revise/reject research stage |
 | POST | `/api/v1/knowledge-base/start` | Launch knowledge base pipeline |
+| POST | `/api/v1/audience-persona/start` | Launch audience persona pipeline |
+| POST | `/api/v1/voice-style-guide/start` | Launch voice style guide pipeline |
 | POST | `/api/v1/gap-analysis/start` | Launch gap analysis |
 | POST | `/api/v1/content/start` | Launch content generation (v1.3) |
 | POST | `/api/v1/content/{run_id}/approve` | HITL: approve/revise content brief |
-| POST | `/api/v1/audience-persona/start` | Launch audience persona pipeline |
 | POST | `/api/v1/daily-tracker/start` | Launch daily tracker run |
 | GET | `/api/v1/tasks` | List tasks (filter by pipeline/status) |
 | GET | `/api/v1/tasks/{task_id}/events` | SSE event stream |
@@ -121,14 +118,17 @@ Full reference: [docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md)
 
 ## Running Pipelines via CLI
 
-### Full research pipeline
+### Research pipelines (Knowledge Base → Audience Persona → Voice Style Guide)
 
 ```bash
-python scripts/run_pipeline.py \
-  --company-name "Ramp" \
-  --domain ramp.com \
-  --persona --style \
-  --auto-approve
+# Knowledge Base (company research — 6-agent DAG)
+python scripts/run_kb.py --company-name "Ramp" --domain ramp.com --auto-approve
+
+# Audience Personas (2-agent pipeline)
+python scripts/run_audience_persona.py --company-name "Ramp" --domain ramp.com --auto-approve
+
+# Voice Style Guide (3-agent pipeline)
+python scripts/run_voice_style_guide.py --company-name "Ramp" --domain ramp.com --auto-approve
 ```
 
 ### Gap analysis

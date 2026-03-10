@@ -84,7 +84,7 @@ def _pull_from_hub(hub_name: str, tag: str = "") -> Optional[str]:
         logger.warning("Hub prompt '%s' returned no manifest", hub_name)
         return None
     except Exception as exc:
-        logger.warning("Failed to pull prompt '%s' from Hub: %s", hub_name, exc)
+        logger.debug("Failed to pull prompt '%s' from Hub: %s", hub_name, exc)
         return None
 
 
