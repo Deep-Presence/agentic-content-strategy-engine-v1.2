@@ -228,6 +228,9 @@ async def run_knowledge_base_pipeline(
     task_store: Optional[Any] = None,
     event_bus: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
+    session_factory: Optional[Any] = None,
+    run_id: Optional[Any] = None,
+    company_id: Optional[Any] = None,
 ) -> KnowledgeBaseOutput:
     """Run the full Knowledge Base pipeline.
 
@@ -601,16 +604,46 @@ async def run_knowledge_base_pipeline(
 
             # Promote approved synthesis to company_context
             if synthesis_md:
-                profile_dir = root / "company_context"
-                profile_dir.mkdir(parents=True, exist_ok=True)
-                profile_path = profile_dir / f"{slug}.md"
-                profile_path.write_text(synthesis_md, encoding="utf-8")
+                storage.promote_synthesis_to_company_context(synthesis_md)
 
                 # Update last_full_refresh for full mode
                 if mode == "full":
                     manifest = storage.read_manifest()
                     manifest.last_full_refresh = datetime.now(timezone.utc)
                     storage.write_manifest(manifest)
+
+        # ── DB persistence (fire-and-forget) ──
+        try:
+            from core.research.persistence import (
+                persist_kb_doc,
+                persist_kb_synthesis,
+                persist_pipeline_run_complete,
+            )
+
+            manifest = storage.read_manifest()
+            for dt in changed_doc_types:
+                r = results.get(dt)
+                if r and not r.error and r.content_md:
+                    entry = manifest.documents.get(dt.value) if manifest.documents else None
+                    ver = entry.current_version if entry and entry.current_version > 0 else 1
+                    await persist_kb_doc(
+                        session_factory, run_id, company_id, slug,
+                        dt.value, ver, r.content_md,
+                        f"knowledge_base/{slug}/{dt.value}/v{ver}.md",
+                    )
+            if synthesis_md:
+                synth_ver = manifest.synthesis_version or 1
+                await persist_kb_synthesis(
+                    session_factory, run_id, company_id, slug,
+                    synth_ver, synthesis_md,
+                    f"knowledge_base/{slug}/synthesis/v{synth_ver}.md",
+                )
+            await persist_pipeline_run_complete(
+                session_factory, run_id,
+                {"mode": mode, "docs_changed": len(changed_doc_types)},
+            )
+        except Exception:
+            logger.warning("KB DB persistence failed, continuing", exc_info=True)
 
         # Build output
         output = KnowledgeBaseOutput(

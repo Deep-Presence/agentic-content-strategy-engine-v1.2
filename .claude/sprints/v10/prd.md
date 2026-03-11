@@ -607,7 +607,7 @@ All 4 were in `core/topic_discovery/graph.py` → `run_td_hitl_checkpoint()`. **
 
 ---
 
-### HIGH — Correctness & Security (11 findings, 3 resolved)
+### HIGH — Correctness & Security (11 findings) — **ALL RESOLVED**
 
 | ID | Finding | Location | Fix | Status |
 |----|---------|----------|-----|--------|
@@ -625,7 +625,7 @@ All 4 were in `core/topic_discovery/graph.py` → `run_td_hitl_checkpoint()`. **
 
 ---
 
-### MEDIUM — Robustness (10 findings, 6 resolved)
+### MEDIUM — Robustness (10 findings) — **ALL RESOLVED**
 
 | ID | Finding | Location | Fix | Status |
 |----|---------|----------|-----|--------|
@@ -634,22 +634,22 @@ All 4 were in `core/topic_discovery/graph.py` → `run_td_hitl_checkpoint()`. **
 | M3 | Blocking filesystem I/O on event loop | pipeline.py:250,620,630 | Wrapped company context `read_text()`, `storage.read_manifest()`, `storage.write_manifest()` in `asyncio.to_thread()` | **RESOLVED** |
 | M4 | Artifact version mismatch (filename version ≠ JSON payload version) | storage.py:182,234 | `write_taxonomy()` and `write_matrix()` now use `model_copy(update={"version": version})` before serialization | **RESOLVED** |
 | M5 | `get_by_effective_slug` can throw `MultipleResultsFound` | repository.py:34 | Changed to `scalars().first()` with `ORDER BY created_at DESC` to return latest discovery | **RESOLVED** |
-| M6 | Migration/ORM nullability drift — NULLs possible where ORM expects non-null | 0006 migration vs ORM models | Add `nullable=False` + server defaults for required columns | OPEN |
-| M7 | Storage path traversal — `slug=".."` escapes root | storage.py:41 | Validate slug against strict regex + `resolved.is_relative_to(base)` | OPEN |
-| M8 | Pydantic fields without defaults (`company_name: str`) | models/topic_discovery.py:107 | Add `= ""` default, enforce requiredness at API boundary | OPEN |
-| M9 | Matrix edit schemas accept invalid enum values as free strings | schemas/topic_discovery.py:79,87 | Use discriminated unions per op + typed enums | OPEN |
+| M6 | Migration/ORM nullability drift — NULLs possible where ORM expects non-null | 0006 migration vs ORM models | Added `nullable=False` + `server_default` on all required Integer/Boolean columns in both ORM models and Alembic migration | **RESOLVED** |
+| M7 | Storage path traversal — `slug=".."` escapes root | storage.py:41 | Added `_SLUG_PATTERN` regex validation (`^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$`) + `Path.resolve()` in `TopicDiscoveryStorage.__init__()` | **RESOLVED** |
+| M8 | Pydantic fields without defaults (`company_name: str`) | models/topic_discovery.py:107 | Changed to `company_name: str = ""`, requiredness enforced at API boundary via `TopicDiscoveryStartRequest` | **RESOLVED** |
+| M9 | Matrix edit schemas accept invalid enum values as free strings | schemas/topic_discovery.py:79,87 | Changed `buyer_stage`/`intent_type` to typed `Optional[BuyerStage]`/`Optional[IntentType]` enums + `ConfigDict(extra="forbid")` on all request schemas | **RESOLVED** |
 | M10 | Nonce anti-replay check optional (`None` disables validation) | routers/topic_discovery.py:203,245 | Hard-fail 409 if `checkpoint_nonce` missing from `approval_payload` | **RESOLVED** |
 
 ---
 
-### LOW — Code Quality (4 findings)
+### LOW — Code Quality (4 findings) — **ALL RESOLVED**
 
-| ID | Finding | Location | Fix |
-|----|---------|----------|-----|
-| L1 | Unused imports/dead code (`_emit_async`, `create_span`, `db_session` arg) | pipeline.py:108,45,208 | Remove or wire properly |
-| L2 | Request schemas accept extra fields silently | schemas/topic_discovery.py:19 | Add `model_config = ConfigDict(extra="forbid")` |
-| L3 | Dead `if not task:` check after `get_task()` (already raises) | routers/topic_discovery.py:163 | Remove dead code |
-| L4 | Taxonomy/matrix read endpoints return untyped `Dict[str, Any]` | routers/topic_discovery.py:274,298 | Define response models |
+| ID | Finding | Location | Fix | Status |
+|----|---------|----------|-----|--------|
+| L1 | Unused imports/dead code (`_emit_async`, `create_span`, `db_session` arg) | pipeline.py:108,45,208 | Removed `_emit_async` helper, `create_span` import, and `db_session` parameter | **RESOLVED** |
+| L2 | Request schemas accept extra fields silently | schemas/topic_discovery.py:19 | Added `model_config = ConfigDict(extra="forbid")` on all 5 request schemas | **RESOLVED** |
+| L3 | Dead `if not task:` check after `get_task()` (already raises) | routers/topic_discovery.py:163 | Removed dead code; replaced with tenant isolation check | **RESOLVED** |
+| L4 | Taxonomy/matrix read endpoints return untyped `Dict[str, Any]` | routers/topic_discovery.py:274,298 | Defined `TaxonomyReadResponse` and `MatrixReadResponse` typed response models | **RESOLVED** |
 
 ---
 
@@ -658,7 +658,7 @@ All 4 were in `core/topic_discovery/graph.py` → `run_td_hitl_checkpoint()`. **
 | # | Question | Recommendation |
 |---|----------|----------------|
 | Q1 | Should TD reuse the exact same `run_hitl_checkpoint()` helper as KB/AP/VSG? | **Yes** — eliminates C1-C4 in one refactor |
-| Q2 | Chao1 vs Chao2 for coverage estimation? | Decide: abundance-based Chao1 (pooled counts) or incidence-based Chao2 (source/sample incidence). Current hybrid is statistically unstable. |
+| Q2 | ~~Chao1 vs Chao2 for coverage estimation?~~ | **RESOLVED:** Per-source Chao1/Good-Turing within each source across expansion rounds; capture-recapture between sources. Hybrid eliminated. |
 | Q3 | Orphan policy on parent delete — hard-delete subtree or promote children? | Define explicitly; current behavior is hard-delete |
 | Q4 | Should `topic_discoveries` be unique per `effective_slug` or append-only per run? | Repository and index strategy currently conflict — resolve |
 | Q5 | Should taxonomy/matrix versions be immutable snapshots? | Current storage allows overwrite — define versioning policy |
@@ -672,17 +672,17 @@ All 4 were in `core/topic_discovery/graph.py` → `run_td_hitl_checkpoint()`. **
 2. ~~Add tenant isolation checks on all endpoints (H1, H2)~~ — **DONE**
 3. ~~Hard-fail on missing nonce (M10)~~ — **DONE**
 
-**Before first client run:** ✅ **H3, H4, H5, H7, H8, H9, H10 RESOLVED (2026-03-09)**
+**Before first client run:** ✅ **ALL RESOLVED (2026-03-09)**
 4. ~~Fix retry semantics (H3, H4)~~ — **DONE**
 5. ~~Skip Source C when empty (H5)~~ — **DONE**
 6. ~~Fix reparent data loss (H8) + shallow copy (H9) + metadata recompute (H10)~~ — **DONE**
 7. ~~Fix S3 counter drift (H7)~~ — **DONE**
-8. Storage path traversal guard (M7)
+8. ~~Storage path traversal guard (M7)~~ — **DONE**
 
-**Before GA:**
-9. Fix coverage math (H6)
-10. All MEDIUM items (M1-M9)
-11. All LOW items (L1-L4)
+**Before GA:** ✅ **ALL RESOLVED (2026-03-09)**
+9. ~~Fix coverage math (H6)~~ — **DONE** (per-source Chao1/Good-Turing + aggregate)
+10. ~~All MEDIUM items (M1-M10)~~ — **DONE** (round accounting, JSON parsing, async I/O, version sync, slug query, nullability, path traversal, field defaults, typed enums, nonce validation)
+11. ~~All LOW items (L1-L4)~~ — **DONE** (dead code removed, extra="forbid", dead checks removed, typed response models)
 
 ---
 
@@ -692,7 +692,7 @@ All 4 were in `core/topic_discovery/graph.py` → `run_td_hitl_checkpoint()`. **
 2. ~~**No cross-tenant test** verifying slug/run_id ownership enforcement~~ — **RESOLVED:** Added 7 cross-tenant tests: `test_status_tenant_isolation_403`, `test_approve_taxonomy_tenant_isolation_403`, `test_approve_matrix_tenant_isolation_403`, `test_taxonomy_tenant_isolation_403`, `test_taxonomy_effective_slug_other_company_blocked`, `test_matrix_tenant_isolation_403`, `test_matrix_effective_slug_other_company_blocked`
 3. ~~**No test for reparent to non-existent parent** (H8 data loss scenario)~~ — **RESOLVED:** Added `TestReparentSafety` (3 tests) + `TestDeepCopyIsolation` (2 tests) + `TestTreeMetadataNormalization` (10 tests) + `TestS3CounterDrift` (1 test)
 4. **No test for concurrent version writes** (M5 race condition)
-5. **No test for path traversal** with malicious slug values (M7)
+5. ~~**No test for path traversal** with malicious slug values (M7)~~ — **RESOLVED:** Added `TestSlugPathTraversal` (5 tests for `..`, `/etc`, empty, uppercase, spaces)
 6. ~~**No test for missing nonce**~~ — **RESOLVED:** Added `test_approve_taxonomy_missing_nonce_409` and `test_approve_matrix_missing_nonce_409`
 
 ---
@@ -757,3 +757,22 @@ All 4 were in `core/topic_discovery/graph.py` → `run_td_hitl_checkpoint()`. **
 | `tests/topic_discovery/test_agents_td.py` | Added 22 tests: `TestM1RoundAccounting` (5: early break A/B, full rounds A, exception A, capped D), `TestParseJsonResponse` (4: valid/malformed/empty/fenced), `TestSafeFloat` (6: float/int/string/invalid/none/empty), `TestM2MalformedJsonRecovery` (5: mid-round A, one-lens D, hierarchy/relevance/topic_gen empty). Updated `test_malformed_json_returns_error` → `test_malformed_json_graceful_recovery`. |
 | `tests/topic_discovery/test_storage_td.py` | Added 7 tests: M4 taxonomy (3: auto-increment sync, explicit sync, no-mutate), M4 matrix (2: auto-increment sync, explicit sync), M5 repository (2: uses scalars().first(), orders by created_at). |
 | `tests/topic_discovery/test_pipeline_td.py` | No new tests needed — M3 changes verified by existing happy-path tests that now exercise the `asyncio.to_thread()` paths. |
+
+### 2026-03-09 — M6, M7, M8, M9, L1, L2, L3, L4 Fixes
+
+**8 issues resolved** across 7 source files + 3 test files. All 373 topic_discovery tests passing (322 core + 51 API). +27 new tests.
+
+**Files modified:**
+
+| File | Changes |
+|------|---------|
+| `core/db/models/topic_discovery.py` | M6: Added `nullable=False` + `server_default` on `taxonomy_version`, `matrix_version`, `total_subdomains`, `max_depth`, `depth`, `is_manually_added`, `sort_order`, `matrix_version` (assignments). Aligns ORM with migration constraints. |
+| `core/db/migrations/versions/0006_topic_discovery_v2.py` | M6: Added `nullable=False` to all Integer/Boolean columns that have `server_default` — `taxonomy_version`, `matrix_version`, `total_subdomains`, `max_depth`, `depth`, `is_manually_added`, `sort_order`, `matrix_version` (assignments). |
+| `core/topic_discovery/storage.py` | M7: Added `_SLUG_PATTERN` regex (`^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$`), validation in `__init__()`, and `Path.resolve()` to prevent traversal. |
+| `core/models/topic_discovery.py` | M8: Changed `company_name: str` → `company_name: str = ""`. Added `PerSourceCoverage` model, `chao1_estimate`/`source_sample_coverage` on `SourceResult`, `per_source_coverage`/`aggregate_sample_coverage`/`aggregate_chao1_ratio` on `CaptureRecaptureResult`. |
+| `api/schemas/topic_discovery.py` | M9: Changed `buyer_stage`/`intent_type` from `Optional[str]` to `Optional[BuyerStage]`/`Optional[IntentType]`. L2: Added `model_config = ConfigDict(extra="forbid")` on all 5 request schemas. L4: Added `TaxonomyReadResponse` and `MatrixReadResponse` typed response models. |
+| `api/routers/topic_discovery.py` | L1: Removed unused `Dict`, `Any` imports. L3: Removed dead `if not task:` checks, replaced with tenant isolation. L4: Endpoints now return `TaxonomyReadResponse`/`MatrixReadResponse`. |
+| `core/topic_discovery/pipeline.py` | L1: Removed `_emit_async` dead helper, `create_span` import, and unused `db_session` parameter. |
+| `tests/topic_discovery/test_storage_td.py` | Added `TestSlugPathTraversal` (5 tests: `..`, `/etc/passwd`, empty string, uppercase, spaces). |
+| `tests/topic_discovery/test_models_td.py` | Added M8 tests for `company_name` default + `PerSourceCoverage` model. |
+| `tests/api/test_topic_discovery.py` | Added `TestSchemaValidation` (8 tests: extra fields rejected on all request schemas, typed enum validation on matrix edits, response model field checks). |

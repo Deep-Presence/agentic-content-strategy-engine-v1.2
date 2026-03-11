@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-07 (Sprint v9 Gap-Content Enrichment)
-> **Total items:** 37
+> **Last synced:** 2026-03-10 (Sprint v11 DB Foundation Review Fixes)
+> **Total items:** 43
 
 ## Critical (Fix Before Production)
 
@@ -253,6 +253,48 @@
 - **Date added:** 2026-03-06
 - **Description:** `list_persona_paths()` returns paths in manifest dict insertion order, not sorted. This means prompt context order can drift between runs depending on when personas were added. Should add `sorted()` for deterministic ordering.
 - **Files affected:** `core/research/audience_persona/storage.py:263`
+- **Blocked by:** nothing
+
+### PB-67: [DB-M1] `get_latest_by_slug_and_type()` is redundant wrapper
+- **Source:** Sprint v11 DB Foundation Review — M1
+- **Date added:** 2026-03-10
+- **Description:** `ResearchArtifactRepository.get_latest_by_slug_and_type()` delegates to `get_by_slug_and_type()` with no added value. Remove or document the distinction.
+- **Files affected:** `core/db/repositories/research_artifact_repo.py:41-47`
+- **Blocked by:** nothing
+
+### PB-68: [DB-M2] No input validation on `upsert_artifact()`
+- **Source:** Sprint v11 DB Foundation Review — M2
+- **Date added:** 2026-03-10
+- **Description:** Empty `effective_slug`, negative version, path traversal in `storage_key` — no validation at repo level. Add guards or document assumptions.
+- **Files affected:** `core/db/repositories/research_artifact_repo.py`
+- **Blocked by:** nothing
+
+### PB-69: [DB-M3] TD `list_assignments()` shape divergence
+- **Source:** Sprint v11 DB Foundation Review — M3
+- **Date added:** 2026-03-10
+- **Description:** JSON service uses `model_dump()`, DB service uses explicit field extraction with `.value` on enums. Define shared assignment DTO to avoid shape drift.
+- **Files affected:** `core/services/json_topic_discovery_data.py`, `core/services/db_topic_discovery_data.py`
+- **Blocked by:** nothing
+
+### PB-70: [DB-M4] JSON VSG `get_guide()` ignores `version` parameter
+- **Source:** Sprint v11 DB Foundation Review — M4
+- **Date added:** 2026-03-10
+- **Description:** `version` kwarg accepted but never used — always returns latest. Implement versioned reads or remove param.
+- **Files affected:** `core/services/json_vsg_data.py`
+- **Blocked by:** nothing
+
+### PB-71: [DB-M5] Missing multi-tenancy isolation tests
+- **Source:** Sprint v11 DB Foundation Review — M5
+- **Date added:** 2026-03-10
+- **Description:** No test verifying two companies with same slug don't collide in `upsert_artifact()`. C2 fix added `company_id` to WHERE but no integration test proves isolation.
+- **Files affected:** `tests/db/test_research_artifact_repo.py`
+- **Blocked by:** nothing
+
+### PB-72: [DB-M6] DB services return `""` instead of `None` for missing content files
+- **Source:** Sprint v11 DB Foundation Review — M6
+- **Date added:** 2026-03-10
+- **Description:** `content_md or ""` masks missing files. Downstream can't distinguish "empty doc" from "file not found". Consider returning `None` and letting callers decide.
+- **Files affected:** `core/services/db_kb_data.py`, `core/services/db_persona_data.py`
 - **Blocked by:** nothing
 
 ## Low Priority / Nice to Have

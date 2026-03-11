@@ -243,6 +243,34 @@ async def _create_pipeline_run(
         logger.warning("Failed to create PipelineRunModel — continuing", exc_info=True)
 
 
+async def _mark_pipeline_run_complete(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[uuid.UUID],
+    summary: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Mark a PipelineRunModel as completed (idempotent).
+
+    Safe to call even if the pipeline already called persist_pipeline_run_complete
+    internally — the first write wins (status check).
+    """
+    if session_factory is None or run_id is None:
+        return
+    try:
+        from core.db.enums import PipelineStatus
+        from core.db.models.pipelines import PipelineRunModel
+
+        async with session_factory() as session:
+            run = await session.get(PipelineRunModel, run_id)
+            if run and run.status != PipelineStatus.completed:
+                run.status = PipelineStatus.completed
+                run.completed_at = datetime.now(tz=timezone.utc)
+                if summary:
+                    run.summary = summary
+                await session.commit()
+    except Exception:
+        logger.warning("Failed to mark PipelineRunModel as completed", exc_info=True)
+
+
 async def _mark_pipeline_run_failed(
     session_factory: Optional[async_sessionmaker],
     run_id: Optional[uuid.UUID],
@@ -418,7 +446,22 @@ async def run_site_audit_task(
     product_slug = getattr(request, "product_slug", None)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
+    # Initialise DB vars before try so they're always available in finally
+    session_factory: Any = None
+    run_id: Any = None
+    company_id: Any = None
+
     try:
+        # Resolve DB context for site audit persistence
+        session_factory, run_id, company_id = await _resolve_db_context(
+            scope.company_slug, scope.effective_slug,
+        )
+        if session_factory and run_id and company_id:
+            await _create_pipeline_run(
+                session_factory, run_id, company_id,
+                scope.effective_slug, "site_audit",
+            )
+
         async with task_store.semaphore:
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "site_audit"})
 
@@ -440,8 +483,7 @@ async def run_site_audit_task(
 
                 audit_result = await run_site_audit(input_data)
 
-                # Persist audit_result.json
-                import json
+                # 1. Persist audit_result.json (filesystem-first)
                 out_dir = (
                     artifacts_root
                     / "site_audit"
@@ -451,6 +493,15 @@ async def run_site_audit_task(
                 out_dir.mkdir(parents=True, exist_ok=True)
                 (out_dir / "audit_result.json").write_text(
                     audit_result.model_dump_json(indent=2), encoding="utf-8"
+                )
+
+                # 2. Persist to DB (additive — never crashes pipeline)
+                from core.site_audit.persistence import persist_site_audit_result
+
+                await persist_site_audit_result(
+                    session_factory, run_id, company_id,
+                    scope.effective_slug, audit_result,
+                    pipeline_run_id=run_id,
                 )
 
                 result = {
@@ -488,6 +539,13 @@ async def run_site_audit_task(
             )
             event_bus.publish(task_id, "completed", {"pipeline": "site_audit"})
 
+            # 3. Mark pipeline run complete in DB
+            await _mark_pipeline_run_complete(session_factory, run_id, summary={
+                "audit_id": result.get("audit_id", ""),
+                "overall_score": result.get("overall_score"),
+                "grade": result.get("grade"),
+            })
+
     except asyncio.CancelledError:
         logger.info("Site audit pipeline cancelled: task_id=%s", task_id)
     except Exception as exc:
@@ -496,6 +554,7 @@ async def run_site_audit_task(
             task_id, status=TaskStatus.FAILED, error=str(exc)
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
         task_store.release_slug_lock(scope.effective_slug)
         task_store.remove_task_handle(task_id)
@@ -667,6 +726,16 @@ async def run_kb_pipeline_task(
     product_slug = getattr(request, "product_slug", None)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
+    # Resolve DB context for research artifact persistence
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "knowledge_base",
+        )
+
     try:
         async with task_store.semaphore:
             input_data = KnowledgeBaseInput(
@@ -691,7 +760,13 @@ async def run_kb_pipeline_task(
                 task_id=task_id,
                 task_store=task_store,
                 event_bus=event_bus,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
             )
+
+            # Ensure pipeline run is marked complete (idempotent)
+            await _mark_pipeline_run_complete(session_factory, run_id)
 
             result = {
                 "slug": output.slug,
@@ -722,6 +797,7 @@ async def run_kb_pipeline_task(
             task_id, status=TaskStatus.FAILED, error=str(exc),
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
         task_store.release_slug_lock(scope.effective_slug)
         task_store.remove_task_handle(task_id)
@@ -748,6 +824,16 @@ async def run_audience_persona_pipeline_task(
     product_slug = getattr(request, "product_slug", None)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
+    # Resolve DB context for research artifact persistence
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "audience_persona",
+        )
+
     try:
         async with task_store.semaphore:
             input_data = AudiencePersonaInput(
@@ -769,7 +855,13 @@ async def run_audience_persona_pipeline_task(
                 task_store=task_store,
                 event_bus=event_bus,
                 artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
             )
+
+            # Ensure pipeline run is marked complete (idempotent)
+            await _mark_pipeline_run_complete(session_factory, run_id)
 
             result = {
                 "slug": output.slug,
@@ -794,6 +886,7 @@ async def run_audience_persona_pipeline_task(
             task_id, status=TaskStatus.FAILED, error=str(exc),
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
         task_store.release_slug_lock(scope.effective_slug)
         task_store.remove_task_handle(task_id)
@@ -900,6 +993,16 @@ async def run_voice_style_guide_pipeline_task(
     product_slug = getattr(request, "product_slug", None)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
+    # Resolve DB context for research artifact persistence
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "voice_style_guide",
+        )
+
     try:
         async with task_store.semaphore:
             input_data = VoiceStyleGuideInput(
@@ -921,7 +1024,13 @@ async def run_voice_style_guide_pipeline_task(
                 task_store=task_store,
                 event_bus=event_bus,
                 artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
             )
+
+            # Ensure pipeline run is marked complete (idempotent)
+            await _mark_pipeline_run_complete(session_factory, run_id)
 
             result = {
                 "slug": output.slug,
@@ -948,6 +1057,7 @@ async def run_voice_style_guide_pipeline_task(
             task_id, status=TaskStatus.FAILED, error=str(exc),
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
         task_store.release_slug_lock(scope.effective_slug)
         task_store.remove_task_handle(task_id)
@@ -974,6 +1084,16 @@ async def run_topic_discovery_pipeline_task(
     product_slug = getattr(request, "product_slug", None)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
+    # Resolve DB context for pipeline run tracking
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "topic_discovery",
+        )
+
     try:
         async with task_store.semaphore:
             input_data = TopicDiscoveryInput(
@@ -996,7 +1116,13 @@ async def run_topic_discovery_pipeline_task(
                 task_store=task_store,
                 event_bus=event_bus,
                 artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
             )
+
+            # Ensure pipeline run is marked complete (idempotent)
+            await _mark_pipeline_run_complete(session_factory, run_id)
 
             result = {
                 "slug": output.slug,
@@ -1018,6 +1144,7 @@ async def run_topic_discovery_pipeline_task(
         logger.info("TD pipeline cancelled: task_id=%s", task_id)
     except Exception as exc:
         logger.exception("TD pipeline failed: %s", exc)
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
         task_store.update_task(
             task_id, status=TaskStatus.FAILED, error=str(exc),
         )

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_persona_data_service, get_task_store
 from api.schemas.audience_persona import (
     ApprovalResponseAP,
     AudiencePersonaStartRequest,
@@ -406,37 +406,16 @@ def standalone_approve_persona(
 
 
 @router.get("/{slug}/personas")
-def list_personas(
+async def list_personas(
     slug: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
-    artifacts_root: Path = Depends(get_artifacts_root),
+    persona_svc=Depends(get_persona_data_service),
 ) -> PersonaListResponse:
     user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
     if not user_company_slug or slug != user_company_slug:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    storage = PersonaStorage(artifacts_root, slug)
-    manifest = storage.read_manifest()
-
-    items: List[PersonaListItem] = []
-    for pid, entry in manifest.personas.items():
-        items.append(
-            PersonaListItem(
-                persona_id=entry.persona_id or pid,
-                persona_name=entry.persona_name,
-                tagline=entry.tagline,
-                kind=entry.kind,
-                status=entry.status,
-                current_version=entry.current_version,
-                last_updated=entry.last_updated,
-                created_by=entry.created_by,
-                word_count=entry.word_count,
-            )
-        )
-
-    return PersonaListResponse(
-        slug=slug,
-        personas=items,
-        total=len(items),
-    )
+    personas = await persona_svc.list_personas(slug)
+    items = [PersonaListItem.model_validate(p) for p in personas]
+    return PersonaListResponse(slug=slug, personas=items, total=len(items))

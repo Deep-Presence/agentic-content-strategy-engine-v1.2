@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_td_data_service
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.topic_discovery import (
     ApprovalResponseTD,
@@ -287,7 +287,7 @@ async def get_latest_taxonomy(
     slug: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
-    artifacts_root: Path = Depends(get_artifacts_root),
+    td_svc=Depends(get_td_data_service),
 ) -> TaxonomyReadResponse:
     user_company_slug = getattr(http_request.state, "company_slug", None)
     if not user_company_slug or (
@@ -295,18 +295,17 @@ async def get_latest_taxonomy(
         and not slug.startswith(f"{user_company_slug}__")
     ):
         raise HTTPException(status_code=403, detail="Access denied")
-    storage = TopicDiscoveryStorage(artifacts_root, slug)
-    taxonomy = storage.get_latest_taxonomy()
+
+    taxonomy = await td_svc.get_taxonomy(slug)
     if taxonomy is None:
         raise HTTPException(status_code=404, detail="No taxonomy found")
 
-    manifest = storage.read_manifest()
     return TaxonomyReadResponse(
         slug=slug,
-        taxonomy=taxonomy.model_dump(mode="json"),
-        version=manifest.taxonomy_version,
-        total_subdomains=taxonomy.total_subdomains,
-        coverage_score=taxonomy.coverage_score,
+        taxonomy=taxonomy,
+        version=taxonomy.get("version", 0),
+        total_subdomains=taxonomy.get("total_subdomains", 0),
+        coverage_score=taxonomy.get("coverage_score", 0.0),
     )
 
 
@@ -318,7 +317,7 @@ async def get_latest_matrix(
     slug: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
-    artifacts_root: Path = Depends(get_artifacts_root),
+    td_svc=Depends(get_td_data_service),
 ) -> MatrixReadResponse:
     user_company_slug = getattr(http_request.state, "company_slug", None)
     if not user_company_slug or (
@@ -326,15 +325,14 @@ async def get_latest_matrix(
         and not slug.startswith(f"{user_company_slug}__")
     ):
         raise HTTPException(status_code=403, detail="Access denied")
-    storage = TopicDiscoveryStorage(artifacts_root, slug)
-    matrix = storage.get_latest_matrix()
+
+    matrix = await td_svc.get_matrix(slug)
     if matrix is None:
         raise HTTPException(status_code=404, detail="No matrix found")
 
-    manifest = storage.read_manifest()
     return MatrixReadResponse(
         slug=slug,
-        matrix=matrix.model_dump(mode="json"),
-        version=manifest.matrix_version,
-        total_assignments=matrix.total_assignments,
+        matrix=matrix,
+        version=matrix.get("version", 0),
+        total_assignments=matrix.get("total_assignments", 0),
     )

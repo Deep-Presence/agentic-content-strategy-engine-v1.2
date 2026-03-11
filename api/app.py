@@ -72,6 +72,9 @@ async def lifespan(app: FastAPI):
         app.state.task_store = await _init_task_store(app)
     if not hasattr(app.state, "artifacts_root") or app.state.artifacts_root is None:
         app.state.artifacts_root = _PROJECT_ROOT / "artifacts"
+    if not hasattr(app.state, "storage_backend") or app.state.storage_backend is None:
+        from core.storage.backends import LocalStorageBackend
+        app.state.storage_backend = LocalStorageBackend(app.state.artifacts_root)
     if not hasattr(app.state, "auth_store") or app.state.auth_store is None:
         app.state.auth_store = AuthStore(base_dir=app.state.artifacts_root)
 

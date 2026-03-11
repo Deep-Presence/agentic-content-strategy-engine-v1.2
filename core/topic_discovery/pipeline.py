@@ -40,6 +40,7 @@ from core.models.topic_discovery import (
     TopicDiscoveryStatus,
 )
 from core.research.audience_persona.storage import PersonaStorage
+from core.research.utils import load_persona_profiles, read_company_context
 from core.shared_tools.tracing import (
     create_session,
     create_trace,
@@ -114,35 +115,6 @@ def _update_task(
         task_store.update_task(task_id, **kwargs)
 
 
-async def _load_persona_profiles(
-    artifacts_root: Path,
-    effective_slug: str,
-    company_slug: str,
-) -> List[str]:
-    """Load active persona profiles from PersonaStorage.
-
-    Returns list of markdown strings (one per persona).
-    Follows effective_slug → company_slug fallback.
-    """
-    for check_slug in (effective_slug, company_slug):
-        persona_storage = PersonaStorage(artifacts_root, check_slug)
-        manifest = persona_storage.read_manifest()
-        if manifest.personas:
-            break
-    else:
-        return []
-
-    persona_mds: List[str] = []
-    for pid, entry in manifest.personas.items():
-        if entry.status not in ("fresh", "stale"):
-            continue
-        version_data = persona_storage.get_latest_version(pid)
-        if version_data and version_data.get("content_md"):
-            persona_mds.append(version_data["content_md"])
-
-    return persona_mds
-
-
 def _build_persona_summaries(persona_mds: List[str], max_chars: int = 30_000) -> str:
     """Build a concatenated summary of all persona profiles."""
     if not persona_mds:
@@ -190,6 +162,9 @@ async def run_topic_discovery_pipeline(
     task_store: Optional[Any] = None,
     event_bus: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
+    session_factory: Optional[Any] = None,
+    run_id: Optional[Any] = None,
+    company_id: Optional[Any] = None,
 ) -> TopicDiscoveryOutput:
     """Run the Topic Discovery pipeline.
 
@@ -227,12 +202,10 @@ async def run_topic_discovery_pipeline(
         _emit(event_bus, task_id, "td_phase_start", {"phase": 0, "stage": "preflight"})
 
         # Load company context
-        company_md = ""
-        for check_slug in (effective_slug, company_slug):
-            ctx_path = root / "company_context" / f"{check_slug}.md"
-            if ctx_path.exists():
-                company_md = await asyncio.to_thread(ctx_path.read_text, encoding="utf-8")
-                break
+        from core.storage.backends import LocalStorageBackend
+
+        _backend = LocalStorageBackend(root)
+        company_md = read_company_context(_backend, effective_slug, company_slug) or ""
 
         if not company_md.strip():
             raise RuntimeError(
@@ -243,7 +216,7 @@ async def run_topic_discovery_pipeline(
         company_md = company_md[:_MAX_COMPANY_CONTEXT_CHARS]
 
         # Load persona profiles
-        persona_mds = await _load_persona_profiles(root, effective_slug, company_slug)
+        persona_mds = load_persona_profiles(_backend, effective_slug, company_slug)
         if not persona_mds:
             raise RuntimeError(
                 f"No active persona profiles found for slug={effective_slug}. "
@@ -254,6 +227,20 @@ async def run_topic_discovery_pipeline(
         domain = input_data.domain or f"{company_slug}.com"
 
         _emit(event_bus, task_id, "td_phase_complete", {"phase": 0})
+
+        # ── DB: Create/update TopicDiscoveryModel ──
+        discovery_id = None
+        taxonomy_db_id = None
+        try:
+            from core.topic_discovery.persistence import persist_td_discovery
+
+            discovery_id = await persist_td_discovery(
+                session_factory, run_id, company_id,
+                effective_slug, domain,
+                pipeline_run_id=run_id,
+            )
+        except Exception:
+            logger.warning("TD persist_td_discovery failed, continuing", exc_info=True)
 
         # =============================================================
         # Phase 1 (S1): Multi-Source Subdomain Generation
@@ -439,6 +426,17 @@ async def run_topic_discovery_pipeline(
             "phase": "hitl_1", "decision": decision,
         })
 
+        # ── DB: Persist approved taxonomy ──
+        try:
+            from core.topic_discovery.persistence import persist_td_taxonomy
+
+            taxonomy_db_id = await persist_td_taxonomy(
+                session_factory, run_id, company_id,
+                discovery_id, taxonomy, tax_version,
+            )
+        except Exception:
+            logger.warning("TD persist_td_taxonomy failed, continuing", exc_info=True)
+
         # =============================================================
         # Phase 3 (S3): Dimensionality Expansion
         # =============================================================
@@ -594,6 +592,18 @@ async def run_topic_discovery_pipeline(
             "phase": "hitl_2", "decision": mat_decision,
         })
 
+        # ── DB: Persist approved assignments ──
+        try:
+            from core.topic_discovery.persistence import persist_td_assignments
+
+            await persist_td_assignments(
+                session_factory, run_id, company_id,
+                discovery_id, matrix, mat_version,
+                taxonomy_id=taxonomy_db_id,
+            )
+        except Exception:
+            logger.warning("TD persist_td_assignments failed, continuing", exc_info=True)
+
         # =============================================================
         # Phase 4: Finalize
         # =============================================================
@@ -612,6 +622,29 @@ async def run_topic_discovery_pipeline(
         manifest.last_updated = datetime.now(timezone.utc).isoformat()
         manifest.source_results_written = [sr.source.value for sr in source_results]
         await asyncio.to_thread(storage.write_manifest, manifest)
+
+        # ── DB Persistence (fire-and-forget) ──
+        try:
+            from core.topic_discovery.persistence import persist_td_status_update
+
+            await persist_td_status_update(session_factory, discovery_id, "approved")
+        except Exception:
+            logger.warning("TD persist_td_status_update failed, continuing", exc_info=True)
+
+        try:
+            from core.research.persistence import persist_pipeline_run_complete
+
+            await persist_pipeline_run_complete(
+                session_factory, run_id,
+                {
+                    "taxonomy_version": tax_version,
+                    "matrix_version": mat_version,
+                    "total_subdomains": taxonomy.total_subdomains,
+                    "total_assignments": len(all_assignments),
+                },
+            )
+        except Exception:
+            logger.warning("TD DB persistence failed, continuing", exc_info=True)
 
         output = TopicDiscoveryOutput(
             slug=company_slug,

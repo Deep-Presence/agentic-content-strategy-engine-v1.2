@@ -125,19 +125,21 @@ async def _preflight_check(
     root: Path,
     effective_slug: str,
     company_slug: str,
+    *,
+    backend: Optional["StorageBackend"] = None,
 ) -> Tuple[str, str, str, Optional[int]]:
     """Validate KB outputs exist and load context.
 
     Returns (company_context_md, customer_reviews_md, knowledge_docs_text, kb_synthesis_version).
     Raises RuntimeError if company context is missing or empty.
     """
+    from core.research.utils import read_company_context
+    from core.storage.backends import LocalStorageBackend
+
+    _backend = backend or LocalStorageBackend(root)
+
     # Company context — check effective_slug first, fallback to company_slug
-    company_md = ""
-    for check_slug in (effective_slug, company_slug):
-        ctx_path = root / "company_context" / f"{check_slug}.md"
-        if ctx_path.exists():
-            company_md = ctx_path.read_text(encoding="utf-8")
-            break
+    company_md = read_company_context(_backend, effective_slug, company_slug) or ""
 
     if not company_md.strip():
         raise RuntimeError(
@@ -207,6 +209,9 @@ async def run_audience_persona_pipeline(
     task_store: Optional[Any] = None,
     event_bus: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
+    session_factory: Optional[Any] = None,
+    run_id: Optional[Any] = None,
+    company_id: Optional[Any] = None,
 ) -> AudiencePersonaOutput:
     """Run the Audience Persona pipeline.
 
@@ -474,6 +479,37 @@ async def run_audience_persona_pipeline(
         profiles_generated = sum(
             1 for r in persona_results.values() if not r.error and r.content_md
         )
+
+        # ── DB persistence (fire-and-forget) ──
+        try:
+            from core.research.persistence import (
+                persist_persona_profile,
+                persist_pipeline_run_complete,
+            )
+
+            manifest = storage.read_manifest()
+            for pid, result in persona_results.items():
+                if result.error or not result.content_md:
+                    continue
+                brief = pid_to_brief.get(pid)
+                kind = "icp" if pid == id_map.get(approved_briefs[0].brief_id) else "secondary"
+                meta = (manifest.personas or {}).get(pid)
+                ver = meta.current_version if meta and meta.current_version > 0 else 1
+                await persist_persona_profile(
+                    session_factory, run_id, company_id, effective_slug,
+                    pid, result.persona_name or (brief.persona_name if brief else pid),
+                    ver, result.content_md,
+                    f"audience_personas/{effective_slug}/{pid}/v{ver}.md",
+                    kind=kind,
+                )
+            await persist_pipeline_run_complete(
+                session_factory, run_id,
+                {"profiles_generated": profiles_generated,
+                 "briefs_suggested": len(briefs),
+                 "briefs_approved": len(approved_briefs)},
+            )
+        except Exception:
+            logger.warning("AP DB persistence failed, continuing", exc_info=True)
 
         output = AudiencePersonaOutput(
             slug=slug,
