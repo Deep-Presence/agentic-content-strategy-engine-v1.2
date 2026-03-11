@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 
 revision: str = "0010"
@@ -25,7 +26,7 @@ ENUM_VALUES = ("draft", "running", "hitl_pending", "completed", "failed")
 
 def upgrade() -> None:
     # ── 1. Create shared enum ────────────────────────────────────────────
-    research_run_status = sa.Enum(
+    research_run_status = postgresql.ENUM(
         *ENUM_VALUES, name=ENUM_NAME, create_type=False,
     )
     op.execute(

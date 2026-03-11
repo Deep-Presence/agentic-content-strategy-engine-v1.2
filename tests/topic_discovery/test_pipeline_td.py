@@ -32,6 +32,7 @@ from core.models.topic_discovery import (
     TopicDiscoveryOutput,
     TopicDiscoveryStatus,
 )
+from core.topic_discovery.agents import DeduplicationResult
 
 # Patch targets
 _P = "core.topic_discovery.pipeline"
@@ -106,6 +107,16 @@ def _make_taxonomy() -> TaxonomyTree:
     )
 
 
+def _make_dedup_result(candidates: list) -> DeduplicationResult:
+    """Build a DeduplicationResult wrapping the given candidates (no actual merging)."""
+    return DeduplicationResult(
+        kept=candidates,
+        clusters=[[i] for i in range(len(candidates))],
+        embeddings=[[1.0, 0.0, 0.0]] * len(candidates),
+        source_of=[c.source for c in candidates],
+    )
+
+
 def _make_coverage() -> CaptureRecaptureResult:
     return CaptureRecaptureResult(
         pairwise_estimates={"source_a_source_b": 10.0},
@@ -167,7 +178,7 @@ def _pipeline_patches(
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb),
             patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=sc),
             patch(f"{_P}.run_source_d_adversarial", return_value=sd),
-            patch(f"{_P}.deduplicate_subdomains", return_value=ded),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(ded)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
             patch(f"{_P}.run_hierarchy_construction", return_value=tax),
             patch(f"{_P}.run_relevance_filtering", return_value=rel),
@@ -337,7 +348,7 @@ class TestPartialSourceFailure:
             patch(f"{_P}.run_source_b_persona_brainstorm", side_effect=RuntimeError("LLM timeout")),
             patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=_make_source(TDSource.source_c, 2)),
             patch(f"{_P}.run_source_d_adversarial", return_value=_make_source(TDSource.source_d, 2)),
-            patch(f"{_P}.deduplicate_subdomains", return_value=sa.candidates),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=_make_coverage()),
             patch(f"{_P}.run_hierarchy_construction", return_value=_make_taxonomy()),
             patch(f"{_P}.run_relevance_filtering", return_value=[]),
@@ -566,7 +577,7 @@ class TestTaxonomyRetryFeedback:
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb) as mock_b,
             patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=sc),
             patch(f"{_P}.run_source_d_adversarial", return_value=sd) as mock_d,
-            patch(f"{_P}.deduplicate_subdomains", return_value=sa.candidates),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
             patch(f"{_P}.run_hierarchy_construction", return_value=tax),
             patch(f"{_P}.run_relevance_filtering", return_value=[]),
@@ -639,7 +650,7 @@ class TestTaxonomyRetryExhaustion:
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=_make_source(TDSource.source_b)),
             patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=_make_source(TDSource.source_c, 2)),
             patch(f"{_P}.run_source_d_adversarial", return_value=_make_source(TDSource.source_d, 2)),
-            patch(f"{_P}.deduplicate_subdomains", return_value=sa.candidates),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
             patch(f"{_P}.run_hierarchy_construction", return_value=tax),
             patch(f"{_P}.run_relevance_filtering", return_value=[]),
@@ -688,7 +699,7 @@ class TestTaxonomyRetryExhaustion:
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=_make_source(TDSource.source_b)),
             patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=_make_source(TDSource.source_c, 2)),
             patch(f"{_P}.run_source_d_adversarial", return_value=_make_source(TDSource.source_d, 2)),
-            patch(f"{_P}.deduplicate_subdomains", return_value=sa.candidates),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
             patch(f"{_P}.run_hierarchy_construction", return_value=tax),
             patch(f"{_P}.run_relevance_filtering", return_value=[]),
@@ -770,7 +781,7 @@ class TestS3CounterDrift:
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=_make_source(TDSource.source_b)),
             patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=_make_source(TDSource.source_c, 2)),
             patch(f"{_P}.run_source_d_adversarial", return_value=_make_source(TDSource.source_d, 2)),
-            patch(f"{_P}.deduplicate_subdomains", return_value=sa.candidates),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
             patch(f"{_P}.run_hierarchy_construction", return_value=tax),
             patch(f"{_P}.run_relevance_filtering", side_effect=_relevance_with_failure),

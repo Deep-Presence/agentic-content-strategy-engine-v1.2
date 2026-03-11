@@ -79,5 +79,14 @@
     "fix_applied": "Patch asyncio.create_task at module level, make tests async.",
     "lesson": "Patch asyncio.create_task at module level, not instance method. Tests must be async for event loop context.",
     "files_affected": ["tests/services/test_db_task_store.py"]
+  },
+  {
+    "id": "F12",
+    "timestamp": "2026-03-10",
+    "what_broke": "tests/api/test_site_audit.py hung indefinitely — zero output, process never completed",
+    "root_cause": "mock_site_audit_pipeline fixture patched api.tasks.runner.run_site_audit_task (source module) but router does 'from api.tasks.runner import run_site_audit_task' creating a local binding. Mock never reached the router — real pipeline launched via asyncio.create_task() and tried to crawl live websites.",
+    "fix_applied": "Changed patch target to api.routers.site_audit.run_site_audit_task (point-of-use patching).",
+    "lesson": "When a module uses 'from X import Y', patching 'X.Y' does NOT affect the importer's local binding. Always patch at the point of use: patch the importing module's attribute, not the source module's.",
+    "files_affected": ["tests/api/test_site_audit.py"]
   }
 ]

@@ -410,7 +410,7 @@ async def run_gap_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"gap_analysis:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
 
 
@@ -556,7 +556,7 @@ async def run_site_audit_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"site_audit:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
 
 
@@ -632,7 +632,7 @@ async def run_content_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(effective)
+        task_store.release_slug_lock(f"content:{effective}")
         task_store.remove_task_handle(task_id)
 
 
@@ -700,7 +700,7 @@ async def run_content_v13_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(effective)
+        task_store.release_slug_lock(f"content_v13:{effective}")
         task_store.remove_task_handle(task_id)
 
 
@@ -799,7 +799,7 @@ async def run_kb_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"knowledge_base:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
 
 
@@ -888,7 +888,7 @@ async def run_audience_persona_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"audience_persona:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
 
 
@@ -968,7 +968,7 @@ async def run_single_persona_generator_task(
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
-        task_store.release_slug_lock(slug)
+        task_store.release_slug_lock(f"audience_persona:{slug}")
         task_store.remove_task_handle(task_id)
 
 
@@ -1059,7 +1059,155 @@ async def run_voice_style_guide_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"voice_style_guide:{scope.effective_slug}")
+        task_store.remove_task_handle(task_id)
+
+
+# ---------------------------------------------------------------------------
+# Research Orchestrator (KB → AP → VSG)
+# ---------------------------------------------------------------------------
+
+
+async def run_research_orchestrator_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Research Orchestrator (KB → AP → VSG).
+
+    Acquires task_store semaphore ONCE for the entire orchestration.
+    Sub-pipelines are called directly (not via runner wrappers).
+    """
+    from core.models.research_orchestrator import ResearchOrchestratorInput
+    from core.research.orchestrator import run_research_orchestrator
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = None  # Ensure always defined for finally block
+    session_factory: Any = None
+    run_id: Any = None
+
+    # All pre-run awaits inside try/finally for slug-lock safety (Codex Fix #8)
+    try:
+        scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+        session_factory, run_id, company_id = await _resolve_db_context(
+            scope.company_slug, scope.effective_slug,
+        )
+        if session_factory and run_id and company_id:
+            await _create_pipeline_run(
+                session_factory, run_id, company_id,
+                scope.effective_slug, "research_orchestrator",
+            )
+
+        async with task_store.semaphore:
+            # Build auto-approve config
+            auto_approve_raw = getattr(request, "auto_approve", None)
+            auto_approve_dict = {}
+            if auto_approve_raw:
+                auto_approve_dict = {
+                    "kb": getattr(auto_approve_raw, "kb", []),
+                    "ap": getattr(auto_approve_raw, "ap", []),
+                    "vsg": getattr(auto_approve_raw, "vsg", []),
+                }
+
+            # Wire skip_fresh flag into PipelineSkipConfig
+            from core.models.research_orchestrator import PipelineSkipConfig
+            skip_fresh = getattr(request, "skip_fresh", True)
+            skip_config = PipelineSkipConfig(
+                skip_kb_if_fresh=skip_fresh,
+                skip_ap_if_fresh=skip_fresh,
+                skip_vsg_if_fresh=skip_fresh,
+            )
+
+            input_data = ResearchOrchestratorInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", ""),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                seed_urls=getattr(request, "seed_urls", []),
+                staleness_threshold_days=getattr(request, "staleness_threshold_days", 30),
+                max_personas=getattr(request, "max_personas", 5),
+                max_authors=getattr(request, "max_authors", 3),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+                force_rerun=getattr(request, "force_rerun", False),
+                auto_approve=auto_approve_dict,
+                skip_config=skip_config,
+                pipelines=getattr(request, "pipelines", ["kb", "ap", "vsg"]),
+            )
+
+            output = await run_research_orchestrator(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "effective_slug": output.effective_slug,
+                "orchestrator_status": output.orchestrator_status.value,
+                "pipelines_run": output.pipelines_run,
+                "pipelines_skipped": output.pipelines_skipped,
+                "total_execution_time_s": output.total_execution_time_s,
+                "company_context_path": output.company_context_path,
+                "persona_dir": output.persona_dir,
+                "style_guide_path": output.style_guide_path,
+                "produced_artifacts": [
+                    {"type": p, "slug": scope.effective_slug}
+                    for p in output.pipelines_run
+                ],
+            }
+
+            # Map orchestrator failure to task-level FAILED status
+            from core.models.research_orchestrator import OrchestratorStatus
+            is_failed = output.orchestrator_status == OrchestratorStatus.failed
+            task_status = TaskStatus.FAILED if is_failed else TaskStatus.COMPLETED
+
+            # Extract error message from failed sub-pipeline for task.error
+            error_msg = None
+            if is_failed:
+                for sr in output.sub_results.values():
+                    if sr.error:
+                        error_msg = sr.error
+                        break
+
+            task_store.update_task(
+                task_id, status=task_status, result=result,
+                **({"error": error_msg} if error_msg else {}),
+            )
+
+            # Mark DB pipeline run with correct terminal status
+            if is_failed:
+                await _mark_pipeline_run_failed(
+                    session_factory, run_id, error_msg or "orchestrator failed",
+                )
+            else:
+                await _mark_pipeline_run_complete(session_factory, run_id)
+
+    except asyncio.CancelledError:
+        logger.info("Research orchestrator cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("Research orchestrator failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        _eff = scope.effective_slug if scope else company_slug
+        task_store.release_slug_lock(f"research_orchestrator:{_eff}")
         task_store.remove_task_handle(task_id)
 
 
@@ -1150,5 +1298,5 @@ async def run_topic_discovery_pipeline_task(
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"topic_discovery:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)

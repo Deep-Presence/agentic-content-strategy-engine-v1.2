@@ -263,7 +263,7 @@ def _topological_sort_stale(stale_doc_values: List[str]) -> List[str]:
 
 
 @router.get("/{run_id}/status")
-def get_knowledge_base_status(
+async def get_knowledge_base_status(
     run_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
@@ -289,7 +289,7 @@ def get_knowledge_base_status(
 
 
 @router.post("/{run_id}/approve")
-def approve_knowledge_base(
+async def approve_knowledge_base(
     run_id: str,
     body: ApprovalRequest,
     http_request: Request,

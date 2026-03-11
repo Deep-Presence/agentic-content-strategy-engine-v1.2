@@ -45,7 +45,7 @@ class DbTaskStore:
     ) -> None:
         self._tasks: Dict[str, PipelineTask] = {}
         self._session_factory = session_factory
-        self._slug_locks: Dict[str, str] = {}
+        self._slug_locks: Dict[str, str] = {}  # "pipeline:effective_slug" -> task_id
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._approval_queues: Dict[str, asyncio.Queue] = {}
         self._task_handles: Dict[str, asyncio.Task] = {}
@@ -90,11 +90,16 @@ class DbTaskStore:
         company_slug: str,
         product_slug: Optional[str] = None,
     ) -> PipelineTask:
-        """Create a new task, acquire slug lock, write to DB."""
+        """Create a new task, acquire slug lock, write to DB.
+
+        Lock key is ``pipeline:effective_slug`` so different pipeline types
+        can run concurrently for the same company.
+        """
         effective = (
             f"{company_slug}__{product_slug}" if product_slug else company_slug
         )
-        self.acquire_slug_lock(effective)
+        lock_key = f"{pipeline}:{effective}"
+        self.acquire_slug_lock(lock_key)
 
         task_id = str(_uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -108,7 +113,7 @@ class DbTaskStore:
             updated_at=now,
         )
         self._tasks[task_id] = task
-        self._slug_locks[effective] = task_id
+        self._slug_locks[lock_key] = task_id
 
         # Write-through to DB (critical: must persist before returning)
         asyncio.create_task(self._db_create(task))
@@ -126,6 +131,8 @@ class DbTaskStore:
         task = self._tasks[task_id]
         for key, value in kwargs.items():
             if hasattr(task, key):
+                if key == "status" and isinstance(value, str) and not isinstance(value, TaskStatus):
+                    value = TaskStatus(value)
                 setattr(task, key, value)
         task.updated_at = datetime.now(timezone.utc)
 

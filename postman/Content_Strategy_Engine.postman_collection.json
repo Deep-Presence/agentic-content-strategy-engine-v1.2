@@ -1,0 +1,1269 @@
+{
+  "info": {
+    "name": "Content Strategy Engine API",
+    "description": "Deep Presence — Content Strategy Engine API. Base URL: http://localhost:8000",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+    { "key": "access_token", "value": "" },
+    { "key": "company_slug", "value": "" },
+    { "key": "product_slug", "value": "" },
+    { "key": "run_id", "value": "" },
+    { "key": "task_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/health",
+            "auth": { "type": "noauth" }
+          }
+        },
+        {
+          "name": "Readiness Check",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/readiness",
+            "auth": { "type": "noauth" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.access_token) {",
+                  "    pm.collectionVariables.set('access_token', json.access_token);",
+                  "    pm.collectionVariables.set('company_slug', json.company.slug);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/auth/register",
+            "auth": { "type": "noauth" },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Aryan\",\n  \"last_name\": \"Keshri\",\n  \"email\": \"aryan@example.com\",\n  \"password\": \"securepassword123\",\n  \"company_name\": \"Deep Presence\",\n  \"company_domain\": \"deeppresence.io\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.access_token) {",
+                  "    pm.collectionVariables.set('access_token', json.access_token);",
+                  "    pm.collectionVariables.set('company_slug', json.company.slug);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/auth/login",
+            "auth": { "type": "noauth" },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"aryan@example.com\",\n  \"password\": \"securepassword123\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Me",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/auth/me"
+          }
+        },
+        {
+          "name": "Create Invite",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/auth/invite",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"member\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Join with Invite",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/auth/join",
+            "auth": { "type": "noauth" },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invite_code\": \"PASTE_INVITE_CODE\",\n  \"first_name\": \"Team\",\n  \"last_name\": \"Member\",\n  \"email\": \"member@example.com\",\n  \"password\": \"securepassword123\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Companies",
+      "item": [
+        {
+          "name": "Get Company Profile",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}"
+          }
+        },
+        {
+          "name": "Create Product",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/products",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"my-product\",\n  \"name\": \"My Product\",\n  \"domain\": \"myproduct.com\",\n  \"description\": \"Product description\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Product",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/products/{{product_slug}}"
+          }
+        },
+        {
+          "name": "Update Product",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/products/{{product_slug}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Product Name\",\n  \"description\": \"Updated description\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Product",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/products/{{product_slug}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Knowledge Base",
+      "item": [
+        {
+          "name": "Start KB Pipeline",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.run_id) {",
+                  "    pm.collectionVariables.set('run_id', json.run_id);",
+                  "    pm.collectionVariables.set('task_id', json.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/knowledge-base/start",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false,\n  \"mode\": \"full\",\n  \"auto_approve_checkpoints\": []\n}"
+            }
+          }
+        },
+        {
+          "name": "Get KB Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/knowledge-base/{{run_id}}/status"
+          }
+        },
+        {
+          "name": "KB HITL Approve",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/knowledge-base/{{run_id}}/approve",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"accept\",\n  \"revision_note\": null\n}"
+            }
+          }
+        },
+        {
+          "name": "KB Health Report",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/knowledge-base/{{company_slug}}/health?threshold_override=90",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "knowledge-base", "{{company_slug}}", "health"],
+              "query": [
+                { "key": "threshold_override", "value": "90", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Refresh Stale KB Docs",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/knowledge-base/{{company_slug}}/refresh-stale",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"product_slug\": null,\n  \"domain\": \"ramp.com\",\n  \"staleness_threshold_override\": null,\n  \"auto_approve_checkpoints\": false\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Audience Persona",
+      "item": [
+        {
+          "name": "Start AP Pipeline",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.run_id) {",
+                  "    pm.collectionVariables.set('run_id', json.run_id);",
+                  "    pm.collectionVariables.set('task_id', json.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/audience-persona/start",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "Get AP Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/audience-persona/{{run_id}}/status"
+          }
+        },
+        {
+          "name": "Approve Persona Briefs (HITL-1)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/audience-persona/{{run_id}}/approve/briefs",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch_decision\": \"accept\",\n  \"brief_reviews\": [],\n  \"added_briefs\": []\n}"
+            }
+          }
+        },
+        {
+          "name": "Approve Persona Profiles (HITL-2)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/audience-persona/{{run_id}}/approve/profiles",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"profile_reviews\": []\n}"
+            }
+          }
+        },
+        {
+          "name": "Add Manual Persona",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/audience-persona/{{company_slug}}/add-persona",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"persona_name\": \"DevOps Lead\",\n  \"tagline\": \"Infrastructure automation champion\",\n  \"description\": \"Manages CI/CD pipelines\",\n  \"rationale\": \"Key buyer persona for infra products\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List Personas",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/audience-persona/{{company_slug}}/personas"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Voice Style Guide",
+      "item": [
+        {
+          "name": "Start VSG Pipeline",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.run_id) {",
+                  "    pm.collectionVariables.set('run_id', json.run_id);",
+                  "    pm.collectionVariables.set('task_id', json.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/voice-style-guide/start",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "Get VSG Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/voice-style-guide/{{run_id}}/status"
+          }
+        },
+        {
+          "name": "Approve Authors (HITL)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/voice-style-guide/{{run_id}}/approve/authors",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch_decision\": \"accept\",\n  \"author_reviews\": []\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Voice Style Guide",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/voice-style-guide/{{company_slug}}/guide"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Topic Discovery",
+      "item": [
+        {
+          "name": "Start Topic Discovery",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.run_id) {",
+                  "    pm.collectionVariables.set('run_id', json.run_id);",
+                  "    pm.collectionVariables.set('task_id', json.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/topic-discovery/start",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "Get TD Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/topic-discovery/{{run_id}}/status"
+          }
+        },
+        {
+          "name": "Approve Taxonomy (HITL)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/topic-discovery/{{run_id}}/approve/taxonomy",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch_decision\": \"accept\",\n  \"user_edits\": [],\n  \"user_feedback\": null\n}"
+            }
+          }
+        },
+        {
+          "name": "Approve Matrix (HITL)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/topic-discovery/{{run_id}}/approve/matrix",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch_decision\": \"accept\",\n  \"user_edits\": []\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Taxonomy",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/topic-discovery/{{company_slug}}/taxonomy"
+          }
+        },
+        {
+          "name": "Get Matrix",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/topic-discovery/{{company_slug}}/matrix"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Research Orchestrator",
+      "item": [
+        {
+          "name": "Start Research DAG (KB→AP→VSG)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.run_id) {",
+                  "    pm.collectionVariables.set('run_id', json.run_id);",
+                  "    pm.collectionVariables.set('task_id', json.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/research/start",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Orchestrator Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/research/{{run_id}}/status"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gap Analysis",
+      "item": [
+        {
+          "name": "Start Gap Analysis",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.run_id) {",
+                  "    pm.collectionVariables.set('run_id', json.run_id);",
+                  "    pm.collectionVariables.set('task_id', json.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/gap-analysis/start",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "Get GA Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/gap-analysis/{{run_id}}/status"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gap Data",
+      "item": [
+        {
+          "name": "Executive Summary",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/companies/{{company_slug}}/gap-analysis/summary",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "companies", "{{company_slug}}", "gap-analysis", "summary"],
+              "query": [
+                { "key": "product_slug", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queries (Paginated)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/companies/{{company_slug}}/gap-analysis/queries?page=1&page_size=15&sort_by=gap_score&sort_dir=desc",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "companies", "{{company_slug}}", "gap-analysis", "queries"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "15" },
+                { "key": "sort_by", "value": "gap_score" },
+                { "key": "sort_dir", "value": "desc" },
+                { "key": "cluster", "value": "", "disabled": true },
+                { "key": "classification", "value": "", "disabled": true },
+                { "key": "search", "value": "", "disabled": true },
+                { "key": "product_slug", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Clusters",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/gap-analysis/clusters"
+          }
+        },
+        {
+          "name": "Signals",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/gap-analysis/signals"
+          }
+        },
+        {
+          "name": "Platforms",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/gap-analysis/platforms"
+          }
+        },
+        {
+          "name": "Heatmap",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/gap-analysis/heatmap"
+          }
+        },
+        {
+          "name": "Embeddings (2D)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/companies/{{company_slug}}/gap-analysis/embeddings?method=umap",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "companies", "{{company_slug}}", "gap-analysis", "embeddings"],
+              "query": [
+                { "key": "method", "value": "umap" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "SPA Trend",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/gap-analysis/trend"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Site Audit",
+      "item": [
+        {
+          "name": "Start Site Audit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.run_id) {",
+                  "    pm.collectionVariables.set('run_id', json.run_id);",
+                  "    pm.collectionVariables.set('task_id', json.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/site-audit/start",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Audit Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/site-audit/status/{{run_id}}"
+          }
+        },
+        {
+          "name": "List Audits",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/site-audit/companies/{{company_slug}}/audits?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "site-audit", "companies", "{{company_slug}}", "audits"],
+              "query": [
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Audit Detail",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/site-audit/companies/{{company_slug}}/audits/{{run_id}}"
+          }
+        },
+        {
+          "name": "Get Findings (Paginated)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/site-audit/companies/{{company_slug}}/audits/{{run_id}}/findings?page=1&page_size=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "site-audit", "companies", "{{company_slug}}", "audits", "{{run_id}}", "findings"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "50" },
+                { "key": "severity", "value": "", "disabled": true },
+                { "key": "dimension", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Pages (Paginated)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/site-audit/companies/{{company_slug}}/audits/{{run_id}}/pages?page=1&page_size=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "site-audit", "companies", "{{company_slug}}", "audits", "{{run_id}}", "pages"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "page_size", "value": "50" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Content v1.0",
+      "item": [
+        {
+          "name": "Start Content Pipeline",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.run_id) {",
+                  "    pm.collectionVariables.set('run_id', json.run_id);",
+                  "    pm.collectionVariables.set('task_id', json.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/content/start",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"max_briefs\": 5,\n  \"auto_approve\": false,\n  \"max_concurrent_workers\": 3,\n  \"max_revision_cycles\": 2\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Content Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/content/{{run_id}}/status"
+          }
+        },
+        {
+          "name": "Approve Content (HITL)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/content/{{run_id}}/approve",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"accept\",\n  \"brief_id\": \"BRIEF_ID_HERE\",\n  \"editor_notes\": null\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Content v1.3",
+      "item": [
+        {
+          "name": "Start Content v1.3",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.run_id) {",
+                  "    pm.collectionVariables.set('run_id', json.run_id);",
+                  "    pm.collectionVariables.set('task_id', json.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/content/v13/start",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"entry_mode\": \"gap_analysis\",\n  \"max_topics\": 10,\n  \"auto_approve\": false,\n  \"max_concurrent_workers\": 3,\n  \"max_revision_cycles\": 2\n}"
+            }
+          }
+        },
+        {
+          "name": "Get v1.3 Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/content/v13/{{run_id}}/status"
+          }
+        },
+        {
+          "name": "Approve Topics (HITL-1)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/content/v13/{{run_id}}/approve/topics",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"accept\",\n  \"approved_topic_ranks\": [],\n  \"feedback\": null\n}"
+            }
+          }
+        },
+        {
+          "name": "Approve Briefs (HITL-2)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/content/v13/{{run_id}}/approve/briefs",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"accept\",\n  \"brief_id\": \"BRIEF_ID_HERE\",\n  \"feedback\": null\n}"
+            }
+          }
+        },
+        {
+          "name": "Approve Content (HITL-3)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/content/v13/{{run_id}}/approve/content",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"accept\",\n  \"brief_id\": \"BRIEF_ID_HERE\",\n  \"editor_notes\": null,\n  \"rethink\": false\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Content Data",
+      "item": [
+        {
+          "name": "List Briefs",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/companies/{{company_slug}}/content/briefs",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "companies", "{{company_slug}}", "content", "briefs"],
+              "query": [
+                { "key": "product_slug", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Brief Detail",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/content/briefs/BRIEF_ID"
+          }
+        },
+        {
+          "name": "Get Stage Content",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/content/briefs/BRIEF_ID/final"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Brand Data",
+      "item": [
+        {
+          "name": "Get Research Artifacts",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/research/artifacts"
+          }
+        },
+        {
+          "name": "Get Run History",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/companies/{{company_slug}}/runs?limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "companies", "{{company_slug}}", "runs"],
+              "query": [
+                { "key": "limit", "value": "50" },
+                { "key": "pipeline", "value": "", "disabled": true },
+                { "key": "status", "value": "", "disabled": true }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Daily Tracker",
+      "item": [
+        {
+          "name": "Create Prompt",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/daily-tracker/prompts",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"What is the best corporate card for startups?\",\n  \"category\": \"competitor\",\n  \"tags\": [\"fintech\", \"cards\"]\n}"
+            }
+          }
+        },
+        {
+          "name": "List Prompts",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/daily-tracker/prompts?limit=50&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "daily-tracker", "prompts"],
+              "query": [
+                { "key": "limit", "value": "50" },
+                { "key": "offset", "value": "0" },
+                { "key": "category", "value": "", "disabled": true },
+                { "key": "active", "value": "", "disabled": true },
+                { "key": "search", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Import from Gap Analysis",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/daily-tracker/prompts/import",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"{{company_slug}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Trigger Run",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/daily-tracker/runs",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"engines\": [\"chatgpt\", \"perplexity\", \"gemini\", \"claude\"],\n  \"prompt_ids\": [],\n  \"brand\": \"Ramp\",\n  \"competitors\": [\"Brex\", \"Divvy\"],\n  \"concurrency\": 6\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Run Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/daily-tracker/runs/{{run_id}}"
+          }
+        },
+        {
+          "name": "Visibility Metrics",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/daily-tracker/analytics/visibility?run_id={{run_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "daily-tracker", "analytics", "visibility"],
+              "query": [
+                { "key": "run_id", "value": "{{run_id}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Mention Trend",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/daily-tracker/analytics/mention-trend?days=30",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "daily-tracker", "analytics", "mention-trend"],
+              "query": [
+                { "key": "days", "value": "30" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Share of Voice",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/daily-tracker/analytics/sov?run_id={{run_id}}"
+          }
+        },
+        {
+          "name": "Citation Rates",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/daily-tracker/analytics/citations?run_id={{run_id}}"
+          }
+        },
+        {
+          "name": "Competitor Metrics",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/daily-tracker/analytics/competitors?run_id={{run_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CPS (Citation Predictor)",
+      "item": [
+        {
+          "name": "Score Content",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/cps/score",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"target_queries\": [\"best corporate card for startups\"],\n  \"content_markdown\": \"# Your Content Here\\n\\nMarkdown content to score...\",\n  \"content_url\": null\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tasks",
+      "item": [
+        {
+          "name": "List Tasks",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/tasks",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tasks"],
+              "query": [
+                { "key": "pipeline", "value": "", "disabled": true },
+                { "key": "status", "value": "", "disabled": true },
+                { "key": "product_slug", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Task",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks/{{task_id}}"
+          }
+        },
+        {
+          "name": "Cancel Task",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/tasks/{{task_id}}/cancel"
+          }
+        },
+        {
+          "name": "Create Stream Token",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/tasks/{{task_id}}/stream-token"
+          }
+        },
+        {
+          "name": "SSE Events Stream",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/tasks/{{task_id}}/events",
+            "description": "Server-Sent Events stream. Use stream_token query param or Bearer auth. Set Last-Event-ID header for replay."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Artifacts",
+      "item": [
+        {
+          "name": "List Companies",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/artifacts/companies"
+          }
+        },
+        {
+          "name": "List Artifact Files",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/artifacts/company_context/{{company_slug}}"
+          }
+        },
+        {
+          "name": "Download Artifact",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/artifacts/company_context/{{company_slug}}/synthesis.md"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Knowledge Docs",
+      "item": [
+        {
+          "name": "Upload KB Document",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/api/v1/companies/{{company_slug}}/knowledge-docs",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "companies", "{{company_slug}}", "knowledge-docs"],
+              "query": [
+                { "key": "product_slug", "value": "", "disabled": true }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List KB Documents",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/knowledge-docs"
+          }
+        },
+        {
+          "name": "Delete KB Document",
+          "request": {
+            "method": "DELETE",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/knowledge-docs/DOC_ID"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Settings",
+      "item": [
+        {
+          "name": "Get Team Members",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/settings/team"
+          }
+        },
+        {
+          "name": "Get Company Profile Settings",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/settings/profile"
+          }
+        },
+        {
+          "name": "Update Company Profile",
+          "request": {
+            "method": "PUT",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/settings/profile",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Deep Presence\",\n  \"domain\": \"deeppresence.io\",\n  \"additional_domains\": []\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Pipeline Defaults",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/companies/{{company_slug}}/settings/pipeline-defaults"
+          }
+        }
+      ]
+    }
+  ]
+}

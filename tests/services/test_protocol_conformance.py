@@ -430,13 +430,17 @@ class TestDIWiring:
         assert hints["return"] is TaskStoreProtocol
 
     def test_get_auth_service_annotation_is_protocol(self):
-        """get_auth_service return annotation is AuthServiceProtocol."""
-        from typing import get_type_hints
+        """get_auth_service return annotation yields AuthServiceProtocol."""
+        from collections.abc import AsyncGenerator
+        from typing import get_args, get_origin, get_type_hints
 
         from api.dependencies import get_auth_service
 
         hints = get_type_hints(get_auth_service)
-        assert hints["return"] is AuthServiceProtocol
+        ret = hints["return"]
+        # Now an AsyncGenerator[AuthServiceProtocol, None]
+        assert get_origin(ret) is AsyncGenerator
+        assert get_args(ret)[0] is AuthServiceProtocol
 
     def test_get_site_audit_data_service_annotation_is_protocol(self):
         """get_site_audit_data_service return annotation is SiteAuditDataServiceProtocol."""

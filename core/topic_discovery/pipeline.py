@@ -49,7 +49,7 @@ from core.shared_tools.tracing import (
 )
 from core.topic_discovery.agents import (
     compute_all_coverage_metrics,
-    deduplicate_subdomains,
+    deduplicate_subdomains_with_clusters,
     run_hierarchy_construction,
     run_relevance_filtering,
     run_source_a_company_brainstorm,
@@ -282,17 +282,22 @@ async def run_topic_discovery_pipeline(
             for i, res in enumerate(results_abc):
                 source_name = ["source_a", "source_b", "source_c"][i]
                 if isinstance(res, Exception):
-                    logger.warning("Source %s failed: %s", source_name, res)
+                    logger.warning("Source %s failed (exception): %s", source_name, res)
                     source_results.append(SourceResult(
                         source=TDSource(source_name),
                         error=str(res),
                     ))
                 else:
                     source_results.append(res)
+                    if res.error:
+                        logger.warning("Source %s returned error: %s", source_name, res.error)
+
+                sr = source_results[-1]
                 _emit(event_bus, task_id, "td_source_complete", {
                     "source": source_name,
-                    "candidate_count": len(res.candidates) if not isinstance(res, Exception) else 0,
-                    "has_error": isinstance(res, Exception) or (hasattr(res, "error") and res.error is not None),
+                    "candidate_count": len(sr.candidates),
+                    "has_error": sr.error is not None,
+                    "error": sr.error,
                 })
 
             # Source D: adversarial (sequential, uses existing subdomains)
@@ -305,10 +310,13 @@ async def run_topic_discovery_pipeline(
                 revision_note=_revision,
             )
             source_results.append(source_d_result)
+            if source_d_result.error:
+                logger.warning("Source source_d returned error: %s", source_d_result.error)
             _emit(event_bus, task_id, "td_source_complete", {
                 "source": "source_d",
                 "candidate_count": len(source_d_result.candidates),
                 "has_error": source_d_result.error is not None,
+                "error": source_d_result.error,
             })
 
             # Write raw source results to storage
@@ -331,26 +339,36 @@ async def run_topic_discovery_pipeline(
                 all_candidates.extend(sr.candidates)
 
             if not all_candidates:
+                # Surface individual source errors for debugging
+                source_errors = [
+                    f"{sr.source.value}: {sr.error}"
+                    for sr in source_results
+                    if sr.error
+                ]
+                err_detail = "; ".join(source_errors) if source_errors else "no errors captured"
                 raise RuntimeError(
-                    "All 4 sources returned 0 candidates. Check LLM availability."
+                    f"All sources returned 0 candidates. Source errors: [{err_detail}]"
                 )
 
-            # Deduplicate via embeddings
-            deduped = await deduplicate_subdomains(
+            # Deduplicate via embeddings (with cluster metadata for coverage)
+            dedup_result = await deduplicate_subdomains_with_clusters(
                 all_candidates, threshold=dedup_threshold,
             )
+            deduped = dedup_result.kept
             logger.info(
                 "TD/%s: dedup %d → %d candidates",
                 effective_slug, len(all_candidates), len(deduped),
             )
 
-            # Coverage metrics
-            coverage = compute_all_coverage_metrics(source_results)
+            # Coverage metrics (cluster-based overlap + semantic frequency)
+            coverage = compute_all_coverage_metrics(
+                source_results, dedup_result=dedup_result,
+            )
             await asyncio.to_thread(storage.write_coverage, coverage)
 
             # Hierarchy construction
             deduped_names = [c.name for c in deduped if c.name]
-            taxonomy = await run_hierarchy_construction(deduped_names, domain)
+            taxonomy = await run_hierarchy_construction(deduped_names, domain, timeout_s=480.0)
 
             # Enrich taxonomy with coverage data
             taxonomy.coverage_score = coverage.aggregate_sample_coverage

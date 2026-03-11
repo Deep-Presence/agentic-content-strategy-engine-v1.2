@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
@@ -91,21 +92,34 @@ def _build_db_auth_service(request: Request) -> AuthServiceProtocol | None:
         return None
 
 
-def get_auth_service(request: Request) -> AuthServiceProtocol:
-    """Return the auth service.
+async def get_auth_service(
+    request: Request,
+) -> AsyncGenerator[AuthServiceProtocol, None]:
+    """Return the auth service with proper DB session lifecycle.
 
     Priority: pre-built override → DbAuthService (DATABASE_URL) → JsonAuthService.
+    DB sessions are committed on success, rolled back on error.
     """
     # 1. Pre-built override (tests, etc.)
     service = getattr(request.app.state, "auth_service", None)
     if service is not None:
-        return service
+        yield service
+        return
     # 2. Per-request DB service (when DATABASE_URL is set)
     db_service = _build_db_auth_service(request)
     if db_service is not None:
-        return db_service
+        session = db_service._company_repo._session
+        try:
+            yield db_service
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+        return
     # 3. Fallback: JSON-backed
-    return JsonAuthService(request.app.state.auth_store)
+    yield JsonAuthService(request.app.state.auth_store)
 
 
 def _build_db_gap_data_service(request: Request) -> GapDataServiceProtocol | None:
@@ -466,20 +480,16 @@ def get_td_data_service(request: Request) -> TopicDiscoveryDataServiceProtocol:
 # ── Daily Tracker dependencies ───────────────────────────────────────
 
 
-def get_prompt_library_service(request: Request) -> Any:
+async def get_prompt_library_service(request: Request) -> AsyncGenerator[Any, None]:
     """Return the PromptLibraryService for daily tracker prompt CRUD.
 
     Checks for a pre-built override on app.state (tests), then constructs
-    a new instance.  Uses lazy import to avoid circular imports and to
-    allow the daily tracker module to be optional.
-
-    Why not DB session: PromptLibraryService wraps a repo that needs an
-    AsyncSession.  In v1 without DATABASE_URL, we return a mock-friendly
-    service from app.state.  With DATABASE_URL, we build per-request.
+    a new instance with proper session lifecycle (commit/rollback/close).
     """
     service = getattr(request.app.state, "prompt_library_service", None)
     if service is not None:
-        return service
+        yield service
+        return
 
     sf = getattr(request.app.state, "db_session_factory", None)
     if sf is not None:
@@ -488,9 +498,19 @@ def get_prompt_library_service(request: Request) -> Any:
             from core.daily_tracker.prompt_library import PromptLibraryService
 
             session = sf()
-            return PromptLibraryService(prompt_repo=TrackedPromptRepository(session))
+            svc = PromptLibraryService(prompt_repo=TrackedPromptRepository(session))
         except Exception:
             _logger.debug("Failed to build PromptLibraryService", exc_info=True)
+        else:
+            try:
+                yield svc
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+            return
 
     raise HTTPException(
         status_code=503,
@@ -536,15 +556,16 @@ def get_analytics_service(request: Request) -> Any:
     )
 
 
-def get_daily_tracker_orchestrator(request: Request) -> Any:
+async def get_daily_tracker_orchestrator(request: Request) -> AsyncGenerator[Any, None]:
     """Return the DailyTrackerOrchestrator for running daily tracking.
 
     Checks for a pre-built override on app.state (tests), then constructs
-    a new instance wiring together all daily tracker modules.
+    a new instance with proper session lifecycle (commit/rollback/close).
     """
     service = getattr(request.app.state, "daily_tracker_orchestrator", None)
     if service is not None:
-        return service
+        yield service
+        return
 
     sf = getattr(request.app.state, "db_session_factory", None)
     if sf is not None:
@@ -557,8 +578,7 @@ def get_daily_tracker_orchestrator(request: Request) -> Any:
 
             session = sf()
             prompt_repo = TrackedPromptRepository(session)
-
-            return DailyTrackerOrchestrator(
+            svc = DailyTrackerOrchestrator(
                 prompt_service=PromptLibraryService(prompt_repo=prompt_repo),
                 runner_service=PlatformRunnerService(),
                 mention_detector=MentionDetector(),
@@ -567,6 +587,16 @@ def get_daily_tracker_orchestrator(request: Request) -> Any:
             _logger.debug(
                 "Failed to build DailyTrackerOrchestrator", exc_info=True
             )
+        else:
+            try:
+                yield svc
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+            return
 
     raise HTTPException(
         status_code=503,

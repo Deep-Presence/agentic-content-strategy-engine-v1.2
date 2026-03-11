@@ -163,6 +163,8 @@ class DbAuthService:
             domain=domain,
             additional_domains=additional_domains or [],
         )
+        # Eagerly load products relationship to avoid lazy-load in async context
+        await self._company_repo._session.refresh(model, ["products"])
         company = self._orm_to_company(model)
         # Create products if provided
         if products:
@@ -398,6 +400,9 @@ class DbAuthService:
             role=UserRole.superuser,
             is_active=True,
         )
+
+        # Eagerly load products relationship to avoid lazy-load in async context
+        await self._company_repo._session.refresh(company_model, ["products"])
 
         return self._orm_to_user_profile(user_model), self._orm_to_company(company_model)
 

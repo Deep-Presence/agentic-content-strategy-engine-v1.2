@@ -14,6 +14,7 @@ import logging
 import math
 import re
 import time
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -73,15 +74,50 @@ _MAX_PAUSE_TURNS = 5
 _EMBEDDING_BATCH_SIZE = 64
 
 
+@dataclass
+class DeduplicationResult:
+    """Result of deduplication with cluster metadata for coverage computation."""
+
+    kept: List[SubdomainCandidate] = field(default_factory=list)
+    clusters: List[List[int]] = field(default_factory=list)
+    embeddings: List[List[float]] = field(default_factory=list)
+    source_of: List[TDSource] = field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
 
 
 def _strip_code_fences(text: str) -> str:
-    """Strip markdown code fences wrapping JSON output."""
-    m = _CODE_FENCE_RE.match(text.strip())
-    return m.group(1).strip() if m else text.strip()
+    """Strip markdown code fences wrapping JSON output.
+
+    Three-tier extraction strategy:
+    1. Anchored regex (exact fence wrapping entire string)
+    2. Non-anchored regex (fence anywhere with preamble/suffix text)
+    3. Bracket extraction (first {/[ to last }/])
+    """
+    stripped = text.strip()
+    # Tier 1: exact fence match (original behavior)
+    m = _CODE_FENCE_RE.match(stripped)
+    if m:
+        return m.group(1).strip()
+    # Tier 2: fence anywhere in the string
+    m2 = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", stripped, re.DOTALL)
+    if m2:
+        return m2.group(1).strip()
+    # Tier 3: extract bare JSON between first {/[ and last }/]
+    obj_start = stripped.find("{")
+    arr_start = stripped.find("[")
+    if obj_start >= 0 and (arr_start < 0 or obj_start <= arr_start):
+        obj_end = stripped.rfind("}")
+        if obj_end > obj_start:
+            return stripped[obj_start : obj_end + 1]
+    if arr_start >= 0:
+        arr_end = stripped.rfind("]")
+        if arr_end > arr_start:
+            return stripped[arr_start : arr_end + 1]
+    return stripped
 
 
 def _extract_text_content(content: Any) -> str:
@@ -118,22 +154,30 @@ async def _run_completion(
     model: str,
     messages: List[Dict[str, Any]],
     temperature: float = 0.7,
-    max_tokens: int = 4096,
+    max_tokens: int = 16384,
     timeout_s: float = 120.0,
+    response_format: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, str]:
     """Run LiteLLM completion with pause_turn handling."""
     convo = list(messages)
     response: Any = None
     raw_text = ""
 
+    # Build kwargs — only include response_format when explicitly set
+    completion_kwargs: Dict[str, Any] = {
+        "model": model,
+        "messages": convo,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if response_format is not None:
+        completion_kwargs["response_format"] = response_format
+
     for turn in range(_MAX_PAUSE_TURNS + 1):
+        # Update messages in kwargs for pause_turn continuations
+        completion_kwargs["messages"] = convo
         response = await asyncio.wait_for(
-            litellm.acompletion(
-                model=model,
-                messages=convo,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            ),
+            litellm.acompletion(**completion_kwargs),
             timeout=timeout_s,
         )
         choice = response.choices[0]
@@ -155,17 +199,78 @@ async def _run_completion(
     return response, raw_text
 
 
+def _repair_truncated_json(text: str) -> Optional[str]:
+    """Attempt to repair JSON truncated by max_tokens.
+
+    Closes any open brackets/braces and strips trailing partial values.
+    Returns repaired string, or None if unrecoverable.
+    """
+    # Strip trailing incomplete key-value (partial string after last comma)
+    text = text.rstrip()
+    # Remove trailing comma if present
+    if text.endswith(","):
+        text = text[:-1]
+    # Remove incomplete string value (unclosed quote after colon)
+    while text and text[-1] not in "{}[]\"0123456789truefalsn":
+        text = text[:-1]
+    if not text:
+        return None
+
+    # Count open/close brackets and braces
+    stack: list[str] = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in "{[":
+            stack.append(ch)
+        elif ch == "}" and stack and stack[-1] == "{":
+            stack.pop()
+        elif ch == "]" and stack and stack[-1] == "[":
+            stack.pop()
+
+    # Close remaining open brackets/braces
+    closers = {"[": "]", "{": "}"}
+    for opener in reversed(stack):
+        text += closers.get(opener, "")
+
+    return text
+
+
 def _parse_json_response(raw_text: str) -> Any:
     """Parse JSON from LLM response, stripping code fences.
 
+    Attempts repair on truncated JSON before giving up.
     Returns None on parse failure (logged, never fatal).
     """
     cleaned = _strip_code_fences(raw_text)
     try:
         return json.loads(cleaned)
     except (json.JSONDecodeError, ValueError):
-        logger.warning("TD: failed to parse LLM JSON response: %.200s", cleaned)
-        return None
+        pass
+
+    # Try repairing truncated JSON
+    repaired = _repair_truncated_json(cleaned)
+    if repaired:
+        try:
+            result = json.loads(repaired)
+            logger.info("TD: repaired truncated JSON response successfully")
+            return result
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    logger.warning("TD: failed to parse LLM JSON response: %.200s", cleaned)
+    return None
 
 
 def _safe_float(value: Any, default: float = 0.5) -> float:
@@ -528,18 +633,18 @@ async def run_source_d_adversarial(
 # ---------------------------------------------------------------------------
 
 
-async def deduplicate_subdomains(
+async def deduplicate_subdomains_with_clusters(
     candidates: List[SubdomainCandidate],
     *,
     threshold: float = 0.85,
-) -> List[SubdomainCandidate]:
+) -> DeduplicationResult:
     """Deduplicate subdomains via embedding cosine similarity.
 
-    Uses text-embedding-3-small via core/shared_tools/embedding_client.
-    Candidates with similarity >= threshold are merged (first occurrence kept).
+    Returns a ``DeduplicationResult`` with cluster metadata, embeddings,
+    and source provenance so coverage metrics can reuse the embedding work.
     """
     if not candidates:
-        return []
+        return DeduplicationResult()
 
     from core.shared_tools.embedding_client import embed_texts
 
@@ -552,9 +657,14 @@ async def deduplicate_subdomains(
         batch_embeddings = await asyncio.to_thread(embed_texts, batch)
         all_embeddings.extend(batch_embeddings)
 
-    # Compute pairwise cosine similarity and mark duplicates
+    source_of = [c.source for c in candidates]
+
+    # Compute pairwise cosine similarity, mark duplicates, and track clusters
     n = len(candidates)
     is_duplicate = [False] * n
+    # Map each kept candidate to the list of original indices it absorbed
+    cluster_map: Dict[int, List[int]] = {i: [i] for i in range(n)}
+
     for i in range(n):
         if is_duplicate[i]:
             continue
@@ -564,8 +674,30 @@ async def deduplicate_subdomains(
             sim = _cosine_similarity(all_embeddings[i], all_embeddings[j])
             if sim >= threshold:
                 is_duplicate[j] = True
+                cluster_map[i].append(j)
 
-    return [c for c, dup in zip(candidates, is_duplicate) if not dup]
+    kept = [c for c, dup in zip(candidates, is_duplicate) if not dup]
+    clusters = [cluster_map[i] for i in range(n) if not is_duplicate[i]]
+
+    return DeduplicationResult(
+        kept=kept,
+        clusters=clusters,
+        embeddings=all_embeddings,
+        source_of=source_of,
+    )
+
+
+async def deduplicate_subdomains(
+    candidates: List[SubdomainCandidate],
+    *,
+    threshold: float = 0.85,
+) -> List[SubdomainCandidate]:
+    """Deduplicate subdomains — backward-compatible wrapper.
+
+    Returns only the kept candidates (without cluster metadata).
+    """
+    result = await deduplicate_subdomains_with_clusters(candidates, threshold=threshold)
+    return result.kept
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -583,28 +715,143 @@ async def run_hierarchy_construction(
     company_domain: str,
     *,
     model: Optional[str] = None,
-    timeout_s: float = 120.0,
+    timeout_s: float = 480.0,
 ) -> TaxonomyTree:
-    """Organize flat subdomains into a hierarchical taxonomy tree via LLM."""
+    """Organize flat subdomains into a hierarchical taxonomy tree via LLM.
+
+    Uses response_format=json_object to enforce valid JSON output.
+    Retries once on parse failure with a repair prompt before raising.
+    """
     model = model or settings.topic_discovery_brainstorm_model
 
+    system_prompt = get_hierarchy_system_prompt()
+    user_prompt = build_hierarchy_user_prompt(subdomains, company_domain)
     messages = [
-        {"role": "system", "content": get_hierarchy_system_prompt()},
-        {
-            "role": "user",
-            "content": build_hierarchy_user_prompt(subdomains, company_domain),
-        },
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
     ]
+
+    # Attempt 1
     _, raw_text = await _run_completion(
-        model=model, messages=messages, timeout_s=timeout_s
+        model=model,
+        messages=messages,
+        timeout_s=timeout_s,
+        response_format={"type": "json_object"},
     )
     parsed = _parse_json_response(raw_text)
+    nodes = _extract_taxonomy_nodes(parsed)
+
+    if nodes is not None:
+        return _build_taxonomy_tree(nodes, company_domain)
+
+    # Attempt 2: retry with conversation context + repair prompt
+    logger.warning(
+        "TD hierarchy construction: first attempt failed to parse. "
+        "Retrying with repair prompt. Raw (first 300 chars): %.300s",
+        raw_text,
+    )
+    repair_prompt = (
+        "Your previous response could not be parsed as valid JSON. "
+        "Please return ONLY a valid JSON object with a 'taxonomy' key "
+        "containing an array of nodes. Each node must have 'name' (string), "
+        "'description' (string), and optional 'children' (array of nodes). "
+        "No markdown, no code fences, no preamble — just the JSON object."
+    )
+    retry_messages = messages + [
+        {"role": "assistant", "content": raw_text},
+        {"role": "user", "content": repair_prompt},
+    ]
+    _, retry_text = await _run_completion(
+        model=model,
+        messages=retry_messages,
+        timeout_s=timeout_s,
+        response_format={"type": "json_object"},
+    )
+    retry_parsed = _parse_json_response(retry_text)
+    retry_nodes = _extract_taxonomy_nodes(retry_parsed)
+
+    if retry_nodes is not None:
+        logger.info("TD hierarchy construction: retry succeeded.")
+        return _build_taxonomy_tree(retry_nodes, company_domain)
+
+    # Both attempts failed — raise
+    raise RuntimeError(
+        f"Hierarchy construction failed after 2 attempts. "
+        f"Could not parse LLM response into a valid taxonomy. "
+        f"First response (300 chars): {raw_text[:300]}. "
+        f"Retry response (300 chars): {retry_text[:300]}."
+    )
+
+
+def _parse_hierarchy_nodes(
+    nodes_data: List[Any], depth: int = 0
+) -> List[SubdomainNode]:
+    """Recursively parse hierarchy JSON into SubdomainNode list.
+
+    Tolerates both the prompt schema (pillar_name/subdomains/sub_subdomains)
+    and the legacy schema (name/children) for backward compatibility.
+    """
+    result = []
+    if not isinstance(nodes_data, list):
+        return result
+    for i, nd in enumerate(nodes_data):
+        if not isinstance(nd, dict):
+            continue
+        # Tolerate prompt keys (pillar_name/pillar_description) and legacy (name/description)
+        name = nd.get("pillar_name") or nd.get("name", "")
+        description = nd.get("pillar_description") or nd.get("description", "")
+        # Tolerate prompt keys (subdomains/sub_subdomains) and legacy (children)
+        children_data = (
+            nd.get("subdomains")
+            or nd.get("sub_subdomains")
+            or nd.get("children", [])
+        )
+        children = _parse_hierarchy_nodes(children_data, depth + 1)
+        # Source provenance: prompt uses "sources" (list), legacy uses "source_provenance" (dict)
+        raw_sources = nd.get("sources", nd.get("source_provenance", {}))
+        # Convert list to dict if needed (model expects Dict[str, bool])
+        if isinstance(raw_sources, list):
+            sources = {s: True for s in raw_sources if isinstance(s, str)}
+        else:
+            sources = raw_sources
+        node = SubdomainNode(
+            name=name,
+            description=description,
+            depth=depth,
+            sort_order=i,
+            children=children,
+            source_provenance=sources,
+            confidence=_safe_float(nd.get("confidence", 0.5)),
+        )
+        result.append(node)
+    return result
+
+
+def _extract_taxonomy_nodes(parsed: Any) -> Optional[List[Any]]:
+    """Extract taxonomy node list from parsed JSON, tolerating key variants.
+
+    The prompt uses ``"hierarchy"`` but legacy code/artifacts may use
+    ``"taxonomy"``.  Returns the node list if found and non-empty, else None.
+    """
     if parsed is None:
-        parsed = {"taxonomy": []}
+        return None
+    if isinstance(parsed, dict):
+        nodes = parsed.get("hierarchy") or parsed.get("taxonomy")
+        if isinstance(nodes, list) and nodes:
+            return nodes
+        return None
+    # Bare list fallback (unlikely but defensive)
+    if isinstance(parsed, list) and parsed:
+        return parsed
+    return None
 
-    root_nodes = _parse_hierarchy_nodes(parsed.get("taxonomy", []))
+
+def _build_taxonomy_tree(
+    nodes_data: List[Any], company_domain: str
+) -> TaxonomyTree:
+    """Build TaxonomyTree from parsed node data."""
+    root_nodes = _parse_hierarchy_nodes(nodes_data)
     total, max_depth = _count_tree_stats(root_nodes)
-
     return TaxonomyTree(
         domain_name=company_domain,
         root_nodes=root_nodes,
@@ -612,30 +859,6 @@ async def run_hierarchy_construction(
         max_depth=max_depth,
         status=TopicDiscoveryStatus.draft,
     )
-
-
-def _parse_hierarchy_nodes(
-    nodes_data: List[Any], depth: int = 0
-) -> List[SubdomainNode]:
-    """Recursively parse hierarchy JSON into SubdomainNode list."""
-    result = []
-    if not isinstance(nodes_data, list):
-        return result
-    for i, nd in enumerate(nodes_data):
-        if not isinstance(nd, dict):
-            continue
-        children = _parse_hierarchy_nodes(nd.get("children", []), depth + 1)
-        node = SubdomainNode(
-            name=nd.get("name", ""),
-            description=nd.get("description", ""),
-            depth=depth,
-            sort_order=i,
-            children=children,
-            source_provenance=nd.get("source_provenance", {}),
-            confidence=_safe_float(nd.get("confidence", 0.5)),
-        )
-        result.append(node)
-    return result
 
 
 def _count_tree_stats(
@@ -795,33 +1018,147 @@ def compute_sample_coverage(
     return 1.0 - (singletons / total)
 
 
+def compute_semantic_frequency_classes(
+    candidates: List[SubdomainCandidate],
+    embeddings: List[List[float]],
+    *,
+    similarity_threshold: float = 0.70,
+) -> Tuple[int, int]:
+    """Count semantic singletons/doubletons across rounds within a single source.
+
+    Instead of requiring exact name repetition (which prompts forbid),
+    two candidates from *different* rounds are considered a "re-discovery"
+    if their embedding cosine similarity >= ``similarity_threshold``.
+
+    Uses union-find to build connected components, then counts how many
+    distinct rounds each component spans.
+
+    Returns ``(singletons, doubletons)``.
+    """
+    if not candidates:
+        return 0, 0
+
+    n = len(candidates)
+
+    # Union-Find
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x: int, y: int) -> None:
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[ry] = rx
+
+    # Merge candidates from DIFFERENT rounds with high similarity
+    for i in range(n):
+        for j in range(i + 1, n):
+            if candidates[i].round_number == candidates[j].round_number:
+                # Same round — still union if similar (they're the same concept
+                # within a round, so the component spans only that round)
+                if _cosine_similarity(embeddings[i], embeddings[j]) >= similarity_threshold:
+                    union(i, j)
+            else:
+                if _cosine_similarity(embeddings[i], embeddings[j]) >= similarity_threshold:
+                    union(i, j)
+
+    # Gather components: map root → set of rounds
+    from collections import defaultdict
+    component_rounds: Dict[int, set] = defaultdict(set)
+    for i in range(n):
+        root = find(i)
+        component_rounds[root].add(candidates[i].round_number)
+
+    singletons = sum(1 for rounds in component_rounds.values() if len(rounds) == 1)
+    doubletons = sum(1 for rounds in component_rounds.values() if len(rounds) == 2)
+    return singletons, doubletons
+
+
+def compute_cluster_based_overlap(
+    clusters: List[List[int]],
+    source_of: List[TDSource],
+) -> Dict[str, int]:
+    """Compute pairwise source overlap from dedup cluster membership.
+
+    For each cluster (group of original indices merged by dedup), check
+    which sources contributed.  Two sources in the same cluster = one
+    overlap unit for that pair.
+
+    Returns dict keyed by ``"{source_a}_{source_b}"`` (sorted) with counts.
+    """
+    from collections import defaultdict
+    from itertools import combinations
+
+    overlap: Dict[str, int] = defaultdict(int)
+
+    for cluster in clusters:
+        # Unique sources in this cluster
+        sources_in_cluster = {source_of[idx] for idx in cluster if idx < len(source_of)}
+        if len(sources_in_cluster) < 2:
+            continue
+        # Count one overlap for every pair of sources present
+        for sa, sb in combinations(sorted(sources_in_cluster, key=lambda s: s.value), 2):
+            key = f"{sa.value}_{sb.value}"
+            overlap[key] += 1
+
+    return dict(overlap)
+
+
 def compute_all_coverage_metrics(
     source_results: List[SourceResult],
+    *,
+    dedup_result: Optional[DeduplicationResult] = None,
+    semantic_sim_threshold: float = 0.70,
 ) -> CaptureRecaptureResult:
     """Compute all coverage metrics from source results.
 
-    - Pairwise capture-recapture across source pairs (between-source).
-    - Per-source Chao1/sample coverage from within-source round-level
-      frequency classes (pre-computed on each SourceResult).
-    - Aggregate coverage = min of per-source sample coverages.
+    When ``dedup_result`` is provided, uses:
+    - Cluster-based overlap for between-source capture-recapture
+    - Semantic frequency classes for within-source coverage
+
+    When ``dedup_result`` is None, falls back to:
+    - Exact name matching for between-source CR
+    - Pre-computed singletons/doubletons from SourceResult
     """
-    # Extract name sets per source (for CR — unchanged)
-    source_sets: Dict[str, set[str]] = {}
+    use_clusters = dedup_result is not None
+
+    # Name sets per source (used for observed count + legacy CR path)
+    source_name_sets: Dict[str, set] = {}
     for sr in source_results:
         names = {c.name.lower().strip() for c in sr.candidates if c.name}
-        source_sets[sr.source.value] = names
+        source_name_sets[sr.source.value] = names
 
-    # Pairwise CR estimates
-    sources = list(source_sets.keys())
+    # ---- Between-source pairwise CR ----
+    sources = sorted(source_name_sets.keys())
     pairwise: Dict[str, float] = {}
-    for i in range(len(sources)):
-        for j in range(i + 1, len(sources)):
-            sa, sb = sources[i], sources[j]
-            set_a, set_b = source_sets[sa], source_sets[sb]
-            overlap = len(set_a & set_b)
-            est = compute_capture_recapture(len(set_a), len(set_b), overlap)
-            if est > 0:
-                pairwise[f"{sa}_{sb}"] = est
+
+    if use_clusters:
+        cluster_overlap = compute_cluster_based_overlap(
+            dedup_result.clusters, dedup_result.source_of,
+        )
+        for i in range(len(sources)):
+            for j in range(i + 1, len(sources)):
+                sa, sb = sources[i], sources[j]
+                key = f"{sa}_{sb}"
+                overlap = cluster_overlap.get(key, 0)
+                n_a = len(source_name_sets.get(sa, set()))
+                n_b = len(source_name_sets.get(sb, set()))
+                est = compute_capture_recapture(n_a, n_b, overlap)
+                if est > 0:
+                    pairwise[key] = est
+    else:
+        for i in range(len(sources)):
+            for j in range(i + 1, len(sources)):
+                sa, sb = sources[i], sources[j]
+                set_a, set_b = source_name_sets[sa], source_name_sets[sb]
+                overlap = len(set_a & set_b)
+                est = compute_capture_recapture(len(set_a), len(set_b), overlap)
+                if est > 0:
+                    pairwise[f"{sa}_{sb}"] = est
 
     # Median estimate
     estimates = sorted(pairwise.values())
@@ -834,24 +1171,66 @@ def compute_all_coverage_metrics(
             median = estimates[mid]
 
     # Observed unique count
-    all_names: set[str] = set()
-    for names in source_sets.values():
+    all_names: set = set()
+    for names in source_name_sets.values():
         all_names |= names
     observed = len(all_names)
 
-    # Build per-source coverage from pre-computed source values
+    # ---- Within-source coverage ----
     per_source: Dict[str, PerSourceCoverage] = {}
-    for sr in source_results:
-        if sr.total_rounds > 0:
-            per_source[sr.source.value] = PerSourceCoverage(
+
+    if use_clusters:
+        # Map: source_value → list of original indices into dedup_result
+        source_indices: Dict[str, List[int]] = {}
+        for idx, src in enumerate(dedup_result.source_of):
+            source_indices.setdefault(src.value, []).append(idx)
+
+        for sr in source_results:
+            if sr.total_rounds <= 0:
+                continue
+            sv = sr.source.value
+            indices = source_indices.get(sv, [])
+            obs = len(source_name_sets.get(sv, set()))
+            total_obs = _count_total_round_observations(sr.candidates)
+
+            # Compute semantic frequency classes if embeddings are available
+            if indices and len(dedup_result.embeddings) >= max(indices) + 1:
+                src_embeds = [dedup_result.embeddings[i] for i in indices]
+                sem_sing, sem_doub = compute_semantic_frequency_classes(
+                    sr.candidates, src_embeds,
+                    similarity_threshold=semantic_sim_threshold,
+                )
+            else:
+                sem_sing, sem_doub = sr.singletons, sr.doubletons
+
+            # Recompute Chao1 and sample coverage using semantic frequency
+            chao1 = compute_chao1_lower_bound(obs, sem_sing, sem_doub)
+            sample_cov = compute_sample_coverage(sem_sing, total_obs)
+
+            per_source[sv] = PerSourceCoverage(
                 source=sr.source,
                 singletons=sr.singletons,
                 doubletons=sr.doubletons,
-                observed=len(source_sets.get(sr.source.value, set())),
-                total_observations=_count_total_round_observations(sr.candidates),
-                chao1_estimate=sr.chao1_estimate,
-                sample_coverage=sr.source_sample_coverage,
+                observed=obs,
+                total_observations=total_obs,
+                chao1_estimate=chao1,
+                sample_coverage=sample_cov,
+                semantic_singletons=sem_sing,
+                semantic_doubletons=sem_doub,
+                semantic_sim_threshold=semantic_sim_threshold,
             )
+    else:
+        for sr in source_results:
+            if sr.total_rounds > 0:
+                per_source[sr.source.value] = PerSourceCoverage(
+                    source=sr.source,
+                    singletons=sr.singletons,
+                    doubletons=sr.doubletons,
+                    observed=len(source_name_sets.get(sr.source.value, set())),
+                    total_observations=_count_total_round_observations(sr.candidates),
+                    chao1_estimate=sr.chao1_estimate,
+                    sample_coverage=sr.source_sample_coverage,
+                )
 
     # Aggregate: use minimum per-source coverage (most conservative)
     coverages = [
@@ -887,6 +1266,7 @@ def compute_all_coverage_metrics(
         per_source_coverage=per_source,
         aggregate_sample_coverage=agg_coverage,
         aggregate_chao1_ratio=agg_chao1_ratio,
+        cluster_based_overlap=use_clusters,
     )
 
 

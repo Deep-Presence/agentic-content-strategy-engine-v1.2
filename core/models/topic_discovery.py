@@ -183,6 +183,10 @@ class PerSourceCoverage(BaseModel):
     total_observations: int = 0
     chao1_estimate: float = 0.0
     sample_coverage: float = 0.0
+    # Semantic frequency classes (embedding-based, cross-round similarity)
+    semantic_singletons: int = 0
+    semantic_doubletons: int = 0
+    semantic_sim_threshold: float = 0.70
 
 
 class CaptureRecaptureResult(BaseModel):
@@ -203,6 +207,8 @@ class CaptureRecaptureResult(BaseModel):
     per_source_coverage: Dict[str, PerSourceCoverage] = Field(default_factory=dict)
     aggregate_sample_coverage: float = 0.0
     aggregate_chao1_ratio: float = 0.0
+    # Whether cluster-based overlap was used (vs. exact name matching)
+    cluster_based_overlap: bool = False
 
 
 class SubdomainNode(BaseModel):

@@ -1,7 +1,7 @@
 {
-  "sprint": "gap-content-enrichment-v9",
-  "sprint_goal": "Gap Analysis → Content Engine Data Enrichment — 3 features: company URL passthrough, structural analysis of company pages, self-citation detection in AI search results.",
-  "sprint_status": "COMPLETE — 24 new tests, all 74 targeted tests passing. 14 files modified across models, pipeline steps, content engine, and tests.",
+  "sprint": "research-orchestrator-v13",
+  "sprint_goal": "Research Orchestrator — Single API call to run KB → AP → VSG as sequential DAG with skip logic, HITL pass-through, auto-approve, and error propagation.",
+  "sprint_status": "COMPLETE — 67 orchestrator tests passing (50 core + 17 API). Codex audit: 5 fixes incorporated (tenant isolation on status, product_slug validation, failed status propagation, max_authors constraint, skip_fresh wiring). 2 deferred to backlog.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -23,19 +23,22 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/research/audience_persona/ (models, storage, agents, graph, pipeline)",
-    "core/research/knowledge_base/ (models, storage, agents, graph, pipeline)",
-    "core/research/prompts/*.py (prompt files with revision_note support)",
-    "api/tasks/runner.py (run_kb_pipeline_task wrapper)"
+    "core/models/research_orchestrator.py (NEW — all Pydantic models)",
+    "core/research/orchestrator.py (NEW — core orchestrator logic)",
+    "api/schemas/research_orchestrator.py (NEW — request/response schemas)",
+    "api/routers/research_orchestrator.py (NEW — /start + /status endpoints)",
+    "api/tasks/runner.py (added run_research_orchestrator_task)",
+    "api/tasks/models.py (added research_orchestrator to PipelineTask Literal)",
+    "api/app.py (added research_orchestrator router)"
   ],
-  "test_count": 2592,
-  "phases_completed_count": 33,
+  "test_count": 2659,
+  "phases_completed_count": 34,
   "recent_phases": [
+    "research-orchestrator v13 — 7 phases + Codex audit (67 tests)",
+    "site-audit-db-persistence v12 — 8 phases + Codex audit (62 tests, 899 SA total)",
     "gap-content-enrichment v9 — 3 features: URL passthrough, structural analysis, self-citation detection (24 tests)",
     "audience-persona Phase D — Pipeline Orchestrator (45 tests, 232 AP total)",
-    "knowledge-base Phase 5 — Synthesis & Living Document (50 tests)",
-    "knowledge-base Phase 4 — API Router + Schemas (35 tests)",
-    "knowledge-base Phase 3 — Orchestrator (58 tests)"
+    "knowledge-base Phase 5 — Synthesis & Living Document (50 tests)"
   ],
   "phases_remaining": [
     "audience-persona Phase E — API Router + Runner (~30 tests)",

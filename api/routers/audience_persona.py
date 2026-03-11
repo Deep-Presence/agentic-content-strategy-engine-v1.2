@@ -223,7 +223,7 @@ def get_audience_persona_status(
 
 
 @router.post("/{run_id}/approve/briefs")
-def approve_briefs(
+async def approve_briefs(
     run_id: str,
     body: PersonaBriefApprovalRequest,
     http_request: Request,
@@ -267,7 +267,7 @@ def approve_briefs(
 
 
 @router.post("/{run_id}/approve/profiles")
-def approve_profiles(
+async def approve_profiles(
     run_id: str,
     body: PersonaProfileApprovalRequest,
     http_request: Request,
