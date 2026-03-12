@@ -367,6 +367,38 @@ async def run_source_a_company_brainstorm(
         )
 
 
+def _resolve_persona_ids(
+    raw_names: List[str],
+    name_to_id: Dict[str, str],
+) -> List[str]:
+    """Fuzzy-match persona names from LLM output to known persona_ids.
+
+    Tries exact match first, then case-insensitive, then substring.
+    """
+    resolved: List[str] = []
+    if not name_to_id:
+        return resolved
+    # Build lower-case lookup
+    lower_map = {k.lower().strip(): v for k, v in name_to_id.items()}
+    for raw in raw_names:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        raw_lower = raw.lower().strip()
+        # Exact match
+        if raw in name_to_id:
+            resolved.append(name_to_id[raw])
+        # Case-insensitive match
+        elif raw_lower in lower_map:
+            resolved.append(lower_map[raw_lower])
+        else:
+            # Substring match (e.g. "David" matches "David the Founder")
+            for key_lower, pid in lower_map.items():
+                if raw_lower in key_lower or key_lower in raw_lower:
+                    resolved.append(pid)
+                    break
+    return list(dict.fromkeys(resolved))  # deduplicate preserving order
+
+
 async def run_source_b_persona_brainstorm(
     persona_profiles: str,
     company_context: str,
@@ -375,6 +407,7 @@ async def run_source_b_persona_brainstorm(
     model: Optional[str] = None,
     timeout_s: float = 120.0,
     revision_note: Optional[str] = None,
+    persona_name_to_id: Optional[Dict[str, str]] = None,
 ) -> SourceResult:
     """Source B: Audience-perspective subdomain brainstorm (iterative expansion)."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -411,12 +444,24 @@ async def run_source_b_persona_brainstorm(
 
             for sd in subdomains:
                 if isinstance(sd, dict):
+                    # Resolve persona names from LLM output to persona_ids
+                    raw_personas = sd.get("source_personas", [])
+                    if not isinstance(raw_personas, list):
+                        raw_personas = []
+                    resolved_ids = _resolve_persona_ids(
+                        raw_personas, persona_name_to_id or {},
+                    )
+                    raw_pains = sd.get("pain_points_addressed", [])
+                    if not isinstance(raw_pains, list):
+                        raw_pains = []
                     c = SubdomainCandidate(
                         name=sd.get("name", ""),
                         description=sd.get("description", ""),
                         source=TDSource.source_b,
                         round_number=round_num,
                         confidence=_safe_float(sd.get("confidence", 0.5)),
+                        persona_ids=resolved_ids,
+                        pain_points=[str(p) for p in raw_pains if p],
                     )
                     all_candidates.append(c)
                     previous_names.append(c.name)
@@ -679,6 +724,19 @@ async def deduplicate_subdomains_with_clusters(
     kept = [c for c, dup in zip(candidates, is_duplicate) if not dup]
     clusters = [cluster_map[i] for i in range(n) if not is_duplicate[i]]
 
+    # Merge persona_ids and pain_points from absorbed candidates into kept
+    for kept_idx, cluster_indices in enumerate(clusters):
+        merged_pids: set[str] = set(kept[kept_idx].persona_ids)
+        merged_pains: list[str] = list(kept[kept_idx].pain_points)
+        for member_idx in cluster_indices:
+            if member_idx == cluster_indices[0]:
+                continue  # skip self (the kept candidate is always first)
+            merged_pids.update(candidates[member_idx].persona_ids)
+            merged_pains.extend(candidates[member_idx].pain_points)
+        kept[kept_idx].persona_ids = sorted(merged_pids)
+        # Deduplicate pain_points preserving order
+        kept[kept_idx].pain_points = list(dict.fromkeys(merged_pains))
+
     return DeduplicationResult(
         kept=kept,
         clusters=clusters,
@@ -701,13 +759,14 @@ async def deduplicate_subdomains(
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
-    """Compute cosine similarity between two vectors."""
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(x * x for x in b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
+    """Compute cosine similarity between two vectors.
+
+    Delegates to ``core.shared_tools.math_utils.cosine_similarity``.
+    Kept as a module-private alias for backward compatibility.
+    """
+    from core.shared_tools.math_utils import cosine_similarity
+
+    return cosine_similarity(a, b)
 
 
 async def run_hierarchy_construction(
@@ -962,6 +1021,121 @@ async def run_topic_generation(
                 relevance=RelevanceCell.relevant,
                 priority_score=_safe_float(t.get("priority_score", 0.5)),
                 priority_factors=t.get("priority_factors", {}),
+            )
+        )
+    return assignments
+
+
+async def run_subdomain_expansion(
+    subdomain_name: str,
+    subdomain_description: str,
+    buyer_stages: List[str],
+    intent_types: List[str],
+    audience_segments: List[Tuple[str, str]],
+    company_context: str,
+    *,
+    persona_context: Optional[str] = None,
+    model: Optional[str] = None,
+    timeout_s: float = 180.0,
+) -> List[TopicAssignment]:
+    """Expand a single subdomain into topic assignments in ONE LLM call.
+
+    Replaces the old two-pass (relevance_filtering + topic_generation) flow.
+    The LLM simultaneously prunes irrelevant combos and generates topics.
+
+    Args:
+        subdomain_name: Name of the subdomain.
+        subdomain_description: Description of the subdomain.
+        buyer_stages: List of buyer stage values (e.g. ["tofu", "mofu", "bofu"]).
+        intent_types: List of intent type values.
+        audience_segments: (persona_id, persona_name) tuples.
+        company_context: Company overview markdown.
+        persona_context: Optional persona markdown for focused expansion.
+        model: LLM model override.
+        timeout_s: Per-call timeout.
+
+    Returns:
+        List of TopicAssignment objects (empty on failure).
+    """
+    from core.topic_discovery.prompts.subdomain_expansion import (
+        build_subdomain_expansion_user_prompt,
+        get_subdomain_expansion_system_prompt,
+    )
+
+    model = model or settings.topic_discovery_brainstorm_model
+
+    messages = [
+        {"role": "system", "content": get_subdomain_expansion_system_prompt()},
+        {
+            "role": "user",
+            "content": build_subdomain_expansion_user_prompt(
+                subdomain_name=subdomain_name,
+                subdomain_description=subdomain_description,
+                buyer_stages=buyer_stages,
+                intent_types=intent_types,
+                audience_segments=audience_segments,
+                company_context=company_context,
+                persona_context=persona_context,
+            ),
+        },
+    ]
+    _, raw_text = await _run_completion(
+        model=model, messages=messages, timeout_s=timeout_s
+    )
+    parsed = _parse_json_response(raw_text)
+    if parsed is None:
+        return []
+
+    topics = parsed.get("topics", [])
+    if not isinstance(topics, list):
+        return []
+
+    assignments: List[TopicAssignment] = []
+    for t in topics:
+        if not isinstance(t, dict):
+            continue
+        # Map buyer stage string to enum
+        bs_raw = t.get("buyer_stage", "tofu")
+        try:
+            bs = BuyerStage(bs_raw)
+        except ValueError:
+            bs = BuyerStage.TOFU
+        # Map intent type string to enum (handle LLM alias)
+        it_raw = t.get("intent_type", "informational")
+        if it_raw == "commercial_investigation":
+            it_raw = "commercial"
+        try:
+            it = IntentType(it_raw)
+        except ValueError:
+            it = IntentType.informational
+
+        persona_id = t.get("persona_id", "")
+        persona_name = t.get("persona_name", "")
+
+        assignments.append(
+            TopicAssignment(
+                subdomain_name=subdomain_name,
+                topic_text=t.get("title", t.get("topic_text", "")),
+                buyer_stage=bs,
+                intent_type=it,
+                audience_segment=persona_name,
+                relevance=RelevanceCell.relevant,
+                priority_score=0.0,  # Will be set by compute_topic_priority
+                persona_id=persona_id,
+                persona_name=persona_name,
+                metadata={
+                    k: t.get(k)
+                    for k in (
+                        "slug",
+                        "angle",
+                        "description",
+                        "target_keywords",
+                        "ai_citation_potential",
+                        "content_format",
+                        "estimated_word_count",
+                    )
+                    if t.get(k) is not None
+                },
             )
         )
     return assignments

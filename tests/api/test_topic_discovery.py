@@ -115,10 +115,17 @@ class TestStartTopicDiscovery:
         )
         assert resp.status_code == 202
 
-    def test_start_auto_approve_invalid_checkpoint(self, client):
+    def test_start_auto_approve_checkpoint_3_valid(self, client, mock_td_runner):
         resp = client.post(
             f"{PREFIX}/start",
             json={**MINIMAL_PAYLOAD, "auto_approve_checkpoints": [3]},
+        )
+        assert resp.status_code == 202
+
+    def test_start_auto_approve_invalid_checkpoint(self, client):
+        resp = client.post(
+            f"{PREFIX}/start",
+            json={**MINIMAL_PAYLOAD, "auto_approve_checkpoints": [4]},
         )
         assert resp.status_code == 422
 
@@ -702,3 +709,297 @@ class TestSchemaValidation:
         data = MatrixReadResponse(**resp.json())
         assert data.slug == "test-co"
         assert data.total_assignments == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# POST /{run_id}/approve/subdomains (HITL-1.5)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestApproveSubdomains:
+    """Tests for POST /topic-discovery/{run_id}/approve/subdomains."""
+
+    def test_approve_subdomains_select(self, client, task_store):
+        task = task_store.create_task("topic_discovery", "test-co")
+        task_store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={
+                "stage": "td_subdomain_selection",
+                "checkpoint_nonce": "test-nonce",
+            },
+        )
+
+        resp = client.post(
+            f"{PREFIX}/{task.task_id}/approve/subdomains",
+            json={
+                "batch_decision": "select",
+                "selected_subdomain_ids": ["sd-1", "sd-2"],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "accepted"
+        assert data["stage"] == "td_subdomain_selection"
+
+    def test_approve_subdomains_top_n(self, client, task_store):
+        task = task_store.create_task("topic_discovery", "test-co")
+        task_store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={
+                "stage": "td_subdomain_selection",
+                "checkpoint_nonce": "test-nonce",
+            },
+        )
+
+        resp = client.post(
+            f"{PREFIX}/{task.task_id}/approve/subdomains",
+            json={"batch_decision": "select_top_n", "top_n": 5},
+        )
+        assert resp.status_code == 200
+
+    def test_approve_subdomains_wrong_stage(self, client, task_store):
+        task = task_store.create_task("topic_discovery", "test-co")
+        task_store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={"stage": "td_taxonomy_review"},
+        )
+
+        resp = client.post(
+            f"{PREFIX}/{task.task_id}/approve/subdomains",
+            json={"batch_decision": "select", "selected_subdomain_ids": ["sd-1"]},
+        )
+        assert resp.status_code == 409
+
+    def test_approve_subdomains_not_pending(self, client, task_store):
+        task = task_store.create_task("topic_discovery", "test-co")
+        resp = client.post(
+            f"{PREFIX}/{task.task_id}/approve/subdomains",
+            json={"batch_decision": "select", "selected_subdomain_ids": ["sd-1"]},
+        )
+        assert resp.status_code == 409
+
+    def test_approve_subdomains_tenant_isolation_403(self, client, task_store):
+        task = task_store.create_task("topic_discovery", "other-co")
+        task_store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={
+                "stage": "td_subdomain_selection",
+                "checkpoint_nonce": "n1",
+            },
+        )
+        resp = client.post(
+            f"{PREFIX}/{task.task_id}/approve/subdomains",
+            json={"batch_decision": "select", "selected_subdomain_ids": ["sd-1"]},
+        )
+        assert resp.status_code == 403
+
+    def test_approve_subdomains_missing_nonce_409(self, client, task_store):
+        task = task_store.create_task("topic_discovery", "test-co")
+        task_store.update_task(
+            task.task_id,
+            status=TaskStatus.PENDING_APPROVAL,
+            approval_payload={"stage": "td_subdomain_selection"},
+        )
+        resp = client.post(
+            f"{PREFIX}/{task.task_id}/approve/subdomains",
+            json={"batch_decision": "select", "selected_subdomain_ids": ["sd-1"]},
+        )
+        assert resp.status_code == 409
+        assert "No active approval checkpoint" in resp.json()["detail"]
+
+    def test_approve_subdomains_extra_fields_rejected(self, client):
+        resp = client.post(
+            f"{PREFIX}/some-task/approve/subdomains",
+            json={
+                "batch_decision": "select",
+                "selected_subdomain_ids": ["sd-1"],
+                "extra_field": "bad",
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_approve_subdomains_invalid_decision_422(self, client):
+        resp = client.post(
+            f"{PREFIX}/some-task/approve/subdomains",
+            json={"batch_decision": "approve"},
+        )
+        assert resp.status_code == 422
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# GET /{slug}/scored-subdomains
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestGetScoredSubdomains:
+    """Tests for GET /topic-discovery/{slug}/scored-subdomains."""
+
+    def test_scored_subdomains_found(self, client, artifacts_root):
+        from core.models.topic_discovery import ScoredSubdomainList, SubdomainScore
+        from core.topic_discovery.storage import TopicDiscoveryStorage
+
+        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
+        scored = ScoredSubdomainList(
+            scores=[
+                SubdomainScore(
+                    subdomain_id="sd-1",
+                    subdomain_name="Finance",
+                    composite_score=0.85,
+                    rank=1,
+                ),
+            ],
+            total_scored=1,
+            signals_used=["source_confidence", "persona_breadth"],
+        )
+        storage.write_scoring(scored)
+
+        resp = client.get(f"{PREFIX}/test-co/scored-subdomains")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["slug"] == "test-co"
+        assert data["total_scored"] == 1
+        assert "source_confidence" in data["signals_used"]
+
+    def test_scored_subdomains_not_found(self, client):
+        resp = client.get(f"{PREFIX}/test-co/scored-subdomains")
+        assert resp.status_code == 404
+
+    def test_scored_subdomains_tenant_isolation_403(self, client):
+        resp = client.get(f"{PREFIX}/other-co/scored-subdomains")
+        assert resp.status_code == 403
+
+    def test_scored_subdomains_effective_slug_other_company_blocked(self, client):
+        resp = client.get(f"{PREFIX}/other-co__product/scored-subdomains")
+        assert resp.status_code == 403
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# GET /{slug}/personas
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestGetPersonaAffinity:
+    """Tests for GET /topic-discovery/{slug}/personas."""
+
+    def test_personas_found(self, client, artifacts_root):
+        from core.models.topic_discovery import (
+            PersonaAffinityIndex,
+            PersonaSubdomainEntry,
+        )
+        from core.topic_discovery.storage import TopicDiscoveryStorage
+
+        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
+        index = PersonaAffinityIndex(
+            persona_entries={
+                "david": [
+                    PersonaSubdomainEntry(
+                        subdomain_id="sd-1",
+                        subdomain_name="Finance",
+                        affinity_score=0.75,
+                        provenance="source_b",
+                    ),
+                ],
+            },
+            total_personas=1,
+            total_subdomains=1,
+        )
+        storage.write_persona_affinity(index)
+
+        resp = client.get(f"{PREFIX}/test-co/personas")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["slug"] == "test-co"
+        assert data["total_personas"] == 1
+        assert "david" in data["persona_entries"]
+
+    def test_personas_not_found(self, client):
+        resp = client.get(f"{PREFIX}/test-co/personas")
+        assert resp.status_code == 404
+
+    def test_personas_tenant_isolation_403(self, client):
+        resp = client.get(f"{PREFIX}/other-co/personas")
+        assert resp.status_code == 403
+
+    def test_personas_with_persona_id_filter(self, client, artifacts_root):
+        from core.models.topic_discovery import (
+            PersonaAffinityIndex,
+            PersonaSubdomainEntry,
+        )
+        from core.topic_discovery.storage import TopicDiscoveryStorage
+
+        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
+        index = PersonaAffinityIndex(
+            persona_entries={
+                "david": [
+                    PersonaSubdomainEntry(
+                        subdomain_id="sd-1",
+                        subdomain_name="Finance",
+                        affinity_score=0.75,
+                    ),
+                ],
+                "marcus": [
+                    PersonaSubdomainEntry(
+                        subdomain_id="sd-2",
+                        subdomain_name="HR",
+                        affinity_score=0.6,
+                    ),
+                ],
+            },
+            total_personas=2,
+            total_subdomains=2,
+        )
+        storage.write_persona_affinity(index)
+
+        resp = client.get(f"{PREFIX}/test-co/personas?persona_id=david")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "david" in data["persona_entries"]
+        assert "marcus" not in data["persona_entries"]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Start Request — new fields
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestStartNewFields:
+    """Tests for new top_n_expand and persona_filter fields."""
+
+    def test_start_with_top_n_expand(self, client, mock_td_runner):
+        resp = client.post(
+            f"{PREFIX}/start",
+            json={**MINIMAL_PAYLOAD, "top_n_expand": 5},
+        )
+        assert resp.status_code == 202
+
+    def test_start_top_n_expand_too_high(self, client):
+        resp = client.post(
+            f"{PREFIX}/start",
+            json={**MINIMAL_PAYLOAD, "top_n_expand": 100},
+        )
+        assert resp.status_code == 422
+
+    def test_start_top_n_expand_too_low(self, client):
+        resp = client.post(
+            f"{PREFIX}/start",
+            json={**MINIMAL_PAYLOAD, "top_n_expand": 0},
+        )
+        assert resp.status_code == 422
+
+    def test_start_with_persona_filter(self, client, mock_td_runner):
+        resp = client.post(
+            f"{PREFIX}/start",
+            json={**MINIMAL_PAYLOAD, "persona_filter": "david"},
+        )
+        assert resp.status_code == 202
+
+    def test_start_all_checkpoints_valid(self, client, mock_td_runner):
+        resp = client.post(
+            f"{PREFIX}/start",
+            json={**MINIMAL_PAYLOAD, "auto_approve_checkpoints": [1, 2, 3]},
+        )
+        assert resp.status_code == 202

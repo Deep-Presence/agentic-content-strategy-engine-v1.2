@@ -26,6 +26,8 @@ from typing import Optional
 
 from core.models.topic_discovery import (
     CaptureRecaptureResult,
+    PersonaAffinityIndex,
+    ScoredSubdomainList,
     SourceResult,
     TaxonomyTree,
     TDSource,
@@ -92,6 +94,12 @@ class TopicDiscoveryStorage:
 
     def _matrix_key(self, version: int) -> str:
         return f"{self._prefix}matrix/v{version}.json"
+
+    def _scoring_key(self, version: int) -> str:
+        return f"{self._prefix}scoring/v{version}.json"
+
+    def _persona_affinity_key(self, version: int) -> str:
+        return f"{self._prefix}persona_affinity/v{version}.json"
 
     # ------------------------------------------------------------------
     # Manifest
@@ -272,3 +280,113 @@ class TopicDiscoveryStorage:
         if v == 0:
             return None
         return self.read_matrix(v)
+
+    # ------------------------------------------------------------------
+    # Scoring (algorithmic subdomain priority)
+    # ------------------------------------------------------------------
+
+    def get_latest_scoring_version(self) -> int:
+        """Return the highest scoring version number, 0 if none exist."""
+        entries = self._backend.list_dir(f"{self._prefix}scoring")
+        versions = []
+        for entry in entries:
+            name = PurePosixPath(entry).name
+            if name.endswith(".json") and name.startswith("v"):
+                try:
+                    versions.append(int(name[1:].removesuffix(".json")))
+                except ValueError:
+                    continue
+        return max(versions) if versions else 0
+
+    def write_scoring(
+        self, scored: ScoredSubdomainList, version: int = 0
+    ) -> int:
+        """Write a scoring version. Auto-increments if version=0."""
+        if version == 0:
+            version = self.get_latest_scoring_version() + 1
+        synced = scored.model_copy(update={"version": version})
+        self._backend.write(
+            self._scoring_key(version),
+            synced.model_dump_json(indent=2),
+        )
+        logger.info(
+            "TD/%s: wrote scoring v%d (%d subdomains)",
+            self._slug, version, synced.total_scored,
+        )
+        return version
+
+    def read_scoring(self, version: int) -> Optional[ScoredSubdomainList]:
+        """Read a specific scoring version. Returns None if missing."""
+        raw = self._backend.read(self._scoring_key(version))
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw)
+            return ScoredSubdomainList.model_validate(data)
+        except Exception as exc:
+            logger.warning("Failed to read scoring v%d: %s", version, exc)
+            return None
+
+    def get_latest_scoring(self) -> Optional[ScoredSubdomainList]:
+        """Read the latest scoring version."""
+        v = self.get_latest_scoring_version()
+        if v == 0:
+            return None
+        return self.read_scoring(v)
+
+    # ------------------------------------------------------------------
+    # Persona Affinity
+    # ------------------------------------------------------------------
+
+    def get_latest_persona_affinity_version(self) -> int:
+        """Return the highest persona affinity version, 0 if none exist."""
+        entries = self._backend.list_dir(f"{self._prefix}persona_affinity")
+        versions = []
+        for entry in entries:
+            name = PurePosixPath(entry).name
+            if name.endswith(".json") and name.startswith("v"):
+                try:
+                    versions.append(int(name[1:].removesuffix(".json")))
+                except ValueError:
+                    continue
+        return max(versions) if versions else 0
+
+    def write_persona_affinity(
+        self, index: PersonaAffinityIndex, version: int = 0
+    ) -> int:
+        """Write a persona affinity version. Auto-increments if version=0."""
+        if version == 0:
+            version = self.get_latest_persona_affinity_version() + 1
+        synced = index.model_copy(update={"version": version})
+        self._backend.write(
+            self._persona_affinity_key(version),
+            synced.model_dump_json(indent=2),
+        )
+        logger.info(
+            "TD/%s: wrote persona_affinity v%d (%d personas, %d subdomains)",
+            self._slug, version, synced.total_personas, synced.total_subdomains,
+        )
+        return version
+
+    def read_persona_affinity(
+        self, version: int
+    ) -> Optional[PersonaAffinityIndex]:
+        """Read a specific persona affinity version. Returns None if missing."""
+        raw = self._backend.read(self._persona_affinity_key(version))
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw)
+            return PersonaAffinityIndex.model_validate(data)
+        except Exception as exc:
+            logger.warning(
+                "Failed to read persona_affinity v%d: %s", version, exc,
+            )
+            return None
+
+    def get_latest_persona_affinity(self) -> Optional[PersonaAffinityIndex]:
+        """Read the latest persona affinity version."""
+        v = self.get_latest_persona_affinity_version()
+        if v == 0:
+            return None
+        return self.read_persona_affinity(v)

@@ -84,6 +84,7 @@ class DbTopicDiscoveryDataService:
         *,
         buyer_stage: Optional[str] = None,
         intent_type: Optional[str] = None,
+        persona_id: Optional[str] = None,
         page: int = 1,
         page_size: int = 50,
     ) -> dict:
@@ -116,20 +117,54 @@ class DbTopicDiscoveryDataService:
             page_size=page_size,
         )
 
+        result_items = [
+            {
+                "topic_text": r.topic_text,
+                "buyer_stage": r.buyer_stage.value if r.buyer_stage else None,
+                "intent_type": r.intent_type.value if r.intent_type else None,
+                "audience_segment": r.audience_segment,
+                "relevance": r.relevance.value if r.relevance else None,
+                "priority_score": r.priority_score,
+                "status": r.status.value if r.status else None,
+            }
+            for r in items
+        ]
+
+        # persona_id filtering applied in-memory (DB schema doesn't have persona_id column yet)
+        if persona_id:
+            result_items = [
+                r for r in result_items
+                if r.get("persona_id") == persona_id
+            ]
+            total = len(result_items)
+
         return {
-            "items": [
-                {
-                    "topic_text": r.topic_text,
-                    "buyer_stage": r.buyer_stage.value if r.buyer_stage else None,
-                    "intent_type": r.intent_type.value if r.intent_type else None,
-                    "audience_segment": r.audience_segment,
-                    "relevance": r.relevance.value if r.relevance else None,
-                    "priority_score": r.priority_score,
-                    "status": r.status.value if r.status else None,
-                }
-                for r in items
-            ],
+            "items": result_items,
             "total": total,
             "page": page,
             "page_size": page_size,
         }
+
+    async def get_scored_subdomains(
+        self,
+        effective_slug: str,
+        *,
+        version: Optional[int] = None,
+    ) -> Optional[dict]:
+        # Delegate to filesystem — scoring JSON is the source of truth
+        from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
+
+        json_svc = JsonTopicDiscoveryDataService(self._artifacts_root, backend=self._backend)
+        return await json_svc.get_scored_subdomains(effective_slug, version=version)
+
+    async def get_persona_affinity(
+        self,
+        effective_slug: str,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        # Delegate to filesystem — persona affinity JSON is the source of truth
+        from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
+
+        json_svc = JsonTopicDiscoveryDataService(self._artifacts_root, backend=self._backend)
+        return await json_svc.get_persona_affinity(effective_slug, persona_id=persona_id)

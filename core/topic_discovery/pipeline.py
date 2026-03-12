@@ -1,11 +1,13 @@
-"""Topic Discovery pipeline orchestrator — S1→S2→HITL1→S3→HITL2.
+"""Topic Discovery pipeline orchestrator — S1→S2→HITL1→Scoring→HITL1.5→S3→HITL2.
 
 Execution flow:
   Phase 0: Preflight (load company context + persona profiles, validate prereqs)
   Phase 1 (S1): Multi-Source Subdomain Generation (A+B+C parallel, then D sequential)
   Phase 2 (S2): Exhaustiveness Evaluation & Merge (dedup → coverage metrics → hierarchy)
   ── HITL-1: Taxonomy approval (approve/modify/retry, max 2 retries) ──
-  Phase 3 (S3): Dimensionality Expansion (relevance filter → topic generation)
+  Phase 2.5: Algorithmic Subdomain Scoring (zero LLM calls) + Persona Affinity
+  ── HITL-1.5: Subdomain Selection (user picks subdomains to expand) ──
+  Phase 3 (S3): On-Demand Expansion (1 LLM call per selected subdomain)
   ── HITL-2: Matrix approval (approve/modify) ──
   Phase 4: Finalize (update manifest, emit completed)
 """
@@ -19,7 +21,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.config.settings import settings
 from core.content_engine.llm_client import configure_litellm_callbacks
@@ -27,7 +29,9 @@ from core.models.topic_discovery import (
     BuyerStage,
     CaptureRecaptureResult,
     IntentType,
+    PersonaAffinityIndex,
     RelevanceCell,
+    ScoredSubdomainList,
     SourceResult,
     SubdomainNode,
     TaxonomyTree,
@@ -56,12 +60,19 @@ from core.topic_discovery.agents import (
     run_source_b_persona_brainstorm,
     run_source_c_competitor_sitemaps,
     run_source_d_adversarial,
+    run_subdomain_expansion,
     run_topic_generation,
 )
 from core.topic_discovery.graph import (
     build_td_matrix_review_graph,
+    build_td_subdomain_selection_graph,
     build_td_taxonomy_review_graph,
     run_td_hitl_checkpoint,
+)
+from core.topic_discovery.scoring import (
+    compute_persona_affinity_index,
+    compute_subdomain_scores,
+    compute_topic_priority,
 )
 from core.topic_discovery.storage import TopicDiscoveryStorage
 
@@ -134,6 +145,86 @@ def _flatten_subdomain_names(nodes: List[SubdomainNode]) -> List[str]:
             names.append(node.name)
         names.extend(_flatten_subdomain_names(node.children))
     return names
+
+
+def _flatten_subdomain_nodes(
+    nodes: List[SubdomainNode],
+) -> List[Tuple[str, str, str]]:
+    """Recursively flatten subdomain tree into (id, name, description) tuples."""
+    result: List[Tuple[str, str, str]] = []
+    for node in nodes:
+        if node.name:
+            result.append((node.id, node.name, node.description))
+        result.extend(_flatten_subdomain_nodes(node.children))
+    return result
+
+
+def _backfill_scores_into_taxonomy(
+    root_nodes: List[SubdomainNode],
+    scored_subdomains: ScoredSubdomainList,
+    persona_affinity: PersonaAffinityIndex,
+) -> None:
+    """Backfill priority_score and persona_affinity from scoring artifacts
+    into the taxonomy SubdomainNode tree (mutates in-place)."""
+    # Build lookup maps
+    score_by_id = {s.subdomain_id: s for s in scored_subdomains.scores}
+    # Build persona_affinity per subdomain: {subdomain_id: {persona_id: score}}
+    affinity_by_sd: Dict[str, Dict[str, float]] = {}
+    for pid, entries in persona_affinity.persona_entries.items():
+        for entry in entries:
+            if entry.affinity_score > 0:
+                affinity_by_sd.setdefault(entry.subdomain_id, {})[pid] = entry.affinity_score
+
+    def _walk(nodes: List[SubdomainNode]) -> None:
+        for node in nodes:
+            sc = score_by_id.get(node.id)
+            if sc:
+                node.priority_score = sc.composite_score
+                node.priority_factors = dict(sc.signal_scores)
+            aff = affinity_by_sd.get(node.id)
+            if aff:
+                node.persona_affinity = aff
+            _walk(node.children)
+
+    _walk(root_nodes)
+
+
+def _load_persona_entries(
+    backend: Any,
+    effective_slug: str,
+    company_slug: Optional[str] = None,
+) -> List[Tuple[str, str]]:
+    """Load (persona_id, persona_name) tuples from persona manifest.
+
+    Falls back from effective_slug to company_slug.
+    Returns list of tuples for active (fresh/stale) personas.
+    """
+    from core.research.audience_persona.storage import PersonaStorage
+    from core.storage.backends import LocalStorageBackend
+
+    for check_slug in filter(None, [effective_slug, company_slug]):
+        if isinstance(backend, LocalStorageBackend):
+            ps = PersonaStorage(backend.root, check_slug, backend=backend)
+        else:
+            ps = PersonaStorage(Path("/unused"), check_slug, backend=backend)
+        manifest = ps.read_manifest()
+        if manifest.personas:
+            break
+    else:
+        return []
+
+    entries: List[Tuple[str, str]] = []
+    for pid, entry in manifest.personas.items():
+        if entry.status in ("fresh", "stale"):
+            entries.append((pid, entry.persona_name or pid))
+    return entries
+
+
+def _build_persona_name_to_id(
+    entries: List[Tuple[str, str]],
+) -> Dict[str, str]:
+    """Build persona_name → persona_id mapping from entries."""
+    return {name: pid for pid, name in entries}
 
 
 def _compute_distributions(
@@ -226,6 +317,12 @@ async def run_topic_discovery_pipeline(
         persona_summaries = _build_persona_summaries(persona_mds)
         domain = input_data.domain or f"{company_slug}.com"
 
+        # Build persona_name_to_id early so Source B can resolve persona links
+        persona_entries = _load_persona_entries(
+            _backend, effective_slug, company_slug
+        )
+        persona_name_to_id = _build_persona_name_to_id(persona_entries)
+
         _emit(event_bus, task_id, "td_phase_complete", {"phase": 0})
 
         # ── DB: Create/update TopicDiscoveryModel ──
@@ -264,6 +361,7 @@ async def run_topic_discovery_pipeline(
             source_b_task = run_source_b_persona_brainstorm(
                 persona_summaries, company_md, max_rounds=max_rounds, timeout_s=timeout_s,
                 revision_note=_revision,
+                persona_name_to_id=persona_name_to_id,
             )
 
             # Source C: competitor sitemaps (placeholder data for now)
@@ -456,7 +554,110 @@ async def run_topic_discovery_pipeline(
             logger.warning("TD persist_td_taxonomy failed, continuing", exc_info=True)
 
         # =============================================================
-        # Phase 3 (S3): Dimensionality Expansion
+        # Phase 2.5: Algorithmic Subdomain Scoring (zero LLM calls)
+        # =============================================================
+        _emit(event_bus, task_id, "td_phase_start", {
+            "phase": "2.5", "stage": "subdomain_scoring",
+        })
+        _update_task(task_store, task_id, current_step="phase_2_5_scoring")
+
+        # persona_entries and persona_name_to_id already built in preflight
+
+        # Build persona_mds_by_id for affinity scoring
+        persona_mds_by_id: Dict[str, str] = {}
+        for (pid, pname), md in zip(persona_entries, persona_mds):
+            persona_mds_by_id[pid] = md
+
+        # Build source_b_persona_map from source results (lowercase keys
+        # to match scoring.py lookup via node.name.lower().strip())
+        source_b_persona_map: Dict[str, List[str]] = {}
+        for sr in source_results:
+            if sr.source == TDSource.source_b:
+                for cand in sr.candidates:
+                    if cand.persona_ids:
+                        key = cand.name.lower().strip()
+                        existing = source_b_persona_map.get(key, [])
+                        merged = list(dict.fromkeys(existing + list(cand.persona_ids)))
+                        source_b_persona_map[key] = merged
+
+        # Compute subdomain scores (zero LLM)
+        scored_subdomains = await compute_subdomain_scores(
+            taxonomy=taxonomy,
+        )
+
+        # Persist scoring
+        scoring_version = await asyncio.to_thread(
+            storage.write_scoring, scored_subdomains
+        )
+
+        # Compute persona affinity index (zero LLM)
+        # Embeddings not pre-computed in this phase; affinity uses Source B
+        # provenance only (embedding weight falls to 0 when vectors missing).
+        persona_affinity = await compute_persona_affinity_index(
+            taxonomy=taxonomy,
+            subdomain_embeddings={},
+            persona_mds_by_id=persona_mds_by_id,
+            persona_embeddings={},
+            source_b_persona_map=source_b_persona_map,
+        )
+
+        # Persist persona affinity
+        affinity_version = await asyncio.to_thread(
+            storage.write_persona_affinity, persona_affinity
+        )
+
+        # Backfill scores into taxonomy nodes and re-persist
+        _backfill_scores_into_taxonomy(
+            taxonomy.root_nodes, scored_subdomains, persona_affinity,
+        )
+        await asyncio.to_thread(
+            storage.write_taxonomy, taxonomy, taxonomy.version
+        )
+
+        _emit(event_bus, task_id, "td_phase_complete", {
+            "phase": "2.5",
+            "total_scored": scored_subdomains.total_scored,
+            "total_personas": persona_affinity.total_personas,
+        })
+
+        # =============================================================
+        # HITL-1.5: Subdomain Selection
+        # =============================================================
+        _emit(event_bus, task_id, "td_phase_start", {
+            "phase": "hitl_1_5", "stage": "subdomain_selection",
+        })
+        _update_task(task_store, task_id, current_step="hitl_1_5_subdomain_selection")
+
+        top_n = input_data.top_n_expand
+        persona_filter = input_data.persona_filter or ""
+
+        selection_graph = build_td_subdomain_selection_graph()
+        hitl15_state = {
+            "scored_subdomains": scored_subdomains.model_dump(mode="json"),
+            "persona_affinity": persona_affinity.model_dump(mode="json"),
+            "checkpoint": 3,
+            "auto_approve": 3 in auto_approve_cps,
+            "top_n": top_n,
+        }
+
+        hitl15_result = await run_td_hitl_checkpoint(
+            selection_graph, hitl15_state,
+            thread_id=f"td-hitl-1.5-{slug}-{uuid.uuid4().hex[:8]}",
+            task_store=task_store, event_bus=event_bus, task_id=task_id,
+            stage_name="td_subdomain_selection",
+        )
+
+        selected_subdomain_ids = hitl15_result.get("final_subdomain_ids", [])
+        persona_filter = hitl15_result.get("persona_filter", persona_filter)
+
+        _emit(event_bus, task_id, "td_phase_complete", {
+            "phase": "hitl_1_5",
+            "selected_count": len(selected_subdomain_ids),
+            "persona_filter": persona_filter or None,
+        })
+
+        # =============================================================
+        # Phase 3 (S3): On-Demand Expansion (1 LLM call per subdomain)
         # =============================================================
         _emit(event_bus, task_id, "td_phase_start", {
             "phase": 3, "stage": "s3_expansion",
@@ -467,102 +668,100 @@ async def run_topic_discovery_pipeline(
         buyer_stages = [s.value for s in BuyerStage]
         intent_types = [t.value for t in IntentType]
 
-        # Extract audience segments from personas
-        audience_segments = [f"Persona {i+1}" for i in range(len(persona_mds))]
-        if not audience_segments:
-            audience_segments = ["General"]
+        # Build audience_segments as (persona_id, persona_name) tuples
+        audience_segments: List[Tuple[str, str]] = persona_entries or [("general", "General")]
 
-        # Flatten subdomain names from taxonomy
-        subdomain_names = _flatten_subdomain_names(taxonomy.root_nodes)
+        # Flatten subdomain nodes from taxonomy
+        all_subdomain_tuples = _flatten_subdomain_nodes(taxonomy.root_nodes)
 
+        # Filter to selected subdomains only
+        selected_set = set(selected_subdomain_ids)
+        selected_tuples = [
+            (sid, sname, sdesc)
+            for sid, sname, sdesc in all_subdomain_tuples
+            if sid in selected_set
+        ]
+
+        # Cap at max_subdomains_to_expand
+        max_expand = settings.topic_discovery_max_subdomains_to_expand
+        if len(selected_tuples) > max_expand:
+            logger.warning(
+                "TD/%s: selected %d subdomains, capping at %d",
+                effective_slug, len(selected_tuples), max_expand,
+            )
+            selected_tuples = selected_tuples[:max_expand]
+
+        # Optional persona context for focused expansion
+        expansion_persona_ctx: Optional[str] = None
+        if persona_filter and persona_filter in persona_mds_by_id:
+            expansion_persona_ctx = persona_mds_by_id[persona_filter][:500]
+
+        # Expand each selected subdomain (1 LLM call each)
         all_assignments: List[TopicAssignment] = []
-        total_relevant = 0
-        total_irrelevant = 0
-
-        # Process each subdomain
         semaphore = asyncio.Semaphore(settings.topic_discovery_max_concurrent_sources)
 
-        async def _process_subdomain(
-            subdomain: str,
-        ) -> tuple:
-            """Return (assignments, relevant_count, irrelevant_count) for one subdomain."""
-            assignments: List[TopicAssignment] = []
-            sd_relevant = 0
-            sd_irrelevant = 0
-
-            # Build dimension combinations for this subdomain
-            dimensions = []
-            for bs in buyer_stages:
-                for it in intent_types:
-                    for seg in audience_segments:
-                        dimensions.append({
-                            "buyer_stage": bs,
-                            "intent_type": it,
-                            "audience_segment": seg,
-                        })
-
-            # Step 1: Relevance filtering
+        async def _expand_subdomain(
+            sd_id: str, sd_name: str, sd_desc: str,
+        ) -> List[TopicAssignment]:
             async with semaphore:
-                classifications = await run_relevance_filtering(
-                    subdomain, dimensions, company_md, timeout_s=timeout_s,
+                assignments = await run_subdomain_expansion(
+                    subdomain_name=sd_name,
+                    subdomain_description=sd_desc,
+                    buyer_stages=buyer_stages,
+                    intent_types=intent_types,
+                    audience_segments=audience_segments,
+                    company_context=company_md,
+                    persona_context=expansion_persona_ctx,
+                    timeout_s=timeout_s,
                 )
+            # Set subdomain_id on each assignment
+            for a in assignments:
+                a.subdomain_id = sd_id
+            return assignments
 
-            # Build relevance lookup
-            relevance_map: Dict[str, str] = {}
-            for cls in classifications:
-                if isinstance(cls, dict):
-                    key = f"{cls.get('buyer_stage', '')}|{cls.get('intent_type', '')}|{cls.get('audience_segment', '')}"
-                    relevance_map[key] = cls.get("relevance", "relevant")
+        expansion_tasks = [
+            _expand_subdomain(sid, sname, sdesc)
+            for sid, sname, sdesc in selected_tuples
+        ]
+        expansion_results = await asyncio.gather(
+            *expansion_tasks, return_exceptions=True
+        )
 
-            # Step 2: Generate topics for relevant cells
-            for dim in dimensions:
-                key = f"{dim['buyer_stage']}|{dim['intent_type']}|{dim['audience_segment']}"
-                relevance = relevance_map.get(key, "relevant")
-
-                if relevance == "irrelevant":
-                    sd_irrelevant += 1
-                    continue
-
-                sd_relevant += 1
-
-                async with semaphore:
-                    topics = await run_topic_generation(
-                        subdomain,
-                        dim["buyer_stage"],
-                        dim["intent_type"],
-                        dim["audience_segment"],
-                        company_md,
-                        timeout_s=timeout_s,
-                    )
-                assignments.extend(topics)
-
-            return assignments, sd_relevant, sd_irrelevant
-
-        # Run subdomain processing with concurrency
-        subdomain_tasks = [_process_subdomain(sd) for sd in subdomain_names]
-        subdomain_results = await asyncio.gather(*subdomain_tasks, return_exceptions=True)
-
-        for i, res in enumerate(subdomain_results):
+        for i, res in enumerate(expansion_results):
             if isinstance(res, Exception):
                 logger.warning(
-                    "TD/%s: topic generation failed for '%s': %s",
-                    effective_slug, subdomain_names[i], res,
+                    "TD/%s: expansion failed for '%s': %s",
+                    effective_slug, selected_tuples[i][1], res,
                 )
             else:
-                sd_assignments, sd_relevant, sd_irrelevant = res
-                all_assignments.extend(sd_assignments)
-                total_relevant += sd_relevant
-                total_irrelevant += sd_irrelevant
+                all_assignments.extend(res)
 
-        # Build matrix
+        # Compute topic priority scores (zero LLM calls)
+        # Build subdomain_id → SubdomainScore lookup
+        score_lookup: Dict[str, Any] = {}
+        for sc in scored_subdomains.scores:
+            score_lookup[sc.subdomain_id] = sc
+
+        for assignment in all_assignments:
+            sd_score = score_lookup.get(assignment.subdomain_id)
+            if sd_score:
+                priority, factors = compute_topic_priority(
+                    assignment.buyer_stage.value,
+                    assignment.intent_type.value,
+                    sd_score.composite_score,
+                )
+                assignment.priority_score = priority
+                assignment.priority_factors = factors
+
+        # Build matrix (even if empty — valid empty matrix)
         distributions = _compute_distributions(all_assignments)
         matrix = TopicAssignmentMatrix(
             version=1,
             status=TopicDiscoveryStatus.draft,
             assignments=all_assignments,
             total_assignments=len(all_assignments),
-            total_relevant_cells=total_relevant,
-            total_irrelevant_cells=total_irrelevant,
+            total_relevant_cells=len(all_assignments),
+            total_irrelevant_cells=0,
             buyer_stage_distribution=distributions["buyer_stage"],
             intent_distribution=distributions["intent"],
             audience_distribution=distributions["audience"],
@@ -573,8 +772,7 @@ async def run_topic_discovery_pipeline(
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": 3,
             "total_assignments": len(all_assignments),
-            "total_relevant": total_relevant,
-            "total_irrelevant": total_irrelevant,
+            "subdomains_expanded": len(selected_tuples),
         })
 
         # =============================================================
@@ -637,6 +835,8 @@ async def run_topic_discovery_pipeline(
         manifest.status = TopicDiscoveryStatus.approved
         manifest.taxonomy_version = tax_version
         manifest.matrix_version = mat_version
+        manifest.scoring_version = scoring_version
+        manifest.persona_affinity_version = affinity_version
         manifest.last_updated = datetime.now(timezone.utc).isoformat()
         manifest.source_results_written = [sr.source.value for sr in source_results]
         await asyncio.to_thread(storage.write_manifest, manifest)
@@ -671,6 +871,8 @@ async def run_topic_discovery_pipeline(
             taxonomy=taxonomy,
             matrix=matrix,
             coverage=coverage,
+            scored_subdomains=scored_subdomains,
+            persona_affinity=persona_affinity,
             manifest=manifest,
             taxonomy_version=tax_version,
             matrix_version=mat_version,

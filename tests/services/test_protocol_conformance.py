@@ -392,7 +392,10 @@ class TestTopicDiscoveryDataProtocol:
         assert isinstance(instance, TopicDiscoveryDataServiceProtocol)
 
     def test_protocol_methods(self):
-        expected = {"get_discovery_summary", "get_taxonomy", "get_matrix", "list_assignments"}
+        expected = {
+            "get_discovery_summary", "get_taxonomy", "get_matrix",
+            "list_assignments", "get_scored_subdomains", "get_persona_affinity",
+        }
         from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
         from core.services.db_topic_discovery_data import DbTopicDiscoveryDataService
 

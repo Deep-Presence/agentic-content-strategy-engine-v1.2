@@ -158,6 +158,16 @@ class Settings(BaseSettings):
     topic_discovery_dedup_threshold: float = 0.85
     topic_discovery_max_concurrent_sources: int = 4
     topic_discovery_source_timeout_s: float = 120.0
+    # Algorithmic subdomain scoring weights (JSON string for env override)
+    topic_discovery_scoring_weights: str = (
+        '{"source_confidence": 0.30, "content_coverage": 0.20, '
+        '"gap_severity": 0.25, "competitive_density": 0.0, "persona_breadth": 0.25}'
+    )
+    topic_discovery_scoring_similarity_threshold: float = 0.60
+    topic_discovery_persona_affinity_weights: str = (
+        '{"provenance": 0.6, "embedding": 0.4}'
+    )
+    topic_discovery_max_subdomains_to_expand: int = 20
 
     # --- CPS Model (Citation Signal Predictor) ---
     cps_enabled: bool = True

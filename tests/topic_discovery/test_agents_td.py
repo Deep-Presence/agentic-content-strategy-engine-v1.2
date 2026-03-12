@@ -1525,3 +1525,166 @@ class TestComputeAllCoverageMetricsWithClusters:
         )
         result = compute_all_coverage_metrics([sr_a], dedup_result=dedup)
         assert result.cluster_based_overlap is True
+
+
+# ── Phase 3: Persona Metadata Tests ──────────────────────────────────────
+
+
+class TestResolvePersonaIds:
+    """Tests for _resolve_persona_ids helper."""
+
+    def test_exact_match(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        name_to_id = {"David Chen": "david", "Marcus Lee": "marcus"}
+        result = _resolve_persona_ids(["David Chen"], name_to_id)
+        assert result == ["david"]
+
+    def test_case_insensitive_match(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        name_to_id = {"David Chen": "david"}
+        result = _resolve_persona_ids(["david chen"], name_to_id)
+        assert result == ["david"]
+
+    def test_substring_match(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        name_to_id = {"David Chen — First-time Founder": "david"}
+        result = _resolve_persona_ids(["David Chen"], name_to_id)
+        assert result == ["david"]
+
+    def test_empty_input(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        assert _resolve_persona_ids([], {"a": "b"}) == []
+        assert _resolve_persona_ids(["x"], {}) == []
+
+    def test_deduplication(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        name_to_id = {"David": "david"}
+        result = _resolve_persona_ids(["David", "david", "DAVID"], name_to_id)
+        assert result == ["david"]
+
+    def test_non_string_ignored(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        name_to_id = {"David": "david"}
+        result = _resolve_persona_ids([None, "", 123, "David"], name_to_id)  # type: ignore[list-item]
+        assert result == ["david"]
+
+
+class TestSourceBPersonaCapture:
+    """Tests for persona metadata captured in Source B agent."""
+
+    @pytest.mark.asyncio
+    async def test_source_b_captures_persona_ids(self):
+        """Source B should populate persona_ids on SubdomainCandidate."""
+        llm_response = json.dumps({
+            "subdomains": [
+                {
+                    "name": "Cap Table Accuracy",
+                    "description": "Ensuring cap table data is correct",
+                    "source_personas": ["David Chen"],
+                    "pain_points_addressed": ["inaccurate cap tables", "equity confusion"],
+                    "confidence": 0.8,
+                }
+            ],
+            "metadata": {"round_number": 1, "subdomains_generated": 1},
+        })
+
+        with patch("core.topic_discovery.agents._run_completion") as mock_comp:
+            mock_comp.return_value = (None, llm_response)
+            result = await run_source_b_persona_brainstorm(
+                "persona profiles text",
+                "company context",
+                max_rounds=1,
+                persona_name_to_id={"David Chen": "david"},
+            )
+        assert len(result.candidates) == 1
+        c = result.candidates[0]
+        assert c.persona_ids == ["david"]
+        assert "inaccurate cap tables" in c.pain_points
+        assert "equity confusion" in c.pain_points
+
+    @pytest.mark.asyncio
+    async def test_source_b_without_persona_mapping(self):
+        """Without persona_name_to_id, persona_ids should be empty."""
+        llm_response = json.dumps({
+            "subdomains": [
+                {
+                    "name": "Test Topic",
+                    "description": "desc",
+                    "source_personas": ["SomeName"],
+                    "confidence": 0.5,
+                }
+            ],
+            "metadata": {"round_number": 1, "subdomains_generated": 1},
+        })
+
+        with patch("core.topic_discovery.agents._run_completion") as mock_comp:
+            mock_comp.return_value = (None, llm_response)
+            result = await run_source_b_persona_brainstorm(
+                "profiles", "context", max_rounds=1,
+            )
+        assert len(result.candidates) == 1
+        assert result.candidates[0].persona_ids == []
+
+
+class TestDedupMergesPersonaIds:
+    """Tests for persona_id merging through dedup clusters."""
+
+    @pytest.mark.asyncio
+    async def test_dedup_merges_persona_ids(self):
+        """When two candidates merge, their persona_ids are combined."""
+        from core.topic_discovery.agents import deduplicate_subdomains_with_clusters
+
+        c1 = SubdomainCandidate(
+            name="expense mgmt",
+            source=TDSource.source_b,
+            persona_ids=["david"],
+            pain_points=["slow reports"],
+        )
+        c2 = SubdomainCandidate(
+            name="expense management",
+            source=TDSource.source_b,
+            persona_ids=["marcus"],
+            pain_points=["audit failures"],
+        )
+
+        with patch("core.shared_tools.embedding_client.embed_texts") as mock_embed:
+            # Very similar embeddings → will merge
+            mock_embed.return_value = [[0.9, 0.1, 0.0], [0.88, 0.12, 0.0]]
+            result = await deduplicate_subdomains_with_clusters(
+                [c1, c2], threshold=0.85,
+            )
+
+        assert len(result.kept) == 1
+        kept = result.kept[0]
+        assert sorted(kept.persona_ids) == ["david", "marcus"]
+        assert "slow reports" in kept.pain_points
+        assert "audit failures" in kept.pain_points
+
+    @pytest.mark.asyncio
+    async def test_dedup_no_merge_preserves_persona_ids(self):
+        """Dissimilar candidates keep their own persona_ids."""
+        from core.topic_discovery.agents import deduplicate_subdomains_with_clusters
+
+        c1 = SubdomainCandidate(
+            name="billing", source=TDSource.source_b, persona_ids=["david"],
+        )
+        c2 = SubdomainCandidate(
+            name="devops", source=TDSource.source_b, persona_ids=["marcus"],
+        )
+
+        with patch("core.shared_tools.embedding_client.embed_texts") as mock_embed:
+            # Very different embeddings → no merge
+            mock_embed.return_value = [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+            result = await deduplicate_subdomains_with_clusters(
+                [c1, c2], threshold=0.85,
+            )
+
+        assert len(result.kept) == 2
+        assert result.kept[0].persona_ids == ["david"]
+        assert result.kept[1].persona_ids == ["marcus"]

@@ -102,7 +102,13 @@ class TopicAssignmentStatus(str, Enum):
 
 
 class TopicDiscoveryInput(BaseModel):
-    """Input for the Topic Discovery pipeline orchestrator."""
+    """Input for the Topic Discovery pipeline orchestrator.
+
+    auto_approve_checkpoints values:
+        1 = auto-approve taxonomy (HITL-1)
+        2 = auto-approve matrix (HITL-2)
+        3 = auto-approve subdomain selection (HITL-1.5, selects top_n_expand)
+    """
 
     company_name: str = ""
     domain: Optional[str] = None
@@ -117,6 +123,10 @@ class TopicDiscoveryInput(BaseModel):
     auto_approve_checkpoints: List[int] = Field(default_factory=list)
     max_expansion_rounds: int = 4
     dedup_threshold: float = 0.85
+    # On-demand expansion: how many top subdomains to expand (HITL-1.5 auto)
+    top_n_expand: int = Field(default=10, ge=1, le=50)
+    # Optional persona_id to focus subdomain scoring/expansion
+    persona_filter: Optional[str] = None
 
 
 class TopicDiscoveryOutput(BaseModel):
@@ -135,6 +145,8 @@ class TopicDiscoveryOutput(BaseModel):
     total_execution_time_s: float = 0.0
     status: TopicDiscoveryStatus = TopicDiscoveryStatus.draft
     error: Optional[str] = None
+    scored_subdomains: Optional[ScoredSubdomainList] = None
+    persona_affinity: Optional[PersonaAffinityIndex] = None
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +164,9 @@ class SubdomainCandidate(BaseModel):
     round_number: int = 1
     specialist_lens: Optional[str] = None
     confidence: float = 0.0
+    # Persona metadata from Source B (preserved through dedup)
+    persona_ids: List[str] = Field(default_factory=list)
+    pain_points: List[str] = Field(default_factory=list)
 
 
 class SourceResult(BaseModel):
@@ -227,6 +242,13 @@ class SubdomainNode(BaseModel):
     sort_order: int = 0
     children: List[SubdomainNode] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    # Algorithmic priority score (computed post-HITL-1, zero LLM calls)
+    priority_score: float = 0.0
+    priority_factors: Dict[str, float] = Field(default_factory=dict)
+    # Persona affinity map: {persona_id: 0-1 affinity score}
+    persona_affinity: Dict[str, float] = Field(default_factory=dict)
+    # Expansion lifecycle: not_expanded | expanding | expanded | failed
+    expansion_status: str = "not_expanded"
 
 
 class TaxonomyTree(BaseModel):
@@ -267,6 +289,9 @@ class TopicAssignment(BaseModel):
     status: TopicAssignmentStatus = TopicAssignmentStatus.not_started
     is_manually_added: bool = False
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    # Persona identity (replaces anonymous "Persona N" labels)
+    persona_id: str = ""
+    persona_name: str = ""
 
 
 class TopicAssignmentMatrix(BaseModel):
@@ -286,6 +311,68 @@ class TopicAssignmentMatrix(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Algorithmic Subdomain Scoring (zero LLM calls)
+# ---------------------------------------------------------------------------
+
+
+class SubdomainScore(BaseModel):
+    """Computed priority score for a single subdomain."""
+
+    subdomain_id: str = ""
+    subdomain_name: str = ""
+    composite_score: float = 0.0
+    signal_scores: Dict[str, float] = Field(default_factory=dict)
+    signal_weights: Dict[str, float] = Field(default_factory=dict)
+    signals_available: List[str] = Field(default_factory=list)
+    rank: int = 0
+    persona_affinity: Dict[str, float] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ScoredSubdomainList(BaseModel):
+    """Full scored & ranked subdomain list produced after HITL-1."""
+
+    id: str = Field(default_factory=_uuid)
+    version: int = 1
+    scores: List[SubdomainScore] = Field(default_factory=list)
+    total_scored: int = 0
+    signals_used: List[str] = Field(default_factory=list)
+    weights_config: Dict[str, float] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=_utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Persona Affinity Index
+# ---------------------------------------------------------------------------
+
+
+class PersonaSubdomainEntry(BaseModel):
+    """One (persona, subdomain) pair with affinity score and provenance."""
+
+    subdomain_id: str = ""
+    subdomain_name: str = ""
+    affinity_score: float = 0.0
+    provenance: str = ""  # "source_b" | "embedding" | "both"
+    pain_points: List[str] = Field(default_factory=list)
+
+
+class PersonaAffinityIndex(BaseModel):
+    """Per-persona index of subdomain affinity scores.
+
+    Computed after S2 merge using Source B provenance + embedding similarity.
+    Stored at: artifacts/topic_discovery/{slug}/persona_affinity/v{N}.json
+    """
+
+    version: int = 1
+    persona_entries: Dict[str, List[PersonaSubdomainEntry]] = Field(
+        default_factory=dict
+    )
+    total_personas: int = 0
+    total_subdomains: int = 0
+    created_at: str = Field(default_factory=_utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Manifest (filesystem versioning)
 # ---------------------------------------------------------------------------
 
@@ -300,6 +387,8 @@ class TopicDiscoveryManifest(BaseModel):
     status: TopicDiscoveryStatus = TopicDiscoveryStatus.draft
     taxonomy_version: int = 0
     matrix_version: int = 0
+    scoring_version: int = 0
+    persona_affinity_version: int = 0
     created_at: str = Field(default_factory=_utcnow)
     last_updated: Optional[str] = None
     source_results_written: List[str] = Field(default_factory=list)

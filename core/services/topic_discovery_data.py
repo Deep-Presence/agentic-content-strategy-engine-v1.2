@@ -35,6 +35,21 @@ class TopicDiscoveryDataServiceProtocol(Protocol):
         *,
         buyer_stage: Optional[str] = None,
         intent_type: Optional[str] = None,
+        persona_id: Optional[str] = None,
         page: int = 1,
         page_size: int = 50,
     ) -> dict: ...
+
+    async def get_scored_subdomains(
+        self,
+        effective_slug: str,
+        *,
+        version: Optional[int] = None,
+    ) -> Optional[dict]: ...
+
+    async def get_persona_affinity(
+        self,
+        effective_slug: str,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> Optional[dict]: ...

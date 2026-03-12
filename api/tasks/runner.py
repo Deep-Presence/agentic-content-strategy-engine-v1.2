@@ -1253,6 +1253,8 @@ async def run_topic_discovery_pipeline_task(
                 auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
                 max_expansion_rounds=getattr(request, "max_expansion_rounds", 4),
                 dedup_threshold=getattr(request, "dedup_threshold", 0.85),
+                top_n_expand=getattr(request, "top_n_expand", 10),
+                persona_filter=getattr(request, "persona_filter", None),
                 language=getattr(request, "language", "en"),
                 region=getattr(request, "region", None),
                 additional_constraints=getattr(request, "additional_constraints", None),

@@ -81,6 +81,7 @@ class JsonTopicDiscoveryDataService:
         *,
         buyer_stage: Optional[str] = None,
         intent_type: Optional[str] = None,
+        persona_id: Optional[str] = None,
         page: int = 1,
         page_size: int = 50,
     ) -> dict:
@@ -97,6 +98,8 @@ class JsonTopicDiscoveryDataService:
                 assignments = [a for a in assignments if getattr(a, "buyer_stage", None) == buyer_stage]
             if intent_type:
                 assignments = [a for a in assignments if getattr(a, "intent_type", None) == intent_type]
+            if persona_id:
+                assignments = [a for a in assignments if getattr(a, "persona_id", "") == persona_id]
 
             total = len(assignments)
             start = (page - 1) * page_size
@@ -112,4 +115,41 @@ class JsonTopicDiscoveryDataService:
                 "page": page,
                 "page_size": page_size,
             }
+        return await asyncio.to_thread(_read)
+
+    async def get_scored_subdomains(
+        self,
+        effective_slug: str,
+        *,
+        version: Optional[int] = None,
+    ) -> Optional[dict]:
+        def _read():
+            storage = self._storage(effective_slug)
+            if version is not None:
+                scored = storage.read_scoring(version)
+            else:
+                scored = storage.get_latest_scoring()
+            if scored is None:
+                return None
+            return scored.model_dump(mode="json")
+        return await asyncio.to_thread(_read)
+
+    async def get_persona_affinity(
+        self,
+        effective_slug: str,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        def _read():
+            storage = self._storage(effective_slug)
+            index = storage.get_latest_persona_affinity()
+            if index is None:
+                return None
+            data = index.model_dump(mode="json")
+            # Optional persona_id filter: return only entries for that persona
+            if persona_id and "persona_entries" in data:
+                filtered = {persona_id: data["persona_entries"].get(persona_id, [])}
+                data["persona_entries"] = filtered
+                data["total_personas"] = 1 if filtered[persona_id] else 0
+            return data
         return await asyncio.to_thread(_read)

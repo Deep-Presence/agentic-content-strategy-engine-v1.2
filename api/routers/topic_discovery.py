@@ -16,6 +16,9 @@ from api.schemas.topic_discovery import (
     ApprovalResponseTD,
     MatrixApprovalRequest,
     MatrixReadResponse,
+    PersonaAffinityResponse,
+    ScoredSubdomainsResponse,
+    SubdomainSelectionRequest,
     TaxonomyApprovalRequest,
     TaxonomyReadResponse,
     TopicDiscoveryStartRequest,
@@ -232,6 +235,55 @@ async def approve_taxonomy(
     )
 
 
+# ── Endpoint 3b: POST /{run_id}/approve/subdomains ────────────────
+
+
+@router.post("/{run_id}/approve/subdomains")
+async def approve_subdomains(
+    run_id: str,
+    body: SubdomainSelectionRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+) -> ApprovalResponseTD:
+    task = task_store.get_task(run_id)
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if task.company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    _validate_approval_window(task, "td_subdomain_selection")
+
+    nonce = (task.approval_payload or {}).get("checkpoint_nonce")
+    if not nonce:
+        raise HTTPException(
+            status_code=409, detail="No active approval checkpoint"
+        )
+
+    approval_data = {
+        "batch_decision": body.batch_decision,
+        "selected_subdomain_ids": body.selected_subdomain_ids,
+        "top_n": body.top_n,
+        "persona_filter": body.persona_filter,
+    }
+
+    try:
+        task_store.submit_approval(
+            run_id,
+            decision=body.batch_decision,
+            stage="td_subdomain_selection",
+            approval_data=approval_data,
+            expected_nonce=nonce,
+        )
+    except ApprovalWindowError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return ApprovalResponseTD(
+        status="accepted",
+        stage="td_subdomain_selection",
+        message=f"Subdomain selection submitted: {body.batch_decision}",
+    )
+
+
 # ── Endpoint 4: POST /{run_id}/approve/matrix ────────────────────────
 
 
@@ -335,4 +387,64 @@ async def get_latest_matrix(
         matrix=matrix,
         version=matrix.get("version", 0),
         total_assignments=matrix.get("total_assignments", 0),
+    )
+
+
+# ── Endpoint 7: GET /{slug}/scored-subdomains ─────────────────────
+
+
+@router.get("/{slug}/scored-subdomains")
+async def get_scored_subdomains(
+    slug: str,
+    http_request: Request,
+    _user: UserProfile = Depends(require_auth),
+    td_svc=Depends(get_td_data_service),
+) -> ScoredSubdomainsResponse:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    scored = await td_svc.get_scored_subdomains(slug)
+    if scored is None:
+        raise HTTPException(status_code=404, detail="No scored subdomains found")
+
+    return ScoredSubdomainsResponse(
+        slug=slug,
+        scored_subdomains=scored,
+        version=scored.get("version", 0),
+        total_scored=scored.get("total_scored", 0),
+        signals_used=scored.get("signals_used", []),
+    )
+
+
+# ── Endpoint 8: GET /{slug}/personas ──────────────────────────────
+
+
+@router.get("/{slug}/personas")
+async def get_persona_affinity(
+    slug: str,
+    http_request: Request,
+    persona_id: Optional[str] = None,
+    _user: UserProfile = Depends(require_auth),
+    td_svc=Depends(get_td_data_service),
+) -> PersonaAffinityResponse:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    affinity = await td_svc.get_persona_affinity(slug, persona_id=persona_id)
+    if affinity is None:
+        raise HTTPException(status_code=404, detail="No persona affinity data found")
+
+    return PersonaAffinityResponse(
+        slug=slug,
+        persona_entries=affinity.get("persona_entries", {}),
+        total_personas=affinity.get("total_personas", 0),
+        total_subdomains=affinity.get("total_subdomains", 0),
     )
