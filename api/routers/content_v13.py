@@ -9,6 +9,8 @@ Follows the same patterns as the existing content.py router
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import re
 from typing import Optional
 
@@ -40,6 +42,8 @@ from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation_v13 import ContentGenerationInputV13, EntryMode
 from core.models.organization import UserProfile
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/content/v13", tags=["content-v13"])
 
@@ -438,7 +442,10 @@ async def get_topic_content_status(
             artifacts_root=artifacts_root, slug=effective_slug,
         )
         matrix = td_storage.get_latest_matrix()
-    except (FileNotFoundError, ValueError):
+    except (FileNotFoundError, ValueError, json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "topic-content-status lookup failed for %s: %s", effective_slug, exc,
+        )
         matrix = None
 
     if matrix is None:

@@ -201,3 +201,31 @@ class TestTopicAssignmentToSelection:
         assignment.priority_score = 0.92
         sel = topic_assignment_to_selection(assignment, ["q1"], ["t1"])
         assert "0.92" in sel.rationale
+
+    def test_cluster_name_derived_from_mapping(self):
+        """L2 fix: cluster_name should be derived, not hardcoded empty."""
+        assignment = _make_assignment(
+            buyer_stage=BuyerStage.TOFU,
+            intent_type=IntentType.informational,
+        )
+        sel = topic_assignment_to_selection(assignment, ["q1"], ["t1"])
+        # TOFU × informational → primary C5 → "Definition"
+        assert sel.cluster_name == "Definition"
+
+    def test_cluster_name_bofu_commercial(self):
+        """L2 fix: BOFU × commercial → primary C8 → 'Branded Evaluation'."""
+        assignment = _make_assignment(
+            buyer_stage=BuyerStage.BOFU,
+            intent_type=IntentType.commercial,
+        )
+        sel = topic_assignment_to_selection(assignment, ["q1"], ["t1"])
+        assert sel.cluster_name == "Branded Evaluation"
+
+    def test_cluster_name_empty_for_excluded_combo(self):
+        """L2 fix: excluded combos should still return empty cluster_name."""
+        assignment = _make_assignment(
+            buyer_stage=BuyerStage.TOFU,
+            intent_type=IntentType.transactional,
+        )
+        sel = topic_assignment_to_selection(assignment, [], [])
+        assert sel.cluster_name == ""

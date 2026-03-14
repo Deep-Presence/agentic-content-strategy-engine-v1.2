@@ -754,6 +754,12 @@ async def _deduplicate_queries_cross_topic(
 
     for q, emb in zip(queries, all_embeddings):
         if emb is None:
+            # M4 fix: keep query even if embedding fails — it's valid, just can't dedup
+            logger.warning(
+                "Embedding failed for query %s — keeping without dedup check",
+                q.query_id,
+            )
+            kept.append(q)
             continue
         if not kept_embs:
             q.embedding = emb
@@ -775,11 +781,14 @@ async def _deduplicate_queries_cross_topic(
             kept.append(q)
             kept_embs.append(emb)
         else:
-            # Merge source_topic_ids into the surviving query
+            # Merge source_topic_ids and cluster metadata into the surviving query
             survivor = kept[max_idx]
             for tid in q.source_topic_ids:
                 if tid not in survivor.source_topic_ids:
                     survivor.source_topic_ids.append(tid)
+            # H4 fix: merge cluster_id from dropped query
+            if q.cluster_id and q.cluster_id not in survivor.merged_cluster_ids:
+                survivor.merged_cluster_ids.append(q.cluster_id)
             logger.debug(
                 "Cross-topic dedup: dropped '%s' (sim=%.3f with '%s')",
                 q.query_text[:60], max_sim, survivor.query_text[:60],
@@ -870,15 +879,17 @@ async def generate_queries_from_topics(
 
             for q in raw_queries:
                 query_counter += 1
+                cid = q.get("cluster_id") or ""
                 all_queries.append(
                     GeneratedQuery(
                         query_id=f"tq_{query_counter}",
-                        cluster_id=q.get("cluster_id") or "",
+                        cluster_id=cid,
                         cluster_name=q.get("cluster_name") or "",
                         query_text=q.get("query_text") or "",
                         buyer_stage=q.get("buyer_stage") or stage,
                         persona_tag=q.get("persona_tag") or topic.audience_segment,
                         source_topic_ids=[topic.id],
+                        merged_cluster_ids=[cid] if cid else [],
                     )
                 )
         except Exception as e:

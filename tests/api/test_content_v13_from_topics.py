@@ -7,10 +7,16 @@ Plus schema validation and task runner integration.
 """
 from __future__ import annotations
 
+import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+
+# Fixed UUIDs for test fixtures (M2 fix requires valid UUIDs)
+_TA_1 = str(uuid.uuid5(uuid.NAMESPACE_DNS, "ta-1"))
+_TA_2 = str(uuid.uuid5(uuid.NAMESPACE_DNS, "ta-2"))
+_TA_3 = str(uuid.uuid5(uuid.NAMESPACE_DNS, "ta-3"))
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +34,7 @@ class TestTopicContentStartRequestSchema:
             company_name="Test Co",
             domain="test.co",
             effective_slug="test-co",
-            topic_assignment_ids=["ta-1"],
+            topic_assignment_ids=[_TA_1],
         )
         assert req.auto_approve is False
         assert len(req.platforms) == 4
@@ -40,7 +46,7 @@ class TestTopicContentStartRequestSchema:
             company_name="Test Co",
             domain="test.co",
             effective_slug="test-co__product",
-            topic_assignment_ids=["ta-1", "ta-2", "ta-3"],
+            topic_assignment_ids=[_TA_1, _TA_2, _TA_3],
             product_slug="product",
             product_name="Product",
             auto_approve=True,
@@ -68,7 +74,32 @@ class TestTopicContentStartRequestSchema:
                 company_name="Test Co",
                 domain="test.co",
                 effective_slug="test-co",
-                topic_assignment_ids=[f"ta-{i}" for i in range(21)],
+                topic_assignment_ids=[str(uuid.uuid4()) for _ in range(21)],
+            )
+
+    def test_non_uuid_topic_ids_rejected(self):
+        """M2 fix: non-UUID strings must be rejected."""
+        from api.schemas.content_v13 import TopicContentStartRequest
+
+        with pytest.raises(Exception):
+            TopicContentStartRequest(
+                company_name="Test Co",
+                domain="test.co",
+                effective_slug="test-co",
+                topic_assignment_ids=["not-a-uuid"],
+            )
+
+    def test_invalid_platform_rejected(self):
+        """M2 fix: unsupported platform names must be rejected."""
+        from api.schemas.content_v13 import TopicContentStartRequest
+
+        with pytest.raises(Exception):
+            TopicContentStartRequest(
+                company_name="Test Co",
+                domain="test.co",
+                effective_slug="test-co",
+                topic_assignment_ids=[_TA_1],
+                platforms=["invalid_platform"],
             )
 
 
@@ -159,7 +190,7 @@ class TestStartFromTopics:
                     "company_name": "Test Co",
                     "domain": "testco.com",
                     "effective_slug": "test-co",
-                    "topic_assignment_ids": ["ta-1", "ta-2"],
+                    "topic_assignment_ids": [_TA_1, _TA_2],
                 },
             )
         assert resp.status_code == 202
@@ -175,7 +206,7 @@ class TestStartFromTopics:
                 "company_name": "Other Corp",
                 "domain": "othercorp.com",
                 "effective_slug": "other-corp",
-                "topic_assignment_ids": ["ta-1"],
+                "topic_assignment_ids": [_TA_1],
             },
         )
         assert resp.status_code == 403
@@ -187,7 +218,7 @@ class TestStartFromTopics:
                 "company_name": "Test Co",
                 "domain": "testco.com",
                 "effective_slug": "test-co",
-                "topic_assignment_ids": ["ta-1"],
+                "topic_assignment_ids": [_TA_1],
             },
         )
         assert resp.status_code == 401
@@ -199,7 +230,7 @@ class TestStartFromTopics:
                 "company_name": "Test Co",
                 "domain": "testco.com",
                 "effective_slug": "test-co",
-                "topic_assignment_ids": ["ta-1"],
+                "topic_assignment_ids": [_TA_1],
             },
         )
         assert resp.status_code == 403
@@ -211,7 +242,7 @@ class TestStartFromTopics:
                 "company_name": "Test Co",
                 "domain": "testco.com",
                 "effective_slug": "../malicious",
-                "topic_assignment_ids": ["ta-1"],
+                "topic_assignment_ids": [_TA_1],
             },
         )
         assert resp.status_code == 400
@@ -228,6 +259,33 @@ class TestStartFromTopics:
         )
         assert resp.status_code == 422
 
+    def test_non_uuid_topic_ids_422(self, client: TestClient):
+        """M2 fix: non-UUID topic_assignment_ids should be rejected at API."""
+        resp = client.post(
+            "/api/v1/content/v13/from-topics",
+            json={
+                "company_name": "Test Co",
+                "domain": "testco.com",
+                "effective_slug": "test-co",
+                "topic_assignment_ids": ["not-a-uuid"],
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_invalid_platform_422(self, client: TestClient):
+        """M2 fix: unsupported platforms should be rejected at API."""
+        resp = client.post(
+            "/api/v1/content/v13/from-topics",
+            json={
+                "company_name": "Test Co",
+                "domain": "testco.com",
+                "effective_slug": "test-co",
+                "topic_assignment_ids": [_TA_1],
+                "platforms": ["invalid_engine"],
+            },
+        )
+        assert resp.status_code == 422
+
     def test_product_slug_passed(self, client: TestClient):
         with patch(
             "api.routers.content_v13.asyncio.create_task",
@@ -239,7 +297,7 @@ class TestStartFromTopics:
                     "company_name": "Test Co",
                     "domain": "testco.com",
                     "effective_slug": "test-co__product",
-                    "topic_assignment_ids": ["ta-1"],
+                    "topic_assignment_ids": [_TA_1],
                     "product_slug": "product",
                     "product_name": "Product",
                 },
@@ -330,6 +388,36 @@ class TestGetTopicContentStatus:
             "/api/v1/content/v13/other-corp/topic-content-status",
         )
         assert resp.status_code == 403
+
+    def test_json_decode_error_returns_empty(self, client: TestClient):
+        """M1 fix: corrupt JSON should not 500."""
+        import json as _json
+
+        with patch(
+            "core.topic_discovery.storage.TopicDiscoveryStorage",
+        ) as mock_cls:
+            mock_cls.return_value.get_latest_matrix.side_effect = _json.JSONDecodeError(
+                "Expecting value", "doc", 0,
+            )
+            resp = client.get(
+                "/api/v1/content/v13/test-co/topic-content-status",
+            )
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+
+    def test_os_error_returns_empty(self, client: TestClient):
+        """M1 fix: permission denied / OS errors should not 500."""
+        with patch(
+            "core.topic_discovery.storage.TopicDiscoveryStorage",
+        ) as mock_cls:
+            mock_cls.return_value.get_latest_matrix.side_effect = OSError(
+                "Permission denied"
+            )
+            resp = client.get(
+                "/api/v1/content/v13/test-co/topic-content-status",
+            )
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
 
     def test_unauthenticated_401(self, public_client: TestClient):
         resp = public_client.get(

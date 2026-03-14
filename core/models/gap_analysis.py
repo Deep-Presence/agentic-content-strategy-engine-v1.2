@@ -173,6 +173,9 @@ class GeneratedQuery(BaseModel):
     # Topic Discovery integration: tracks which TopicAssignment(s) spawned this query.
     # List because cross-topic dedup can merge queries from multiple topics.
     source_topic_ids: List[str] = Field(default_factory=list)
+    # All cluster IDs that contributed to this query (original + merged duplicates).
+    # Populated during cross-topic dedup when queries from different clusters merge.
+    merged_cluster_ids: List[str] = Field(default_factory=list)
 
 
 class CitationRef(BaseModel):

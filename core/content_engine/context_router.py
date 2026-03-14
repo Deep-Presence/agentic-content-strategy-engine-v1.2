@@ -29,6 +29,7 @@ from core.models.content_generation_v13 import (
     TopicSelection,
     WorkerQueryContext,
 )
+from core.gap_analysis.topic_cluster_map import get_cluster_mapping, get_cluster_name
 from core.models.topic_discovery import TopicAssignment
 
 logger = logging.getLogger(__name__)
@@ -477,11 +478,13 @@ def topic_assignment_to_selection(
         f"Priority score: {assignment.priority_score:.2f}."
     )
 
-    # Determine cluster name from first query's cluster (or infer from mapping)
+    # L2 fix: derive cluster_name from buyer_stage × intent_type mapping
     cluster_name = ""
-    if query_ids:
-        # Will be populated by the pipeline from query data
-        cluster_name = ""
+    mapping = get_cluster_mapping(
+        assignment.buyer_stage.value, assignment.intent_type.value,
+    )
+    if mapping and mapping.primary:
+        cluster_name = get_cluster_name(mapping.primary[0])
 
     return TopicSelection(
         rank=rank,

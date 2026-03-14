@@ -151,6 +151,19 @@ class TestContentRepoListByTopicAssignment:
         assert pieces == []
         session.execute.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_invalid_uuid_returns_empty(self):
+        """M3 fix: malformed UUID string should return [] not raise."""
+        from core.db.repositories.content_repo import ContentRepository
+
+        session = AsyncMock()
+        repo = ContentRepository(session)
+        pieces = await repo.list_by_topic_assignment("not-a-uuid")
+
+        assert pieces == []
+        # No DB query should have been executed
+        session.execute.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # 4. persist_content_pieces includes topic_assignment_id

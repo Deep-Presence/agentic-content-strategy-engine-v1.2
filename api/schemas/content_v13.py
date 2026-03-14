@@ -138,6 +138,9 @@ class ApprovalResponseV13(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+SUPPORTED_SEARCH_PLATFORMS: set[str] = {"perplexity", "openai", "gemini", "claude"}
+
+
 class TopicContentStartRequest(BaseModel):
     """Launch the TD → GA → CE pipeline for approved topic assignments."""
 
@@ -145,6 +148,20 @@ class TopicContentStartRequest(BaseModel):
     domain: str
     effective_slug: str
     topic_assignment_ids: List[str] = Field(min_length=1, max_length=20)
+
+    @field_validator("topic_assignment_ids")
+    @classmethod
+    def _validate_topic_ids(cls, v: List[str]) -> List[str]:
+        import uuid as _uuid
+
+        for tid in v:
+            try:
+                _uuid.UUID(tid)
+            except ValueError:
+                raise ValueError(
+                    f"Each topic_assignment_id must be a valid UUID, got: {tid!r}"
+                )
+        return v
 
     # Product scope
     product_slug: Optional[str] = None
@@ -156,6 +173,17 @@ class TopicContentStartRequest(BaseModel):
     platforms: List[str] = Field(
         default_factory=lambda: ["perplexity", "openai", "gemini", "claude"]
     )
+
+    @field_validator("platforms")
+    @classmethod
+    def _validate_platforms(cls, v: List[str]) -> List[str]:
+        invalid = [p for p in v if p not in SUPPORTED_SEARCH_PLATFORMS]
+        if invalid:
+            raise ValueError(
+                f"Unsupported platform(s): {invalid}. "
+                f"Allowed: {sorted(SUPPORTED_SEARCH_PLATFORMS)}"
+            )
+        return v
 
 
 class TopicContentStatusItem(BaseModel):

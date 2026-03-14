@@ -64,11 +64,14 @@ class ContentRepository(SQLAlchemyRepository[ContentPieceModel]):
         topic_assignment_id: _uuid.UUID | str,
     ) -> Sequence[ContentPieceModel]:
         """List all content pieces linked to a specific topic assignment."""
-        pk = (
-            _uuid.UUID(str(topic_assignment_id))
-            if isinstance(topic_assignment_id, str)
-            else topic_assignment_id
-        )
+        try:
+            pk = (
+                _uuid.UUID(str(topic_assignment_id))
+                if isinstance(topic_assignment_id, str)
+                else topic_assignment_id
+            )
+        except ValueError:
+            return []
         stmt = (
             select(ContentPieceModel)
             .where(ContentPieceModel.topic_assignment_id == pk)
