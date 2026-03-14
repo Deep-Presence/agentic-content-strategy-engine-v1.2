@@ -23,10 +23,18 @@ from api.schemas.content_v13 import (
     ContentStartRequestV13,
     PipelineRunResponseV13,
     TopicApprovalRequest,
+    TopicContentStartRequest,
+    TopicContentStatusItem,
+    TopicContentStatusResponse,
 )
 from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask, TaskStatus
-from api.tasks.runner import _derive_slug, _resolve_scope_async, run_content_v13_pipeline_task
+from api.tasks.runner import (
+    _derive_slug,
+    _resolve_scope_async,
+    run_content_v13_pipeline_task,
+    run_td_content_pipeline_task,
+)
 from core.auth.service import AuthServiceProtocol
 from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation_v13 import ContentGenerationInputV13, EntryMode
@@ -341,4 +349,111 @@ async def approve_content(
         stage="content_review",
         brief_id=body.brief_id,
         message=f"Content {body.brief_id} {body.decision} submitted",
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /from-topics — Launch TD → GA → CE pipeline
+# ---------------------------------------------------------------------------
+
+
+@router.post("/from-topics", status_code=202)
+async def start_from_topics(
+    body: TopicContentStartRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+    event_bus: EventBus = Depends(get_event_bus),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
+) -> PipelineRunResponseV13:
+    """Launch the TD → GA → CE pipeline for approved topic assignments."""
+    # Tenant isolation
+    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
+    company_slug = _derive_slug(body.company_name)
+    if not user_company_slug or company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Cannot start pipeline for another company")
+
+    # Validate effective_slug format
+    if not _SLUG_PATTERN.match(body.effective_slug):
+        raise HTTPException(status_code=400, detail="Invalid effective_slug format")
+
+    # Create task
+    task = task_store.create_task(
+        pipeline="td_content",
+        company_slug=company_slug,
+        product_slug=body.product_slug,
+    )
+
+    handle = asyncio.create_task(
+        run_td_content_pipeline_task(
+            task_id=task.task_id,
+            effective_slug=body.effective_slug,
+            topic_assignment_ids=body.topic_assignment_ids,
+            company_name=body.company_name,
+            domain=body.domain,
+            task_store=task_store,
+            event_bus=event_bus,
+            product_slug=body.product_slug,
+            product_name=body.product_name,
+            product_description=body.product_description,
+            auto_approve=body.auto_approve,
+            platforms=body.platforms,
+        )
+    )
+    task_store.register_task_handle(task.task_id, handle)
+
+    return PipelineRunResponseV13(
+        run_id=task.task_id,
+        status="started",
+        entry_mode="topic_discovery",
+        message=f"TD→Content pipeline started for {len(body.topic_assignment_ids)} topics",
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /topic-content-status — Per-assignment status
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{effective_slug}/topic-content-status")
+async def get_topic_content_status(
+    effective_slug: str,
+    http_request: Request,
+    _user: UserProfile = Depends(require_auth),
+) -> TopicContentStatusResponse:
+    """Get per-assignment content status for a TD-driven content run."""
+    if not _SLUG_PATTERN.match(effective_slug):
+        raise HTTPException(status_code=400, detail="Invalid effective_slug format")
+
+    # Tenant isolation: effective_slug must start with the user's company slug
+    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or not effective_slug.startswith(user_company_slug):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        from core.topic_discovery.storage import TopicDiscoveryStorage
+
+        artifacts_root = http_request.app.state.artifacts_root
+        td_storage = TopicDiscoveryStorage(
+            artifacts_root=artifacts_root, slug=effective_slug,
+        )
+        matrix = td_storage.get_latest_matrix()
+    except (FileNotFoundError, ValueError):
+        matrix = None
+
+    if matrix is None:
+        return TopicContentStatusResponse(effective_slug=effective_slug)
+
+    items = []
+    for a in matrix.assignments:
+        items.append(TopicContentStatusItem(
+            topic_assignment_id=a.id,
+            topic_text=a.topic_text,
+            status=a.status.value if hasattr(a.status, "value") else str(a.status),
+        ))
+
+    return TopicContentStatusResponse(
+        effective_slug=effective_slug,
+        total_assignments=len(items),
+        items=items,
     )

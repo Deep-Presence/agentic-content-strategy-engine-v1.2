@@ -60,6 +60,7 @@ class CompanyResponse(BaseModel):
     slug: str
     name: str
     domain: str
+    industry: Optional[str] = None
 
 
 class LoginResponse(BaseModel):

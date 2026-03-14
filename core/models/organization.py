@@ -46,6 +46,7 @@ class Company(BaseModel):
     name: str
     domain: str
     additional_domains: List[str] = Field(default_factory=list)
+    industry: Optional[str] = None
     products: List[Product] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)

@@ -1384,3 +1384,219 @@ async def run_topic_expansion_pipeline_task(
     finally:
         task_store.release_slug_lock(f"topic_expansion:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
+
+
+# ── TD → Content pipeline runner ──────────────────────────────────
+
+
+async def run_td_content_pipeline_task(
+    task_id: str,
+    effective_slug: str,
+    topic_assignment_ids: List[str],
+    company_name: str,
+    domain: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    *,
+    product_slug: Optional[str] = None,
+    product_name: Optional[str] = None,
+    product_description: Optional[str] = None,
+    auto_approve: bool = False,
+    platforms: Optional[List[str]] = None,
+) -> None:
+    """Background task wrapper for the TD → GA → CE orchestrator.
+
+    Acquires semaphore, resolves DB context, calls
+    run_td_to_content_pipeline(), and handles completion/failure.
+    """
+    from core.orchestration.td_content_orchestrator import (
+        run_td_to_content_pipeline,
+    )
+
+    company_slug = _derive_slug(company_name)
+
+    session_factory, run_id, company_id = await _resolve_db_context(
+        company_slug, effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            effective_slug, "content",
+        )
+
+    try:
+        async with task_store.semaphore:
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "td_content"})
+
+            output = await run_td_to_content_pipeline(
+                effective_slug=effective_slug,
+                topic_assignment_ids=topic_assignment_ids,
+                company_name=company_name,
+                domain=domain,
+                platforms=platforms,
+                auto_approve=auto_approve,
+                product_slug=product_slug,
+                product_name=product_name,
+                product_description=product_description,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            result = {
+                "company_slug": output.company_slug,
+                "total_briefs": output.total_briefs,
+                "total_approved": output.total_approved,
+                "total_rejected": output.total_rejected,
+                "pieces": [
+                    {
+                        "brief_id": p.brief_id,
+                        "title": p.title,
+                        "status": p.status.value if hasattr(p.status, "value") else str(p.status),
+                        "topic_assignment_id": p.topic_assignment_id,
+                    }
+                    for p in output.pieces
+                ],
+                "produced_artifacts": [{"type": "td_content", "slug": effective_slug}],
+            }
+            task_store.update_task(task_id, status=TaskStatus.COMPLETED, result=result)
+            event_bus.publish(task_id, "completed", {"pipeline": "td_content"})
+
+    except asyncio.CancelledError:
+        logger.info("TD→Content pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("TD→Content pipeline failed: %s", exc)
+        task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        task_store.release_slug_lock(f"td_content:{effective_slug}")
+        task_store.remove_task_handle(task_id)
+
+
+# ---------------------------------------------------------------------------
+# Onboarding Pipeline
+# ---------------------------------------------------------------------------
+
+
+async def run_onboarding_task(
+    task_id: str,
+    request: Any,
+    company_name: str,
+    company_domain: str,
+    company_slug: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Onboarding Pipeline Orchestrator.
+
+    Acquires task_store semaphore ONCE for the entire orchestration.
+    company_name/domain/slug resolved by the router from auth context.
+    """
+    from core.models.onboarding import OnboardingInput, OnboardingStatus
+    from core.onboarding.orchestrator import run_onboarding_pipeline
+
+    session_factory: Any = None
+    run_id: Any = None
+
+    try:
+        session_factory, run_id, company_id = await _resolve_db_context(
+            company_slug, company_slug,
+        )
+        if session_factory and run_id and company_id:
+            await _create_pipeline_run(
+                session_factory, run_id, company_id,
+                company_slug, "onboarding",
+            )
+
+        async with task_store.semaphore:
+            input_data = OnboardingInput(
+                company_name=company_name,
+                domain=company_domain,
+                company_slug=company_slug,
+                industry=getattr(request, "industry", None),
+                seed_personas=getattr(request, "seed_personas", []),
+                seed_urls=[str(u) for u in getattr(request, "seed_urls", [])],
+                max_pages=getattr(request, "max_pages", 200),
+                max_depth=getattr(request, "max_depth", 4),
+                max_personas=getattr(request, "max_personas", 5),
+                max_authors=getattr(request, "max_authors", 3),
+                max_queries=getattr(request, "max_queries", 75),
+                platforms=getattr(request, "platforms", ["perplexity", "openai", "gemini", "claude"]),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                force_rerun=getattr(request, "force_rerun", False),
+            )
+
+            output = await run_onboarding_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "onboarding_status": output.onboarding_status.value,
+                "total_execution_time_s": output.total_execution_time_s,
+                "audit_run_id": output.audit_run_id,
+                "company_context_path": output.company_context_path,
+                "persona_dir": output.persona_dir,
+                "style_guide_path": output.style_guide_path,
+                "gap_analysis_dir": output.gap_analysis_dir,
+                "topic_discovery_id": output.topic_discovery_id,
+                "phases": {
+                    k: {"status": v.status, "time_s": v.execution_time_s}
+                    for k, v in output.phases.items()
+                },
+                "produced_artifacts": [
+                    {"type": sr.pipeline, "slug": company_slug}
+                    for sr in output.sub_results.values()
+                    if sr.status == "completed"
+                ],
+            }
+
+            is_failed = output.onboarding_status == OnboardingStatus.failed
+            task_status = TaskStatus.FAILED if is_failed else TaskStatus.COMPLETED
+
+            error_msg = None
+            if is_failed:
+                for sr in output.sub_results.values():
+                    if sr.error:
+                        error_msg = sr.error
+                        break
+
+            task_store.update_task(
+                task_id, status=task_status, result=result,
+                **({"error": error_msg} if error_msg else {}),
+            )
+
+            if is_failed:
+                await _mark_pipeline_run_failed(
+                    session_factory, run_id, error_msg or "onboarding failed",
+                )
+            else:
+                await _mark_pipeline_run_complete(session_factory, run_id)
+
+    except asyncio.CancelledError:
+        logger.info("Onboarding pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("Onboarding pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        task_store.release_slug_lock(f"onboarding:{company_slug}")
+        task_store.remove_task_handle(task_id)

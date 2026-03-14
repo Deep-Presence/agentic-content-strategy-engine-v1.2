@@ -48,6 +48,7 @@ class CompanyProfileSettingsResponse(BaseModel):
     name: str
     domain: str
     additional_domains: List[str] = Field(default_factory=list)
+    industry: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -58,6 +59,7 @@ class UpdateCompanyProfileRequest(BaseModel):
     name: Optional[str] = None
     domain: Optional[str] = None
     additional_domains: Optional[List[str]] = None
+    industry: Optional[str] = Field(default=None, max_length=200)
 
 
 # ── Phase 1C: Pipeline Defaults ───────────────────────────

@@ -80,6 +80,7 @@ class DbAuthService:
             name=model.name,
             domain=model.domain,
             additional_domains=model.additional_domains or [],
+            industry=model.industry,
             products=[
                 Product(
                     id=str(p.id),

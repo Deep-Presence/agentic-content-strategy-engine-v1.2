@@ -169,6 +169,7 @@ async def persist_s2(
             repo = GapAnalysisRepository(session)
             items: list[dict[str, object]] = []
             for q in queries:
+                source_ids = getattr(q, "source_topic_ids", None) or []
                 items.append({
                     "id": _uuid.uuid4(),
                     "run_id": run_id,
@@ -178,6 +179,7 @@ async def persist_s2(
                     "query_text": q.query_text,
                     "buyer_stage": getattr(q, "buyer_stage", None),
                     "persona_tag": getattr(q, "persona_tag", None),
+                    "source_topic_ids": source_ids if source_ids else None,
                 })
             if items:
                 await repo.bulk_insert_run_queries(items)
@@ -491,6 +493,7 @@ async def persist_s6(
                 if gap.content_brief:
                     content_brief = gap.content_brief.model_dump(mode="json") if hasattr(gap.content_brief, "model_dump") else gap.content_brief
 
+                source_ids = getattr(gap, "source_topic_ids", None) or []
                 gap_rows.append({
                     "id": gap_id,
                     "run_id": run_id,
@@ -505,6 +508,7 @@ async def persist_s6(
                     "gap": _safe_float(gap.gap),
                     "classification": _classify(gap.interpretation or "no_data"),
                     "content_brief": content_brief,
+                    "source_topic_ids": source_ids if source_ids else None,
                 })
 
                 for rank, ex in enumerate(exemplars[:5], start=1):

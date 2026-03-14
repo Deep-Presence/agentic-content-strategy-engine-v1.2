@@ -131,3 +131,46 @@ class ApprovalResponseV13(BaseModel):
     stage: str = ""
     brief_id: Optional[str] = None
     message: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Topic Discovery → Content Pipeline
+# ---------------------------------------------------------------------------
+
+
+class TopicContentStartRequest(BaseModel):
+    """Launch the TD → GA → CE pipeline for approved topic assignments."""
+
+    company_name: str
+    domain: str
+    effective_slug: str
+    topic_assignment_ids: List[str] = Field(min_length=1, max_length=20)
+
+    # Product scope
+    product_slug: Optional[str] = None
+    product_name: Optional[str] = None
+    product_description: Optional[str] = None
+
+    # Options
+    auto_approve: bool = False
+    platforms: List[str] = Field(
+        default_factory=lambda: ["perplexity", "openai", "gemini", "claude"]
+    )
+
+
+class TopicContentStatusItem(BaseModel):
+    """Per-assignment status in a topic content run."""
+
+    topic_assignment_id: str
+    topic_text: str
+    status: str
+    content_piece_id: Optional[str] = None
+    content_title: Optional[str] = None
+
+
+class TopicContentStatusResponse(BaseModel):
+    """Response for topic content status query."""
+
+    effective_slug: str
+    total_assignments: int = 0
+    items: List[TopicContentStatusItem] = Field(default_factory=list)

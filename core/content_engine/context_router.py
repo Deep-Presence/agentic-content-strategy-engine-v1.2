@@ -26,8 +26,10 @@ from core.models.content_generation_v13 import (
     ClusterSummary,
     PlannerScorecard,
     QueryScorecard,
+    TopicSelection,
     WorkerQueryContext,
 )
+from core.models.topic_discovery import TopicAssignment
 
 logger = logging.getLogger(__name__)
 
@@ -362,3 +364,131 @@ def format_worker_context_as_markdown(
         lines.append("")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Topic Discovery Context Extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_topic_contexts(
+    analysis_json: Dict[str, Any],
+    topic_query_map: Dict[str, List[str]],
+) -> Dict[str, WorkerQueryContext]:
+    """Extract per-topic WorkerQueryContext from topic-scoped analysis.
+
+    For each topic, aggregates exemplars across all its queries and uses
+    the highest-gap query as the primary context. Returns dict keyed by
+    the FIRST query_id of each topic (compat with build_briefs_parallel
+    which does ``contexts[topic.query_ids[0]]``).
+
+    Args:
+        analysis_json: The full AnalysisResult dict (from analysis.json).
+        topic_query_map: Maps topic_assignment_id → [query_ids].
+
+    Returns:
+        Dict mapping first_query_id → WorkerQueryContext.
+    """
+    gaps: List[Dict[str, Any]] = analysis_json.get("gaps", [])
+    cluster_specs: List[Dict[str, Any]] = analysis_json.get("cluster_specs", [])
+
+    gap_by_id: Dict[str, Dict[str, Any]] = {
+        g.get("query_id", ""): g for g in gaps
+    }
+    spec_by_name: Dict[str, Dict[str, Any]] = {
+        s.get("cluster_name", ""): s for s in cluster_specs
+    }
+
+    contexts: Dict[str, WorkerQueryContext] = {}
+
+    for topic_id, query_ids in topic_query_map.items():
+        if not query_ids:
+            continue
+
+        # Gather all gaps for this topic
+        topic_gaps = [gap_by_id[qid] for qid in query_ids if qid in gap_by_id]
+        if not topic_gaps:
+            continue
+
+        # Use highest-gap query as primary
+        primary_gap = max(topic_gaps, key=lambda g: g.get("gap") or 0.0)
+
+        # Aggregate exemplars across all queries (dedupe by URL)
+        all_exemplars: List[Dict[str, Any]] = []
+        seen_urls: set[str] = set()
+        for g in topic_gaps:
+            for ex in g.get("top_cited_exemplars", []):
+                url = ex.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    all_exemplars.append(ex)
+
+        # Use primary gap's cluster for spec lookup
+        cluster_name = primary_gap.get("cluster_name", "") or ""
+        cluster_spec = spec_by_name.get(cluster_name, {})
+
+        # Key by first query_id (compat with build_briefs_parallel)
+        key_qid = query_ids[0]
+        contexts[key_qid] = WorkerQueryContext(
+            query_gap=primary_gap,
+            cluster_spec=cluster_spec,
+            exemplars=all_exemplars[:5],  # Cap at 5 exemplars
+            gap_content_brief=primary_gap.get("content_brief"),
+            company_best_text=primary_gap.get("best_company_unit_text", "") or "",
+            company_best_url=primary_gap.get("best_company_url", "") or "",
+        )
+
+    logger.info(
+        "Extracted topic contexts for %d topics (%d total query groups)",
+        len(contexts), len(topic_query_map),
+    )
+    return contexts
+
+
+def topic_assignment_to_selection(
+    assignment: TopicAssignment,
+    query_ids: List[str],
+    query_texts: List[str],
+    rank: int = 0,
+) -> TopicSelection:
+    """Convert a TopicAssignment → TopicSelection for Brief Builder.
+
+    Maps TD metadata into the format the Brief Builder expects,
+    bypassing the Strategic Planner.
+
+    Args:
+        assignment: The approved TopicAssignment from TD.
+        query_ids: Query IDs generated for this assignment.
+        query_texts: Corresponding query text strings.
+        rank: Priority rank (0 = highest).
+
+    Returns:
+        TopicSelection ready for the Brief Builder.
+    """
+    # Map buyer stage to estimated impact
+    impact_map = {"bofu": "high", "mofu": "medium", "tofu": "medium"}
+    impact = impact_map.get(assignment.buyer_stage.value, "medium")
+
+    # Build rationale from TD metadata
+    rationale = (
+        f"Topic Discovery: {assignment.subdomain_name} → "
+        f"{assignment.buyer_stage.value}/{assignment.intent_type.value} "
+        f"for {assignment.audience_segment}. "
+        f"Priority score: {assignment.priority_score:.2f}."
+    )
+
+    # Determine cluster name from first query's cluster (or infer from mapping)
+    cluster_name = ""
+    if query_ids:
+        # Will be populated by the pipeline from query data
+        cluster_name = ""
+
+    return TopicSelection(
+        rank=rank,
+        query_ids=query_ids,
+        query_texts=query_texts,
+        cluster_name=cluster_name,
+        rationale=rationale,
+        consolidation_note=f"TD topic: {assignment.topic_text}",
+        estimated_impact=impact,
+    )

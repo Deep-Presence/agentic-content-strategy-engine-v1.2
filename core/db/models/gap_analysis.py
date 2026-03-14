@@ -47,6 +47,9 @@ class RunQueryModel(UUIDPKMixin, Base):
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
     buyer_stage: Mapped[str | None] = mapped_column(String, nullable=True)
     persona_tag: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_topic_ids: Mapped[list[str] | None] = mapped_column(
+        ARRAY(Text), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -137,6 +140,9 @@ class QueryGapModel(UUIDPKMixin, TimestampMixin, Base):
         nullable=False,
     )
     content_brief: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    source_topic_ids: Mapped[list[str] | None] = mapped_column(
+        ARRAY(Text), nullable=True
+    )
     targeted_by_content_id: Mapped[_uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("content_pieces.id", ondelete="SET NULL"),

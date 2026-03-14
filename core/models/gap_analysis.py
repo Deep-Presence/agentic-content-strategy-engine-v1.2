@@ -170,6 +170,9 @@ class GeneratedQuery(BaseModel):
     buyer_stage: Optional[str] = None
     persona_tag: Optional[str] = None
     embedding: Optional[List[float]] = None
+    # Topic Discovery integration: tracks which TopicAssignment(s) spawned this query.
+    # List because cross-topic dedup can merge queries from multiple topics.
+    source_topic_ids: List[str] = Field(default_factory=list)
 
 
 class CitationRef(BaseModel):
@@ -361,6 +364,8 @@ class QueryGap(BaseModel):
     best_company_structural_signals: Optional[Dict[str, Any]] = None
     company_cited: bool = False
     company_cited_platforms: List[str] = Field(default_factory=list)
+    # Topic Discovery integration: inherited from GeneratedQuery.source_topic_ids in S6.
+    source_topic_ids: List[str] = Field(default_factory=list)
 
 
 class ClusterContentSpec(BaseModel):
@@ -399,6 +404,9 @@ class AnalysisResult(BaseModel):
     citation_patterns: Dict[str, Any] = Field(default_factory=dict)
     decision_metrics: Dict[str, Any] = Field(default_factory=dict)
     cluster_specs: List[ClusterContentSpec] = Field(default_factory=list)
+    # Topic Discovery integration: maps topic_assignment_id → [query_ids].
+    # Populated by run_topic_scoped_gap_analysis(); empty dict for standard runs.
+    topic_query_map: Dict[str, List[str]] = Field(default_factory=dict)
 
 
 class GapReport(BaseModel):

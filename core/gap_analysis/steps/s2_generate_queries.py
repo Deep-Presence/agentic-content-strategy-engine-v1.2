@@ -12,7 +12,15 @@ import numpy as np
 from openai import AsyncOpenAI
 
 from core.models.gap_analysis import GapAnalysisInput, GeneratedQuery, QueryCluster
+from core.models.topic_discovery import TopicAssignment
 from core.config.settings import settings
+from core.gap_analysis.topic_cluster_map import (
+    CLUSTER_NAMES,
+    CLUSTER_INTENT_PATTERNS,
+    get_cluster_brand_policy,
+    get_cluster_mapping,
+    is_excluded_combo,
+)
 from core.shared_tools.async_embedding_client import async_embed_texts
 
 logger = logging.getLogger(__name__)
@@ -582,3 +590,318 @@ async def generate_queries(
 
     logger.info("Final query count: %d", len(generated))
     return generated
+
+
+# ---------------------------------------------------------------------------
+# Topic-Scoped Query Generation (TD Integration)
+# ---------------------------------------------------------------------------
+
+
+_TOPIC_QUERY_GEN_PROMPT = """\
+You are a search behavior expert for B2B buyers. Generate realistic search queries \
+that a real person in this role would type into Google, Gemini, Claude, ChatGPT, or Perplexity.
+
+TOPIC CONTEXT:
+- Topic title: {topic_text}
+- Subdomain: {subdomain_name}
+- Audience: {audience_segment}
+- Buyer stage: {buyer_stage}
+- Intent type: {intent_type}
+
+COMPANY being analyzed:
+- Name: {company_name}
+- Domain: {company_domain}
+{product_context_block}
+COMPANY CONTEXT (condensed):
+{company_context}
+
+PERSONA CONTEXT:
+{persona_context}
+
+TARGET CLUSTERS — Generate queries ONLY for these clusters:
+{cluster_instructions}
+
+Return JSON only, no prose. Format:
+{{
+  "queries": [
+    {{
+      "cluster_id": "C1",
+      "cluster_name": "Mechanism",
+      "query_text": "How does ...?",
+      "buyer_stage": "{buyer_stage}",
+      "persona_tag": "{audience_segment}"
+    }}
+  ]
+}}
+
+Constraints:
+- Total queries: {min_queries}-{max_queries}
+- Primary clusters get 3-5 queries each; secondary clusters get 1-2 queries each
+- Every query MUST be grounded in the subdomain "{subdomain_name}", NOT the company's full category
+- Queries should reflect how a {audience_segment} would phrase their search
+- Each query must be unique and phrased as a real buyer would type it
+- Use natural language, not keyword strings
+
+{brand_rules}
+
+Do Not Include or Use Emojis in your response.
+"""
+
+
+def _build_cluster_instructions(
+    primary: tuple[str, ...],
+    secondary: tuple[str, ...],
+) -> str:
+    """Build cluster instruction block for topic-scoped prompt."""
+    lines: list[str] = []
+    for cid in primary:
+        name = CLUSTER_NAMES.get(cid, cid)
+        pattern = CLUSTER_INTENT_PATTERNS.get(cid, "")
+        policy = get_cluster_brand_policy(cid)
+        lines.append(
+            f"  PRIMARY: {cid} ({name}) — \"{pattern}\" [brand: {policy}]"
+        )
+    for cid in secondary:
+        name = CLUSTER_NAMES.get(cid, cid)
+        pattern = CLUSTER_INTENT_PATTERNS.get(cid, "")
+        policy = get_cluster_brand_policy(cid)
+        lines.append(
+            f"  SECONDARY: {cid} ({name}) — \"{pattern}\" [brand: {policy}]"
+        )
+    return "\n".join(lines)
+
+
+def _build_brand_rules(
+    primary: tuple[str, ...],
+    secondary: tuple[str, ...],
+) -> str:
+    """Build brand name usage rules for target clusters."""
+    all_clusters = list(primary) + list(secondary)
+    has_c8 = "C8" in all_clusters
+    has_c2 = "C2" in all_clusters
+
+    lines = [
+        "────────────────────────────────────────────────",
+        "CRITICAL — Brand / Company Name Usage Rules:",
+        "────────────────────────────────────────────────",
+        "",
+        "By default, queries must NOT contain any specific company or product brand names.",
+        "Use generic category terms instead.",
+    ]
+    if has_c8:
+        lines.append(
+            "EXCEPTION — C8 (Branded Evaluation): Brand names are REQUIRED "
+            "(e.g., \"X vs Y vs Z\", \"X alternatives\")."
+        )
+    if has_c2:
+        lines.append(
+            "EXCEPTION — C2 (Boundary): Brand names ONLY when asking about a "
+            "specific product's known limitation. Generic boundary questions stay unbranded."
+        )
+    lines.append("────────────────────────────────────────────────")
+    return "\n".join(lines)
+
+
+def _build_topic_prompt(
+    topic: TopicAssignment,
+    primary: tuple[str, ...],
+    secondary: tuple[str, ...],
+    queries_range: tuple[int, int],
+    company_context: str,
+    persona_context: str,
+    company_name: str,
+    company_domain: Optional[str],
+    product_context: Optional[str] = None,
+) -> str:
+    """Build the topic-scoped query generation prompt for a single topic."""
+    return _TOPIC_QUERY_GEN_PROMPT.format(
+        topic_text=topic.topic_text,
+        subdomain_name=topic.subdomain_name,
+        audience_segment=topic.audience_segment,
+        buyer_stage=topic.buyer_stage.value,
+        intent_type=topic.intent_type.value,
+        company_name=company_name,
+        company_domain=company_domain or "N/A",
+        product_context_block=product_context or "",
+        company_context=company_context[:3000],
+        persona_context=persona_context[:2000] if persona_context else "No persona provided.",
+        cluster_instructions=_build_cluster_instructions(primary, secondary),
+        min_queries=queries_range[0],
+        max_queries=queries_range[1],
+        brand_rules=_build_brand_rules(primary, secondary),
+    )
+
+
+async def _deduplicate_queries_cross_topic(
+    queries: List[GeneratedQuery],
+    threshold: float = 0.85,
+) -> List[GeneratedQuery]:
+    """Global (cross-topic, cross-cluster) dedup with source_topic_ids merge.
+
+    Unlike ``_deduplicate_queries`` which deduplicates within each cluster,
+    this function deduplicates across the entire query set. When a duplicate
+    is dropped, its ``source_topic_ids`` are merged into the surviving query.
+    """
+    if not queries:
+        return queries
+
+    all_texts = [q.query_text for q in queries]
+    all_embeddings = await async_embed_texts(all_texts)
+
+    # Greedy global selection
+    kept: List[GeneratedQuery] = []
+    kept_embs: List[List[float]] = []
+
+    for q, emb in zip(queries, all_embeddings):
+        if emb is None:
+            continue
+        if not kept_embs:
+            q.embedding = emb
+            kept.append(q)
+            kept_embs.append(emb)
+            continue
+
+        # Find closest existing query
+        max_sim = 0.0
+        max_idx = -1
+        for idx, s_emb in enumerate(kept_embs):
+            sim = _cosine_similarity(emb, s_emb)
+            if sim > max_sim:
+                max_sim = sim
+                max_idx = idx
+
+        if max_sim < threshold:
+            q.embedding = emb
+            kept.append(q)
+            kept_embs.append(emb)
+        else:
+            # Merge source_topic_ids into the surviving query
+            survivor = kept[max_idx]
+            for tid in q.source_topic_ids:
+                if tid not in survivor.source_topic_ids:
+                    survivor.source_topic_ids.append(tid)
+            logger.debug(
+                "Cross-topic dedup: dropped '%s' (sim=%.3f with '%s')",
+                q.query_text[:60], max_sim, survivor.query_text[:60],
+            )
+
+    logger.info(
+        "Cross-topic dedup: %d queries -> %d queries (threshold=%.2f)",
+        len(queries), len(kept), threshold,
+    )
+    return kept
+
+
+async def generate_queries_from_topics(
+    topics: List[TopicAssignment],
+    company_context_path: Optional[str] = None,
+    persona_paths: Optional[List[str]] = None,
+    company_name: str = "",
+    company_domain: Optional[str] = None,
+    product_name: Optional[str] = None,
+    product_slug: Optional[str] = None,
+    product_description: Optional[str] = None,
+    model: Optional[str] = None,
+) -> List[GeneratedQuery]:
+    """Generate queries from approved TopicAssignments (TD → GA bridge).
+
+    Two-pass flow:
+      Pass 1: Topic-scoped generation (LLM call per topic batch)
+      Pass 2: Cross-topic semantic dedup (global, merges source_topic_ids)
+
+    No Pass 3 (coverage validation) — only relevant clusters matter.
+
+    Returns:
+        List of GeneratedQuery with source_topic_ids set.
+    """
+    if not topics:
+        return []
+
+    company_context = _read_text(company_context_path)
+    persona_context = "\n\n".join(
+        _read_text(p) for p in (persona_paths or []) if p
+    )
+    model_name = model or settings.gap_analysis_query_gen_model
+
+    # Build product context block if applicable
+    product_context: Optional[str] = None
+    if product_slug and product_name:
+        product_context = _PRODUCT_CONTEXT_BLOCK.format(
+            product_name=product_name,
+            product_domain=company_domain or "N/A",
+            product_description=product_description or "N/A",
+        )
+
+    # Pass 1: Topic-scoped generation
+    all_queries: List[GeneratedQuery] = []
+    query_counter = 0
+
+    for topic in topics:
+        stage = topic.buyer_stage.value
+        intent = topic.intent_type.value
+
+        if is_excluded_combo(stage, intent):
+            logger.info(
+                "Skipping excluded combo %s × %s for topic '%s'",
+                stage, intent, topic.topic_text[:50],
+            )
+            continue
+
+        mapping = get_cluster_mapping(stage, intent)
+        if mapping is None:
+            continue
+
+        prompt = _build_topic_prompt(
+            topic=topic,
+            primary=mapping.primary,
+            secondary=mapping.secondary,
+            queries_range=mapping.queries_range,
+            company_context=company_context,
+            persona_context=persona_context,
+            company_name=company_name,
+            company_domain=company_domain,
+            product_context=product_context,
+        )
+
+        try:
+            response_text = await _call_openai(prompt, model_name)
+            payload = _extract_json(response_text)
+            raw_queries = payload.get("queries", [])
+
+            for q in raw_queries:
+                query_counter += 1
+                all_queries.append(
+                    GeneratedQuery(
+                        query_id=f"tq_{query_counter}",
+                        cluster_id=q.get("cluster_id") or "",
+                        cluster_name=q.get("cluster_name") or "",
+                        query_text=q.get("query_text") or "",
+                        buyer_stage=q.get("buyer_stage") or stage,
+                        persona_tag=q.get("persona_tag") or topic.audience_segment,
+                        source_topic_ids=[topic.id],
+                    )
+                )
+        except Exception as e:
+            logger.error(
+                "Topic query generation failed for '%s': %s",
+                topic.topic_text[:50], e,
+            )
+            continue
+
+    logger.info("Pass 1 (topic-scoped): generated %d queries from %d topics.",
+                len(all_queries), len(topics))
+
+    if not all_queries:
+        return []
+
+    # Pass 2: Cross-topic semantic dedup
+    all_queries = await _deduplicate_queries_cross_topic(
+        all_queries, threshold=0.85,
+    )
+
+    # Re-assign sequential query IDs
+    for i, q in enumerate(all_queries, start=1):
+        q.query_id = f"tq_{i}"
+
+    logger.info("Final topic-scoped query count: %d", len(all_queries))
+    return all_queries

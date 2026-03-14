@@ -1,7 +1,7 @@
 {
-  "current_sprint": "research-orchestrator-v13",
-  "last_updated": "2026-03-11",
-  "test_count": 2659,
+  "current_sprint": "td-content-integration-v1.2.0",
+  "last_updated": "2026-03-15",
+  "test_count": 2703,
   "completed_sprints_summary": {
     "total_tasks_completed": 36,
     "sprints": [
@@ -20,10 +20,51 @@
       {"sprint": "content-engine-v13", "date": "2026-03-02", "summary": "v1.3 pipeline (6 stages, LiteLLM, E-E-A-T, 3 HITL, linker agent, 10-phase refactor), LangSmith migration"},
       {"sprint": "knowledge-base-v1-v5", "date": "2026-03-06", "summary": "KB phases 1-5: 17 models, KBStorage, 6 agents, DAG orchestrator, 3 HITL, API router, staleness tracking, delta synthesis. 260 KB tests"},
       {"sprint": "audience-persona-v6-a-c", "date": "2026-03-06", "summary": "AP phases A-C: 9 Pydantic models, PersonaStorage, 2 agents (suggester + generator), 2 HITL graphs, prompts. 187 AP tests"},
-      {"sprint": "research-orchestrator-v13", "date": "2026-03-11", "summary": "Research Orchestrator — KB→AP→VSG sequential DAG. 7 phases + Codex audit (8 findings, 5 fixed). 67 tests (50 core + 17 API). Skip logic, HITL pass-through, auto-approve, error propagation."}
+      {"sprint": "research-orchestrator-v13", "date": "2026-03-11", "summary": "Research Orchestrator — KB→AP→VSG sequential DAG. 7 phases + Codex audit (8 findings, 5 fixed). 67 tests (50 core + 17 API). Skip logic, HITL pass-through, auto-approve, error propagation."},
+      {"sprint": "td-content-integration-v1.2.0", "date": "2026-03-15", "summary": "TD→GA→CE integration — 8-phase plan. Topic-scoped GA (cluster mapping, S2 topic queries, cross-topic dedup), CE TOPIC_DISCOVERY mode, orchestrator, DB persistence (migration 0011), API layer (2 endpoints, task runner). ~44 new tests."}
     ]
   },
   "completed": [
+    {
+      "id": "T-td-content-integration",
+      "task": "TD→GA→CE Integration — 8-phase plan: (1) Models + cluster mapping, (2) Topic-scoped S2 queries, (3) S6+S8 modifications, (4) Scoped GA pipeline, (5) CE TD mode + context router, (6) Orchestrator, (7) DB models + migration 0011 + persistence, (8) API endpoints + schemas + task runner.",
+      "sprint": "td-content-integration-v1.2.0",
+      "status": "done",
+      "completed_at": "2026-03-15",
+      "tests_added": 44,
+      "files_created": [
+        "core/gap_analysis/topic_cluster_map.py",
+        "core/orchestration/td_content_orchestrator.py",
+        "core/db/migrations/versions/0011_td_content_integration.py",
+        "tests/gap_analysis/test_topic_cluster_map.py",
+        "tests/gap_analysis/test_s2_topic_queries.py",
+        "tests/content_engine/test_td_mode.py",
+        "tests/orchestration/test_td_content_orchestrator.py",
+        "tests/db/test_td_content_integration.py",
+        "tests/api/test_content_v13_from_topics.py"
+      ],
+      "files_modified": [
+        "core/models/gap_analysis.py",
+        "core/models/content_generation_v13.py",
+        "core/models/content_generation.py",
+        "core/gap_analysis/steps/s2_generate_queries.py",
+        "core/gap_analysis/steps/s6_analyze.py",
+        "core/gap_analysis/steps/s8_generate_report.py",
+        "core/gap_analysis/pipeline.py",
+        "core/content_engine/context_router.py",
+        "core/content_engine/pipeline_v13.py",
+        "core/content_engine/persistence.py",
+        "core/gap_analysis/persistence.py",
+        "core/topic_discovery/persistence.py",
+        "core/db/models/content.py",
+        "core/db/models/gap_analysis.py",
+        "core/db/repositories/content_repo.py",
+        "api/schemas/content_v13.py",
+        "api/tasks/models.py",
+        "api/tasks/runner.py",
+        "api/routers/content_v13.py"
+      ]
+    },
     {
       "id": "T-research-orchestrator",
       "task": "Research Orchestrator — KB→AP→VSG sequential DAG: Pydantic models, core orchestrator (skip logic, HITL pass-through, auto-approve distribution, error propagation), runner wrapper, API schema + router, app wiring. Codex audit: 5 fixes (tenant isolation on status, product_slug validation, failed status mapping, max_authors constraint, skip_fresh wiring). 2 deferred (VSG ap_manifest_version, process-local concurrency).",
@@ -89,7 +130,8 @@
       "tests_added": 38
     }
   ],
-  "in_progress": [],
+  "in_progress": [
+  ],
   "pending": [
     {
       "id": "T-async-13",

@@ -59,6 +59,24 @@ class ContentRepository(SQLAlchemyRepository[ContentPieceModel]):
         result = await self._session.execute(stmt)
         return result.scalars().first()
 
+    async def list_by_topic_assignment(
+        self,
+        topic_assignment_id: _uuid.UUID | str,
+    ) -> Sequence[ContentPieceModel]:
+        """List all content pieces linked to a specific topic assignment."""
+        pk = (
+            _uuid.UUID(str(topic_assignment_id))
+            if isinstance(topic_assignment_id, str)
+            else topic_assignment_id
+        )
+        stmt = (
+            select(ContentPieceModel)
+            .where(ContentPieceModel.topic_assignment_id == pk)
+            .order_by(ContentPieceModel.created_at.desc())
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
     # ── Phase 3 additions ─────────────────────────────────────────────
 
     async def get_piece_detail(

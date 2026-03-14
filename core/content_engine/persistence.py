@@ -80,6 +80,15 @@ async def persist_content_pieces(
                 if eval_summary and hasattr(eval_summary, "model_dump"):
                     eval_summary = eval_summary.model_dump(mode="json")
 
+                # Resolve topic_assignment_id (may come from TD mode)
+                ta_id_raw = getattr(piece, "topic_assignment_id", None)
+                ta_id: _uuid.UUID | None = None
+                if ta_id_raw:
+                    try:
+                        ta_id = _uuid.UUID(str(ta_id_raw))
+                    except (ValueError, AttributeError):
+                        ta_id = None
+
                 await repo.create_piece(
                     id=_uuid.uuid4(),
                     run_id=run_id,
@@ -89,6 +98,7 @@ async def persist_content_pieces(
                     word_count=len(piece.final_markdown.split()) if piece.final_markdown else 0,
                     evaluation_results=eval_summary,
                     revision_count=0,
+                    topic_assignment_id=ta_id,
                 )
             await session.commit()
         logger.info(

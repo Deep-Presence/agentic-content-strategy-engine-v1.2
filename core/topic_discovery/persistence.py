@@ -341,6 +341,46 @@ async def persist_td_assignments(
         )
 
 
+# ── Assignment status batch hook ──────────────────────────────────────────
+
+
+async def persist_td_assignment_status_batch(
+    session_factory: Optional[async_sessionmaker],
+    assignment_ids: List[str],
+    status: str,
+) -> None:
+    """Bulk-update TopicAssignmentModel.status for a list of assignment IDs.
+
+    Used by the TD→Content orchestrator to transition assignments through
+    not_started → in_gap_analysis → content_produced.
+    """
+    if session_factory is None or not assignment_ids:
+        return
+    try:
+        from core.db.enums import TopicAssignmentStatus as DBTopicAssignmentStatus
+        from core.db.repositories.topic_discovery_repo import TopicAssignmentRepository
+
+        db_status = DBTopicAssignmentStatus(status)
+        async with session_factory() as session:
+            repo = TopicAssignmentRepository(session)
+            for aid in assignment_ids:
+                try:
+                    a_uuid = _uuid.UUID(aid)
+                except (ValueError, AttributeError):
+                    continue
+                await repo.update_assignment_status(a_uuid, db_status)
+            await session.commit()
+        logger.info(
+            "persist_td_assignment_status_batch: %d assignments → %s",
+            len(assignment_ids), status,
+        )
+    except Exception:
+        logger.warning(
+            "persist_td_assignment_status_batch failed for %d assignments",
+            len(assignment_ids), exc_info=True,
+        )
+
+
 # ── Status update hook ───────────────────────────────────────────────────
 
 

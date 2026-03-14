@@ -117,7 +117,11 @@ def _cli_footer(total: float, skipped_count: int) -> None:
     w("─" * 52 + "\n\n")
     sys.stdout.flush()
 
-from core.gap_analysis.steps.s2_generate_queries import generate_queries
+from core.gap_analysis.steps.s2_generate_queries import (
+    generate_queries,
+    generate_queries_from_topics,
+)
+from core.gap_analysis.steps.s8_generate_report import aggregate_per_topic
 from core.gap_analysis.steps.s3_search_platforms import (
     save_platform_results,
     search_platforms,
@@ -150,6 +154,7 @@ from core.models.gap_analysis import (
     PlatformResult,
     SemanticUnit,
 )
+from core.models.topic_discovery import TopicAssignment
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]  # content-strategy-engine/
 
@@ -436,3 +441,179 @@ async def run_gap_analysis(
     logger.info("Pipeline completed: all steps finished (%.1fs total)", total)
     _cli_footer(total, skipped_count)
     return report
+
+
+# ── Topic-Scoped Gap Analysis (TD Integration) ──────────────────────
+
+
+async def run_topic_scoped_gap_analysis(
+    topics: List[TopicAssignment],
+    base_input: GapAnalysisInput,
+    *,
+    existing_ga_slug: Optional[str] = None,
+    skip_visualizations: bool = True,
+    session_factory: Optional[async_sessionmaker] = None,
+    run_id: Optional[uuid.UUID] = None,
+    company_id: Optional[uuid.UUID] = None,
+) -> tuple[GapReport, Dict[str, List[str]]]:
+    """Run a topic-scoped gap analysis for TD-approved TopicAssignments.
+
+    Reuses S1 embeddings from an existing GA run (if available), uses
+    topic-scoped S2, runs S3-S6 identically (fewer queries = faster),
+    skips S7 by default, runs S8 with per-topic aggregation.
+
+    Storage path: artifacts/gap_analysis/{slug}/topic_scoped/{run_id}/
+
+    Returns:
+        Tuple of (GapReport, topic_query_map) where topic_query_map
+        maps topic_assignment_id → [query_ids].
+    """
+    slug = _company_slug(base_input)
+    scoped_run_id = run_id or uuid.uuid4()
+    scoped_dir = _PROJECT_ROOT / "artifacts" / "gap_analysis" / slug / "topic_scoped" / str(scoped_run_id)
+    scoped_dir.mkdir(parents=True, exist_ok=True)
+    pipeline_start = time.monotonic()
+
+    logger.info(
+        "Topic-scoped GA: %d topics, slug=%s, run_id=%s",
+        len(topics), slug, scoped_run_id,
+    )
+
+    # Auto-resolve persona paths
+    _resolve_persona_paths(base_input, slug)
+
+    # ── S1: Reuse cached company embeddings ──
+    s1_start = time.monotonic()
+    cache_slug = existing_ga_slug or slug
+    cache_dir = _PROJECT_ROOT / "artifacts" / "gap_analysis" / cache_slug
+    embeddings_path = cache_dir / "company_embeddings.json"
+
+    if embeddings_path.exists():
+        company_units = _load_json_list(embeddings_path, SemanticUnit)
+        # Hydrate from ChromaDB if needed
+        if not any(u.embedding for u in company_units):
+            if await async_collection_exists(cache_slug):
+                embedding_map = await async_get_all_embeddings(cache_slug)
+                for unit in company_units:
+                    if unit.unit_id in embedding_map:
+                        unit.embedding = embedding_map[unit.unit_id]
+        logger.info("S1: reused %d cached embeddings from '%s'", len(company_units), cache_slug)
+    else:
+        company_units = await embed_company_assets(base_input)
+        logger.info("S1: computed %d embeddings (no cache)", len(company_units))
+
+    # Load page analysis (if available)
+    page_analysis_lookup: Dict[str, CompanyPageAnalysis] = {}
+    page_analysis_path = cache_dir / "company_page_analysis.json"
+    if page_analysis_path.exists():
+        try:
+            raw = json.loads(page_analysis_path.read_text(encoding="utf-8"))
+            for item in raw:
+                pa = CompanyPageAnalysis(**item)
+                page_analysis_lookup[pa.url] = pa
+        except Exception:
+            pass
+    s1_elapsed = time.monotonic() - s1_start
+    logger.info("S1 completed (%.1fs)", s1_elapsed)
+
+    # ── S2: Topic-scoped query generation ──
+    s2_start = time.monotonic()
+    queries = await generate_queries_from_topics(
+        topics=topics,
+        company_context_path=base_input.company_context_path,
+        persona_paths=base_input.persona_paths,
+        company_name=base_input.company_name,
+        company_domain=base_input.domain,
+        product_name=base_input.product_name,
+        product_slug=base_input.product_slug,
+        product_description=base_input.product_description,
+    )
+    (scoped_dir / "queries.json").write_text(
+        json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
+        encoding="utf-8",
+    )
+    s2_elapsed = time.monotonic() - s2_start
+    logger.info("S2 completed: %d queries (%.1fs)", len(queries), s2_elapsed)
+
+    if not queries:
+        logger.warning("Topic-scoped S2 produced 0 queries. Returning empty report.")
+        empty_report = GapReport()
+        return empty_report, {}
+
+    # ── S3: Search platforms ──
+    s3_start = time.monotonic()
+    platform_results = await search_platforms(queries, base_input.platforms)
+    results_dir = scoped_dir / "platform_results"
+    save_platform_results(platform_results, results_dir)
+
+    _flag_company_citations(platform_results, base_input.domain)
+    company_citation_map = _build_company_citation_map(platform_results)
+    s3_elapsed = time.monotonic() - s3_start
+    logger.info("S3 completed: %d results (%.1fs)", len(platform_results), s3_elapsed)
+
+    # ── S4: Enrich citations ──
+    s4_start = time.monotonic()
+    query_lookup = {q.query_id: q for q in queries}
+    enriched = await enrich_citations(platform_results, query_lookup=query_lookup)
+    save_enriched_citations(enriched, scoped_dir / "enriched_citations.json")
+    s4_elapsed = time.monotonic() - s4_start
+    logger.info("S4 completed: %d enriched (%.1fs)", len(enriched), s4_elapsed)
+
+    # ── S5: Embed content ──
+    s5_start = time.monotonic()
+    queries, enriched = await embed_all(queries, enriched, company_slug=slug)
+    save_embeddings(queries, enriched, scoped_dir / "embeddings")
+    s5_elapsed = time.monotonic() - s5_start
+    logger.info("S5 completed (%.1fs)", s5_elapsed)
+
+    # ── S6: Analyze gaps ──
+    s6_start = time.monotonic()
+    analysis = compute_gap_analysis(
+        queries,
+        company_units,
+        enriched,
+        company_citation_map=company_citation_map,
+        page_analysis_lookup=page_analysis_lookup or None,
+    )
+    (scoped_dir / "analysis.json").write_text(
+        json.dumps(analysis.model_dump(mode="json"), indent=2, default=str),
+        encoding="utf-8",
+    )
+    s6_elapsed = time.monotonic() - s6_start
+    logger.info("S6 completed (%.1fs)", s6_elapsed)
+
+    # ── S7: Skip visualizations by default ──
+    if not skip_visualizations:
+        generate_visualizations(
+            queries, enriched, company_units, analysis, scoped_dir / "visualizations"
+        )
+
+    # ── S8: Report + per-topic aggregation ──
+    s8_start = time.monotonic()
+    report = await generate_gap_report(analysis, queries, enriched)
+    save_report(report, scoped_dir, analysis=analysis)
+
+    # Per-topic aggregation (sets analysis.topic_query_map as side effect)
+    topic_metrics = aggregate_per_topic(analysis, queries)
+    topic_query_map = analysis.topic_query_map
+
+    # Re-save analysis.json with topic_query_map populated
+    (scoped_dir / "analysis.json").write_text(
+        json.dumps(analysis.model_dump(mode="json"), indent=2, default=str),
+        encoding="utf-8",
+    )
+    # Save per-topic metrics separately
+    (scoped_dir / "topic_metrics.json").write_text(
+        json.dumps(topic_metrics, indent=2, default=str),
+        encoding="utf-8",
+    )
+    s8_elapsed = time.monotonic() - s8_start
+    logger.info("S8 completed (%.1fs)", s8_elapsed)
+
+    total = time.monotonic() - pipeline_start
+    logger.info(
+        "Topic-scoped GA completed: %d queries, %d gaps, %.1fs total",
+        len(queries), len(analysis.gaps), total,
+    )
+
+    return report, topic_query_map

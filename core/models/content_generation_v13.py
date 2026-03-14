@@ -194,6 +194,11 @@ class ContentBlueprint(ContentBrief):
         default="",
         description="Search intent stage (informational, navigational, commercial, transactional)",
     )
+    # Topic Discovery traceability
+    topic_assignment_id: Optional[str] = Field(
+        default=None,
+        description="TD TopicAssignment ID this blueprint was built from",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +211,7 @@ class EntryMode(str, Enum):
 
     AUTONOMOUS = "autonomous"
     MANUAL = "manual"
+    TOPIC_DISCOVERY = "topic_discovery"
 
 
 class ManualPromptInput(BaseModel):
@@ -235,6 +241,10 @@ class ContentGenerationInputV13(ContentGenerationInput):
     manual_prompt: Optional[str] = None
     manual_description: Optional[str] = None
     manual_cluster: Optional[str] = None
+    # Topic Discovery mode fields
+    topic_assignment_ids: List[str] = Field(default_factory=list)
+    td_effective_slug: Optional[str] = None
+    td_ga_run_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
