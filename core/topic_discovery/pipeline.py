@@ -64,10 +64,11 @@ from core.topic_discovery.agents import (
     run_relevance_filtering,
     run_source_a_company_brainstorm,
     run_source_b_persona_brainstorm,
-    run_source_c_competitor_sitemaps,
+    run_source_c_deep_research,
     run_source_d_adversarial,
     run_subdomain_expansion,
     run_topic_generation,
+    run_unified_hierarchy_and_scoring,
 )
 from core.topic_discovery.graph import (
     build_td_matrix_review_graph,
@@ -76,7 +77,11 @@ from core.topic_discovery.graph import (
     run_td_hitl_checkpoint,
 )
 from core.topic_discovery.scoring import (
+    apply_source_confidence_adjustment,
+    build_persona_affinity_index_from_taxonomy,
+    build_scored_subdomain_list_from_taxonomy,
     compute_persona_affinity_index,
+    compute_source_confidence_scores,
     compute_subdomain_scores,
     compute_topic_priority,
 )
@@ -326,6 +331,24 @@ async def run_topic_discovery_pipeline(
         persona_summaries = _build_persona_summaries(persona_mds)
         domain = input_data.domain or f"{company_slug}.com"
 
+        # Load competitor landscape from KB (best-effort, not required)
+        competitor_landscape = ""
+        try:
+            from core.models.knowledge_base import KBDocType
+            from core.research.knowledge_base.storage import KBStorage
+
+            _kb_storage = KBStorage(root, effective_slug, backend=_backend)
+            _competitor_doc = _kb_storage.get_latest_version(
+                KBDocType.COMPETITOR_REGISTRY,
+            )
+            if _competitor_doc:
+                competitor_landscape = _competitor_doc.content_md or ""
+        except Exception:
+            logger.debug(
+                "Could not load competitor landscape from KB for %s",
+                effective_slug,
+            )
+
         # Build persona_name_to_id early so Source B can resolve persona links
         persona_entries = _load_persona_entries(
             _backend, effective_slug, company_slug
@@ -373,10 +396,10 @@ async def run_topic_discovery_pipeline(
                 persona_name_to_id=persona_name_to_id,
             )
 
-            # Source C: competitor sitemaps (placeholder data for now)
-            sitemap_data = ""  # TODO: fetch sitemaps from seed_urls
-            source_c_task = run_source_c_competitor_sitemaps(
-                sitemap_data, domain, timeout_s=timeout_s,
+            # Source C: deep research competitive content landscape
+            source_c_task = run_source_c_deep_research(
+                company_md, competitor_landscape, domain,
+                timeout_s=settings.topic_discovery_source_c_timeout_s,
                 revision_note=_revision,
             )
 
@@ -473,9 +496,18 @@ async def run_topic_discovery_pipeline(
             )
             await asyncio.to_thread(storage.write_coverage, coverage)
 
-            # Hierarchy construction
+            # Unified S2: hierarchy + priority scoring + persona affinity
             deduped_names = [c.name for c in deduped if c.name]
-            taxonomy = await run_hierarchy_construction(deduped_names, domain, timeout_s=480.0)
+            persona_profiles_for_s2: List[Tuple[str, str]] = []
+            for (pid, _pname), md in zip(persona_entries, persona_mds):
+                persona_profiles_for_s2.append((pid, md))
+            taxonomy = await run_unified_hierarchy_and_scoring(
+                subdomains=deduped_names,
+                company_domain=domain,
+                company_context=company_md,
+                persona_profiles=persona_profiles_for_s2,
+                timeout_s=600.0,
+            )
 
             # Enrich taxonomy with coverage data
             taxonomy.coverage_score = coverage.aggregate_sample_coverage
@@ -563,108 +595,40 @@ async def run_topic_discovery_pipeline(
             logger.warning("TD persist_td_taxonomy failed, continuing", exc_info=True)
 
         # =============================================================
-        # Phase 2.5: Algorithmic Subdomain Scoring (zero LLM calls)
+        # Phase 2.5: Post-Processing — Source Confidence Blend (trial)
         # =============================================================
+        # LLM scores (priority_factors + persona_affinity) are already on
+        # taxonomy nodes from the unified S2 call.  We only add a lightweight
+        # source_confidence adjustment and produce the ScoredSubdomainList +
+        # PersonaAffinityIndex artifacts for Pipeline B compatibility.
         _emit(event_bus, task_id, "td_phase_start", {
-            "phase": "2.5", "stage": "subdomain_scoring",
+            "phase": "2.5", "stage": "score_blending",
         })
-        _update_task(task_store, task_id, current_step="phase_2_5_scoring")
+        _update_task(task_store, task_id, current_step="phase_2_5_blending")
 
-        # persona_entries and persona_name_to_id already built in preflight
+        # Compute source_confidence per node (lightweight, no embeddings)
+        source_scores = compute_source_confidence_scores(taxonomy)
 
-        # Build persona_mds_by_id for affinity scoring
-        persona_mds_by_id: Dict[str, str] = {}
-        for (pid, pname), md in zip(persona_entries, persona_mds):
-            persona_mds_by_id[pid] = md
-
-        # Build source_b_persona_map from source results (lowercase keys
-        # to match scoring.py lookup via node.name.lower().strip())
-        source_b_persona_map: Dict[str, List[str]] = {}
-        for sr in source_results:
-            if sr.source == TDSource.source_b:
-                for cand in sr.candidates:
-                    if cand.persona_ids:
-                        key = cand.name.lower().strip()
-                        existing = source_b_persona_map.get(key, [])
-                        merged = list(dict.fromkeys(existing + list(cand.persona_ids)))
-                        source_b_persona_map[key] = merged
-
-        # Compute subdomain scores (zero LLM)
-        scored_subdomains = await compute_subdomain_scores(
-            taxonomy=taxonomy,
+        # Blend LLM composite with source_confidence
+        apply_source_confidence_adjustment(taxonomy, source_scores)
+        logger.info(
+            "TD/%s: blended LLM scores with source_confidence for %d nodes",
+            effective_slug, len(source_scores),
         )
 
-        # Persist scoring
+        # Build ScoredSubdomainList from taxonomy (Pipeline B compatibility)
+        scored_subdomains = build_scored_subdomain_list_from_taxonomy(taxonomy)
         scoring_version = await asyncio.to_thread(
             storage.write_scoring, scored_subdomains
         )
 
-        # ── Compute embeddings for affinity scoring (experimental) ──
-        subdomain_embeddings: Dict[str, List[float]] = {}
-        persona_embeddings: Dict[str, List[float]] = {}
-        try:
-            from core.shared_tools.async_embedding_client import async_embed_texts
-
-            # Flatten taxonomy and collect texts (description preferred, name fallback)
-            flat_nodes = []
-            for _n in taxonomy.root_nodes:
-                flat_nodes.append(_n)
-                if _n.children:
-                    stack = list(_n.children)
-                    while stack:
-                        c = stack.pop()
-                        flat_nodes.append(c)
-                        if c.children:
-                            stack.extend(c.children)
-
-            sd_ids: List[str] = []
-            sd_texts: List[str] = []
-            for node in flat_nodes:
-                text = (node.description or "").strip() or node.name.strip()
-                if text:
-                    sd_ids.append(node.id)
-                    sd_texts.append(text)
-
-            if sd_texts:
-                sd_embs = await async_embed_texts(sd_texts)
-                subdomain_embeddings = dict(zip(sd_ids, sd_embs))
-                logger.info("TD/%s: embedded %d subdomains", effective_slug, len(subdomain_embeddings))
-
-            # Read persona embeddings from ChromaDB (stored by AP pipeline)
-            try:
-                from core.shared_tools.async_chroma_client import async_get_persona_embeddings
-                persona_embeddings = await async_get_persona_embeddings(effective_slug)
-            except Exception:
-                pass
-
-            # Fallback: embed persona texts inline if ChromaDB had nothing
-            if not persona_embeddings and persona_mds_by_id:
-                p_ids = list(persona_mds_by_id.keys())
-                p_texts = [md[:2000] for md in persona_mds_by_id.values()]
-                p_embs = await async_embed_texts(p_texts)
-                persona_embeddings = dict(zip(p_ids, p_embs))
-                logger.info("TD/%s: embedded %d personas inline (fallback)", effective_slug, len(persona_embeddings))
-        except Exception:
-            logger.warning("TD/%s: embedding computation failed, using provenance only", effective_slug, exc_info=True)
-
-        # Compute persona affinity index
-        persona_affinity = await compute_persona_affinity_index(
-            taxonomy=taxonomy,
-            subdomain_embeddings=subdomain_embeddings,
-            persona_mds_by_id=persona_mds_by_id,
-            persona_embeddings=persona_embeddings,
-            source_b_persona_map=source_b_persona_map,
-        )
-
-        # Persist persona affinity
+        # Build PersonaAffinityIndex from taxonomy (Pipeline B compatibility)
+        persona_affinity = build_persona_affinity_index_from_taxonomy(taxonomy)
         affinity_version = await asyncio.to_thread(
             storage.write_persona_affinity, persona_affinity
         )
 
-        # Backfill scores into taxonomy nodes and re-persist
-        _backfill_scores_into_taxonomy(
-            taxonomy.root_nodes, scored_subdomains, persona_affinity,
-        )
+        # Re-persist taxonomy with blended priority_score
         await asyncio.to_thread(
             storage.write_taxonomy, taxonomy, taxonomy.version
         )
@@ -801,8 +765,8 @@ async def run_topic_expansion_pipeline(
     configure_litellm_callbacks()
     session_id = create_session(f"td-expansion-{effective_slug}")
     trace_span = create_trace(
+        session_id,
         "topic_expansion_pipeline",
-        session_id=session_id,
         input={"effective_slug": effective_slug, "subdomain_ids": input_data.subdomain_ids},
     )
 
@@ -849,7 +813,7 @@ async def run_topic_expansion_pipeline(
         company_md = company_md[:_MAX_COMPANY_CONTEXT_CHARS]
 
         persona_mds = await asyncio.to_thread(
-            load_persona_profiles, root, effective_slug, company_slug,
+            load_persona_profiles, backend, effective_slug, company_slug,
         )
 
         # Build persona_mds_by_id for expansion context

@@ -752,6 +752,7 @@ async def run_kb_pipeline_task(
                 refresh_docs=getattr(request, "refresh_docs", None),
                 staleness_threshold_days=getattr(request, "staleness_threshold_days", 30),
                 auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+                express_mode=getattr(request, "express_mode", False),
             )
 
             output = await run_knowledge_base_pipeline(

@@ -384,6 +384,144 @@ async def compute_persona_affinity_index(
 
 
 # ---------------------------------------------------------------------------
+# LLM + Source Confidence Blending (Unified S2 trial)
+# ---------------------------------------------------------------------------
+
+
+def compute_source_confidence_scores(
+    taxonomy: TaxonomyTree,
+) -> Dict[str, float]:
+    """Compute source_confidence for every node in the taxonomy.
+
+    Lightweight — no embeddings, no LLM calls.  Uses existing
+    ``_score_source_confidence()`` function.
+
+    Returns:
+        Mapping of node_id → source_confidence score (0.0–1.0).
+    """
+    flat = _flatten_nodes(taxonomy.root_nodes)
+    return {node.id: _score_source_confidence(node) for node in flat}
+
+
+def apply_source_confidence_adjustment(
+    taxonomy: TaxonomyTree,
+    source_scores: Dict[str, float],
+    *,
+    llm_weight: float = 0.75,
+    sc_weight: float = 0.25,
+) -> None:
+    """Blend LLM composite with source_confidence on each node (in-place).
+
+    For the trial, only LLM composite and source_confidence are available,
+    so the weights renormalize from (0.45, 0.15) → (0.75, 0.25).
+
+    Writes the blended value to ``node.priority_score`` and stores blend
+    metadata in ``node.metadata``.
+    """
+    def _walk(nodes: List[SubdomainNode]) -> None:
+        for node in nodes:
+            llm_composite = node.metadata.get("llm_composite", node.priority_score)
+            sc = source_scores.get(node.id, 0.5)
+            blended = round(llm_weight * llm_composite + sc_weight * sc, 4)
+            node.priority_score = blended
+            node.metadata["blend_weights"] = {
+                "llm_composite": llm_weight,
+                "source_confidence": sc_weight,
+            }
+            node.metadata["source_confidence"] = round(sc, 4)
+            _walk(node.children)
+
+    _walk(taxonomy.root_nodes)
+
+
+def build_scored_subdomain_list_from_taxonomy(
+    taxonomy: TaxonomyTree,
+) -> ScoredSubdomainList:
+    """Build a ScoredSubdomainList from taxonomy nodes with LLM scores.
+
+    Produces the same artifact shape as ``compute_subdomain_scores()`` for
+    storage compatibility with Pipeline B.  Uses the blended
+    ``priority_score`` (LLM + source_confidence) and the LLM's 4-dimension
+    ``priority_factors``.
+    """
+    flat = _flatten_nodes(taxonomy.root_nodes)
+    scores: List[SubdomainScore] = []
+
+    for node in flat:
+        # Use LLM dimension scores as signal_scores
+        signal_scores = dict(node.priority_factors) if node.priority_factors else {}
+        # Add source_confidence from metadata if available
+        sc = node.metadata.get("source_confidence")
+        if sc is not None:
+            signal_scores["source_confidence"] = sc
+
+        signals_available = list(signal_scores.keys())
+
+        scores.append(
+            SubdomainScore(
+                subdomain_id=node.id,
+                subdomain_name=node.name,
+                composite_score=node.priority_score,
+                signal_scores={k: round(v, 4) for k, v in signal_scores.items()},
+                signal_weights={},  # weights are in metadata["blend_weights"]
+                signals_available=signals_available,
+            )
+        )
+
+    # Sort descending by composite score, tie-break alphabetical
+    scores.sort(key=lambda s: (-s.composite_score, s.subdomain_name))
+    for i, sc in enumerate(scores):
+        sc.rank = i + 1
+
+    return ScoredSubdomainList(
+        scores=scores,
+        total_scored=len(scores),
+        signals_used=["llm_composite", "source_confidence"],
+        weights_config={"llm_composite": 0.75, "source_confidence": 0.25},
+    )
+
+
+def build_persona_affinity_index_from_taxonomy(
+    taxonomy: TaxonomyTree,
+) -> PersonaAffinityIndex:
+    """Build a PersonaAffinityIndex from taxonomy node persona_affinity fields.
+
+    Produces the same artifact shape as ``compute_persona_affinity_index()``
+    for storage compatibility with Pipeline B.  Persona scores come from LLM
+    reasoning rather than embedding similarity.
+    """
+    flat = _flatten_nodes(taxonomy.root_nodes)
+
+    # Collect all persona IDs from any node
+    all_persona_ids: set = set()
+    for node in flat:
+        all_persona_ids.update(node.persona_affinity.keys())
+
+    entries: Dict[str, List[PersonaSubdomainEntry]] = {}
+    for pid in sorted(all_persona_ids):
+        pid_entries: List[PersonaSubdomainEntry] = []
+        for node in flat:
+            score = node.persona_affinity.get(pid, 0.0)
+            pid_entries.append(
+                PersonaSubdomainEntry(
+                    subdomain_id=node.id,
+                    subdomain_name=node.name,
+                    affinity_score=round(score, 4),
+                    provenance="llm",
+                )
+            )
+        # Sort by affinity descending
+        pid_entries.sort(key=lambda e: -e.affinity_score)
+        entries[pid] = pid_entries
+
+    return PersonaAffinityIndex(
+        persona_entries=entries,
+        total_personas=len(all_persona_ids),
+        total_subdomains=len(flat),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Topic-level priority scoring (algorithmic, post-expansion)
 # ---------------------------------------------------------------------------
 

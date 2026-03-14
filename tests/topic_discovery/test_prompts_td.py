@@ -17,7 +17,7 @@ from core.topic_discovery.prompts.source_b_persona import (
     get_source_b_system_prompt,
     build_source_b_user_prompt,
 )
-from core.topic_discovery.prompts.source_c_sitemap import (
+from core.topic_discovery.prompts.source_c_deep_research import (
     SOURCE_C_SYSTEM_PROMPT,
     get_source_c_system_prompt,
     build_source_c_user_prompt,
@@ -152,11 +152,31 @@ class TestSourceBBuilder:
 class TestSourceCBuilder:
     def test_basic_prompt(self):
         result = build_source_c_user_prompt(
-            sitemap_data="/blog/expense-management\n/blog/corporate-cards",
-            company_domain="ramp.com",
+            company_context="Ramp is a fintech company providing corporate cards",
+            competitor_landscape="Brex and Divvy are key competitors",
+            domain="corporate spend management",
         )
-        assert "expense-management" in result
-        assert "ramp.com" in result
+        assert "Ramp is a fintech" in result
+        assert "corporate spend management" in result
+        assert "Brex and Divvy" in result
+
+    def test_empty_competitor_landscape(self):
+        result = build_source_c_user_prompt(
+            company_context="Ramp context",
+            competitor_landscape="",
+            domain="fintech",
+        )
+        assert "No competitor data provided" in result
+
+    def test_revision_note(self):
+        result = build_source_c_user_prompt(
+            company_context="Context",
+            competitor_landscape="Competitors",
+            domain="fintech",
+            revision_note="Add more emerging topics",
+        )
+        assert "Reviewer Feedback" in result
+        assert "Add more emerging topics" in result
 
 
 # ── Source D Builder ─────────────────────────────────────────────────────

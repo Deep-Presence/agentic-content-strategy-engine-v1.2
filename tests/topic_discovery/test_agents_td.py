@@ -45,7 +45,7 @@ from core.topic_discovery.agents import (
     run_relevance_filtering,
     run_source_a_company_brainstorm,
     run_source_b_persona_brainstorm,
-    run_source_c_competitor_sitemaps,
+    run_source_c_deep_research,
     run_source_d_adversarial,
     run_topic_generation,
 )
@@ -634,44 +634,107 @@ class TestSourceBBrainstorm:
         assert result.error is None
 
 
-class TestSourceCSitemaps:
+class TestSourceCDeepResearch:
     @pytest.mark.asyncio
-    async def test_happy_path(self, mock_litellm):
+    async def test_happy_path(self):
         response_json = json.dumps({
             "subdomains": [
-                {"name": "integration guides", "description": "desc", "confidence": 0.6},
-            ]
+                {
+                    "name": "Expense Management",
+                    "description": "Corporate expense tracking and policy enforcement",
+                    "competitive_density": "high",
+                    "source_type": "established",
+                    "confidence": 0.85,
+                },
+            ],
+            "metadata": {
+                "publishers_identified": ["Ramp Blog"],
+                "top_gaps": ["AI expense categorization"],
+                "emerging_trends": ["Real-time spend controls"],
+            },
         })
-        mock_litellm.acompletion = AsyncMock(
-            return_value=_make_mock_response(response_json)
-        )
-        result = await run_source_c_competitor_sitemaps(
-            "sitemap data", "ramp.com", timeout_s=10.0
-        )
+        with patch(
+            "core.research.tools.perplexity_client"
+        ) as mock_pplx:
+            mock_pplx.research = MagicMock(return_value=response_json)
+            result = await run_source_c_deep_research(
+                "Ramp is a fintech company", "Competitor data", "fintech",
+                timeout_s=10.0,
+            )
         assert result.source == TDSource.source_c
         assert len(result.candidates) == 1
+        assert result.candidates[0].name == "Expense Management"
+        assert result.candidates[0].confidence == 0.85
         assert result.total_rounds == 1
+        assert result.error is None
 
     @pytest.mark.asyncio
-    async def test_empty_sitemap_skips_llm_call(self, mock_litellm):
-        """H5: Empty sitemap data should skip LLM call entirely."""
-        mock_litellm.acompletion = AsyncMock()
-        result = await run_source_c_competitor_sitemaps("", "ramp.com", timeout_s=10.0)
+    async def test_empty_context_skips_api_call(self):
+        """Skip API call when both company_context and competitor_landscape are empty."""
+        with patch(
+            "core.research.tools.perplexity_client"
+        ) as mock_pplx:
+            mock_pplx.research = MagicMock()
+            result = await run_source_c_deep_research(
+                "", "", "fintech", timeout_s=10.0,
+            )
         assert result.source == TDSource.source_c
         assert len(result.candidates) == 0
         assert result.total_rounds == 0
         assert result.error is None
-        mock_litellm.acompletion.assert_not_called()
+        mock_pplx.research.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_whitespace_sitemap_skips_llm_call(self, mock_litellm):
-        """H5: Whitespace-only sitemap data should skip LLM call."""
-        mock_litellm.acompletion = AsyncMock()
-        result = await run_source_c_competitor_sitemaps("  \n  ", "ramp.com", timeout_s=10.0)
+    async def test_whitespace_context_skips_api_call(self):
+        """Whitespace-only context should skip API call."""
+        with patch(
+            "core.research.tools.perplexity_client"
+        ) as mock_pplx:
+            mock_pplx.research = MagicMock()
+            result = await run_source_c_deep_research(
+                "  \n  ", "  ", "fintech", timeout_s=10.0,
+            )
         assert result.source == TDSource.source_c
         assert len(result.candidates) == 0
         assert result.total_rounds == 0
-        mock_litellm.acompletion.assert_not_called()
+        mock_pplx.research.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_citations_stripped_before_json_parse(self):
+        """Perplexity citations section should be stripped before JSON parsing."""
+        response_json = json.dumps({
+            "subdomains": [
+                {"name": "API Security", "description": "desc", "confidence": 0.7},
+            ],
+        })
+        raw_with_citations = (
+            response_json + "\n\nSources:\n[1] https://example.com\n[2] https://other.com"
+        )
+        with patch(
+            "core.research.tools.perplexity_client"
+        ) as mock_pplx:
+            mock_pplx.research = MagicMock(return_value=raw_with_citations)
+            result = await run_source_c_deep_research(
+                "Company context", "", "cybersecurity", timeout_s=10.0,
+            )
+        assert len(result.candidates) == 1
+        assert result.candidates[0].name == "API Security"
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_error(self):
+        """Timeout should be handled gracefully."""
+        with patch(
+            "core.research.tools.perplexity_client"
+        ) as mock_pplx:
+            mock_pplx.research = MagicMock(
+                side_effect=asyncio.TimeoutError()
+            )
+            result = await run_source_c_deep_research(
+                "Company context", "", "fintech", timeout_s=0.001,
+            )
+        assert result.source == TDSource.source_c
+        assert result.error is not None
+        assert len(result.candidates) == 0
 
 
 class TestSourceDAdversarial:
@@ -934,8 +997,8 @@ class TestPromptBuilderRevisionNote:
         assert "more fintech" in prompt
 
     def test_source_c_revision_note(self):
-        from core.topic_discovery.prompts.source_c_sitemap import build_source_c_user_prompt
-        prompt = build_source_c_user_prompt("sitemap data", "ramp.com", revision_note="missing security")
+        from core.topic_discovery.prompts.source_c_deep_research import build_source_c_user_prompt
+        prompt = build_source_c_user_prompt("company ctx", "competitors", "fintech", revision_note="missing security")
         assert "## Reviewer Feedback" in prompt
         assert "missing security" in prompt
 

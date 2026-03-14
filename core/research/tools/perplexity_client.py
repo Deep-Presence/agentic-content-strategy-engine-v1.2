@@ -4,7 +4,7 @@ Perplexity Deep Research client.
 Uses sonar-deep-research for comprehensive web-grounded research with citations.
 See https://docs.perplexity.ai/docs/getting-started/overview
 """
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from core.config.settings import settings
 
@@ -37,6 +37,7 @@ def research(
     include_raw_content: bool = False,
     include_answer: bool = True,
     timeout_s: float = 300.0,
+    model: Optional[str] = None,
     **kwargs: Any,
 ) -> str:
     """
@@ -44,9 +45,13 @@ def research(
 
     Conducts autonomous multi-step retrieval, synthesis, and reasoning.
     Returns research text with inline citations [1], [2], etc.
+
+    Args:
+        model: Override the default Perplexity model. If None, uses
+            settings.perplexity_deep_research_model.
     """
     client = _client(timeout_s=timeout_s)
-    model = settings.perplexity_deep_research_model
+    model = model or settings.perplexity_deep_research_model
 
     try:
         completion = client.chat.completions.create(
@@ -88,6 +93,7 @@ def search(
     include_raw_content: bool = False,
     include_answer: bool = True,
     timeout_s: float = 300.0,
+    model: Optional[str] = None,
     **kwargs: Any,
 ) -> str:
     """Alias for research (Perplexity Deep Research covers both search and deep research)."""
@@ -98,5 +104,6 @@ def search(
         include_raw_content=include_raw_content,
         include_answer=include_answer,
         timeout_s=timeout_s,
+        model=model,
         **kwargs,
     )

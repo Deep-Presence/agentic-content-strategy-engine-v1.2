@@ -107,10 +107,36 @@ def _make_taxonomy() -> TaxonomyTree:
             SubdomainNode(
                 id="sd-1", name="Expense Management", depth=0, confidence=0.9,
                 source_provenance={"source_a": True, "source_b": True},
+                priority_score=0.82,
+                priority_factors={
+                    "strategic_centrality": 0.85,
+                    "citation_opportunity": 0.75,
+                    "content_authority": 0.80,
+                    "conversion_potential": 0.80,
+                },
+                persona_affinity={"p1": 0.85},
+                metadata={
+                    "llm_composite": 0.82,
+                    "scoring_rationale": "Core expense management capability.",
+                    "scoring_source": "llm",
+                },
             ),
             SubdomainNode(
                 id="sd-2", name="Corporate Cards", depth=0, confidence=0.8,
                 source_provenance={"source_a": True},
+                priority_score=0.72,
+                priority_factors={
+                    "strategic_centrality": 0.75,
+                    "citation_opportunity": 0.65,
+                    "content_authority": 0.70,
+                    "conversion_potential": 0.70,
+                },
+                persona_affinity={"p1": 0.65},
+                metadata={
+                    "llm_composite": 0.72,
+                    "scoring_rationale": "Adjacent to core spend management.",
+                    "scoring_source": "llm",
+                },
             ),
         ],
         total_subdomains=2,
@@ -179,8 +205,6 @@ def _pipeline_patches(
     tax = taxonomy or _make_taxonomy()
     cov = coverage or _make_coverage()
     ded = deduped or sa.candidates
-    sc_sub = scored or _make_scored_subdomains()
-    pa = affinity or _make_persona_affinity()
 
     from contextlib import contextmanager
 
@@ -196,13 +220,11 @@ def _pipeline_patches(
             patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa),
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb),
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=sc),
+            patch(f"{_P}.run_source_c_deep_research", return_value=sc),
             patch(f"{_P}.run_source_d_adversarial", return_value=sd),
             patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(ded)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
-            patch(f"{_P}.run_hierarchy_construction", return_value=tax),
-            patch(f"{_P}.compute_subdomain_scores", return_value=sc_sub),
-            patch(f"{_P}.compute_persona_affinity_index", return_value=pa),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=tax),
         ):
             yield
 
@@ -368,13 +390,11 @@ class TestPartialSourceFailure:
             patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa),
             patch(f"{_P}.run_source_b_persona_brainstorm", side_effect=RuntimeError("LLM timeout")),
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=_make_source(TDSource.source_c, 2)),
+            patch(f"{_P}.run_source_c_deep_research", return_value=_make_source(TDSource.source_c, 2)),
             patch(f"{_P}.run_source_d_adversarial", return_value=_make_source(TDSource.source_d, 2)),
             patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=_make_coverage()),
-            patch(f"{_P}.run_hierarchy_construction", return_value=_make_taxonomy()),
-            patch(f"{_P}.compute_subdomain_scores", return_value=_make_scored_subdomains()),
-            patch(f"{_P}.compute_persona_affinity_index", return_value=_make_persona_affinity()),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=_make_taxonomy()),
         ):
             from core.topic_discovery.pipeline import run_topic_discovery_pipeline
             output = await run_topic_discovery_pipeline(td_input, artifacts_root=artifacts_dir)
@@ -393,7 +413,7 @@ class TestPartialSourceFailure:
             patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=empty),
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=empty),
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=empty),
+            patch(f"{_P}.run_source_c_deep_research", return_value=empty),
             patch(f"{_P}.run_source_d_adversarial", return_value=empty),
         ):
             from core.topic_discovery.pipeline import run_topic_discovery_pipeline
@@ -593,11 +613,11 @@ class TestTaxonomyRetryFeedback:
             patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa) as mock_a,
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb) as mock_b,
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=sc),
+            patch(f"{_P}.run_source_c_deep_research", return_value=sc),
             patch(f"{_P}.run_source_d_adversarial", return_value=sd) as mock_d,
             patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
-            patch(f"{_P}.run_hierarchy_construction", return_value=tax),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=tax),
             patch(f"{_P}.compute_subdomain_scores", return_value=_make_scored_subdomains()),
             patch(f"{_P}.compute_persona_affinity_index", return_value=_make_persona_affinity()),
             patch(f"{_P}.run_td_hitl_checkpoint", side_effect=hitl_responses),
@@ -665,11 +685,11 @@ class TestTaxonomyRetryExhaustion:
             patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa) as mock_a,
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=_make_source(TDSource.source_b)),
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=_make_source(TDSource.source_c, 2)),
+            patch(f"{_P}.run_source_c_deep_research", return_value=_make_source(TDSource.source_c, 2)),
             patch(f"{_P}.run_source_d_adversarial", return_value=_make_source(TDSource.source_d, 2)),
             patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
-            patch(f"{_P}.run_hierarchy_construction", return_value=tax),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=tax),
             patch(f"{_P}.compute_subdomain_scores", return_value=_make_scored_subdomains()),
             patch(f"{_P}.compute_persona_affinity_index", return_value=_make_persona_affinity()),
             patch(f"{_P}.run_td_hitl_checkpoint", side_effect=hitl_responses),
@@ -713,11 +733,11 @@ class TestTaxonomyRetryExhaustion:
             patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa),
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=_make_source(TDSource.source_b)),
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=_make_source(TDSource.source_c, 2)),
+            patch(f"{_P}.run_source_c_deep_research", return_value=_make_source(TDSource.source_c, 2)),
             patch(f"{_P}.run_source_d_adversarial", return_value=_make_source(TDSource.source_d, 2)),
             patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
-            patch(f"{_P}.run_hierarchy_construction", return_value=tax),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=tax),
             patch(f"{_P}.compute_subdomain_scores", return_value=_make_scored_subdomains()),
             patch(f"{_P}.compute_persona_affinity_index", return_value=_make_persona_affinity()),
             patch(f"{_P}.run_td_hitl_checkpoint", side_effect=hitl_responses),

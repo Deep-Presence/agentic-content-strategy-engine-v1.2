@@ -157,6 +157,11 @@ class Settings(BaseSettings):
 
     # --- Research Knowledge Base ---
     research_kb_project: str = "research-kb"
+    # Per-agent Perplexity model overrides (KB pipeline)
+    research_kb_company_overview_model: str = "sonar-deep-research"
+    research_kb_customer_reviews_model: str = "sonar-pro"
+    research_kb_competitor_scanner_model: str = "sonar-deep-research"
+    research_kb_weakness_analyst_model: str = "sonar-deep-research"
     # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
     research_kb_brand_perception_model: str = "claude-sonnet-4-5-20250929"
     # Synthesis agent — init_chat_model(), needs provider:model format
@@ -176,7 +181,7 @@ class Settings(BaseSettings):
     # --- Topic Discovery Pipeline ---
     topic_discovery_brainstorm_model: str = "anthropic/claude-sonnet-4-6"
     topic_discovery_dedup_model: str = "anthropic/claude-haiku-4-5-20251001"
-    topic_discovery_max_expansion_rounds: int = 4
+    topic_discovery_max_expansion_rounds: int = 2
     topic_discovery_dedup_threshold: float = 0.85
     topic_discovery_max_concurrent_sources: int = 4
     topic_discovery_source_timeout_s: float = 120.0
@@ -190,7 +195,12 @@ class Settings(BaseSettings):
     topic_discovery_persona_affinity_weights: str = (
         '{"provenance": 0.6, "embedding": 0.4}'
     )
-    topic_discovery_max_subdomains_to_expand: int = 20
+    topic_discovery_max_subdomains_to_expand: int = 10
+    # Source C: Perplexity deep research for competitive content landscape
+    topic_discovery_source_c_model: str = "sonar-deep-research"
+    topic_discovery_source_c_timeout_s: float = 500.0
+    # Unified S2 model (hierarchy + scoring + persona affinity)
+    topic_discovery_unified_s2_model: str = "anthropic/claude-sonnet-4-6"
 
     # --- CPS Model (Citation Signal Predictor) ---
     cps_enabled: bool = True

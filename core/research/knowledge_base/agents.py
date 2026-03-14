@@ -143,6 +143,7 @@ async def _run_perplexity_agent(
     parent_span: Optional[Any] = None,
     timeout_s: float = 500.0,
     span_name: str = "agent",
+    model: Optional[str] = None,
 ) -> KBAgentResult:
     """Shared runner for Perplexity-based agents."""
     span = create_span(
@@ -155,13 +156,14 @@ async def _run_perplexity_agent(
         result_md = await asyncio.wait_for(
             asyncio.to_thread(
                 perplexity_client.research, query=full_prompt, timeout_s=timeout_s,
+                model=model,
             ),
             timeout=timeout_s,
         )
         log_generation(
             span,
             span_name,
-            settings.perplexity_deep_research_model,
+            model or settings.perplexity_deep_research_model,
             full_prompt[:2000],
             result_md[:2000] if result_md else "",
         )
@@ -200,6 +202,7 @@ async def run_company_overview_agent(
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
     return await _run_perplexity_agent(
         KBDocType.COMPANY_OVERVIEW, full_prompt, parent_span, timeout_s, "company-overview",
+        model=settings.research_kb_company_overview_model,
     )
 
 
@@ -215,6 +218,7 @@ async def run_customer_reviews_agent(
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
     return await _run_perplexity_agent(
         KBDocType.CUSTOMER_REVIEWS, full_prompt, parent_span, timeout_s, "customer-reviews",
+        model=settings.research_kb_customer_reviews_model,
     )
 
 
@@ -233,6 +237,7 @@ async def run_competitor_scanner_agent(
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
     return await _run_perplexity_agent(
         KBDocType.COMPETITOR_REGISTRY, full_prompt, parent_span, timeout_s, "competitor-scanner",
+        model=settings.research_kb_competitor_scanner_model,
     )
 
 
@@ -253,6 +258,7 @@ async def run_weakness_analyst_agent(
     full_prompt = f"{system_prompt}\n\n{user_prompt}"
     return await _run_perplexity_agent(
         KBDocType.WEAKNESS_ANALYSIS, full_prompt, parent_span, timeout_s, "weakness-analyst",
+        model=settings.research_kb_weakness_analyst_model,
     )
 
 

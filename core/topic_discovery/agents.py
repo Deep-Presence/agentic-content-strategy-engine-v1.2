@@ -46,7 +46,7 @@ from core.topic_discovery.prompts.source_b_persona import (
     build_source_b_user_prompt,
     get_source_b_system_prompt,
 )
-from core.topic_discovery.prompts.source_c_sitemap import (
+from core.topic_discovery.prompts.source_c_deep_research import (
     build_source_c_user_prompt,
     get_source_c_system_prompt,
 )
@@ -495,18 +495,21 @@ async def run_source_b_persona_brainstorm(
         )
 
 
-async def run_source_c_competitor_sitemaps(
-    sitemap_data: str,
-    company_domain: str,
+async def run_source_c_deep_research(
+    company_context: str,
+    competitor_landscape: str,
+    domain: str,
     *,
     model: Optional[str] = None,
-    timeout_s: float = 120.0,
+    timeout_s: float = 500.0,
     revision_note: Optional[str] = None,
 ) -> SourceResult:
-    """Source C: Extract subdomains from competitor sitemap/URL structure."""
-    # H5: Guard against empty sitemap data — skip LLM call entirely
-    if not sitemap_data or not sitemap_data.strip():
-        logger.info("TD Source C: no sitemap data provided, skipping LLM call")
+    """Source C: Deep research competitive content landscape via Perplexity."""
+    from core.research.tools import perplexity_client
+
+    # Guard: skip API call if no context available at all
+    if not (company_context or "").strip() and not (competitor_landscape or "").strip():
+        logger.info("TD Source C: no company context or competitor data, skipping")
         return SourceResult(
             source=TDSource.source_c,
             candidates=[],
@@ -514,22 +517,31 @@ async def run_source_c_competitor_sitemaps(
             execution_time_s=0.0,
         )
 
-    model = model or settings.topic_discovery_dedup_model
+    model = model or settings.topic_discovery_source_c_model
     t0 = time.monotonic()
 
     try:
-        messages = [
-            {"role": "system", "content": get_source_c_system_prompt()},
-            {
-                "role": "user",
-                "content": build_source_c_user_prompt(
-                    sitemap_data, company_domain, revision_note=revision_note,
-                ),
-            },
-        ]
-        _, raw_text = await _run_completion(
-            model=model, messages=messages, timeout_s=timeout_s
+        system_prompt = get_source_c_system_prompt()
+        user_prompt = build_source_c_user_prompt(
+            company_context, competitor_landscape, domain,
+            revision_note=revision_note,
         )
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+
+        raw_text: str = await asyncio.wait_for(
+            asyncio.to_thread(
+                perplexity_client.research,
+                query=full_prompt,
+                timeout_s=timeout_s,
+                model=model,
+            ),
+            timeout=timeout_s,
+        )
+
+        # Strip Perplexity citations section before JSON parsing
+        if "\n\nSources:\n" in raw_text:
+            raw_text = raw_text[: raw_text.index("\n\nSources:\n")]
+
         parsed = _parse_json_response(raw_text)
         if parsed is None:
             return SourceResult(
@@ -570,6 +582,13 @@ async def run_source_c_competitor_sitemaps(
             chao1_estimate=chao1,
             source_sample_coverage=sc,
             execution_time_s=time.monotonic() - t0,
+        )
+    except asyncio.TimeoutError:
+        return SourceResult(
+            source=TDSource.source_c,
+            total_rounds=1,
+            execution_time_s=time.monotonic() - t0,
+            error=f"Timeout after {timeout_s}s",
         )
     except Exception as exc:
         return SourceResult(
@@ -842,6 +861,115 @@ async def run_hierarchy_construction(
     )
 
 
+async def run_unified_hierarchy_and_scoring(
+    subdomains: List[str],
+    company_domain: str,
+    company_context: str,
+    persona_profiles: List[Tuple[str, str]],
+    *,
+    model: Optional[str] = None,
+    timeout_s: float = 600.0,
+) -> TaxonomyTree:
+    """Unified S2: build hierarchy + score subdomains + persona affinity.
+
+    Single LLM call that combines taxonomy construction with priority scoring
+    (4 dimensions) and per-persona affinity scoring.  Uses the prompt from
+    ``prompts/unified_s2.py``.
+
+    Args:
+        subdomains: Flat list of deduplicated subdomain names.
+        company_domain: Primary domain/industry of the company.
+        company_context: Full company context markdown.
+        persona_profiles: List of (persona_id, profile_markdown) tuples.
+        model: LLM model override (defaults to settings).
+        timeout_s: Timeout for LLM call.
+
+    Returns:
+        TaxonomyTree with priority_score, priority_factors, persona_affinity,
+        and metadata populated on every node from LLM reasoning.
+    """
+    from core.topic_discovery.prompts.unified_s2 import (
+        build_unified_s2_user_prompt,
+        get_unified_s2_system_prompt,
+    )
+
+    model = model or settings.topic_discovery_unified_s2_model
+
+    system_prompt = get_unified_s2_system_prompt()
+    user_prompt = build_unified_s2_user_prompt(
+        company_context=company_context,
+        persona_profiles=persona_profiles,
+        deduped_subdomains=subdomains,
+        domain=company_domain,
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    # Attempt 1 — larger max_tokens for scoring + persona affinity output
+    _, raw_text = await _run_completion(
+        model=model,
+        messages=messages,
+        timeout_s=timeout_s,
+        max_tokens=32768,
+        response_format={"type": "json_object"},
+    )
+    parsed = _parse_json_response(raw_text)
+    nodes = _extract_taxonomy_nodes(parsed)
+
+    if nodes is not None:
+        tree = _build_taxonomy_tree(nodes, company_domain)
+        warnings = _validate_and_fix_composites(tree.root_nodes)
+        if warnings:
+            logger.info(
+                "TD unified S2: fixed %d composite scores: %s",
+                len(warnings), "; ".join(warnings[:5]),
+            )
+        return tree
+
+    # Attempt 2: retry with repair prompt
+    logger.warning(
+        "TD unified S2: first attempt failed to parse. "
+        "Retrying with repair prompt. Raw (first 300 chars): %.300s",
+        raw_text,
+    )
+    repair_prompt = (
+        "Your previous response could not be parsed as valid JSON. "
+        "Please return ONLY a valid JSON object with a 'hierarchy' key "
+        "containing an array of pillar objects. Each pillar must have "
+        "'pillar_name', 'pillar_description', 'priority_scoring', "
+        "'persona_affinity', and 'subdomains'. "
+        "No markdown, no code fences, no preamble — just the JSON object."
+    )
+    retry_messages = messages + [
+        {"role": "assistant", "content": raw_text},
+        {"role": "user", "content": repair_prompt},
+    ]
+    _, retry_text = await _run_completion(
+        model=model,
+        messages=retry_messages,
+        timeout_s=timeout_s,
+        max_tokens=32768,
+        response_format={"type": "json_object"},
+    )
+    retry_parsed = _parse_json_response(retry_text)
+    retry_nodes = _extract_taxonomy_nodes(retry_parsed)
+
+    if retry_nodes is not None:
+        logger.info("TD unified S2: retry succeeded.")
+        tree = _build_taxonomy_tree(retry_nodes, company_domain)
+        _validate_and_fix_composites(tree.root_nodes)
+        return tree
+
+    raise RuntimeError(
+        f"Unified S2 failed after 2 attempts. "
+        f"Could not parse LLM response into a valid taxonomy. "
+        f"First response (300 chars): {raw_text[:300]}. "
+        f"Retry response (300 chars): {retry_text[:300]}."
+    )
+
+
 def _parse_hierarchy_nodes(
     nodes_data: List[Any], depth: int = 0
 ) -> List[SubdomainNode]:
@@ -882,6 +1010,46 @@ def _parse_hierarchy_nodes(
             source_provenance=sources,
             confidence=_safe_float(nd.get("confidence", 0.5)),
         )
+
+        # --- Unified S2: Extract priority scoring (if present) ---
+        ps = nd.get("priority_scoring") or nd.get("scoring")
+        if isinstance(ps, dict):
+            sc = _safe_float(ps.get("strategic_centrality", 0.0), 0.0)
+            co = _safe_float(ps.get("citation_opportunity", 0.0), 0.0)
+            ca = _safe_float(ps.get("content_authority", 0.0), 0.0)
+            cp = _safe_float(ps.get("conversion_potential", 0.0), 0.0)
+            llm_composite = 0.35 * sc + 0.25 * co + 0.20 * ca + 0.20 * cp
+            llm_composite = round(llm_composite, 4)
+            node.priority_factors = {
+                "strategic_centrality": round(sc, 4),
+                "citation_opportunity": round(co, 4),
+                "content_authority": round(ca, 4),
+                "conversion_potential": round(cp, 4),
+            }
+            node.priority_score = llm_composite
+            node.metadata["llm_composite"] = llm_composite
+            node.metadata["scoring_rationale"] = ps.get("scoring_rationale", "")
+            node.metadata["scoring_source"] = "llm"
+
+        # --- Unified S2: Extract persona affinity (if present) ---
+        pa = nd.get("persona_affinity")
+        if isinstance(pa, list):
+            affinity_map: Dict[str, float] = {}
+            rationale_map: Dict[str, str] = {}
+            for entry in pa:
+                if isinstance(entry, dict):
+                    pid = entry.get("persona_id", "")
+                    score = _safe_float(entry.get("score", 0.0), 0.0)
+                    rationale = entry.get("rationale", "")
+                    if pid:
+                        affinity_map[pid] = round(score, 4)
+                        if rationale:
+                            rationale_map[pid] = rationale
+            if affinity_map:
+                node.persona_affinity = affinity_map
+            if rationale_map:
+                node.metadata["persona_rationale"] = rationale_map
+
         result.append(node)
     return result
 
@@ -935,6 +1103,43 @@ def _count_tree_stats(
         total += child_total
         max_depth = max(max_depth, child_depth)
     return total, max_depth
+
+
+def _validate_and_fix_composites(
+    nodes: List[SubdomainNode],
+    tolerance: float = 0.02,
+) -> List[str]:
+    """Verify LLM composite scores match the weighted formula; fix silently.
+
+    Walks all nodes recursively.  If ``metadata["llm_composite"]`` differs
+    from the recomputed value by more than *tolerance*, it is corrected and
+    a warning string is returned.
+
+    Returns:
+        List of warning strings (empty if all composites were correct).
+    """
+    warnings: List[str] = []
+    for node in nodes:
+        pf = node.priority_factors
+        if pf and node.metadata.get("scoring_source") == "llm":
+            expected = round(
+                0.35 * pf.get("strategic_centrality", 0.0)
+                + 0.25 * pf.get("citation_opportunity", 0.0)
+                + 0.20 * pf.get("content_authority", 0.0)
+                + 0.20 * pf.get("conversion_potential", 0.0),
+                4,
+            )
+            current = node.metadata.get("llm_composite", 0.0)
+            if abs(current - expected) > tolerance:
+                node.priority_score = expected
+                node.metadata["llm_composite"] = expected
+                warnings.append(
+                    f"Corrected composite for '{node.name}': "
+                    f"{current} → {expected}"
+                )
+        # Recurse into children
+        warnings.extend(_validate_and_fix_composites(node.children, tolerance))
+    return warnings
 
 
 # ---------------------------------------------------------------------------
