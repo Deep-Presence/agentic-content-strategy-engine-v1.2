@@ -98,6 +98,8 @@ def check_freshness(
     publish_date: str | None,
     modified_date: str | None,
     page_type: str = "page",
+    http_last_modified: str | None = None,
+    sitemap_lastmod: str | None = None,
 ) -> list[AuditFinding]:
     """Generate findings for stale or undated content.
 
@@ -111,14 +113,16 @@ def check_freshness(
         page_type: Inferred page type (e.g. ``"article"``, ``"homepage"``).
             When ``"article"`` and no dates are found, generates a low-severity
             finding recommending date metadata.
+        http_last_modified: Value of the HTTP ``Last-Modified`` header, or ``None``.
+        sitemap_lastmod: ``<lastmod>`` value from sitemap XML, or ``None``.
 
     Returns:
         List of :class:`AuditFinding` objects.
     """
     findings: list[AuditFinding] = []
 
-    # Use modified_date preferentially, fall back to publish_date
-    best_date_str = modified_date or publish_date
+    # Use modified_date preferentially, fall back through chain
+    best_date_str = modified_date or http_last_modified or sitemap_lastmod or publish_date
     if not best_date_str:
         # Article pages without any date metadata get a finding
         if page_type == "article":

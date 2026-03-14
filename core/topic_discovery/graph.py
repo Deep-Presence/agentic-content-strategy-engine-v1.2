@@ -464,7 +464,12 @@ def build_td_matrix_review_graph(
 
 
 class TDSubdomainSelectionState(TypedDict, total=False):
-    """State for HITL-1.5: subdomain selection after scoring."""
+    """State for HITL-1.5: subdomain selection after scoring.
+
+    DEPRECATED: HITL-1.5 eliminated in pipeline split (Pipeline A + B).
+    Subdomain selection is now the trigger for Pipeline B, not an inline
+    checkpoint. Kept for backward compat with existing tests.
+    """
 
     scored_subdomains: dict  # Serialized ScoredSubdomainList
     persona_affinity: dict  # Serialized PersonaAffinityIndex
@@ -571,6 +576,8 @@ def _subdomain_selection_route(state: Dict[str, Any]) -> str:
 def build_td_subdomain_selection_graph(
     checkpointer: Optional[Any] = None,
 ) -> Any:
+    # DEPRECATED: HITL-1.5 eliminated in pipeline split (Pipeline A + B).
+    # Kept for backward compat with existing tests. Remove in future cleanup.
     """Build the Subdomain Selection sub-graph (HITL-1.5).
 
     Nodes: present → gate → route → END

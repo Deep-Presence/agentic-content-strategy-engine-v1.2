@@ -25,6 +25,7 @@ class PipelineType(str, Enum):
     content_refresh = "content_refresh"
     site_audit = "site_audit"
     topic_discovery = "topic_discovery"
+    topic_expansion = "topic_expansion"
     knowledge_base = "knowledge_base"
     audience_persona = "audience_persona"
     voice_style_guide = "voice_style_guide"
@@ -110,6 +111,7 @@ class TrackingStatus(str, Enum):
 class TDStatus(str, Enum):
     draft = "draft"
     hitl_pending = "hitl_pending"
+    discovery_complete = "discovery_complete"
     approved = "approved"
     archived = "archived"
 

@@ -155,7 +155,7 @@ class TestStartTopicDiscovery:
 
 
 class TestStartTDGuard:
-    """Tests for the guard that blocks re-runs when taxonomy+matrix exist."""
+    """Tests for the guard that blocks re-runs when discovery is complete."""
 
     def test_guard_blocks_when_approved(self, client, artifacts_root):
         _write_td_manifest(
@@ -1003,3 +1003,214 @@ class TestStartNewFields:
             json={**MINIMAL_PAYLOAD, "auto_approve_checkpoints": [1, 2, 3]},
         )
         assert resp.status_code == 202
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# POST /expand (Pipeline B)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestStartTopicExpansion:
+    """Tests for POST /topic-discovery/expand."""
+
+    @pytest.fixture
+    def mock_expansion_runner(self):
+        """Mock the expansion pipeline runner to complete instantly."""
+        with patch(
+            "api.routers.topic_discovery.run_topic_expansion_pipeline_task",
+            new_callable=AsyncMock,
+        ) as mock_fn:
+
+            async def _complete_task(task_id, **kwargs):
+                task_store = kwargs["task_store"]
+                event_bus = kwargs["event_bus"]
+                event_bus.publish(task_id, "pipeline_start", {"pipeline": "topic_expansion"})
+                task_store.update_task(
+                    task_id, status=TaskStatus.COMPLETED, result={"stage": "complete"}
+                )
+                event_bus.publish(task_id, "completed", {"pipeline": "topic_expansion"})
+
+            mock_fn.side_effect = _complete_task
+            yield mock_fn
+
+    def test_expand_success(self, client, mock_expansion_runner, artifacts_root):
+        """POST /expand succeeds when Pipeline A has completed."""
+        _write_td_manifest(
+            artifacts_root, "test-co",
+            taxonomy_version=1, status="discovery_complete",
+        )
+        resp = client.post(
+            f"{PREFIX}/expand",
+            json={
+                **MINIMAL_PAYLOAD,
+                "subdomain_ids": ["sd-1", "sd-2"],
+            },
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["pipeline"] == "topic_expansion"
+        assert data["status"] == "started"
+        assert "run_id" in data
+
+    def test_expand_missing_discovery_409(self, client, artifacts_root):
+        """POST /expand returns 409 when Pipeline A hasn't run."""
+        resp = client.post(
+            f"{PREFIX}/expand",
+            json={
+                **MINIMAL_PAYLOAD,
+                "subdomain_ids": ["sd-1"],
+            },
+        )
+        assert resp.status_code == 409
+        assert "not been completed" in resp.json()["detail"]
+
+    def test_expand_empty_subdomain_ids_422(self, client):
+        """POST /expand with empty subdomain_ids is rejected by schema."""
+        resp = client.post(
+            f"{PREFIX}/expand",
+            json={**MINIMAL_PAYLOAD, "subdomain_ids": []},
+        )
+        assert resp.status_code == 422
+
+    def test_expand_requires_auth(self, public_client):
+        resp = public_client.post(
+            f"{PREFIX}/expand",
+            json={**MINIMAL_PAYLOAD, "subdomain_ids": ["sd-1"]},
+        )
+        assert resp.status_code in (401, 403)
+
+    def test_expand_viewer_rejected(self, viewer_client):
+        resp = viewer_client.post(
+            f"{PREFIX}/expand",
+            json={**MINIMAL_PAYLOAD, "subdomain_ids": ["sd-1"]},
+        )
+        assert resp.status_code == 403
+
+    def test_expand_tenant_isolation(self, client):
+        """Cannot expand for a different company."""
+        resp = client.post(
+            f"{PREFIX}/expand",
+            json={
+                "company_name": "Other Corp",
+                "domain": "other.com",
+                "subdomain_ids": ["sd-1"],
+            },
+        )
+        assert resp.status_code == 403
+
+    def test_expand_auto_approve_only_2_valid(self, client, mock_expansion_runner, artifacts_root):
+        """Pipeline B only supports checkpoint 2 for auto-approve."""
+        _write_td_manifest(
+            artifacts_root, "test-co",
+            taxonomy_version=1, status="discovery_complete",
+        )
+        resp = client.post(
+            f"{PREFIX}/expand",
+            json={
+                **MINIMAL_PAYLOAD,
+                "subdomain_ids": ["sd-1"],
+                "auto_approve_checkpoints": [2],
+            },
+        )
+        assert resp.status_code == 202
+
+    def test_expand_auto_approve_invalid_checkpoint_422(self, client):
+        """Pipeline B rejects checkpoint values other than 2."""
+        resp = client.post(
+            f"{PREFIX}/expand",
+            json={
+                **MINIMAL_PAYLOAD,
+                "subdomain_ids": ["sd-1"],
+                "auto_approve_checkpoints": [1],
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_expand_extra_fields_rejected_422(self, client):
+        """Extra fields on expand request must be rejected."""
+        resp = client.post(
+            f"{PREFIX}/expand",
+            json={
+                **MINIMAL_PAYLOAD,
+                "subdomain_ids": ["sd-1"],
+                "bogus_field": True,
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_expand_with_product_slug(self, client, mock_expansion_runner, artifacts_root):
+        """Expansion with product_slug uses effective_slug."""
+        _write_td_manifest(
+            artifacts_root, "test-co__cards",
+            taxonomy_version=1, status="discovery_complete",
+        )
+        resp = client.post(
+            f"{PREFIX}/expand",
+            json={
+                **MINIMAL_PAYLOAD,
+                "product_slug": "cards",
+                "subdomain_ids": ["sd-1"],
+            },
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["effective_slug"] == "test-co__cards"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# GET /{slug}/expansion-status
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestGetExpansionStatus:
+    """Tests for GET /topic-discovery/{slug}/expansion-status."""
+
+    def test_expansion_status_found(self, client, artifacts_root):
+        from core.models.topic_discovery import SubdomainNode, TaxonomyTree
+        from core.topic_discovery.storage import TopicDiscoveryStorage
+
+        storage = TopicDiscoveryStorage(artifacts_root, "test-co")
+        tree = TaxonomyTree(
+            domain_name="test.com",
+            root_nodes=[
+                SubdomainNode(
+                    id="sd-1", name="Finance", priority_score=0.9,
+                    expansion_status="expanded",
+                ),
+                SubdomainNode(
+                    id="sd-2", name="HR", priority_score=0.7,
+                    expansion_status="not_expanded",
+                ),
+                SubdomainNode(
+                    id="sd-3", name="Legal", priority_score=0.5,
+                    expansion_status="failed",
+                ),
+            ],
+            total_subdomains=3,
+        )
+        storage.write_taxonomy(tree)
+
+        resp = client.get(f"{PREFIX}/test-co/expansion-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["slug"] == "test-co"
+        assert data["total_subdomains"] == 3
+        assert data["expanded"] == 1
+        assert data["not_expanded"] == 2  # not_expanded + failed
+        assert data["expanded_ids"] == ["sd-1"]
+        assert len(data["available_for_expansion"]) == 2
+        # Sorted by priority descending
+        assert data["available_for_expansion"][0]["id"] == "sd-2"
+        assert data["available_for_expansion"][1]["id"] == "sd-3"
+
+    def test_expansion_status_not_found(self, client):
+        resp = client.get(f"{PREFIX}/test-co/expansion-status")
+        assert resp.status_code == 404
+
+    def test_expansion_status_tenant_isolation_403(self, client):
+        resp = client.get(f"{PREFIX}/other-co/expansion-status")
+        assert resp.status_code == 403
+
+    def test_expansion_status_effective_slug_other_company_blocked(self, client):
+        resp = client.get(f"{PREFIX}/other-co__product/expansion-status")
+        assert resp.status_code == 403

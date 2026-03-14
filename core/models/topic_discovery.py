@@ -66,6 +66,7 @@ class TopicDiscoveryStatus(str, Enum):
 
     draft = "draft"
     hitl_pending = "hitl_pending"
+    discovery_complete = "discovery_complete"
     approved = "approved"
     archived = "archived"
 
@@ -102,12 +103,10 @@ class TopicAssignmentStatus(str, Enum):
 
 
 class TopicDiscoveryInput(BaseModel):
-    """Input for the Topic Discovery pipeline orchestrator.
+    """Input for the Topic Discovery pipeline (Pipeline A: Discovery).
 
     auto_approve_checkpoints values:
         1 = auto-approve taxonomy (HITL-1)
-        2 = auto-approve matrix (HITL-2)
-        3 = auto-approve subdomain selection (HITL-1.5, selects top_n_expand)
     """
 
     company_name: str = ""
@@ -147,6 +146,44 @@ class TopicDiscoveryOutput(BaseModel):
     error: Optional[str] = None
     scored_subdomains: Optional[ScoredSubdomainList] = None
     persona_affinity: Optional[PersonaAffinityIndex] = None
+
+
+class TopicExpansionInput(BaseModel):
+    """Input for the Topic Expansion pipeline (Pipeline B: Expansion).
+
+    auto_approve_checkpoints values:
+        2 = auto-approve matrix (HITL-2)
+    """
+
+    company_name: str = ""
+    domain: Optional[str] = None
+    company_slug: Optional[str] = None
+    company_id: Optional[str] = None
+    product_slug: Optional[str] = None
+    product_name: Optional[str] = None
+    effective_slug: str = ""
+    subdomain_ids: List[str] = Field(default_factory=list)
+    persona_filter: Optional[str] = None
+    taxonomy_version: Optional[int] = None
+    auto_approve_checkpoints: List[int] = Field(default_factory=list)
+    language: str = "en"
+    region: Optional[str] = None
+
+
+class TopicExpansionOutput(BaseModel):
+    """Output from the Topic Expansion pipeline (Pipeline B)."""
+
+    id: str = Field(default_factory=_uuid)
+    slug: str = ""
+    effective_slug: str = ""
+    matrix: Optional[TopicAssignmentMatrix] = None
+    matrix_version: int = 0
+    subdomains_expanded: int = 0
+    subdomains_failed: int = 0
+    total_assignments: int = 0
+    total_execution_time_s: float = 0.0
+    status: TopicDiscoveryStatus = TopicDiscoveryStatus.draft
+    error: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +429,9 @@ class TopicDiscoveryManifest(BaseModel):
     created_at: str = Field(default_factory=_utcnow)
     last_updated: Optional[str] = None
     source_results_written: List[str] = Field(default_factory=list)
+    discovery_completed_at: Optional[str] = None
+    last_expansion_task_id: Optional[str] = None
+    expanded_subdomain_ids: List[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -400,3 +440,4 @@ class TopicDiscoveryManifest(BaseModel):
 
 SubdomainNode.model_rebuild()
 TopicDiscoveryOutput.model_rebuild()
+TopicExpansionOutput.model_rebuild()

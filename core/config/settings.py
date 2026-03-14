@@ -58,9 +58,31 @@ class Settings(BaseSettings):
     # Pipeline / Agent
     aeo_agent_invoke_timeout_s: int = 900
 
-    # Gap Analysis
+    # Gap Analysis — Crawl
     gap_analysis_max_crawl_pages: int = 500
     gap_analysis_max_crawl_depth: int = 4
+
+    # Gap Analysis — S3 Concurrency (two-level: global + per-engine)
+    gap_analysis_s3_global_concurrency: int = 30
+    gap_analysis_s3_concurrency_default: int = 8
+    gap_analysis_s3_openai_concurrency: int = 12
+    gap_analysis_s3_claude_concurrency: int = 6
+    gap_analysis_s3_gemini_concurrency: int = 10
+    gap_analysis_s3_perplexity_concurrency: int = 8
+
+    # Gap Analysis — S3 Retry + Circuit Breaker
+    gap_analysis_s3_max_retries: int = 2
+    gap_analysis_s3_retry_base_delay_s: float = 2.0
+    gap_analysis_s3_circuit_breaker_threshold: int = 5
+
+    # Gap Analysis — S4 Concurrency
+    gap_analysis_s4_fetch_concurrency: int = 40
+    gap_analysis_s4_parse_workers: int = 16
+    gap_analysis_s4_http_pool_size: int = 50
+
+    # Gap Analysis — S5 Embedding
+    gap_analysis_s5_embed_batch_size: int = 256
+    gap_analysis_s5_embed_concurrent_batches: int = 6
 
     # ChromaDB (local vector store for gap analysis embeddings)
     chroma_persist_dir: str = "artifacts/chroma_db"
@@ -158,6 +180,7 @@ class Settings(BaseSettings):
     topic_discovery_dedup_threshold: float = 0.85
     topic_discovery_max_concurrent_sources: int = 4
     topic_discovery_source_timeout_s: float = 120.0
+    topic_discovery_expansion_timeout_s: float = 300.0
     # Algorithmic subdomain scoring weights (JSON string for env override)
     topic_discovery_scoring_weights: str = (
         '{"source_confidence": 0.30, "content_coverage": 0.20, '

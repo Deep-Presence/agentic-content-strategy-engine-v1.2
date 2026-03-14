@@ -308,7 +308,6 @@ Do Not Include or Use Emojies in your response.
 def _build_seed_prompt(
     company_context: str,
     persona_context: str,
-    style_guide: str,
     clusters: List[QueryCluster],
     max_queries: int,
     company_name: str,
@@ -418,7 +417,6 @@ async def _validate_coverage(
     max_queries: int,
     company_context: str,
     persona_context: str,
-    style_guide: str,
     model: str,
 ) -> List[GeneratedQuery]:
     """Ensure balanced cluster distribution; generate fill-ins for underrepresented clusters."""
@@ -524,8 +522,6 @@ async def generate_queries(
     persona_context = "\n\n".join(
         _read_text(p) for p in input_data.persona_paths if p
     )
-    style_guide = _read_text(input_data.style_guide_path)
-
     model_name = model or settings.gap_analysis_query_gen_model
 
     # Build product context block (empty string for company-level runs — no drift)
@@ -541,7 +537,6 @@ async def generate_queries(
     prompt = _build_seed_prompt(
         company_context=company_context,
         persona_context=persona_context,
-        style_guide=style_guide,
         clusters=clusters,
         max_queries=input_data.max_queries,
         company_name=input_data.company_name,
@@ -578,7 +573,6 @@ async def generate_queries(
         max_queries=input_data.max_queries,
         company_context=company_context,
         persona_context=persona_context,
-        style_guide=style_guide,
         model=model_name,
     )
 

@@ -146,6 +146,37 @@ def generate_markdown_report(result: SiteAuditResult) -> str:
     )
     lines.append("")
 
+    # Performance overview
+    pages_with_data = [
+        p for p in result.page_results if p.html_bytes is not None
+    ]
+    if pages_with_data:
+        lines.append("## Performance Overview")
+        lines.append("")
+        avg_html_kb = (
+            sum(p.html_bytes for p in pages_with_data) / len(pages_with_data) / 1024
+        )
+        lines.append(f"- Average HTML size: {avg_html_kb:.0f}KB")
+
+        pages_with_blocking = sum(
+            1 for p in pages_with_data
+            if (p.blocking_script_count or 0) + (p.blocking_css_count or 0) > 0
+        )
+        lines.append(
+            f"- Pages with render-blocking resources: "
+            f"{pages_with_blocking}/{len(pages_with_data)}"
+        )
+
+        avg_resources = (
+            sum(
+                (p.external_script_count or 0) + (p.external_css_count or 0)
+                for p in pages_with_data
+            )
+            / len(pages_with_data)
+        )
+        lines.append(f"- Average external resources per page: {avg_resources:.0f}")
+        lines.append("")
+
     # Top findings
     if result.top_findings:
         lines.append("## Top Findings")

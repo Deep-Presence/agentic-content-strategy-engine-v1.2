@@ -37,7 +37,7 @@ class TestPipelineTypeEnum:
 
     @pytest.mark.parametrize(
         "legacy_value",
-        ["research", "gap_analysis", "content", "content_refresh", "site_audit", "topic_discovery"],
+        ["research", "gap_analysis", "content", "content_refresh", "site_audit", "topic_discovery", "topic_expansion"],
     )
     def test_legacy_pipeline_types_still_valid(self, legacy_value):
         member = PipelineType(legacy_value)

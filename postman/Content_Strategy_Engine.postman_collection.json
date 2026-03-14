@@ -224,7 +224,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false,\n  \"mode\": \"full\",\n  \"auto_approve_checkpoints\": []\n}"
+              "raw": "{\n  \"company_name\": \"Carta\",\n  \"domain\": \"carta.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false,\n  \"mode\": \"full\",\n  \"auto_approve_checkpoints\": []\n}"
             }
           }
         },
@@ -273,7 +273,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"product_slug\": null,\n  \"domain\": \"ramp.com\",\n  \"staleness_threshold_override\": null,\n  \"auto_approve_checkpoints\": false\n}"
+              "raw": "{\n  \"product_slug\": null,\n  \"domain\": \"carta.com\",\n  \"staleness_threshold_override\": null,\n  \"auto_approve_checkpoints\": false\n}"
             }
           }
         }
@@ -306,7 +306,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
+              "raw": "{\n  \"company_name\": \"Carta\",\n  \"domain\": \"carta.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
             }
           }
         },
@@ -395,7 +395,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
+              "raw": "{\n  \"company_name\": \"Carta\",\n  \"domain\": \"carta.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
             }
           }
         },
@@ -431,9 +431,10 @@
     },
     {
       "name": "Topic Discovery",
+      "description": "Pipeline A (Discovery) + Pipeline B (Expansion) + data read endpoints.",
       "item": [
         {
-          "name": "Start Topic Discovery",
+          "name": "Pipeline A — Start Discovery",
           "event": [
             {
               "listen": "test",
@@ -456,7 +457,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
+              "raw": "{\n  \"company_name\": \"Carta\",\n  \"domain\": \"carta.com\",\n  \"product_slug\": null,\n  \"auto_approve_checkpoints\": []\n}"
             }
           }
         },
@@ -468,7 +469,7 @@
           }
         },
         {
-          "name": "Approve Taxonomy (HITL)",
+          "name": "Approve Taxonomy (HITL-1)",
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/v1/topic-discovery/{{run_id}}/approve/taxonomy",
@@ -482,7 +483,35 @@
           }
         },
         {
-          "name": "Approve Matrix (HITL)",
+          "name": "Pipeline B — Start Expansion",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.run_id) {",
+                  "    pm.collectionVariables.set('run_id', json.run_id);",
+                  "    pm.collectionVariables.set('task_id', json.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/api/v1/topic-discovery/expand",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Carta\",\n  \"domain\": \"carta.com\",\n  \"product_slug\": null,\n  \"subdomain_ids\": [\"SUBDOMAIN_ID_1\", \"SUBDOMAIN_ID_2\"],\n  \"persona_filter\": null,\n  \"taxonomy_version\": null,\n  \"auto_approve_checkpoints\": []\n}"
+            }
+          }
+        },
+        {
+          "name": "Approve Matrix (HITL-2)",
           "request": {
             "method": "POST",
             "url": "{{base_url}}/api/v1/topic-discovery/{{run_id}}/approve/matrix",
@@ -493,6 +522,13 @@
               "mode": "raw",
               "raw": "{\n  \"batch_decision\": \"accept\",\n  \"user_edits\": []\n}"
             }
+          }
+        },
+        {
+          "name": "Get Expansion Status",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/topic-discovery/{{company_slug}}/expansion-status"
           }
         },
         {
@@ -507,6 +543,27 @@
           "request": {
             "method": "GET",
             "url": "{{base_url}}/api/v1/topic-discovery/{{company_slug}}/matrix"
+          }
+        },
+        {
+          "name": "Get Scored Subdomains",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/v1/topic-discovery/{{company_slug}}/scored-subdomains"
+          }
+        },
+        {
+          "name": "Get Persona Affinity",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/v1/topic-discovery/{{company_slug}}/personas?persona_id=",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "topic-discovery", "{{company_slug}}", "personas"],
+              "query": [
+                { "key": "persona_id", "value": "", "disabled": true }
+              ]
+            }
           }
         }
       ]
@@ -538,7 +595,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null\n}"
+              "raw": "{\n  \"company_name\": \"Carta\",\n  \"domain\": \"carta.com\",\n  \"product_slug\": null\n}"
             }
           }
         },
@@ -578,7 +635,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
+              "raw": "{\n  \"company_name\": \"Carta\",\n  \"domain\": \"carta.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
             }
           }
         },
@@ -707,7 +764,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
+              "raw": "{\n  \"company_name\": \"Carta\",\n  \"domain\": \"carta.com\",\n  \"product_slug\": null,\n  \"force_rerun\": false\n}"
             }
           }
         },
@@ -800,7 +857,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"max_briefs\": 5,\n  \"auto_approve\": false,\n  \"max_concurrent_workers\": 3,\n  \"max_revision_cycles\": 2\n}"
+              "raw": "{\n  \"company_name\": \"Carta\",\n  \"domain\": \"carta.com\",\n  \"product_slug\": null,\n  \"max_briefs\": 5,\n  \"auto_approve\": false,\n  \"max_concurrent_workers\": 3,\n  \"max_revision_cycles\": 2\n}"
             }
           }
         },
@@ -854,7 +911,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"company_name\": \"Ramp\",\n  \"domain\": \"ramp.com\",\n  \"product_slug\": null,\n  \"entry_mode\": \"gap_analysis\",\n  \"max_topics\": 10,\n  \"auto_approve\": false,\n  \"max_concurrent_workers\": 3,\n  \"max_revision_cycles\": 2\n}"
+              "raw": "{\n  \"company_name\": \"Carta\",\n  \"domain\": \"carta.com\",\n  \"product_slug\": null,\n  \"entry_mode\": \"gap_analysis\",\n  \"max_topics\": 10,\n  \"auto_approve\": false,\n  \"max_concurrent_workers\": 3,\n  \"max_revision_cycles\": 2\n}"
             }
           }
         },
@@ -983,7 +1040,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"text\": \"What is the best corporate card for startups?\",\n  \"category\": \"competitor\",\n  \"tags\": [\"fintech\", \"cards\"]\n}"
+              "raw": "{\n  \"text\": \"What is the best equity management platform?\",\n  \"category\": \"competitor\",\n  \"tags\": [\"equity\", \"cap-table\"]\n}"
             }
           }
         },
@@ -1029,7 +1086,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"engines\": [\"chatgpt\", \"perplexity\", \"gemini\", \"claude\"],\n  \"prompt_ids\": [],\n  \"brand\": \"Ramp\",\n  \"competitors\": [\"Brex\", \"Divvy\"],\n  \"concurrency\": 6\n}"
+              "raw": "{\n  \"engines\": [\"chatgpt\", \"perplexity\", \"gemini\", \"claude\"],\n  \"prompt_ids\": [],\n  \"brand\": \"Carta\",\n  \"competitors\": [\"Pulley\", \"Shareworks\"],\n  \"concurrency\": 6\n}"
             }
           }
         },
@@ -1104,7 +1161,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"target_queries\": [\"best corporate card for startups\"],\n  \"content_markdown\": \"# Your Content Here\\n\\nMarkdown content to score...\",\n  \"content_url\": null\n}"
+              "raw": "{\n  \"target_queries\": [\"best equity management platform\"],\n  \"content_markdown\": \"# Your Content Here\\n\\nMarkdown content to score...\",\n  \"content_url\": null\n}"
             }
           }
         }

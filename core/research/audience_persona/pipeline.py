@@ -46,6 +46,47 @@ _MAX_CUSTOMER_REVIEWS_CHARS = 40_000  # ~10k tokens
 
 
 # ---------------------------------------------------------------------------
+# Background persona embedding (experimental)
+# ---------------------------------------------------------------------------
+
+
+async def _embed_persona_profiles_bg(
+    effective_slug: str,
+    persona_results: Dict[str, "PersonaAgentResult"],
+    rejected_profiles: List[str],
+) -> None:
+    """Embed approved persona profiles and store in ChromaDB (fire-and-forget).
+
+    Runs as a background task — failures are logged but never crash the pipeline.
+    """
+    try:
+        from core.shared_tools.async_chroma_client import async_upsert_persona_embeddings
+        from core.shared_tools.async_embedding_client import async_embed_texts
+
+        # Collect approved persona texts (skip errored and rejected)
+        persona_ids: List[str] = []
+        texts: List[str] = []
+        for pid, result in persona_results.items():
+            if result.error or not result.content_md or pid in rejected_profiles:
+                continue
+            persona_ids.append(pid)
+            texts.append(result.content_md)
+
+        if not persona_ids:
+            logger.info("No approved persona profiles to embed for %s", effective_slug)
+            return
+
+        embeddings = await async_embed_texts(texts)
+        await async_upsert_persona_embeddings(effective_slug, persona_ids, texts, embeddings)
+        logger.info(
+            "Persona embedding complete: %d profiles stored for %s",
+            len(persona_ids), effective_slug,
+        )
+    except Exception:
+        logger.warning("Persona embedding failed for %s, continuing", effective_slug, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
 
@@ -478,6 +519,12 @@ async def run_audience_persona_pipeline(
 
         profiles_generated = sum(
             1 for r in persona_results.values() if not r.error and r.content_md
+        )
+
+        # ── Persona embedding (fire-and-forget background task) ──
+        rejected = rejected_profiles if successful_ids else []
+        asyncio.create_task(
+            _embed_persona_profiles_bg(effective_slug, persona_results, rejected)
         )
 
         # ── DB persistence (fire-and-forget) ──

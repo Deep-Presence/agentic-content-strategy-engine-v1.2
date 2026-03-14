@@ -6,6 +6,7 @@ Each takes relevant page signals and returns list[AuditFinding].
 Checks:
     - HTTPS enforcement
     - Mixed content detection
+    - HTTP security headers (HSTS, CSP, X-Content-Type-Options, X-Frame-Options)
 """
 from __future__ import annotations
 
@@ -78,3 +79,142 @@ def check_mixed_content(url: str, has_mixed_content: bool) -> list[AuditFinding]
             details={"has_mixed_content": True},
         )
     ]
+
+
+def check_security_headers(
+    url: str,
+    headers: dict[str, str],
+) -> list[AuditFinding]:
+    """Check HTTP security headers on an HTTPS page.
+
+    Evaluates: Strict-Transport-Security, Content-Security-Policy,
+    X-Content-Type-Options, X-Frame-Options.
+
+    Args:
+        url: Page URL (should be HTTPS — caller gates this).
+        headers: HTTP response headers dict (keys are case-insensitive in
+            practice, so we normalise to lowercase for comparison).
+
+    Returns:
+        List of :class:`AuditFinding` objects.
+    """
+    findings: list[AuditFinding] = []
+    lower_headers = {k.lower(): v for k, v in headers.items()}
+
+    # --- HSTS ---
+    hsts = lower_headers.get("strict-transport-security")
+    if not hsts:
+        findings.append(
+            AuditFinding(
+                finding_type="missing_hsts",
+                dimension=AuditDimension.security,
+                severity=AuditCheckSeverity.medium,
+                url=url,
+                message="Missing Strict-Transport-Security header.",
+                recommendation=(
+                    "Add a Strict-Transport-Security header with "
+                    "max-age=31536000 (1 year) to enforce HTTPS."
+                ),
+                details={"header": "strict-transport-security"},
+            )
+        )
+    else:
+        # Check max-age value
+        import re
+
+        match = re.search(r"max-age=(\d+)", hsts, re.IGNORECASE)
+        if match and int(match.group(1)) < 31536000:
+            findings.append(
+                AuditFinding(
+                    finding_type="weak_hsts",
+                    dimension=AuditDimension.security,
+                    severity=AuditCheckSeverity.low,
+                    url=url,
+                    message=(
+                        f"HSTS max-age is {match.group(1)}s — "
+                        f"recommended minimum is 31536000 (1 year)."
+                    ),
+                    recommendation=(
+                        "Increase Strict-Transport-Security max-age "
+                        "to at least 31536000 seconds."
+                    ),
+                    details={
+                        "header": "strict-transport-security",
+                        "max_age": int(match.group(1)),
+                    },
+                )
+            )
+
+    # --- CSP ---
+    csp = lower_headers.get("content-security-policy")
+    if not csp:
+        findings.append(
+            AuditFinding(
+                finding_type="missing_csp",
+                dimension=AuditDimension.security,
+                severity=AuditCheckSeverity.low,
+                url=url,
+                message="Missing Content-Security-Policy header.",
+                recommendation=(
+                    "Add a Content-Security-Policy header to mitigate "
+                    "cross-site scripting and injection attacks."
+                ),
+                details={"header": "content-security-policy"},
+            )
+        )
+    else:
+        csp_lower = csp.lower()
+        if "'unsafe-inline'" in csp_lower or "'unsafe-eval'" in csp_lower:
+            findings.append(
+                AuditFinding(
+                    finding_type="weak_csp",
+                    dimension=AuditDimension.security,
+                    severity=AuditCheckSeverity.medium,
+                    url=url,
+                    message=(
+                        "Content-Security-Policy contains unsafe-inline "
+                        "or unsafe-eval directives."
+                    ),
+                    recommendation=(
+                        "Replace unsafe-inline with nonce-based or "
+                        "hash-based CSP. Remove unsafe-eval if possible."
+                    ),
+                    details={"header": "content-security-policy"},
+                )
+            )
+
+    # --- X-Content-Type-Options ---
+    if "x-content-type-options" not in lower_headers:
+        findings.append(
+            AuditFinding(
+                finding_type="missing_x_content_type_options",
+                dimension=AuditDimension.security,
+                severity=AuditCheckSeverity.low,
+                url=url,
+                message="Missing X-Content-Type-Options header.",
+                recommendation=(
+                    "Add X-Content-Type-Options: nosniff to prevent "
+                    "MIME type sniffing."
+                ),
+                details={"header": "x-content-type-options"},
+            )
+        )
+
+    # --- X-Frame-Options ---
+    if "x-frame-options" not in lower_headers:
+        findings.append(
+            AuditFinding(
+                finding_type="missing_x_frame_options",
+                dimension=AuditDimension.security,
+                severity=AuditCheckSeverity.low,
+                url=url,
+                message="Missing X-Frame-Options header.",
+                recommendation=(
+                    "Add X-Frame-Options: DENY or SAMEORIGIN to prevent "
+                    "clickjacking attacks."
+                ),
+                details={"header": "x-frame-options"},
+            )
+        )
+
+    return findings

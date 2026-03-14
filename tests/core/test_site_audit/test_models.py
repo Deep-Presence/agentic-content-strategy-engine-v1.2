@@ -349,6 +349,41 @@ class TestPageAuditResult:
         assert isinstance(p.aeo, AEOReadinessResult)
         assert p.findings == []
 
+    def test_performance_structural_defaults(self) -> None:
+        p = PageAuditResult()
+        assert p.html_bytes is None
+        assert p.external_script_count is None
+        assert p.external_css_count is None
+        assert p.blocking_script_count is None
+        assert p.blocking_css_count is None
+        assert p.images_without_lazy is None
+        assert p.images_without_dimensions is None
+        assert p.inline_js_bytes is None
+        assert p.inline_css_bytes is None
+
+    def test_performance_structural_roundtrip(self) -> None:
+        p = PageAuditResult(
+            html_bytes=102400,
+            external_script_count=5,
+            external_css_count=3,
+            blocking_script_count=2,
+            blocking_css_count=1,
+            images_without_lazy=4,
+            images_without_dimensions=2,
+            inline_js_bytes=8192,
+            inline_css_bytes=4096,
+        )
+        restored = json_roundtrip(p)
+        assert restored.html_bytes == 102400
+        assert restored.external_script_count == 5
+        assert restored.external_css_count == 3
+        assert restored.blocking_script_count == 2
+        assert restored.blocking_css_count == 1
+        assert restored.images_without_lazy == 4
+        assert restored.images_without_dimensions == 2
+        assert restored.inline_js_bytes == 8192
+        assert restored.inline_css_bytes == 4096
+
     def test_nested_models_isolated(self) -> None:
         """Nested default_factory models must not be shared."""
         p1 = PageAuditResult()

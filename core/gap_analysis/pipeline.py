@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.gap_analysis.steps.s1_embed_assets import embed_company_assets
 from core.models.gap_analysis import PlatformResult
+from core.research.audience_persona.storage import PersonaStorage
 from core.shared_tools.async_chroma_client import (
     async_collection_exists,
     async_get_all_embeddings,
@@ -165,6 +166,28 @@ def _artifact_dir(company_slug: str) -> Path:
     return path
 
 
+def _resolve_persona_paths(input_data: "GapAnalysisInput", slug: str) -> None:
+    """Auto-discover persona paths from audience_persona artifacts when none provided.
+
+    Mutates ``input_data.persona_paths`` in place. Explicit paths take priority.
+    """
+    if input_data.persona_paths:
+        logger.info("Using %d explicit persona path(s)", len(input_data.persona_paths))
+        return
+
+    storage = PersonaStorage(artifacts_root=_PROJECT_ROOT / "artifacts", slug=slug)
+    paths = storage.list_persona_paths()
+    if paths:
+        input_data.persona_paths = paths
+        logger.info(
+            "Auto-discovered %d persona(s) from artifacts/audience_personas/%s/",
+            len(paths),
+            slug,
+        )
+    else:
+        logger.info("No audience persona artifacts found for slug '%s'", slug)
+
+
 def _load_json_list(path: Path, model_cls):
     if not path.exists():
         raise RuntimeError(f"Missing artifact: {path}")
@@ -186,39 +209,75 @@ async def run_gap_analysis(
     pipeline_start = time.monotonic()
     skipped_count = len([s for s in range(1, 9) if s in skip_steps])
 
+    # Fast/demo mode: cap queries and use only fastest engines
+    if input_data.fast_mode:
+        input_data.max_queries = min(input_data.max_queries or 30, 30)
+        if not input_data.platforms or len(input_data.platforms) > 2:
+            input_data.platforms = ["openai", "perplexity"]
+        logger.info(
+            "Fast mode enabled: max_queries=%d, platforms=%s",
+            input_data.max_queries,
+            input_data.platforms,
+        )
+
     _cli_header(slug, skip_steps)
 
-    # Step 1: embed company assets
-    step_start = time.monotonic()
-    logger.info("Step 1 started: embed_company_assets")
-    if 1 in skip_steps:
-        company_units = _load_json_list(
-            artifact_dir / "company_embeddings.json", SemanticUnit
-        )
-        # Hydrate embeddings from ChromaDB if JSON has no raw vectors
-        if not any(u.embedding for u in company_units):
-            if await async_collection_exists(slug):
-                embedding_map = await async_get_all_embeddings(slug)
-                hydrated = 0
-                for unit in company_units:
-                    if unit.unit_id in embedding_map:
-                        unit.embedding = embedding_map[unit.unit_id]
-                        hydrated += 1
-                logger.info(
-                    "Hydrated %d/%d unit embeddings from ChromaDB.",
-                    hydrated,
-                    len(company_units),
-                )
-            else:
-                logger.warning(
-                    "No ChromaDB collection found for '%s' and JSON has no embeddings. "
-                    "S6/S7 may produce degraded results.",
-                    slug,
-                )
-    else:
-        company_units = await embed_company_assets(input_data)
-    logger.info("Step 1 completed: embed_company_assets (%.1fs)", time.monotonic() - step_start)
+    # Auto-resolve persona paths before query generation (depends on neither S1 nor S2)
+    _resolve_persona_paths(input_data, slug)
+
+    # ── S1 + S2: run in parallel when neither is skipped ──────────────
+    async def _run_s1() -> tuple[List[SemanticUnit], float]:
+        t = time.monotonic()
+        logger.info("Step 1 started: embed_company_assets")
+        if 1 in skip_steps:
+            units = _load_json_list(
+                artifact_dir / "company_embeddings.json", SemanticUnit
+            )
+            if not any(u.embedding for u in units):
+                if await async_collection_exists(slug):
+                    embedding_map = await async_get_all_embeddings(slug)
+                    hydrated = 0
+                    for unit in units:
+                        if unit.unit_id in embedding_map:
+                            unit.embedding = embedding_map[unit.unit_id]
+                            hydrated += 1
+                    logger.info(
+                        "Hydrated %d/%d unit embeddings from ChromaDB.",
+                        hydrated, len(units),
+                    )
+                else:
+                    logger.warning(
+                        "No ChromaDB collection found for '%s' and JSON has no embeddings. "
+                        "S6/S7 may produce degraded results.", slug,
+                    )
+        else:
+            units = await embed_company_assets(input_data)
+        elapsed = time.monotonic() - t
+        logger.info("Step 1 completed: embed_company_assets (%.1fs)", elapsed)
+        return units, elapsed
+
+    async def _run_s2() -> tuple[List[GeneratedQuery], float]:
+        t = time.monotonic()
+        logger.info("Step 2 started: generate_queries")
+        if 2 in skip_steps:
+            qs = _load_json_list(artifact_dir / "queries.json", GeneratedQuery)
+        else:
+            qs = await generate_queries(input_data)
+            (artifact_dir / "queries.json").write_text(
+                json.dumps([q.model_dump(mode="json") for q in qs], indent=2, default=str),
+                encoding="utf-8",
+            )
+        elapsed = time.monotonic() - t
+        logger.info("Step 2 completed: generate_queries (%.1fs)", elapsed)
+        return qs, elapsed
+
+    (company_units, s1_elapsed), (queries, s2_elapsed) = await asyncio.gather(
+        _run_s1(), _run_s2(),
+    )
+
+    # Post-gather persistence + CLI output
     await persist_s1(session_factory, run_id, company_id, slug, company_units)
+    await persist_s2(session_factory, run_id, company_id, slug, queries)
 
     # Load company page analysis (produced by s1 alongside embeddings)
     page_analysis_path = artifact_dir / "company_page_analysis.json"
@@ -235,22 +294,8 @@ async def run_gap_analysis(
         except Exception:
             logger.warning("Failed to load company_page_analysis.json, skipping")
 
-    _cli_step(1, time.monotonic() - step_start, skipped=1 in skip_steps)
-
-    # Step 2: generate queries
-    step_start = time.monotonic()
-    logger.info("Step 2 started: generate_queries")
-    if 2 in skip_steps:
-        queries = _load_json_list(artifact_dir / "queries.json", GeneratedQuery)
-    else:
-        queries = await generate_queries(input_data)
-        (artifact_dir / "queries.json").write_text(
-            json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
-            encoding="utf-8",
-        )
-    logger.info("Step 2 completed: generate_queries (%.1fs)", time.monotonic() - step_start)
-    await persist_s2(session_factory, run_id, company_id, slug, queries)
-    _cli_step(2, time.monotonic() - step_start, skipped=2 in skip_steps)
+    _cli_step(1, s1_elapsed, skipped=1 in skip_steps)
+    _cli_step(2, s2_elapsed, skipped=2 in skip_steps)
 
     # Step 3: search platforms
     step_start = time.monotonic()

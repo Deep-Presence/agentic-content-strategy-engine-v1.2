@@ -107,11 +107,8 @@ class GapAnalysisInput(BaseModel):
     persona_paths: List[str] = Field(
         default_factory=list, description="Paths to persona artifacts (DeepAgents paths)."
     )
-    style_guide_path: Optional[str] = Field(
-        default=None, description="Path to style guide artifact (DeepAgents path)."
-    )
     max_queries: int = Field(
-        default=150, ge=10, le=500, description="Max queries across all clusters."
+        default=75, ge=10, le=500, description="Max queries across all clusters."
     )
     platforms: List[str] = Field(
         default_factory=lambda: ["perplexity", "openai", "gemini", "claude"],
@@ -132,6 +129,10 @@ class GapAnalysisInput(BaseModel):
     )
     product_name: Optional[str] = Field(
         default=None, description="Product display name for prompt injection."
+    )
+    fast_mode: bool = Field(
+        default=False,
+        description="Demo/fast mode: caps queries at 30, uses only fastest engines (openai, perplexity).",
     )
     product_description: Optional[str] = Field(
         default=None, description="Product description for prompt injection."

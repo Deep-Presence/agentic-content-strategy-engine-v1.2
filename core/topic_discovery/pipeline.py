@@ -1,15 +1,19 @@
-"""Topic Discovery pipeline orchestrator — S1→S2→HITL1→Scoring→HITL1.5→S3→HITL2.
+"""Topic Discovery pipeline orchestrators — Pipeline A (Discovery) + Pipeline B (Expansion).
 
-Execution flow:
+Pipeline A (run_topic_discovery_pipeline):
   Phase 0: Preflight (load company context + persona profiles, validate prereqs)
   Phase 1 (S1): Multi-Source Subdomain Generation (A+B+C parallel, then D sequential)
   Phase 2 (S2): Exhaustiveness Evaluation & Merge (dedup → coverage metrics → hierarchy)
   ── HITL-1: Taxonomy approval (approve/modify/retry, max 2 retries) ──
   Phase 2.5: Algorithmic Subdomain Scoring (zero LLM calls) + Persona Affinity
-  ── HITL-1.5: Subdomain Selection (user picks subdomains to expand) ──
+  → Ends with status=discovery_complete. No expansion.
+
+Pipeline B (run_topic_expansion_pipeline):
+  Preflight: Load taxonomy + scores + personas from Pipeline A artifacts
   Phase 3 (S3): On-Demand Expansion (1 LLM call per selected subdomain)
   ── HITL-2: Matrix approval (approve/modify) ──
-  Phase 4: Finalize (update manifest, emit completed)
+  Finalize: Update manifest, emit completed
+  → Re-entrant: can be called multiple times with different subdomains.
 """
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from core.config.settings import settings
 from core.content_engine.llm_client import configure_litellm_callbacks
@@ -42,6 +46,8 @@ from core.models.topic_discovery import (
     TopicDiscoveryManifest,
     TopicDiscoveryOutput,
     TopicDiscoveryStatus,
+    TopicExpansionInput,
+    TopicExpansionOutput,
 )
 from core.research.audience_persona.storage import PersonaStorage
 from core.research.utils import load_persona_profiles, read_company_context
@@ -87,7 +93,10 @@ _MAX_TAXONOMY_RETRIES = 2
 # ---------------------------------------------------------------------------
 
 
-def _resolve_slug(input_data: TopicDiscoveryInput) -> str:
+_TDInput = Union[TopicDiscoveryInput, TopicExpansionInput]
+
+
+def _resolve_slug(input_data: _TDInput) -> str:
     """Derive company slug from input."""
     if input_data.company_slug:
         return input_data.company_slug
@@ -97,7 +106,7 @@ def _resolve_slug(input_data: TopicDiscoveryInput) -> str:
     return slug
 
 
-def _resolve_effective_slug(input_data: TopicDiscoveryInput) -> str:
+def _resolve_effective_slug(input_data: _TDInput) -> str:
     """Derive effective slug (company__product if product_slug is set)."""
     slug = _resolve_slug(input_data)
     if input_data.product_slug:
@@ -257,10 +266,10 @@ async def run_topic_discovery_pipeline(
     run_id: Optional[Any] = None,
     company_id: Optional[Any] = None,
 ) -> TopicDiscoveryOutput:
-    """Run the Topic Discovery pipeline.
+    """Run the Topic Discovery pipeline (Pipeline A: Discovery).
 
-    Coordinates a 5-stage pipeline (S1→S2→HITL1→S3→HITL2)
-    producing an exhaustive taxonomy of content opportunities.
+    Produces a scored, prioritized taxonomy with persona affinity.
+    Does NOT expand subdomains — use run_topic_expansion_pipeline() for that.
     """
     start_time = time.time()
     root = artifacts_root or Path("artifacts")
@@ -590,14 +599,60 @@ async def run_topic_discovery_pipeline(
             storage.write_scoring, scored_subdomains
         )
 
-        # Compute persona affinity index (zero LLM)
-        # Embeddings not pre-computed in this phase; affinity uses Source B
-        # provenance only (embedding weight falls to 0 when vectors missing).
+        # ── Compute embeddings for affinity scoring (experimental) ──
+        subdomain_embeddings: Dict[str, List[float]] = {}
+        persona_embeddings: Dict[str, List[float]] = {}
+        try:
+            from core.shared_tools.async_embedding_client import async_embed_texts
+
+            # Flatten taxonomy and collect texts (description preferred, name fallback)
+            flat_nodes = []
+            for _n in taxonomy.root_nodes:
+                flat_nodes.append(_n)
+                if _n.children:
+                    stack = list(_n.children)
+                    while stack:
+                        c = stack.pop()
+                        flat_nodes.append(c)
+                        if c.children:
+                            stack.extend(c.children)
+
+            sd_ids: List[str] = []
+            sd_texts: List[str] = []
+            for node in flat_nodes:
+                text = (node.description or "").strip() or node.name.strip()
+                if text:
+                    sd_ids.append(node.id)
+                    sd_texts.append(text)
+
+            if sd_texts:
+                sd_embs = await async_embed_texts(sd_texts)
+                subdomain_embeddings = dict(zip(sd_ids, sd_embs))
+                logger.info("TD/%s: embedded %d subdomains", effective_slug, len(subdomain_embeddings))
+
+            # Read persona embeddings from ChromaDB (stored by AP pipeline)
+            try:
+                from core.shared_tools.async_chroma_client import async_get_persona_embeddings
+                persona_embeddings = await async_get_persona_embeddings(effective_slug)
+            except Exception:
+                pass
+
+            # Fallback: embed persona texts inline if ChromaDB had nothing
+            if not persona_embeddings and persona_mds_by_id:
+                p_ids = list(persona_mds_by_id.keys())
+                p_texts = [md[:2000] for md in persona_mds_by_id.values()]
+                p_embs = await async_embed_texts(p_texts)
+                persona_embeddings = dict(zip(p_ids, p_embs))
+                logger.info("TD/%s: embedded %d personas inline (fallback)", effective_slug, len(persona_embeddings))
+        except Exception:
+            logger.warning("TD/%s: embedding computation failed, using provenance only", effective_slug, exc_info=True)
+
+        # Compute persona affinity index
         persona_affinity = await compute_persona_affinity_index(
             taxonomy=taxonomy,
-            subdomain_embeddings={},
+            subdomain_embeddings=subdomain_embeddings,
             persona_mds_by_id=persona_mds_by_id,
-            persona_embeddings={},
+            persona_embeddings=persona_embeddings,
             source_b_persona_map=source_b_persona_map,
         )
 
@@ -621,60 +676,229 @@ async def run_topic_discovery_pipeline(
         })
 
         # =============================================================
-        # HITL-1.5: Subdomain Selection
+        # Finalize: Discovery Complete
         # =============================================================
-        _emit(event_bus, task_id, "td_phase_start", {
-            "phase": "hitl_1_5", "stage": "subdomain_selection",
-        })
-        _update_task(task_store, task_id, current_step="hitl_1_5_subdomain_selection")
+        _emit(event_bus, task_id, "td_phase_start", {"phase": "finalize", "stage": "discovery_finalize"})
+        _update_task(task_store, task_id, current_step="finalize_discovery")
 
-        top_n = input_data.top_n_expand
-        persona_filter = input_data.persona_filter or ""
+        manifest = await asyncio.to_thread(storage.read_manifest)
+        manifest.slug = company_slug
+        manifest.effective_slug = effective_slug
+        manifest.company_name = input_data.company_name
+        manifest.domain_name = domain
+        manifest.status = TopicDiscoveryStatus.discovery_complete
+        manifest.taxonomy_version = tax_version
+        manifest.matrix_version = 0
+        manifest.scoring_version = scoring_version
+        manifest.persona_affinity_version = affinity_version
+        manifest.last_updated = datetime.now(timezone.utc).isoformat()
+        manifest.discovery_completed_at = datetime.now(timezone.utc).isoformat()
+        manifest.source_results_written = [sr.source.value for sr in source_results]
+        await asyncio.to_thread(storage.write_manifest, manifest)
 
-        selection_graph = build_td_subdomain_selection_graph()
-        hitl15_state = {
-            "scored_subdomains": scored_subdomains.model_dump(mode="json"),
-            "persona_affinity": persona_affinity.model_dump(mode="json"),
-            "checkpoint": 3,
-            "auto_approve": 3 in auto_approve_cps,
-            "top_n": top_n,
-        }
+        # ── DB Persistence (fire-and-forget) ──
+        try:
+            from core.topic_discovery.persistence import persist_td_status_update
 
-        hitl15_result = await run_td_hitl_checkpoint(
-            selection_graph, hitl15_state,
-            thread_id=f"td-hitl-1.5-{slug}-{uuid.uuid4().hex[:8]}",
-            task_store=task_store, event_bus=event_bus, task_id=task_id,
-            stage_name="td_subdomain_selection",
+            await persist_td_status_update(session_factory, discovery_id, "discovery_complete")
+        except Exception:
+            logger.warning("TD persist_td_status_update failed, continuing", exc_info=True)
+
+        try:
+            from core.research.persistence import persist_pipeline_run_complete
+
+            await persist_pipeline_run_complete(
+                session_factory, run_id,
+                {
+                    "taxonomy_version": tax_version,
+                    "total_subdomains": taxonomy.total_subdomains,
+                },
+            )
+        except Exception:
+            logger.warning("TD DB persistence failed, continuing", exc_info=True)
+
+        output = TopicDiscoveryOutput(
+            slug=company_slug,
+            effective_slug=effective_slug,
+            company_name=input_data.company_name,
+            taxonomy=taxonomy,
+            matrix=None,
+            coverage=coverage,
+            scored_subdomains=scored_subdomains,
+            persona_affinity=persona_affinity,
+            manifest=manifest,
+            taxonomy_version=tax_version,
+            matrix_version=0,
+            total_execution_time_s=time.time() - start_time,
+            status=TopicDiscoveryStatus.discovery_complete,
         )
 
-        selected_subdomain_ids = hitl15_result.get("final_subdomain_ids", [])
-        persona_filter = hitl15_result.get("persona_filter", persona_filter)
+        _emit(event_bus, task_id, "completed", {"pipeline": "topic_discovery"})
+        _emit(event_bus, task_id, "td_phase_complete", {"phase": "finalize"})
+        end_span(trace_span, output={
+            "total_subdomains": taxonomy.total_subdomains,
+            "coverage_score": coverage.aggregate_sample_coverage,
+        })
+        flush()
+        return output
+
+    except Exception as exc:
+        logger.exception("TD pipeline failed for %s: %s", slug, exc)
+        _emit(event_bus, task_id, "failed", {"error": str(exc)})
+        end_span(trace_span, error=str(exc))
+        flush()
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Pipeline B: Topic Expansion
+# ---------------------------------------------------------------------------
+
+
+def _update_expansion_status(
+    root_nodes: List[SubdomainNode],
+    expanded_ids: set,
+    failed_ids: set,
+) -> None:
+    """Walk taxonomy tree and set expansion_status for expanded/failed nodes."""
+    for node in root_nodes:
+        if node.id in expanded_ids:
+            node.expansion_status = "expanded"
+        elif node.id in failed_ids:
+            node.expansion_status = "failed"
+        _update_expansion_status(node.children, expanded_ids, failed_ids)
+
+
+async def run_topic_expansion_pipeline(
+    input_data: TopicExpansionInput,
+    *,
+    task_id: Optional[str] = None,
+    task_store: Optional[Any] = None,
+    event_bus: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+    session_factory: Optional[Any] = None,
+    run_id: Optional[Any] = None,
+    company_id: Optional[Any] = None,
+) -> TopicExpansionOutput:
+    """Run the Topic Expansion pipeline (Pipeline B).
+
+    Expands selected subdomains into a buyer_stage x intent_type matrix.
+    Requires Pipeline A (discovery) to have completed first.
+    Re-entrant: can be called multiple times with different subdomains.
+    """
+    start_time = time.time()
+    root = artifacts_root or Path("artifacts")
+    slug = _resolve_slug(input_data)
+    company_slug = slug
+    effective_slug = input_data.effective_slug or _resolve_effective_slug(input_data)
+
+    _emit(event_bus, task_id, "pipeline_start", {
+        "pipeline": "topic_expansion",
+        "company_slug": company_slug,
+        "effective_slug": effective_slug,
+    })
+
+    configure_litellm_callbacks()
+    session_id = create_session(f"td-expansion-{effective_slug}")
+    trace_span = create_trace(
+        "topic_expansion_pipeline",
+        session_id=session_id,
+        input={"effective_slug": effective_slug, "subdomain_ids": input_data.subdomain_ids},
+    )
+
+    try:
+        # =============================================================
+        # Preflight: Load Pipeline A artifacts
+        # =============================================================
+        _emit(event_bus, task_id, "td_phase_start", {"phase": "preflight", "stage": "expansion_preflight"})
+        _update_task(task_store, task_id, current_step="expansion_preflight")
+
+        storage = TopicDiscoveryStorage(root, effective_slug)
+        manifest = await asyncio.to_thread(storage.read_manifest)
+
+        if manifest.taxonomy_version == 0 or manifest.scoring_version == 0:
+            raise RuntimeError(
+                f"Topic Discovery has not completed for '{effective_slug}'. "
+                "Run the discovery pipeline first."
+            )
+
+        # Load taxonomy
+        tax_version = input_data.taxonomy_version or manifest.taxonomy_version
+        taxonomy = await asyncio.to_thread(storage.read_taxonomy, tax_version)
+        if taxonomy is None:
+            raise RuntimeError(f"Taxonomy v{tax_version} not found for '{effective_slug}'.")
+
+        # Load scored subdomains + persona affinity
+        scored_subdomains = await asyncio.to_thread(
+            storage.read_scoring, manifest.scoring_version,
+        )
+        persona_affinity = await asyncio.to_thread(
+            storage.read_persona_affinity, manifest.persona_affinity_version,
+        )
+
+        # Load company context + persona profiles (needed for expansion prompts)
+        domain = input_data.domain or f"{company_slug}.com"
+        from core.storage.backends import LocalStorageBackend
+        backend = LocalStorageBackend(root)
+
+        company_md = await asyncio.to_thread(
+            read_company_context, backend, effective_slug, company_slug,
+        )
+        if not company_md:
+            company_md = ""
+        company_md = company_md[:_MAX_COMPANY_CONTEXT_CHARS]
+
+        persona_mds = await asyncio.to_thread(
+            load_persona_profiles, root, effective_slug, company_slug,
+        )
+
+        # Build persona_mds_by_id for expansion context
+        persona_entries = _load_persona_entries(backend, effective_slug, company_slug)
+        persona_mds_by_id: Dict[str, str] = {}
+        if persona_entries and persona_mds:
+            for idx, (pid, _pname) in enumerate(persona_entries):
+                if idx < len(persona_mds):
+                    persona_mds_by_id[pid] = persona_mds[idx]
+
+        # Validate subdomain selection
+        if not input_data.subdomain_ids:
+            raise ValueError("subdomain_ids must be non-empty for topic expansion.")
+
+        all_subdomain_tuples = _flatten_subdomain_nodes(taxonomy.root_nodes)
+        valid_ids = {sid for sid, _, _ in all_subdomain_tuples}
+        unknown_ids = set(input_data.subdomain_ids) - valid_ids
+        if unknown_ids:
+            logger.warning(
+                "TD-Expansion/%s: unknown subdomain IDs will be skipped: %s",
+                effective_slug, unknown_ids,
+            )
+
+        selected_subdomain_ids = [
+            sid for sid in input_data.subdomain_ids if sid in valid_ids
+        ]
+        if not selected_subdomain_ids:
+            raise ValueError("No valid subdomain IDs provided for expansion.")
 
         _emit(event_bus, task_id, "td_phase_complete", {
-            "phase": "hitl_1_5",
-            "selected_count": len(selected_subdomain_ids),
-            "persona_filter": persona_filter or None,
+            "phase": "preflight",
+            "subdomains_selected": len(selected_subdomain_ids),
         })
 
         # =============================================================
-        # Phase 3 (S3): On-Demand Expansion (1 LLM call per subdomain)
+        # Phase 3 (S3): On-Demand Expansion
         # =============================================================
         _emit(event_bus, task_id, "td_phase_start", {
             "phase": 3, "stage": "s3_expansion",
         })
         _update_task(task_store, task_id, current_step="phase_3_expansion")
 
-        # Define dimensions
+        auto_approve_cps = set(input_data.auto_approve_checkpoints or [])
+
         buyer_stages = [s.value for s in BuyerStage]
         intent_types = [t.value for t in IntentType]
-
-        # Build audience_segments as (persona_id, persona_name) tuples
         audience_segments: List[Tuple[str, str]] = persona_entries or [("general", "General")]
 
-        # Flatten subdomain nodes from taxonomy
-        all_subdomain_tuples = _flatten_subdomain_nodes(taxonomy.root_nodes)
-
-        # Filter to selected subdomains only
+        # Filter to selected subdomains
         selected_set = set(selected_subdomain_ids)
         selected_tuples = [
             (sid, sname, sdesc)
@@ -682,23 +906,25 @@ async def run_topic_discovery_pipeline(
             if sid in selected_set
         ]
 
-        # Cap at max_subdomains_to_expand
         max_expand = settings.topic_discovery_max_subdomains_to_expand
         if len(selected_tuples) > max_expand:
             logger.warning(
-                "TD/%s: selected %d subdomains, capping at %d",
+                "TD-Expansion/%s: selected %d subdomains, capping at %d",
                 effective_slug, len(selected_tuples), max_expand,
             )
             selected_tuples = selected_tuples[:max_expand]
 
         # Optional persona context for focused expansion
+        persona_filter = input_data.persona_filter or ""
         expansion_persona_ctx: Optional[str] = None
         if persona_filter and persona_filter in persona_mds_by_id:
             expansion_persona_ctx = persona_mds_by_id[persona_filter][:500]
 
-        # Expand each selected subdomain (1 LLM call each)
+        # Expand each selected subdomain
         all_assignments: List[TopicAssignment] = []
         semaphore = asyncio.Semaphore(settings.topic_discovery_max_concurrent_sources)
+        expanded_ids: set = set()
+        failed_ids: set = set()
 
         async def _expand_subdomain(
             sd_id: str, sd_name: str, sd_desc: str,
@@ -712,9 +938,8 @@ async def run_topic_discovery_pipeline(
                     audience_segments=audience_segments,
                     company_context=company_md,
                     persona_context=expansion_persona_ctx,
-                    timeout_s=timeout_s,
+                    timeout_s=settings.topic_discovery_expansion_timeout_s,
                 )
-            # Set subdomain_id on each assignment
             for a in assignments:
                 a.subdomain_id = sd_id
             return assignments
@@ -724,23 +949,27 @@ async def run_topic_discovery_pipeline(
             for sid, sname, sdesc in selected_tuples
         ]
         expansion_results = await asyncio.gather(
-            *expansion_tasks, return_exceptions=True
+            *expansion_tasks, return_exceptions=True,
         )
 
         for i, res in enumerate(expansion_results):
+            sd_id = selected_tuples[i][0]
             if isinstance(res, Exception):
                 logger.warning(
-                    "TD/%s: expansion failed for '%s': %s",
-                    effective_slug, selected_tuples[i][1], res,
+                    "TD-Expansion/%s: expansion failed for '%s': %s(%s)",
+                    effective_slug, selected_tuples[i][1],
+                    type(res).__name__, res,
                 )
+                failed_ids.add(sd_id)
             else:
                 all_assignments.extend(res)
+                expanded_ids.add(sd_id)
 
-        # Compute topic priority scores (zero LLM calls)
-        # Build subdomain_id → SubdomainScore lookup
+        # Compute topic priority scores
         score_lookup: Dict[str, Any] = {}
-        for sc in scored_subdomains.scores:
-            score_lookup[sc.subdomain_id] = sc
+        if scored_subdomains:
+            for sc in scored_subdomains.scores:
+                score_lookup[sc.subdomain_id] = sc
 
         for assignment in all_assignments:
             sd_score = score_lookup.get(assignment.subdomain_id)
@@ -753,10 +982,9 @@ async def run_topic_discovery_pipeline(
                 assignment.priority_score = priority
                 assignment.priority_factors = factors
 
-        # Build matrix (even if empty — valid empty matrix)
+        # Build matrix
         distributions = _compute_distributions(all_assignments)
         matrix = TopicAssignmentMatrix(
-            version=1,
             status=TopicDiscoveryStatus.draft,
             assignments=all_assignments,
             total_assignments=len(all_assignments),
@@ -769,10 +997,15 @@ async def run_topic_discovery_pipeline(
 
         mat_version = await asyncio.to_thread(storage.write_matrix, matrix)
 
+        # Update expansion_status on taxonomy nodes
+        _update_expansion_status(taxonomy.root_nodes, expanded_ids, failed_ids)
+        await asyncio.to_thread(storage.write_taxonomy, taxonomy, taxonomy.version)
+
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": 3,
             "total_assignments": len(all_assignments),
-            "subdomains_expanded": len(selected_tuples),
+            "subdomains_expanded": len(expanded_ids),
+            "subdomains_failed": len(failed_ids),
         })
 
         # =============================================================
@@ -809,89 +1042,73 @@ async def run_topic_discovery_pipeline(
         })
 
         # ── DB: Persist approved assignments ──
+        discovery_id: Optional[Any] = None
+        taxonomy_db_id: Optional[Any] = None
         try:
-            from core.topic_discovery.persistence import persist_td_assignments
+            from core.topic_discovery.persistence import (
+                persist_td_assignments,
+                persist_td_discovery,
+            )
 
+            discovery_id = await persist_td_discovery(
+                session_factory, run_id, company_id,
+                effective_slug, domain, manifest.taxonomy_version,
+            )
             await persist_td_assignments(
                 session_factory, run_id, company_id,
                 discovery_id, matrix, mat_version,
                 taxonomy_id=taxonomy_db_id,
             )
         except Exception:
-            logger.warning("TD persist_td_assignments failed, continuing", exc_info=True)
+            logger.warning("TD-Expansion persist failed, continuing", exc_info=True)
 
         # =============================================================
-        # Phase 4: Finalize
+        # Finalize
         # =============================================================
-        _emit(event_bus, task_id, "td_phase_start", {"phase": 4, "stage": "finalize"})
-        _update_task(task_store, task_id, current_step="phase_4_finalize")
+        _emit(event_bus, task_id, "td_phase_start", {"phase": "finalize", "stage": "expansion_finalize"})
+        _update_task(task_store, task_id, current_step="finalize_expansion")
 
-        # Update manifest
         manifest = await asyncio.to_thread(storage.read_manifest)
-        manifest.slug = company_slug
-        manifest.effective_slug = effective_slug
-        manifest.company_name = input_data.company_name
-        manifest.domain_name = domain
         manifest.status = TopicDiscoveryStatus.approved
-        manifest.taxonomy_version = tax_version
         manifest.matrix_version = mat_version
-        manifest.scoring_version = scoring_version
-        manifest.persona_affinity_version = affinity_version
         manifest.last_updated = datetime.now(timezone.utc).isoformat()
-        manifest.source_results_written = [sr.source.value for sr in source_results]
+        manifest.last_expansion_task_id = task_id or ""
+        # Accumulate expanded IDs (re-entrant)
+        existing_expanded = set(manifest.expanded_subdomain_ids)
+        existing_expanded.update(expanded_ids)
+        manifest.expanded_subdomain_ids = sorted(existing_expanded)
         await asyncio.to_thread(storage.write_manifest, manifest)
 
-        # ── DB Persistence (fire-and-forget) ──
         try:
             from core.topic_discovery.persistence import persist_td_status_update
 
             await persist_td_status_update(session_factory, discovery_id, "approved")
         except Exception:
-            logger.warning("TD persist_td_status_update failed, continuing", exc_info=True)
+            logger.warning("TD-Expansion persist_td_status_update failed", exc_info=True)
 
-        try:
-            from core.research.persistence import persist_pipeline_run_complete
-
-            await persist_pipeline_run_complete(
-                session_factory, run_id,
-                {
-                    "taxonomy_version": tax_version,
-                    "matrix_version": mat_version,
-                    "total_subdomains": taxonomy.total_subdomains,
-                    "total_assignments": len(all_assignments),
-                },
-            )
-        except Exception:
-            logger.warning("TD DB persistence failed, continuing", exc_info=True)
-
-        output = TopicDiscoveryOutput(
+        output = TopicExpansionOutput(
             slug=company_slug,
             effective_slug=effective_slug,
-            company_name=input_data.company_name,
-            taxonomy=taxonomy,
             matrix=matrix,
-            coverage=coverage,
-            scored_subdomains=scored_subdomains,
-            persona_affinity=persona_affinity,
-            manifest=manifest,
-            taxonomy_version=tax_version,
             matrix_version=mat_version,
+            subdomains_expanded=len(expanded_ids),
+            subdomains_failed=len(failed_ids),
+            total_assignments=len(all_assignments),
             total_execution_time_s=time.time() - start_time,
             status=TopicDiscoveryStatus.approved,
         )
 
-        _emit(event_bus, task_id, "completed", {"pipeline": "topic_discovery"})
-        _emit(event_bus, task_id, "td_phase_complete", {"phase": 4})
+        _emit(event_bus, task_id, "completed", {"pipeline": "topic_expansion"})
+        _emit(event_bus, task_id, "td_phase_complete", {"phase": "finalize"})
         end_span(trace_span, output={
-            "total_subdomains": taxonomy.total_subdomains,
+            "subdomains_expanded": len(expanded_ids),
             "total_assignments": len(all_assignments),
-            "coverage_score": coverage.aggregate_sample_coverage,
         })
         flush()
         return output
 
     except Exception as exc:
-        logger.exception("TD pipeline failed for %s: %s", slug, exc)
+        logger.exception("TD-Expansion pipeline failed for %s: %s", effective_slug, exc)
         _emit(event_bus, task_id, "failed", {"error": str(exc)})
         end_span(trace_span, error=str(exc))
         flush()

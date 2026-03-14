@@ -359,7 +359,6 @@ async def run_gap_pipeline_task(
                 seed_urls=request.seed_urls or [f"https://{domain}/"],
                 company_context_path=resolved["company_context_path"],
                 persona_paths=resolved["persona_paths"],
-                style_guide_path=resolved["style_guide_path"],
                 max_queries=request.max_queries,
                 platforms=request.platforms,
                 language=request.language,
@@ -1301,4 +1300,86 @@ async def run_topic_discovery_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
         task_store.release_slug_lock(f"topic_discovery:{scope.effective_slug}")
+        task_store.remove_task_handle(task_id)
+
+
+async def run_topic_expansion_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Topic Expansion pipeline (Pipeline B)."""
+    from core.models.topic_discovery import TopicExpansionInput
+    from core.topic_discovery.pipeline import run_topic_expansion_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "topic_expansion",
+        )
+
+    try:
+        async with task_store.semaphore:
+            input_data = TopicExpansionInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                effective_slug=scope.effective_slug,
+                subdomain_ids=getattr(request, "subdomain_ids", []),
+                persona_filter=getattr(request, "persona_filter", None),
+                taxonomy_version=getattr(request, "taxonomy_version", None),
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+            )
+
+            output = await run_topic_expansion_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            await _mark_pipeline_run_complete(session_factory, run_id)
+
+            result = {
+                "slug": output.slug,
+                "effective_slug": output.effective_slug,
+                "matrix_version": output.matrix_version,
+                "subdomains_expanded": output.subdomains_expanded,
+                "subdomains_failed": output.subdomains_failed,
+                "total_assignments": output.total_assignments,
+                "produced_artifacts": [
+                    {"type": "topic_expansion", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("TD-Expansion pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("TD-Expansion pipeline failed: %s", exc)
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(f"topic_expansion:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)

@@ -2,10 +2,15 @@
 """
 Run the gap analysis pipeline.
 
-Example:
-  cd content-strategy-engine && python scripts/run_gap_analysis.py --company-name "Acme" --domain acme.com \
-    --company-context-path /artifacts/company_context/acme.md \
-    --persona-path /artifacts/personas/acme_icp.md
+Persona paths are auto-discovered from artifacts/audience_personas/{slug}/
+when --persona-path is not provided. Use --persona-path to override.
+
+Example (auto-discover personas):
+  python scripts/run_gap_analysis.py --company-name "Ramp" --domain ramp.com
+
+Example (explicit persona override):
+  python scripts/run_gap_analysis.py --company-name "Ramp" --domain ramp.com \
+    --persona-path artifacts/audience_personas/ramp/david/v2.md
 """
 import argparse
 import asyncio
@@ -26,10 +31,14 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--domain", required=True, help="Company domain (e.g., acme.com)")
     p.add_argument("--company-id", default=None, help="Supabase company UUID (optional)")
     p.add_argument("--company-context-path", default=None, help="DeepAgents path")
-    p.add_argument("--persona-path", action="append", default=[], help="Persona path (repeatable)")
-    p.add_argument("--style-guide-path", default=None, help="Style guide path")
+    p.add_argument(
+        "--persona-path",
+        action="append",
+        default=[],
+        help="Persona .md path (repeatable). Omit to auto-discover from artifacts/audience_personas/{slug}/",
+    )
     p.add_argument("--seed-url", action="append", default=[], help="Seed URL (repeatable)")
-    p.add_argument("--max-queries", type=int, default=150, help="Max queries to generate")
+    p.add_argument("--max-queries", type=int, default=100, help="Max queries to generate")
     p.add_argument(
         "--platforms",
         default="perplexity,openai,gemini,claude",
@@ -56,7 +65,6 @@ def main() -> int:
         seed_urls=args.seed_url or [],
         company_context_path=args.company_context_path,
         persona_paths=args.persona_path or [],
-        style_guide_path=args.style_guide_path,
         max_queries=args.max_queries,
         platforms=platforms,
     )

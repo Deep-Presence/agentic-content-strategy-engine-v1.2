@@ -190,3 +190,57 @@ class PersonaAffinityResponse(BaseModel):
     persona_entries: Dict[str, Any] = Field(default_factory=dict)
     total_personas: int = 0
     total_subdomains: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Pipeline B: Topic Expansion
+# ---------------------------------------------------------------------------
+
+
+class TopicExpansionStartRequest(BaseModel):
+    """Launch the Topic Expansion pipeline (Pipeline B)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    company_name: str
+    domain: str
+    product_slug: Optional[str] = None
+
+    @field_validator("product_slug")
+    @classmethod
+    def _validate_product_slug(cls, v: Optional[str]) -> Optional[str]:
+        return _check_product_slug(v)
+
+    subdomain_ids: List[str] = Field(
+        min_length=1,
+        description="Subdomain IDs to expand into the content matrix",
+    )
+    persona_filter: Optional[str] = None
+    taxonomy_version: Optional[int] = None
+    auto_approve_checkpoints: List[int] = Field(
+        default_factory=list,
+        description="Checkpoint 2 = auto-approve matrix",
+    )
+
+    @field_validator("auto_approve_checkpoints")
+    @classmethod
+    def _validate_auto_approve(cls, v: List[int]) -> List[int]:
+        invalid = [x for x in v if x not in {2}]
+        if invalid:
+            raise ValueError(
+                "Pipeline B only supports checkpoint 2 (matrix); "
+                f"got invalid: {invalid}"
+            )
+        return v
+
+
+class ExpansionStatusResponse(BaseModel):
+    """Response for GET /{slug}/expansion-status."""
+
+    slug: str = ""
+    effective_slug: str = ""
+    total_subdomains: int = 0
+    expanded: int = 0
+    not_expanded: int = 0
+    expanded_ids: List[str] = Field(default_factory=list)
+    available_for_expansion: List[Dict[str, Any]] = Field(default_factory=list)
