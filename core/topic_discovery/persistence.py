@@ -70,6 +70,10 @@ def _flatten_taxonomy_tree(
         sort_idx = _counter[0]
         _counter[0] += 1
 
+        # Persona affinity dict (Pydantic field name is "persona_affinity",
+        # ORM column name is "persona_affinity_json")
+        pa = getattr(node, "persona_affinity", None)
+
         flat.append({
             "id": node_uuid,
             "taxonomy_id": taxonomy_id,
@@ -82,6 +86,10 @@ def _flatten_taxonomy_tree(
             "is_manually_added": getattr(node, "is_manually_added", False),
             "sort_order": sort_idx,
             "metadata_json": getattr(node, "metadata", None),
+            "priority_score": getattr(node, "priority_score", 0.0),
+            "priority_factors": getattr(node, "priority_factors", None),
+            "persona_affinity_json": pa if isinstance(pa, dict) else None,
+            "expansion_status": getattr(node, "expansion_status", "not_expanded"),
         })
 
         # Recurse into children
@@ -108,6 +116,7 @@ async def persist_td_discovery(
     *,
     product_id: _uuid.UUID | None = None,
     pipeline_run_id: _uuid.UUID | None = None,
+    manifest_json: dict | None = None,
 ) -> _uuid.UUID | None:
     """Create/update TopicDiscoveryModel at pipeline start.
 
@@ -131,6 +140,9 @@ async def persist_td_discovery(
                 domain_name=domain_name,
                 status=TDStatus.draft,
             )
+            if manifest_json is not None:
+                discovery.manifest_json = manifest_json
+                await session.flush()
             await session.commit()
 
         logger.info(
@@ -162,7 +174,7 @@ async def persist_td_taxonomy(
     Steps:
     1. Upsert TaxonomyTreeModel with tree_json
     2. Delete existing subdomain nodes for this taxonomy (idempotent)
-    3. Flatten taxonomy tree into flat list
+    3. Flatten taxonomy tree into flat list (including scoring columns)
     4. Bulk insert SubdomainNodeModel rows
     5. Update TopicDiscoveryModel.taxonomy_version
 
@@ -208,7 +220,8 @@ async def persist_td_taxonomy(
             # 2. Delete old nodes (idempotent)
             await node_repo.delete_by_taxonomy(taxonomy_id)
 
-            # 3. Flatten tree
+            # 3. Flatten tree (now includes priority_score, priority_factors,
+            #    persona_affinity_json, expansion_status)
             flat_nodes = _flatten_taxonomy_tree(
                 taxonomy.root_nodes, taxonomy_id,
             )
@@ -258,8 +271,8 @@ async def persist_td_assignments(
     Steps:
     1. Delete existing assignments for this discovery + version (idempotent)
     2. Map Pydantic enums → DB enums via .value
-    3. Bulk insert TopicAssignmentModel rows
-    4. Update TopicDiscoveryModel.matrix_version and status
+    3. Bulk insert TopicAssignmentModel rows with persona + subdomain fields
+    4. Update TopicDiscoveryModel.matrix_version
     """
     if not _should_persist(session_factory, run_id, company_id):
         return
@@ -272,7 +285,6 @@ async def persist_td_assignments(
             BuyerStage as DBBuyerStage,
             IntentType as DBIntentType,
             RelevanceCell as DBRelevanceCell,
-            TDStatus,
             TopicAssignmentStatus as DBTopicAssignmentStatus,
         )
         from core.db.models.topic_discovery import TopicAssignmentModel
@@ -298,11 +310,20 @@ async def persist_td_assignments(
                 except (ValueError, AttributeError):
                     a_uuid = _uuid.uuid4()
 
+                # Resolve subdomain_node_id FK from Pydantic subdomain_id
+                subdomain_node_uuid = None
+                raw_subdomain_id = getattr(a, "subdomain_id", None)
+                if raw_subdomain_id:
+                    try:
+                        subdomain_node_uuid = _uuid.UUID(raw_subdomain_id)
+                    except (ValueError, AttributeError):
+                        pass
+
                 models.append(TopicAssignmentModel(
                     id=a_uuid,
                     discovery_id=discovery_id,
                     matrix_version=version,
-                    subdomain_node_id=None,  # FK link is best-effort
+                    subdomain_node_id=subdomain_node_uuid,
                     topic_text=a.topic_text,
                     buyer_stage=DBBuyerStage(a.buyer_stage.value),
                     intent_type=DBIntentType(a.intent_type.value),
@@ -318,6 +339,10 @@ async def persist_td_assignments(
                     is_manually_added=getattr(a, "is_manually_added", False),
                     metadata_json=getattr(a, "metadata", None)
                     if isinstance(getattr(a, "metadata", None), dict) else {},
+                    persona_id=getattr(a, "persona_id", None),
+                    persona_name=getattr(a, "persona_name", None),
+                    subdomain_id_text=raw_subdomain_id,
+                    subdomain_name=getattr(a, "subdomain_name", None),
                 ))
 
             if models:
@@ -337,6 +362,188 @@ async def persist_td_assignments(
     except Exception:
         logger.warning(
             "persist_td_assignments failed for discovery %s, continuing without DB",
+            discovery_id, exc_info=True,
+        )
+
+
+# ── Source results hook ─────────────────────────────────────────────────
+
+
+async def persist_td_source_results(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    discovery_id: Optional[_uuid.UUID],
+    source_results: List[Any],
+    version: int = 1,
+) -> None:
+    """Persist SourceResultModel rows AFTER S1 source collection.
+
+    Stores per-source generation statistics and raw candidates.
+    """
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    if discovery_id is None or not source_results:
+        return
+    assert session_factory is not None
+    try:
+        from core.db.models.topic_discovery import SourceResultModel
+        from core.db.repositories.topic_discovery_repo import SourceResultRepository
+
+        async with session_factory() as session:
+            repo = SourceResultRepository(session)
+
+            # Idempotent: delete existing results for this discovery
+            await repo.delete_by_discovery(discovery_id)
+
+            models = []
+            for sr in source_results:
+                # Serialize candidates to JSON
+                candidates_json = None
+                if sr.candidates:
+                    try:
+                        candidates_json = [
+                            c.model_dump(mode="json") if hasattr(c, "model_dump")
+                            else vars(c)
+                            for c in sr.candidates
+                        ]
+                    except Exception:
+                        candidates_json = None
+
+                models.append(SourceResultModel(
+                    discovery_id=discovery_id,
+                    source=sr.source.value if hasattr(sr.source, "value") else str(sr.source),
+                    version=version,
+                    total_candidates=len(sr.candidates),
+                    total_rounds=getattr(sr, "total_rounds", 0),
+                    singletons=getattr(sr, "singletons", 0),
+                    doubletons=getattr(sr, "doubletons", 0),
+                    chao1_estimate=getattr(sr, "chao1_estimate", None),
+                    source_sample_coverage=getattr(sr, "source_sample_coverage", None),
+                    execution_time_s=getattr(sr, "execution_time_s", None),
+                    error=getattr(sr, "error", None),
+                    candidates_json=candidates_json,
+                ))
+
+            if models:
+                await repo.bulk_create(models)
+            await session.commit()
+
+        logger.info(
+            "persist_td_source_results: %d sources stored for discovery %s",
+            len(models), discovery_id,
+        )
+    except Exception:
+        logger.warning(
+            "persist_td_source_results failed for discovery %s, continuing without DB",
+            discovery_id, exc_info=True,
+        )
+
+
+# ── Persona affinity hook ──────────────────────────────────────────────
+
+
+async def persist_td_persona_affinity(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    discovery_id: Optional[_uuid.UUID],
+    affinity_index: Any,
+    version: int,
+) -> None:
+    """Persist PersonaAffinityModel rows AFTER Phase 2.5 persona affinity computation.
+
+    Flattens the PersonaAffinityIndex (Dict[persona_id → List[PersonaSubdomainEntry]])
+    into flat rows in td_persona_affinity.
+    """
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    if discovery_id is None or affinity_index is None:
+        return
+    assert session_factory is not None
+    try:
+        from core.db.models.topic_discovery import PersonaAffinityModel
+        from core.db.repositories.topic_discovery_repo import PersonaAffinityRepository
+
+        async with session_factory() as session:
+            repo = PersonaAffinityRepository(session)
+
+            # Idempotent: delete existing affinity for this discovery + version
+            await repo.delete_by_discovery(discovery_id, version=version)
+
+            models = []
+            persona_entries = getattr(affinity_index, "persona_entries", {})
+            for persona_id, entries in persona_entries.items():
+                for entry in entries:
+                    # Try to resolve subdomain UUID for FK linkage
+                    subdomain_node_uuid = None
+                    raw_sub_id = getattr(entry, "subdomain_id", None)
+                    if raw_sub_id:
+                        try:
+                            subdomain_node_uuid = _uuid.UUID(raw_sub_id)
+                        except (ValueError, AttributeError):
+                            pass
+
+                    pain_points_val = getattr(entry, "pain_points", None)
+
+                    models.append(PersonaAffinityModel(
+                        discovery_id=discovery_id,
+                        subdomain_node_id=subdomain_node_uuid,
+                        persona_id=persona_id,
+                        persona_name=None,
+                        subdomain_id_str=raw_sub_id,
+                        subdomain_name=getattr(entry, "subdomain_name", None),
+                        affinity_score=getattr(entry, "affinity_score", 0.0),
+                        provenance=getattr(entry, "provenance", None),
+                        pain_points=pain_points_val if isinstance(pain_points_val, list) else None,
+                        version=version,
+                    ))
+
+            if models:
+                await repo.bulk_create(models)
+            await session.commit()
+
+        logger.info(
+            "persist_td_persona_affinity: %d entries stored for discovery %s (v%d)",
+            len(models), discovery_id, version,
+        )
+    except Exception:
+        logger.warning(
+            "persist_td_persona_affinity failed for discovery %s, continuing without DB",
+            discovery_id, exc_info=True,
+        )
+
+
+# ── Scoring metadata hook ──────────────────────────────────────────────
+
+
+async def persist_td_scoring_metadata(
+    session_factory: Optional[async_sessionmaker],
+    discovery_id: Optional[_uuid.UUID],
+    scoring_version: int,
+    persona_affinity_version: int,
+) -> None:
+    """Update TopicDiscoveryModel with scoring and persona affinity versions."""
+    if session_factory is None or discovery_id is None:
+        return
+    try:
+        from core.db.repositories.topic_discovery_repo import TopicDiscoveryRepository
+
+        async with session_factory() as session:
+            repo = TopicDiscoveryRepository(session)
+            await repo.update_versions(
+                discovery_id,
+                scoring_version=scoring_version,
+                persona_affinity_version=persona_affinity_version,
+            )
+            await session.commit()
+        logger.info(
+            "persist_td_scoring_metadata: discovery %s → scoring_v%d, affinity_v%d",
+            discovery_id, scoring_version, persona_affinity_version,
+        )
+    except Exception:
+        logger.warning(
+            "persist_td_scoring_metadata failed for discovery %s",
             discovery_id, exc_info=True,
         )
 

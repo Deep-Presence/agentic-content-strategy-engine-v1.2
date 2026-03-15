@@ -316,14 +316,251 @@ def test_repository_model_class_binding():
         TaxonomyTreeModel,
         SubdomainNodeModel,
         TopicAssignmentModel,
+        SourceResultModel,
+        PersonaAffinityModel,
     )
     from core.topic_discovery.repository import (
         TopicDiscoveryRepository,
         TaxonomyTreeRepository,
         SubdomainNodeRepository,
         TopicAssignmentRepository,
+        SourceResultRepository,
+        PersonaAffinityRepository,
     )
     assert TopicDiscoveryRepository.model_class is TopicDiscoveryModel
     assert TaxonomyTreeRepository.model_class is TaxonomyTreeModel
     assert SubdomainNodeRepository.model_class is SubdomainNodeModel
     assert TopicAssignmentRepository.model_class is TopicAssignmentModel
+    assert SourceResultRepository.model_class is SourceResultModel
+    assert PersonaAffinityRepository.model_class is PersonaAffinityModel
+
+
+# ── SourceResultRepository Tests ───────────────────────────────────────
+
+
+class TestSourceResultRepository:
+    async def test_bulk_create_adds_all(self):
+        from core.topic_discovery.repository import SourceResultRepository
+
+        session = _mock_session()
+        repo = SourceResultRepository(session)
+
+        models = [MagicMock(), MagicMock()]
+        result = await repo.bulk_create(models)
+
+        session.add_all.assert_called_once_with(models)
+        session.flush.assert_called_once()
+        assert result == models
+
+    async def test_get_by_discovery_returns_results(self):
+        from core.topic_discovery.repository import SourceResultRepository
+
+        session = _mock_session()
+        row = MagicMock()
+        row.source = "source_a"
+        session.execute.return_value = _mock_execute_result([row])
+        repo = SourceResultRepository(session)
+
+        results = await repo.get_by_discovery(uuid.uuid4())
+        assert len(results) == 1
+
+    async def test_get_by_discovery_with_source_filter(self):
+        from core.topic_discovery.repository import SourceResultRepository
+
+        session = _mock_session()
+        session.execute.return_value = _mock_execute_result([])
+        repo = SourceResultRepository(session)
+
+        results = await repo.get_by_discovery(uuid.uuid4(), source="source_b")
+        assert len(results) == 0
+        session.execute.assert_called_once()
+
+    async def test_delete_by_discovery_returns_count(self):
+        from core.topic_discovery.repository import SourceResultRepository
+
+        session = _mock_session()
+        result = MagicMock()
+        result.rowcount = 3
+        session.execute.return_value = result
+        repo = SourceResultRepository(session)
+
+        count = await repo.delete_by_discovery(uuid.uuid4())
+        assert count == 3
+        session.flush.assert_called_once()
+
+
+# ── PersonaAffinityRepository Tests ───────────────────────────────────
+
+
+class TestPersonaAffinityRepository:
+    async def test_bulk_create_adds_all(self):
+        from core.topic_discovery.repository import PersonaAffinityRepository
+
+        session = _mock_session()
+        repo = PersonaAffinityRepository(session)
+
+        models = [MagicMock(), MagicMock(), MagicMock()]
+        result = await repo.bulk_create(models)
+
+        session.add_all.assert_called_once_with(models)
+        session.flush.assert_called_once()
+        assert result == models
+
+    async def test_get_by_discovery_returns_entries(self):
+        from core.topic_discovery.repository import PersonaAffinityRepository
+
+        session = _mock_session()
+        row = MagicMock()
+        row.persona_id = "persona-cfo"
+        session.execute.return_value = _mock_execute_result([row])
+        repo = PersonaAffinityRepository(session)
+
+        results = await repo.get_by_discovery(uuid.uuid4())
+        assert len(results) == 1
+
+    async def test_get_by_discovery_with_version_filter(self):
+        from core.topic_discovery.repository import PersonaAffinityRepository
+
+        session = _mock_session()
+        session.execute.return_value = _mock_execute_result([])
+        repo = PersonaAffinityRepository(session)
+
+        results = await repo.get_by_discovery(uuid.uuid4(), version=2)
+        assert len(results) == 0
+        session.execute.assert_called_once()
+
+    async def test_get_by_persona_returns_filtered(self):
+        from core.topic_discovery.repository import PersonaAffinityRepository
+
+        session = _mock_session()
+        row = MagicMock()
+        row.persona_id = "persona-cfo"
+        session.execute.return_value = _mock_execute_result([row])
+        repo = PersonaAffinityRepository(session)
+
+        results = await repo.get_by_persona(uuid.uuid4(), "persona-cfo")
+        assert len(results) == 1
+        session.execute.assert_called_once()
+
+    async def test_delete_by_discovery_returns_count(self):
+        from core.topic_discovery.repository import PersonaAffinityRepository
+
+        session = _mock_session()
+        result = MagicMock()
+        result.rowcount = 5
+        session.execute.return_value = result
+        repo = PersonaAffinityRepository(session)
+
+        count = await repo.delete_by_discovery(uuid.uuid4())
+        assert count == 5
+        session.flush.assert_called_once()
+
+    async def test_delete_by_discovery_with_version(self):
+        from core.topic_discovery.repository import PersonaAffinityRepository
+
+        session = _mock_session()
+        result = MagicMock()
+        result.rowcount = 2
+        session.execute.return_value = result
+        repo = PersonaAffinityRepository(session)
+
+        count = await repo.delete_by_discovery(uuid.uuid4(), version=1)
+        assert count == 2
+
+
+# ── TopicDiscoveryRepo Extended Versions Tests ────────────────────────
+
+
+class TestTopicDiscoveryRepoUpdateVersionsExtended:
+    """Verify update_versions handles scoring_version and persona_affinity_version."""
+
+    async def test_scoring_version_kwarg(self):
+        from core.topic_discovery.repository import TopicDiscoveryRepository
+
+        session = _mock_session()
+        updated = _make_discovery(scoring_version=3)
+        session.execute.return_value = _mock_execute_result([updated])
+        repo = TopicDiscoveryRepository(session)
+
+        # update() is inherited from base — mock it
+        repo.update = AsyncMock(return_value=updated)
+
+        result = await repo.update_versions(
+            updated.id, scoring_version=3,
+        )
+        repo.update.assert_called_once_with(updated.id, scoring_version=3)
+
+    async def test_persona_affinity_version_kwarg(self):
+        from core.topic_discovery.repository import TopicDiscoveryRepository
+
+        session = _mock_session()
+        updated = _make_discovery()
+        repo = TopicDiscoveryRepository(session)
+        repo.update = AsyncMock(return_value=updated)
+
+        await repo.update_versions(
+            updated.id, persona_affinity_version=2,
+        )
+        repo.update.assert_called_once_with(
+            updated.id, persona_affinity_version=2,
+        )
+
+    async def test_all_version_kwargs_together(self):
+        from core.topic_discovery.repository import TopicDiscoveryRepository
+
+        session = _mock_session()
+        updated = _make_discovery()
+        repo = TopicDiscoveryRepository(session)
+        repo.update = AsyncMock(return_value=updated)
+
+        await repo.update_versions(
+            updated.id,
+            taxonomy_version=2,
+            matrix_version=3,
+            scoring_version=1,
+            persona_affinity_version=1,
+        )
+        repo.update.assert_called_once_with(
+            updated.id,
+            taxonomy_version=2,
+            matrix_version=3,
+            scoring_version=1,
+            persona_affinity_version=1,
+        )
+
+    async def test_no_kwargs_returns_existing(self):
+        from core.topic_discovery.repository import TopicDiscoveryRepository
+
+        session = _mock_session()
+        existing = _make_discovery()
+        repo = TopicDiscoveryRepository(session)
+        repo.get_by_id = AsyncMock(return_value=existing)
+
+        result = await repo.update_versions(existing.id)
+        repo.get_by_id.assert_called_once_with(existing.id)
+        assert result is existing
+
+
+# ── TopicAssignmentRepo Paginated with persona_id Tests ───────────────
+
+
+class TestTopicAssignmentRepoPaginatedWithPersona:
+    async def test_persona_id_filter(self):
+        from core.topic_discovery.repository import TopicAssignmentRepository
+
+        session = _mock_session()
+        assignment = MagicMock()
+        assignment.persona_id = "persona-cfo"
+
+        count_result = MagicMock()
+        count_result.scalar.return_value = 1
+        items_result = _mock_execute_result([assignment])
+
+        session.execute.side_effect = [count_result, items_result]
+        repo = TopicAssignmentRepository(session)
+
+        items, total = await repo.list_paginated(
+            uuid.uuid4(), persona_id="persona-cfo",
+        )
+        assert total == 1
+        assert len(items) == 1

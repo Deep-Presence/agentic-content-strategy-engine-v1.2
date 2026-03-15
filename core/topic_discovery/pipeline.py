@@ -453,6 +453,17 @@ async def run_topic_discovery_pipeline(
             for sr in source_results:
                 await asyncio.to_thread(storage.write_source_result, sr.source, sr)
 
+            # ── DB: Persist source results ──
+            try:
+                from core.topic_discovery.persistence import persist_td_source_results
+
+                await persist_td_source_results(
+                    session_factory, run_id, company_id,
+                    discovery_id, source_results,
+                )
+            except Exception:
+                logger.warning("TD persist_td_source_results failed, continuing", exc_info=True)
+
             _emit(event_bus, task_id, "td_phase_complete", {"phase": 1})
 
             # =============================================================
@@ -633,6 +644,39 @@ async def run_topic_discovery_pipeline(
             storage.write_taxonomy, taxonomy, taxonomy.version
         )
 
+        # ── DB: Re-persist taxonomy with scoring data on nodes ──
+        try:
+            from core.topic_discovery.persistence import persist_td_taxonomy as _re_persist_tax
+
+            await _re_persist_tax(
+                session_factory, run_id, company_id,
+                discovery_id, taxonomy, tax_version,
+            )
+        except Exception:
+            logger.warning("TD re-persist_td_taxonomy (post-scoring) failed, continuing", exc_info=True)
+
+        # ── DB: Persist persona affinity index ──
+        try:
+            from core.topic_discovery.persistence import persist_td_persona_affinity
+
+            await persist_td_persona_affinity(
+                session_factory, run_id, company_id,
+                discovery_id, persona_affinity, affinity_version,
+            )
+        except Exception:
+            logger.warning("TD persist_td_persona_affinity failed, continuing", exc_info=True)
+
+        # ── DB: Persist scoring + affinity version metadata ──
+        try:
+            from core.topic_discovery.persistence import persist_td_scoring_metadata
+
+            await persist_td_scoring_metadata(
+                session_factory, discovery_id,
+                scoring_version, affinity_version,
+            )
+        except Exception:
+            logger.warning("TD persist_td_scoring_metadata failed, continuing", exc_info=True)
+
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": "2.5",
             "total_scored": scored_subdomains.total_scored,
@@ -667,6 +711,22 @@ async def run_topic_discovery_pipeline(
             await persist_td_status_update(session_factory, discovery_id, "discovery_complete")
         except Exception:
             logger.warning("TD persist_td_status_update failed, continuing", exc_info=True)
+
+        # ── DB: Persist manifest metadata ──
+        try:
+            if session_factory is not None and discovery_id is not None:
+                from core.db.repositories.topic_discovery_repo import TopicDiscoveryRepository
+
+                async with session_factory() as _msess:
+                    _mrepo = TopicDiscoveryRepository(_msess)
+                    await _mrepo.update(discovery_id, manifest_json={
+                        "source_results_written": manifest.source_results_written,
+                        "expanded_subdomain_ids": getattr(manifest, "expanded_subdomain_ids", []),
+                        "last_expansion_task_id": getattr(manifest, "last_expansion_task_id", None),
+                    })
+                    await _msess.commit()
+        except Exception:
+            logger.warning("TD manifest_json DB persist failed, continuing", exc_info=True)
 
         try:
             from core.research.persistence import persist_pipeline_run_complete

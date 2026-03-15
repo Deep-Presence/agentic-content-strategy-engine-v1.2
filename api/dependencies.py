@@ -440,6 +440,9 @@ def _build_db_td_data_service(request: Request) -> TopicDiscoveryDataServiceProt
         return None
     try:
         from core.db.repositories.topic_discovery_repo import (
+            PersonaAffinityRepository,
+            SourceResultRepository,
+            SubdomainNodeRepository,
             TopicAssignmentRepository,
             TaxonomyTreeRepository,
             TopicDiscoveryRepository,
@@ -452,6 +455,9 @@ def _build_db_td_data_service(request: Request) -> TopicDiscoveryDataServiceProt
             taxonomy_repo=TaxonomyTreeRepository(session),
             assignment_repo=TopicAssignmentRepository(session),
             artifacts_root=request.app.state.artifacts_root,
+            node_repo=SubdomainNodeRepository(session),
+            source_result_repo=SourceResultRepository(session),
+            persona_affinity_repo=PersonaAffinityRepository(session),
             backend=getattr(request.app.state, "storage_backend", None),
         )
     except Exception:

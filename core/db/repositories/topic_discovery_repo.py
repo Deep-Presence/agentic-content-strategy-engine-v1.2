@@ -4,11 +4,13 @@ Follows the project's SQLAlchemyRepository pattern:
 - Repos call session.add() + session.flush() only
 - session.commit() is NEVER called here — commit happens in the DI layer
 
-Four table-specific repositories:
-- TopicDiscoveryRepository  — topic_discoveries
-- TaxonomyTreeRepository    — taxonomy_trees
-- SubdomainNodeRepository   — subdomain_nodes
-- TopicAssignmentRepository — topic_assignments
+Six table-specific repositories:
+- TopicDiscoveryRepository    — topic_discoveries
+- TaxonomyTreeRepository      — taxonomy_trees
+- SubdomainNodeRepository     — subdomain_nodes
+- TopicAssignmentRepository   — topic_assignments
+- SourceResultRepository      — td_source_results
+- PersonaAffinityRepository   — td_persona_affinity
 """
 from __future__ import annotations
 
@@ -26,6 +28,8 @@ from core.db.enums import (
     TopicAssignmentStatus,
 )
 from core.db.models.topic_discovery import (
+    PersonaAffinityModel,
+    SourceResultModel,
     SubdomainNodeModel,
     TaxonomyTreeModel,
     TopicAssignmentModel,
@@ -76,13 +80,19 @@ class TopicDiscoveryRepository(SQLAlchemyRepository[TopicDiscoveryModel]):
         *,
         taxonomy_version: Optional[int] = None,
         matrix_version: Optional[int] = None,
+        scoring_version: Optional[int] = None,
+        persona_affinity_version: Optional[int] = None,
     ) -> Optional[TopicDiscoveryModel]:
-        """Update taxonomy/matrix version counters."""
+        """Update taxonomy/matrix/scoring/persona_affinity version counters."""
         kwargs: dict = {}
         if taxonomy_version is not None:
             kwargs["taxonomy_version"] = taxonomy_version
         if matrix_version is not None:
             kwargs["matrix_version"] = matrix_version
+        if scoring_version is not None:
+            kwargs["scoring_version"] = scoring_version
+        if persona_affinity_version is not None:
+            kwargs["persona_affinity_version"] = persona_affinity_version
         if not kwargs:
             return await self.get_by_id(discovery_id)
         return await self.update(discovery_id, **kwargs)
@@ -352,6 +362,7 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
         *,
         buyer_stage: BuyerStage | None = None,
         intent_type: IntentType | None = None,
+        persona_id: str | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> Tuple[Sequence[TopicAssignmentModel], int]:
@@ -363,6 +374,8 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
             base = base.where(TopicAssignmentModel.buyer_stage == buyer_stage)
         if intent_type is not None:
             base = base.where(TopicAssignmentModel.intent_type == intent_type)
+        if persona_id is not None:
+            base = base.where(TopicAssignmentModel.persona_id == persona_id)
 
         # Count
         count_stmt = select(func.count()).select_from(base.subquery())
@@ -408,3 +421,111 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
             "by_relevance": await _group_by(TopicAssignmentModel.relevance),
             "by_status": await _group_by(TopicAssignmentModel.status),
         }
+
+
+class SourceResultRepository(SQLAlchemyRepository[SourceResultModel]):
+    """Repository for td_source_results table."""
+
+    model_class = SourceResultModel
+
+    async def bulk_create(
+        self, results: List[SourceResultModel]
+    ) -> List[SourceResultModel]:
+        """Bulk insert source result rows."""
+        self._session.add_all(results)
+        await self._session.flush()
+        return results
+
+    async def get_by_discovery(
+        self,
+        discovery_id: _uuid.UUID | str,
+        *,
+        source: str | None = None,
+    ) -> Sequence[SourceResultModel]:
+        """Get source results for a discovery, optionally filtered by source."""
+        did = _uuid.UUID(str(discovery_id)) if isinstance(discovery_id, str) else discovery_id
+        stmt = select(SourceResultModel).where(
+            SourceResultModel.discovery_id == did
+        )
+        if source is not None:
+            stmt = stmt.where(SourceResultModel.source == source)
+        stmt = stmt.order_by(SourceResultModel.source)
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def delete_by_discovery(self, discovery_id: _uuid.UUID) -> int:
+        """Delete all source results for a discovery."""
+        stmt = delete(SourceResultModel).where(
+            SourceResultModel.discovery_id == discovery_id
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return result.rowcount
+
+
+class PersonaAffinityRepository(SQLAlchemyRepository[PersonaAffinityModel]):
+    """Repository for td_persona_affinity table."""
+
+    model_class = PersonaAffinityModel
+
+    async def bulk_create(
+        self, entries: List[PersonaAffinityModel]
+    ) -> List[PersonaAffinityModel]:
+        """Bulk insert persona affinity rows."""
+        self._session.add_all(entries)
+        await self._session.flush()
+        return entries
+
+    async def get_by_discovery(
+        self,
+        discovery_id: _uuid.UUID | str,
+        *,
+        version: int | None = None,
+    ) -> Sequence[PersonaAffinityModel]:
+        """Get persona affinity entries for a discovery."""
+        did = _uuid.UUID(str(discovery_id)) if isinstance(discovery_id, str) else discovery_id
+        stmt = select(PersonaAffinityModel).where(
+            PersonaAffinityModel.discovery_id == did
+        )
+        if version is not None:
+            stmt = stmt.where(PersonaAffinityModel.version == version)
+        stmt = stmt.order_by(
+            PersonaAffinityModel.persona_id,
+            PersonaAffinityModel.affinity_score.desc(),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_by_persona(
+        self,
+        discovery_id: _uuid.UUID | str,
+        persona_id: str,
+    ) -> Sequence[PersonaAffinityModel]:
+        """Get affinity entries for a specific persona."""
+        did = _uuid.UUID(str(discovery_id)) if isinstance(discovery_id, str) else discovery_id
+        stmt = (
+            select(PersonaAffinityModel)
+            .where(
+                PersonaAffinityModel.discovery_id == did,
+                PersonaAffinityModel.persona_id == persona_id,
+            )
+            .order_by(PersonaAffinityModel.affinity_score.desc())
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def delete_by_discovery(
+        self,
+        discovery_id: _uuid.UUID,
+        *,
+        version: int | None = None,
+    ) -> int:
+        """Delete persona affinity entries for a discovery."""
+        stmt = delete(PersonaAffinityModel).where(
+            PersonaAffinityModel.discovery_id == discovery_id
+        )
+        if version is not None:
+            stmt = stmt.where(PersonaAffinityModel.version == version)
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return result.rowcount
