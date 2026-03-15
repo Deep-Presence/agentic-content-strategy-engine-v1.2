@@ -58,10 +58,15 @@
 | `GET` | `/api/v1/topic-discovery/{slug}/personas` | Get persona affinity data | 200 |
 | `POST` | `/api/v1/topic-discovery/expand` | Launch topic expansion (Pipeline B) | 202 |
 | `GET` | `/api/v1/topic-discovery/{slug}/expansion-status` | Get expansion status | 200 |
+| `POST` | `/api/v1/onboarding/start` | Launch onboarding pipeline (superuser) | 202 |
+| `GET` | `/api/v1/onboarding/{run_id}/status` | Get onboarding status | 200 |
+| `POST` | `/api/v1/content/v13/from-topics` | Launch content from topic assignments | 202 |
+| `GET` | `/api/v1/content/v13/{effective_slug}/topic-content-status` | Get per-assignment content status | 200 |
 | `POST` | `/api/v1/cps/score` | Score content for citation probability | 200 |
 | `GET` | `/api/v1/tasks` | List all tasks (with filters) | 200 |
 | `GET` | `/api/v1/tasks/{task_id}` | Get task detail | 200 |
 | `POST` | `/api/v1/tasks/{task_id}/cancel` | Cancel a running task | 200 |
+| `POST` | `/api/v1/tasks/{task_id}/stream-token` | Create short-lived stream token for SSE | 200 |
 | `GET` | `/api/v1/tasks/{task_id}/events` | Stream real-time events (SSE) | 200 |
 | `GET` | `/api/v1/artifacts/companies` | List all company slugs | 200 |
 | `GET` | `/api/v1/artifacts/{type}/{slug}` | List artifact files | 200 |
@@ -74,12 +79,18 @@
 | `POST` | `/api/v1/auth/register` | Register new user + company | 201 |
 | `POST` | `/api/v1/auth/login` | Login with email + password | 200 |
 | `GET` | `/api/v1/auth/me` | Get current user (requires Bearer token) | 200 |
+| `POST` | `/api/v1/auth/invite` | Create invite code (superuser only) | 201 |
+| `POST` | `/api/v1/auth/join` | Join company via invite code | 201 |
 
-### Company Profile
+### Company Profile & Products
 
 | Method | Path | Description | Status |
 |--------|------|-------------|--------|
 | `GET` | `/api/v1/companies/{slug}` | Get company profile with artifacts & runs | 200 |
+| `POST` | `/api/v1/companies/{slug}/products` | Create a product | 201 |
+| `GET` | `/api/v1/companies/{slug}/products/{product_slug}` | Get product detail | 200 |
+| `PUT` | `/api/v1/companies/{slug}/products/{product_slug}` | Update product fields | 200 |
+| `DELETE` | `/api/v1/companies/{slug}/products/{product_slug}` | Delete a product | 200 |
 
 ### Gap Analysis Data (Signal Analysis Dashboard)
 
@@ -216,6 +227,7 @@ The system has 6 pipelines:
 | Pipeline | What it does | Has HITL? |
 |----------|-------------|-----------|
 | **site_audit** | Deterministic crawl + 8-dimension page analysis (no LLM) | No |
+| **onboarding** | 3-phase orchestrator: Site Audit → Research (KB+AP+VSG auto-approve) → Gap Analysis | No (all HITL auto-approved) |
 | **research_orchestrator** | Orchestrates KB → AP → VSG in sequence with a single run_id | Yes — delegates to sub-pipeline HITL gates |
 | **knowledge_base** | 6-agent DAG builds company knowledge (overview, reviews, competitors, etc.) | Yes — 3 HITL checkpoints |
 | **audience_persona** | 2-agent pipeline: Persona Suggester → Profile Generator | Yes — 2 HITL checkpoints (briefs, profiles) |
@@ -297,7 +309,7 @@ Configured via `API_CORS_ORIGINS` env var. Defaults to `localhost:3000` and `loc
 POST /api/v1/auth/register
 ```
 
-Creates a new user with company deduplication. If `company_domain` matches an existing company's root domain, the user joins that company as `member`. Otherwise, a new company is created and the user becomes `superuser`. Subdomains are normalized to root domain.
+Creates a new user and a new isolated company. The user becomes `superuser`. If `company_domain` matches an existing company, returns `409`. To join an existing company, use `POST /api/v1/auth/join` with an invite code.
 
 **Request Body:**
 
@@ -407,6 +419,70 @@ Authorization: Bearer {access_token}
 
 **Error (401):** No token, invalid token, or user not found.
 
+### Create Invite Code
+
+```
+POST /api/v1/auth/invite
+```
+
+Create an invite code for the current user's company. Only superusers can create invites. The invite code allows a new user to join the company via `POST /api/v1/auth/join`.
+
+**Auth:** Requires `superuser` role.
+
+**Request Body:**
+
+```json
+{
+  "role": "member"
+}
+```
+
+| Field | Type | Required | Default | Values | Description |
+|-------|------|----------|---------|--------|-------------|
+| `role` | string | No | `"member"` | `"member"` · `"viewer"` | Role assigned to the invited user |
+
+**Response (201):**
+
+```json
+{
+  "invite_code": "abc123def456",
+  "company_slug": "acme-corp",
+  "role": "member"
+}
+```
+
+### Join Company via Invite
+
+```
+POST /api/v1/auth/join
+```
+
+Join an existing company using an invite code. Public endpoint (no auth required). The invite code determines which company and role the user gets.
+
+**Request Body:**
+
+```json
+{
+  "invite_code": "abc123def456",
+  "first_name": "Jane",
+  "last_name": "Smith",
+  "email": "jane@acme.com",
+  "password": "securepass123"
+}
+```
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| `invite_code` | string | Yes | — | Invite code from `POST /auth/invite` |
+| `first_name` | string | Yes | — | User's first name |
+| `last_name` | string | Yes | — | User's last name |
+| `email` | string | Yes | Valid email | User's email (must be unique) |
+| `password` | string | Yes | min 8 chars | Password |
+
+**Response (201):** Same `LoginResponse` shape as register (access_token + user + company).
+
+**Error (400):** Invalid or expired invite code.
+
 ---
 
 ## 6. Company Profile
@@ -471,6 +547,105 @@ Returns company profile with research artifact status, gap analysis/content avai
 **Error (400):** Invalid slug format (doesn't match regex).
 
 **Error (404):** Company not found in auth store AND no artifacts exist on filesystem.
+
+### Create Product
+
+```
+POST /api/v1/companies/{slug}/products
+```
+
+Create a new product under a company.
+
+**Auth:** Requires `member` or `superuser` role + company membership.
+
+**Request Body:**
+
+```json
+{
+  "name": "Expense Management",
+  "slug": "expense-management",
+  "domain": "ramp.com/expense",
+  "description": "AI-powered expense management platform"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Product display name |
+| `slug` | string | Yes | Product slug (must match `^[a-z0-9][a-z0-9-]*$`) |
+| `domain` | string | No | Product-specific domain or URL |
+| `description` | string | No | Product description |
+
+**Response (201):**
+
+```json
+{
+  "id": "product-abc123",
+  "slug": "expense-management",
+  "name": "Expense Management",
+  "domain": "ramp.com/expense",
+  "description": "AI-powered expense management platform",
+  "company_id": "company-def456",
+  "created_at": "2026-03-15T10:00:00Z",
+  "updated_at": "2026-03-15T10:00:00Z"
+}
+```
+
+**Error (409):** Product slug already exists for this company.
+
+**Error (422):** Product slug doesn't match pattern.
+
+### Get Product
+
+```
+GET /api/v1/companies/{slug}/products/{product_slug}
+```
+
+**Auth:** Requires tenant access.
+
+**Response (200):** `ProductDetailResponse` (same shape as create response).
+
+**Error (404):** Product not found.
+
+### Update Product
+
+```
+PUT /api/v1/companies/{slug}/products/{product_slug}
+```
+
+**Auth:** Requires `member` or `superuser` role + company membership.
+
+**Request Body:** All fields optional — only non-null fields are applied.
+
+```json
+{
+  "name": "Expense Management Pro",
+  "domain": "ramp.com/expense-pro",
+  "description": "Updated description"
+}
+```
+
+**Response (200):** Updated `ProductDetailResponse`.
+
+**Error (404):** Product not found.
+
+### Delete Product
+
+```
+DELETE /api/v1/companies/{slug}/products/{product_slug}
+```
+
+**Auth:** Requires `member` or `superuser` role + company membership.
+
+**Response (200):**
+
+```json
+{
+  "deleted": true
+}
+```
+
+**Error (404):** Product not found.
 
 ---
 
@@ -723,6 +898,68 @@ Paginated per-page audit results with AEO readiness and schema detection.
   "total_pages": 3
 }
 ```
+
+---
+
+## 7.5. Onboarding Pipeline
+
+The onboarding pipeline is a 3-phase orchestrator for new companies. It runs **Site Audit → Research (KB + AP + VSG, all auto-approved) → Gap Analysis** in sequence with a single `run_id`. All HITL checkpoints are auto-approved. Designed for first-time company setup.
+
+### Start Onboarding
+
+```
+POST /api/v1/onboarding/start
+```
+
+**Auth:** Requires `superuser` role. Company name and domain are resolved from the auth token (not passed in the request body).
+
+**Request Body:**
+
+```json
+{
+  "industry": "Fintech",
+  "seed_personas": ["VP of Engineering at B2B SaaS", "CFO at mid-market company"],
+  "seed_urls": ["https://ramp.com/blog"],
+  "max_pages": 200,
+  "max_depth": 4,
+  "max_personas": 5,
+  "max_authors": 3,
+  "max_queries": 75,
+  "platforms": ["perplexity", "openai", "gemini", "claude"],
+  "language": "en",
+  "region": null,
+  "force_rerun": false
+}
+```
+
+**Fields:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `industry` | string | No | `null` | Company industry (e.g., "Fintech", "SaaS") — persisted to company profile |
+| `seed_personas` | string[] | No | `[]` | User-provided persona descriptions (max 7) |
+| `seed_urls` | string[] | No | `[]` | Seed URLs for KB and GA pipelines (max 10) |
+| `max_pages` | int | No | `200` | Site audit max pages (10–500) |
+| `max_depth` | int | No | `4` | Site audit crawl depth (1–10) |
+| `max_personas` | int | No | `5` | AP: personas to generate (3–7) |
+| `max_authors` | int | No | `3` | VSG: authors to discover (2–3) |
+| `max_queries` | int | No | `75` | GA: max queries (10–500) |
+| `platforms` | string[] | No | `["perplexity","openai","gemini","claude"]` | GA: AI platforms to search |
+| `language` | string | No | `"en"` | Language code |
+| `region` | string | No | `null` | Geographic region |
+| `force_rerun` | bool | No | `false` | Bypass artifact existence guards |
+
+**Response (202):** `PipelineRunResponse` with `pipeline: "onboarding"`.
+
+### Get Onboarding Status
+
+```
+GET /api/v1/onboarding/{run_id}/status
+```
+
+**Auth:** Requires authentication. Tenant-isolated.
+
+**Response (200):** Standard `TaskResponse`. The `current_step` field indicates which phase is active (e.g., `"site_audit"`, `"research_kb"`, `"gap_analysis"`).
 
 ---
 
@@ -1333,6 +1570,83 @@ Submit final content review after Workers + Evaluator produce the content.
 | `editor_notes` | string | No | `null` | Editing feedback (max 5000 chars) |
 | `rethink` | bool | No | `false` | If true on reject, trigger major direction change |
 
+### Start Content from Topic Assignments
+
+```
+POST /api/v1/content/v13/from-topics
+```
+
+Launch the TD → GA → CE pipeline for approved topic assignments from the Topic Discovery matrix. Each selected assignment goes through gap analysis and content generation.
+
+**Auth:** Requires `member` or `superuser` role. Tenant-isolated.
+
+**Request Body:**
+
+```json
+{
+  "company_name": "Ramp",
+  "domain": "ramp.com",
+  "effective_slug": "ramp",
+  "topic_assignment_ids": ["ta-uuid-001", "ta-uuid-002"],
+  "product_slug": null,
+  "product_name": null,
+  "product_description": null,
+  "auto_approve": false,
+  "platforms": ["perplexity", "openai", "gemini", "claude"]
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `company_name` | string | Yes | — | Company name |
+| `domain` | string | Yes | — | Company domain |
+| `effective_slug` | string | Yes | — | Effective slug (company or company__product) |
+| `topic_assignment_ids` | string[] | Yes | — | UUIDs of topic assignments to produce content for (1–20) |
+| `product_slug` | string | No | `null` | Product scope |
+| `product_name` | string | No | `null` | Product name override |
+| `product_description` | string | No | `null` | Product description override |
+| `auto_approve` | bool | No | `false` | Skip all HITL gates |
+| `platforms` | string[] | No | `["perplexity","openai","gemini","claude"]` | AI platforms for gap analysis |
+
+**Response (202):** `PipelineRunResponseV13`.
+
+**Error (409):** Topic discovery hasn't completed, or assignment IDs not found.
+
+### Get Topic Content Status
+
+```
+GET /api/v1/content/v13/{effective_slug}/topic-content-status
+```
+
+Get per-assignment content status for a topic-discovery-driven content run.
+
+**Auth:** Requires authentication. Tenant-isolated (effective_slug must start with user's company slug).
+
+**Response (200):**
+
+```json
+{
+  "effective_slug": "ramp",
+  "total_assignments": 5,
+  "items": [
+    {
+      "topic_assignment_id": "ta-uuid-001",
+      "topic_text": "How Mid-Market CFOs Cut Month-End Close from 15 Days to 5",
+      "status": "completed",
+      "content_piece_id": "brief-001",
+      "content_title": "Month-End Close Automation Guide"
+    },
+    {
+      "topic_assignment_id": "ta-uuid-002",
+      "topic_text": "Best Expense Management Software 2026",
+      "status": "in_progress",
+      "content_piece_id": null,
+      "content_title": null
+    }
+  ]
+}
+```
+
 **CPS Score in Review:** The HITL-3 review state includes a CPS (Citation Signal Predictor) score in `eval_summary.cps` when available. This predicts how likely the content is to be cited by AI answer engines (0.0–1.0). The CPS score is informational and does not gate approval.
 
 ```json
@@ -1375,7 +1689,7 @@ GET /api/v1/tasks?pipeline=gap_analysis&status=completed
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `pipeline` | string | Filter by pipeline: `research_orchestrator` · `knowledge_base` · `audience_persona` · `voice_style_guide` · `topic_discovery` · `topic_expansion` · `gap_analysis` · `content` · `content_v13` · `site_audit` |
+| `pipeline` | string | Filter by pipeline: `onboarding` · `research_orchestrator` · `knowledge_base` · `audience_persona` · `voice_style_guide` · `topic_discovery` · `topic_expansion` · `gap_analysis` · `content` · `content_v13` · `site_audit` |
 | `status` | string | Filter by status: `running` · `pending_approval` · `completed` · `failed` · `cancelled` |
 
 **Response (200):**
@@ -1425,6 +1739,30 @@ Only tasks with status `running` or `pending_approval` can be cancelled.
 ```
 
 **Error (409):** Task is not in a cancellable state.
+
+### Create Stream Token
+
+```
+POST /api/v1/tasks/{task_id}/stream-token
+```
+
+Create a short-lived token for SSE `EventSource` clients. The browser's `EventSource` API doesn't support `Authorization` headers, so the frontend calls this endpoint first, then passes the token as a query parameter: `GET /api/v1/tasks/{task_id}/events?stream_token=xxx`.
+
+**Auth:** Requires authentication. Tenant-isolated (task must belong to user's company).
+
+**Response (200):**
+
+```json
+{
+  "stream_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+  "expires_in": 300
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `stream_token` | string | Short-lived JWT (5 minutes, stream-only flag) |
+| `expires_in` | int | Token TTL in seconds (always 300) |
 
 ---
 
@@ -1854,6 +2192,7 @@ GET /api/v1/companies/{slug}/settings/profile
   "name": "Acme Corp",
   "domain": "acme.com",
   "additional_domains": [],
+  "industry": "Fintech",
   "created_at": "2026-01-15T10:00:00Z",
   "updated_at": "2026-01-15T10:00:00Z"
 }
@@ -1873,11 +2212,19 @@ PUT /api/v1/companies/{slug}/settings/profile
 {
   "name": "Acme Corporation",
   "domain": "acme.com",
-  "additional_domains": ["blog.acme.com"]
+  "additional_domains": ["blog.acme.com"],
+  "industry": "SaaS"
 }
 ```
 
 All fields are optional — only non-null fields are applied.
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `name` | string | — | Company display name |
+| `domain` | string | — | Primary domain |
+| `additional_domains` | string[] | — | Additional domains |
+| `industry` | string | max 200 chars | Company industry |
 
 ### Get Pipeline Defaults
 
@@ -3215,6 +3562,9 @@ The browser's `EventSource` automatically sends `Last-Event-ID` on reconnection.
 | **404** | — | Artifact/file/document not found | Show "Not found" |
 | **409** | `task_conflict` | Concurrent run for same company | Show "A pipeline is already running" |
 | **409** | — | Wrong state for action (cancel completed, approve non-pending) | Show the `detail` message |
+| **409** | — | Domain already taken (registration) | Show "Ask admin for invite code" |
+| **409** | — | HITL window mismatch (approval nonce mismatch) | Re-fetch status, retry |
+| **409** | — | Product slug already exists | Show the `detail` message |
 | **422** | — | Invalid request body | Show validation error from `detail` |
 | **500** | `pipeline_error` | Unhandled pipeline exception | Show "Pipeline error: {detail}" |
 
@@ -3334,6 +3684,71 @@ interface CompanyResponse {
   slug: string;
   name: string;
   domain: string;
+}
+
+interface InviteRequest {
+  role?: 'member' | 'viewer';  // default "member"
+}
+
+interface InviteResponse {
+  invite_code: string;
+  company_slug: string;
+  role: string;
+}
+
+interface JoinRequest {
+  invite_code: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  password: string;           // min 8 chars
+}
+```
+
+### Product Models
+
+```typescript
+interface ProductCreateRequest {
+  name: string;
+  slug: string;               // ^[a-z0-9][a-z0-9-]*$
+  domain?: string;
+  description?: string;
+}
+
+interface ProductUpdateRequest {
+  name?: string;
+  domain?: string;
+  description?: string;
+}
+
+interface ProductDetailResponse {
+  id: string;
+  slug: string;
+  name: string;
+  domain: string | null;
+  description: string | null;
+  company_id: string;
+  created_at: string;         // ISO 8601
+  updated_at: string;
+}
+```
+
+### Onboarding Models
+
+```typescript
+interface OnboardingStartRequest {
+  industry?: string;                    // max 200 chars
+  seed_personas?: string[];             // max 7
+  seed_urls?: string[];                 // max 10
+  max_pages?: number;                   // 10–500, default 200
+  max_depth?: number;                   // 1–10, default 4
+  max_personas?: number;                // 3–7, default 5
+  max_authors?: number;                 // 2–3, default 3
+  max_queries?: number;                 // 10–500, default 75
+  platforms?: string[];                 // default all 4
+  language?: string;                    // default "en"
+  region?: string;
+  force_rerun?: boolean;
 }
 ```
 
@@ -3500,6 +3915,32 @@ interface ApprovalResponseV13 {
   brief_id: string | null;
   message: string | null;
 }
+
+interface TopicContentStartRequest {
+  company_name: string;
+  domain: string;
+  effective_slug: string;
+  topic_assignment_ids: string[];        // 1–20, each must be valid UUID
+  product_slug?: string;
+  product_name?: string;
+  product_description?: string;
+  auto_approve?: boolean;
+  platforms?: string[];                  // default all 4
+}
+
+interface TopicContentStatusItem {
+  topic_assignment_id: string;
+  topic_text: string;
+  status: string;
+  content_piece_id: string | null;
+  content_title: string | null;
+}
+
+interface TopicContentStatusResponse {
+  effective_slug: string;
+  total_assignments: number;
+  items: TopicContentStatusItem[];
+}
 ```
 
 ### Knowledge Document Models
@@ -3545,8 +3986,16 @@ interface CompanyProfileSettingsResponse {
   name: string;
   domain: string;
   additional_domains: string[];
+  industry: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface UpdateCompanyProfileRequest {
+  name?: string;
+  domain?: string;
+  additional_domains?: string[];
+  industry?: string;                    // max 200 chars
 }
 
 interface PipelineDefaultsResponse {

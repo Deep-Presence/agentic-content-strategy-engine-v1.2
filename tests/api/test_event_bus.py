@@ -130,3 +130,21 @@ class TestEventBusStream:
         bus = EventBus()
         history = bus.get_history("nonexistent")
         assert history == []
+
+    async def test_sub_completed_does_not_terminate_stream(self) -> None:
+        """sub_completed (rewritten by proxy) must NOT close the SSE stream."""
+        bus = EventBus()
+        bus.publish("t1", "start", {"pipeline": "orchestrator"})
+        bus.publish("t1", "sub_completed", {"pipeline": "kb"})
+        bus.publish("t1", "sub_failed", {"pipeline": "ap"})
+        bus.publish("t1", "progress", {"step": 3})
+        bus.publish("t1", "completed", {"pipeline": "orchestrator"})
+
+        events = []
+        async for chunk in bus.stream("t1"):
+            events.append(chunk)
+
+        # All 5 events should be yielded — stream only terminates on real "completed"
+        assert len(events) == 5
+        assert "sub_completed" in events[1]
+        assert "sub_failed" in events[2]

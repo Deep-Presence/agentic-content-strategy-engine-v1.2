@@ -796,6 +796,90 @@ class TestNullSafeHelpers:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+class TestSubPipelineEventProxy:
+    """_SubPipelineEventProxy rewrites terminal events to prevent premature SSE close."""
+
+    def test_rewrites_completed(self) -> None:
+        from core.onboarding.orchestrator import _SubPipelineEventProxy
+
+        real_bus = MagicMock()
+        proxy = _SubPipelineEventProxy(real_bus)
+        proxy.publish("t1", "completed", {"pipeline": "kb"})
+        real_bus.publish.assert_called_once_with("t1", "sub_completed", {"pipeline": "kb"})
+
+    def test_rewrites_failed(self) -> None:
+        from core.onboarding.orchestrator import _SubPipelineEventProxy
+
+        real_bus = MagicMock()
+        proxy = _SubPipelineEventProxy(real_bus)
+        proxy.publish("t1", "failed", {"error": "boom"})
+        real_bus.publish.assert_called_once_with("t1", "sub_failed", {"error": "boom"})
+
+    def test_rewrites_cancelled(self) -> None:
+        from core.onboarding.orchestrator import _SubPipelineEventProxy
+
+        real_bus = MagicMock()
+        proxy = _SubPipelineEventProxy(real_bus)
+        proxy.publish("t1", "cancelled", {})
+        real_bus.publish.assert_called_once_with("t1", "sub_cancelled", {})
+
+    def test_passes_through_non_terminal_events(self) -> None:
+        from core.onboarding.orchestrator import _SubPipelineEventProxy
+
+        real_bus = MagicMock()
+        proxy = _SubPipelineEventProxy(real_bus)
+        proxy.publish("t1", "progress", {"step": 3})
+        real_bus.publish.assert_called_once_with("t1", "progress", {"step": 3})
+
+    def test_delegates_other_attributes(self) -> None:
+        from core.onboarding.orchestrator import _SubPipelineEventProxy
+
+        real_bus = MagicMock()
+        real_bus.get_history.return_value = [{"id": 1}]
+        proxy = _SubPipelineEventProxy(real_bus)
+        assert proxy.get_history("t1") == [{"id": 1}]
+
+    @pytest.mark.asyncio
+    @patch(_TD_PATCH, new_callable=AsyncMock, return_value=_mock_td_output())
+    @patch(_GA_PATCH, new_callable=AsyncMock, return_value=_mock_ga_output())
+    @patch(_VSG_PATCH, new_callable=AsyncMock, return_value=_mock_vsg_output())
+    @patch(_AP_PATCH, new_callable=AsyncMock, return_value=_mock_ap_output())
+    @patch(_KB_PATCH, new_callable=AsyncMock, return_value=_mock_kb_output())
+    @patch(_SA_PATCH, new_callable=AsyncMock, return_value=_mock_sa_result())
+    async def test_sub_pipelines_receive_proxy_not_raw_bus(
+        self, mock_sa, mock_kb, mock_ap, mock_vsg, mock_ga, mock_td,
+        tmp_path: Path,
+    ) -> None:
+        """Sub-pipelines get a proxy bus so their terminal events don't kill SSE."""
+        from core.onboarding.orchestrator import _SubPipelineEventProxy
+
+        event_bus = MagicMock()
+        await run_onboarding_pipeline(
+            OnboardingInput(company_name="Test Co", domain="test.com"),
+            task_id="t1",
+            task_store=MagicMock(),
+            event_bus=event_bus,
+            artifacts_root=tmp_path,
+        )
+
+        # KB, AP, VSG, TD receive proxy (not raw bus)
+        kb_bus = mock_kb.call_args.kwargs["event_bus"]
+        assert isinstance(kb_bus, _SubPipelineEventProxy)
+
+        ap_bus = mock_ap.call_args.kwargs["event_bus"]
+        assert isinstance(ap_bus, _SubPipelineEventProxy)
+
+        vsg_bus = mock_vsg.call_args.kwargs["event_bus"]
+        assert isinstance(vsg_bus, _SubPipelineEventProxy)
+
+        td_bus = mock_td.call_args.kwargs["event_bus"]
+        assert isinstance(td_bus, _SubPipelineEventProxy)
+
+        # Orchestrator's own terminal event still uses raw bus
+        last_call = event_bus.publish.call_args_list[-1]
+        assert last_call.args[1] == "completed"
+
+
 class TestParallelism:
     """Verify SA+KB and VSG+GA+TD run in parallel."""
 

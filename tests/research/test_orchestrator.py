@@ -775,6 +775,56 @@ class TestSSEEvents:
         assert event_types[-1] == "failed"
 
 
+class TestSubPipelineEventProxy:
+    """Sub-pipeline terminal events are rewritten to prevent premature SSE close."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path: Path) -> None:
+        self.root = tmp_path
+        self.event_bus = MagicMock()
+        self.task_store = MagicMock()
+
+    @pytest.mark.asyncio
+    @patch(_VSG_PATCH, new_callable=AsyncMock, return_value=_mock_vsg_output())
+    @patch(_AP_PATCH, new_callable=AsyncMock, return_value=_mock_ap_output())
+    @patch(_KB_PATCH, new_callable=AsyncMock, return_value=_mock_kb_output())
+    async def test_sub_pipelines_receive_proxy_not_raw_bus(
+        self, mock_kb, mock_ap, mock_vsg,
+    ) -> None:
+        """KB, AP, VSG get a proxy bus so their terminal events don't kill SSE."""
+        from core.research.orchestrator import _SubPipelineEventProxy
+
+        inp = ResearchOrchestratorInput(
+            company_name="Test Co",
+            skip_config=PipelineSkipConfig(
+                skip_kb_if_fresh=False,
+                skip_ap_if_fresh=False,
+                skip_vsg_if_fresh=False,
+            ),
+        )
+        await run_research_orchestrator(
+            inp,
+            task_id="t1",
+            task_store=self.task_store,
+            event_bus=self.event_bus,
+            artifacts_root=self.root,
+        )
+
+        # All sub-pipelines receive proxy
+        kb_bus = mock_kb.call_args.kwargs["event_bus"]
+        assert isinstance(kb_bus, _SubPipelineEventProxy)
+
+        ap_bus = mock_ap.call_args.kwargs["event_bus"]
+        assert isinstance(ap_bus, _SubPipelineEventProxy)
+
+        vsg_bus = mock_vsg.call_args.kwargs["event_bus"]
+        assert isinstance(vsg_bus, _SubPipelineEventProxy)
+
+        # Orchestrator's own terminal event still uses raw bus
+        last_call = self.event_bus.publish.call_args_list[-1]
+        assert last_call.args[1] == "completed"
+
+
 class TestAutoApproveDistribution:
     """Tests that auto-approve config is correctly distributed to sub-pipelines."""
 

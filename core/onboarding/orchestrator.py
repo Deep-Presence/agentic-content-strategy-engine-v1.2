@@ -54,6 +54,30 @@ def _update_task(
         task_store.update_task(task_id, **kwargs)
 
 
+class _SubPipelineEventProxy:
+    """Wraps EventBus to rewrite terminal events from sub-pipelines.
+
+    Prevents sub-pipeline "completed"/"failed"/"cancelled" events from
+    terminating the parent orchestrator's SSE stream early.
+    """
+
+    _REWRITES = {
+        "completed": "sub_completed",
+        "failed": "sub_failed",
+        "cancelled": "sub_cancelled",
+    }
+
+    def __init__(self, real_bus: Any) -> None:
+        self._real_bus = real_bus
+
+    def publish(self, task_id: str, event_type: str, data: Dict[str, Any]) -> None:
+        event_type = self._REWRITES.get(event_type, event_type)
+        self._real_bus.publish(task_id, event_type, data)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real_bus, name)
+
+
 # ---------------------------------------------------------------------------
 # Slug resolution
 # ---------------------------------------------------------------------------
@@ -493,6 +517,9 @@ async def run_onboarding_pipeline(
     slug = _resolve_slugs(input_data)
     constraints = _build_constraints(input_data)
 
+    # Proxy rewrites sub-pipeline terminal events so they don't close SSE stream
+    proxy_bus = _SubPipelineEventProxy(event_bus) if event_bus else None
+
     sub_results: Dict[str, OnboardingSubResult] = {}
     phases: Dict[str, OnboardingPhaseResult] = {}
 
@@ -528,7 +555,7 @@ async def run_onboarding_pipeline(
             "phase": "phase_a", "pipeline": "site_audit",
         })
         sa_task = asyncio.create_task(
-            _run_site_audit_stage(input_data, slug, event_bus, task_id, root)
+            _run_site_audit_stage(input_data, slug, proxy_bus, task_id, root)
         )
 
         # Run KB (blocking)
@@ -538,7 +565,7 @@ async def run_onboarding_pipeline(
         try:
             kb_result, kb_output = await _run_kb_stage(
                 input_data, slug, constraints,
-                task_id, task_store, event_bus,
+                task_id, task_store, proxy_bus,
                 root, session_factory, run_id, company_id,
             )
             sub_results["kb"] = kb_result
@@ -614,7 +641,7 @@ async def run_onboarding_pipeline(
             try:
                 ap_result, ap_output = await _run_ap_stage(
                     input_data, slug, constraints,
-                    task_id, task_store, event_bus,
+                    task_id, task_store, proxy_bus,
                     root, session_factory, run_id, company_id,
                 )
                 sub_results["ap"] = ap_result
@@ -676,7 +703,7 @@ async def run_onboarding_pipeline(
                 input_data=input_data, slug=slug, constraints=constraints,
             )
             infra_kw = dict(
-                task_id=task_id, task_store=task_store, event_bus=event_bus,
+                task_id=task_id, task_store=task_store, event_bus=proxy_bus,
                 root=root, session_factory=session_factory,
                 run_id=run_id, company_id=company_id,
             )

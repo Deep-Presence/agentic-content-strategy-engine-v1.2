@@ -53,6 +53,30 @@ def _update_task(
         task_store.update_task(task_id, **kwargs)
 
 
+class _SubPipelineEventProxy:
+    """Wraps EventBus to rewrite terminal events from sub-pipelines.
+
+    Prevents sub-pipeline "completed"/"failed"/"cancelled" events from
+    terminating the parent orchestrator's SSE stream early.
+    """
+
+    _REWRITES = {
+        "completed": "sub_completed",
+        "failed": "sub_failed",
+        "cancelled": "sub_cancelled",
+    }
+
+    def __init__(self, real_bus: Any) -> None:
+        self._real_bus = real_bus
+
+    def publish(self, task_id: str, event_type: str, data: Dict[str, Any]) -> None:
+        event_type = self._REWRITES.get(event_type, event_type)
+        self._real_bus.publish(task_id, event_type, data)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real_bus, name)
+
+
 # ---------------------------------------------------------------------------
 # Slug resolution
 # ---------------------------------------------------------------------------
@@ -314,6 +338,9 @@ async def run_research_orchestrator(
     root = artifacts_root or Path("artifacts")
     company_slug, effective_slug = _resolve_slugs(input_data)
 
+    # Proxy rewrites sub-pipeline terminal events so they don't close SSE stream
+    proxy_bus = _SubPipelineEventProxy(event_bus) if event_bus else None
+
     sub_results: Dict[str, SubPipelineResult] = {}
     pipelines_run: List[str] = []
     pipelines_skipped: List[str] = []
@@ -393,7 +420,7 @@ async def run_research_orchestrator(
                 root=root,
                 task_id=task_id,
                 task_store=task_store,
-                event_bus=event_bus,
+                event_bus=proxy_bus,
                 session_factory=session_factory,
                 run_id=run_id,
                 company_id=company_id,
