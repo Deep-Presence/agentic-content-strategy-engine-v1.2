@@ -144,6 +144,10 @@ class AudiencePersonaInput(BaseModel):
     region: Optional[str] = None
     additional_constraints: Optional[str] = None
     auto_approve_checkpoints: List[int] = Field(default_factory=list)
+    seed_personas: List[str] = Field(
+        default_factory=list,
+        description="User-provided persona seeds to guide the suggester agent",
+    )
 
 
 class AudiencePersonaOutput(BaseModel):

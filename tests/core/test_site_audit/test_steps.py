@@ -33,8 +33,13 @@ from core.site_audit.steps.s2_analyze_pages import (
     _extract_freshness,
     _extract_headings,
     _extract_image_stats,
+    _extract_inline_code_weight,
+    _extract_image_optimization_signals,
     _extract_link_counts,
     _extract_meta_description,
+    _extract_page_size,
+    _extract_render_blocking,
+    _extract_resource_counts,
     _extract_robots_meta,
     _extract_title,
     _has_mixed_content,
@@ -1032,3 +1037,191 @@ class TestFreshnessDimension:
                 assert f.dimension != AuditDimension.eeat, (
                     f"Freshness finding {f.finding_type} has dimension=eeat for date {date_str}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Extraction helper tests (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractPageSize:
+    def test_ascii(self) -> None:
+        assert _extract_page_size("hello") == 5
+
+    def test_multibyte(self) -> None:
+        # 'é' is 2 bytes in UTF-8
+        assert _extract_page_size("é") == 2
+
+    def test_empty(self) -> None:
+        assert _extract_page_size("") == 0
+
+
+class TestExtractResourceCounts:
+    def test_counts(self) -> None:
+        html = (
+            '<script src="a.js"></script>'
+            '<script src="b.js"></script>'
+            '<link rel="stylesheet" href="c.css">'
+            "<script>inline()</script>"
+        )
+        ext_scripts, ext_css = _extract_resource_counts(_soup(html))
+        assert ext_scripts == 2
+        assert ext_css == 1
+
+    def test_empty(self) -> None:
+        assert _extract_resource_counts(_soup("<html></html>")) == (0, 0)
+
+
+class TestExtractRenderBlocking:
+    def test_blocking_in_head(self) -> None:
+        html = (
+            "<head>"
+            '<script src="block.js"></script>'
+            '<script src="ok.js" defer></script>'
+            '<link rel="stylesheet" href="block.css">'
+            '<link rel="stylesheet" href="print.css" media="print">'
+            "</head>"
+        )
+        scripts, css = _extract_render_blocking(_soup(html))
+        assert scripts == ["block.js"]
+        assert css == ["block.css"]
+
+    def test_no_head(self) -> None:
+        assert _extract_render_blocking(_soup("<body></body>")) == ([], [])
+
+
+class TestExtractImageOptimization:
+    def test_signals(self) -> None:
+        html = (
+            '<img src="a.png" width="10" height="10">'
+            '<img src="b.webp" loading="lazy" width="10" height="10" srcset="b.webp 1x">'
+            '<img src="c.jpg">'
+        )
+        s = _extract_image_optimization_signals(_soup(html))
+        assert s["total"] == 3
+        assert s["without_lazy"] == 2  # a.png and c.jpg
+        assert s["without_dimensions"] == 1  # c.jpg
+        assert s["without_srcset"] == 2  # a.png and c.jpg
+        assert s["uses_modern_formats"] is True  # b.webp
+
+
+class TestExtractInlineCodeWeight:
+    def test_weight(self) -> None:
+        html = "<script>var x = 1;</script><style>body{}</style>"
+        js, css = _extract_inline_code_weight(_soup(html))
+        assert js == len(b"var x = 1;")
+        assert css == len(b"body{}")
+
+    def test_external_not_counted(self) -> None:
+        html = '<script src="app.js"></script>'
+        js, css = _extract_inline_code_weight(_soup(html))
+        assert js == 0
+        assert css == 0
+
+
+# ---------------------------------------------------------------------------
+# Wiring tests — analyze_single_page populates new fields
+# ---------------------------------------------------------------------------
+
+
+class TestAnalyzeSinglePagePerformanceWiring:
+    """Verify new performance fields are populated on the result."""
+
+    _HTML = textwrap.dedent("""\
+        <!DOCTYPE html>
+        <html><head>
+          <title>Test Page</title>
+          <meta name="description" content="desc">
+          <link rel="canonical" href="https://example.com/page">
+          <script src="a.js"></script>
+          <link rel="stylesheet" href="s.css">
+        </head><body>
+          <h1>Title</h1>
+          <p>Hello world content here for word count.</p>
+          <img src="photo.jpg">
+          <script>var x = 1;</script>
+          <style>body{color:red}</style>
+        </body></html>
+    """)
+
+    def test_html_bytes_set(self) -> None:
+        r = analyze_single_page(_URL, self._HTML, 0, 200, None, DEFAULT_AUDIT_CONFIG)
+        assert r.html_bytes is not None
+        assert r.html_bytes == len(self._HTML.encode("utf-8"))
+
+    def test_resource_counts_set(self) -> None:
+        r = analyze_single_page(_URL, self._HTML, 0, 200, None, DEFAULT_AUDIT_CONFIG)
+        assert r.external_script_count == 1
+        assert r.external_css_count == 1
+
+    def test_blocking_counts_set(self) -> None:
+        r = analyze_single_page(_URL, self._HTML, 0, 200, None, DEFAULT_AUDIT_CONFIG)
+        # a.js is in <head> without async/defer → blocking
+        assert r.blocking_script_count == 1
+        # s.css is in <head> without media="print" → blocking
+        assert r.blocking_css_count == 1
+
+    def test_image_optimization_set(self) -> None:
+        r = analyze_single_page(_URL, self._HTML, 0, 200, None, DEFAULT_AUDIT_CONFIG)
+        assert r.images_without_lazy == 1
+        assert r.images_without_dimensions == 1
+
+    def test_inline_code_set(self) -> None:
+        r = analyze_single_page(_URL, self._HTML, 0, 200, None, DEFAULT_AUDIT_CONFIG)
+        assert r.inline_js_bytes is not None and r.inline_js_bytes > 0
+        assert r.inline_css_bytes is not None and r.inline_css_bytes > 0
+
+    def test_security_headers_wired_on_https(self) -> None:
+        """When headers dict is passed and URL is HTTPS, security findings appear."""
+        headers = {}  # missing all security headers
+        r = analyze_single_page(
+            _URL, self._HTML, 0, 200, None, DEFAULT_AUDIT_CONFIG,
+            headers=headers,
+        )
+        security_types = {f.finding_type for f in r.findings if f.dimension == AuditDimension.security}
+        assert "missing_hsts" in security_types
+
+    def test_security_headers_skipped_on_http(self) -> None:
+        """Security header checks skip HTTP URLs even when headers provided."""
+        r = analyze_single_page(
+            "http://example.com/page", self._HTML, 0, 200, None,
+            DEFAULT_AUDIT_CONFIG, headers={},
+        )
+        security_types = {f.finding_type for f in r.findings if f.dimension == AuditDimension.security}
+        assert "missing_hsts" not in security_types
+
+    def test_no_headers_no_security_header_findings(self) -> None:
+        """No security header findings when headers param is None."""
+        r = analyze_single_page(_URL, self._HTML, 0, 200, None, DEFAULT_AUDIT_CONFIG)
+        security_header_types = {"missing_hsts", "missing_csp", "missing_x_content_type_options", "missing_x_frame_options"}
+        result_types = {f.finding_type for f in r.findings}
+        assert result_types & security_header_types == set()
+
+
+class TestAnalyzeAllPagesPassesNewParams:
+    """Verify analyze_all_pages forwards headers_map and sitemap_lastmod_map."""
+
+    _HTML = "<html><head><title>T</title></head><body><h1>H</h1><p>content</p></body></html>"
+
+    @pytest.mark.asyncio
+    async def test_headers_forwarded(self) -> None:
+        pages = [(_URL, self._HTML)]
+        headers_map = {_URL: {"strict-transport-security": "max-age=31536000"}}
+        results = await analyze_all_pages(
+            pages, {_URL: 0}, {_URL: 200}, {},
+            headers_map=headers_map,
+        )
+        assert len(results) == 1
+        # HSTS present → no missing_hsts finding
+        hsts_findings = [f for f in results[0].findings if f.finding_type == "missing_hsts"]
+        assert hsts_findings == []
+
+    @pytest.mark.asyncio
+    async def test_no_new_params_backward_compat(self) -> None:
+        """Calling without new params still works (backward compat)."""
+        pages = [(_URL, self._HTML)]
+        results = await analyze_all_pages(
+            pages, {_URL: 0}, {_URL: 200}, {},
+        )
+        assert len(results) == 1
+        assert results[0].url == _URL

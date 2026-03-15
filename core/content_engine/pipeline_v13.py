@@ -1026,6 +1026,98 @@ async def _run_pipeline_stages(
         )
         approved_blueprints = blueprints
 
+    elif input_data.entry_mode == EntryMode.TOPIC_DISCOVERY:
+        # Topic Discovery mode — skips Stage 1. Topics come pre-approved from TD HITL-2.
+        # Loads topic-scoped analysis + builds per-topic WorkerQueryContext, then feeds
+        # into Brief Builder (Stage 2) + optional HITL-2.
+        logger.info("Topic Discovery mode — loading scoped analysis")
+
+        from core.content_engine.context_router import (
+            extract_topic_contexts,
+            topic_assignment_to_selection,
+        )
+        from core.topic_discovery.storage import TopicDiscoveryStorage
+
+        td_slug = input_data.td_effective_slug or slug
+        td_storage = TopicDiscoveryStorage(
+            artifacts_root=_PROJECT_ROOT / "artifacts", slug=td_slug,
+        )
+        matrix = td_storage.get_latest_matrix()
+
+        # Filter to requested assignments
+        requested_ids = set(input_data.topic_assignment_ids)
+        assignments = [
+            a for a in (matrix.assignments if matrix else [])
+            if a.id in requested_ids
+        ]
+        if not assignments:
+            logger.warning("No matching TopicAssignments found for IDs: %s", requested_ids)
+
+        # Load topic-scoped analysis
+        td_analysis_json: dict[str, Any] = {}
+        if input_data.td_ga_run_id:
+            scoped_path = (
+                _PROJECT_ROOT / "artifacts" / "gap_analysis" / slug
+                / "topic_scoped" / input_data.td_ga_run_id / "analysis.json"
+            )
+            if scoped_path.exists():
+                td_analysis_json = json.loads(scoped_path.read_text(encoding="utf-8"))
+            else:
+                logger.warning("Scoped analysis not found: %s", scoped_path)
+
+        topic_query_map = td_analysis_json.get("topic_query_map", {})
+        gaps_raw = td_analysis_json.get("gaps", [])
+
+        # Build per-topic contexts
+        worker_contexts = extract_topic_contexts(td_analysis_json, topic_query_map)
+
+        # Build TopicSelection per assignment
+        approved_topics: list[TopicSelection] = []
+        for rank_idx, assignment in enumerate(assignments):
+            qids = topic_query_map.get(assignment.id, [])
+            qtexts = [
+                g.get("query_text", "")
+                for g in gaps_raw
+                if g.get("query_id") in set(qids)
+            ]
+            ts = topic_assignment_to_selection(assignment, qids, qtexts, rank=rank_idx)
+            approved_topics.append(ts)
+
+        if approved_topics and worker_contexts:
+            blueprints = await build_briefs_parallel(
+                contexts=worker_contexts,
+                topics=approved_topics,
+                company_context_md=company_context_md,
+                persona_mds=persona_mds,
+                style_guide_md=style_guide_md,
+                max_concurrent=input_data.max_concurrent_workers,
+                parent_span=pipeline_trace,
+            )
+
+            if input_data.auto_approve:
+                approved_blueprints = blueprints
+            else:
+                # HITL-2: Brief approval (same as AUTONOMOUS mode)
+                # For now, auto-approve in TD mode; full HITL-2 can be added later
+                approved_blueprints = blueprints
+
+            # Tag blueprints with topic_assignment_id for downstream traceability
+            for bp in approved_blueprints:
+                for topic in approved_topics:
+                    if topic.query_ids and bp.target_queries:
+                        tq_ids = {tq.query_text for tq in bp.target_queries}
+                        if set(topic.query_texts) & tq_ids:
+                            if topic.rank < len(assignments):
+                                bp.topic_assignment_id = assignments[topic.rank].id
+                            break
+
+    # Build brief_id → topic_assignment_id lookup for ContentPiece traceability
+    _bp_ta_map: Dict[str, str] = {}
+    for bp in approved_blueprints:
+        ta_id = getattr(bp, "topic_assignment_id", None)
+        if ta_id and hasattr(bp, "brief_id"):
+            _bp_ta_map[bp.brief_id] = ta_id
+
     # Initialize pieces before Stage 3 (worker failures append to it)
     pieces: List[ContentPiece] = []
 
@@ -1059,6 +1151,7 @@ async def _run_pipeline_stages(
                 title=f"[Worker Failed] {wf['brief_id']}",
                 status=ContentStatus.REJECTED,
                 eval_summary={"worker_error": wf["error"]},
+                topic_assignment_id=_bp_ta_map.get(wf["brief_id"]),
             ))
             _emit(event_bus, task_id, "worker_failed", {
                 "brief_id": wf["brief_id"],
@@ -1229,6 +1322,7 @@ async def _run_pipeline_stages(
                             eval_summary=eval_summary,
                             human_notes=review_state.get("editor_notes"),
                             artifact_path=str(final_path.relative_to(_PROJECT_ROOT)),
+                            topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                         )
                     )
                     piece_resolved = True
@@ -1311,6 +1405,7 @@ async def _run_pipeline_stages(
                                 status=ContentStatus.REJECTED,
                                 eval_summary=eval_summary,
                                 human_notes=review_state.get("editor_notes"),
+                                topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                             )
                         )
                         piece_resolved = True
@@ -1325,6 +1420,7 @@ async def _run_pipeline_stages(
                             status=ContentStatus.REJECTED,
                             eval_summary=eval_summary,
                             human_notes=review_state.get("editor_notes"),
+                            topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                         )
                     )
                     piece_resolved = True
@@ -1358,6 +1454,7 @@ async def _run_pipeline_stages(
                     final_markdown=final_content.markdown,
                     eval_summary=auto_eval,
                     artifact_path=str(final_path.relative_to(_PROJECT_ROOT)),
+                    topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                 )
             )
 

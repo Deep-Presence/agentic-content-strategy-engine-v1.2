@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_vsg_data_service
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.voice_style_guide import (
     ApprovalResponseVSG,
@@ -225,19 +225,17 @@ async def approve_authors(
 async def get_latest_guide(
     slug: str,
     _user: UserProfile = Depends(require_auth),
-    artifacts_root: Path = Depends(get_artifacts_root),
+    vsg_svc=Depends(get_vsg_data_service),
 ) -> Dict[str, Any]:
-    storage = VoiceStyleGuideStorage(artifacts_root, slug)
-    guide_md = storage.get_latest_guide()
-    if guide_md is None:
+    result = await vsg_svc.get_guide(slug)
+    if result is None:
         raise HTTPException(status_code=404, detail="No voice style guide found")
 
-    manifest = storage.read_manifest()
     return {
         "slug": slug,
-        "guide_md": guide_md,
-        "version": manifest.guide.current_version,
-        "word_count": manifest.guide.word_count,
-        "last_updated": manifest.guide.last_updated,
-        "source_authors": manifest.guide.source_authors,
+        "guide_md": result["content_md"],
+        "version": result.get("version", 0),
+        "word_count": result.get("word_count", 0),
+        "last_updated": result.get("last_updated"),
+        "source_authors": result.get("source_authors", []),
     }

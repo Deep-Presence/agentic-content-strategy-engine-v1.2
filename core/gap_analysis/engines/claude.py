@@ -82,7 +82,7 @@ class ClaudeEngine(SearchEngine):
     def __init__(self, model: Optional[str] = None) -> None:
         super().__init__(model=model or settings.gap_analysis_claude_engine_model)
 
-    async def search(self, query_text: str, query_id: Optional[str] = None) -> PlatformResult:
+    async def search(self, query_text: str, query_id: Optional[str] = None, *, client: Any = None) -> PlatformResult:
         api_key = settings.anthropic_api_key
         if not api_key:
             raise RuntimeError(
@@ -97,8 +97,8 @@ class ClaudeEngine(SearchEngine):
         }
         payload = {
             "model": self.model,
-            "max_tokens": 4096,
-            "temperature": 0,
+            "max_tokens": 2048,
+            "temperature": 0.3,
             "system": (
                 "You are a helpful research assistant. Search the web to answer queries "
                 "accurately. Always cite your sources."
@@ -108,14 +108,15 @@ class ClaudeEngine(SearchEngine):
                 {
                     "type": "web_search_20250305",
                     "name": "web_search",
-                    "max_uses": 5,
+                    "max_uses": 2,
                 }
             ],
         }
 
         logger.info("Claude search request for query %s", query_id)
-        async with httpx.AsyncClient(timeout=90) as client:
-            resp = await client.post(
+
+        async def _do_request(http_client: httpx.AsyncClient) -> dict:
+            resp = await http_client.post(
                 f"{_BASE_URL}/v1/messages",
                 headers=headers,
                 json=payload,
@@ -130,7 +131,7 @@ class ClaudeEngine(SearchEngine):
                 resp.raise_for_status()
 
             try:
-                data = resp.json()
+                return resp.json()
             except json.JSONDecodeError as e:
                 logger.error(
                     "Claude search invalid JSON for query %s: %s body_preview=%s",
@@ -141,6 +142,12 @@ class ClaudeEngine(SearchEngine):
                 raise RuntimeError(
                     f"Claude API returned invalid JSON: {e}"
                 ) from e
+
+        if client is not None:
+            data = await _do_request(client)
+        else:
+            async with httpx.AsyncClient(timeout=90) as http_client:
+                data = await _do_request(http_client)
 
         response_text, citations = _extract_claude_output_from_json(data)
         logger.info(

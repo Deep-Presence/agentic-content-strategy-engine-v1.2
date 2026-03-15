@@ -28,7 +28,11 @@ the existing router patterns (require_auth, require_tenant).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import uuid as _uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -37,12 +41,18 @@ from pydantic import BaseModel, Field
 from api.auth.dependencies import require_auth, require_role
 from api.dependencies import (
     get_analytics_service,
+    get_artifacts_root,
     get_daily_tracker_orchestrator,
+    get_event_bus,
     get_prompt_library_service,
+    get_task_store,
 )
+from api.schemas.common import PipelineRunResponse
+from api.tasks.event_bus import EventBus
 from core.daily_tracker.analytics_engine import AnalyticsService
 from core.daily_tracker.orchestrator import DailyTrackerOrchestrator
 from core.daily_tracker.prompt_library import PromptLibraryService
+from core.services.task_store import TaskStoreProtocol
 from core.models.daily_tracker import (
     CompetitorMetrics,
     PromptLibraryFilter,
@@ -306,37 +316,39 @@ async def trigger_daily_run(
     body: TriggerRunRequest,
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
-    orchestrator: DailyTrackerOrchestrator = Depends(
-        get_daily_tracker_orchestrator
-    ),
-) -> RunStatusResponse:
-    """Trigger a daily tracking run.
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+    event_bus: EventBus = Depends(get_event_bus),
+    artifacts_root: Path = Depends(get_artifacts_root),
+) -> PipelineRunResponse:
+    """Trigger a daily tracking run as an async background task.
 
-    The run executes synchronously within this request because the
-    orchestrator is lightweight (delegates to platform runner).
-    For long-running runs with many prompts, consider the SSE task
-    pattern in a future iteration.
+    Returns 202 with a task_id immediately.  The run executes in the
+    background and emits SSE events via ``GET /tasks/{task_id}/events``.
     """
-    company_id = _get_company_id(request)
+    company_slug = _get_company_id(request)
 
-    result = await orchestrator.execute_daily_run(
-        company_id=company_id,
-        prompt_ids=body.prompt_ids,
-        engines=body.engines,
-        brand=body.brand,
-        competitors=body.competitors,
-        concurrency=body.concurrency,
+    from api.tasks.runner import run_daily_tracker_task
+
+    task = task_store.create_task("daily_tracker", company_slug)
+
+    handle = asyncio.create_task(
+        run_daily_tracker_task(
+            task_id=task.task_id,
+            request=body,
+            company_slug=company_slug,
+            artifacts_root=artifacts_root,
+            task_store=task_store,
+            event_bus=event_bus,
+        )
     )
+    task_store.register_task_handle(task.task_id, handle)
 
-    return RunStatusResponse(
-        run_id=result.run_id,
-        company_id=result.company_id,
-        status=result.status.value,
-        prompt_count=result.prompt_count,
-        engine_count=result.engine_count,
-        started_at=result.started_at.isoformat() if result.started_at else None,
-        completed_at=result.completed_at.isoformat() if result.completed_at else None,
-        error=result.error,
+    return PipelineRunResponse(
+        run_id=task.task_id,
+        pipeline=task.pipeline,
+        company_slug=task.company_slug,
+        status="running",
+        created_at=task.created_at,
     )
 
 
@@ -345,17 +357,40 @@ async def get_run_status(
     run_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
-    orchestrator: DailyTrackerOrchestrator = Depends(
-        get_daily_tracker_orchestrator
-    ),
 ) -> RunStatusResponse:
-    """Get the status of a daily run."""
-    _get_company_id(request)  # tenant check
-    status_dict = await orchestrator.get_run_status(run_id)
-    return RunStatusResponse(
-        run_id=status_dict.get("run_id", run_id),  # type: ignore[arg-type]
-        status=str(status_dict.get("status", "unknown")),
-    )
+    """Get the status of a daily run from the database."""
+    company_slug = _get_company_id(request)
+
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    try:
+        from core.db.models.daily_tracker import DailyRunModel
+
+        async with sf() as session:
+            run_uuid = _uuid.UUID(run_id)
+            row = await session.get(DailyRunModel, run_uuid)
+            if row is None or row.company_id != company_slug:
+                raise HTTPException(status_code=404, detail="Run not found")
+
+            return RunStatusResponse(
+                run_id=str(row.id),
+                company_id=row.company_id,
+                status=row.status or "unknown",
+                prompt_count=row.prompt_count or 0,
+                engine_count=row.engine_count or 0,
+                started_at=row.started_at.isoformat() if row.started_at else None,
+                completed_at=row.completed_at.isoformat() if row.completed_at else None,
+                error=row.error,
+            )
+    except HTTPException:
+        raise
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid run_id format")
+    except Exception:
+        logger.warning("get_run_status failed for %s", run_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch run status")
 
 
 @router.get("/runs")
@@ -365,17 +400,54 @@ async def list_runs(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> RunListResponse:
-    """List daily runs for the authenticated company.
+    """List daily runs for the authenticated company from the database."""
+    company_slug = _get_company_id(request)
 
-    Note: In the current implementation without DB persistence for runs,
-    this returns an empty list. Full implementation requires DB run storage
-    (deferred to the next iteration when DB repos are wired end-to-end).
-    """
-    _get_company_id(request)  # tenant check
-    # Why: orchestrator is stateless — run listing requires DB lookup.
-    # In v1, runs are transient (returned from trigger endpoint).
-    # Full DB persistence for run listing is deferred.
-    return RunListResponse(runs=[], total=0)
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        return RunListResponse(runs=[], total=0)
+
+    try:
+        from core.db.models.daily_tracker import DailyRunModel
+        from sqlalchemy import func, select
+
+        async with sf() as session:
+            # Count total
+            count_q = (
+                select(func.count())
+                .select_from(DailyRunModel)
+                .where(DailyRunModel.company_id == company_slug)
+            )
+            total = (await session.execute(count_q)).scalar() or 0
+
+            # Fetch page
+            q = (
+                select(DailyRunModel)
+                .where(DailyRunModel.company_id == company_slug)
+                .order_by(DailyRunModel.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            rows = (await session.execute(q)).scalars().all()
+
+            runs = [
+                RunStatusResponse(
+                    run_id=str(row.id),
+                    company_id=row.company_id,
+                    status=row.status or "unknown",
+                    prompt_count=row.prompt_count or 0,
+                    engine_count=row.engine_count or 0,
+                    started_at=row.started_at.isoformat() if row.started_at else None,
+                    completed_at=row.completed_at.isoformat() if row.completed_at else None,
+                    error=row.error,
+                )
+                for row in rows
+            ]
+
+            return RunListResponse(runs=runs, total=total)
+    except Exception:
+        logger.warning("list_runs failed for %s", company_slug, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch runs")
 
 
 # ── Analytics Endpoints ──────────────────────────────────────────────

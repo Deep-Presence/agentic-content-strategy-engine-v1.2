@@ -165,6 +165,18 @@ def build_persona_suggester_user_prompt(
     if input_data.additional_constraints:
         additional_parts.append(f"**Additional Constraints:** {input_data.additional_constraints}")
 
+    if input_data.seed_personas:
+        additional_parts.append("")
+        additional_parts.append("### User-Provided Persona Seeds")
+        additional_parts.append(
+            "The user has indicated these audience personas are important. "
+            "You MUST include these in your recommendations (use them as the "
+            "persona_name values), but validate against the business context. "
+            "If a seed doesn't fit the data, flag it but still include it."
+        )
+        for i, name in enumerate(input_data.seed_personas, 1):
+            additional_parts.append(f"{i}. {name}")
+
     if additional_parts:
         parts.extend(additional_parts)
     else:

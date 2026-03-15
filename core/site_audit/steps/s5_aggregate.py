@@ -22,6 +22,7 @@ from typing import Any
 
 from core.models.site_audit import (
     AIBotAccessResult,
+    AuditCheckSeverity,
     AuditDimension,
     AuditFinding,
     PageAuditResult,
@@ -34,6 +35,179 @@ from core.site_audit.scoring import (
     compute_grade,
     compute_overall_score,
 )
+
+
+# ---------------------------------------------------------------------------
+# Cross-page analysis helpers (pure, no I/O)
+# ---------------------------------------------------------------------------
+
+
+def _detect_duplicate_titles(
+    page_results: list[PageAuditResult],
+) -> list[AuditFinding]:
+    """Flag pages that share the same title (case-insensitive).
+
+    Duplicate titles confuse AI models trying to identify distinct content.
+    Groups with 2+ URLs produce a single finding listing all affected URLs.
+    """
+    title_groups: dict[str, list[str]] = {}
+    for page in page_results:
+        title = (page.title or "").strip().lower()
+        if not title:
+            continue
+        title_groups.setdefault(title, []).append(page.url)
+
+    findings: list[AuditFinding] = []
+    for title, urls in title_groups.items():
+        if len(urls) < 2:
+            continue
+        findings.append(
+            AuditFinding(
+                finding_type="duplicate_title",
+                dimension=AuditDimension.on_page_seo,
+                severity=AuditCheckSeverity.high,
+                url="",
+                message=(
+                    f"{len(urls)} pages share the same title: "
+                    f"\"{title[:80]}{'…' if len(title) > 80 else ''}\""
+                ),
+                recommendation=(
+                    "Give each page a unique, descriptive title. "
+                    "Duplicate titles make it harder for AI models to "
+                    "distinguish and cite individual pages."
+                ),
+                details={"title": title, "urls": urls},
+            )
+        )
+    return findings
+
+
+def _detect_duplicate_meta_descriptions(
+    page_results: list[PageAuditResult],
+) -> list[AuditFinding]:
+    """Flag pages that share the same meta description (case-insensitive)."""
+    desc_groups: dict[str, list[str]] = {}
+    for page in page_results:
+        desc = (page.meta_description or "").strip().lower()
+        if not desc:
+            continue
+        desc_groups.setdefault(desc, []).append(page.url)
+
+    findings: list[AuditFinding] = []
+    for desc, urls in desc_groups.items():
+        if len(urls) < 2:
+            continue
+        findings.append(
+            AuditFinding(
+                finding_type="duplicate_meta_description",
+                dimension=AuditDimension.on_page_seo,
+                severity=AuditCheckSeverity.medium,
+                url="",
+                message=(
+                    f"{len(urls)} pages share the same meta description."
+                ),
+                recommendation=(
+                    "Write unique meta descriptions for each page. "
+                    "AI models use descriptions to understand page relevance."
+                ),
+                details={"description": desc[:200], "urls": urls},
+            )
+        )
+    return findings
+
+
+def _detect_orphan_pages(
+    sitemap_urls: list[str],
+    internal_link_targets: set[str],
+) -> list[AuditFinding]:
+    """Flag sitemap URLs that are not linked from any crawled page.
+
+    Orphan pages are discoverable via sitemap but unreachable through
+    internal navigation, reducing their crawl priority and citation chance.
+    """
+    orphans = set(sitemap_urls) - internal_link_targets
+    if not orphans:
+        return []
+
+    findings: list[AuditFinding] = []
+    orphan_list = sorted(orphans)
+    # Cap at 20 individual findings
+    for orphan_url in orphan_list[:20]:
+        findings.append(
+            AuditFinding(
+                finding_type="orphan_page",
+                dimension=AuditDimension.crawlability,
+                severity=AuditCheckSeverity.medium,
+                url=orphan_url,
+                message="Page is in sitemap but has no internal links pointing to it.",
+                recommendation=(
+                    "Add internal links to this page from related content. "
+                    "Orphan pages are less likely to be discovered and cited "
+                    "by AI crawlers."
+                ),
+                details={"total_orphans": len(orphans)},
+            )
+        )
+    return findings
+
+
+def _detect_thin_content(
+    page_results: list[PageAuditResult],
+    config: AuditConfig,
+) -> list[AuditFinding]:
+    """Flag pages with very low word counts.
+
+    Thin content pages provide insufficient substance for AI models
+    to extract and cite meaningful information.
+    """
+    findings: list[AuditFinding] = []
+    for page in page_results:
+        # Skip noindex/redirect pages
+        if page.is_noindex or page.redirect_url:
+            continue
+        wc = page.word_count or 0
+        if wc < config.thin_content_threshold:
+            findings.append(
+                AuditFinding(
+                    finding_type="thin_content",
+                    dimension=AuditDimension.on_page_seo,
+                    severity=AuditCheckSeverity.medium,
+                    url=page.url,
+                    message=(
+                        f"Page has only {wc} words "
+                        f"(threshold: {config.thin_content_threshold})."
+                    ),
+                    recommendation=(
+                        "Expand this page with substantive content. "
+                        "AI models need sufficient text to extract facts "
+                        "and generate citations."
+                    ),
+                    details={
+                        "word_count": wc,
+                        "threshold": config.thin_content_threshold,
+                    },
+                )
+            )
+    return findings
+
+
+def _cross_page_findings(
+    page_results: list[PageAuditResult],
+    sitemap_urls: list[str],
+    internal_link_targets: set[str],
+    config: AuditConfig,
+) -> list[AuditFinding]:
+    """Run all cross-page analysis checks.
+
+    Orchestrator for site-wide findings that require comparing data
+    across multiple pages.
+    """
+    findings: list[AuditFinding] = []
+    findings.extend(_detect_duplicate_titles(page_results))
+    findings.extend(_detect_duplicate_meta_descriptions(page_results))
+    findings.extend(_detect_orphan_pages(sitemap_urls, internal_link_targets))
+    findings.extend(_detect_thin_content(page_results, config))
+    return findings
 
 
 def _collect_all_findings(page_results: list[PageAuditResult]) -> list[AuditFinding]:
@@ -105,15 +279,17 @@ def aggregate_results(
     domain: str = "",
     audit_id: str = "",
     config: AuditConfig = DEFAULT_AUDIT_CONFIG,
+    internal_link_targets: set[str] | None = None,
 ) -> SiteAuditResult:
     """Aggregate per-page results into a site-level audit result.
 
     Steps:
-        1. Collect all findings from all pages.
-        2. Compute per-dimension scores via the scoring module.
-        3. Compute overall score and grade.
-        4. Compute summary statistics (avg snippet readiness, schema coverage).
-        5. Build the :class:`SiteAuditResult`.
+        1. Run cross-page analysis (duplicate titles, orphan pages, etc.).
+        2. Collect all findings from all pages.
+        3. Compute per-dimension scores via the scoring module.
+        4. Compute overall score and grade.
+        5. Compute summary statistics (avg snippet readiness, schema coverage).
+        6. Build the :class:`SiteAuditResult`.
 
     Args:
         page_results: Per-page audit results from s2 + s3/s4 enrichment.
@@ -122,12 +298,22 @@ def aggregate_results(
         domain: Audited domain string.
         audit_id: Unique audit run identifier.
         config: Audit configuration with weights and thresholds.
+        internal_link_targets: Set of URLs linked from crawled pages (for orphan detection).
 
     Returns:
         A :class:`SiteAuditResult` with all scores, findings, and summaries
         populated. ``status`` is set to ``"completed"``.
     """
+    # Cross-page analysis (skip orphan detection when link targets not provided)
+    cross_findings = _cross_page_findings(
+        page_results,
+        sitemap_urls=sitemap_health.sitemap_urls if internal_link_targets is not None else [],
+        internal_link_targets=internal_link_targets or set(),
+        config=config,
+    )
+
     all_findings = _collect_all_findings(page_results)
+    all_findings = cross_findings + all_findings
 
     # Per-dimension scores (page-normalised)
     pages_crawled = len(page_results)

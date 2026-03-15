@@ -160,7 +160,7 @@ class TestSlugLocks:
     def test_slug_released_on_completion(self, store: TaskStore) -> None:
         task = store.create_task("gap_analysis", "ramp")
         store.update_task(task.task_id, status=TaskStatus.COMPLETED)
-        store.release_slug_lock("ramp")
+        store.release_slug_lock("gap_analysis:ramp")
         # Should not raise
         task2 = store.create_task("gap_analysis", "ramp")
         assert task2.company_slug == "ramp"
@@ -168,7 +168,7 @@ class TestSlugLocks:
     def test_slug_released_on_failure(self, store: TaskStore) -> None:
         task = store.create_task("gap_analysis", "ramp")
         store.update_task(task.task_id, status=TaskStatus.FAILED, error="err")
-        store.release_slug_lock("ramp")
+        store.release_slug_lock("gap_analysis:ramp")
         task2 = store.create_task("gap_analysis", "ramp")
         assert task2.company_slug == "ramp"
 

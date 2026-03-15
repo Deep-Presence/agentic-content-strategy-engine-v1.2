@@ -967,3 +967,376 @@ class TestStalenessAndChangedDocs:
         assert len(output.changed_docs) == 5
         assert "company_overview" in output.changed_docs
         assert "customer_reviews" in output.changed_docs
+
+
+# ---------------------------------------------------------------------------
+# Express Mode Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def kb_input_express() -> KnowledgeBaseInput:
+    return KnowledgeBaseInput(
+        company_name="Test Co",
+        domain="test.co",
+        company_slug="test-co",
+        express_mode=True,
+        auto_approve_checkpoints=[1, 2, 3],
+    )
+
+
+class TestExpressMode:
+    """Tests for express mode — eager DAG + auto-approve intermediate HITL."""
+
+    @pytest.mark.asyncio
+    async def test_express_mode_runs_all_agents(
+        self, kb_input_express: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        """Express mode runs all 5 agents and produces output."""
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        output = await run_knowledge_base_pipeline(
+            kb_input_express, artifacts_root=tmp_path,
+        )
+        assert isinstance(output, KnowledgeBaseOutput)
+        assert output.slug == "test-co"
+        assert output.synthesis_md != ""
+        assert len(output.changed_docs) == 5
+
+    @pytest.mark.asyncio
+    async def test_express_mode_auto_approves_cp1_cp2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Express mode merges HITL-1/2 into one auto-approved checkpoint."""
+        inp = KnowledgeBaseInput(
+            company_name="Test Co",
+            company_slug="test-co",
+            express_mode=True,
+            auto_approve_checkpoints=[3],  # Only cp3 from user
+        )
+
+        hitl_calls: List[Dict[str, Any]] = []
+
+        async def _track_hitl(graph, initial_state, thread_id, **kw):
+            hitl_calls.append({
+                "checkpoint": initial_state.get("checkpoint"),
+                "auto_approve": initial_state.get("auto_approve"),
+                "stage": kw.get("stage_name"),
+            })
+            return {
+                **initial_state,
+                "decision": "approve",
+                "approved_docs": list(initial_state.get("doc_summaries", {}).keys()),
+            }
+
+        monkeypatch.setattr(f"{_PIPE}.run_kb_hitl_checkpoint", _track_hitl)
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        await run_knowledge_base_pipeline(inp, artifacts_root=tmp_path)
+
+        # Express mode: 1 merged HITL (auto-approved) + 1 HITL-3 (auto-approved via user)
+        assert len(hitl_calls) == 2
+        # Merged HITL is auto-approved
+        assert hitl_calls[0]["auto_approve"] is True
+        assert hitl_calls[0]["stage"] == "kb_checkpoint_express"
+        # HITL-3 uses user's auto_approve setting
+        assert hitl_calls[1]["checkpoint"] == 3
+
+    @pytest.mark.asyncio
+    async def test_express_mode_preserves_hitl3(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Express mode does NOT auto-approve HITL-3 unless user explicitly sets it."""
+        inp = KnowledgeBaseInput(
+            company_name="Test Co",
+            company_slug="test-co",
+            express_mode=True,
+            auto_approve_checkpoints=[],  # No user auto-approvals
+        )
+
+        hitl_calls: List[Dict[str, Any]] = []
+
+        async def _track_hitl(graph, initial_state, thread_id, **kw):
+            hitl_calls.append({
+                "checkpoint": initial_state.get("checkpoint"),
+                "auto_approve": initial_state.get("auto_approve"),
+                "stage": kw.get("stage_name"),
+            })
+            return {
+                **initial_state,
+                "decision": "approve",
+                "approved_docs": list(initial_state.get("doc_summaries", {}).keys()),
+            }
+
+        monkeypatch.setattr(f"{_PIPE}.run_kb_hitl_checkpoint", _track_hitl)
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        await run_knowledge_base_pipeline(inp, artifacts_root=tmp_path)
+
+        # HITL-3 should NOT be auto-approved (user didn't set checkpoint 3)
+        hitl3 = [h for h in hitl_calls if h["stage"] == "kb_checkpoint_3"]
+        assert len(hitl3) == 1
+        assert hitl3[0]["auto_approve"] is False
+
+    @pytest.mark.asyncio
+    async def test_express_false_uses_classic_dag(
+        self, kb_input_auto_approve: KnowledgeBaseInput, tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """express_mode=False takes classic phased path (backward compat)."""
+        hitl_calls: List[Dict[str, Any]] = []
+
+        async def _track_hitl(graph, initial_state, thread_id, **kw):
+            hitl_calls.append({
+                "checkpoint": initial_state.get("checkpoint"),
+                "stage": kw.get("stage_name"),
+            })
+            return {
+                **initial_state,
+                "decision": "approve",
+                "approved_docs": list(initial_state.get("doc_summaries", {}).keys()),
+            }
+
+        monkeypatch.setattr(f"{_PIPE}.run_kb_hitl_checkpoint", _track_hitl)
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        await run_knowledge_base_pipeline(
+            kb_input_auto_approve, artifacts_root=tmp_path,
+        )
+        # Classic: 3 HITL calls (cp1, cp2, cp3) — no express checkpoint
+        assert len(hitl_calls) == 3
+        stages = [h["stage"] for h in hitl_calls]
+        assert "kb_checkpoint_express" not in stages
+        assert "kb_checkpoint_1" in stages
+        assert "kb_checkpoint_2" in stages
+        assert "kb_checkpoint_3" in stages
+
+    @pytest.mark.asyncio
+    async def test_express_mode_ignored_for_refresh(
+        self, tmp_path: Path,
+    ) -> None:
+        """Express mode is ignored for refresh mode (only activates for full)."""
+        inp = KnowledgeBaseInput(
+            company_name="Test Co",
+            company_slug="test-co",
+            express_mode=True,
+            refresh_docs=[KBDocType.COMPANY_OVERVIEW, KBDocType.CUSTOMER_REVIEWS],
+            auto_approve_checkpoints=[1, 2, 3],
+        )
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        output = await run_knowledge_base_pipeline(inp, artifacts_root=tmp_path)
+        # Should complete successfully using classic refresh path
+        assert isinstance(output, KnowledgeBaseOutput)
+
+    @pytest.mark.asyncio
+    async def test_express_mode_writes_company_profile(
+        self, kb_input_express: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        """Express mode writes company_context/{slug}.md."""
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        await run_knowledge_base_pipeline(
+            kb_input_express, artifacts_root=tmp_path,
+        )
+        profile_path = tmp_path / "company_context" / "test-co.md"
+        assert profile_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_express_mode_sets_last_full_refresh(
+        self, kb_input_express: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        """Express mode sets last_full_refresh in manifest."""
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+        from core.research.knowledge_base.storage import KBStorage
+
+        await run_knowledge_base_pipeline(
+            kb_input_express, artifacts_root=tmp_path,
+        )
+        storage = KBStorage(tmp_path, "test-co")
+        manifest = storage.read_manifest()
+        assert manifest.last_full_refresh is not None
+
+    @pytest.mark.asyncio
+    async def test_express_mode_sse_events(
+        self, kb_input_express: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        """Express mode emits eager phase events."""
+        event_bus = MagicMock()
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        await run_knowledge_base_pipeline(
+            kb_input_express,
+            artifacts_root=tmp_path,
+            task_id="task-express-1",
+            event_bus=event_bus,
+        )
+
+        event_types = [c[0][1] for c in event_bus.publish.call_args_list]
+        assert "pipeline_start" in event_types
+        assert "completed" in event_types
+        # Should have eager phase events
+        phase_starts = [
+            c for c in event_bus.publish.call_args_list
+            if c[0][1] == "kb_phase_start"
+        ]
+        phase_data = [c[0][2] for c in phase_starts]
+        phases = [d.get("phase") for d in phase_data]
+        assert "eager" in phases
+
+
+class TestEagerDag:
+    """Tests for _run_eager_dag dependency coordination."""
+
+    @pytest.mark.asyncio
+    async def test_overview_failure_unblocks_downstream(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """company_overview error fires event — downstream agents still run (no deadlock)."""
+        async def _failing_co(input_data, **kw):
+            raise RuntimeError("Perplexity down")
+
+        monkeypatch.setattr(f"{_PIPE}.run_company_overview_agent", _failing_co)
+
+        inp = KnowledgeBaseInput(
+            company_name="Test Co",
+            company_slug="test-co",
+            express_mode=True,
+            auto_approve_checkpoints=[1, 2, 3],
+        )
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        output = await run_knowledge_base_pipeline(inp, artifacts_root=tmp_path)
+        # Pipeline completes — no deadlock
+        assert isinstance(output, KnowledgeBaseOutput)
+        # company_overview should have error
+        co_result = output.agent_results.get("company_overview")
+        assert co_result is not None
+        assert co_result.error is not None
+
+    @pytest.mark.asyncio
+    async def test_eager_dag_all_agents_produce_results(
+        self, kb_input_express: KnowledgeBaseInput, tmp_path: Path,
+    ) -> None:
+        """All 5 agents appear in output.agent_results."""
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        output = await run_knowledge_base_pipeline(
+            kb_input_express, artifacts_root=tmp_path,
+        )
+        expected = {
+            "company_overview", "customer_reviews", "competitor_registry",
+            "weakness_analysis", "brand_perception",
+        }
+        assert expected.issubset(set(output.agent_results.keys()))
+
+    @pytest.mark.asyncio
+    async def test_eager_dag_dependency_ordering(
+        self, kb_input_express: KnowledgeBaseInput, tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """competitor_scanner waits for company_overview; weakness_analyst waits for both."""
+        import time as _time
+
+        finish_order: List[str] = []
+
+        async def _co_slow(input_data, **kw):
+            await asyncio.sleep(0.05)
+            finish_order.append("co")
+            return _make_result(KBDocType.COMPANY_OVERVIEW, "# Overview")
+
+        async def _cr_fast(input_data, **kw):
+            await asyncio.sleep(0.01)
+            finish_order.append("cr")
+            return _make_result(KBDocType.CUSTOMER_REVIEWS, "# Reviews")
+
+        async def _cs_dep(input_data, company_overview_md, **kw):
+            finish_order.append("cs")
+            return _make_result(KBDocType.COMPETITOR_REGISTRY, "# Competitors")
+
+        async def _wa_dep(input_data, company_overview_md, competitor_registry_md, **kw):
+            finish_order.append("wa")
+            return _make_result(KBDocType.WEAKNESS_ANALYSIS, "# Weakness")
+
+        async def _bp_dep(input_data, upstream_docs, **kw):
+            finish_order.append("bp")
+            return _make_result(KBDocType.BRAND_PERCEPTION, "# Brand")
+
+        monkeypatch.setattr(f"{_PIPE}.run_company_overview_agent", _co_slow)
+        monkeypatch.setattr(f"{_PIPE}.run_customer_reviews_agent", _cr_fast)
+        monkeypatch.setattr(f"{_PIPE}.run_competitor_scanner_agent", _cs_dep)
+        monkeypatch.setattr(f"{_PIPE}.run_weakness_analyst_agent", _wa_dep)
+        monkeypatch.setattr(f"{_PIPE}.run_brand_perception_agent", _bp_dep)
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        await run_knowledge_base_pipeline(
+            kb_input_express, artifacts_root=tmp_path,
+        )
+        # cr finishes first (fast), then co, then cs/wa/bp after
+        assert finish_order.index("cr") < finish_order.index("co")
+        assert finish_order.index("co") < finish_order.index("cs")
+        assert finish_order.index("cs") < finish_order.index("wa")
+
+    @pytest.mark.asyncio
+    async def test_express_mode_reject_at_merged_hitl(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Reject at merged HITL in express mode stops the pipeline."""
+        inp = KnowledgeBaseInput(
+            company_name="Test Co",
+            company_slug="test-co",
+            express_mode=True,
+            auto_approve_checkpoints=[],  # Don't auto-approve
+        )
+
+        async def _reject_hitl(graph, initial_state, thread_id, **kw):
+            return {**initial_state, "decision": "reject"}
+
+        monkeypatch.setattr(f"{_PIPE}.run_kb_hitl_checkpoint", _reject_hitl)
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        output = await run_knowledge_base_pipeline(inp, artifacts_root=tmp_path)
+        assert output.synthesis_md == ""
+
+    @pytest.mark.asyncio
+    async def test_express_mode_reject_at_cp3(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Reject at HITL-3 in express mode stops without writing company_context."""
+        inp = KnowledgeBaseInput(
+            company_name="Test Co",
+            company_slug="test-co",
+            express_mode=True,
+            auto_approve_checkpoints=[1, 2],  # Auto-approve merged, NOT cp3
+        )
+
+        hitl_count = {"count": 0}
+
+        async def _approve_then_reject(graph, initial_state, thread_id, **kw):
+            hitl_count["count"] += 1
+            if hitl_count["count"] == 1:
+                # Merged HITL — approve
+                return {
+                    **initial_state,
+                    "decision": "approve",
+                    "approved_docs": list(initial_state.get("doc_summaries", {}).keys()),
+                }
+            # HITL-3 — reject
+            return {**initial_state, "decision": "reject"}
+
+        monkeypatch.setattr(f"{_PIPE}.run_kb_hitl_checkpoint", _approve_then_reject)
+
+        from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
+
+        output = await run_knowledge_base_pipeline(inp, artifacts_root=tmp_path)
+        assert output.synthesis_md == ""
+        profile_path = tmp_path / "company_context" / "test-co.md"
+        assert not profile_path.exists()

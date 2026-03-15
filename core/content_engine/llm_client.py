@@ -66,16 +66,32 @@ def _get_langsmith_callback() -> Optional[Any]:
 
 
 def configure_litellm_callbacks() -> None:
-    """Configure LiteLLM global callbacks for LangSmith tracing.
+    """Configure LiteLLM: export API keys to os.environ + set LangSmith callbacks.
+
+    LiteLLM reads API keys from os.environ, but pydantic-settings loads them
+    into the Settings object without setting os.environ.  This bridge ensures
+    litellm can authenticate with every provider.
 
     Should be called once at pipeline startup.
     """
     if not _litellm_available:
         return
 
-    try:
-        import os
+    import os
 
+    from core.config.settings import settings
+
+    # Bridge pydantic-settings → os.environ for LiteLLM
+    _KEY_MAP = {
+        "ANTHROPIC_API_KEY": settings.anthropic_api_key,
+        "OPENAI_API_KEY": settings.openai_api_key,
+        "PERPLEXITY_API_KEY": settings.perplexity_api_key,
+    }
+    for env_var, value in _KEY_MAP.items():
+        if value and not os.environ.get(env_var):
+            os.environ[env_var] = value
+
+    try:
         if os.environ.get("LANGSMITH_API_KEY"):
             litellm.success_callback = ["langsmith"]  # type: ignore[union-attr]
             litellm.failure_callback = ["langsmith"]  # type: ignore[union-attr]

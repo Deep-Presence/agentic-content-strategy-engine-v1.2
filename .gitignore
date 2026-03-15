@@ -37,6 +37,7 @@ artifacts/chroma_db/*
 # Auth data (contains password hashes — never commit)
 artifacts/_auth/
 artifacts/_jobs/
+artifacts/
 
 # Node
 node_modules/

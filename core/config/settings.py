@@ -58,9 +58,31 @@ class Settings(BaseSettings):
     # Pipeline / Agent
     aeo_agent_invoke_timeout_s: int = 900
 
-    # Gap Analysis
+    # Gap Analysis — Crawl
     gap_analysis_max_crawl_pages: int = 500
     gap_analysis_max_crawl_depth: int = 4
+
+    # Gap Analysis — S3 Concurrency (two-level: global + per-engine)
+    gap_analysis_s3_global_concurrency: int = 30
+    gap_analysis_s3_concurrency_default: int = 8
+    gap_analysis_s3_openai_concurrency: int = 12
+    gap_analysis_s3_claude_concurrency: int = 6
+    gap_analysis_s3_gemini_concurrency: int = 10
+    gap_analysis_s3_perplexity_concurrency: int = 8
+
+    # Gap Analysis — S3 Retry + Circuit Breaker
+    gap_analysis_s3_max_retries: int = 2
+    gap_analysis_s3_retry_base_delay_s: float = 2.0
+    gap_analysis_s3_circuit_breaker_threshold: int = 5
+
+    # Gap Analysis — S4 Concurrency
+    gap_analysis_s4_fetch_concurrency: int = 40
+    gap_analysis_s4_parse_workers: int = 16
+    gap_analysis_s4_http_pool_size: int = 50
+
+    # Gap Analysis — S5 Embedding
+    gap_analysis_s5_embed_batch_size: int = 256
+    gap_analysis_s5_embed_concurrent_batches: int = 6
 
     # ChromaDB (local vector store for gap analysis embeddings)
     chroma_persist_dir: str = "artifacts/chroma_db"
@@ -135,6 +157,11 @@ class Settings(BaseSettings):
 
     # --- Research Knowledge Base ---
     research_kb_project: str = "research-kb"
+    # Per-agent Perplexity model overrides (KB pipeline)
+    research_kb_company_overview_model: str = "sonar-deep-research"
+    research_kb_customer_reviews_model: str = "sonar-pro"
+    research_kb_competitor_scanner_model: str = "sonar-deep-research"
+    research_kb_weakness_analyst_model: str = "sonar-deep-research"
     # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
     research_kb_brand_perception_model: str = "claude-sonnet-4-5-20250929"
     # Synthesis agent — init_chat_model(), needs provider:model format
@@ -154,10 +181,26 @@ class Settings(BaseSettings):
     # --- Topic Discovery Pipeline ---
     topic_discovery_brainstorm_model: str = "anthropic/claude-sonnet-4-6"
     topic_discovery_dedup_model: str = "anthropic/claude-haiku-4-5-20251001"
-    topic_discovery_max_expansion_rounds: int = 4
+    topic_discovery_max_expansion_rounds: int = 2
     topic_discovery_dedup_threshold: float = 0.85
     topic_discovery_max_concurrent_sources: int = 4
     topic_discovery_source_timeout_s: float = 120.0
+    topic_discovery_expansion_timeout_s: float = 300.0
+    # Algorithmic subdomain scoring weights (JSON string for env override)
+    topic_discovery_scoring_weights: str = (
+        '{"source_confidence": 0.30, "content_coverage": 0.20, '
+        '"gap_severity": 0.25, "competitive_density": 0.0, "persona_breadth": 0.25}'
+    )
+    topic_discovery_scoring_similarity_threshold: float = 0.60
+    topic_discovery_persona_affinity_weights: str = (
+        '{"provenance": 0.6, "embedding": 0.4}'
+    )
+    topic_discovery_max_subdomains_to_expand: int = 10
+    # Source C: Perplexity deep research for competitive content landscape
+    topic_discovery_source_c_model: str = "sonar-deep-research"
+    topic_discovery_source_c_timeout_s: float = 500.0
+    # Unified S2 model (hierarchy + scoring + persona affinity)
+    topic_discovery_unified_s2_model: str = "anthropic/claude-sonnet-4-6"
 
     # --- CPS Model (Citation Signal Predictor) ---
     cps_enabled: bool = True

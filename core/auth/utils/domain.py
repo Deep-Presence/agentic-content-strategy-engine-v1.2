@@ -85,7 +85,7 @@ def derive_slug(name: str) -> str:
 # Allowlists for mutable fields — prevents callers from overwriting
 # immutable identity fields (id, created_at, slug) via **kwargs.
 COMPANY_MUTABLE_FIELDS: frozenset[str] = frozenset({
-    "name", "domain", "additional_domains",
+    "name", "domain", "additional_domains", "industry",
 })
 PRODUCT_MUTABLE_FIELDS: frozenset[str] = frozenset({
     "name", "domain", "description",

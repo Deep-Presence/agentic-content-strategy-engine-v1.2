@@ -191,6 +191,8 @@ async def run_site_audit(
                 redirect_map=discovery.redirect_map,
                 config=config,
                 check_core_web_vitals=input_data.check_core_web_vitals,
+                headers_map=discovery.headers_map,
+                sitemap_lastmod_map=discovery.sitemap_lastmod_map,
             )
             _emit(on_progress, f"Step 2 complete: {len(page_results)} pages analyzed")
             logger.info("s2_analyze_pages complete: %d results", len(page_results))
@@ -292,6 +294,7 @@ async def run_site_audit(
                 domain=domain,
                 audit_id=audit_id,
                 config=config,
+                internal_link_targets=discovery.internal_link_targets,
             )
             result.pages_discovered = len(discovery.discovered_urls)
             result.started_at = started_at

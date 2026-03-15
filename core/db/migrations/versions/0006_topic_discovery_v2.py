@@ -23,41 +23,49 @@ down_revision = "0005"
 branch_labels = None
 depends_on = None
 
-# New enum types
-td_status_enum = sa.Enum(
+# New enum types — use postgresql.ENUM with create_type=False so SQLAlchemy
+# does not silently try to CREATE TYPE on its own (sa.Enum ignores that flag
+# in SQLAlchemy 2.0).  Actual type creation is handled via raw SQL below.
+td_status_enum = postgresql.ENUM(
     "draft", "hitl_pending", "approved", "archived",
     name="td_status_enum",
+    create_type=False,
 )
-buyer_stage_enum = sa.Enum(
+buyer_stage_enum = postgresql.ENUM(
     "tofu", "mofu", "bofu",
     name="buyer_stage_enum",
+    create_type=False,
 )
-intent_type_enum = sa.Enum(
+intent_type_enum = postgresql.ENUM(
     "informational", "commercial", "navigational", "transactional",
     name="intent_type_enum",
+    create_type=False,
 )
-audience_segment_type_enum = sa.Enum(
+audience_segment_type_enum = postgresql.ENUM(
     "individual_persona", "team_group",
     name="audience_segment_type_enum",
+    create_type=False,
 )
-relevance_cell_enum = sa.Enum(
+relevance_cell_enum = postgresql.ENUM(
     "relevant", "marginal", "irrelevant",
     name="relevance_cell_enum",
+    create_type=False,
 )
-topic_assignment_status_enum = sa.Enum(
+topic_assignment_status_enum = postgresql.ENUM(
     "not_started", "in_gap_analysis", "content_produced", "published",
     name="topic_assignment_status_enum",
+    create_type=False,
 )
 
 
 def upgrade() -> None:
-    # ── 1. Create new enum types ─────────────────────────────────────
-    td_status_enum.create(op.get_bind(), checkfirst=True)
-    buyer_stage_enum.create(op.get_bind(), checkfirst=True)
-    intent_type_enum.create(op.get_bind(), checkfirst=True)
-    audience_segment_type_enum.create(op.get_bind(), checkfirst=True)
-    relevance_cell_enum.create(op.get_bind(), checkfirst=True)
-    topic_assignment_status_enum.create(op.get_bind(), checkfirst=True)
+    # ── 1. Create new enum types (raw SQL — sa.Enum.create is unreliable in SA 2.0)
+    op.execute("CREATE TYPE td_status_enum AS ENUM ('draft', 'hitl_pending', 'approved', 'archived')")
+    op.execute("CREATE TYPE buyer_stage_enum AS ENUM ('tofu', 'mofu', 'bofu')")
+    op.execute("CREATE TYPE intent_type_enum AS ENUM ('informational', 'commercial', 'navigational', 'transactional')")
+    op.execute("CREATE TYPE audience_segment_type_enum AS ENUM ('individual_persona', 'team_group')")
+    op.execute("CREATE TYPE relevance_cell_enum AS ENUM ('relevant', 'marginal', 'irrelevant')")
+    op.execute("CREATE TYPE topic_assignment_status_enum AS ENUM ('not_started', 'in_gap_analysis', 'content_produced', 'published')")
 
     # ── 2. ALTER topic_discoveries ───────────────────────────────────
     op.add_column(
@@ -313,10 +321,10 @@ def downgrade() -> None:
     op.drop_column("topic_discoveries", "effective_slug")
     op.drop_column("topic_discoveries", "domain_name")
 
-    # Drop new enum types
-    topic_assignment_status_enum.drop(op.get_bind(), checkfirst=True)
-    relevance_cell_enum.drop(op.get_bind(), checkfirst=True)
-    audience_segment_type_enum.drop(op.get_bind(), checkfirst=True)
-    intent_type_enum.drop(op.get_bind(), checkfirst=True)
-    buyer_stage_enum.drop(op.get_bind(), checkfirst=True)
-    td_status_enum.drop(op.get_bind(), checkfirst=True)
+    # Drop new enum types (raw SQL for SA 2.0 compat)
+    op.execute("DROP TYPE IF EXISTS topic_assignment_status_enum")
+    op.execute("DROP TYPE IF EXISTS relevance_cell_enum")
+    op.execute("DROP TYPE IF EXISTS audience_segment_type_enum")
+    op.execute("DROP TYPE IF EXISTS intent_type_enum")
+    op.execute("DROP TYPE IF EXISTS buyer_stage_enum")
+    op.execute("DROP TYPE IF EXISTS td_status_enum")

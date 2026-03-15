@@ -126,6 +126,10 @@ class KnowledgeBaseStartRequest(BaseModel):
         default_factory=list,
         description="Checkpoint numbers to auto-approve (1, 2, 3)",
     )
+    express_mode: bool = Field(
+        default=False,
+        description="Enable express onboarding: optimized parallel DAG + auto-approve intermediate HITL checkpoints.",
+    )
 
     @field_validator("auto_approve_checkpoints")
     @classmethod

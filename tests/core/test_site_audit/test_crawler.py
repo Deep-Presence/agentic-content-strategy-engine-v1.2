@@ -317,7 +317,7 @@ class TestParseSitemap:
             "https://example.com/sitemap.xml": (200, _VALID_SITEMAP_XML),
         })
         async with httpx.AsyncClient(transport=transport) as client:
-            urls, is_index = await _parse_sitemap(
+            urls, is_index, lastmod_map = await _parse_sitemap(
                 "https://example.com/sitemap.xml",
                 client, timeout=10.0, domain="example.com", visited=set(),
             )
@@ -326,6 +326,7 @@ class TestParseSitemap:
         # External filtered out
         assert not any("other.com" in u for u in urls)
         assert is_index is False
+        assert isinstance(lastmod_map, dict)
 
     async def test_sitemap_index(self) -> None:
         transport = _make_mock_transport({
@@ -333,7 +334,7 @@ class TestParseSitemap:
             "https://example.com/sitemap1.xml": (200, _CHILD_SITEMAP_XML),
         })
         async with httpx.AsyncClient(transport=transport) as client:
-            urls, is_index = await _parse_sitemap(
+            urls, is_index, _lastmod = await _parse_sitemap(
                 "https://example.com/sitemap_index.xml",
                 client, timeout=10.0, domain="example.com", visited=set(),
             )
@@ -343,44 +344,86 @@ class TestParseSitemap:
     async def test_404_returns_empty(self) -> None:
         transport = _make_mock_transport({})  # everything → 404
         async with httpx.AsyncClient(transport=transport) as client:
-            urls, is_index = await _parse_sitemap(
+            urls, is_index, lastmod_map = await _parse_sitemap(
                 "https://example.com/sitemap.xml",
                 client, timeout=10.0, domain="example.com", visited=set(),
             )
         assert urls == []
+        assert lastmod_map == {}
 
     async def test_invalid_xml_returns_empty(self) -> None:
         transport = _make_mock_transport({
             "https://example.com/sitemap.xml": (200, "NOT XML <<<"),
         })
         async with httpx.AsyncClient(transport=transport) as client:
-            urls, is_index = await _parse_sitemap(
+            urls, is_index, lastmod_map = await _parse_sitemap(
                 "https://example.com/sitemap.xml",
                 client, timeout=10.0, domain="example.com", visited=set(),
             )
         assert urls == []
+        assert lastmod_map == {}
 
     async def test_empty_content_returns_empty(self) -> None:
         transport = _make_mock_transport({
             "https://example.com/sitemap.xml": (200, ""),
         })
         async with httpx.AsyncClient(transport=transport) as client:
-            urls, is_index = await _parse_sitemap(
+            urls, is_index, lastmod_map = await _parse_sitemap(
                 "https://example.com/sitemap.xml",
                 client, timeout=10.0, domain="example.com", visited=set(),
             )
         assert urls == []
+        assert lastmod_map == {}
 
     async def test_dedup_via_visited(self) -> None:
         """Already-visited sitemaps are skipped."""
         visited = {"https://example.com/sitemap.xml"}
         transport = _make_mock_transport({})
         async with httpx.AsyncClient(transport=transport) as client:
-            urls, _ = await _parse_sitemap(
+            urls, _, _lastmod = await _parse_sitemap(
                 "https://example.com/sitemap.xml",
                 client, timeout=10.0, domain="example.com", visited=visited,
             )
         assert urls == []
+
+    async def test_lastmod_extracted(self) -> None:
+        """Verify lastmod dates are extracted from sitemap URLs."""
+        sitemap_xml = textwrap.dedent("""\
+            <?xml version="1.0" encoding="UTF-8"?>
+            <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+              <url>
+                <loc>https://example.com/page1</loc>
+                <lastmod>2026-01-15</lastmod>
+              </url>
+              <url>
+                <loc>https://example.com/page2</loc>
+              </url>
+              <url>
+                <loc>https://example.com/page3</loc>
+                <lastmod>2026-02-20T10:30:00Z</lastmod>
+              </url>
+            </urlset>
+        """)
+        transport = _make_mock_transport({
+            "https://example.com/sitemap.xml": (200, sitemap_xml),
+        })
+        async with httpx.AsyncClient(transport=transport) as client:
+            urls, is_index, lastmod_map = await _parse_sitemap(
+                "https://example.com/sitemap.xml",
+                client, timeout=10.0, domain="example.com", visited=set(),
+            )
+        assert len(urls) == 3
+        assert is_index is False
+        # page1 has lastmod, page2 does not, page3 has lastmod
+        page1_url = [u for u in urls if "page1" in u][0]
+        page3_url = [u for u in urls if "page3" in u][0]
+        assert page1_url in lastmod_map
+        assert lastmod_map[page1_url] == "2026-01-15"
+        assert page3_url in lastmod_map
+        assert lastmod_map[page3_url] == "2026-02-20T10:30:00Z"
+        # page2 has no lastmod entry
+        page2_url = [u for u in urls if "page2" in u][0]
+        assert page2_url not in lastmod_map
 
 
 # ---------------------------------------------------------------------------
@@ -1015,7 +1058,7 @@ class TestXmlSecurity:
         transport = _make_mock_transport(url_map)
         async with httpx.AsyncClient(transport=transport) as client:
             # max_depth=3 means it stops before reaching level 8
-            urls, has_index = await _parse_sitemap(
+            urls, has_index, _lastmod = await _parse_sitemap(
                 "https://example.com/sitemap-0.xml",
                 client, 10.0, "example.com", set(), max_depth=3,
             )

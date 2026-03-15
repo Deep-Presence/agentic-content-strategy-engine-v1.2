@@ -34,6 +34,7 @@ class CompanyModel(UUIDPKMixin, TimestampMixin, Base):
     additional_domains: Mapped[list[str] | None] = mapped_column(
         ARRAY(Text), nullable=True
     )
+    industry: Mapped[str | None] = mapped_column(String, nullable=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # relationships

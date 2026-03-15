@@ -49,8 +49,19 @@ from core.site_audit.checks.on_page_seo import (
     check_title,
 )
 from core.site_audit.checks.performance import check_ssr_content
+from core.site_audit.checks.performance_structural import (
+    check_image_optimization,
+    check_inline_code_weight,
+    check_page_size,
+    check_render_blocking,
+    check_resource_counts,
+)
 from core.site_audit.checks.schema_checks import infer_page_type
-from core.site_audit.checks.security import check_https, check_mixed_content
+from core.site_audit.checks.security import (
+    check_https,
+    check_mixed_content,
+    check_security_headers,
+)
 from core.site_audit.config import AuditConfig, DEFAULT_AUDIT_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -330,6 +341,38 @@ def _extract_freshness(soup: BeautifulSoup) -> tuple[Optional[str], Optional[str
             if val:
                 publish_date = str(val).strip()
 
+    # Additional fallbacks for modified_date
+    if not modified_date:
+        for prop in ("og:updated_time", "DC.date.modified"):
+            tag = soup.find("meta", attrs={"property": prop}) or soup.find(
+                "meta", attrs={"name": prop}
+            )
+            if tag is not None:
+                val = tag.get("content")  # type: ignore[union-attr]
+                if val:
+                    modified_date = str(val).strip()
+                    break
+        if not modified_date:
+            tag = soup.find("meta", attrs={"itemprop": "dateModified"})
+            if tag is not None:
+                val = tag.get("content")  # type: ignore[union-attr]
+                if val:
+                    modified_date = str(val).strip()
+
+    # Additional fallbacks for publish_date
+    if not publish_date:
+        tag = soup.find("meta", attrs={"itemprop": "datePublished"})
+        if tag is not None:
+            val = tag.get("content")  # type: ignore[union-attr]
+            if val:
+                publish_date = str(val).strip()
+        if not publish_date:
+            tag = soup.find("meta", attrs={"name": "DC.date.created"})
+            if tag is not None:
+                val = tag.get("content")  # type: ignore[union-attr]
+                if val:
+                    publish_date = str(val).strip()
+
     return publish_date, modified_date
 
 
@@ -435,6 +478,104 @@ def _has_mixed_content(soup: BeautifulSoup, page_url: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Performance structural extraction helpers (pure, no I/O)
+# ---------------------------------------------------------------------------
+
+
+def _extract_page_size(html: str) -> int:
+    """Return HTML size in bytes."""
+    return len(html.encode("utf-8"))
+
+
+def _extract_resource_counts(soup: BeautifulSoup) -> tuple[int, int]:
+    """Count external scripts and external stylesheets.
+
+    Returns:
+        Tuple of (external_script_count, external_css_count).
+    """
+    external_scripts = len(soup.find_all("script", src=True))
+    external_css = len(soup.find_all("link", rel="stylesheet"))
+    return external_scripts, external_css
+
+
+def _extract_render_blocking(soup: BeautifulSoup) -> tuple[list[str], list[str]]:
+    """Identify render-blocking scripts and stylesheets in ``<head>``.
+
+    Returns:
+        Tuple of (blocking_script_urls, blocking_css_urls).
+    """
+    head = soup.find("head")
+    if not head:
+        return [], []
+
+    blocking_scripts: list[str] = []
+    for script in head.find_all("script", src=True):
+        if not (
+            script.has_attr("async")
+            or script.has_attr("defer")
+            or script.get("type") == "module"
+        ):
+            blocking_scripts.append(script.get("src", ""))
+
+    blocking_css: list[str] = []
+    for link in head.find_all("link", rel="stylesheet"):
+        media = (link.get("media") or "").lower()
+        if not link.has_attr("disabled") and media not in ("print", "not all"):
+            blocking_css.append(link.get("href", ""))
+
+    return blocking_scripts, blocking_css
+
+
+def _extract_image_optimization_signals(soup: BeautifulSoup) -> dict:
+    """Extract image optimization signals.
+
+    Returns:
+        Dict with keys: total, without_lazy, without_dimensions,
+        without_srcset, uses_modern_formats.
+    """
+    images = soup.find_all("img")
+    total = len(images)
+    without_lazy = 0
+    without_dimensions = 0
+    without_srcset = 0
+    modern_format_count = 0
+
+    for img in images:
+        if img.get("loading", "").lower() != "lazy":
+            without_lazy += 1
+        if not (img.get("width") and img.get("height")):
+            without_dimensions += 1
+        if not img.has_attr("srcset"):
+            without_srcset += 1
+        src = (img.get("src") or "").lower()
+        if src.endswith((".webp", ".avif")):
+            modern_format_count += 1
+
+    return {
+        "total": total,
+        "without_lazy": without_lazy,
+        "without_dimensions": without_dimensions,
+        "without_srcset": without_srcset,
+        "uses_modern_formats": modern_format_count > 0,
+    }
+
+
+def _extract_inline_code_weight(soup: BeautifulSoup) -> tuple[int, int]:
+    """Return (inline_js_bytes, inline_css_bytes)."""
+    js_bytes = sum(
+        len((s.string or "").encode("utf-8"))
+        for s in soup.find_all("script")
+        if not s.get("src") and s.string
+    )
+    css_bytes = sum(
+        len((s.string or "").encode("utf-8"))
+        for s in soup.find_all("style")
+        if s.string
+    )
+    return js_bytes, css_bytes
+
+
+# ---------------------------------------------------------------------------
 # Single-page analysis (synchronous, pure CPU)
 # ---------------------------------------------------------------------------
 
@@ -447,6 +588,8 @@ def analyze_single_page(
     redirect_url: Optional[str],
     config: AuditConfig,
     check_core_web_vitals: bool = True,
+    headers: dict[str, str] | None = None,
+    sitemap_lastmod: str | None = None,
 ) -> PageAuditResult:
     """Analyse a single crawled page and return a structured result.
 
@@ -569,12 +712,65 @@ def analyze_single_page(
     result.has_https = url.startswith("https://")
     all_findings.extend(check_mixed_content(url, mixed))
 
-    # Freshness
+    # Security headers (HTTPS pages only, when headers available)
+    if headers is not None and url.startswith("https://"):
+        all_findings.extend(check_security_headers(url, headers))
+
+    # Performance — structural checks
+    html_bytes = _extract_page_size(html)
+    result.html_bytes = html_bytes
+    all_findings.extend(check_page_size(url, html_bytes, config))
+
+    ext_scripts, ext_css = _extract_resource_counts(soup)
+    result.external_script_count = ext_scripts
+    result.external_css_count = ext_css
+    all_findings.extend(check_resource_counts(url, ext_scripts, ext_css, config))
+
+    blocking_scripts, blocking_css = _extract_render_blocking(soup)
+    result.blocking_script_count = len(blocking_scripts)
+    result.blocking_css_count = len(blocking_css)
+    all_findings.extend(check_render_blocking(url, blocking_scripts, blocking_css, config))
+
+    img_signals = _extract_image_optimization_signals(soup)
+    result.images_without_lazy = img_signals["without_lazy"]
+    result.images_without_dimensions = img_signals["without_dimensions"]
+    all_findings.extend(
+        check_image_optimization(
+            url,
+            images_without_lazy=img_signals["without_lazy"],
+            images_without_dimensions=img_signals["without_dimensions"],
+            images_without_srcset=img_signals["without_srcset"],
+            total_images=img_signals["total"],
+            uses_modern_formats=img_signals["uses_modern_formats"],
+            config=config,
+        )
+    )
+
+    inline_js, inline_css = _extract_inline_code_weight(soup)
+    result.inline_js_bytes = inline_js
+    result.inline_css_bytes = inline_css
+    all_findings.extend(check_inline_code_weight(url, inline_js, inline_css, config))
+
+    # Freshness (enhanced: pass HTTP Last-Modified + sitemap lastmod)
     publish_date, modified_date = _extract_freshness(soup)
     result.publish_date = publish_date
     result.modified_date = modified_date
     page_type = infer_page_type(url, html)
-    all_findings.extend(check_freshness(url, publish_date, modified_date, page_type=page_type))
+    http_last_modified = (
+        {k.lower(): v for k, v in headers.items()}.get("last-modified")
+        if headers
+        else None
+    )
+    all_findings.extend(
+        check_freshness(
+            url,
+            publish_date,
+            modified_date,
+            page_type=page_type,
+            http_last_modified=http_last_modified,
+            sitemap_lastmod=sitemap_lastmod,
+        )
+    )
 
     # Author — only penalise missing author on article-type pages (blog, posts,
     # articles).  Homepages, product pages, etc. do not need author attribution.
@@ -600,6 +796,8 @@ async def analyze_all_pages(
     redirect_map: dict[str, str],
     config: AuditConfig = DEFAULT_AUDIT_CONFIG,
     check_core_web_vitals: bool = True,
+    headers_map: dict[str, dict[str, str]] | None = None,
+    sitemap_lastmod_map: dict[str, str] | None = None,
 ) -> list[PageAuditResult]:
     """Analyse all crawled pages concurrently.
 
@@ -613,12 +811,16 @@ async def analyze_all_pages(
         status_code_map: ``{url: status_code}`` from s1_discover.
         redirect_map: ``{url: final_url}`` from s1_discover.
         config: Audit configuration.
+        headers_map: ``{url: {header: value}}`` HTTP response headers per page.
+        sitemap_lastmod_map: ``{url: lastmod_str}`` from sitemap.
 
     Returns:
         List of :class:`~core.models.site_audit.PageAuditResult` objects,
         one per input page.  Errors in individual page analysis are caught
         and logged without crashing the full run.
     """
+    _headers = headers_map or {}
+    _lastmod = sitemap_lastmod_map or {}
     semaphore = asyncio.Semaphore(config.page_analysis_concurrency)
 
     async def _analyse_one(url: str, html: str) -> PageAuditResult:
@@ -635,6 +837,8 @@ async def analyze_all_pages(
                     redirect_url=redirect,
                     config=config,
                     check_core_web_vitals=check_core_web_vitals,
+                    headers=_headers.get(url),
+                    sitemap_lastmod=_lastmod.get(url),
                 )
             except Exception as exc:
                 logger.error("Page analysis failed for %s: %s", url, exc, exc_info=True)

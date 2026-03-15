@@ -121,6 +121,20 @@ class AuditConfig:
     aeo_quick_answer_min_words: int = 15
     aeo_quick_answer_max_words: int = 150
 
+    # Performance — structural checks
+    html_warn_size_kb: int = 200
+    html_max_size_kb: int = 500
+    max_external_resources_warn: int = 15
+    max_external_resources_critical: int = 30
+    max_render_blocking_warn: int = 2
+    max_render_blocking_critical: int = 5
+    inline_js_warn_kb: int = 50
+    inline_js_max_kb: int = 100
+    inline_css_max_kb: int = 50
+
+    # Cross-page analysis
+    thin_content_threshold: int = 200
+
     def __post_init__(self) -> None:
         """Validate invariants on a frozen dataclass."""
         # 1. Weights must sum to 1.0

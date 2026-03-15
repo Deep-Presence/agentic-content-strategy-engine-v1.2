@@ -192,6 +192,7 @@ class KnowledgeBaseInput(BaseModel):
     refresh_docs: Optional[List[KBDocType]] = None
     staleness_threshold_days: int = 30
     auto_approve_checkpoints: List[int] = Field(default_factory=list)
+    express_mode: bool = False
 
 
 class KnowledgeBaseOutput(BaseModel):

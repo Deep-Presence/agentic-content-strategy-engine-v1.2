@@ -243,6 +243,34 @@ async def _create_pipeline_run(
         logger.warning("Failed to create PipelineRunModel — continuing", exc_info=True)
 
 
+async def _mark_pipeline_run_complete(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[uuid.UUID],
+    summary: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Mark a PipelineRunModel as completed (idempotent).
+
+    Safe to call even if the pipeline already called persist_pipeline_run_complete
+    internally — the first write wins (status check).
+    """
+    if session_factory is None or run_id is None:
+        return
+    try:
+        from core.db.enums import PipelineStatus
+        from core.db.models.pipelines import PipelineRunModel
+
+        async with session_factory() as session:
+            run = await session.get(PipelineRunModel, run_id)
+            if run and run.status != PipelineStatus.completed:
+                run.status = PipelineStatus.completed
+                run.completed_at = datetime.now(tz=timezone.utc)
+                if summary:
+                    run.summary = summary
+                await session.commit()
+    except Exception:
+        logger.warning("Failed to mark PipelineRunModel as completed", exc_info=True)
+
+
 async def _mark_pipeline_run_failed(
     session_factory: Optional[async_sessionmaker],
     run_id: Optional[uuid.UUID],
@@ -331,7 +359,6 @@ async def run_gap_pipeline_task(
                 seed_urls=request.seed_urls or [f"https://{domain}/"],
                 company_context_path=resolved["company_context_path"],
                 persona_paths=resolved["persona_paths"],
-                style_guide_path=resolved["style_guide_path"],
                 max_queries=request.max_queries,
                 platforms=request.platforms,
                 language=request.language,
@@ -382,7 +409,7 @@ async def run_gap_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"gap_analysis:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
 
 
@@ -418,7 +445,22 @@ async def run_site_audit_task(
     product_slug = getattr(request, "product_slug", None)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
+    # Initialise DB vars before try so they're always available in finally
+    session_factory: Any = None
+    run_id: Any = None
+    company_id: Any = None
+
     try:
+        # Resolve DB context for site audit persistence
+        session_factory, run_id, company_id = await _resolve_db_context(
+            scope.company_slug, scope.effective_slug,
+        )
+        if session_factory and run_id and company_id:
+            await _create_pipeline_run(
+                session_factory, run_id, company_id,
+                scope.effective_slug, "site_audit",
+            )
+
         async with task_store.semaphore:
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "site_audit"})
 
@@ -440,8 +482,7 @@ async def run_site_audit_task(
 
                 audit_result = await run_site_audit(input_data)
 
-                # Persist audit_result.json
-                import json
+                # 1. Persist audit_result.json (filesystem-first)
                 out_dir = (
                     artifacts_root
                     / "site_audit"
@@ -451,6 +492,15 @@ async def run_site_audit_task(
                 out_dir.mkdir(parents=True, exist_ok=True)
                 (out_dir / "audit_result.json").write_text(
                     audit_result.model_dump_json(indent=2), encoding="utf-8"
+                )
+
+                # 2. Persist to DB (additive — never crashes pipeline)
+                from core.site_audit.persistence import persist_site_audit_result
+
+                await persist_site_audit_result(
+                    session_factory, run_id, company_id,
+                    scope.effective_slug, audit_result,
+                    pipeline_run_id=run_id,
                 )
 
                 result = {
@@ -488,6 +538,13 @@ async def run_site_audit_task(
             )
             event_bus.publish(task_id, "completed", {"pipeline": "site_audit"})
 
+            # 3. Mark pipeline run complete in DB
+            await _mark_pipeline_run_complete(session_factory, run_id, summary={
+                "audit_id": result.get("audit_id", ""),
+                "overall_score": result.get("overall_score"),
+                "grade": result.get("grade"),
+            })
+
     except asyncio.CancelledError:
         logger.info("Site audit pipeline cancelled: task_id=%s", task_id)
     except Exception as exc:
@@ -496,8 +553,9 @@ async def run_site_audit_task(
             task_id, status=TaskStatus.FAILED, error=str(exc)
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"site_audit:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
 
 
@@ -573,7 +631,7 @@ async def run_content_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(effective)
+        task_store.release_slug_lock(f"content:{effective}")
         task_store.remove_task_handle(task_id)
 
 
@@ -641,7 +699,7 @@ async def run_content_v13_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(effective)
+        task_store.release_slug_lock(f"content_v13:{effective}")
         task_store.remove_task_handle(task_id)
 
 
@@ -667,6 +725,16 @@ async def run_kb_pipeline_task(
     product_slug = getattr(request, "product_slug", None)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
+    # Resolve DB context for research artifact persistence
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "knowledge_base",
+        )
+
     try:
         async with task_store.semaphore:
             input_data = KnowledgeBaseInput(
@@ -684,6 +752,7 @@ async def run_kb_pipeline_task(
                 refresh_docs=getattr(request, "refresh_docs", None),
                 staleness_threshold_days=getattr(request, "staleness_threshold_days", 30),
                 auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+                express_mode=getattr(request, "express_mode", False),
             )
 
             output = await run_knowledge_base_pipeline(
@@ -691,7 +760,13 @@ async def run_kb_pipeline_task(
                 task_id=task_id,
                 task_store=task_store,
                 event_bus=event_bus,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
             )
+
+            # Ensure pipeline run is marked complete (idempotent)
+            await _mark_pipeline_run_complete(session_factory, run_id)
 
             result = {
                 "slug": output.slug,
@@ -722,8 +797,9 @@ async def run_kb_pipeline_task(
             task_id, status=TaskStatus.FAILED, error=str(exc),
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"knowledge_base:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
 
 
@@ -748,6 +824,16 @@ async def run_audience_persona_pipeline_task(
     product_slug = getattr(request, "product_slug", None)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
+    # Resolve DB context for research artifact persistence
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "audience_persona",
+        )
+
     try:
         async with task_store.semaphore:
             input_data = AudiencePersonaInput(
@@ -769,7 +855,13 @@ async def run_audience_persona_pipeline_task(
                 task_store=task_store,
                 event_bus=event_bus,
                 artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
             )
+
+            # Ensure pipeline run is marked complete (idempotent)
+            await _mark_pipeline_run_complete(session_factory, run_id)
 
             result = {
                 "slug": output.slug,
@@ -794,8 +886,9 @@ async def run_audience_persona_pipeline_task(
             task_id, status=TaskStatus.FAILED, error=str(exc),
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"audience_persona:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
 
 
@@ -875,7 +968,7 @@ async def run_single_persona_generator_task(
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
-        task_store.release_slug_lock(slug)
+        task_store.release_slug_lock(f"audience_persona:{slug}")
         task_store.remove_task_handle(task_id)
 
 
@@ -900,6 +993,16 @@ async def run_voice_style_guide_pipeline_task(
     product_slug = getattr(request, "product_slug", None)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
+    # Resolve DB context for research artifact persistence
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "voice_style_guide",
+        )
+
     try:
         async with task_store.semaphore:
             input_data = VoiceStyleGuideInput(
@@ -921,7 +1024,13 @@ async def run_voice_style_guide_pipeline_task(
                 task_store=task_store,
                 event_bus=event_bus,
                 artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
             )
+
+            # Ensure pipeline run is marked complete (idempotent)
+            await _mark_pipeline_run_complete(session_factory, run_id)
 
             result = {
                 "slug": output.slug,
@@ -948,8 +1057,157 @@ async def run_voice_style_guide_pipeline_task(
             task_id, status=TaskStatus.FAILED, error=str(exc),
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"voice_style_guide:{scope.effective_slug}")
+        task_store.remove_task_handle(task_id)
+
+
+# ---------------------------------------------------------------------------
+# Research Orchestrator (KB → AP → VSG)
+# ---------------------------------------------------------------------------
+
+
+async def run_research_orchestrator_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Research Orchestrator (KB → AP → VSG).
+
+    Acquires task_store semaphore ONCE for the entire orchestration.
+    Sub-pipelines are called directly (not via runner wrappers).
+    """
+    from core.models.research_orchestrator import ResearchOrchestratorInput
+    from core.research.orchestrator import run_research_orchestrator
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = None  # Ensure always defined for finally block
+    session_factory: Any = None
+    run_id: Any = None
+
+    # All pre-run awaits inside try/finally for slug-lock safety (Codex Fix #8)
+    try:
+        scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+        session_factory, run_id, company_id = await _resolve_db_context(
+            scope.company_slug, scope.effective_slug,
+        )
+        if session_factory and run_id and company_id:
+            await _create_pipeline_run(
+                session_factory, run_id, company_id,
+                scope.effective_slug, "research_orchestrator",
+            )
+
+        async with task_store.semaphore:
+            # Build auto-approve config
+            auto_approve_raw = getattr(request, "auto_approve", None)
+            auto_approve_dict = {}
+            if auto_approve_raw:
+                auto_approve_dict = {
+                    "kb": getattr(auto_approve_raw, "kb", []),
+                    "ap": getattr(auto_approve_raw, "ap", []),
+                    "vsg": getattr(auto_approve_raw, "vsg", []),
+                }
+
+            # Wire skip_fresh flag into PipelineSkipConfig
+            from core.models.research_orchestrator import PipelineSkipConfig
+            skip_fresh = getattr(request, "skip_fresh", True)
+            skip_config = PipelineSkipConfig(
+                skip_kb_if_fresh=skip_fresh,
+                skip_ap_if_fresh=skip_fresh,
+                skip_vsg_if_fresh=skip_fresh,
+            )
+
+            input_data = ResearchOrchestratorInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", ""),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                seed_urls=getattr(request, "seed_urls", []),
+                staleness_threshold_days=getattr(request, "staleness_threshold_days", 30),
+                max_personas=getattr(request, "max_personas", 5),
+                max_authors=getattr(request, "max_authors", 3),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                additional_constraints=getattr(request, "additional_constraints", None),
+                force_rerun=getattr(request, "force_rerun", False),
+                auto_approve=auto_approve_dict,
+                skip_config=skip_config,
+                pipelines=getattr(request, "pipelines", ["kb", "ap", "vsg"]),
+            )
+
+            output = await run_research_orchestrator(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "effective_slug": output.effective_slug,
+                "orchestrator_status": output.orchestrator_status.value,
+                "pipelines_run": output.pipelines_run,
+                "pipelines_skipped": output.pipelines_skipped,
+                "total_execution_time_s": output.total_execution_time_s,
+                "company_context_path": output.company_context_path,
+                "persona_dir": output.persona_dir,
+                "style_guide_path": output.style_guide_path,
+                "produced_artifacts": [
+                    {"type": p, "slug": scope.effective_slug}
+                    for p in output.pipelines_run
+                ],
+            }
+
+            # Map orchestrator failure to task-level FAILED status
+            from core.models.research_orchestrator import OrchestratorStatus
+            is_failed = output.orchestrator_status == OrchestratorStatus.failed
+            task_status = TaskStatus.FAILED if is_failed else TaskStatus.COMPLETED
+
+            # Extract error message from failed sub-pipeline for task.error
+            error_msg = None
+            if is_failed:
+                for sr in output.sub_results.values():
+                    if sr.error:
+                        error_msg = sr.error
+                        break
+
+            task_store.update_task(
+                task_id, status=task_status, result=result,
+                **({"error": error_msg} if error_msg else {}),
+            )
+
+            # Mark DB pipeline run with correct terminal status
+            if is_failed:
+                await _mark_pipeline_run_failed(
+                    session_factory, run_id, error_msg or "orchestrator failed",
+                )
+            else:
+                await _mark_pipeline_run_complete(session_factory, run_id)
+
+    except asyncio.CancelledError:
+        logger.info("Research orchestrator cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("Research orchestrator failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        _eff = scope.effective_slug if scope else company_slug
+        task_store.release_slug_lock(f"research_orchestrator:{_eff}")
         task_store.remove_task_handle(task_id)
 
 
@@ -974,6 +1232,16 @@ async def run_topic_discovery_pipeline_task(
     product_slug = getattr(request, "product_slug", None)
     scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
+    # Resolve DB context for pipeline run tracking
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "topic_discovery",
+        )
+
     try:
         async with task_store.semaphore:
             input_data = TopicDiscoveryInput(
@@ -985,6 +1253,8 @@ async def run_topic_discovery_pipeline_task(
                 auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
                 max_expansion_rounds=getattr(request, "max_expansion_rounds", 4),
                 dedup_threshold=getattr(request, "dedup_threshold", 0.85),
+                top_n_expand=getattr(request, "top_n_expand", 10),
+                persona_filter=getattr(request, "persona_filter", None),
                 language=getattr(request, "language", "en"),
                 region=getattr(request, "region", None),
                 additional_constraints=getattr(request, "additional_constraints", None),
@@ -996,7 +1266,13 @@ async def run_topic_discovery_pipeline_task(
                 task_store=task_store,
                 event_bus=event_bus,
                 artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
             )
+
+            # Ensure pipeline run is marked complete (idempotent)
+            await _mark_pipeline_run_complete(session_factory, run_id)
 
             result = {
                 "slug": output.slug,
@@ -1018,10 +1294,480 @@ async def run_topic_discovery_pipeline_task(
         logger.info("TD pipeline cancelled: task_id=%s", task_id)
     except Exception as exc:
         logger.exception("TD pipeline failed: %s", exc)
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
         task_store.update_task(
             task_id, status=TaskStatus.FAILED, error=str(exc),
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
-        task_store.release_slug_lock(scope.effective_slug)
+        task_store.release_slug_lock(f"topic_discovery:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
+
+
+async def run_topic_expansion_pipeline_task(
+    task_id: str,
+    request: Any,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Topic Expansion pipeline (Pipeline B)."""
+    from core.models.topic_discovery import TopicExpansionInput
+    from core.topic_discovery.pipeline import run_topic_expansion_pipeline
+
+    company_slug = _derive_slug(request.company_name)
+    product_slug = getattr(request, "product_slug", None)
+    scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
+
+    session_factory, run_id, company_id = await _resolve_db_context(
+        scope.company_slug, scope.effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            scope.effective_slug, "topic_expansion",
+        )
+
+    try:
+        async with task_store.semaphore:
+            input_data = TopicExpansionInput(
+                company_name=request.company_name,
+                domain=getattr(request, "domain", None),
+                company_slug=scope.company_slug,
+                product_slug=scope.product_slug,
+                product_name=scope.product_name,
+                effective_slug=scope.effective_slug,
+                subdomain_ids=getattr(request, "subdomain_ids", []),
+                persona_filter=getattr(request, "persona_filter", None),
+                taxonomy_version=getattr(request, "taxonomy_version", None),
+                auto_approve_checkpoints=getattr(request, "auto_approve_checkpoints", []),
+            )
+
+            output = await run_topic_expansion_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            await _mark_pipeline_run_complete(session_factory, run_id)
+
+            result = {
+                "slug": output.slug,
+                "effective_slug": output.effective_slug,
+                "matrix_version": output.matrix_version,
+                "subdomains_expanded": output.subdomains_expanded,
+                "subdomains_failed": output.subdomains_failed,
+                "total_assignments": output.total_assignments,
+                "produced_artifacts": [
+                    {"type": "topic_expansion", "slug": scope.effective_slug},
+                ],
+            }
+            task_store.update_task(
+                task_id, status=TaskStatus.COMPLETED, result=result,
+            )
+
+    except asyncio.CancelledError:
+        logger.info("TD-Expansion pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("TD-Expansion pipeline failed: %s", exc)
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(f"topic_expansion:{scope.effective_slug}")
+        task_store.remove_task_handle(task_id)
+
+
+# ── TD → Content pipeline runner ──────────────────────────────────
+
+
+async def run_td_content_pipeline_task(
+    task_id: str,
+    effective_slug: str,
+    topic_assignment_ids: List[str],
+    company_name: str,
+    domain: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    *,
+    product_slug: Optional[str] = None,
+    product_name: Optional[str] = None,
+    product_description: Optional[str] = None,
+    auto_approve: bool = False,
+    platforms: Optional[List[str]] = None,
+) -> None:
+    """Background task wrapper for the TD → GA → CE orchestrator.
+
+    Acquires semaphore, resolves DB context, calls
+    run_td_to_content_pipeline(), and handles completion/failure.
+    """
+    from core.orchestration.td_content_orchestrator import (
+        run_td_to_content_pipeline,
+    )
+
+    company_slug = _derive_slug(company_name)
+
+    session_factory, run_id, company_id = await _resolve_db_context(
+        company_slug, effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            effective_slug, "content",
+        )
+
+    try:
+        async with task_store.semaphore:
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "td_content"})
+
+            output = await run_td_to_content_pipeline(
+                effective_slug=effective_slug,
+                topic_assignment_ids=topic_assignment_ids,
+                company_name=company_name,
+                domain=domain,
+                platforms=platforms,
+                auto_approve=auto_approve,
+                product_slug=product_slug,
+                product_name=product_name,
+                product_description=product_description,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            result = {
+                "company_slug": output.company_slug,
+                "total_briefs": output.total_briefs,
+                "total_approved": output.total_approved,
+                "total_rejected": output.total_rejected,
+                "pieces": [
+                    {
+                        "brief_id": p.brief_id,
+                        "title": p.title,
+                        "status": p.status.value if hasattr(p.status, "value") else str(p.status),
+                        "topic_assignment_id": p.topic_assignment_id,
+                    }
+                    for p in output.pieces
+                ],
+                "produced_artifacts": [{"type": "td_content", "slug": effective_slug}],
+            }
+            task_store.update_task(task_id, status=TaskStatus.COMPLETED, result=result)
+            event_bus.publish(task_id, "completed", {"pipeline": "td_content"})
+
+    except asyncio.CancelledError:
+        logger.info("TD→Content pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("TD→Content pipeline failed: %s", exc)
+        task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        task_store.release_slug_lock(f"td_content:{effective_slug}")
+        task_store.remove_task_handle(task_id)
+
+
+# ---------------------------------------------------------------------------
+# Onboarding Pipeline
+# ---------------------------------------------------------------------------
+
+
+async def run_onboarding_task(
+    task_id: str,
+    request: Any,
+    company_name: str,
+    company_domain: str,
+    company_slug: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    auth_service: Optional[Any] = None,
+    artifacts_root: Optional[Path] = None,
+) -> None:
+    """Background task wrapper for Onboarding Pipeline Orchestrator.
+
+    Acquires task_store semaphore ONCE for the entire orchestration.
+    company_name/domain/slug resolved by the router from auth context.
+    """
+    from core.models.onboarding import OnboardingInput, OnboardingStatus
+    from core.onboarding.orchestrator import run_onboarding_pipeline
+
+    session_factory: Any = None
+    run_id: Any = None
+
+    try:
+        session_factory, run_id, company_id = await _resolve_db_context(
+            company_slug, company_slug,
+        )
+        if session_factory and run_id and company_id:
+            await _create_pipeline_run(
+                session_factory, run_id, company_id,
+                company_slug, "onboarding",
+            )
+
+        async with task_store.semaphore:
+            input_data = OnboardingInput(
+                company_name=company_name,
+                domain=company_domain,
+                company_slug=company_slug,
+                industry=getattr(request, "industry", None),
+                seed_personas=getattr(request, "seed_personas", []),
+                seed_urls=[str(u) for u in getattr(request, "seed_urls", [])],
+                max_pages=getattr(request, "max_pages", 200),
+                max_depth=getattr(request, "max_depth", 4),
+                max_personas=getattr(request, "max_personas", 5),
+                max_authors=getattr(request, "max_authors", 3),
+                max_queries=getattr(request, "max_queries", 75),
+                platforms=getattr(request, "platforms", ["perplexity", "openai", "gemini", "claude"]),
+                language=getattr(request, "language", "en"),
+                region=getattr(request, "region", None),
+                force_rerun=getattr(request, "force_rerun", False),
+            )
+
+            output = await run_onboarding_pipeline(
+                input_data,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                artifacts_root=artifacts_root,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            result = {
+                "slug": output.slug,
+                "company_name": output.company_name,
+                "onboarding_status": output.onboarding_status.value,
+                "total_execution_time_s": output.total_execution_time_s,
+                "audit_run_id": output.audit_run_id,
+                "company_context_path": output.company_context_path,
+                "persona_dir": output.persona_dir,
+                "style_guide_path": output.style_guide_path,
+                "gap_analysis_dir": output.gap_analysis_dir,
+                "topic_discovery_id": output.topic_discovery_id,
+                "phases": {
+                    k: {"status": v.status, "time_s": v.execution_time_s}
+                    for k, v in output.phases.items()
+                },
+                "produced_artifacts": [
+                    {"type": sr.pipeline, "slug": company_slug}
+                    for sr in output.sub_results.values()
+                    if sr.status == "completed"
+                ],
+            }
+
+            is_failed = output.onboarding_status == OnboardingStatus.failed
+            task_status = TaskStatus.FAILED if is_failed else TaskStatus.COMPLETED
+
+            error_msg = None
+            if is_failed:
+                for sr in output.sub_results.values():
+                    if sr.error:
+                        error_msg = sr.error
+                        break
+
+            task_store.update_task(
+                task_id, status=task_status, result=result,
+                **({"error": error_msg} if error_msg else {}),
+            )
+
+            if is_failed:
+                await _mark_pipeline_run_failed(
+                    session_factory, run_id, error_msg or "onboarding failed",
+                )
+            else:
+                await _mark_pipeline_run_complete(session_factory, run_id)
+
+    except asyncio.CancelledError:
+        logger.info("Onboarding pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("Onboarding pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        task_store.release_slug_lock(f"onboarding:{company_slug}")
+        task_store.remove_task_handle(task_id)
+
+
+# ── Daily Tracker pipeline runner ────────────────────────────────────
+
+
+async def run_daily_tracker_task(
+    task_id: str,
+    request: Any,
+    company_slug: str,
+    artifacts_root: Path,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+) -> None:
+    """Background task wrapper for the daily tracker pipeline.
+
+    Builds the orchestrator internally, executes a daily run, and persists
+    results to both filesystem (JSON artifact) and DB (daily_runs +
+    daily_run_responses tables).
+
+    Key design decisions (Codex-informed):
+    - **company_slug is string**: daily_tracker tables use String company_id.
+      ``_resolve_db_context``'s UUID company_id is only for PipelineRunModel.
+    - **result.run_id → daily_runs.id**: The orchestrator generates run_id
+      internally.  PipelineRunModel gets its own ``pipeline_run_id``.
+    - **Two-phase daily_runs write**: ``create_daily_run_record`` (status=running)
+      then ``persist_daily_run_result`` (status=completed/failed).
+    - **Safety net**: ``mark_daily_run_failed`` in finally block ensures the
+      daily_runs row never stays in 'running' state.
+
+    Args:
+        task_id: Task UUID created by the router.
+        request: TriggerRunRequest fields (engines, prompt_ids, brand, etc.).
+        company_slug: Authenticated company slug (string).
+        artifacts_root: Filesystem root for artifact persistence.
+        task_store: Task persistence store.
+        event_bus: SSE event bus for real-time progress streaming.
+    """
+    session_factory: Any = None
+    pipeline_run_id: Any = None
+    daily_run_id: Optional[str] = None
+
+    try:
+        # 1. Resolve DB context — session_factory for orchestrator + persistence,
+        #    pipeline_run_id/company_id for PipelineRunModel only.
+        session_factory, pipeline_run_id, company_id = await _resolve_db_context(
+            company_slug, company_slug,
+        )
+        if session_factory and pipeline_run_id and company_id:
+            await _create_pipeline_run(
+                session_factory, pipeline_run_id, company_id,
+                company_slug, "daily_tracker",
+            )
+
+        # 2. Daily tracker REQUIRES DB for prompt storage
+        if session_factory is None:
+            raise RuntimeError(
+                "Daily tracker requires DATABASE_URL for prompt storage"
+            )
+
+        async with task_store.semaphore:
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "daily_tracker"})
+
+            from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
+            from core.daily_tracker.prompt_library import PromptLibraryService
+            from core.daily_tracker.platform_runner import PlatformRunnerService
+            from core.daily_tracker.mention_detector import MentionDetector
+            from core.daily_tracker.orchestrator import DailyTrackerOrchestrator
+            from core.daily_tracker.persistence import (
+                create_daily_run_record,
+                persist_daily_run_result,
+                write_run_artifact,
+            )
+            from core.models.daily_tracker import RunStatus
+
+            # 3. Pre-generate run_id and create daily_run record BEFORE
+            #    orchestration for in-flight visibility in GET /runs.
+            daily_run_id = str(uuid.uuid4())
+            config = {
+                "engines": getattr(request, "engines", None),
+                "prompt_ids": getattr(request, "prompt_ids", None),
+                "brand": getattr(request, "brand", None),
+                "competitors": getattr(request, "competitors", None),
+            }
+            await create_daily_run_record(
+                session_factory, company_slug, daily_run_id, config,
+            )
+
+            # 4. Build orchestrator with a short-lived DB session for prompt
+            #    loading only. Session is released BEFORE external platform
+            #    calls to avoid holding DB connections during long I/O.
+            async with session_factory() as orch_session:
+                prompt_repo = TrackedPromptRepository(orch_session)
+                orchestrator = DailyTrackerOrchestrator(
+                    prompt_service=PromptLibraryService(prompt_repo=prompt_repo),
+                    runner_service=PlatformRunnerService(),
+                    mention_detector=MentionDetector(),
+                )
+
+                # Pre-load prompts within the session scope
+                prompts = await orchestrator._fetch_prompts(
+                    company_slug,
+                    getattr(request, "prompt_ids", None),
+                )
+
+            # 5. Execute orchestrator WITHOUT holding a DB connection.
+            #    Pass pre-generated run_id so result.run_id matches the
+            #    daily_runs row created above.
+            result = await orchestrator.execute_daily_run(
+                company_id=company_slug,
+                prompt_ids=[p.id for p in prompts] if prompts else None,
+                engines=getattr(request, "engines", None),
+                brand=getattr(request, "brand", None),
+                competitors=getattr(request, "competitors", None),
+                concurrency=getattr(request, "concurrency", 6),
+                run_id=daily_run_id,
+            )
+
+            mention_analyses: list[Any] = getattr(result, "_mention_analyses", [])
+
+            # 6. Filesystem-first
+            await write_run_artifact(
+                artifacts_root, company_slug, result, mention_analyses,
+            )
+
+            # 7. DB-additive
+            await persist_daily_run_result(
+                session_factory, company_slug, result, mention_analyses,
+            )
+
+            # 8. Update task based on result status
+            if result.status == RunStatus.FAILED:
+                task_store.update_task(
+                    task_id, status=TaskStatus.FAILED, error=result.error,
+                )
+                event_bus.publish(task_id, "failed", {"error": result.error or "Run failed"})
+                await _mark_pipeline_run_failed(
+                    session_factory, pipeline_run_id, result.error or "Run failed",
+                )
+            else:
+                summary = {
+                    "run_id": daily_run_id,
+                    "prompt_count": result.prompt_count,
+                    "engine_count": result.engine_count,
+                }
+                task_store.update_task(
+                    task_id, status=TaskStatus.COMPLETED, result=summary,
+                )
+                event_bus.publish(task_id, "completed", {"pipeline": "daily_tracker"})
+                await _mark_pipeline_run_complete(session_factory, pipeline_run_id, summary)
+
+    except asyncio.CancelledError:
+        logger.info("Daily tracker pipeline cancelled: task_id=%s", task_id)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error="Pipeline cancelled",
+        )
+        event_bus.publish(task_id, "failed", {"error": "Pipeline cancelled"})
+        await _mark_pipeline_run_failed(session_factory, pipeline_run_id, "Cancelled")
+    except Exception as exc:
+        logger.exception("Daily tracker pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, pipeline_run_id, str(exc))
+    finally:
+        task_store.release_slug_lock(f"daily_tracker:{company_slug}")
+        task_store.remove_task_handle(task_id)
+        # Safety net: ensure daily_runs row doesn't stay in 'running' state
+        if daily_run_id and session_factory:
+            from core.daily_tracker.persistence import mark_daily_run_failed as _mark_dt_failed
+            await _mark_dt_failed(session_factory, daily_run_id)

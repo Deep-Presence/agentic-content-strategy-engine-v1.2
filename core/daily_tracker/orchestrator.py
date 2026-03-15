@@ -69,6 +69,7 @@ class DailyTrackerOrchestrator:
         brand: str | None = None,
         competitors: list[str] | None = None,
         concurrency: int = 6,
+        run_id: str | None = None,
     ) -> DailyRunResult:
         """Execute a complete daily tracking run.
 
@@ -90,6 +91,9 @@ class DailyTrackerOrchestrator:
             brand: Brand name for mention detection.
             competitors: Competitor names for mention detection.
             concurrency: Max concurrent API calls (default 6).
+            run_id: Optional pre-generated run UUID string. If None, a new
+                UUID is generated. Caller can pre-generate to create a
+                DB record before orchestration starts (in-flight visibility).
 
         Returns:
             DailyRunResult with all responses and mention analyses.
@@ -97,7 +101,7 @@ class DailyTrackerOrchestrator:
         Raises:
             Exception: Re-raised from platform runner on catastrophic failure.
         """
-        run_id = str(uuid4())
+        run_id = run_id or str(uuid4())
         started_at = datetime.now(timezone.utc)
 
         logger.info(
@@ -233,10 +237,15 @@ class DailyTrackerOrchestrator:
             prompts: list[TrackedPrompt] = []
             for pid in prompt_ids:
                 prompt = await self._prompts.get_prompt(pid)
-                if prompt is not None:
-                    prompts.append(prompt)
-                else:
+                if prompt is None:
                     logger.warning("Prompt %s not found, skipping", pid)
+                elif prompt.company_id != company_id:
+                    logger.warning(
+                        "Prompt %s belongs to %s, not %s — skipping (tenant isolation)",
+                        pid, prompt.company_id, company_id,
+                    )
+                else:
+                    prompts.append(prompt)
             return prompts
 
         # Fetch all active prompts for the company

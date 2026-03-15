@@ -32,6 +32,7 @@ class ContentPieceModel(UUIDPKMixin, TimestampMixin, Base):
         Index("ix_content_pieces_run", "run_id"),
         Index("ix_content_pieces_gap_query", "gap_run_id", "query_id"),
         Index("ix_content_pieces_status", "status"),
+        Index("ix_content_pieces_topic_assignment", "topic_assignment_id"),
     )
 
     run_id: Mapped[_uuid.UUID] = mapped_column(
@@ -61,6 +62,11 @@ class ContentPieceModel(UUIDPKMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
     published_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    topic_assignment_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("topic_assignments.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 # ── Research Artifacts ───────────────────────────────────────────────────

@@ -12,7 +12,7 @@ class TestTaskListTotal:
 
     def test_total_matches_task_count(self, client: TestClient, task_store: TaskStore) -> None:
         task_store.create_task("gap_analysis", "test-co")
-        task_store.release_slug_lock("test-co")
+        task_store.release_slug_lock("gap_analysis:test-co")
         task_store.create_task("research", "test-co")
 
         resp = client.get("/api/v1/tasks")
@@ -28,7 +28,7 @@ class TestTaskListTotal:
 
     def test_total_reflects_filter(self, client: TestClient, task_store: TaskStore) -> None:
         task_store.create_task("gap_analysis", "test-co")
-        task_store.release_slug_lock("test-co")
+        task_store.release_slug_lock("gap_analysis:test-co")
         task_store.create_task("research", "test-co")
 
         resp = client.get("/api/v1/tasks?pipeline=gap_analysis")
@@ -42,7 +42,7 @@ class TestTaskListCompanySlugFilter:
 
     def test_filter_by_company_slug(self, client: TestClient, task_store: TaskStore) -> None:
         task_store.create_task("gap_analysis", "test-co")
-        task_store.release_slug_lock("test-co")
+        task_store.release_slug_lock("gap_analysis:test-co")
         task_store.create_task("research", "test-co")
 
         resp = client.get("/api/v1/tasks?company_slug=test-co")
@@ -66,7 +66,7 @@ class TestTaskListCompanySlugFilter:
     def test_combined_filters(self, client: TestClient, task_store: TaskStore) -> None:
         t1 = task_store.create_task("gap_analysis", "test-co")
         task_store.update_task(t1.task_id, status=TaskStatus.COMPLETED)
-        task_store.release_slug_lock("test-co")
+        task_store.release_slug_lock("gap_analysis:test-co")
         task_store.create_task("research", "test-co")
         # Create a task for another company (won't be visible due to auto-filter)
         task_store.create_task("gap_analysis", "other-co")

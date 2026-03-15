@@ -1,14 +1,17 @@
-"""Tests for Topic Discovery pipeline orchestrator.
+"""Tests for Topic Discovery pipeline orchestrator (Pipeline A: Discovery).
 
 Covers:
 - Slug resolution + preflight loading
-- Full happy path (all agents mocked, both HITLs auto-approved)
+- Full happy path (all agents mocked, HITL-1 auto-approved)
 - Missing company context → RuntimeError
 - Missing personas → RuntimeError
 - Partial source failure → pipeline continues
 - SSE events emitted at each phase boundary
 - Task store status transitions
 - Product slug → effective_slug routing
+
+Pipeline A ends at Phase 2.5 with status=discovery_complete, matrix=None.
+Pipeline B (expansion) tests are in test_expansion_pipeline_td.py.
 """
 from __future__ import annotations
 
@@ -21,10 +24,12 @@ from core.models.topic_discovery import (
     BuyerStage,
     CaptureRecaptureResult,
     IntentType,
-    RelevanceCell,
+    PersonaAffinityIndex,
+    ScoredSubdomainList,
     SourceResult,
     SubdomainCandidate,
     SubdomainNode,
+    SubdomainScore,
     TaxonomyTree,
     TDSource,
     TopicAssignment,
@@ -32,6 +37,7 @@ from core.models.topic_discovery import (
     TopicDiscoveryOutput,
     TopicDiscoveryStatus,
 )
+from core.topic_discovery.agents import DeduplicationResult
 
 # Patch targets
 _P = "core.topic_discovery.pipeline"
@@ -48,7 +54,7 @@ def td_input() -> TopicDiscoveryInput:
         company_name="Test Co",
         domain="test.com",
         company_slug="test-co",
-        auto_approve_checkpoints=[1, 2],
+        auto_approve_checkpoints=[1],
         max_expansion_rounds=2,
         dedup_threshold=0.85,
     )
@@ -98,11 +104,76 @@ def _make_taxonomy() -> TaxonomyTree:
         domain_name="test.com",
         version=1,
         root_nodes=[
-            SubdomainNode(name="Expense Management", depth=0, confidence=0.9),
-            SubdomainNode(name="Corporate Cards", depth=0, confidence=0.8),
+            SubdomainNode(
+                id="sd-1", name="Expense Management", depth=0, confidence=0.9,
+                source_provenance={"source_a": True, "source_b": True},
+                priority_score=0.82,
+                priority_factors={
+                    "strategic_centrality": 0.85,
+                    "citation_opportunity": 0.75,
+                    "content_authority": 0.80,
+                    "conversion_potential": 0.80,
+                },
+                persona_affinity={"p1": 0.85},
+                metadata={
+                    "llm_composite": 0.82,
+                    "scoring_rationale": "Core expense management capability.",
+                    "scoring_source": "llm",
+                },
+            ),
+            SubdomainNode(
+                id="sd-2", name="Corporate Cards", depth=0, confidence=0.8,
+                source_provenance={"source_a": True},
+                priority_score=0.72,
+                priority_factors={
+                    "strategic_centrality": 0.75,
+                    "citation_opportunity": 0.65,
+                    "content_authority": 0.70,
+                    "conversion_potential": 0.70,
+                },
+                persona_affinity={"p1": 0.65},
+                metadata={
+                    "llm_composite": 0.72,
+                    "scoring_rationale": "Adjacent to core spend management.",
+                    "scoring_source": "llm",
+                },
+            ),
         ],
         total_subdomains=2,
         max_depth=0,
+    )
+
+
+def _make_scored_subdomains() -> ScoredSubdomainList:
+    """Scored subdomain list matching _make_taxonomy node IDs."""
+    return ScoredSubdomainList(
+        version=1,
+        scores=[
+            SubdomainScore(
+                subdomain_id="sd-1", subdomain_name="Expense Management",
+                composite_score=0.9, rank=1,
+            ),
+            SubdomainScore(
+                subdomain_id="sd-2", subdomain_name="Corporate Cards",
+                composite_score=0.7, rank=2,
+            ),
+        ],
+        total_scored=2,
+        signals_used=["source_confidence", "persona_breadth"],
+    )
+
+
+def _make_persona_affinity() -> PersonaAffinityIndex:
+    return PersonaAffinityIndex(version=1, total_personas=1, total_subdomains=2)
+
+
+def _make_dedup_result(candidates: list) -> DeduplicationResult:
+    """Build a DeduplicationResult wrapping the given candidates (no actual merging)."""
+    return DeduplicationResult(
+        kept=candidates,
+        clusters=[[i] for i in range(len(candidates))],
+        embeddings=[[1.0, 0.0, 0.0]] * len(candidates),
+        source_of=[c.source for c in candidates],
     )
 
 
@@ -121,27 +192,12 @@ def _make_coverage() -> CaptureRecaptureResult:
     )
 
 
-def _make_topics(count: int = 2) -> list[TopicAssignment]:
-    return [
-        TopicAssignment(
-            subdomain_name="Expense Management",
-            topic_text=f"Topic {i}",
-            buyer_stage=BuyerStage.TOFU,
-            intent_type=IntentType.informational,
-            audience_segment="Persona 1",
-            relevance=RelevanceCell.relevant,
-            priority_score=0.7,
-        )
-        for i in range(1, count + 1)
-    ]
-
-
 def _pipeline_patches(
     source_a=None, source_b=None, source_c=None, source_d=None,
     deduped=None, coverage=None, taxonomy=None,
-    relevance=None, topics=None,
+    scored=None, affinity=None,
 ):
-    """Return a context manager that patches all pipeline externals."""
+    """Return a context manager that patches all Pipeline A externals."""
     sa = source_a or _make_source(TDSource.source_a)
     sb = source_b or _make_source(TDSource.source_b)
     sc = source_c or _make_source(TDSource.source_c, 2)
@@ -149,8 +205,6 @@ def _pipeline_patches(
     tax = taxonomy or _make_taxonomy()
     cov = coverage or _make_coverage()
     ded = deduped or sa.candidates
-    rel = relevance if relevance is not None else []
-    top = topics or _make_topics()
 
     from contextlib import contextmanager
 
@@ -162,16 +216,15 @@ def _pipeline_patches(
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
             patch(f"{_P}.flush"),
-            patch(f"{_P}._load_persona_profiles", return_value=["## Persona 1\nCFO persona."]),
+            patch(f"{_P}.load_persona_profiles", return_value=["## Persona 1\nCFO persona."]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa),
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb),
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=sc),
+            patch(f"{_P}.run_source_c_deep_research", return_value=sc),
             patch(f"{_P}.run_source_d_adversarial", return_value=sd),
-            patch(f"{_P}.deduplicate_subdomains", return_value=ded),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(ded)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
-            patch(f"{_P}.run_hierarchy_construction", return_value=tax),
-            patch(f"{_P}.run_relevance_filtering", return_value=rel),
-            patch(f"{_P}.run_topic_generation", return_value=top),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=tax),
         ):
             yield
 
@@ -236,7 +289,7 @@ class TestPreflightErrors:
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
             patch(f"{_P}.flush"),
-            patch(f"{_P}._load_persona_profiles", return_value=[]),
+            patch(f"{_P}.load_persona_profiles", return_value=[]),
         ):
             from core.topic_discovery.pipeline import run_topic_discovery_pipeline
             with pytest.raises(RuntimeError, match="No active persona profiles"):
@@ -263,10 +316,10 @@ class TestHappyPath:
         assert output.effective_slug == "test-co"
         assert output.company_name == "Test Co"
         assert output.taxonomy is not None
-        assert output.matrix is not None
+        assert output.matrix is None  # Pipeline A produces no matrix
         assert output.coverage is not None
         assert output.total_execution_time_s > 0
-        assert output.status == TopicDiscoveryStatus.approved
+        assert output.status == TopicDiscoveryStatus.discovery_complete
 
     @pytest.mark.asyncio
     async def test_pipeline_writes_manifest(self, td_input, artifacts_dir):
@@ -281,7 +334,7 @@ class TestHappyPath:
         storage = TopicDiscoveryStorage(artifacts_dir, "test-co")
         manifest = storage.read_manifest()
         assert manifest.company_name == "Test Co"
-        assert manifest.status == TopicDiscoveryStatus.approved
+        assert manifest.status == TopicDiscoveryStatus.discovery_complete
 
     @pytest.mark.asyncio
     async def test_pipeline_writes_taxonomy_to_storage(self, td_input, artifacts_dir):
@@ -296,16 +349,18 @@ class TestHappyPath:
         assert tax.status == TopicDiscoveryStatus.approved
 
     @pytest.mark.asyncio
-    async def test_pipeline_writes_matrix_to_storage(self, td_input, artifacts_dir):
+    async def test_pipeline_writes_no_matrix(self, td_input, artifacts_dir):
+        """Pipeline A does not produce a matrix — that's Pipeline B's job."""
         with _pipeline_patches():
             from core.topic_discovery.pipeline import run_topic_discovery_pipeline
-            await run_topic_discovery_pipeline(td_input, artifacts_root=artifacts_dir)
+            output = await run_topic_discovery_pipeline(td_input, artifacts_root=artifacts_dir)
+
+        assert output.matrix is None
+        assert output.matrix_version == 0
 
         from core.topic_discovery.storage import TopicDiscoveryStorage
         storage = TopicDiscoveryStorage(artifacts_dir, "test-co")
-        mat = storage.get_latest_matrix()
-        assert mat is not None
-        assert mat.status == TopicDiscoveryStatus.approved
+        assert storage.get_latest_matrix() is None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -332,21 +387,19 @@ class TestPartialSourceFailure:
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
             patch(f"{_P}.flush"),
-            patch(f"{_P}._load_persona_profiles", return_value=["persona md"]),
+            patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa),
             patch(f"{_P}.run_source_b_persona_brainstorm", side_effect=RuntimeError("LLM timeout")),
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=_make_source(TDSource.source_c, 2)),
+            patch(f"{_P}.run_source_c_deep_research", return_value=_make_source(TDSource.source_c, 2)),
             patch(f"{_P}.run_source_d_adversarial", return_value=_make_source(TDSource.source_d, 2)),
-            patch(f"{_P}.deduplicate_subdomains", return_value=sa.candidates),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=_make_coverage()),
-            patch(f"{_P}.run_hierarchy_construction", return_value=_make_taxonomy()),
-            patch(f"{_P}.run_relevance_filtering", return_value=[]),
-            patch(f"{_P}.run_topic_generation", return_value=_make_topics()),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=_make_taxonomy()),
         ):
             from core.topic_discovery.pipeline import run_topic_discovery_pipeline
             output = await run_topic_discovery_pipeline(td_input, artifacts_root=artifacts_dir)
 
-        assert output.status == TopicDiscoveryStatus.approved
+        assert output.status == TopicDiscoveryStatus.discovery_complete
 
     @pytest.mark.asyncio
     async def test_all_sources_zero_candidates_raises(self, td_input, artifacts_dir):
@@ -357,10 +410,10 @@ class TestPartialSourceFailure:
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
             patch(f"{_P}.flush"),
-            patch(f"{_P}._load_persona_profiles", return_value=["persona md"]),
+            patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=empty),
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=empty),
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=empty),
+            patch(f"{_P}.run_source_c_deep_research", return_value=empty),
             patch(f"{_P}.run_source_d_adversarial", return_value=empty),
         ):
             from core.topic_discovery.pipeline import run_topic_discovery_pipeline
@@ -420,7 +473,7 @@ class TestTaskStore:
         assert "preflight" in steps
         assert "phase_1_multi_source" in steps
         assert "phase_2_merge" in steps
-        assert "phase_4_finalize" in steps
+        assert "finalize_discovery" in steps
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -437,7 +490,7 @@ class TestProductSlug:
             domain="test.com",
             company_slug="test-co",
             product_slug="cards",
-            auto_approve_checkpoints=[1, 2],
+            auto_approve_checkpoints=[1],
             max_expansion_rounds=2,
         )
 
@@ -453,6 +506,7 @@ class TestProductSlug:
             )
 
         assert output.effective_slug == "test-co__cards"
+        assert output.status == TopicDiscoveryStatus.discovery_complete
         assert (tmp_path / "topic_discovery" / "test-co__cards" / "_manifest.json").exists()
 
 
@@ -524,7 +578,7 @@ class TestTaxonomyRetryFeedback:
             company_name="Test Co",
             domain="test.com",
             company_slug="test-co",
-            auto_approve_checkpoints=[2],  # auto-approve HITL-2 only
+            auto_approve_checkpoints=[],  # no auto-approve — we mock HITL-1
             max_expansion_rounds=2,
             dedup_threshold=0.85,
         )
@@ -535,7 +589,6 @@ class TestTaxonomyRetryFeedback:
         tax = _make_taxonomy()
         cov = _make_coverage()
 
-        matrix = _make_topics()
         hitl_responses = [
             # HITL-1 first attempt: retry with feedback
             {
@@ -548,11 +601,6 @@ class TestTaxonomyRetryFeedback:
                 "batch_decision": "approve",
                 "approved_taxonomy": tax.model_dump(mode="json"),
             },
-            # HITL-2: auto-approved
-            {
-                "batch_decision": "approve",
-                "approved_matrix": {},
-            },
         ]
 
         with (
@@ -561,16 +609,17 @@ class TestTaxonomyRetryFeedback:
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
             patch(f"{_P}.flush"),
-            patch(f"{_P}._load_persona_profiles", return_value=["persona md"]),
+            patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa) as mock_a,
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=sb) as mock_b,
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=sc),
+            patch(f"{_P}.run_source_c_deep_research", return_value=sc),
             patch(f"{_P}.run_source_d_adversarial", return_value=sd) as mock_d,
-            patch(f"{_P}.deduplicate_subdomains", return_value=sa.candidates),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
-            patch(f"{_P}.run_hierarchy_construction", return_value=tax),
-            patch(f"{_P}.run_relevance_filtering", return_value=[]),
-            patch(f"{_P}.run_topic_generation", return_value=_make_topics()),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=tax),
+            patch(f"{_P}.compute_subdomain_scores", return_value=_make_scored_subdomains()),
+            patch(f"{_P}.compute_persona_affinity_index", return_value=_make_persona_affinity()),
             patch(f"{_P}.run_td_hitl_checkpoint", side_effect=hitl_responses),
         ):
             from core.topic_discovery.pipeline import run_topic_discovery_pipeline
@@ -578,7 +627,7 @@ class TestTaxonomyRetryFeedback:
                 td_input, artifacts_root=artifacts_dir,
             )
 
-        assert output.status == TopicDiscoveryStatus.approved
+        assert output.status == TopicDiscoveryStatus.discovery_complete
 
         # First call: no revision_note (initial run)
         first_call_a = mock_a.call_args_list[0]
@@ -611,7 +660,7 @@ class TestTaxonomyRetryExhaustion:
             company_name="Test Co",
             domain="test.com",
             company_slug="test-co",
-            auto_approve_checkpoints=[2],  # auto-approve HITL-2 only
+            auto_approve_checkpoints=[],  # no auto-approve — we mock HITL-1
             max_expansion_rounds=2,
             dedup_threshold=0.85,
         )
@@ -619,13 +668,11 @@ class TestTaxonomyRetryExhaustion:
         tax = _make_taxonomy()
         cov = _make_coverage()
 
-        # HITL-1 always returns retry; HITL-2 auto-approved
+        # HITL-1 always returns retry — Pipeline A only has HITL-1
         hitl_responses = [
             {"batch_decision": "retry", "user_feedback": "try 1", "approved_taxonomy": {}},
             {"batch_decision": "retry", "user_feedback": "try 2", "approved_taxonomy": {}},
             # Pipeline should NOT call HITL-1 a 3rd time — retries exhausted after 2
-            # HITL-2: auto-approved
-            {"batch_decision": "approve", "approved_matrix": {}},
         ]
 
         with (
@@ -634,16 +681,17 @@ class TestTaxonomyRetryExhaustion:
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
             patch(f"{_P}.flush"),
-            patch(f"{_P}._load_persona_profiles", return_value=["persona md"]),
+            patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa) as mock_a,
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=_make_source(TDSource.source_b)),
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=_make_source(TDSource.source_c, 2)),
+            patch(f"{_P}.run_source_c_deep_research", return_value=_make_source(TDSource.source_c, 2)),
             patch(f"{_P}.run_source_d_adversarial", return_value=_make_source(TDSource.source_d, 2)),
-            patch(f"{_P}.deduplicate_subdomains", return_value=sa.candidates),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
-            patch(f"{_P}.run_hierarchy_construction", return_value=tax),
-            patch(f"{_P}.run_relevance_filtering", return_value=[]),
-            patch(f"{_P}.run_topic_generation", return_value=_make_topics()),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=tax),
+            patch(f"{_P}.compute_subdomain_scores", return_value=_make_scored_subdomains()),
+            patch(f"{_P}.compute_persona_affinity_index", return_value=_make_persona_affinity()),
             patch(f"{_P}.run_td_hitl_checkpoint", side_effect=hitl_responses),
         ):
             from core.topic_discovery.pipeline import run_topic_discovery_pipeline
@@ -662,7 +710,7 @@ class TestTaxonomyRetryExhaustion:
             company_name="Test Co",
             domain="test.com",
             company_slug="test-co",
-            auto_approve_checkpoints=[2],
+            auto_approve_checkpoints=[],
             max_expansion_rounds=2,
             dedup_threshold=0.85,
         )
@@ -673,8 +721,6 @@ class TestTaxonomyRetryExhaustion:
         hitl_responses = [
             {"batch_decision": "retry", "user_feedback": "try 1", "approved_taxonomy": {}},
             {"batch_decision": "retry", "user_feedback": "try 2", "approved_taxonomy": {}},
-            # HITL-2: auto-approved
-            {"batch_decision": "approve", "approved_matrix": {}},
         ]
 
         with (
@@ -683,16 +729,17 @@ class TestTaxonomyRetryExhaustion:
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
             patch(f"{_P}.flush"),
-            patch(f"{_P}._load_persona_profiles", return_value=["persona md"]),
+            patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
             patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa),
             patch(f"{_P}.run_source_b_persona_brainstorm", return_value=_make_source(TDSource.source_b)),
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=_make_source(TDSource.source_c, 2)),
+            patch(f"{_P}.run_source_c_deep_research", return_value=_make_source(TDSource.source_c, 2)),
             patch(f"{_P}.run_source_d_adversarial", return_value=_make_source(TDSource.source_d, 2)),
-            patch(f"{_P}.deduplicate_subdomains", return_value=sa.candidates),
+            patch(f"{_P}.deduplicate_subdomains_with_clusters", return_value=_make_dedup_result(sa.candidates)),
             patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
-            patch(f"{_P}.run_hierarchy_construction", return_value=tax),
-            patch(f"{_P}.run_relevance_filtering", return_value=[]),
-            patch(f"{_P}.run_topic_generation", return_value=_make_topics()),
+            patch(f"{_P}.run_unified_hierarchy_and_scoring", return_value=tax),
+            patch(f"{_P}.compute_subdomain_scores", return_value=_make_scored_subdomains()),
+            patch(f"{_P}.compute_persona_affinity_index", return_value=_make_persona_affinity()),
             patch(f"{_P}.run_td_hitl_checkpoint", side_effect=hitl_responses),
         ):
             from core.topic_discovery.pipeline import run_topic_discovery_pipeline
@@ -700,100 +747,15 @@ class TestTaxonomyRetryExhaustion:
                 td_input, artifacts_root=artifacts_dir,
             )
 
-        # Must be approved, not draft
-        assert output.status == TopicDiscoveryStatus.approved
+        # Pipeline A ends with discovery_complete
+        assert output.status == TopicDiscoveryStatus.discovery_complete
 
-        # Taxonomy in storage must also be approved
+        # Taxonomy in storage must be approved (HITL-1 auto-approves on exhaustion)
         from core.topic_discovery.storage import TopicDiscoveryStorage
         storage = TopicDiscoveryStorage(artifacts_dir, "test-co")
         stored_tax = storage.get_latest_taxonomy()
         assert stored_tax is not None
         assert stored_tax.status == TopicDiscoveryStatus.approved
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# H7: S3 counter drift on partial subdomain failure
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestS3CounterDrift:
-
-    @pytest.mark.asyncio
-    async def test_partial_subdomain_failure_counters_consistent(self, artifacts_dir):
-        """H7: When a subdomain fails in S3, counters must only reflect
-        successful subdomains — not include counts from failed ones."""
-        td_input = TopicDiscoveryInput(
-            company_name="Test Co",
-            domain="test.com",
-            company_slug="test-co",
-            auto_approve_checkpoints=[1, 2],
-            max_expansion_rounds=2,
-            dedup_threshold=0.85,
-        )
-
-        # Taxonomy with 3 subdomains
-        tax = TaxonomyTree(
-            domain_name="test.com",
-            version=1,
-            root_nodes=[
-                SubdomainNode(name="Working A", depth=0),
-                SubdomainNode(name="Failing B", depth=0),
-                SubdomainNode(name="Working C", depth=0),
-            ],
-            total_subdomains=3,
-            max_depth=0,
-        )
-
-        call_count = 0
-
-        async def _topic_gen_with_failure(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            return _make_topics(2)
-
-        async def _relevance_with_failure(subdomain, *args, **kwargs):
-            if subdomain == "Failing B":
-                raise RuntimeError("Simulated LLM failure")
-            return []
-
-        sa = _make_source(TDSource.source_a)
-        cov = _make_coverage()
-
-        with (
-            patch(f"{_P}.configure_litellm_callbacks"),
-            patch(f"{_P}.create_session", return_value="s"),
-            patch(f"{_P}.create_trace", return_value=MagicMock()),
-            patch(f"{_P}.end_span"),
-            patch(f"{_P}.flush"),
-            patch(f"{_P}._load_persona_profiles", return_value=["persona md"]),
-            patch(f"{_P}.run_source_a_company_brainstorm", return_value=sa),
-            patch(f"{_P}.run_source_b_persona_brainstorm", return_value=_make_source(TDSource.source_b)),
-            patch(f"{_P}.run_source_c_competitor_sitemaps", return_value=_make_source(TDSource.source_c, 2)),
-            patch(f"{_P}.run_source_d_adversarial", return_value=_make_source(TDSource.source_d, 2)),
-            patch(f"{_P}.deduplicate_subdomains", return_value=sa.candidates),
-            patch(f"{_P}.compute_all_coverage_metrics", return_value=cov),
-            patch(f"{_P}.run_hierarchy_construction", return_value=tax),
-            patch(f"{_P}.run_relevance_filtering", side_effect=_relevance_with_failure),
-            patch(f"{_P}.run_topic_generation", side_effect=_topic_gen_with_failure),
-        ):
-            from core.topic_discovery.pipeline import run_topic_discovery_pipeline
-            output = await run_topic_discovery_pipeline(
-                td_input, artifacts_root=artifacts_dir,
-            )
-
-        # "Failing B" raised in relevance_filtering, so its subdomain
-        # contributed 0 assignments and 0 to counters.
-        # With the fix, total_relevant_cells should ONLY count from the
-        # 2 successful subdomains, and len(assignments) > 0 from those.
-        mat = output.matrix
-        assert mat.total_assignments == len(mat.assignments)
-        assert mat.total_assignments > 0
-        # The key invariant: relevant + irrelevant should be consistent
-        # with what was actually processed (no ghost counts from Failing B)
-        assert mat.total_relevant_cells + mat.total_irrelevant_cells > 0
-        # All assignments are from successful subdomains
-        for a in mat.assignments:
-            assert a.subdomain_name != "Failing B"
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -16,7 +16,11 @@ from core.auth.service import AuthServiceProtocol
 from core.services.brand_data import BrandDataServiceProtocol
 from core.services.content_data import ContentDataServiceProtocol
 from core.services.gap_data import GapDataServiceProtocol
+from core.services.kb_data import KBDataServiceProtocol
+from core.services.persona_data import PersonaDataServiceProtocol
 from core.services.site_audit_data import SiteAuditDataServiceProtocol
+from core.services.topic_discovery_data import TopicDiscoveryDataServiceProtocol
+from core.services.vsg_data import VSGDataServiceProtocol
 from core.services.task_store import TaskStoreProtocol
 
 
@@ -263,6 +267,143 @@ class TestTaskStoreProtocol:
             assert hasattr(DbTaskStore, method), f"DbTaskStore missing {method}"
 
 
+# ── KBDataServiceProtocol ────────────────────────────────────────────
+
+
+class TestKBDataProtocol:
+    """Verify both implementations satisfy KBDataServiceProtocol."""
+
+    def test_json_is_protocol(self):
+        from core.services.json_kb_data import JsonKBDataService
+
+        instance = JsonKBDataService(artifacts_root=Path("/tmp"))
+        assert isinstance(instance, KBDataServiceProtocol)
+
+    def test_db_is_protocol(self):
+        from core.services.db_kb_data import DbKBDataService
+
+        instance = DbKBDataService(
+            kb_run_repo=MagicMock(),
+            kb_doc_repo=MagicMock(),
+            kb_synth_repo=MagicMock(),
+            pipeline_repo=MagicMock(),
+            artifacts_root=Path("/tmp"),
+        )
+        assert isinstance(instance, KBDataServiceProtocol)
+
+    def test_protocol_methods(self):
+        expected = {"get_summary", "get_doc", "get_synthesis", "get_health", "get_staleness_report"}
+        from core.services.json_kb_data import JsonKBDataService
+        from core.services.db_kb_data import DbKBDataService
+
+        for cls in (JsonKBDataService, DbKBDataService):
+            for method in expected:
+                assert hasattr(cls, method), f"{cls.__name__} missing {method}"
+
+
+# ── PersonaDataServiceProtocol ──────────────────────────────────────
+
+
+class TestPersonaDataProtocol:
+    """Verify both implementations satisfy PersonaDataServiceProtocol."""
+
+    def test_json_is_protocol(self):
+        from core.services.json_persona_data import JsonPersonaDataService
+
+        instance = JsonPersonaDataService(artifacts_root=Path("/tmp"))
+        assert isinstance(instance, PersonaDataServiceProtocol)
+
+    def test_db_is_protocol(self):
+        from core.services.db_persona_data import DbPersonaDataService
+
+        instance = DbPersonaDataService(
+            persona_run_repo=MagicMock(),
+            persona_profile_repo=MagicMock(),
+            pipeline_repo=MagicMock(),
+            artifacts_root=Path("/tmp"),
+        )
+        assert isinstance(instance, PersonaDataServiceProtocol)
+
+    def test_protocol_methods(self):
+        expected = {"list_personas", "get_persona", "get_summary", "check_staleness"}
+        from core.services.json_persona_data import JsonPersonaDataService
+        from core.services.db_persona_data import DbPersonaDataService
+
+        for cls in (JsonPersonaDataService, DbPersonaDataService):
+            for method in expected:
+                assert hasattr(cls, method), f"{cls.__name__} missing {method}"
+
+
+# ── VSGDataServiceProtocol ──────────────────────────────────────────
+
+
+class TestVSGDataProtocol:
+    """Verify both implementations satisfy VSGDataServiceProtocol."""
+
+    def test_json_is_protocol(self):
+        from core.services.json_vsg_data import JsonVSGDataService
+
+        instance = JsonVSGDataService(artifacts_root=Path("/tmp"))
+        assert isinstance(instance, VSGDataServiceProtocol)
+
+    def test_db_is_protocol(self):
+        from core.services.db_vsg_data import DbVSGDataService
+
+        instance = DbVSGDataService(
+            vsg_run_repo=MagicMock(),
+            vsg_author_repo=MagicMock(),
+            vsg_guide_repo=MagicMock(),
+            pipeline_repo=MagicMock(),
+            artifacts_root=Path("/tmp"),
+        )
+        assert isinstance(instance, VSGDataServiceProtocol)
+
+    def test_protocol_methods(self):
+        expected = {"get_summary", "get_guide", "list_authors", "get_author_research"}
+        from core.services.json_vsg_data import JsonVSGDataService
+        from core.services.db_vsg_data import DbVSGDataService
+
+        for cls in (JsonVSGDataService, DbVSGDataService):
+            for method in expected:
+                assert hasattr(cls, method), f"{cls.__name__} missing {method}"
+
+
+# ── TopicDiscoveryDataServiceProtocol ───────────────────────────────
+
+
+class TestTopicDiscoveryDataProtocol:
+    """Verify both implementations satisfy TopicDiscoveryDataServiceProtocol."""
+
+    def test_json_is_protocol(self):
+        from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
+
+        instance = JsonTopicDiscoveryDataService(artifacts_root=Path("/tmp"))
+        assert isinstance(instance, TopicDiscoveryDataServiceProtocol)
+
+    def test_db_is_protocol(self):
+        from core.services.db_topic_discovery_data import DbTopicDiscoveryDataService
+
+        instance = DbTopicDiscoveryDataService(
+            td_repo=MagicMock(),
+            taxonomy_repo=MagicMock(),
+            assignment_repo=MagicMock(),
+            artifacts_root=Path("/tmp"),
+        )
+        assert isinstance(instance, TopicDiscoveryDataServiceProtocol)
+
+    def test_protocol_methods(self):
+        expected = {
+            "get_discovery_summary", "get_taxonomy", "get_matrix",
+            "list_assignments", "get_scored_subdomains", "get_persona_affinity",
+        }
+        from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
+        from core.services.db_topic_discovery_data import DbTopicDiscoveryDataService
+
+        for cls in (JsonTopicDiscoveryDataService, DbTopicDiscoveryDataService):
+            for method in expected:
+                assert hasattr(cls, method), f"{cls.__name__} missing {method}"
+
+
 # ── DI wiring ──────────────────────────────────────────────────────
 
 
@@ -292,13 +433,17 @@ class TestDIWiring:
         assert hints["return"] is TaskStoreProtocol
 
     def test_get_auth_service_annotation_is_protocol(self):
-        """get_auth_service return annotation is AuthServiceProtocol."""
-        from typing import get_type_hints
+        """get_auth_service return annotation yields AuthServiceProtocol."""
+        from collections.abc import AsyncGenerator
+        from typing import get_args, get_origin, get_type_hints
 
         from api.dependencies import get_auth_service
 
         hints = get_type_hints(get_auth_service)
-        assert hints["return"] is AuthServiceProtocol
+        ret = hints["return"]
+        # Now an AsyncGenerator[AuthServiceProtocol, None]
+        assert get_origin(ret) is AsyncGenerator
+        assert get_args(ret)[0] is AuthServiceProtocol
 
     def test_get_site_audit_data_service_annotation_is_protocol(self):
         """get_site_audit_data_service return annotation is SiteAuditDataServiceProtocol."""
@@ -308,3 +453,35 @@ class TestDIWiring:
 
         hints = get_type_hints(get_site_audit_data_service)
         assert hints["return"] is SiteAuditDataServiceProtocol
+
+    def test_get_kb_data_service_annotation_is_protocol(self):
+        from typing import get_type_hints
+
+        from api.dependencies import get_kb_data_service
+
+        hints = get_type_hints(get_kb_data_service)
+        assert hints["return"] is KBDataServiceProtocol
+
+    def test_get_persona_data_service_annotation_is_protocol(self):
+        from typing import get_type_hints
+
+        from api.dependencies import get_persona_data_service
+
+        hints = get_type_hints(get_persona_data_service)
+        assert hints["return"] is PersonaDataServiceProtocol
+
+    def test_get_vsg_data_service_annotation_is_protocol(self):
+        from typing import get_type_hints
+
+        from api.dependencies import get_vsg_data_service
+
+        hints = get_type_hints(get_vsg_data_service)
+        assert hints["return"] is VSGDataServiceProtocol
+
+    def test_get_td_data_service_annotation_is_protocol(self):
+        from typing import get_type_hints
+
+        from api.dependencies import get_td_data_service
+
+        hints = get_type_hints(get_td_data_service)
+        assert hints["return"] is TopicDiscoveryDataServiceProtocol

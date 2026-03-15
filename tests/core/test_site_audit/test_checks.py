@@ -23,7 +23,11 @@ from core.site_audit.checks.on_page_seo import (
     check_meta_description,
     check_title,
 )
-from core.site_audit.checks.security import check_https, check_mixed_content
+from core.site_audit.checks.security import (
+    check_https,
+    check_mixed_content,
+    check_security_headers,
+)
 from core.site_audit.config import AuditConfig, DEFAULT_AUDIT_CONFIG
 
 _URL = "https://example.com/page"
@@ -599,3 +603,125 @@ class TestCheckMixedContent:
     def test_finding_type(self) -> None:
         findings = check_mixed_content(_URL, True)
         assert findings[0].finding_type == "mixed_content"
+
+
+# ---------------------------------------------------------------------------
+# check_security_headers
+# ---------------------------------------------------------------------------
+
+
+class TestCheckSecurityHeaders:
+    def test_all_headers_present_no_findings(self) -> None:
+        headers = {
+            "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+            "Content-Security-Policy": "default-src 'self'",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+        }
+        assert check_security_headers(_URL, headers) == []
+
+    def test_missing_hsts(self) -> None:
+        headers = {
+            "Content-Security-Policy": "default-src 'self'",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+        }
+        findings = check_security_headers(_URL, headers)
+        types = [f.finding_type for f in findings]
+        assert "missing_hsts" in types
+
+    def test_weak_hsts(self) -> None:
+        headers = {
+            "Strict-Transport-Security": "max-age=86400",
+            "Content-Security-Policy": "default-src 'self'",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+        }
+        findings = check_security_headers(_URL, headers)
+        types = [f.finding_type for f in findings]
+        assert "weak_hsts" in types
+
+    def test_missing_csp(self) -> None:
+        headers = {
+            "Strict-Transport-Security": "max-age=31536000",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+        }
+        findings = check_security_headers(_URL, headers)
+        types = [f.finding_type for f in findings]
+        assert "missing_csp" in types
+
+    def test_weak_csp_unsafe_inline(self) -> None:
+        headers = {
+            "Strict-Transport-Security": "max-age=31536000",
+            "Content-Security-Policy": "default-src 'self' 'unsafe-inline'",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+        }
+        findings = check_security_headers(_URL, headers)
+        types = [f.finding_type for f in findings]
+        assert "weak_csp" in types
+
+    def test_missing_all_headers(self) -> None:
+        findings = check_security_headers(_URL, {})
+        types = [f.finding_type for f in findings]
+        assert "missing_hsts" in types
+        assert "missing_csp" in types
+        assert "missing_x_content_type_options" in types
+        assert "missing_x_frame_options" in types
+
+    def test_all_security_dimension(self) -> None:
+        findings = check_security_headers(_URL, {})
+        for f in findings:
+            assert f.dimension == AuditDimension.security
+
+    def test_case_insensitive_headers(self) -> None:
+        headers = {
+            "strict-transport-security": "max-age=31536000",
+            "content-security-policy": "default-src 'self'",
+            "x-content-type-options": "nosniff",
+            "x-frame-options": "SAMEORIGIN",
+        }
+        assert check_security_headers(_URL, headers) == []
+
+
+# ---------------------------------------------------------------------------
+# check_freshness — enhanced with http_last_modified / sitemap_lastmod
+# ---------------------------------------------------------------------------
+
+
+class TestCheckFreshnessEnhanced:
+    def test_http_last_modified_fallback(self) -> None:
+        """When no meta dates, falls back to HTTP Last-Modified."""
+        findings = check_freshness(
+            _URL, None, None, "article",
+            http_last_modified="2026-01-01",
+        )
+        # Recent date — no staleness findings, but may have other findings
+        stale_findings = [f for f in findings if "stale" in f.finding_type]
+        assert stale_findings == []
+
+    def test_sitemap_lastmod_fallback(self) -> None:
+        """When no meta dates or HTTP header, falls back to sitemap lastmod."""
+        findings = check_freshness(
+            _URL, None, None, "article",
+            sitemap_lastmod="2026-02-01",
+        )
+        stale_findings = [f for f in findings if "stale" in f.finding_type]
+        assert stale_findings == []
+
+    def test_modified_date_takes_priority(self) -> None:
+        """Modified date is preferred over HTTP/sitemap fallbacks."""
+        findings = check_freshness(
+            _URL, None, "2026-01-01", "article",
+            http_last_modified="2020-01-01",  # stale but should be ignored
+            sitemap_lastmod="2020-01-01",
+        )
+        stale_findings = [f for f in findings if "stale" in f.finding_type]
+        assert stale_findings == []
+
+    def test_backward_compat_no_new_args(self) -> None:
+        """Existing callers without new args still work."""
+        findings = check_freshness(_URL, "2026-01-01", None)
+        stale_findings = [f for f in findings if "stale" in f.finding_type]
+        assert stale_findings == []

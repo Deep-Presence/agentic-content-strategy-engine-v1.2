@@ -105,6 +105,9 @@ class S1DiscoveryOutput:
     status_code_map: dict[str, int] = field(default_factory=dict)
     robots_txt_raw: str = ""
     discovered_urls: set[str] = field(default_factory=set)
+    headers_map: dict[str, dict[str, str]] = field(default_factory=dict)
+    internal_link_targets: set[str] = field(default_factory=set)
+    sitemap_lastmod_map: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +471,7 @@ async def _parse_sitemap(
     visited: set[str],
     max_urls: int = 10_000,
     max_depth: int = 5,
-) -> tuple[list[str], bool]:
+) -> tuple[list[str], bool, dict[str, str]]:
     """Recursively fetch and parse a sitemap or sitemap index.
 
     Args:
@@ -481,24 +484,26 @@ async def _parse_sitemap(
         max_depth: Maximum recursion depth for sitemap index chains.
 
     Returns:
-        Tuple of (page_urls, has_index) where page_urls is a list of
-        normalized page URLs and has_index indicates a sitemap index was found.
+        Tuple of (page_urls, has_index, lastmod_map) where page_urls is a list
+        of normalized page URLs, has_index indicates a sitemap index was found,
+        and lastmod_map maps URL → lastmod date string.
     """
     if max_depth <= 0:
         logger.warning("Sitemap recursion depth exceeded for %s", sitemap_url)
-        return [], False
+        return [], False, {}
     if sitemap_url in visited:
-        return [], False
+        return [], False, {}
     visited.add(sitemap_url)
 
     root = await _fetch_xml(sitemap_url, client, timeout)
     if root is None:
-        return [], False
+        return [], False, {}
 
     # Strip namespace to get local tag name
     tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
 
     urls: list[str] = []
+    lastmod_map: dict[str, str] = {}
     has_index = False
 
     if tag == "sitemapindex":
@@ -518,11 +523,12 @@ async def _parse_sitemap(
         for child_url in child_sitemap_urls:
             if len(urls) >= max_urls:
                 break
-            child_urls, _ = await _parse_sitemap(
+            child_urls, _, child_lastmod = await _parse_sitemap(
                 child_url, client, timeout, domain, visited, max_urls,
                 max_depth=max_depth - 1,
             )
             urls.extend(child_urls)
+            lastmod_map.update(child_lastmod)
 
     elif tag == "urlset":
         # With namespace
@@ -532,6 +538,9 @@ async def _parse_sitemap(
                 normalized = normalize_url(loc_el.text.strip())
                 if is_same_domain(normalized, domain):
                     urls.append(normalized)
+                    lm_el = url_el.find("sm:lastmod", _SITEMAP_NS)
+                    if lm_el is not None and lm_el.text:
+                        lastmod_map[normalized] = lm_el.text.strip()
         # Without namespace (fallback)
         for url_el in root.findall("url"):
             loc_el = url_el.find("loc")
@@ -539,8 +548,11 @@ async def _parse_sitemap(
                 normalized = normalize_url(loc_el.text.strip())
                 if is_same_domain(normalized, domain):
                     urls.append(normalized)
+                    lm_el = url_el.find("lastmod")
+                    if lm_el is not None and lm_el.text:
+                        lastmod_map[normalized] = lm_el.text.strip()
 
-    return urls, has_index
+    return urls, has_index, lastmod_map
 
 
 async def _discover_from_sitemaps(
@@ -548,7 +560,7 @@ async def _discover_from_sitemaps(
     raw_robots: str,
     client: httpx.AsyncClient,
     timeout: float,
-) -> SitemapHealthResult:
+) -> tuple[SitemapHealthResult, dict[str, str]]:
     """Parse all sitemaps for *domain* and return a health summary.
 
     Args:
@@ -558,8 +570,8 @@ async def _discover_from_sitemaps(
         timeout: Request timeout in seconds.
 
     Returns:
-        :class:`~core.models.site_audit.SitemapHealthResult` with discovered
-        URLs and health information.
+        Tuple of (:class:`~core.models.site_audit.SitemapHealthResult`,
+        lastmod_map) where lastmod_map maps page URL → lastmod date string.
     """
     sitemap_urls_from_robots = _parse_sitemap_urls_from_robots(raw_robots)
     all_sitemap_urls: list[str] = list(sitemap_urls_from_robots)
@@ -573,14 +585,16 @@ async def _discover_from_sitemaps(
     page_urls: list[str] = []
     errors: list[str] = []
     has_index = False
+    lastmod_map: dict[str, str] = {}
 
     for sitemap_url in all_sitemap_urls:
         try:
-            found_urls, is_index = await _parse_sitemap(
+            found_urls, is_index, found_lastmod = await _parse_sitemap(
                 sitemap_url, client, timeout, domain, visited_sitemaps
             )
             if found_urls:
                 page_urls.extend(found_urls)
+                lastmod_map.update(found_lastmod)
                 if is_index:
                     has_index = True
         except Exception as exc:
@@ -592,7 +606,7 @@ async def _discover_from_sitemaps(
         sitemap_urls=list(set(page_urls)),
         sitemap_errors=errors,
         has_sitemap_index=has_index,
-    )
+    ), lastmod_map
 
 
 # ---------------------------------------------------------------------------
@@ -731,6 +745,9 @@ class AsyncSiteCrawler:
         self._redirect_map: dict[str, str] = {}
         self._robots_disallowed: set[str] = set()
         self._discovered: set[str] = set()
+        self._headers_map: dict[str, dict[str, str]] = {}
+        self._internal_link_targets: set[str] = set()
+        self._sitemap_lastmod_map: dict[str, str] = {}
 
         self._robot_parser: RobotFileParser = RobotFileParser()
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(concurrency)
@@ -775,7 +792,7 @@ class AsyncSiteCrawler:
                 ai_bot_access = AIBotAccessResult()
 
             # Phase 2: Sitemap discovery
-            sitemap_health = await _discover_from_sitemaps(
+            sitemap_health, self._sitemap_lastmod_map = await _discover_from_sitemaps(
                 self.domain, robots_raw, client, self.timeout
             )
 
@@ -801,6 +818,9 @@ class AsyncSiteCrawler:
             status_code_map=dict(self._status_map),
             robots_txt_raw=robots_raw,
             discovered_urls=set(self._discovered),
+            headers_map=dict(self._headers_map),
+            internal_link_targets=set(self._internal_link_targets),
+            sitemap_lastmod_map=dict(self._sitemap_lastmod_map),
         )
 
     async def _check_llms_txt(self, client: httpx.AsyncClient) -> bool:
@@ -1035,12 +1055,14 @@ class AsyncSiteCrawler:
         is_html = "text/html" in content_type
 
         if status < 400 and is_html:
+            self._headers_map[url] = dict(resp.headers)
             if len(self._results) < self.max_pages:
                 html = resp.text
                 self._results.append((url, html))
 
                 if not self._stop_crawling and depth < self.max_depth:
                     links = _extract_links(html, url, self.domain)
+                    self._internal_link_targets.update(links)
                     for link in links:
                         await self._enqueue(link, depth + 1)
             else:

@@ -13,25 +13,29 @@ Layout::
         raw/coverage_v1.json
 
 Atomicity: version files are written first, manifest is updated last.
+All I/O goes through a ``StorageBackend`` so the underlying persistence
+layer (local filesystem, S3, GCS) can be swapped via configuration.
 """
 from __future__ import annotations
 
 import json
 import logging
-import os
 import re
-import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional
 
 from core.models.topic_discovery import (
     CaptureRecaptureResult,
+    PersonaAffinityIndex,
+    ScoredSubdomainList,
     SourceResult,
     TaxonomyTree,
     TDSource,
     TopicAssignmentMatrix,
     TopicDiscoveryManifest,
 )
+from core.storage.backends.base import StorageBackend
+from core.storage.backends.local import LocalStorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -39,34 +43,26 @@ _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
 
 
 class TopicDiscoveryStorage:
-    """Read / write / version topic discovery artifacts on the filesystem."""
+    """Read / write / version topic discovery artifacts via a StorageBackend."""
 
-    def __init__(self, artifacts_root: Path, slug: str) -> None:
+    def __init__(
+        self,
+        artifacts_root: Path,
+        slug: str,
+        *,
+        backend: Optional[StorageBackend] = None,
+    ) -> None:
         if not slug or not _SLUG_PATTERN.match(slug):
             raise ValueError(
                 f"Invalid slug: {slug!r}. "
                 "Must match ^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$"
             )
-        self._root = Path(artifacts_root).resolve() / "topic_discovery" / slug
+        self._artifacts_root = Path(artifacts_root)
         self._slug = slug
-
-    @staticmethod
-    def _atomic_write(path: Path, content: str) -> None:
-        """Write content to *path* atomically via temp-file + os.replace."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(
-            dir=str(path.parent), suffix=".tmp", prefix=path.stem + "_",
+        self._backend = backend or LocalStorageBackend(
+            self._artifacts_root.resolve(),
         )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp_path, str(path))
-        except BaseException:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        self._prefix = f"topic_discovery/{slug}/"
 
     # ------------------------------------------------------------------
     # Properties
@@ -74,51 +70,71 @@ class TopicDiscoveryStorage:
 
     @property
     def base_dir(self) -> Path:
-        return self._root
+        return self._artifacts_root.resolve() / "topic_discovery" / self._slug
 
     @property
     def slug(self) -> str:
         return self._slug
 
     # ------------------------------------------------------------------
+    # Key helpers (return paths relative to backend root)
+    # ------------------------------------------------------------------
+
+    def _manifest_key(self) -> str:
+        return f"{self._prefix}_manifest.json"
+
+    def _source_key(self, source: TDSource, version: int) -> str:
+        return f"{self._prefix}raw/{source.value}_v{version}.json"
+
+    def _coverage_key(self, version: int) -> str:
+        return f"{self._prefix}raw/coverage_v{version}.json"
+
+    def _taxonomy_key(self, version: int) -> str:
+        return f"{self._prefix}taxonomy/v{version}.json"
+
+    def _matrix_key(self, version: int) -> str:
+        return f"{self._prefix}matrix/v{version}.json"
+
+    def _scoring_key(self, version: int) -> str:
+        return f"{self._prefix}scoring/v{version}.json"
+
+    def _persona_affinity_key(self, version: int) -> str:
+        return f"{self._prefix}persona_affinity/v{version}.json"
+
+    # ------------------------------------------------------------------
     # Manifest
     # ------------------------------------------------------------------
 
-    def _manifest_path(self) -> Path:
-        return self._root / "_manifest.json"
-
     def read_manifest(self) -> TopicDiscoveryManifest:
         """Read the manifest, returning a blank one if it doesn't exist."""
-        path = self._manifest_path()
-        if not path.exists():
+        raw = self._backend.read(self._manifest_key())
+        if raw is None:
             return TopicDiscoveryManifest(slug=self._slug)
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             return TopicDiscoveryManifest.model_validate(data)
         except Exception as exc:
-            logger.warning("Failed to read TD manifest at %s: %s", path, exc)
+            logger.warning("Failed to read TD manifest for %s: %s", self._slug, exc)
             return TopicDiscoveryManifest(slug=self._slug)
 
     def write_manifest(self, manifest: TopicDiscoveryManifest) -> None:
         """Persist the manifest to disk (atomic)."""
-        self._root.mkdir(parents=True, exist_ok=True)
-        self._atomic_write(
-            self._manifest_path(), manifest.model_dump_json(indent=2)
+        self._backend.write(
+            self._manifest_key(), manifest.model_dump_json(indent=2),
         )
 
     # ------------------------------------------------------------------
     # Raw source results
     # ------------------------------------------------------------------
 
-    def _raw_dir(self) -> Path:
-        return self._root / "raw"
-
     def write_source_result(
         self, source: TDSource, result: SourceResult, version: int = 1
     ) -> None:
         """Write a raw source result artifact."""
-        path = self._raw_dir() / f"{source.value}_v{version}.json"
-        self._atomic_write(path, result.model_dump_json(indent=2))
+        self._backend.write(
+            self._source_key(source, version),
+            result.model_dump_json(indent=2),
+        )
         logger.info(
             "TD/%s: wrote %s v%d (%d candidates)",
             self._slug, source.value, version, len(result.candidates),
@@ -128,11 +144,11 @@ class TopicDiscoveryStorage:
         self, source: TDSource, version: int = 1
     ) -> Optional[SourceResult]:
         """Read a raw source result. Returns None if missing or corrupt."""
-        path = self._raw_dir() / f"{source.value}_v{version}.json"
-        if not path.exists():
+        raw = self._backend.read(self._source_key(source, version))
+        if raw is None:
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             return SourceResult.model_validate(data)
         except Exception as exc:
             logger.warning("Failed to read source result %s v%d: %s", source.value, version, exc)
@@ -146,16 +162,18 @@ class TopicDiscoveryStorage:
         self, metrics: CaptureRecaptureResult, version: int = 1
     ) -> None:
         """Write coverage metrics."""
-        path = self._raw_dir() / f"coverage_v{version}.json"
-        self._atomic_write(path, metrics.model_dump_json(indent=2))
+        self._backend.write(
+            self._coverage_key(version),
+            metrics.model_dump_json(indent=2),
+        )
 
     def read_coverage(self, version: int = 1) -> Optional[CaptureRecaptureResult]:
         """Read coverage metrics. Returns None if missing."""
-        path = self._raw_dir() / f"coverage_v{version}.json"
-        if not path.exists():
+        raw = self._backend.read(self._coverage_key(version))
+        if raw is None:
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             return CaptureRecaptureResult.model_validate(data)
         except Exception as exc:
             logger.warning("Failed to read coverage v%d: %s", version, exc)
@@ -165,19 +183,15 @@ class TopicDiscoveryStorage:
     # Taxonomy
     # ------------------------------------------------------------------
 
-    def _taxonomy_dir(self) -> Path:
-        return self._root / "taxonomy"
-
     def get_latest_taxonomy_version(self) -> int:
         """Return the highest taxonomy version number, 0 if none exist."""
-        d = self._taxonomy_dir()
-        if not d.exists():
-            return 0
+        entries = self._backend.list_dir(f"{self._prefix}taxonomy")
         versions = []
-        for f in d.iterdir():
-            if f.suffix == ".json" and f.stem.startswith("v"):
+        for entry in entries:
+            name = PurePosixPath(entry).name
+            if name.endswith(".json") and name.startswith("v"):
                 try:
-                    versions.append(int(f.stem[1:]))
+                    versions.append(int(name[1:].removesuffix(".json")))
                 except ValueError:
                     continue
         return max(versions) if versions else 0
@@ -186,9 +200,11 @@ class TopicDiscoveryStorage:
         """Write a taxonomy version. Auto-increments if version=0. Returns version written."""
         if version == 0:
             version = self.get_latest_taxonomy_version() + 1
-        path = self._taxonomy_dir() / f"v{version}.json"
         synced = tree.model_copy(update={"version": version})
-        self._atomic_write(path, synced.model_dump_json(indent=2))
+        self._backend.write(
+            self._taxonomy_key(version),
+            synced.model_dump_json(indent=2),
+        )
         logger.info(
             "TD/%s: wrote taxonomy v%d (%d subdomains)",
             self._slug, version, synced.total_subdomains,
@@ -197,11 +213,11 @@ class TopicDiscoveryStorage:
 
     def read_taxonomy(self, version: int) -> Optional[TaxonomyTree]:
         """Read a specific taxonomy version. Returns None if missing."""
-        path = self._taxonomy_dir() / f"v{version}.json"
-        if not path.exists():
+        raw = self._backend.read(self._taxonomy_key(version))
+        if raw is None:
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             return TaxonomyTree.model_validate(data)
         except Exception as exc:
             logger.warning("Failed to read taxonomy v%d: %s", version, exc)
@@ -218,19 +234,15 @@ class TopicDiscoveryStorage:
     # Matrix
     # ------------------------------------------------------------------
 
-    def _matrix_dir(self) -> Path:
-        return self._root / "matrix"
-
     def get_latest_matrix_version(self) -> int:
         """Return the highest matrix version number, 0 if none exist."""
-        d = self._matrix_dir()
-        if not d.exists():
-            return 0
+        entries = self._backend.list_dir(f"{self._prefix}matrix")
         versions = []
-        for f in d.iterdir():
-            if f.suffix == ".json" and f.stem.startswith("v"):
+        for entry in entries:
+            name = PurePosixPath(entry).name
+            if name.endswith(".json") and name.startswith("v"):
                 try:
-                    versions.append(int(f.stem[1:]))
+                    versions.append(int(name[1:].removesuffix(".json")))
                 except ValueError:
                     continue
         return max(versions) if versions else 0
@@ -239,9 +251,11 @@ class TopicDiscoveryStorage:
         """Write a matrix version. Auto-increments if version=0. Returns version written."""
         if version == 0:
             version = self.get_latest_matrix_version() + 1
-        path = self._matrix_dir() / f"v{version}.json"
         synced = matrix.model_copy(update={"version": version})
-        self._atomic_write(path, synced.model_dump_json(indent=2))
+        self._backend.write(
+            self._matrix_key(version),
+            synced.model_dump_json(indent=2),
+        )
         logger.info(
             "TD/%s: wrote matrix v%d (%d assignments)",
             self._slug, version, synced.total_assignments,
@@ -250,11 +264,11 @@ class TopicDiscoveryStorage:
 
     def read_matrix(self, version: int) -> Optional[TopicAssignmentMatrix]:
         """Read a specific matrix version. Returns None if missing."""
-        path = self._matrix_dir() / f"v{version}.json"
-        if not path.exists():
+        raw = self._backend.read(self._matrix_key(version))
+        if raw is None:
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             return TopicAssignmentMatrix.model_validate(data)
         except Exception as exc:
             logger.warning("Failed to read matrix v%d: %s", version, exc)
@@ -266,3 +280,113 @@ class TopicDiscoveryStorage:
         if v == 0:
             return None
         return self.read_matrix(v)
+
+    # ------------------------------------------------------------------
+    # Scoring (algorithmic subdomain priority)
+    # ------------------------------------------------------------------
+
+    def get_latest_scoring_version(self) -> int:
+        """Return the highest scoring version number, 0 if none exist."""
+        entries = self._backend.list_dir(f"{self._prefix}scoring")
+        versions = []
+        for entry in entries:
+            name = PurePosixPath(entry).name
+            if name.endswith(".json") and name.startswith("v"):
+                try:
+                    versions.append(int(name[1:].removesuffix(".json")))
+                except ValueError:
+                    continue
+        return max(versions) if versions else 0
+
+    def write_scoring(
+        self, scored: ScoredSubdomainList, version: int = 0
+    ) -> int:
+        """Write a scoring version. Auto-increments if version=0."""
+        if version == 0:
+            version = self.get_latest_scoring_version() + 1
+        synced = scored.model_copy(update={"version": version})
+        self._backend.write(
+            self._scoring_key(version),
+            synced.model_dump_json(indent=2),
+        )
+        logger.info(
+            "TD/%s: wrote scoring v%d (%d subdomains)",
+            self._slug, version, synced.total_scored,
+        )
+        return version
+
+    def read_scoring(self, version: int) -> Optional[ScoredSubdomainList]:
+        """Read a specific scoring version. Returns None if missing."""
+        raw = self._backend.read(self._scoring_key(version))
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw)
+            return ScoredSubdomainList.model_validate(data)
+        except Exception as exc:
+            logger.warning("Failed to read scoring v%d: %s", version, exc)
+            return None
+
+    def get_latest_scoring(self) -> Optional[ScoredSubdomainList]:
+        """Read the latest scoring version."""
+        v = self.get_latest_scoring_version()
+        if v == 0:
+            return None
+        return self.read_scoring(v)
+
+    # ------------------------------------------------------------------
+    # Persona Affinity
+    # ------------------------------------------------------------------
+
+    def get_latest_persona_affinity_version(self) -> int:
+        """Return the highest persona affinity version, 0 if none exist."""
+        entries = self._backend.list_dir(f"{self._prefix}persona_affinity")
+        versions = []
+        for entry in entries:
+            name = PurePosixPath(entry).name
+            if name.endswith(".json") and name.startswith("v"):
+                try:
+                    versions.append(int(name[1:].removesuffix(".json")))
+                except ValueError:
+                    continue
+        return max(versions) if versions else 0
+
+    def write_persona_affinity(
+        self, index: PersonaAffinityIndex, version: int = 0
+    ) -> int:
+        """Write a persona affinity version. Auto-increments if version=0."""
+        if version == 0:
+            version = self.get_latest_persona_affinity_version() + 1
+        synced = index.model_copy(update={"version": version})
+        self._backend.write(
+            self._persona_affinity_key(version),
+            synced.model_dump_json(indent=2),
+        )
+        logger.info(
+            "TD/%s: wrote persona_affinity v%d (%d personas, %d subdomains)",
+            self._slug, version, synced.total_personas, synced.total_subdomains,
+        )
+        return version
+
+    def read_persona_affinity(
+        self, version: int
+    ) -> Optional[PersonaAffinityIndex]:
+        """Read a specific persona affinity version. Returns None if missing."""
+        raw = self._backend.read(self._persona_affinity_key(version))
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw)
+            return PersonaAffinityIndex.model_validate(data)
+        except Exception as exc:
+            logger.warning(
+                "Failed to read persona_affinity v%d: %s", version, exc,
+            )
+            return None
+
+    def get_latest_persona_affinity(self) -> Optional[PersonaAffinityIndex]:
+        """Read the latest persona affinity version."""
+        v = self.get_latest_persona_affinity_version()
+        if v == 0:
+            return None
+        return self.read_persona_affinity(v)

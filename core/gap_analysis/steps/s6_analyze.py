@@ -271,6 +271,7 @@ def compute_gap_analysis(
                 best_company_structural_signals=company_signals_dict,
                 company_cited=bool(cited_platforms),
                 company_cited_platforms=cited_platforms,
+                source_topic_ids=query_lookup.get(query_id, GeneratedQuery(query_id="", cluster_id="", cluster_name="", query_text="")).source_topic_ids,
             )
         )
         citation_sims_all.extend(sims)

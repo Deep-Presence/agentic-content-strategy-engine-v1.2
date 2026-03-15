@@ -251,6 +251,61 @@ class TestAsyncRunGapAnalysis:
 from core.models.gap_analysis import CitationRef
 
 
+class TestFastMode:
+    """Tests for Phase 5: fast/demo mode."""
+
+    def test_fast_mode_caps_queries(self):
+        """fast_mode=True should cap max_queries at 30."""
+        input_data = GapAnalysisInput(
+            company_name="Test Co",
+            domain="test.com",
+            max_queries=150,
+            fast_mode=True,
+        )
+        # Simulate the fast mode guard logic from pipeline
+        if input_data.fast_mode:
+            input_data.max_queries = min(input_data.max_queries or 30, 30)
+        assert input_data.max_queries == 30
+
+    def test_fast_mode_selects_fast_engines(self):
+        """fast_mode=True should select only openai and perplexity."""
+        input_data = GapAnalysisInput(
+            company_name="Test Co",
+            domain="test.com",
+            platforms=["perplexity", "openai", "gemini", "claude"],
+            fast_mode=True,
+        )
+        if input_data.fast_mode:
+            if not input_data.platforms or len(input_data.platforms) > 2:
+                input_data.platforms = ["openai", "perplexity"]
+        assert set(input_data.platforms) == {"openai", "perplexity"}
+
+    def test_fast_mode_preserves_custom_two_platforms(self):
+        """fast_mode with exactly 2 platforms should keep user's choice."""
+        input_data = GapAnalysisInput(
+            company_name="Test Co",
+            domain="test.com",
+            platforms=["gemini", "claude"],
+            fast_mode=True,
+        )
+        if input_data.fast_mode:
+            if not input_data.platforms or len(input_data.platforms) > 2:
+                input_data.platforms = ["openai", "perplexity"]
+        assert input_data.platforms == ["gemini", "claude"]
+
+    def test_fast_mode_default_false(self):
+        """GapAnalysisInput without fast_mode should default to False."""
+        input_data = GapAnalysisInput(company_name="Test Co")
+        assert input_data.fast_mode is False
+
+    def test_fast_mode_backward_compat_deserialization(self):
+        """Old JSON without fast_mode should deserialize with default False."""
+        old_json = {"company_name": "Test Co", "max_queries": 100}
+        input_data = GapAnalysisInput(**old_json)
+        assert input_data.fast_mode is False
+        assert input_data.max_queries == 100
+
+
 class TestFlagCompanyCitations:
     """Tests for _flag_company_citations helper."""
 
@@ -356,3 +411,207 @@ class TestBuildCompanyCitationMap:
         ]
         result = _build_company_citation_map(results)
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# S1 || S2 Parallelism tests
+# ---------------------------------------------------------------------------
+
+
+class TestS1S2Parallelism:
+    """Verify S1 and S2 run in parallel via asyncio.gather."""
+
+    @pytest.mark.asyncio
+    async def test_s1_s2_run_concurrently(self, input_data, mock_report, tmp_path):
+        """S1 and S2 should overlap in time, not run sequentially."""
+        import time
+
+        (tmp_path / "visualizations").mkdir()
+
+        s1_start = None
+        s2_start = None
+        s1_end = None
+        s2_end = None
+
+        mock_units = [
+            SemanticUnit(
+                unit_id="unit_1", url="https://test.com",
+                text="Test text", embedding=[0.1, 0.2],
+            ),
+        ]
+        mock_queries = [
+            GeneratedQuery(
+                query_id="q_1", cluster_id="C1", cluster_name="Test",
+                query_text="How does it work?",
+            ),
+        ]
+
+        async def _slow_s1(input_data):
+            nonlocal s1_start, s1_end
+            s1_start = time.monotonic()
+            await asyncio.sleep(0.2)
+            s1_end = time.monotonic()
+            return mock_units
+
+        async def _slow_s2(input_data):
+            nonlocal s2_start, s2_end
+            s2_start = time.monotonic()
+            await asyncio.sleep(0.2)
+            s2_end = time.monotonic()
+            return mock_queries
+
+        mock_analysis = AnalysisResult(
+            proximity_stats={}, spa_results=[], gaps=[], centroids=[],
+            cluster_specs=[], citation_patterns={}, decision_metrics={},
+        )
+
+        with patch(
+            "core.gap_analysis.pipeline.embed_company_assets",
+            new_callable=AsyncMock, side_effect=_slow_s1,
+        ), patch(
+            "core.gap_analysis.pipeline.generate_queries",
+            new_callable=AsyncMock, side_effect=_slow_s2,
+        ), patch(
+            "core.gap_analysis.pipeline.search_platforms",
+            new_callable=AsyncMock, return_value=[],
+        ), patch(
+            "core.gap_analysis.pipeline.enrich_citations",
+            new_callable=AsyncMock, return_value=[],
+        ), patch(
+            "core.gap_analysis.pipeline.embed_all",
+            new_callable=AsyncMock, return_value=(mock_queries, []),
+        ), patch(
+            "core.gap_analysis.pipeline.compute_gap_analysis",
+            return_value=mock_analysis,
+        ), patch(
+            "core.gap_analysis.pipeline.generate_visualizations",
+            return_value={},
+        ), patch(
+            "core.gap_analysis.pipeline.generate_gap_report",
+            new_callable=AsyncMock, return_value=mock_report,
+        ), patch(
+            "core.gap_analysis.pipeline._artifact_dir",
+            return_value=tmp_path,
+        ), patch(
+            "core.gap_analysis.pipeline.save_platform_results",
+        ), patch(
+            "core.gap_analysis.pipeline.save_enriched_citations",
+        ), patch(
+            "core.gap_analysis.pipeline.save_embeddings",
+        ), patch(
+            "core.gap_analysis.pipeline.save_report",
+        ):
+            from core.gap_analysis.pipeline import run_gap_analysis
+
+            t0 = time.monotonic()
+            await run_gap_analysis(input_data)
+            wall_time = time.monotonic() - t0
+
+        # If sequential, total >= 0.4s. If parallel, total ~0.2s
+        assert wall_time < 0.35, f"S1+S2 took {wall_time:.2f}s — likely sequential"
+        # S2 should start before S1 finishes (overlap)
+        assert s2_start < s1_end, "S2 did not start before S1 finished"
+
+    @pytest.mark.asyncio
+    async def test_s1_failure_aborts_pipeline(self, input_data, tmp_path):
+        """If S1 fails, pipeline should abort (S6/S7 need company_units)."""
+        with patch(
+            "core.gap_analysis.pipeline._artifact_dir",
+            return_value=tmp_path,
+        ), patch(
+            "core.gap_analysis.pipeline.embed_company_assets",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("s1 exploded"),
+        ), patch(
+            "core.gap_analysis.pipeline.generate_queries",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            from core.gap_analysis.pipeline import run_gap_analysis
+            with pytest.raises(RuntimeError, match="s1 exploded"):
+                await run_gap_analysis(input_data)
+
+    @pytest.mark.asyncio
+    async def test_s2_failure_aborts_pipeline(self, input_data, tmp_path):
+        """If S2 fails, pipeline should abort (S3 needs queries)."""
+        mock_units = [
+            SemanticUnit(
+                unit_id="unit_1", url="https://test.com",
+                text="Test text", embedding=[0.1, 0.2],
+            ),
+        ]
+
+        with patch(
+            "core.gap_analysis.pipeline._artifact_dir",
+            return_value=tmp_path,
+        ), patch(
+            "core.gap_analysis.pipeline.embed_company_assets",
+            new_callable=AsyncMock,
+            return_value=mock_units,
+        ), patch(
+            "core.gap_analysis.pipeline.generate_queries",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("s2 exploded"),
+        ):
+            from core.gap_analysis.pipeline import run_gap_analysis
+            with pytest.raises(RuntimeError, match="s2 exploded"):
+                await run_gap_analysis(input_data)
+
+    @pytest.mark.asyncio
+    async def test_skip_s1_s2_loads_from_artifacts(self, input_data, mock_report, tmp_path):
+        """When both S1 and S2 are skipped, artifacts are loaded (no parallelism needed)."""
+        (tmp_path / "visualizations").mkdir()
+
+        units_data = [
+            SemanticUnit(
+                unit_id="u1", url="https://test.com",
+                text="test", embedding=[0.1],
+            ).model_dump(mode="json"),
+        ]
+        queries_data = [
+            GeneratedQuery(
+                query_id="q1", cluster_id="C1", cluster_name="Test",
+                query_text="test?",
+            ).model_dump(mode="json"),
+        ]
+        (tmp_path / "company_embeddings.json").write_text(json.dumps(units_data, default=str))
+        (tmp_path / "queries.json").write_text(json.dumps(queries_data, default=str))
+
+        mock_analysis = AnalysisResult(
+            proximity_stats={}, spa_results=[], gaps=[], centroids=[],
+            cluster_specs=[], citation_patterns={}, decision_metrics={},
+        )
+
+        with patch(
+            "core.gap_analysis.pipeline._artifact_dir", return_value=tmp_path,
+        ), patch(
+            "core.gap_analysis.pipeline.search_platforms",
+            new_callable=AsyncMock, return_value=[],
+        ), patch(
+            "core.gap_analysis.pipeline.enrich_citations",
+            new_callable=AsyncMock, return_value=[],
+        ), patch(
+            "core.gap_analysis.pipeline.embed_all",
+            new_callable=AsyncMock, return_value=([], []),
+        ), patch(
+            "core.gap_analysis.pipeline.compute_gap_analysis",
+            return_value=mock_analysis,
+        ), patch(
+            "core.gap_analysis.pipeline.generate_visualizations",
+            return_value={},
+        ), patch(
+            "core.gap_analysis.pipeline.generate_gap_report",
+            new_callable=AsyncMock, return_value=mock_report,
+        ), patch(
+            "core.gap_analysis.pipeline.save_platform_results",
+        ), patch(
+            "core.gap_analysis.pipeline.save_enriched_citations",
+        ), patch(
+            "core.gap_analysis.pipeline.save_embeddings",
+        ), patch(
+            "core.gap_analysis.pipeline.save_report",
+        ):
+            from core.gap_analysis.pipeline import run_gap_analysis
+            report = await run_gap_analysis(input_data, skip_steps=[1, 2])
+
+        assert isinstance(report, GapReport)

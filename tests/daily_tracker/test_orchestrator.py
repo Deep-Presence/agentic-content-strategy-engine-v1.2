@@ -306,6 +306,26 @@ class TestRunWithSpecificPromptIds:
         assert result.status == RunStatus.COMPLETED
         assert result.prompt_count == 0
 
+    @pytest.mark.asyncio
+    async def test_rejects_cross_tenant_prompt_ids(
+        self,
+        orchestrator: DailyTrackerOrchestrator,
+        mock_prompt_service: AsyncMock,
+    ) -> None:
+        """Codex finding: prompt belonging to another company must be skipped."""
+        other_tenant_prompt = TrackedPrompt(
+            id="p-other", company_id="other-company", text="foreign", active=True,
+        )
+        own_prompt = _make_prompt("p-own")
+        mock_prompt_service.get_prompt.side_effect = [other_tenant_prompt, own_prompt]
+
+        result = await orchestrator.execute_daily_run(
+            company_id="company-abc",
+            prompt_ids=["p-other", "p-own"],
+        )
+        # Only the own prompt should be used (prompt_count=1, not 2)
+        assert result.prompt_count == 1
+
 
 # ── Test: Runner Failure ─────────────────────────────────────────────
 

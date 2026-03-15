@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-07 (Sprint v9 Gap-Content Enrichment)
-> **Total items:** 37
+> **Last synced:** 2026-03-15 (Sprint v15 Daily Tracker DB Persistence)
+> **Total items:** 48
 
 ## Critical (Fix Before Production)
 
@@ -253,6 +253,83 @@
 - **Date added:** 2026-03-06
 - **Description:** `list_persona_paths()` returns paths in manifest dict insertion order, not sorted. This means prompt context order can drift between runs depending on when personas were added. Should add `sorted()` for deterministic ordering.
 - **Files affected:** `core/research/audience_persona/storage.py:263`
+- **Blocked by:** nothing
+
+### PB-67: [DB-M1] `get_latest_by_slug_and_type()` is redundant wrapper
+- **Source:** Sprint v11 DB Foundation Review — M1
+- **Date added:** 2026-03-10
+- **Description:** `ResearchArtifactRepository.get_latest_by_slug_and_type()` delegates to `get_by_slug_and_type()` with no added value. Remove or document the distinction.
+- **Files affected:** `core/db/repositories/research_artifact_repo.py:41-47`
+- **Blocked by:** nothing
+
+### PB-68: [DB-M2] No input validation on `upsert_artifact()`
+- **Source:** Sprint v11 DB Foundation Review — M2
+- **Date added:** 2026-03-10
+- **Description:** Empty `effective_slug`, negative version, path traversal in `storage_key` — no validation at repo level. Add guards or document assumptions.
+- **Files affected:** `core/db/repositories/research_artifact_repo.py`
+- **Blocked by:** nothing
+
+### PB-69: [DB-M3] TD `list_assignments()` shape divergence
+- **Source:** Sprint v11 DB Foundation Review — M3
+- **Date added:** 2026-03-10
+- **Description:** JSON service uses `model_dump()`, DB service uses explicit field extraction with `.value` on enums. Define shared assignment DTO to avoid shape drift.
+- **Files affected:** `core/services/json_topic_discovery_data.py`, `core/services/db_topic_discovery_data.py`
+- **Blocked by:** nothing
+
+### PB-70: [DB-M4] JSON VSG `get_guide()` ignores `version` parameter
+- **Source:** Sprint v11 DB Foundation Review — M4
+- **Date added:** 2026-03-10
+- **Description:** `version` kwarg accepted but never used — always returns latest. Implement versioned reads or remove param.
+- **Files affected:** `core/services/json_vsg_data.py`
+- **Blocked by:** nothing
+
+### PB-71: [DB-M5] Missing multi-tenancy isolation tests
+- **Source:** Sprint v11 DB Foundation Review — M5
+- **Date added:** 2026-03-10
+- **Description:** No test verifying two companies with same slug don't collide in `upsert_artifact()`. C2 fix added `company_id` to WHERE but no integration test proves isolation.
+- **Files affected:** `tests/db/test_research_artifact_repo.py`
+- **Blocked by:** nothing
+
+### PB-72: [DB-M6] DB services return `""` instead of `None` for missing content files
+- **Source:** Sprint v11 DB Foundation Review — M6
+- **Date added:** 2026-03-10
+- **Description:** `content_md or ""` masks missing files. Downstream can't distinguish "empty doc" from "file not found". Consider returning `None` and letting callers decide.
+- **Files affected:** `core/services/db_kb_data.py`, `core/services/db_persona_data.py`
+- **Blocked by:** nothing
+
+### PB-73: [SA-R1] Distributed lock for multi-worker site audit deployment
+- **Source:** Sprint v12 Site Audit DB Persistence — Codex audit (deferred)
+- **Date added:** 2026-03-10
+- **Description:** Current slug lock is in-process only (`asyncio.Lock`). Multi-worker deployment needs PG advisory lock or Redis-based distributed lock to prevent duplicate audits across workers.
+- **Files affected:** `api/tasks/runner.py`, `api/tasks/store.py`
+- **Blocked by:** nothing
+
+### PB-74: [SA-C2] Product-scoped read endpoints for site audit
+- **Source:** Sprint v12 Site Audit DB Persistence — Codex audit (deferred)
+- **Date added:** 2026-03-10
+- **Description:** Routes use `{slug}` (company_slug) but DB stores `effective_slug` (`{company}__{product}`). Product-scoped reads need either an explicit `product_slug` query param or endpoint restructuring to `/companies/{slug}/products/{product}/audits`.
+- **Files affected:** `api/routers/site_audit.py`, `core/services/db_site_audit_data.py`
+- **Blocked by:** nothing
+
+### PB-76: [RO-M6] VSG skip logic never fires — ap_manifest_version never written by VSG pipeline
+- **Source:** Sprint v13 Research Orchestrator — Codex audit (deferred finding #6)
+- **Date added:** 2026-03-11
+- **Description:** `_should_skip_vsg()` in orchestrator compares `vsg_manifest.ap_manifest_version` against current AP manifest fingerprint (`last_full_run.isoformat()`). But the VSG pipeline's finalize phase never writes `ap_manifest_version` to the VSG manifest — only `company_name` and `last_full_run`. So VSG skip logic always sees `ap_manifest_version=None` and never skips.
+- **Files affected:** `core/research/voice_style_guide/pipeline.py:445-448`, `core/models/voice_style_guide.py`, `core/research/orchestrator.py:170`
+- **Blocked by:** nothing
+
+### PB-77: [RO-M7] Process-local concurrency — slug locks/semaphore lost in multi-worker deployment
+- **Source:** Sprint v13 Research Orchestrator — Codex audit (deferred finding #7)
+- **Date added:** 2026-03-11
+- **Description:** Slug locks, approval queues, task handles, and semaphore are in-memory only in both `TaskStore` and `DbTaskStore`. Multi-process deployments (gunicorn workers, horizontal scaling) can run the same slug concurrently and race on artifact writes. Known tech debt — needs PG advisory locks or Redis-based distributed locking.
+- **Files affected:** `api/tasks/store.py`, `core/services/db_task_store.py`, `api/tasks/runner.py`
+- **Blocked by:** nothing
+
+### PB-75: [SA-DI] Session/service DI lifecycle cleanup
+- **Source:** Sprint v12 Site Audit DB Persistence — Codex audit (deferred)
+- **Date added:** 2026-03-10
+- **Description:** `api/dependencies.py` creates DB services without `yield`/cleanup pattern. Session factories are created once at startup but services don't have explicit lifecycle management. Should use FastAPI `yield` dependencies for proper cleanup.
+- **Files affected:** `api/dependencies.py`
 - **Blocked by:** nothing
 
 ## Low Priority / Nice to Have

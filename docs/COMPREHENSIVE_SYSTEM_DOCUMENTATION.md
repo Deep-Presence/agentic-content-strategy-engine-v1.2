@@ -3,7 +3,7 @@
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
 > **Stack:** Python 3.12 · LangGraph · FastAPI · Pydantic v2 · LangSmith · LiteLLM
-> **Document Date:** 2026-03-07 (updated: Audience Persona pipeline v2, CPS standalone endpoint, CPS Model integration)
+> **Document Date:** 2026-03-11 (updated: Research Orchestrator KB→AP→VSG DAG)
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -67,6 +67,12 @@
    - 5d.7 [Pydantic Models (9 Models)](#5d7-pydantic-models-9-models)
    - 5d.8 [API Endpoints (7 Total)](#5d8-api-endpoints-7-total)
    - 5d.9 [Test Coverage (232 tests)](#5d9-test-coverage-232-tests)
+5f. [Research Orchestrator — KB → AP → VSG DAG](#5f-research-orchestrator--kb--ap--vsg-dag)
+   - 5f.1 [Architecture & Flow](#5f1-architecture--flow)
+   - 5f.2 [Skip Logic](#5f2-skip-logic)
+   - 5f.3 [HITL Pass-Through](#5f3-hitl-pass-through)
+   - 5f.4 [API Endpoints](#5f4-api-endpoints)
+   - 5f.5 [Test Coverage (67 tests)](#5f5-test-coverage-67-tests)
 6. [Pipeline 2: Gap Analysis](#6-pipeline-2-gap-analysis)
    - 6.1 [Step 1 — Embed Company Assets](#61-step-1--embed-company-assets)
    - 6.2 [Step 2 — Generate Queries](#62-step-2--generate-queries)
@@ -2382,6 +2388,102 @@ artifacts/audience_personas/{slug}/
 | `tests/research/audience_persona/test_prompts_ap.py` | 20 | Prompt builders, revision notes |
 | `tests/api/test_audience_persona_router.py` | 45 | 7 endpoints: start, status, approve, add-persona, list |
 | **Total** | **232** | |
+
+---
+
+## 5f. Research Orchestrator — KB → AP → VSG DAG
+
+The Research Orchestrator provides a **single API call** (`POST /api/v1/research/start`) that runs all three research pipelines in sequence: Knowledge Base → Audience Persona → Voice Style Guide. It handles dependency ordering, HITL pass-through, skip logic for fresh artifacts, auto-approve distribution, and error propagation.
+
+**Location:** `core/research/orchestrator.py` (core logic), `api/routers/research_orchestrator.py` (API)
+
+### 5f.1 Architecture & Flow
+
+```
+POST /api/v1/research/start
+    → run_research_orchestrator_task() (runner.py — acquires semaphore + slug lock ONCE)
+        → run_research_orchestrator() (orchestrator.py)
+            1. Resolve slugs (company_slug, effective_slug)
+            2. Emit "pipeline_start" SSE event
+            3. For each pipeline in [kb, ap, vsg]:
+               a. Check skip logic (_should_skip_*)
+               b. If skip → emit "orchestrator_stage_skipped", record SubPipelineResult(skipped)
+               c. If run  → emit "orchestrator_stage_start"
+                          → build sub-pipeline Input
+                          → await run_{pipeline}_pipeline(...)
+                          → emit "orchestrator_stage_complete"
+               d. On error → emit "orchestrator_stage_failed", STOP downstream
+            4. Emit "completed" event
+            5. Return ResearchOrchestratorOutput
+```
+
+**Key design decisions:**
+- Sub-pipelines called **directly** (not via runner wrappers) — no double-lock or double-semaphore
+- Orchestrator's `run_id` passed to sub-pipelines for valid FK in DB artifact persistence
+- `OrchestratorStatus` enum: `completed`, `completed_partial` (some skipped), `failed` (a pipeline errored)
+- Failed orchestrator status maps to `TaskStatus.FAILED` at the task level
+
+### 5f.2 Skip Logic
+
+Each pipeline has a skip check that evaluates artifact freshness:
+
+| Pipeline | Skip Condition | Mechanism |
+|----------|----------------|-----------|
+| KB | `synthesis_version > 0` AND no stale docs AND not `force_rerun` | `KBStorage.read_manifest()` |
+| AP | Approved personas exist AND `kb_synthesis_version` matches current KB | `PersonaStorage.read_manifest()` + `KBStorage.read_manifest()` |
+| VSG | Guide `current_version > 0` AND `status == "fresh"` AND AP unchanged | `VoiceStyleGuideStorage.read_manifest()` |
+
+`force_rerun=true` bypasses all skip logic. `skip_fresh=false` in the API request disables freshness skipping.
+
+### 5f.3 HITL Pass-Through
+
+The orchestrator shares its `task_id` with all sub-pipelines. When a sub-pipeline (e.g., KB) hits a HITL checkpoint:
+
+1. KB calls `task_store.wait_for_approval(task_id)` — suspends the KB coroutine
+2. The orchestrator's `await` on KB naturally suspends
+3. User approves via existing per-pipeline endpoint (e.g., `POST /api/v1/knowledge-base/{run_id}/approve`)
+4. KB resumes, completes, returns output
+5. Orchestrator proceeds to next pipeline
+
+**No new approval endpoints** — all approvals use existing per-pipeline endpoints with the same `run_id`.
+
+### 5f.4 API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/research/start` | Launch orchestrator (202). Returns `run_id`. |
+| `GET` | `/api/v1/research/{run_id}/status` | Get orchestrator status (tenant-isolated). |
+
+**Request body (`POST /start`):**
+```json
+{
+  "company_name": "Ramp",
+  "domain": "ramp.com",
+  "product_slug": "expense",
+  "pipelines": ["kb", "ap", "vsg"],
+  "auto_approve": {"kb": [1,2,3], "ap": [1,2], "vsg": [1]},
+  "force_rerun": false,
+  "skip_fresh": true,
+  "max_personas": 5,
+  "max_authors": 3
+}
+```
+
+### 5f.5 Test Coverage (67 tests)
+
+| Category | Count | Description |
+|----------|-------|-------------|
+| Model tests | 19 | AutoApproveConfig, PipelineSkipConfig, SubPipelineStatus/Result, OrchestratorStatus, Input/Output |
+| Skip logic | 10 | Skip/no-skip for KB/AP/VSG with force_rerun and config overrides |
+| Input construction | 3 | _build_kb/ap/vsg_input helpers |
+| Full orchestration | 5 | All-run, selective, all-skipped, mixed skip/run |
+| Error propagation | 3 | KB fail → AP/VSG skip, AP fail → VSG skip, VSG fail recorded |
+| SSE events | 3 | Stage events, skipped events, failed events |
+| Auto-approve | 3 | Per-pipeline checkpoint distribution |
+| Null-safe helpers | 1 | Runs without event_bus |
+| Slug resolution | 3 | Company-only, with product, explicit slug |
+| API router | 17 | Start success/auth/tenant/validation, status/cross-tenant/not-found |
+| **Total** | **67** | |
 
 ---
 
@@ -9231,6 +9333,8 @@ def test_other_user_cannot_read_test_co_profile(self, other_client, test_company
 | 2026-03-07 | §6.8 | Updated gap report to include company page URL, self-citation status, and company page structural summary per gap | D-GCE-1/3 |
 | 2026-03-07 | §6.10 | Updated data flow diagram — `company_page_analysis.json` from s1, `_flag_company_citations` + `_build_company_citation_map` between s3/s4, enriched s6 inputs | D-GCE-all |
 | 2026-03-07 | §7.4 | Updated context router: `company_cited` in QueryScorecard, `company_best_url` in WorkerQueryContext, `Cited` column in scorecard markdown, structural comparison in worker context markdown | D-GCE-all |
+| 2026-03-11 | TOC | Added §5f Research Orchestrator with 5 subsection links | T-research-orchestrator |
+| 2026-03-11 | §5f | **NEW SECTION** — Research Orchestrator (KB → AP → VSG DAG): sequential pipeline chaining, skip logic (artifact freshness), HITL pass-through (shared task_id), auto-approve distribution, error propagation, tenant-isolated API endpoints. 67 tests (50 core + 17 API). Codex-reviewed (8 findings, 5 fixed, 2 deferred to backlog). | T-research-orchestrator |
 
 ---
 

@@ -1,7 +1,7 @@
 {
-  "sprint": "gap-content-enrichment-v9",
-  "sprint_goal": "Gap Analysis → Content Engine Data Enrichment — 3 features: company URL passthrough, structural analysis of company pages, self-citation detection in AI search results.",
-  "sprint_status": "COMPLETE — 24 new tests, all 74 targeted tests passing. 14 files modified across models, pipeline steps, content engine, and tests.",
+  "sprint": "daily-tracker-db-persistence-v15",
+  "sprint_goal": "Daily Tracker DB Persistence & Production Readiness — Make daily tracker fully DB-ready with persistence layer, async task runner, router refactor, and DB integration tests.",
+  "sprint_status": "COMPLETE — 392 daily tracker tests passing (8 DB integration skipped without TEST_DATABASE_URL). 6 phases complete. Codex-reviewed plan with all 7 findings addressed.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -23,19 +23,22 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/research/audience_persona/ (models, storage, agents, graph, pipeline)",
-    "core/research/knowledge_base/ (models, storage, agents, graph, pipeline)",
-    "core/research/prompts/*.py (prompt files with revision_note support)",
-    "api/tasks/runner.py (run_kb_pipeline_task wrapper)"
+    "core/daily_tracker/persistence.py (NEW — 5 persistence functions)",
+    "core/db/migrations/versions/0014_daily_tracker_enum.py (NEW — PG ENUM migration)",
+    "api/tasks/runner.py (added run_daily_tracker_task)",
+    "api/routers/daily_tracker.py (refactored POST /runs, GET /runs, GET /runs/{run_id})",
+    "api/tasks/models.py (added daily_tracker to PipelineTask Literal)",
+    "tests/api/test_daily_tracker_runner.py (NEW — 11 runner tests)",
+    "tests/daily_tracker/test_persistence.py (NEW — 16 persistence tests)"
   ],
-  "test_count": 2592,
-  "phases_completed_count": 33,
+  "test_count": 2703,
+  "phases_completed_count": 40,
   "recent_phases": [
-    "gap-content-enrichment v9 — 3 features: URL passthrough, structural analysis, self-citation detection (24 tests)",
-    "audience-persona Phase D — Pipeline Orchestrator (45 tests, 232 AP total)",
-    "knowledge-base Phase 5 — Synthesis & Living Document (50 tests)",
-    "knowledge-base Phase 4 — API Router + Schemas (35 tests)",
-    "knowledge-base Phase 3 — Orchestrator (58 tests)"
+    "daily-tracker-db-persistence v15 — 6 phases + Codex audit (392 DT tests, 41 new)",
+    "td-content-integration v1.2.0 — 8 phases (44 new tests)",
+    "research-orchestrator v13 — 7 phases + Codex audit (67 tests)",
+    "site-audit-db-persistence v12 — 8 phases + Codex audit (62 tests, 899 SA total)",
+    "gap-content-enrichment v9 — 3 features: URL passthrough, structural analysis, self-citation detection (24 tests)"
   ],
   "phases_remaining": [
     "audience-persona Phase E — API Router + Runner (~30 tests)",

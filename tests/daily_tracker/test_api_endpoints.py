@@ -391,27 +391,31 @@ class TestBulkCreatePrompts:
 
 
 class TestTriggerRun:
-    def test_trigger_run_success(self, client: TestClient) -> None:
-        resp = client.post(
-            "/api/v1/daily-tracker/runs",
-            json={},
-        )
+    def test_trigger_run_returns_202_with_task_id(self, client: TestClient) -> None:
+        """POST /runs now launches async task and returns 202 with task_id."""
+        with patch("api.routers.daily_tracker.asyncio.create_task"):
+            resp = client.post(
+                "/api/v1/daily-tracker/runs",
+                json={},
+            )
         assert resp.status_code == 202
         data = resp.json()
-        assert data["status"] == "completed"
+        assert data["status"] == "running"
+        assert data["pipeline"] == "daily_tracker"
         assert "run_id" in data
 
     def test_trigger_run_with_options(self, client: TestClient) -> None:
-        resp = client.post(
-            "/api/v1/daily-tracker/runs",
-            json={
-                "engines": ["openai", "claude"],
-                "prompt_ids": ["p-1"],
-                "brand": "Ramp",
-                "competitors": ["Brex"],
-                "concurrency": 2,
-            },
-        )
+        with patch("api.routers.daily_tracker.asyncio.create_task"):
+            resp = client.post(
+                "/api/v1/daily-tracker/runs",
+                json={
+                    "engines": ["openai", "claude"],
+                    "prompt_ids": ["p-1"],
+                    "brand": "Ramp",
+                    "competitors": ["Brex"],
+                    "concurrency": 2,
+                },
+            )
         assert resp.status_code == 202
 
     def test_trigger_run_unauthenticated(self, public_client: TestClient) -> None:
@@ -423,15 +427,21 @@ class TestTriggerRun:
 
 
 class TestGetRunStatus:
-    def test_get_run_status_success(self, client: TestClient) -> None:
-        resp = client.get("/api/v1/daily-tracker/runs/run-001")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["run_id"] == "run-001"
+    def test_get_run_status_no_db(self, client: TestClient) -> None:
+        """Without DB, GET /runs/{run_id} returns 503."""
+        resp = client.get("/api/v1/daily-tracker/runs/11111111-1111-1111-1111-111111111111")
+        assert resp.status_code == 503
+
+    def test_get_run_status_invalid_uuid(self, client: TestClient) -> None:
+        """Invalid UUID format returns 503 (no DB) or 400."""
+        resp = client.get("/api/v1/daily-tracker/runs/not-a-uuid")
+        # Without DB: 503 (db_session_factory is None)
+        assert resp.status_code in (400, 503)
 
 
 class TestListRuns:
-    def test_list_runs_returns_empty(self, client: TestClient) -> None:
+    def test_list_runs_returns_empty_without_db(self, client: TestClient) -> None:
+        """Without DB session factory, list_runs gracefully returns empty."""
         resp = client.get("/api/v1/daily-tracker/runs")
         assert resp.status_code == 200
         data = resp.json()

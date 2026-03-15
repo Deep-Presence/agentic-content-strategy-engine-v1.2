@@ -11,6 +11,7 @@ import logging
 import math
 import re
 import statistics
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -19,6 +20,7 @@ import httpx
 import trafilatura
 from bs4 import BeautifulSoup
 
+from core.config.settings import settings
 from core.models.gap_analysis import (
     EnrichedCitation,
     GeneratedQuery,
@@ -60,6 +62,10 @@ def _infer_content_type(url: str) -> Optional[str]:
 _SEMANTIC_SELECTORS = ["article", "main", "[role='main']", ".post-content", ".entry-content"]
 _MIN_TRAFILATURA_LEN = 200
 
+# Serialize trafilatura.extract() calls — lxml releases the GIL and its
+# internal global state is not thread-safe under concurrent access.
+_TRAFILATURA_LOCK = threading.Lock()
+
 
 def _extract_main_content(html: str) -> str:
     """Extract main content from HTML, stripping nav/footer/sidebar chrome.
@@ -72,14 +78,15 @@ def _extract_main_content(html: str) -> str:
     Returns the best HTML for paragraph text extraction.
     For structural element counting, use _extract_structural_html() instead.
     """
-    # Tier 1: trafilatura
+    # Tier 1: trafilatura (serialized — lxml is not thread-safe)
     try:
-        extracted = trafilatura.extract(
-            html,
-            output_format="html",
-            include_tables=True,
-            include_links=True,
-        )
+        with _TRAFILATURA_LOCK:
+            extracted = trafilatura.extract(
+                html,
+                output_format="html",
+                include_tables=True,
+                include_links=True,
+            )
         if extracted and len(extracted) >= _MIN_TRAFILATURA_LEN:
             return extracted
     except Exception:
@@ -385,8 +392,13 @@ async def _fetch_html(
         Both are None on error/non-HTML response.
     """
     async def _do_fetch() -> Tuple[Optional[str], Optional[str]]:
+        owned_client: httpx.AsyncClient | None = None
         try:
-            target = client or httpx.AsyncClient(timeout=20, follow_redirects=True)
+            if client is not None:
+                target = client
+            else:
+                owned_client = httpx.AsyncClient(timeout=20, follow_redirects=True)
+                target = owned_client
             resp = await target.get(url)
             if resp.status_code >= 400:
                 return None, None
@@ -396,6 +408,9 @@ async def _fetch_html(
             return resp.text, str(resp.url)
         except Exception:
             return None, None
+        finally:
+            if owned_client is not None:
+                await owned_client.aclose()
 
     if semaphore:
         async with semaphore:
@@ -406,18 +421,23 @@ async def _fetch_html(
 async def enrich_citations(
     results: List[PlatformResult],
     query_lookup: Optional[Dict[str, GeneratedQuery]] = None,
-    concurrency: int = 20,
+    concurrency: Optional[int] = None,
+    parse_workers: Optional[int] = None,
 ) -> List[EnrichedCitation]:
     """Enrich citations by fetching HTML and extracting structural signals.
 
-    Async-first: fetches URLs concurrently with semaphore-based throttling.
+    Two-phase pipeline:
+      Phase 1 — Fetch: async HTTP with semaphore-based throttling
+      Phase 2 — Parse: thread-offloaded _extract_paragraphs (CPU-bound)
+
     Deduplicates URLs so each is fetched only once.
     Preserves original citation ordering.
 
     Args:
         results: Platform search results containing citations.
         query_lookup: Optional mapping of query_id -> GeneratedQuery for cluster info.
-        concurrency: Maximum number of concurrent HTTP requests.
+        concurrency: Max concurrent HTTP requests (default: settings).
+        parse_workers: Max concurrent parse threads (default: settings).
 
     Returns:
         List of EnrichedCitation objects in the same order as input citations.
@@ -425,7 +445,10 @@ async def enrich_citations(
     if not results:
         return []
 
-    # Collect all unique URLs while preserving input order
+    fetch_concurrency = concurrency if concurrency is not None else settings.gap_analysis_s4_fetch_concurrency
+    thread_workers = parse_workers if parse_workers is not None else settings.gap_analysis_s4_parse_workers
+
+    # ── Phase 0: Collect unique URLs preserving input order ────────────
     citation_entries: List[Tuple[int, str, dict]] = []
     seen_urls: set[str] = set()
 
@@ -450,32 +473,62 @@ async def enrich_citations(
     if not citation_entries:
         return []
 
-    # Fetch all unique URLs concurrently with connection limits (Codex)
-    semaphore = asyncio.Semaphore(concurrency)
+    # ── Phase 1: Fetch all unique URLs concurrently ───────────────────
+    semaphore = asyncio.Semaphore(fetch_concurrency)
 
     async with httpx.AsyncClient(
         timeout=20,
         follow_redirects=True,
-        limits=httpx.Limits(max_connections=30, max_keepalive_connections=10),
+        limits=httpx.Limits(
+            max_connections=settings.gap_analysis_s4_http_pool_size,
+            max_keepalive_connections=20,
+        ),
     ) as client:
         fetch_tasks = [
             _fetch_html(url, client=client, semaphore=semaphore)
             for _, url, _ in citation_entries
         ]
-        fetch_results = await asyncio.gather(*fetch_tasks)
+        fetch_results_raw = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
-    # Build enriched citations preserving original order
-    enriched: List[EnrichedCitation] = []
-    resolved_count = 0
+    # Normalize any escaped exceptions to (None, None)
+    fetch_results = []
+    for result in fetch_results_raw:
+        if isinstance(result, BaseException):
+            logger.warning("Unexpected fetch error: %s", result)
+            fetch_results.append((None, None))
+        else:
+            fetch_results.append(result)
+
+    # ── Phase 2: Parse HTMLs in thread pool (CPU-bound offload) ───────
+    parse_sem = asyncio.Semaphore(thread_workers)
+
+    async def _parse_one(html: str) -> Tuple[List[str], StructuralSignals]:
+        async with parse_sem:
+            return await asyncio.to_thread(_extract_paragraphs, html)
+
+    fetchable_entries: List[Tuple[int, str, dict, str]] = []
+    parse_tasks_list: List[asyncio.Task] = []
     for (idx, original_url, meta), (html, resolved_url) in zip(citation_entries, fetch_results):
         if not html:
             continue
-        # Use resolved URL (after redirects) instead of wrapper URLs
-        # (e.g. vertexaisearch.cloud.google.com → actual destination)
         final_url = resolved_url or original_url
+        fetchable_entries.append((idx, original_url, meta, final_url))
+        parse_tasks_list.append(_parse_one(html))
+
+    parse_results_raw = await asyncio.gather(*parse_tasks_list, return_exceptions=True)
+
+    # ── Phase 3: Assemble EnrichedCitation objects ────────────────────
+    enriched: List[EnrichedCitation] = []
+    resolved_count = 0
+    for (idx, original_url, meta, final_url), result in zip(
+        fetchable_entries, parse_results_raw
+    ):
+        if isinstance(result, BaseException):
+            logger.warning("Parse failed for %s: %s", final_url, result)
+            continue
+        paragraphs, signals = result
         if final_url != original_url:
             resolved_count += 1
-        paragraphs, signals = _extract_paragraphs(html)
         domain = urlparse(final_url).netloc
         signals.authority_type = _infer_authority_type(domain)
         signals.content_type = _infer_content_type(final_url)

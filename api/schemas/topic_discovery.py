@@ -1,6 +1,6 @@
 """Request/response schemas for the Topic Discovery pipeline API.
 
-Two HITL approval endpoints (taxonomy + matrix) + start + status + read.
+Three HITL approval endpoints (taxonomy + subdomains + matrix) + start + status + read.
 """
 from __future__ import annotations
 
@@ -33,22 +33,34 @@ class TopicDiscoveryStartRequest(BaseModel):
 
     auto_approve_checkpoints: List[int] = Field(
         default_factory=list,
-        description="Checkpoint numbers to auto-approve (1=taxonomy, 2=matrix)",
+        description=(
+            "Checkpoint numbers to auto-approve "
+            "(1=taxonomy, 2=matrix, 3=subdomain selection)"
+        ),
     )
 
     @field_validator("auto_approve_checkpoints")
     @classmethod
     def _validate_auto_approve(cls, v: List[int]) -> List[int]:
-        invalid = [x for x in v if x not in {1, 2}]
+        invalid = [x for x in v if x not in {1, 2, 3}]
         if invalid:
             raise ValueError(
-                f"auto_approve_checkpoints values must be 1 or 2; got invalid: {invalid}"
+                f"auto_approve_checkpoints values must be 1, 2, or 3; "
+                f"got invalid: {invalid}"
             )
         return v
 
     force_rerun: bool = False
     max_expansion_rounds: int = Field(default=4, ge=1, le=10)
     dedup_threshold: float = Field(default=0.85, ge=0.5, le=1.0)
+    top_n_expand: int = Field(
+        default=10, ge=1, le=50,
+        description="How many top-scored subdomains to expand (HITL-1.5)",
+    )
+    persona_filter: Optional[str] = Field(
+        default=None,
+        description="Optional persona_id to focus subdomain scoring/expansion",
+    )
     language: str = "en"
     region: Optional[str] = None
     additional_constraints: Optional[str] = None
@@ -138,3 +150,97 @@ class MatrixReadResponse(BaseModel):
     matrix: Dict[str, Any] = Field(default_factory=dict)
     version: int = 0
     total_assignments: int = 0
+
+
+# ---------------------------------------------------------------------------
+# HITL-1.5: Subdomain Selection
+# ---------------------------------------------------------------------------
+
+
+class SubdomainSelectionRequest(BaseModel):
+    """Request body for HITL-1.5 subdomain selection approval."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    batch_decision: Literal["select", "select_top_n"]
+    selected_subdomain_ids: List[str] = Field(default_factory=list)
+    top_n: Optional[int] = Field(default=None, ge=1, le=50)
+    persona_filter: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Scored Subdomains + Persona Affinity Responses
+# ---------------------------------------------------------------------------
+
+
+class ScoredSubdomainsResponse(BaseModel):
+    """Response for GET /{slug}/scored-subdomains."""
+
+    slug: str = ""
+    scored_subdomains: Dict[str, Any] = Field(default_factory=dict)
+    version: int = 0
+    total_scored: int = 0
+    signals_used: List[str] = Field(default_factory=list)
+
+
+class PersonaAffinityResponse(BaseModel):
+    """Response for GET /{slug}/personas."""
+
+    slug: str = ""
+    persona_entries: Dict[str, Any] = Field(default_factory=dict)
+    total_personas: int = 0
+    total_subdomains: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Pipeline B: Topic Expansion
+# ---------------------------------------------------------------------------
+
+
+class TopicExpansionStartRequest(BaseModel):
+    """Launch the Topic Expansion pipeline (Pipeline B)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    company_name: str
+    domain: str
+    product_slug: Optional[str] = None
+
+    @field_validator("product_slug")
+    @classmethod
+    def _validate_product_slug(cls, v: Optional[str]) -> Optional[str]:
+        return _check_product_slug(v)
+
+    subdomain_ids: List[str] = Field(
+        min_length=1,
+        description="Subdomain IDs to expand into the content matrix",
+    )
+    persona_filter: Optional[str] = None
+    taxonomy_version: Optional[int] = None
+    auto_approve_checkpoints: List[int] = Field(
+        default_factory=list,
+        description="Checkpoint 2 = auto-approve matrix",
+    )
+
+    @field_validator("auto_approve_checkpoints")
+    @classmethod
+    def _validate_auto_approve(cls, v: List[int]) -> List[int]:
+        invalid = [x for x in v if x not in {2}]
+        if invalid:
+            raise ValueError(
+                "Pipeline B only supports checkpoint 2 (matrix); "
+                f"got invalid: {invalid}"
+            )
+        return v
+
+
+class ExpansionStatusResponse(BaseModel):
+    """Response for GET /{slug}/expansion-status."""
+
+    slug: str = ""
+    effective_slug: str = ""
+    total_subdomains: int = 0
+    expanded: int = 0
+    not_expanded: int = 0
+    expanded_ids: List[str] = Field(default_factory=list)
+    available_for_expansion: List[Dict[str, Any]] = Field(default_factory=list)
