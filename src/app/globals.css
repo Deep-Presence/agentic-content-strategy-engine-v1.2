@@ -1,93 +1,160 @@
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
+@layer base {
+  :root {
+    /* Backgrounds — Slate-tinted grays */
+    --bg: #F8F9FA;
+    --surface: #FBFCFD;
+    --surface-raised: #FFFFFF;
+    --surface-overlay: #FBFCFD;
+
+    /* Borders — visible, Slate-based */
+    --border: #ECEEF0;
+    --border-subtle: #F1F3F5;
+    --border-strong: #D7DBDF;
+    --border-control: #D7DBDF;
+
+    /* Text — Slate.12 → Slate.9 */
+    --text-primary: #11181C;
+    --text-secondary: #687076;
+    --text-tertiary: #889096;
+    --text-on-accent: #FFFFFF;
+
+    /* Accent — Deep Presence Teal */
+    --accent: #5BA4C4;
+    --accent-hover: #4A93B3;
+    --accent-subtle: rgba(91,164,196,0.08);
+
+    /* Semantic */
+    --success: #34B27B;
+    --success-subtle: rgba(52,178,123,0.08);
+    --warning: #DC7B18;
+    --warning-subtle: rgba(220,123,24,0.08);
+    --error: #E5484D;
+    --error-subtle: rgba(229,72,77,0.06);
+    --info: #5BA4C4;
+    --info-subtle: rgba(91,164,196,0.08);
+
+    /* Brand */
+    --deep-verdigris: #5BA4C4;
+    --signal-amber: #DC7B18;
+    --signal-amber-subtle: rgba(220,123,24,0.1);
+
+    /* Radius */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-xl: 12px;
+    --radius-full: 9999px;
+
+    /* Shadows — minimal */
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 2px 4px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
+    --shadow-lg: 0 4px 8px rgba(0,0,0,0.04), 0 2px 4px rgba(0,0,0,0.06);
+    --shadow-float: 0 8px 30px rgba(0,0,0,0.08), 0 0 0 1px #ECEEF0;
+
+    /* Typography — references next/font CSS variables with fallbacks */
+    --font-display: var(--font-space-grotesk, 'Space Grotesk'), sans-serif;
+    --font-body: var(--font-space-grotesk, 'Space Grotesk'), sans-serif;
+    --font-mono: var(--font-jetbrains-mono, 'JetBrains Mono'), monospace;
+
+    /* Spacing */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+    --space-12: 48px;
+    --space-16: 64px;
+    --space-20: 80px;
+  }
+
+  [data-theme="dark"] {
+    /* Backgrounds — pure neutral grays */
+    --bg: #171717;
+    --surface: #1F1F1F;
+    --surface-raised: #292929;
+    --surface-overlay: #242424;
+
+    /* Borders — pure gray, visible */
+    --border: #2E2E2E;
+    --border-subtle: #242424;
+    --border-strong: #3E3E3E;
+    --border-control: #3E3E3E;
+
+    /* Text */
+    --text-primary: #EDEDED;
+    --text-secondary: #A0A0A0;
+    --text-tertiary: #707070;
+    --text-on-accent: #FFFFFF;
+
+    /* Accent — lighter teal for dark mode */
+    --accent: #6CB8D2;
+    --accent-hover: #7CC8E2;
+    --accent-subtle: rgba(108,184,210,0.1);
+
+    /* Semantic */
+    --success: #3ECF8E;
+    --success-subtle: rgba(62,207,142,0.12);
+    --warning: #FFB224;
+    --warning-subtle: rgba(255,178,36,0.12);
+    --error: #F87171;
+    --error-subtle: rgba(248,113,113,0.12);
+    --info: #6CB8D2;
+    --info-subtle: rgba(108,184,210,0.1);
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.3);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.4);
+    --shadow-float: 0 8px 30px rgba(0,0,0,0.4), 0 0 0 1px #2E2E2E;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 
-@layer base {
-  :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.809 0.105 251.813);
-    --chart-2: oklch(0.623 0.214 259.815);
-    --chart-3: oklch(0.546 0.245 262.881);
-    --chart-4: oklch(0.488 0.243 264.376);
-    --chart-5: oklch(0.424 0.199 265.638);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+@layer components {
+  /* Skeleton shimmer animation */
+  @keyframes shimmer {
+    0% { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
   }
-  .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.809 0.105 251.813);
-    --chart-2: oklch(0.623 0.214 259.815);
-    --chart-3: oklch(0.546 0.245 262.881);
-    --chart-4: oklch(0.488 0.243 264.376);
-    --chart-5: oklch(0.424 0.199 265.638);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+
+  /* Locus logo animations */
+  @keyframes locusDotsIn {
+    0% { opacity: 0; transform: scale(0); transform-origin: center; }
+    100% { opacity: 1; transform: scale(1); transform-origin: center; }
   }
-  .theme {
-    --font-sans: var(--font-sans);
+
+  @keyframes locusArcDraw {
+    0% { stroke-dashoffset: 120; opacity: 0.2; }
+    10% { opacity: 1; }
+    100% { stroke-dashoffset: 0; opacity: 1; }
   }
-  * {
-    @apply border-border outline-ring/50;
+
+  @keyframes locusPulse {
+    0%, 100% { transform: scale(1); transform-origin: center; }
+    50% { transform: scale(1.2); transform-origin: center; }
   }
-  body {
-    @apply bg-background text-foreground;
-  }
-  html {
-    @apply font-sans;
+
+  @keyframes phasePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
   }
 }
