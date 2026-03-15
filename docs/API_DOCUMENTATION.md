@@ -2467,16 +2467,15 @@ POST /api/v1/daily-tracker/runs
 
 **Response (202):**
 
+Returns a `PipelineRunResponse` with a `task_id`. The run executes asynchronously. Use `GET /tasks/{task_id}/events` for SSE progress streaming.
+
 ```json
 {
-  "run_id": "run-abc",
-  "company_id": "ramp",
-  "status": "completed",
-  "prompt_count": 50,
-  "engine_count": 2,
-  "started_at": "2026-03-01T10:00:00Z",
-  "completed_at": "2026-03-01T10:05:00Z",
-  "error": null
+  "run_id": "task-uuid-here",
+  "pipeline": "daily_tracker",
+  "company_slug": "ramp",
+  "status": "running",
+  "created_at": "2026-03-15T10:00:00Z"
 }
 ```
 
@@ -2486,11 +2485,35 @@ POST /api/v1/daily-tracker/runs
 GET /api/v1/daily-tracker/runs/{run_id}
 ```
 
+Returns run details from the database. Requires `run_id` in UUID format.
+
+**Response (200):**
+
+```json
+{
+  "run_id": "run-uuid",
+  "company_id": "ramp",
+  "status": "completed",
+  "prompt_count": 50,
+  "engine_count": 2,
+  "started_at": "2026-03-15T10:00:00Z",
+  "completed_at": "2026-03-15T10:05:00Z",
+  "error": null
+}
+```
+
+| Status | Description |
+|--------|-------------|
+| `404` | Run not found or belongs to different tenant |
+| `503` | Database not configured |
+
 #### List Runs
 
 ```
 GET /api/v1/daily-tracker/runs
 ```
+
+Returns paginated list of daily runs from the database, ordered by most recent first.
 
 **Query Parameters:**
 
@@ -2498,8 +2521,6 @@ GET /api/v1/daily-tracker/runs
 |-------|------|---------|-------------|
 | `limit` | int | `20` | Max results (1–100) |
 | `offset` | int | `0` | Offset |
-
-> **Note:** In v1, run listing returns empty as runs are transient. Full DB persistence is deferred.
 
 ### Analytics
 

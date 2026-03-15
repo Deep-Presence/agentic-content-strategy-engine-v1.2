@@ -1600,3 +1600,174 @@ async def run_onboarding_task(
     finally:
         task_store.release_slug_lock(f"onboarding:{company_slug}")
         task_store.remove_task_handle(task_id)
+
+
+# ── Daily Tracker pipeline runner ────────────────────────────────────
+
+
+async def run_daily_tracker_task(
+    task_id: str,
+    request: Any,
+    company_slug: str,
+    artifacts_root: Path,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+) -> None:
+    """Background task wrapper for the daily tracker pipeline.
+
+    Builds the orchestrator internally, executes a daily run, and persists
+    results to both filesystem (JSON artifact) and DB (daily_runs +
+    daily_run_responses tables).
+
+    Key design decisions (Codex-informed):
+    - **company_slug is string**: daily_tracker tables use String company_id.
+      ``_resolve_db_context``'s UUID company_id is only for PipelineRunModel.
+    - **result.run_id → daily_runs.id**: The orchestrator generates run_id
+      internally.  PipelineRunModel gets its own ``pipeline_run_id``.
+    - **Two-phase daily_runs write**: ``create_daily_run_record`` (status=running)
+      then ``persist_daily_run_result`` (status=completed/failed).
+    - **Safety net**: ``mark_daily_run_failed`` in finally block ensures the
+      daily_runs row never stays in 'running' state.
+
+    Args:
+        task_id: Task UUID created by the router.
+        request: TriggerRunRequest fields (engines, prompt_ids, brand, etc.).
+        company_slug: Authenticated company slug (string).
+        artifacts_root: Filesystem root for artifact persistence.
+        task_store: Task persistence store.
+        event_bus: SSE event bus for real-time progress streaming.
+    """
+    session_factory: Any = None
+    pipeline_run_id: Any = None
+    daily_run_id: Optional[str] = None
+
+    try:
+        # 1. Resolve DB context — session_factory for orchestrator + persistence,
+        #    pipeline_run_id/company_id for PipelineRunModel only.
+        session_factory, pipeline_run_id, company_id = await _resolve_db_context(
+            company_slug, company_slug,
+        )
+        if session_factory and pipeline_run_id and company_id:
+            await _create_pipeline_run(
+                session_factory, pipeline_run_id, company_id,
+                company_slug, "daily_tracker",
+            )
+
+        # 2. Daily tracker REQUIRES DB for prompt storage
+        if session_factory is None:
+            raise RuntimeError(
+                "Daily tracker requires DATABASE_URL for prompt storage"
+            )
+
+        async with task_store.semaphore:
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "daily_tracker"})
+
+            from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
+            from core.daily_tracker.prompt_library import PromptLibraryService
+            from core.daily_tracker.platform_runner import PlatformRunnerService
+            from core.daily_tracker.mention_detector import MentionDetector
+            from core.daily_tracker.orchestrator import DailyTrackerOrchestrator
+            from core.daily_tracker.persistence import (
+                create_daily_run_record,
+                persist_daily_run_result,
+                write_run_artifact,
+            )
+            from core.models.daily_tracker import RunStatus
+
+            # 3. Pre-generate run_id and create daily_run record BEFORE
+            #    orchestration for in-flight visibility in GET /runs.
+            daily_run_id = str(uuid.uuid4())
+            config = {
+                "engines": getattr(request, "engines", None),
+                "prompt_ids": getattr(request, "prompt_ids", None),
+                "brand": getattr(request, "brand", None),
+                "competitors": getattr(request, "competitors", None),
+            }
+            await create_daily_run_record(
+                session_factory, company_slug, daily_run_id, config,
+            )
+
+            # 4. Build orchestrator with a short-lived DB session for prompt
+            #    loading only. Session is released BEFORE external platform
+            #    calls to avoid holding DB connections during long I/O.
+            async with session_factory() as orch_session:
+                prompt_repo = TrackedPromptRepository(orch_session)
+                orchestrator = DailyTrackerOrchestrator(
+                    prompt_service=PromptLibraryService(prompt_repo=prompt_repo),
+                    runner_service=PlatformRunnerService(),
+                    mention_detector=MentionDetector(),
+                )
+
+                # Pre-load prompts within the session scope
+                prompts = await orchestrator._fetch_prompts(
+                    company_slug,
+                    getattr(request, "prompt_ids", None),
+                )
+
+            # 5. Execute orchestrator WITHOUT holding a DB connection.
+            #    Pass pre-generated run_id so result.run_id matches the
+            #    daily_runs row created above.
+            result = await orchestrator.execute_daily_run(
+                company_id=company_slug,
+                prompt_ids=[p.id for p in prompts] if prompts else None,
+                engines=getattr(request, "engines", None),
+                brand=getattr(request, "brand", None),
+                competitors=getattr(request, "competitors", None),
+                concurrency=getattr(request, "concurrency", 6),
+                run_id=daily_run_id,
+            )
+
+            mention_analyses: list[Any] = getattr(result, "_mention_analyses", [])
+
+            # 6. Filesystem-first
+            await write_run_artifact(
+                artifacts_root, company_slug, result, mention_analyses,
+            )
+
+            # 7. DB-additive
+            await persist_daily_run_result(
+                session_factory, company_slug, result, mention_analyses,
+            )
+
+            # 8. Update task based on result status
+            if result.status == RunStatus.FAILED:
+                task_store.update_task(
+                    task_id, status=TaskStatus.FAILED, error=result.error,
+                )
+                event_bus.publish(task_id, "failed", {"error": result.error or "Run failed"})
+                await _mark_pipeline_run_failed(
+                    session_factory, pipeline_run_id, result.error or "Run failed",
+                )
+            else:
+                summary = {
+                    "run_id": daily_run_id,
+                    "prompt_count": result.prompt_count,
+                    "engine_count": result.engine_count,
+                }
+                task_store.update_task(
+                    task_id, status=TaskStatus.COMPLETED, result=summary,
+                )
+                event_bus.publish(task_id, "completed", {"pipeline": "daily_tracker"})
+                await _mark_pipeline_run_complete(session_factory, pipeline_run_id, summary)
+
+    except asyncio.CancelledError:
+        logger.info("Daily tracker pipeline cancelled: task_id=%s", task_id)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error="Pipeline cancelled",
+        )
+        event_bus.publish(task_id, "failed", {"error": "Pipeline cancelled"})
+        await _mark_pipeline_run_failed(session_factory, pipeline_run_id, "Cancelled")
+    except Exception as exc:
+        logger.exception("Daily tracker pipeline failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, pipeline_run_id, str(exc))
+    finally:
+        task_store.release_slug_lock(f"daily_tracker:{company_slug}")
+        task_store.remove_task_handle(task_id)
+        # Safety net: ensure daily_runs row doesn't stay in 'running' state
+        if daily_run_id and session_factory:
+            from core.daily_tracker.persistence import mark_daily_run_failed as _mark_dt_failed
+            await _mark_dt_failed(session_factory, daily_run_id)

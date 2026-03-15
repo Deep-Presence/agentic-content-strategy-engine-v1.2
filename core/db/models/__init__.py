@@ -4,6 +4,7 @@ from core.db.models import (  # noqa: F401
     audience_persona,
     cache,
     content,
+    daily_tracker,
     embeddings,
     gap_analysis,
     knowledge_base,

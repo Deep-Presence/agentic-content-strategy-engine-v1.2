@@ -30,6 +30,7 @@ class PipelineType(str, Enum):
     audience_persona = "audience_persona"
     voice_style_guide = "voice_style_guide"
     onboarding = "onboarding"
+    daily_tracker = "daily_tracker"
 
 
 class PipelineStatus(str, Enum):
