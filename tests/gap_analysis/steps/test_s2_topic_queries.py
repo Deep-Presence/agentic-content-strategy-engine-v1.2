@@ -262,6 +262,109 @@ class TestDeduplicateQueriesCrossTopic:
         assert result == []
 
     @pytest.mark.asyncio
+    async def test_merges_cluster_ids_on_dedup(self):
+        """H4 fix: merged_cluster_ids should include both cluster IDs."""
+        queries = [
+            GeneratedQuery(
+                query_id="tq_1", cluster_id="C5", cluster_name="Definition",
+                query_text="What is AP automation?",
+                source_topic_ids=["t1"],
+                merged_cluster_ids=["C5"],
+            ),
+            GeneratedQuery(
+                query_id="tq_2", cluster_id="C6", cluster_name="Problem/Awareness",
+                query_text="What is accounts payable automation?",
+                source_topic_ids=["t2"],
+                merged_cluster_ids=["C6"],
+            ),
+        ]
+        mock_embs = [[1.0, 0.0, 0.0], [0.99, 0.01, 0.0]]
+
+        with patch(
+            "core.gap_analysis.steps.s2_generate_queries.async_embed_texts",
+            new_callable=AsyncMock,
+            return_value=mock_embs,
+        ):
+            from core.gap_analysis.steps.s2_generate_queries import (
+                _deduplicate_queries_cross_topic,
+            )
+
+            result = await _deduplicate_queries_cross_topic(queries, threshold=0.85)
+
+        assert len(result) == 1
+        assert "C5" in result[0].merged_cluster_ids
+        assert "C6" in result[0].merged_cluster_ids
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_cluster_ids_after_merge(self):
+        """H4 fix: same cluster_id on both → no duplicate in merged_cluster_ids."""
+        queries = [
+            GeneratedQuery(
+                query_id="tq_1", cluster_id="C5", cluster_name="Definition",
+                query_text="What is AP?",
+                source_topic_ids=["t1"],
+                merged_cluster_ids=["C5"],
+            ),
+            GeneratedQuery(
+                query_id="tq_2", cluster_id="C5", cluster_name="Definition",
+                query_text="What is AP automation?",
+                source_topic_ids=["t2"],
+                merged_cluster_ids=["C5"],
+            ),
+        ]
+        mock_embs = [[1.0, 0.0], [1.0, 0.0]]
+
+        with patch(
+            "core.gap_analysis.steps.s2_generate_queries.async_embed_texts",
+            new_callable=AsyncMock,
+            return_value=mock_embs,
+        ):
+            from core.gap_analysis.steps.s2_generate_queries import (
+                _deduplicate_queries_cross_topic,
+            )
+
+            result = await _deduplicate_queries_cross_topic(queries, threshold=0.85)
+
+        assert len(result) == 1
+        assert result[0].merged_cluster_ids.count("C5") == 1
+
+    @pytest.mark.asyncio
+    async def test_keeps_queries_with_none_embeddings(self):
+        """M4 fix: queries with failed embeddings should be kept, not dropped."""
+        queries = [
+            GeneratedQuery(
+                query_id="tq_1", cluster_id="C5", cluster_name="Definition",
+                query_text="Query with failed embedding",
+                source_topic_ids=["t1"],
+            ),
+            GeneratedQuery(
+                query_id="tq_2", cluster_id="C6", cluster_name="Problem",
+                query_text="Query with valid embedding A",
+                source_topic_ids=["t2"],
+            ),
+            GeneratedQuery(
+                query_id="tq_3", cluster_id="C7", cluster_name="Best-of",
+                query_text="Query with valid embedding B",
+                source_topic_ids=["t3"],
+            ),
+        ]
+        mock_embs = [None, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+
+        with patch(
+            "core.gap_analysis.steps.s2_generate_queries.async_embed_texts",
+            new_callable=AsyncMock,
+            return_value=mock_embs,
+        ):
+            from core.gap_analysis.steps.s2_generate_queries import (
+                _deduplicate_queries_cross_topic,
+            )
+
+            result = await _deduplicate_queries_cross_topic(queries, threshold=0.85)
+
+        assert len(result) == 3
+        assert result[0].query_id == "tq_1"
+
+    @pytest.mark.asyncio
     async def test_no_duplicate_topic_ids_after_merge(self):
         """If same topic_id already exists, don't add it again."""
         queries = [
