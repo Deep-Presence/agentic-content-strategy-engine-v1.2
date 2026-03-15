@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-15 (Sprint v15 Daily Tracker DB Persistence)
-> **Total items:** 48
+> **Last synced:** 2026-03-15 (Sprint v16 pgvector Migration)
+> **Total items:** 51
 
 ## Critical (Fix Before Production)
 
@@ -547,6 +547,27 @@
 - **Description:** Manual mode currently constructs `WorkerQueryContext` inline with minimal data. Full s3-s6 reuse (search→enrich→embed→analyze on user's topic) would provide richer context but adds 2-5 min latency and requires s1 output (SemanticUnit list) as prerequisite. Current inline approach is sufficient for v0.
 - **Files affected:** `core/content_engine/pipeline_v13.py` (lines 395-435)
 - **Blocked by:** nothing
+
+### PB-80: DB integration tests for migrations 0016+0017
+- **Source:** pgvector-migration-v16 — Codex review deferred
+- **Date added:** 2026-03-15
+- **Description:** Migrations 0016 (pgvector_migration) and 0017 (cps_training_tables) need DB integration tests verifying table creation, HNSW indexes, backfill correctness, and downgrade safety. Requires `TEST_DATABASE_URL`.
+- **Files affected:** `tests/db/test_pgvector_migration.py`
+- **Status:** ✅ RESOLVED 2026-03-15 — 13 DB integration tests (persona_embeddings CRUD + unique constraints, semantic_units nullable run_id + slug query, paragraph_embeddings nullable FK, CPS training tables, EmbeddingRepository end-to-end). Auto-skip without TEST_DATABASE_URL.
+
+### PB-81: Tests for new EmbeddingRepository methods
+- **Source:** pgvector-migration-v16 — Phase 3 deferred
+- **Date added:** 2026-03-15
+- **Description:** 7 new methods added to `embedding_repo.py` (slug-based queries, upserts, persona embeddings, count/delete). Need mocked session unit tests.
+- **Files affected:** `tests/shared_tools/test_embedding_repo_extended.py`
+- **Status:** ✅ RESOLVED 2026-03-15 — 15 mocked-session unit tests covering all 7 methods (get_by_slug, get_by_ids, count, delete, upsert paragraphs, upsert personas, get personas).
+
+### PB-82: Integration test for migrate_chroma_to_pgvector.py script
+- **Source:** pgvector-migration-v16 — Phase 8 deferred
+- **Date added:** 2026-03-15
+- **Description:** Data migration script needs integration test with mock ChromaDB client + mock pgvector. Verify collection enumeration, batch processing, idempotent ON CONFLICT, dry-run mode, and summary report.
+- **Files affected:** `tests/scripts/test_migrate_chroma_to_pgvector.py`
+- **Status:** ✅ RESOLVED 2026-03-15 — 17 tests (slug extraction, 3 collection types, dry-run, empty collections, missing chroma dir, missing chromadb, missing DATABASE_URL, null documents, multi-company).
 
 ### PB-44: Knowledge doc upload content_type inferred from extension only
 - **Source:** Settings-knowledge-docs sprint self-review

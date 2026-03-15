@@ -572,5 +572,41 @@
     "outcome": "_flag_company_citations() and _build_company_citation_map() in pipeline.py, called between s3 and s4. is_company_citation carried through s4 dedup into EnrichedCitation.",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-pgvector-1",
+    "timestamp": "2026-03-15",
+    "task": "Replace ChromaDB with pgvector as primary vector store",
+    "approach": "8-phase migration: VectorStoreClient with drop-in API, 2 Alembic migrations, EmbeddingRepository extensions, consumer migration, full ChromaDB removal, data migration script.",
+    "rationale": "ChromaDB is local SQLite-backed, single-process — not production-ready. pgvector infrastructure already existed (3 tables + HNSW indexes + EmbeddingRepository). Migration makes pgvector PRIMARY and ONLY store, requires DATABASE_URL.",
+    "alternatives_rejected": [
+      "In-memory fallback without DATABASE_URL (undermines production readiness)",
+      "Keep ChromaDB alongside pgvector (dual-write complexity, maintenance burden)"
+    ],
+    "outcome": "ChromaDB fully removed. VectorStoreClient (469 lines) is single write path. persist_s1 is no-op (VectorStoreClient writes during S1). persist_s5 handles query embeddings only. Codex-reviewed: 11 findings, all addressed.",
+    "reversible": false,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-pgvector-2",
+    "timestamp": "2026-03-15",
+    "task": "Consolidate persist_s1/s5 with VectorStoreClient",
+    "approach": "persist_s1 → logging-only no-op (VectorStoreClient writes during S1 execution). persist_s5 → query embeddings only (needs run_id FK not available in VectorStoreClient). Citation paragraph embeddings handled by VectorStoreClient during S5.",
+    "rationale": "Single write path eliminates double-writes. Query embeddings require run_id FK (pipeline_runs table) which is only available in pipeline context, not in VectorStoreClient.",
+    "alternatives_rejected": ["Full no-op for persist_s5 (loses query embedding persistence)", "Pass run_id through VectorStoreClient (coupling pipeline concerns into vector store)"],
+    "outcome": "Clean separation: VectorStoreClient handles embeddings, persist_s5 handles query embeddings with run_id FK.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-pgvector-3",
+    "timestamp": "2026-03-15",
+    "task": "Deterministic enrichment IDs for S4 FK integrity",
+    "approach": "Replace uuid4() with uuid5(NAMESPACE_URL, url_hash) in persist_s4 for enrichment IDs.",
+    "rationale": "uuid4() generates new IDs on every rerun, breaking FK references from paragraph_embeddings.url_enrichment_id. uuid5 is deterministic — same URL always produces same enrichment ID.",
+    "alternatives_rejected": ["Query existing enrichment IDs before insert (extra DB round-trip)", "Remove FK constraint (loses referential integrity)"],
+    "outcome": "Deterministic IDs prevent FK mismatch on reruns. Pre-existing bug fixed during migration.",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]
