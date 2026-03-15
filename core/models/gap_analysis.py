@@ -107,11 +107,8 @@ class GapAnalysisInput(BaseModel):
     persona_paths: List[str] = Field(
         default_factory=list, description="Paths to persona artifacts (DeepAgents paths)."
     )
-    style_guide_path: Optional[str] = Field(
-        default=None, description="Path to style guide artifact (DeepAgents path)."
-    )
     max_queries: int = Field(
-        default=150, ge=10, le=500, description="Max queries across all clusters."
+        default=75, ge=10, le=500, description="Max queries across all clusters."
     )
     platforms: List[str] = Field(
         default_factory=lambda: ["perplexity", "openai", "gemini", "claude"],
@@ -132,6 +129,10 @@ class GapAnalysisInput(BaseModel):
     )
     product_name: Optional[str] = Field(
         default=None, description="Product display name for prompt injection."
+    )
+    fast_mode: bool = Field(
+        default=False,
+        description="Demo/fast mode: caps queries at 30, uses only fastest engines (openai, perplexity).",
     )
     product_description: Optional[str] = Field(
         default=None, description="Product description for prompt injection."
@@ -169,6 +170,12 @@ class GeneratedQuery(BaseModel):
     buyer_stage: Optional[str] = None
     persona_tag: Optional[str] = None
     embedding: Optional[List[float]] = None
+    # Topic Discovery integration: tracks which TopicAssignment(s) spawned this query.
+    # List because cross-topic dedup can merge queries from multiple topics.
+    source_topic_ids: List[str] = Field(default_factory=list)
+    # All cluster IDs that contributed to this query (original + merged duplicates).
+    # Populated during cross-topic dedup when queries from different clusters merge.
+    merged_cluster_ids: List[str] = Field(default_factory=list)
 
 
 class CitationRef(BaseModel):
@@ -178,6 +185,7 @@ class CitationRef(BaseModel):
     snippet: Optional[str] = None
     confidence: Optional[float] = None
     source: Optional[str] = None
+    is_company_citation: bool = False
 
 
 class PlatformResult(BaseModel):
@@ -252,6 +260,21 @@ class StructuralSignals(BaseModel):
     named_entity_density: float = 0.0
 
 
+class CompanyPageAnalysis(BaseModel):
+    """Structural analysis of a company page (page-level, not chunk-level).
+
+    Computed during s1 by reusing the structural signal extraction from s4.
+    Stored as a separate artifact (company_page_analysis.json) to avoid
+    duplicating signals across the 10-20 SemanticUnit chunks per page.
+    """
+
+    url: str
+    title: Optional[str] = None
+    structural_signals: Optional[StructuralSignals] = None
+    word_count: int = 0
+    paragraph_count: int = 0
+
+
 class CitationExemplar(BaseModel):
     """A top-scoring cited page for a specific query."""
 
@@ -281,6 +304,7 @@ class EnrichedCitation(BaseModel):
     paragraphs: List[str] = Field(default_factory=list)
     best_paragraphs: List[ParagraphMatch] = Field(default_factory=list)
     structural_signals: Optional[StructuralSignals] = None
+    is_company_citation: bool = False
 
 
 class SpaResult(BaseModel):
@@ -333,12 +357,18 @@ class QueryGap(BaseModel):
     query_text: str
     best_company_unit: Optional[str] = None
     best_company_unit_text: Optional[str] = None
+    best_company_url: Optional[str] = None
     best_company_similarity: Optional[float] = None
     avg_citation_similarity: Optional[float] = None
     gap: Optional[float] = None
     interpretation: Optional[str] = None
     top_cited_exemplars: List[CitationExemplar] = Field(default_factory=list)
     content_brief: Optional[GapContentBrief] = None
+    best_company_structural_signals: Optional[Dict[str, Any]] = None
+    company_cited: bool = False
+    company_cited_platforms: List[str] = Field(default_factory=list)
+    # Topic Discovery integration: inherited from GeneratedQuery.source_topic_ids in S6.
+    source_topic_ids: List[str] = Field(default_factory=list)
 
 
 class ClusterContentSpec(BaseModel):
@@ -377,6 +407,9 @@ class AnalysisResult(BaseModel):
     citation_patterns: Dict[str, Any] = Field(default_factory=dict)
     decision_metrics: Dict[str, Any] = Field(default_factory=dict)
     cluster_specs: List[ClusterContentSpec] = Field(default_factory=list)
+    # Topic Discovery integration: maps topic_assignment_id → [query_ids].
+    # Populated by run_topic_scoped_gap_analysis(); empty dict for standard runs.
+    topic_query_map: Dict[str, List[str]] = Field(default_factory=dict)
 
 
 class GapReport(BaseModel):

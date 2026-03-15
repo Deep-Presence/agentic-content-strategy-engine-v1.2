@@ -89,7 +89,7 @@ def get_task(
 
 
 @router.post("/{task_id}/cancel")
-def cancel_task(
+async def cancel_task(
     task_id: str,
     request: Request,
     task_store: TaskStoreProtocol = Depends(get_task_store),
@@ -113,9 +113,9 @@ def cancel_task(
     task_store.cancel_task_handle(task_id)
 
     task_store.update_task(task_id, status=TaskStatus.CANCELLED)
-    # Use effective_slug (may be company__product) for correct lock release
+    # Use pipeline:effective_slug for correct lock release
     effective = task.effective_slug or task.company_slug
-    task_store.release_slug_lock(effective)
+    task_store.release_slug_lock(f"{task.pipeline}:{effective}")
 
     # Publish SSE cancelled event so frontend receives it
     event_bus.publish(task_id, "cancelled", {"reason": "user_cancelled"})

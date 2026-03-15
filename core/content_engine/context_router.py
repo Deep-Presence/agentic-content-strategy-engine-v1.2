@@ -26,8 +26,11 @@ from core.models.content_generation_v13 import (
     ClusterSummary,
     PlannerScorecard,
     QueryScorecard,
+    TopicSelection,
     WorkerQueryContext,
 )
+from core.gap_analysis.topic_cluster_map import get_cluster_mapping, get_cluster_name
+from core.models.topic_discovery import TopicAssignment
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +77,7 @@ def extract_scorecard(
                 interpretation=gap.get("interpretation", "") or "",
                 exemplar_count=len(exemplars),
                 has_brief=content_brief is not None,
+                company_cited=gap.get("company_cited", False),
             )
         )
 
@@ -184,6 +188,7 @@ def extract_worker_context(
             exemplars=exemplars,
             gap_content_brief=content_brief,
             company_best_text=gap.get("best_company_unit_text", "") or "",
+            company_best_url=gap.get("best_company_url", "") or "",
         )
 
     logger.info(
@@ -244,10 +249,10 @@ def format_scorecard_as_markdown(scorecard: PlannerScorecard) -> str:
     # --- Per-query table ---
     lines.append("## Query Scorecards")
     lines.append(
-        "| ID | Query | Cluster | Gap | Co. Sim | Cit. Sim | Class | Exemplars | Brief |"
+        "| ID | Query | Cluster | Gap | Co. Sim | Cit. Sim | Class | Exemplars | Brief | Cited |"
     )
     lines.append(
-        "|----|-------|---------|-----|---------|----------|-------|-----------|-------|"
+        "|----|-------|---------|-----|---------|----------|-------|-----------|-------|-------|"
     )
     for q in scorecard.queries:
         # Truncate query text to 80 chars for readability
@@ -256,7 +261,8 @@ def format_scorecard_as_markdown(scorecard: PlannerScorecard) -> str:
             f"| {q.query_id} | {qtext} | {q.cluster_name} "
             f"| {q.gap:.3f} | {q.best_company_similarity:.3f} "
             f"| {q.avg_citation_similarity:.3f} | {q.interpretation} "
-            f"| {q.exemplar_count} | {'Y' if q.has_brief else 'N'} |"
+            f"| {q.exemplar_count} | {'Y' if q.has_brief else 'N'} "
+            f"| {'Y' if q.company_cited else 'N'} |"
         )
     lines.append("")
 
@@ -291,12 +297,36 @@ def format_worker_context_as_markdown(
     lines.append(f"- **Company Similarity:** {gap.get('best_company_similarity', 0):.3f}")
     lines.append(f"- **Citation Similarity:** {gap.get('avg_citation_similarity', 0):.3f}")
     lines.append(f"- **Classification:** {gap.get('interpretation', '')}")
+    company_cited = gap.get("company_cited", False)
+    if company_cited:
+        platforms = gap.get("company_cited_platforms", [])
+        lines.append(f"- **Company Already Cited:** Yes (on {', '.join(platforms)})")
+    else:
+        lines.append("- **Company Already Cited:** No")
     lines.append("")
 
     # --- Company's current content ---
     if context.company_best_text:
         lines.append("## Company's Current Best Content")
+        if context.company_best_url:
+            lines.append(f"- **Source URL:** {context.company_best_url}")
         lines.append(context.company_best_text[:500])
+        lines.append("")
+
+    # --- Company page structural signals ---
+    company_signals = gap.get("best_company_structural_signals")
+    if company_signals:
+        lines.append("## Company Page Structure")
+        key_signals = [
+            "word_count", "header_count", "h2_count", "h3_count",
+            "list_item_count", "table_count", "has_faq_section",
+            "has_definition_opening", "has_key_takeaways", "has_step_by_step",
+            "paragraph_count", "avg_paragraph_length", "reading_level",
+            "stat_count", "citation_count", "authority_type", "content_type",
+        ]
+        for key in key_signals:
+            if key in company_signals:
+                lines.append(f"- **{key}:** {company_signals[key]}")
         lines.append("")
 
     # --- Content brief targets ---
@@ -335,3 +365,133 @@ def format_worker_context_as_markdown(
         lines.append("")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Topic Discovery Context Extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_topic_contexts(
+    analysis_json: Dict[str, Any],
+    topic_query_map: Dict[str, List[str]],
+) -> Dict[str, WorkerQueryContext]:
+    """Extract per-topic WorkerQueryContext from topic-scoped analysis.
+
+    For each topic, aggregates exemplars across all its queries and uses
+    the highest-gap query as the primary context. Returns dict keyed by
+    the FIRST query_id of each topic (compat with build_briefs_parallel
+    which does ``contexts[topic.query_ids[0]]``).
+
+    Args:
+        analysis_json: The full AnalysisResult dict (from analysis.json).
+        topic_query_map: Maps topic_assignment_id → [query_ids].
+
+    Returns:
+        Dict mapping first_query_id → WorkerQueryContext.
+    """
+    gaps: List[Dict[str, Any]] = analysis_json.get("gaps", [])
+    cluster_specs: List[Dict[str, Any]] = analysis_json.get("cluster_specs", [])
+
+    gap_by_id: Dict[str, Dict[str, Any]] = {
+        g.get("query_id", ""): g for g in gaps
+    }
+    spec_by_name: Dict[str, Dict[str, Any]] = {
+        s.get("cluster_name", ""): s for s in cluster_specs
+    }
+
+    contexts: Dict[str, WorkerQueryContext] = {}
+
+    for topic_id, query_ids in topic_query_map.items():
+        if not query_ids:
+            continue
+
+        # Gather all gaps for this topic
+        topic_gaps = [gap_by_id[qid] for qid in query_ids if qid in gap_by_id]
+        if not topic_gaps:
+            continue
+
+        # Use highest-gap query as primary
+        primary_gap = max(topic_gaps, key=lambda g: g.get("gap") or 0.0)
+
+        # Aggregate exemplars across all queries (dedupe by URL)
+        all_exemplars: List[Dict[str, Any]] = []
+        seen_urls: set[str] = set()
+        for g in topic_gaps:
+            for ex in g.get("top_cited_exemplars", []):
+                url = ex.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    all_exemplars.append(ex)
+
+        # Use primary gap's cluster for spec lookup
+        cluster_name = primary_gap.get("cluster_name", "") or ""
+        cluster_spec = spec_by_name.get(cluster_name, {})
+
+        # Key by first query_id (compat with build_briefs_parallel)
+        key_qid = query_ids[0]
+        contexts[key_qid] = WorkerQueryContext(
+            query_gap=primary_gap,
+            cluster_spec=cluster_spec,
+            exemplars=all_exemplars[:5],  # Cap at 5 exemplars
+            gap_content_brief=primary_gap.get("content_brief"),
+            company_best_text=primary_gap.get("best_company_unit_text", "") or "",
+            company_best_url=primary_gap.get("best_company_url", "") or "",
+        )
+
+    logger.info(
+        "Extracted topic contexts for %d topics (%d total query groups)",
+        len(contexts), len(topic_query_map),
+    )
+    return contexts
+
+
+def topic_assignment_to_selection(
+    assignment: TopicAssignment,
+    query_ids: List[str],
+    query_texts: List[str],
+    rank: int = 0,
+) -> TopicSelection:
+    """Convert a TopicAssignment → TopicSelection for Brief Builder.
+
+    Maps TD metadata into the format the Brief Builder expects,
+    bypassing the Strategic Planner.
+
+    Args:
+        assignment: The approved TopicAssignment from TD.
+        query_ids: Query IDs generated for this assignment.
+        query_texts: Corresponding query text strings.
+        rank: Priority rank (0 = highest).
+
+    Returns:
+        TopicSelection ready for the Brief Builder.
+    """
+    # Map buyer stage to estimated impact
+    impact_map = {"bofu": "high", "mofu": "medium", "tofu": "medium"}
+    impact = impact_map.get(assignment.buyer_stage.value, "medium")
+
+    # Build rationale from TD metadata
+    rationale = (
+        f"Topic Discovery: {assignment.subdomain_name} → "
+        f"{assignment.buyer_stage.value}/{assignment.intent_type.value} "
+        f"for {assignment.audience_segment}. "
+        f"Priority score: {assignment.priority_score:.2f}."
+    )
+
+    # L2 fix: derive cluster_name from buyer_stage × intent_type mapping
+    cluster_name = ""
+    mapping = get_cluster_mapping(
+        assignment.buyer_stage.value, assignment.intent_type.value,
+    )
+    if mapping and mapping.primary:
+        cluster_name = get_cluster_name(mapping.primary[0])
+
+    return TopicSelection(
+        rank=rank,
+        query_ids=query_ids,
+        query_texts=query_texts,
+        cluster_name=cluster_name,
+        rationale=rationale,
+        consolidation_note=f"TD topic: {assignment.topic_text}",
+        estimated_impact=impact,
+    )

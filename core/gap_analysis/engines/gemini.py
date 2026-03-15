@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 _TEMPERATURE = 0
-_MAX_OUTPUT_TOKENS = 4096
+_MAX_OUTPUT_TOKENS = 2048
 
 
 def _parse_gemini_response(data: dict) -> dict:
@@ -64,7 +64,7 @@ class GeminiEngine(SearchEngine):
     def __init__(self, model: Optional[str] = None) -> None:
         super().__init__(model=model or settings.gap_analysis_gemini_engine_model)
 
-    async def search(self, query_text: str, query_id: Optional[str] = None) -> PlatformResult:
+    async def search(self, query_text: str, query_id: Optional[str] = None, *, client: Any = None) -> PlatformResult:
         api_key = settings.google_api_key_gap_analysis
         if not api_key:
             raise RuntimeError(
@@ -93,8 +93,9 @@ class GeminiEngine(SearchEngine):
         }
 
         logger.info("Gemini search request for query %s", query_id)
-        async with httpx.AsyncClient(timeout=90) as client:
-            resp = await client.post(url, params=params, json=payload)
+
+        async def _do_request(http_client: httpx.AsyncClient) -> dict:
+            resp = await http_client.post(url, params=params, json=payload)
             if resp.status_code >= 400:
                 logger.error(
                     "Gemini search error for query %s: status=%s body=%s",
@@ -105,7 +106,7 @@ class GeminiEngine(SearchEngine):
                 resp.raise_for_status()
 
             try:
-                data = resp.json()
+                return resp.json()
             except json.JSONDecodeError as e:
                 logger.error(
                     "Gemini search invalid JSON for query %s: %s body_preview=%s",
@@ -114,6 +115,12 @@ class GeminiEngine(SearchEngine):
                     resp.text[:500],
                 )
                 raise RuntimeError(f"Gemini API returned invalid JSON: {e}") from e
+
+        if client is not None:
+            data = await _do_request(client)
+        else:
+            async with httpx.AsyncClient(timeout=90) as http_client:
+                data = await _do_request(http_client)
 
         parsed = _parse_gemini_response(data)
         response_text = parsed["response_text"]

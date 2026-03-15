@@ -130,8 +130,10 @@ Rules:
 - Section word counts MUST sum to approximately the total word_count_range midpoint
 - Structural targets MUST be derived from the exemplar data, not guessed
 - Content format must match query intent and exemplar patterns
-- If the company currently has content for this query (company_best_text), \
-note what already exists and what the new content should improve upon
+- If the company currently has content for this query (company_best_text with source URL), \
+note what already exists, reference the source URL, and explain what the new content \
+should improve upon. If a source URL is provided, recommend whether to optimize the \
+existing page or create a net-new page
 - Every section must have at least 2 key_points and a clear purpose
 - **gap_reasoning**: Provide exactly 3 points explaining how this brief specifically \
 overcomes the identified content gap. Reference concrete gap data (scores, counts, etc.)
@@ -143,6 +145,10 @@ Name the persona role and key characteristics that this content addresses
 "problem-unaware", "problem-aware", "solution-aware", "product-aware", "most-aware"
 - **intent_stage**: Classify from the query context. Values: \
 "informational", "navigational", "commercial", "transactional"
+- If the company is already cited by AI platforms for this query (Company Already Cited = Yes), \
+focus on OPTIMIZING the existing cited content rather than creating competing new content. \
+Note which platforms cite it and design improvements to the source page that will strengthen \
+the company's existing citation position
 """
 
 

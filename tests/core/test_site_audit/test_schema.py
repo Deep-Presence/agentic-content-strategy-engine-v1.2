@@ -32,6 +32,7 @@ from core.site_audit.checks.schema_checks import (
     validate_product_schema,
     validate_schema_block,
     validate_speakable_schema,
+    validate_website_schema,
 )
 from core.site_audit.steps.s3_check_schema import detect_schema, generate_schema_findings
 
@@ -933,3 +934,106 @@ class TestValidateSchemaBlockProductSpeakable:
         errors = validate_schema_block(block)
         # Should have run speakable validation (name warning)
         assert any("name" in e for e in errors)
+
+    def test_dispatches_website(self) -> None:
+        block = {"@type": "WebSite"}
+        errors = validate_schema_block(block)
+        assert any("url" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# validate_website_schema
+# ---------------------------------------------------------------------------
+
+
+class TestValidateWebsiteSchema:
+    def test_valid_website(self) -> None:
+        block = {
+            "@type": "WebSite",
+            "name": "Example Site",
+            "url": "https://example.com",
+        }
+        assert validate_website_schema(block) == []
+
+    def test_missing_url(self) -> None:
+        block = {"@type": "WebSite", "name": "Example"}
+        errors = validate_website_schema(block)
+        assert any("url" in e for e in errors)
+
+    def test_missing_name(self) -> None:
+        block = {"@type": "WebSite", "url": "https://example.com"}
+        errors = validate_website_schema(block)
+        assert any("name" in e for e in errors)
+
+    def test_valid_search_action(self) -> None:
+        block = {
+            "@type": "WebSite",
+            "name": "Example",
+            "url": "https://example.com",
+            "potentialAction": {
+                "@type": "SearchAction",
+                "target": "https://example.com/search?q={search_term_string}",
+                "query-input": "required name=search_term_string",
+            },
+        }
+        assert validate_website_schema(block) == []
+
+    def test_search_action_missing_target(self) -> None:
+        block = {
+            "@type": "WebSite",
+            "name": "Example",
+            "url": "https://example.com",
+            "potentialAction": {
+                "@type": "SearchAction",
+                "query-input": "required name=search_term_string",
+            },
+        }
+        errors = validate_website_schema(block)
+        assert any("target" in e for e in errors)
+
+    def test_search_action_missing_query_input(self) -> None:
+        block = {
+            "@type": "WebSite",
+            "name": "Example",
+            "url": "https://example.com",
+            "potentialAction": {
+                "@type": "SearchAction",
+                "target": "https://example.com/search?q={search_term_string}",
+            },
+        }
+        errors = validate_website_schema(block)
+        assert any("query-input" in e for e in errors)
+
+    def test_search_action_target_without_template(self) -> None:
+        block = {
+            "@type": "WebSite",
+            "name": "Example",
+            "url": "https://example.com",
+            "potentialAction": {
+                "@type": "SearchAction",
+                "target": "https://example.com/search",
+                "query-input": "required name=search_term_string",
+            },
+        }
+        errors = validate_website_schema(block)
+        assert any("template" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# generate_schema_findings — homepage WebSite check
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateSchemaFindingsWebsite:
+    def test_homepage_missing_website_schema(self) -> None:
+        result = detect_schema("", f"{BASE_URL}/")
+        findings = generate_schema_findings(f"{BASE_URL}/", result)
+        types = [f.finding_type for f in findings]
+        assert "missing_website_schema" in types
+
+    def test_homepage_with_website_schema(self) -> None:
+        html = _make_html([{"@type": "WebSite", "name": "Test", "url": BASE_URL}])
+        result = detect_schema(html, f"{BASE_URL}/")
+        findings = generate_schema_findings(f"{BASE_URL}/", result)
+        types = [f.finding_type for f in findings]
+        assert "missing_website_schema" not in types

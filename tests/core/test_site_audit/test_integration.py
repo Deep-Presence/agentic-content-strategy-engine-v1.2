@@ -665,6 +665,31 @@ class TestGenerateMarkdownReport:
         md = generate_markdown_report(self._make_result())
         assert "llms.txt" in md
 
+    def test_contains_performance_overview(self) -> None:
+        """Performance Overview appears when pages have html_bytes."""
+        page = _make_page_result()
+        page.html_bytes = 50_000
+        page.external_script_count = 3
+        page.external_css_count = 2
+        page.blocking_script_count = 1
+        page.blocking_css_count = 1
+        result = aggregate_results(
+            page_results=[page],
+            ai_bot_access=AIBotAccessResult(),
+            sitemap_health=SitemapHealthResult(),
+        )
+        md = generate_markdown_report(result)
+        assert "Performance Overview" in md
+        assert "Average HTML size:" in md
+        assert "render-blocking" in md
+        assert "external resources" in md
+
+    def test_no_performance_overview_without_data(self) -> None:
+        """No Performance Overview when html_bytes is None."""
+        result = self._make_result()
+        md = generate_markdown_report(result)
+        assert "Performance Overview" not in md
+
 
 class TestGenerateReport:
     """Tests for generate_report (file persistence)."""

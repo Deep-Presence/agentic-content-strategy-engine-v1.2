@@ -125,6 +125,22 @@ class TestAuditConfig:
         assert cfg.aeo_ideal_paragraph_word_count_min == 20
         assert cfg.aeo_ideal_paragraph_word_count_max == 80
 
+    def test_performance_structural_defaults(self) -> None:
+        cfg = AuditConfig()
+        assert cfg.html_warn_size_kb == 200
+        assert cfg.html_max_size_kb == 500
+        assert cfg.max_external_resources_warn == 15
+        assert cfg.max_external_resources_critical == 30
+        assert cfg.max_render_blocking_warn == 2
+        assert cfg.max_render_blocking_critical == 5
+        assert cfg.inline_js_warn_kb == 50
+        assert cfg.inline_js_max_kb == 100
+        assert cfg.inline_css_max_kb == 50
+
+    def test_cross_page_defaults(self) -> None:
+        cfg = AuditConfig()
+        assert cfg.thin_content_threshold == 200
+
     def test_weight_sum_helper(self) -> None:
         cfg = AuditConfig()
         assert cfg.weight_sum() == pytest.approx(1.0)

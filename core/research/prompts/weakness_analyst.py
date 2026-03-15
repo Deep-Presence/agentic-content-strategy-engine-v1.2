@@ -70,12 +70,12 @@ def build_weakness_analyst_user_prompt(
         revision_note: Optional reviewer feedback from a previous version.
     """
     # Truncate upstream docs to avoid excessive prompt length
-    overview_truncated = company_overview_md[:8000]
-    if len(company_overview_md) > 8000:
+    overview_truncated = company_overview_md[:32_000]  # ~8k tokens
+    if len(company_overview_md) > 32_000:
         overview_truncated += "\n\n[... truncated ...]"
 
-    competitor_truncated = competitor_registry_md[:12000]
-    if len(competitor_registry_md) > 12000:
+    competitor_truncated = competitor_registry_md[:48_000]  # ~12k tokens
+    if len(competitor_registry_md) > 48_000:
         competitor_truncated += "\n\n[... truncated ...]"
 
     parts = [

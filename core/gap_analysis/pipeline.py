@@ -7,18 +7,64 @@ import re
 import sys
 import time
 import uuid
+from collections import defaultdict
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.gap_analysis.steps.s1_embed_assets import embed_company_assets
+from core.models.gap_analysis import PlatformResult
+from core.research.audience_persona.storage import PersonaStorage
 from core.shared_tools.async_chroma_client import (
     async_collection_exists,
     async_get_all_embeddings,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── Self-citation helpers ──────────────────────────────────────────
+
+
+def _normalize_domain(domain: str) -> str:
+    """Strip 'www.' prefix and lowercase a domain for comparison."""
+    return domain.lower().removeprefix("www.")
+
+
+def _flag_company_citations(
+    results: List[PlatformResult],
+    company_domain: Optional[str],
+) -> None:
+    """In-place: set is_company_citation=True for citations matching company domain."""
+    if not company_domain:
+        return
+    norm_company = _normalize_domain(company_domain)
+    for result in results:
+        for citation in result.citations:
+            citation_netloc = urlparse(str(citation.url)).netloc
+            norm_citation = _normalize_domain(citation_netloc)
+            if norm_citation == norm_company or norm_citation.endswith(
+                f".{norm_company}"
+            ):
+                citation.is_company_citation = True
+
+
+def _build_company_citation_map(
+    results: List[PlatformResult],
+) -> Dict[str, List[str]]:
+    """Build query_id → [engine1, engine2, ...] map from flagged citations.
+
+    Must be called BEFORE s4 dedup, since dedup collapses multi-engine info.
+    """
+    citation_map: Dict[str, List[str]] = defaultdict(list)
+    for result in results:
+        for citation in result.citations:
+            if citation.is_company_citation:
+                if result.engine not in citation_map[result.query_id]:
+                    citation_map[result.query_id].append(result.engine)
+    return dict(citation_map)
 
 # ── CLI progress helpers ────────────────────────────────────────────
 
@@ -71,7 +117,11 @@ def _cli_footer(total: float, skipped_count: int) -> None:
     w("─" * 52 + "\n\n")
     sys.stdout.flush()
 
-from core.gap_analysis.steps.s2_generate_queries import generate_queries
+from core.gap_analysis.steps.s2_generate_queries import (
+    generate_queries,
+    generate_queries_from_topics,
+)
+from core.gap_analysis.steps.s8_generate_report import aggregate_per_topic
 from core.gap_analysis.steps.s3_search_platforms import (
     save_platform_results,
     search_platforms,
@@ -96,6 +146,7 @@ from core.gap_analysis.persistence import (
 )
 from core.models.gap_analysis import (
     AnalysisResult,
+    CompanyPageAnalysis,
     EnrichedCitation,
     GapAnalysisInput,
     GapReport,
@@ -103,6 +154,7 @@ from core.models.gap_analysis import (
     PlatformResult,
     SemanticUnit,
 )
+from core.models.topic_discovery import TopicAssignment
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]  # content-strategy-engine/
 
@@ -117,6 +169,28 @@ def _artifact_dir(company_slug: str) -> Path:
     path = _PROJECT_ROOT / "artifacts" / "gap_analysis" / company_slug
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _resolve_persona_paths(input_data: "GapAnalysisInput", slug: str) -> None:
+    """Auto-discover persona paths from audience_persona artifacts when none provided.
+
+    Mutates ``input_data.persona_paths`` in place. Explicit paths take priority.
+    """
+    if input_data.persona_paths:
+        logger.info("Using %d explicit persona path(s)", len(input_data.persona_paths))
+        return
+
+    storage = PersonaStorage(artifacts_root=_PROJECT_ROOT / "artifacts", slug=slug)
+    paths = storage.list_persona_paths()
+    if paths:
+        input_data.persona_paths = paths
+        logger.info(
+            "Auto-discovered %d persona(s) from artifacts/audience_personas/%s/",
+            len(paths),
+            slug,
+        )
+    else:
+        logger.info("No audience persona artifacts found for slug '%s'", slug)
 
 
 def _load_json_list(path: Path, model_cls):
@@ -140,55 +214,93 @@ async def run_gap_analysis(
     pipeline_start = time.monotonic()
     skipped_count = len([s for s in range(1, 9) if s in skip_steps])
 
+    # Fast/demo mode: cap queries and use only fastest engines
+    if input_data.fast_mode:
+        input_data.max_queries = min(input_data.max_queries or 30, 30)
+        if not input_data.platforms or len(input_data.platforms) > 2:
+            input_data.platforms = ["openai", "perplexity"]
+        logger.info(
+            "Fast mode enabled: max_queries=%d, platforms=%s",
+            input_data.max_queries,
+            input_data.platforms,
+        )
+
     _cli_header(slug, skip_steps)
 
-    # Step 1: embed company assets
-    step_start = time.monotonic()
-    logger.info("Step 1 started: embed_company_assets")
-    if 1 in skip_steps:
-        company_units = _load_json_list(
-            artifact_dir / "company_embeddings.json", SemanticUnit
-        )
-        # Hydrate embeddings from ChromaDB if JSON has no raw vectors
-        if not any(u.embedding for u in company_units):
-            if await async_collection_exists(slug):
-                embedding_map = await async_get_all_embeddings(slug)
-                hydrated = 0
-                for unit in company_units:
-                    if unit.unit_id in embedding_map:
-                        unit.embedding = embedding_map[unit.unit_id]
-                        hydrated += 1
-                logger.info(
-                    "Hydrated %d/%d unit embeddings from ChromaDB.",
-                    hydrated,
-                    len(company_units),
-                )
-            else:
-                logger.warning(
-                    "No ChromaDB collection found for '%s' and JSON has no embeddings. "
-                    "S6/S7 may produce degraded results.",
-                    slug,
-                )
-    else:
-        company_units = await embed_company_assets(input_data)
-    logger.info("Step 1 completed: embed_company_assets (%.1fs)", time.monotonic() - step_start)
-    await persist_s1(session_factory, run_id, company_id, slug, company_units)
-    _cli_step(1, time.monotonic() - step_start, skipped=1 in skip_steps)
+    # Auto-resolve persona paths before query generation (depends on neither S1 nor S2)
+    _resolve_persona_paths(input_data, slug)
 
-    # Step 2: generate queries
-    step_start = time.monotonic()
-    logger.info("Step 2 started: generate_queries")
-    if 2 in skip_steps:
-        queries = _load_json_list(artifact_dir / "queries.json", GeneratedQuery)
-    else:
-        queries = await generate_queries(input_data)
-        (artifact_dir / "queries.json").write_text(
-            json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
-            encoding="utf-8",
-        )
-    logger.info("Step 2 completed: generate_queries (%.1fs)", time.monotonic() - step_start)
+    # ── S1 + S2: run in parallel when neither is skipped ──────────────
+    async def _run_s1() -> tuple[List[SemanticUnit], float]:
+        t = time.monotonic()
+        logger.info("Step 1 started: embed_company_assets")
+        if 1 in skip_steps:
+            units = _load_json_list(
+                artifact_dir / "company_embeddings.json", SemanticUnit
+            )
+            if not any(u.embedding for u in units):
+                if await async_collection_exists(slug):
+                    embedding_map = await async_get_all_embeddings(slug)
+                    hydrated = 0
+                    for unit in units:
+                        if unit.unit_id in embedding_map:
+                            unit.embedding = embedding_map[unit.unit_id]
+                            hydrated += 1
+                    logger.info(
+                        "Hydrated %d/%d unit embeddings from ChromaDB.",
+                        hydrated, len(units),
+                    )
+                else:
+                    logger.warning(
+                        "No ChromaDB collection found for '%s' and JSON has no embeddings. "
+                        "S6/S7 may produce degraded results.", slug,
+                    )
+        else:
+            units = await embed_company_assets(input_data)
+        elapsed = time.monotonic() - t
+        logger.info("Step 1 completed: embed_company_assets (%.1fs)", elapsed)
+        return units, elapsed
+
+    async def _run_s2() -> tuple[List[GeneratedQuery], float]:
+        t = time.monotonic()
+        logger.info("Step 2 started: generate_queries")
+        if 2 in skip_steps:
+            qs = _load_json_list(artifact_dir / "queries.json", GeneratedQuery)
+        else:
+            qs = await generate_queries(input_data)
+            (artifact_dir / "queries.json").write_text(
+                json.dumps([q.model_dump(mode="json") for q in qs], indent=2, default=str),
+                encoding="utf-8",
+            )
+        elapsed = time.monotonic() - t
+        logger.info("Step 2 completed: generate_queries (%.1fs)", elapsed)
+        return qs, elapsed
+
+    (company_units, s1_elapsed), (queries, s2_elapsed) = await asyncio.gather(
+        _run_s1(), _run_s2(),
+    )
+
+    # Post-gather persistence + CLI output
+    await persist_s1(session_factory, run_id, company_id, slug, company_units)
     await persist_s2(session_factory, run_id, company_id, slug, queries)
-    _cli_step(2, time.monotonic() - step_start, skipped=2 in skip_steps)
+
+    # Load company page analysis (produced by s1 alongside embeddings)
+    page_analysis_path = artifact_dir / "company_page_analysis.json"
+    page_analysis_lookup: Dict[str, CompanyPageAnalysis] = {}
+    if page_analysis_path.exists():
+        try:
+            raw = json.loads(page_analysis_path.read_text(encoding="utf-8"))
+            for item in raw:
+                pa = CompanyPageAnalysis(**item)
+                page_analysis_lookup[pa.url] = pa
+            logger.info(
+                "Loaded company page analysis: %d pages", len(page_analysis_lookup)
+            )
+        except Exception:
+            logger.warning("Failed to load company_page_analysis.json, skipping")
+
+    _cli_step(1, s1_elapsed, skipped=1 in skip_steps)
+    _cli_step(2, s2_elapsed, skipped=2 in skip_steps)
 
     # Step 3: search platforms
     step_start = time.monotonic()
@@ -209,6 +321,16 @@ async def run_gap_analysis(
         platform_results = await search_platforms(queries, input_data.platforms)
         save_platform_results(platform_results, artifact_dir / "platform_results")
     logger.info("Step 3 completed: search_platforms (%.1fs)", time.monotonic() - step_start)
+
+    # Flag company self-citations and build citation map (before s4 dedup)
+    _flag_company_citations(platform_results, input_data.domain)
+    company_citation_map = _build_company_citation_map(platform_results)
+    if company_citation_map:
+        logger.info(
+            "Self-citation detection: company cited for %d queries across platforms",
+            len(company_citation_map),
+        )
+
     await persist_s3(session_factory, run_id, company_id, slug, platform_results, queries)
     _cli_step(3, time.monotonic() - step_start, skipped=3 in skip_steps)
 
@@ -254,7 +376,13 @@ async def run_gap_analysis(
             **json.loads((artifact_dir / "analysis.json").read_text(encoding="utf-8"))
         )
     else:
-        analysis = compute_gap_analysis(queries, company_units, enriched)
+        analysis = compute_gap_analysis(
+            queries,
+            company_units,
+            enriched,
+            company_citation_map=company_citation_map,
+            page_analysis_lookup=page_analysis_lookup or None,
+        )
         (artifact_dir / "analysis.json").write_text(
             json.dumps(analysis.model_dump(mode="json"), indent=2, default=str), encoding="utf-8"
         )
@@ -313,3 +441,179 @@ async def run_gap_analysis(
     logger.info("Pipeline completed: all steps finished (%.1fs total)", total)
     _cli_footer(total, skipped_count)
     return report
+
+
+# ── Topic-Scoped Gap Analysis (TD Integration) ──────────────────────
+
+
+async def run_topic_scoped_gap_analysis(
+    topics: List[TopicAssignment],
+    base_input: GapAnalysisInput,
+    *,
+    existing_ga_slug: Optional[str] = None,
+    skip_visualizations: bool = True,
+    session_factory: Optional[async_sessionmaker] = None,
+    run_id: Optional[uuid.UUID] = None,
+    company_id: Optional[uuid.UUID] = None,
+) -> tuple[GapReport, Dict[str, List[str]]]:
+    """Run a topic-scoped gap analysis for TD-approved TopicAssignments.
+
+    Reuses S1 embeddings from an existing GA run (if available), uses
+    topic-scoped S2, runs S3-S6 identically (fewer queries = faster),
+    skips S7 by default, runs S8 with per-topic aggregation.
+
+    Storage path: artifacts/gap_analysis/{slug}/topic_scoped/{run_id}/
+
+    Returns:
+        Tuple of (GapReport, topic_query_map) where topic_query_map
+        maps topic_assignment_id → [query_ids].
+    """
+    slug = _company_slug(base_input)
+    scoped_run_id = run_id or uuid.uuid4()
+    scoped_dir = _PROJECT_ROOT / "artifacts" / "gap_analysis" / slug / "topic_scoped" / str(scoped_run_id)
+    scoped_dir.mkdir(parents=True, exist_ok=True)
+    pipeline_start = time.monotonic()
+
+    logger.info(
+        "Topic-scoped GA: %d topics, slug=%s, run_id=%s",
+        len(topics), slug, scoped_run_id,
+    )
+
+    # Auto-resolve persona paths
+    _resolve_persona_paths(base_input, slug)
+
+    # ── S1: Reuse cached company embeddings ──
+    s1_start = time.monotonic()
+    cache_slug = existing_ga_slug or slug
+    cache_dir = _PROJECT_ROOT / "artifacts" / "gap_analysis" / cache_slug
+    embeddings_path = cache_dir / "company_embeddings.json"
+
+    if embeddings_path.exists():
+        company_units = _load_json_list(embeddings_path, SemanticUnit)
+        # Hydrate from ChromaDB if needed
+        if not any(u.embedding for u in company_units):
+            if await async_collection_exists(cache_slug):
+                embedding_map = await async_get_all_embeddings(cache_slug)
+                for unit in company_units:
+                    if unit.unit_id in embedding_map:
+                        unit.embedding = embedding_map[unit.unit_id]
+        logger.info("S1: reused %d cached embeddings from '%s'", len(company_units), cache_slug)
+    else:
+        company_units = await embed_company_assets(base_input)
+        logger.info("S1: computed %d embeddings (no cache)", len(company_units))
+
+    # Load page analysis (if available)
+    page_analysis_lookup: Dict[str, CompanyPageAnalysis] = {}
+    page_analysis_path = cache_dir / "company_page_analysis.json"
+    if page_analysis_path.exists():
+        try:
+            raw = json.loads(page_analysis_path.read_text(encoding="utf-8"))
+            for item in raw:
+                pa = CompanyPageAnalysis(**item)
+                page_analysis_lookup[pa.url] = pa
+        except Exception:
+            pass
+    s1_elapsed = time.monotonic() - s1_start
+    logger.info("S1 completed (%.1fs)", s1_elapsed)
+
+    # ── S2: Topic-scoped query generation ──
+    s2_start = time.monotonic()
+    queries = await generate_queries_from_topics(
+        topics=topics,
+        company_context_path=base_input.company_context_path,
+        persona_paths=base_input.persona_paths,
+        company_name=base_input.company_name,
+        company_domain=base_input.domain,
+        product_name=base_input.product_name,
+        product_slug=base_input.product_slug,
+        product_description=base_input.product_description,
+    )
+    (scoped_dir / "queries.json").write_text(
+        json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
+        encoding="utf-8",
+    )
+    s2_elapsed = time.monotonic() - s2_start
+    logger.info("S2 completed: %d queries (%.1fs)", len(queries), s2_elapsed)
+
+    if not queries:
+        logger.warning("Topic-scoped S2 produced 0 queries. Returning empty report.")
+        empty_report = GapReport()
+        return empty_report, {}
+
+    # ── S3: Search platforms ──
+    s3_start = time.monotonic()
+    platform_results = await search_platforms(queries, base_input.platforms)
+    results_dir = scoped_dir / "platform_results"
+    save_platform_results(platform_results, results_dir)
+
+    _flag_company_citations(platform_results, base_input.domain)
+    company_citation_map = _build_company_citation_map(platform_results)
+    s3_elapsed = time.monotonic() - s3_start
+    logger.info("S3 completed: %d results (%.1fs)", len(platform_results), s3_elapsed)
+
+    # ── S4: Enrich citations ──
+    s4_start = time.monotonic()
+    query_lookup = {q.query_id: q for q in queries}
+    enriched = await enrich_citations(platform_results, query_lookup=query_lookup)
+    save_enriched_citations(enriched, scoped_dir / "enriched_citations.json")
+    s4_elapsed = time.monotonic() - s4_start
+    logger.info("S4 completed: %d enriched (%.1fs)", len(enriched), s4_elapsed)
+
+    # ── S5: Embed content ──
+    s5_start = time.monotonic()
+    queries, enriched = await embed_all(queries, enriched, company_slug=slug)
+    save_embeddings(queries, enriched, scoped_dir / "embeddings")
+    s5_elapsed = time.monotonic() - s5_start
+    logger.info("S5 completed (%.1fs)", s5_elapsed)
+
+    # ── S6: Analyze gaps ──
+    s6_start = time.monotonic()
+    analysis = compute_gap_analysis(
+        queries,
+        company_units,
+        enriched,
+        company_citation_map=company_citation_map,
+        page_analysis_lookup=page_analysis_lookup or None,
+    )
+    (scoped_dir / "analysis.json").write_text(
+        json.dumps(analysis.model_dump(mode="json"), indent=2, default=str),
+        encoding="utf-8",
+    )
+    s6_elapsed = time.monotonic() - s6_start
+    logger.info("S6 completed (%.1fs)", s6_elapsed)
+
+    # ── S7: Skip visualizations by default ──
+    if not skip_visualizations:
+        generate_visualizations(
+            queries, enriched, company_units, analysis, scoped_dir / "visualizations"
+        )
+
+    # ── S8: Report + per-topic aggregation ──
+    s8_start = time.monotonic()
+    report = await generate_gap_report(analysis, queries, enriched)
+    save_report(report, scoped_dir, analysis=analysis)
+
+    # Per-topic aggregation (sets analysis.topic_query_map as side effect)
+    topic_metrics = aggregate_per_topic(analysis, queries)
+    topic_query_map = analysis.topic_query_map
+
+    # Re-save analysis.json with topic_query_map populated
+    (scoped_dir / "analysis.json").write_text(
+        json.dumps(analysis.model_dump(mode="json"), indent=2, default=str),
+        encoding="utf-8",
+    )
+    # Save per-topic metrics separately
+    (scoped_dir / "topic_metrics.json").write_text(
+        json.dumps(topic_metrics, indent=2, default=str),
+        encoding="utf-8",
+    )
+    s8_elapsed = time.monotonic() - s8_start
+    logger.info("S8 completed (%.1fs)", s8_elapsed)
+
+    total = time.monotonic() - pipeline_start
+    logger.info(
+        "Topic-scoped GA completed: %d queries, %d gaps, %.1fs total",
+        len(queries), len(analysis.gaps), total,
+    )
+
+    return report, topic_query_map

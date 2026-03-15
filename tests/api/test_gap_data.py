@@ -923,6 +923,124 @@ class TestGapSignals:
         assert body["signals"] == []
         assert body["correlations"] == []
 
+    # ── Company avg from company_page_analysis.json ──────────────────
+
+    def test_company_avg_populated_from_page_analysis(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """company_avg should be computed from company_page_analysis.json."""
+        enriched = _make_enriched(count=5, with_new_signals=True)
+        data = _make_complete_new_format(num_clusters=1)
+        pages = [
+            {
+                "url": "https://test.com/page-1",
+                "title": "Page 1",
+                "structural_signals": {
+                    "word_count": 1200,
+                    "paragraph_count": 15,
+                    "h2_count": 4,
+                    "h3_count": 2,
+                    "list_block_count": 3,
+                    "has_faq_section": True,
+                    "data_point_count": 8,
+                },
+                "word_count": 1200,
+                "paragraph_count": 15,
+            },
+            {
+                "url": "https://test.com/page-2",
+                "title": "Page 2",
+                "structural_signals": {
+                    "word_count": 800,
+                    "paragraph_count": 10,
+                    "h2_count": 6,
+                    "h3_count": 4,
+                    "list_block_count": 5,
+                    "has_faq_section": False,
+                    "data_point_count": 12,
+                },
+                "word_count": 800,
+                "paragraph_count": 10,
+            },
+        ]
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "company_page_analysis.json", pages)
+
+        body = client.get(_url("test-co", "signals")).json()
+        signals = {s["signal"]: s for s in body["signals"]}
+
+        # Word Count: avg of 1200 and 800 = 1000.0
+        assert signals["Word Count"]["company_avg"] == 1000.0
+        # H2 Count: avg of 4 and 6 = 5.0
+        assert signals["H2 Count"]["company_avg"] == 5.0
+        # FAQ Section: avg of True(1) and False(0) = 0.5
+        assert signals["FAQ Section"]["company_avg"] == 0.5
+        # Data Point Count: avg of 8 and 12 = 10.0
+        assert signals["Data Point Count"]["company_avg"] == 10.0
+
+    def test_company_avg_zero_when_no_page_analysis(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """company_avg should remain 0.0 when company_page_analysis.json is missing."""
+        enriched = _make_enriched(count=5, with_new_signals=True)
+        data = _make_complete_new_format(num_clusters=1)
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+        # No company_page_analysis.json written
+
+        body = client.get(_url("test-co", "signals")).json()
+        for s in body["signals"]:
+            assert s["company_avg"] == 0.0
+
+    def test_company_avg_skips_pages_without_signals(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """Pages with null structural_signals should be skipped."""
+        enriched = _make_enriched(count=5, with_new_signals=True)
+        data = _make_complete_new_format(num_clusters=1)
+        pages = [
+            {
+                "url": "https://test.com/good-page",
+                "structural_signals": {"word_count": 2000, "h2_count": 8},
+            },
+            {
+                "url": "https://test.com/no-signals",
+                "structural_signals": None,
+            },
+        ]
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "company_page_analysis.json", pages)
+
+        body = client.get(_url("test-co", "signals")).json()
+        signals = {s["signal"]: s for s in body["signals"]}
+        # Only one valid page: company_avg = 2000.0
+        assert signals["Word Count"]["company_avg"] == 2000.0
+        assert signals["H2 Count"]["company_avg"] == 8.0
+
+    def test_company_avg_recommendation_includes_comparison(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """Recommendation text should mention both citation and company averages."""
+        enriched = _make_enriched(count=5, with_new_signals=True)
+        data = _make_complete_new_format(num_clusters=1)
+        pages = [
+            {
+                "url": "https://test.com/page-1",
+                "structural_signals": {"word_count": 500},
+            },
+        ]
+        _write_artifact(artifacts_root, "test-co", "enriched_citations.json", enriched)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+        _write_artifact(artifacts_root, "test-co", "company_page_analysis.json", pages)
+
+        body = client.get(_url("test-co", "signals")).json()
+        signals = {s["signal"]: s for s in body["signals"]}
+        rec = signals["Word Count"]["recommendation"]
+        assert "company" in rec.lower()
+        assert "citation" in rec.lower()
+
 
 class TestGapPlatforms:
     """GET /platforms endpoint."""

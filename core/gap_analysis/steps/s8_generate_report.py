@@ -94,10 +94,22 @@ def _build_gap_report_md(
         lines.append("")
         lines.append(f"- **Cluster:** {gap.cluster_name or 'N/A'}")
         lines.append(f"- **Best Company Unit:** {gap.best_company_unit or 'N/A'} (sim={gap.best_company_similarity or 0:.4f})")
+        if gap.best_company_url:
+            lines.append(f"  - URL: {gap.best_company_url}")
         if gap.best_company_unit_text:
             lines.append(f"  - *\"{gap.best_company_unit_text[:150]}...\"*")
         lines.append(f"- **Avg Citation Similarity:** {gap.avg_citation_similarity or 0:.4f}")
         lines.append(f"- **Gap:** {gap.gap or 0:.4f} ({gap.interpretation})")
+        if gap.company_cited:
+            lines.append(f"- **Company Cited:** Yes (on {', '.join(gap.company_cited_platforms)})")
+        if gap.best_company_structural_signals:
+            ss = gap.best_company_structural_signals
+            lines.append(
+                f"- **Company Page Structure:** words={ss.get('word_count', 0)}, "
+                f"headers={ss.get('header_count', 0)}, "
+                f"lists={ss.get('list_item_count', 0)}, "
+                f"stats={ss.get('stat_count', 0)}"
+            )
         lines.append("")
 
         # Inline ContentBrief (Phase 3)
@@ -445,3 +457,72 @@ def save_report(
         (output_dir / "gap_analysis_complete.json").write_text(
             json.dumps(complete, indent=2, default=str), encoding="utf-8"
         )
+
+
+# ---------------------------------------------------------------------------
+# Per-Topic Aggregation (TD Integration)
+# ---------------------------------------------------------------------------
+
+
+def aggregate_per_topic(
+    analysis: AnalysisResult,
+    queries: List[GeneratedQuery],
+) -> Dict[str, Dict[str, Any]]:
+    """Group gap results by source_topic_id → per-topic metrics.
+
+    Returns a dict keyed by topic_assignment_id, each containing:
+      - avg_gap: mean gap across the topic's queries
+      - max_gap: maximum gap
+      - query_ids: list of query_ids for this topic
+      - cluster_names: unique cluster names involved
+      - significant_gap_count: queries with interpretation == "significant_gap"
+      - exemplar_count: total exemplars across the topic's queries
+      - query_count: number of queries for this topic
+
+    Also builds and stores the topic_query_map on the analysis object.
+    """
+    from collections import defaultdict
+
+    # Build topic_id → query_ids map from queries
+    topic_queries: Dict[str, List[str]] = defaultdict(list)
+    for q in queries:
+        for tid in q.source_topic_ids:
+            topic_queries[tid].append(q.query_id)
+
+    # Store on analysis for downstream consumers
+    analysis.topic_query_map = dict(topic_queries)
+
+    # Index gaps by query_id
+    gap_lookup: Dict[str, QueryGap] = {g.query_id: g for g in analysis.gaps}
+
+    result: Dict[str, Dict[str, Any]] = {}
+    for topic_id, query_ids in topic_queries.items():
+        topic_gaps = [gap_lookup[qid] for qid in query_ids if qid in gap_lookup]
+        if not topic_gaps:
+            result[topic_id] = {
+                "avg_gap": 0.0,
+                "max_gap": 0.0,
+                "query_ids": query_ids,
+                "cluster_names": [],
+                "significant_gap_count": 0,
+                "exemplar_count": 0,
+                "query_count": len(query_ids),
+            }
+            continue
+
+        gaps_values = [g.gap or 0.0 for g in topic_gaps]
+        cluster_names = list({g.cluster_name for g in topic_gaps if g.cluster_name})
+        sig_count = sum(1 for g in topic_gaps if g.interpretation == "significant_gap")
+        exemplar_count = sum(len(g.top_cited_exemplars) for g in topic_gaps)
+
+        result[topic_id] = {
+            "avg_gap": round(sum(gaps_values) / len(gaps_values), 4),
+            "max_gap": round(max(gaps_values), 4),
+            "query_ids": query_ids,
+            "cluster_names": cluster_names,
+            "significant_gap_count": sig_count,
+            "exemplar_count": exemplar_count,
+            "query_count": len(query_ids),
+        }
+
+    return result

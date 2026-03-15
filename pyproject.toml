@@ -14,7 +14,6 @@ dependencies = [
     "langgraph>=0.2",
     "langchain-google-genai>=2.0",
     "perplexityai>=0.2",
-    "deepagents",
     "openai",
     "anthropic",
     "chromadb>=0.5.0,<1.0",
@@ -39,6 +38,8 @@ dependencies = [
     "psycopg2-binary>=2.9",
     "alembic>=1.13",
     "pgvector>=0.3",
+    # CPS model — Markdown-to-HTML conversion for feature extraction
+    "markdown>=3.5.0",
 ]
 
 [project.optional-dependencies]
@@ -49,7 +50,7 @@ dev = [
 
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["core*", "scripts*", "api*"]

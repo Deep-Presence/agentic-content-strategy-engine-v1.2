@@ -157,6 +157,7 @@ def create_pipeline_trace(
                 "session_id": session_id,
             },
             extra={"metadata": metadata or {}},
+            ls_client=_get_client(),
         )
         run_tree.post()
         return run_tree
@@ -204,6 +205,7 @@ def create_trace(
             project_name=_get_project_name(project_name),
             inputs=effective_input or {},
             extra={"metadata": metadata or {}, "tags": tags or []},
+            ls_client=_get_client(),
         )
         run_tree.post()
         return run_tree
@@ -498,6 +500,7 @@ def create_research_trace(
                 "company_name": company_name,
             },
             extra={"metadata": metadata or {}},
+            ls_client=_get_client(),
         )
         run_tree.post()
         return run_tree

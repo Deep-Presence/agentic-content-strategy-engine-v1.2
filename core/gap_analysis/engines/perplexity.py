@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from core.gap_analysis.engines.base import SearchEngine
 from core.models.gap_analysis import CitationRef, PlatformResult
@@ -14,35 +13,33 @@ class PerplexityEngine(SearchEngine):
     def __init__(self, model: Optional[str] = None) -> None:
         super().__init__(model=model or settings.perplexity_search_model)
 
-    async def search(self, query_text: str, query_id: Optional[str] = None) -> PlatformResult:
-        def _run() -> tuple[str, List[str]]:
-            from perplexity import Perplexity
+    async def search(self, query_text: str, query_id: Optional[str] = None, *, client: Any = None) -> PlatformResult:
+        from perplexity import AsyncPerplexity
 
-            api_key = settings.perplexity_api_key
-            if not api_key:
-                raise RuntimeError(
-                    "PERPLEXITY_API_KEY is not set. Get your key at https://perplexity.ai/account/api"
-                )
-            client = Perplexity(api_key=api_key)
-            completion = client.chat.completions.create(
-                model=self.model,
-                messages=[
+        api_key = settings.perplexity_api_key
+        if not api_key:
+            raise RuntimeError(
+                "PERPLEXITY_API_KEY is not set. Get your key at https://perplexity.ai/account/api"
+            )
+
+        pplx_client = client if client is not None else AsyncPerplexity(api_key=api_key)
+        completion = await pplx_client.chat.completions.create(
+            model=self.model,
+            messages=[
                 {
                     "role": "system",
                     "content": "You are a helpful research assistant. Provide accurate, well-researched answers with citations to your sources. Always cite the sources you use.",
                 },
                 {"role": "user", "content": query_text},
             ],
-                stream=False,
-            )
-            content = ""
-            if completion.choices:
-                msg = completion.choices[0].message
-                content = getattr(msg, "content", None) or ""
-            citations = getattr(completion, "citations", None) or []
-            return content, citations
-
-        response_text, citations = await asyncio.to_thread(_run)
+            stream=False,
+        )
+        content = ""
+        if completion.choices:
+            msg = completion.choices[0].message
+            content = getattr(msg, "content", None) or ""
+        citations = getattr(completion, "citations", None) or []
+        response_text = content
         citation_refs: List[CitationRef] = []
         for index, url in enumerate(citations, start=1):
             try:

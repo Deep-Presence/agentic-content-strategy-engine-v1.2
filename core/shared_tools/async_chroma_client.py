@@ -18,8 +18,10 @@ from core.shared_tools.chroma_client import (
     get_company_collection,
     get_citations_collection,
     get_embeddings_by_ids,
+    get_persona_embeddings,
     upsert_embeddings,
     upsert_citation_embeddings,
+    upsert_persona_embeddings,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,4 +85,35 @@ async def async_upsert_citation_embeddings(
         documents,
         embeddings,
         metadatas,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Persona profile embeddings
+# ---------------------------------------------------------------------------
+
+
+async def async_upsert_persona_embeddings(
+    effective_slug: str,
+    persona_ids: List[str],
+    texts: List[str],
+    embeddings: List[List[float]],
+) -> None:
+    """Async wrapper for upsert_persona_embeddings (runs in thread pool)."""
+    await asyncio.to_thread(
+        upsert_persona_embeddings,
+        effective_slug,
+        persona_ids,
+        texts,
+        embeddings,
+    )
+
+
+async def async_get_persona_embeddings(
+    effective_slug: str,
+    persona_ids: Optional[List[str]] = None,
+) -> Dict[str, List[float]]:
+    """Async wrapper for get_persona_embeddings (runs in thread pool)."""
+    return await asyncio.to_thread(
+        get_persona_embeddings, effective_slug, persona_ids,
     )

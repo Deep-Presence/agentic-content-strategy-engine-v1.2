@@ -11,6 +11,7 @@ from core.models.gap_analysis import (
     CentroidResult,
     CitationExemplar,
     ClusterContentSpec,
+    CompanyPageAnalysis,
     EnrichedCitation,
     GapContentBrief,
     GeneratedQuery,
@@ -145,6 +146,9 @@ def compute_gap_analysis(
     queries: List[GeneratedQuery],
     company_units: List[SemanticUnit],
     enriched: List[EnrichedCitation],
+    *,
+    company_citation_map: Optional[Dict[str, List[str]]] = None,
+    page_analysis_lookup: Optional[Dict[str, CompanyPageAnalysis]] = None,
 ) -> AnalysisResult:
     query_lookup = {q.query_id: q for q in queries}
     cluster_lookup = _cluster_map(queries)
@@ -157,7 +161,7 @@ def compute_gap_analysis(
 
     query_to_citation_sims: Dict[str, List[float]] = defaultdict(list)
     query_to_company_best: Dict[str, float] = {}
-    query_to_best_unit: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
+    query_to_best_unit: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {}
     query_to_exemplars: Dict[str, List[CitationExemplar]] = defaultdict(list)
 
     for query in queries:
@@ -196,10 +200,11 @@ def compute_gap_analysis(
                         )
                     )
 
-        # Company best similarity — track unit ID and text
+        # Company best similarity — track unit ID, text, and URL
         best_sim = 0.0
         best_unit_id: Optional[str] = None
         best_unit_text: Optional[str] = None
+        best_unit_url: Optional[str] = None
         for unit in company_units:
             if unit.embedding:
                 sim = _cosine_similarity(query.embedding, unit.embedding)
@@ -207,8 +212,9 @@ def compute_gap_analysis(
                     best_sim = sim
                     best_unit_id = unit.unit_id
                     best_unit_text = unit.text[:200] if unit.text else None
+                    best_unit_url = str(unit.url) if unit.url else None
         query_to_company_best[query.query_id] = best_sim
-        query_to_best_unit[query.query_id] = (best_unit_id, best_unit_text)
+        query_to_best_unit[query.query_id] = (best_unit_id, best_unit_text, best_unit_url)
 
     # Sort and keep top-3 exemplars per query
     for qid in query_to_exemplars:
@@ -230,9 +236,24 @@ def compute_gap_analysis(
         elif gap <= -0.05:
             interpretation = "company_wins"
 
-        unit_id, unit_text = query_to_best_unit.get(query_id, (None, None))
+        unit_id, unit_text, unit_url = query_to_best_unit.get(
+            query_id, (None, None, None)
+        )
         exemplars = query_to_exemplars.get(query_id, [])
         content_brief = _compute_content_brief(exemplars) if exemplars else None
+        cited_platforms = (
+            company_citation_map.get(query_id, [])
+            if company_citation_map
+            else []
+        )
+        # Attach structural signals for the best company page
+        company_signals_dict = None
+        if page_analysis_lookup and unit_url:
+            pa = page_analysis_lookup.get(unit_url)
+            if pa and pa.structural_signals:
+                sig_data = pa.structural_signals.model_dump()
+                sig_data.pop("per_paragraph_word_counts", None)
+                company_signals_dict = sig_data
         gaps.append(
             QueryGap(
                 query_id=query_id,
@@ -240,12 +261,17 @@ def compute_gap_analysis(
                 query_text=query_lookup[query_id].query_text,
                 best_company_unit=unit_id,
                 best_company_unit_text=unit_text,
+                best_company_url=unit_url,
                 best_company_similarity=best_company,
                 avg_citation_similarity=avg_citation,
                 gap=gap,
                 interpretation=interpretation,
                 top_cited_exemplars=exemplars,
                 content_brief=content_brief,
+                best_company_structural_signals=company_signals_dict,
+                company_cited=bool(cited_platforms),
+                company_cited_platforms=cited_platforms,
+                source_topic_ids=query_lookup.get(query_id, GeneratedQuery(query_id="", cluster_id="", cluster_name="", query_text="")).source_topic_ids,
             )
         )
         citation_sims_all.extend(sims)

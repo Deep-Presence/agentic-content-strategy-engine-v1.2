@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
@@ -17,9 +18,17 @@ from core.services.gap_data import GapDataServiceProtocol
 from core.services.json_brand_data import JsonBrandDataService
 from core.services.json_content_data import JsonContentDataService
 from core.services.json_gap_data import JsonGapDataService
+from core.services.json_kb_data import JsonKBDataService
+from core.services.json_persona_data import JsonPersonaDataService
 from core.services.json_site_audit_data import JsonSiteAuditDataService
+from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
+from core.services.json_vsg_data import JsonVSGDataService
+from core.services.kb_data import KBDataServiceProtocol
+from core.services.persona_data import PersonaDataServiceProtocol
 from core.services.site_audit_data import SiteAuditDataServiceProtocol
 from core.services.task_store import TaskStoreProtocol
+from core.services.topic_discovery_data import TopicDiscoveryDataServiceProtocol
+from core.services.vsg_data import VSGDataServiceProtocol
 
 _logger = logging.getLogger(__name__)
 
@@ -39,6 +48,11 @@ def get_event_bus(request: Request) -> EventBus:
 
 def get_artifacts_root(request: Request) -> Path:
     return request.app.state.artifacts_root
+
+
+def get_storage_backend(request: Request):
+    """Return the app-level StorageBackend (LocalStorageBackend or S3StorageBackend)."""
+    return request.app.state.storage_backend
 
 
 def get_auth_store(request: Request) -> AuthStore:
@@ -78,21 +92,34 @@ def _build_db_auth_service(request: Request) -> AuthServiceProtocol | None:
         return None
 
 
-def get_auth_service(request: Request) -> AuthServiceProtocol:
-    """Return the auth service.
+async def get_auth_service(
+    request: Request,
+) -> AsyncGenerator[AuthServiceProtocol, None]:
+    """Return the auth service with proper DB session lifecycle.
 
     Priority: pre-built override → DbAuthService (DATABASE_URL) → JsonAuthService.
+    DB sessions are committed on success, rolled back on error.
     """
     # 1. Pre-built override (tests, etc.)
     service = getattr(request.app.state, "auth_service", None)
     if service is not None:
-        return service
+        yield service
+        return
     # 2. Per-request DB service (when DATABASE_URL is set)
     db_service = _build_db_auth_service(request)
     if db_service is not None:
-        return db_service
+        session = db_service._company_repo._session
+        try:
+            yield db_service
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+        return
     # 3. Fallback: JSON-backed
-    return JsonAuthService(request.app.state.auth_store)
+    yield JsonAuthService(request.app.state.auth_store)
 
 
 def _build_db_gap_data_service(request: Request) -> GapDataServiceProtocol | None:
@@ -261,23 +288,214 @@ def get_site_audit_data_service(request: Request) -> SiteAuditDataServiceProtoco
     )
 
 
+# ── KB Data Service ──────────────────────────────────────────────────
+
+
+def _build_db_kb_data_service(request: Request) -> KBDataServiceProtocol | None:
+    """Try to build a per-request DbKBDataService."""
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        return None
+    try:
+        from core.db.repositories.kb_repo import (
+            KBDocumentRepository,
+            KBRunRepository,
+            KBSynthesisRepository,
+        )
+        from core.db.repositories.pipeline_repo import PipelineRepository
+        from core.services.db_kb_data import DbKBDataService
+
+        session = sf()
+        return DbKBDataService(
+            kb_run_repo=KBRunRepository(session),
+            kb_doc_repo=KBDocumentRepository(session),
+            kb_synth_repo=KBSynthesisRepository(session),
+            pipeline_repo=PipelineRepository(session),
+            artifacts_root=request.app.state.artifacts_root,
+            backend=getattr(request.app.state, "storage_backend", None),
+        )
+    except Exception:
+        _logger.debug("Failed to build DbKBDataService", exc_info=True)
+        return None
+
+
+def get_kb_data_service(request: Request) -> KBDataServiceProtocol:
+    """Return the KB data service.
+
+    Priority: pre-built override → DbKBDataService (DATABASE_URL) → JsonKBDataService.
+    """
+    service = getattr(request.app.state, "kb_data_service", None)
+    if service is not None:
+        return service
+    db_service = _build_db_kb_data_service(request)
+    if db_service is not None:
+        return db_service
+    return JsonKBDataService(
+        artifacts_root=request.app.state.artifacts_root,
+        backend=getattr(request.app.state, "storage_backend", None),
+    )
+
+
+# ── Persona Data Service ────────────────────────────────────────────
+
+
+def _build_db_persona_data_service(request: Request) -> PersonaDataServiceProtocol | None:
+    """Try to build a per-request DbPersonaDataService."""
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        return None
+    try:
+        from core.db.repositories.persona_repo import (
+            PersonaProfileRepository,
+            PersonaRunRepository,
+        )
+        from core.db.repositories.pipeline_repo import PipelineRepository
+        from core.services.db_persona_data import DbPersonaDataService
+
+        session = sf()
+        return DbPersonaDataService(
+            persona_run_repo=PersonaRunRepository(session),
+            persona_profile_repo=PersonaProfileRepository(session),
+            pipeline_repo=PipelineRepository(session),
+            artifacts_root=request.app.state.artifacts_root,
+            backend=getattr(request.app.state, "storage_backend", None),
+        )
+    except Exception:
+        _logger.debug("Failed to build DbPersonaDataService", exc_info=True)
+        return None
+
+
+def get_persona_data_service(request: Request) -> PersonaDataServiceProtocol:
+    """Return the persona data service.
+
+    Priority: pre-built override → DbPersonaDataService (DATABASE_URL) → JsonPersonaDataService.
+    """
+    service = getattr(request.app.state, "persona_data_service", None)
+    if service is not None:
+        return service
+    db_service = _build_db_persona_data_service(request)
+    if db_service is not None:
+        return db_service
+    return JsonPersonaDataService(
+        artifacts_root=request.app.state.artifacts_root,
+        backend=getattr(request.app.state, "storage_backend", None),
+    )
+
+
+# ── VSG Data Service ────────────────────────────────────────────────
+
+
+def _build_db_vsg_data_service(request: Request) -> VSGDataServiceProtocol | None:
+    """Try to build a per-request DbVSGDataService."""
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        return None
+    try:
+        from core.db.repositories.pipeline_repo import PipelineRepository
+        from core.db.repositories.vsg_repo import (
+            VSGAuthorRepository,
+            VSGGuideRepository,
+            VSGRunRepository,
+        )
+        from core.services.db_vsg_data import DbVSGDataService
+
+        session = sf()
+        return DbVSGDataService(
+            vsg_run_repo=VSGRunRepository(session),
+            vsg_author_repo=VSGAuthorRepository(session),
+            vsg_guide_repo=VSGGuideRepository(session),
+            pipeline_repo=PipelineRepository(session),
+            artifacts_root=request.app.state.artifacts_root,
+            backend=getattr(request.app.state, "storage_backend", None),
+        )
+    except Exception:
+        _logger.debug("Failed to build DbVSGDataService", exc_info=True)
+        return None
+
+
+def get_vsg_data_service(request: Request) -> VSGDataServiceProtocol:
+    """Return the VSG data service.
+
+    Priority: pre-built override → DbVSGDataService (DATABASE_URL) → JsonVSGDataService.
+    """
+    service = getattr(request.app.state, "vsg_data_service", None)
+    if service is not None:
+        return service
+    db_service = _build_db_vsg_data_service(request)
+    if db_service is not None:
+        return db_service
+    return JsonVSGDataService(
+        artifacts_root=request.app.state.artifacts_root,
+        backend=getattr(request.app.state, "storage_backend", None),
+    )
+
+
+# ── TD Data Service ─────────────────────────────────────────────────
+
+
+def _build_db_td_data_service(request: Request) -> TopicDiscoveryDataServiceProtocol | None:
+    """Try to build a per-request DbTopicDiscoveryDataService."""
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        return None
+    try:
+        from core.db.repositories.topic_discovery_repo import (
+            PersonaAffinityRepository,
+            SourceResultRepository,
+            SubdomainNodeRepository,
+            TopicAssignmentRepository,
+            TaxonomyTreeRepository,
+            TopicDiscoveryRepository,
+        )
+        from core.services.db_topic_discovery_data import DbTopicDiscoveryDataService
+
+        session = sf()
+        return DbTopicDiscoveryDataService(
+            td_repo=TopicDiscoveryRepository(session),
+            taxonomy_repo=TaxonomyTreeRepository(session),
+            assignment_repo=TopicAssignmentRepository(session),
+            artifacts_root=request.app.state.artifacts_root,
+            node_repo=SubdomainNodeRepository(session),
+            source_result_repo=SourceResultRepository(session),
+            persona_affinity_repo=PersonaAffinityRepository(session),
+            backend=getattr(request.app.state, "storage_backend", None),
+        )
+    except Exception:
+        _logger.debug("Failed to build DbTopicDiscoveryDataService", exc_info=True)
+        return None
+
+
+def get_td_data_service(request: Request) -> TopicDiscoveryDataServiceProtocol:
+    """Return the TD data service.
+
+    Priority: pre-built override → DbTopicDiscoveryDataService (DATABASE_URL) →
+    JsonTopicDiscoveryDataService.
+    """
+    service = getattr(request.app.state, "td_data_service", None)
+    if service is not None:
+        return service
+    db_service = _build_db_td_data_service(request)
+    if db_service is not None:
+        return db_service
+    return JsonTopicDiscoveryDataService(
+        artifacts_root=request.app.state.artifacts_root,
+        backend=getattr(request.app.state, "storage_backend", None),
+    )
+
+
 # ── Daily Tracker dependencies ───────────────────────────────────────
 
 
-def get_prompt_library_service(request: Request) -> Any:
+async def get_prompt_library_service(request: Request) -> AsyncGenerator[Any, None]:
     """Return the PromptLibraryService for daily tracker prompt CRUD.
 
     Checks for a pre-built override on app.state (tests), then constructs
-    a new instance.  Uses lazy import to avoid circular imports and to
-    allow the daily tracker module to be optional.
-
-    Why not DB session: PromptLibraryService wraps a repo that needs an
-    AsyncSession.  In v1 without DATABASE_URL, we return a mock-friendly
-    service from app.state.  With DATABASE_URL, we build per-request.
+    a new instance with proper session lifecycle (commit/rollback/close).
     """
     service = getattr(request.app.state, "prompt_library_service", None)
     if service is not None:
-        return service
+        yield service
+        return
 
     sf = getattr(request.app.state, "db_session_factory", None)
     if sf is not None:
@@ -286,9 +504,19 @@ def get_prompt_library_service(request: Request) -> Any:
             from core.daily_tracker.prompt_library import PromptLibraryService
 
             session = sf()
-            return PromptLibraryService(prompt_repo=TrackedPromptRepository(session))
+            svc = PromptLibraryService(prompt_repo=TrackedPromptRepository(session))
         except Exception:
             _logger.debug("Failed to build PromptLibraryService", exc_info=True)
+        else:
+            try:
+                yield svc
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+            return
 
     raise HTTPException(
         status_code=503,
@@ -334,15 +562,16 @@ def get_analytics_service(request: Request) -> Any:
     )
 
 
-def get_daily_tracker_orchestrator(request: Request) -> Any:
+async def get_daily_tracker_orchestrator(request: Request) -> AsyncGenerator[Any, None]:
     """Return the DailyTrackerOrchestrator for running daily tracking.
 
     Checks for a pre-built override on app.state (tests), then constructs
-    a new instance wiring together all daily tracker modules.
+    a new instance with proper session lifecycle (commit/rollback/close).
     """
     service = getattr(request.app.state, "daily_tracker_orchestrator", None)
     if service is not None:
-        return service
+        yield service
+        return
 
     sf = getattr(request.app.state, "db_session_factory", None)
     if sf is not None:
@@ -355,8 +584,7 @@ def get_daily_tracker_orchestrator(request: Request) -> Any:
 
             session = sf()
             prompt_repo = TrackedPromptRepository(session)
-
-            return DailyTrackerOrchestrator(
+            svc = DailyTrackerOrchestrator(
                 prompt_service=PromptLibraryService(prompt_repo=prompt_repo),
                 runner_service=PlatformRunnerService(),
                 mention_detector=MentionDetector(),
@@ -365,6 +593,16 @@ def get_daily_tracker_orchestrator(request: Request) -> Any:
             _logger.debug(
                 "Failed to build DailyTrackerOrchestrator", exc_info=True
             )
+        else:
+            try:
+                yield svc
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+            return
 
     raise HTTPException(
         status_code=503,

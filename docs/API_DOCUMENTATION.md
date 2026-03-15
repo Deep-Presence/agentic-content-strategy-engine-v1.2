@@ -36,9 +36,37 @@
 | `POST` | `/api/v1/knowledge-base/{run_id}/approve` | Submit HITL approval (KB) | 200 |
 | `GET` | `/api/v1/knowledge-base/{slug}/health` | KB health & staleness report | 200 |
 | `POST` | `/api/v1/knowledge-base/{slug}/refresh-stale` | Refresh only stale KB docs | 202 |
+| `POST` | `/api/v1/audience-persona/start` | Launch audience persona pipeline | 202 |
+| `GET` | `/api/v1/audience-persona/{run_id}/status` | Get audience persona status | 200 |
+| `POST` | `/api/v1/audience-persona/{run_id}/approve/briefs` | HITL-1 brief approval (AP) | 200 |
+| `POST` | `/api/v1/audience-persona/{run_id}/approve/profiles` | HITL-2 profile approval (AP) | 200 |
+| `POST` | `/api/v1/audience-persona/{slug}/add-persona` | Add standalone persona | 202 |
+| `POST` | `/api/v1/audience-persona/{slug}/personas/{persona_id}/approve` | Approve/reject standalone persona | 200 |
+| `GET` | `/api/v1/audience-persona/{slug}/personas` | List all personas | 200 |
+| `POST` | `/api/v1/voice-style-guide/start` | Launch voice style guide pipeline | 202 |
+| `GET` | `/api/v1/voice-style-guide/{run_id}/status` | Get VSG pipeline status | 200 |
+| `POST` | `/api/v1/voice-style-guide/{run_id}/approve/authors` | HITL-1 author approval (VSG) | 200 |
+| `GET` | `/api/v1/voice-style-guide/{slug}/guide` | Get latest voice style guide | 200 |
+| `POST` | `/api/v1/topic-discovery/start` | Launch topic discovery pipeline | 202 |
+| `GET` | `/api/v1/topic-discovery/{run_id}/status` | Get topic discovery status | 200 |
+| `POST` | `/api/v1/topic-discovery/{run_id}/approve/taxonomy` | HITL-1 taxonomy approval (TD) | 200 |
+| `POST` | `/api/v1/topic-discovery/{run_id}/approve/subdomains` | HITL-1.5 subdomain selection (TD) | 200 |
+| `POST` | `/api/v1/topic-discovery/{run_id}/approve/matrix` | HITL-2 matrix approval (TD) | 200 |
+| `GET` | `/api/v1/topic-discovery/{slug}/taxonomy` | Get latest taxonomy | 200 |
+| `GET` | `/api/v1/topic-discovery/{slug}/matrix` | Get latest content matrix | 200 |
+| `GET` | `/api/v1/topic-discovery/{slug}/scored-subdomains` | Get scored subdomains | 200 |
+| `GET` | `/api/v1/topic-discovery/{slug}/personas` | Get persona affinity data | 200 |
+| `POST` | `/api/v1/topic-discovery/expand` | Launch topic expansion (Pipeline B) | 202 |
+| `GET` | `/api/v1/topic-discovery/{slug}/expansion-status` | Get expansion status | 200 |
+| `POST` | `/api/v1/onboarding/start` | Launch onboarding pipeline (superuser) | 202 |
+| `GET` | `/api/v1/onboarding/{run_id}/status` | Get onboarding status | 200 |
+| `POST` | `/api/v1/content/v13/from-topics` | Launch content from topic assignments | 202 |
+| `GET` | `/api/v1/content/v13/{effective_slug}/topic-content-status` | Get per-assignment content status | 200 |
+| `POST` | `/api/v1/cps/score` | Score content for citation probability | 200 |
 | `GET` | `/api/v1/tasks` | List all tasks (with filters) | 200 |
 | `GET` | `/api/v1/tasks/{task_id}` | Get task detail | 200 |
 | `POST` | `/api/v1/tasks/{task_id}/cancel` | Cancel a running task | 200 |
+| `POST` | `/api/v1/tasks/{task_id}/stream-token` | Create short-lived stream token for SSE | 200 |
 | `GET` | `/api/v1/tasks/{task_id}/events` | Stream real-time events (SSE) | 200 |
 | `GET` | `/api/v1/artifacts/companies` | List all company slugs | 200 |
 | `GET` | `/api/v1/artifacts/{type}/{slug}` | List artifact files | 200 |
@@ -51,12 +79,18 @@
 | `POST` | `/api/v1/auth/register` | Register new user + company | 201 |
 | `POST` | `/api/v1/auth/login` | Login with email + password | 200 |
 | `GET` | `/api/v1/auth/me` | Get current user (requires Bearer token) | 200 |
+| `POST` | `/api/v1/auth/invite` | Create invite code (superuser only) | 201 |
+| `POST` | `/api/v1/auth/join` | Join company via invite code | 201 |
 
-### Company Profile
+### Company Profile & Products
 
 | Method | Path | Description | Status |
 |--------|------|-------------|--------|
 | `GET` | `/api/v1/companies/{slug}` | Get company profile with artifacts & runs | 200 |
+| `POST` | `/api/v1/companies/{slug}/products` | Create a product | 201 |
+| `GET` | `/api/v1/companies/{slug}/products/{product_slug}` | Get product detail | 200 |
+| `PUT` | `/api/v1/companies/{slug}/products/{product_slug}` | Update product fields | 200 |
+| `DELETE` | `/api/v1/companies/{slug}/products/{product_slug}` | Delete a product | 200 |
 
 ### Gap Analysis Data (Signal Analysis Dashboard)
 
@@ -193,8 +227,13 @@ The system has 6 pipelines:
 | Pipeline | What it does | Has HITL? |
 |----------|-------------|-----------|
 | **site_audit** | Deterministic crawl + 8-dimension page analysis (no LLM) | No |
-| **research** | AI agents research a company, build persona profiles, and create writing style guides | Yes — approve/revise/reject each stage |
+| **onboarding** | 3-phase orchestrator: Site Audit → Research (KB+AP+VSG auto-approve) → Gap Analysis | No (all HITL auto-approved) |
+| **research_orchestrator** | Orchestrates KB → AP → VSG in sequence with a single run_id | Yes — delegates to sub-pipeline HITL gates |
 | **knowledge_base** | 6-agent DAG builds company knowledge (overview, reviews, competitors, etc.) | Yes — 3 HITL checkpoints |
+| **audience_persona** | 2-agent pipeline: Persona Suggester → Profile Generator | Yes — 2 HITL checkpoints (briefs, profiles) |
+| **voice_style_guide** | 3-agent pipeline: Author Discovery → Author Research → Voice Synthesis | Yes — 1 HITL checkpoint (authors) |
+| **topic_discovery** | Taxonomy generation → subdomain scoring → content matrix generation | Yes — 3 HITL checkpoints (taxonomy, subdomains, matrix) |
+| **topic_expansion** | Expands selected subdomains into the content matrix (Pipeline B) | Yes — 1 HITL checkpoint (matrix) |
 | **gap_analysis** | Crawls company site, generates search queries, queries 4 AI platforms, analyzes citation gaps | No |
 | **content** | Uses research + gap analysis outputs to auto-generate optimized content pieces | Yes — approve/edit/reject each brief |
 | **content_v13** | v1.3 pipeline: Strategic Planner → Brief Builder → Workers → Evaluator → HITL | Yes — 3 HITL checkpoints (topics, briefs, content) |
@@ -270,7 +309,7 @@ Configured via `API_CORS_ORIGINS` env var. Defaults to `localhost:3000` and `loc
 POST /api/v1/auth/register
 ```
 
-Creates a new user with company deduplication. If `company_domain` matches an existing company's root domain, the user joins that company as `member`. Otherwise, a new company is created and the user becomes `superuser`. Subdomains are normalized to root domain.
+Creates a new user and a new isolated company. The user becomes `superuser`. If `company_domain` matches an existing company, returns `409`. To join an existing company, use `POST /api/v1/auth/join` with an invite code.
 
 **Request Body:**
 
@@ -380,6 +419,70 @@ Authorization: Bearer {access_token}
 
 **Error (401):** No token, invalid token, or user not found.
 
+### Create Invite Code
+
+```
+POST /api/v1/auth/invite
+```
+
+Create an invite code for the current user's company. Only superusers can create invites. The invite code allows a new user to join the company via `POST /api/v1/auth/join`.
+
+**Auth:** Requires `superuser` role.
+
+**Request Body:**
+
+```json
+{
+  "role": "member"
+}
+```
+
+| Field | Type | Required | Default | Values | Description |
+|-------|------|----------|---------|--------|-------------|
+| `role` | string | No | `"member"` | `"member"` · `"viewer"` | Role assigned to the invited user |
+
+**Response (201):**
+
+```json
+{
+  "invite_code": "abc123def456",
+  "company_slug": "acme-corp",
+  "role": "member"
+}
+```
+
+### Join Company via Invite
+
+```
+POST /api/v1/auth/join
+```
+
+Join an existing company using an invite code. Public endpoint (no auth required). The invite code determines which company and role the user gets.
+
+**Request Body:**
+
+```json
+{
+  "invite_code": "abc123def456",
+  "first_name": "Jane",
+  "last_name": "Smith",
+  "email": "jane@acme.com",
+  "password": "securepass123"
+}
+```
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| `invite_code` | string | Yes | — | Invite code from `POST /auth/invite` |
+| `first_name` | string | Yes | — | User's first name |
+| `last_name` | string | Yes | — | User's last name |
+| `email` | string | Yes | Valid email | User's email (must be unique) |
+| `password` | string | Yes | min 8 chars | Password |
+
+**Response (201):** Same `LoginResponse` shape as register (access_token + user + company).
+
+**Error (400):** Invalid or expired invite code.
+
 ---
 
 ## 6. Company Profile
@@ -444,6 +547,105 @@ Returns company profile with research artifact status, gap analysis/content avai
 **Error (400):** Invalid slug format (doesn't match regex).
 
 **Error (404):** Company not found in auth store AND no artifacts exist on filesystem.
+
+### Create Product
+
+```
+POST /api/v1/companies/{slug}/products
+```
+
+Create a new product under a company.
+
+**Auth:** Requires `member` or `superuser` role + company membership.
+
+**Request Body:**
+
+```json
+{
+  "name": "Expense Management",
+  "slug": "expense-management",
+  "domain": "ramp.com/expense",
+  "description": "AI-powered expense management platform"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Product display name |
+| `slug` | string | Yes | Product slug (must match `^[a-z0-9][a-z0-9-]*$`) |
+| `domain` | string | No | Product-specific domain or URL |
+| `description` | string | No | Product description |
+
+**Response (201):**
+
+```json
+{
+  "id": "product-abc123",
+  "slug": "expense-management",
+  "name": "Expense Management",
+  "domain": "ramp.com/expense",
+  "description": "AI-powered expense management platform",
+  "company_id": "company-def456",
+  "created_at": "2026-03-15T10:00:00Z",
+  "updated_at": "2026-03-15T10:00:00Z"
+}
+```
+
+**Error (409):** Product slug already exists for this company.
+
+**Error (422):** Product slug doesn't match pattern.
+
+### Get Product
+
+```
+GET /api/v1/companies/{slug}/products/{product_slug}
+```
+
+**Auth:** Requires tenant access.
+
+**Response (200):** `ProductDetailResponse` (same shape as create response).
+
+**Error (404):** Product not found.
+
+### Update Product
+
+```
+PUT /api/v1/companies/{slug}/products/{product_slug}
+```
+
+**Auth:** Requires `member` or `superuser` role + company membership.
+
+**Request Body:** All fields optional — only non-null fields are applied.
+
+```json
+{
+  "name": "Expense Management Pro",
+  "domain": "ramp.com/expense-pro",
+  "description": "Updated description"
+}
+```
+
+**Response (200):** Updated `ProductDetailResponse`.
+
+**Error (404):** Product not found.
+
+### Delete Product
+
+```
+DELETE /api/v1/companies/{slug}/products/{product_slug}
+```
+
+**Auth:** Requires `member` or `superuser` role + company membership.
+
+**Response (200):**
+
+```json
+{
+  "deleted": true
+}
+```
+
+**Error (404):** Product not found.
 
 ---
 
@@ -699,6 +901,68 @@ Paginated per-page audit results with AEO readiness and schema detection.
 
 ---
 
+## 7.5. Onboarding Pipeline
+
+The onboarding pipeline is a 3-phase orchestrator for new companies. It runs **Site Audit → Research (KB + AP + VSG, all auto-approved) → Gap Analysis** in sequence with a single `run_id`. All HITL checkpoints are auto-approved. Designed for first-time company setup.
+
+### Start Onboarding
+
+```
+POST /api/v1/onboarding/start
+```
+
+**Auth:** Requires `superuser` role. Company name and domain are resolved from the auth token (not passed in the request body).
+
+**Request Body:**
+
+```json
+{
+  "industry": "Fintech",
+  "seed_personas": ["VP of Engineering at B2B SaaS", "CFO at mid-market company"],
+  "seed_urls": ["https://ramp.com/blog"],
+  "max_pages": 200,
+  "max_depth": 4,
+  "max_personas": 5,
+  "max_authors": 3,
+  "max_queries": 75,
+  "platforms": ["perplexity", "openai", "gemini", "claude"],
+  "language": "en",
+  "region": null,
+  "force_rerun": false
+}
+```
+
+**Fields:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `industry` | string | No | `null` | Company industry (e.g., "Fintech", "SaaS") — persisted to company profile |
+| `seed_personas` | string[] | No | `[]` | User-provided persona descriptions (max 7) |
+| `seed_urls` | string[] | No | `[]` | Seed URLs for KB and GA pipelines (max 10) |
+| `max_pages` | int | No | `200` | Site audit max pages (10–500) |
+| `max_depth` | int | No | `4` | Site audit crawl depth (1–10) |
+| `max_personas` | int | No | `5` | AP: personas to generate (3–7) |
+| `max_authors` | int | No | `3` | VSG: authors to discover (2–3) |
+| `max_queries` | int | No | `75` | GA: max queries (10–500) |
+| `platforms` | string[] | No | `["perplexity","openai","gemini","claude"]` | GA: AI platforms to search |
+| `language` | string | No | `"en"` | Language code |
+| `region` | string | No | `null` | Geographic region |
+| `force_rerun` | bool | No | `false` | Bypass artifact existence guards |
+
+**Response (202):** `PipelineRunResponse` with `pipeline: "onboarding"`.
+
+### Get Onboarding Status
+
+```
+GET /api/v1/onboarding/{run_id}/status
+```
+
+**Auth:** Requires authentication. Tenant-isolated.
+
+**Response (200):** Standard `TaskResponse`. The `current_step` field indicates which phase is active (e.g., `"site_audit"`, `"research_kb"`, `"gap_analysis"`).
+
+---
+
 ## 8. Gap Analysis (Pipeline Operations)
 
 ### Start Gap Analysis
@@ -798,31 +1062,39 @@ GET /api/v1/gap-analysis/{run_id}/status
 
 ---
 
-## 9. Research Pipeline (Pipeline Operations)
+## 9. Research Orchestrator (Pipeline Operations)
 
-The research pipeline runs up to 3 sequential stages: **company** → **persona** → **style guide**. Each stage can pause for human approval.
+The Research Orchestrator runs up to 3 sub-pipelines in sequence: **Knowledge Base → Audience Persona → Voice Style Guide**. A single `run_id` covers the entire flow. HITL approvals are handled through the per-pipeline approval endpoints (KB, AP, VSG) using the **same** `run_id`.
 
-### Start Research
+### Start Research Orchestrator
 
 ```
 POST /api/v1/research/start
 ```
 
-**Request Body (simplified):**
+**Auth:** Requires `member` or `superuser` role. Tenant-isolated.
 
-The frontend only needs `company_name` and `domain`. The backend constructs per-stage inputs and chains artifact paths (company_context_path, persona_paths) automatically between stages.
+**Request Body:**
 
 ```json
 {
-  "company_name": "Stripe",
-  "domain": "stripe.com",
-  "seed_urls": ["https://stripe.com/blog"],
-  "stages": ["company", "persona", "style_guide"],
-  "auto_approve": false,
+  "company_name": "Ramp",
+  "domain": "ramp.com",
+  "product_slug": null,
+  "seed_urls": ["https://ramp.com/blog"],
+  "max_personas": 5,
+  "max_authors": 5,
+  "force_rerun": false,
+  "skip_fresh": true,
+  "pipelines": ["kb", "ap", "vsg"],
+  "auto_approve": {
+    "kb": [],
+    "ap": [],
+    "vsg": []
+  },
   "language": "en",
-  "region": "us",
-  "max_personas": 3,
-  "force_rerun": false
+  "region": null,
+  "additional_constraints": null
 }
 ```
 
@@ -833,65 +1105,47 @@ The frontend only needs `company_name` and `domain`. The backend constructs per-
 | `company_name` | string | Yes | — | Company name |
 | `domain` | string | Yes | — | Company domain |
 | `product_slug` | string | No | `null` | Product scope |
-| `seed_urls` | string[] | No | `[https://{domain}/]` | URLs for the research agent to study |
+| `seed_urls` | string[] | No | `[]` | URLs for KB agent research |
+| `max_personas` | int | No | `5` | AP: personas to generate (3–7) |
+| `max_authors` | int | No | `5` | VSG: authors to discover (3–5) |
 | `force_rerun` | bool | No | `false` | Bypass already-exists guard |
-| `stages` | string[] | No | `["company","persona","style_guide"]` | Which stages to run |
-| `auto_approve` | bool | No | `false` | Skip HITL gates |
+| `skip_fresh` | bool | No | `true` | Skip sub-pipelines with fresh artifacts |
+| `pipelines` | string[] | No | `["kb","ap","vsg"]` | Which sub-pipelines to run |
+| `auto_approve` | object | No | `{}` | Per-pipeline auto-approve checkpoints (see below) |
 | `language` | string | No | `"en"` | Language code |
 | `region` | string | No | `null` | Region context |
-| `max_personas` | int | No | `3` | 1-3 (1 ICP + up to 2 secondary) |
-| `internal_sources` | string[] | No | `[]` | Paths to internal transcripts/notes |
-| `additional_constraints` | string | No | `null` | Extra instructions for the research agents |
+| `additional_constraints` | string | No | `null` | Extra instructions for the agents |
 
-**Response (202):** Same shape as gap analysis `PipelineRunResponse`.
+**`auto_approve` object:**
 
-### Get Research Status
+| Field | Type | Description |
+|-------|------|-------------|
+| `kb` | int[] | KB checkpoints to auto-approve: `1` (P1), `2` (P2), `3` (synthesis) |
+| `ap` | int[] | AP checkpoints to auto-approve: `1` (briefs), `2` (profiles) |
+| `vsg` | int[] | VSG checkpoints to auto-approve: `1` (authors) |
+
+**`pipelines` field:** Controls which sub-pipelines run. Order is always KB → AP → VSG regardless of array order. Omitting a pipeline skips it entirely (e.g., `["kb", "vsg"]` runs KB then VSG, skipping AP).
+
+**Response (202):** `PipelineRunResponse` with `pipeline: "research_orchestrator"`.
+
+### Get Research Orchestrator Status
 
 ```
 GET /api/v1/research/{run_id}/status
 ```
 
-**Response (200):** Same `TaskResponse` shape as gap analysis.
+**Auth:** Requires authentication. Tenant-isolated.
 
-When `status` is `"pending_approval"`, the `approval_payload` tells you which stage needs approval:
+**Response (200):** Standard `TaskResponse`. The `current_step` field indicates which sub-pipeline is active (e.g., `"kb_phase_1"`, `"ap_hitl_briefs"`, `"vsg_author_discovery"`).
 
-```json
-{
-  "status": "pending_approval",
-  "current_step": "company",
-  "approval_payload": {
-    "stage": "company",
-    "status": "pending_approval",
-    "draft_path": "/artifacts/company_context/stripe.draft.md",
-    "artifact_md": "# Company Context: Stripe\n\n**Domain:** stripe.com\n\n## Origin Story\n..."
-  }
-}
-```
+When `status` is `"pending_approval"`, the `approval_payload` tells you which sub-pipeline's HITL gate needs a decision. Use the corresponding per-pipeline approval endpoint:
 
-### Submit Research Approval
+- **KB checkpoint:** `POST /api/v1/knowledge-base/{run_id}/approve`
+- **AP brief checkpoint:** `POST /api/v1/audience-persona/{run_id}/approve/briefs`
+- **AP profile checkpoint:** `POST /api/v1/audience-persona/{run_id}/approve/profiles`
+- **VSG author checkpoint:** `POST /api/v1/voice-style-guide/{run_id}/approve/authors`
 
-```
-POST /api/v1/research/{run_id}/approve
-```
-
-**Request Body:**
-
-```json
-{
-  "decision": "approve",
-  "revision_note": null
-}
-```
-
-| Field | Type | Required | Values | Description |
-|-------|------|----------|--------|-------------|
-| `decision` | string | Yes | `"approve"` · `"revise"` · `"reject"` | Approval decision |
-| `revision_note` | string | No | — | Feedback for the agent (required if `"revise"`) |
-
-**What happens after each decision:**
-- **`approve`** — Stage output is finalized, pipeline moves to the next stage (or completes)
-- **`revise`** — Agent re-runs with the `revision_note` as feedback, then returns to `pending_approval` again
-- **`reject`** — Pipeline stops, task status becomes `completed`
+All use the **same `run_id`** returned by `POST /research/start`.
 
 ---
 
@@ -1316,6 +1570,108 @@ Submit final content review after Workers + Evaluator produce the content.
 | `editor_notes` | string | No | `null` | Editing feedback (max 5000 chars) |
 | `rethink` | bool | No | `false` | If true on reject, trigger major direction change |
 
+### Start Content from Topic Assignments
+
+```
+POST /api/v1/content/v13/from-topics
+```
+
+Launch the TD → GA → CE pipeline for approved topic assignments from the Topic Discovery matrix. Each selected assignment goes through gap analysis and content generation.
+
+**Auth:** Requires `member` or `superuser` role. Tenant-isolated.
+
+**Request Body:**
+
+```json
+{
+  "company_name": "Ramp",
+  "domain": "ramp.com",
+  "effective_slug": "ramp",
+  "topic_assignment_ids": ["ta-uuid-001", "ta-uuid-002"],
+  "product_slug": null,
+  "product_name": null,
+  "product_description": null,
+  "auto_approve": false,
+  "platforms": ["perplexity", "openai", "gemini", "claude"]
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `company_name` | string | Yes | — | Company name |
+| `domain` | string | Yes | — | Company domain |
+| `effective_slug` | string | Yes | — | Effective slug (company or company__product) |
+| `topic_assignment_ids` | string[] | Yes | — | UUIDs of topic assignments to produce content for (1–20) |
+| `product_slug` | string | No | `null` | Product scope |
+| `product_name` | string | No | `null` | Product name override |
+| `product_description` | string | No | `null` | Product description override |
+| `auto_approve` | bool | No | `false` | Skip all HITL gates |
+| `platforms` | string[] | No | `["perplexity","openai","gemini","claude"]` | AI platforms for gap analysis |
+
+**Response (202):** `PipelineRunResponseV13`.
+
+**Error (409):** Topic discovery hasn't completed, or assignment IDs not found.
+
+### Get Topic Content Status
+
+```
+GET /api/v1/content/v13/{effective_slug}/topic-content-status
+```
+
+Get per-assignment content status for a topic-discovery-driven content run.
+
+**Auth:** Requires authentication. Tenant-isolated (effective_slug must start with user's company slug).
+
+**Response (200):**
+
+```json
+{
+  "effective_slug": "ramp",
+  "total_assignments": 5,
+  "items": [
+    {
+      "topic_assignment_id": "ta-uuid-001",
+      "topic_text": "How Mid-Market CFOs Cut Month-End Close from 15 Days to 5",
+      "status": "completed",
+      "content_piece_id": "brief-001",
+      "content_title": "Month-End Close Automation Guide"
+    },
+    {
+      "topic_assignment_id": "ta-uuid-002",
+      "topic_text": "Best Expense Management Software 2026",
+      "status": "in_progress",
+      "content_piece_id": null,
+      "content_title": null
+    }
+  ]
+}
+```
+
+**CPS Score in Review:** The HITL-3 review state includes a CPS (Citation Signal Predictor) score in `eval_summary.cps` when available. This predicts how likely the content is to be cited by AI answer engines (0.0–1.0). The CPS score is informational and does not gate approval.
+
+```json
+{
+  "eval_summary": {
+    "overall_score": 0.85,
+    "overall_passed": true,
+    "dimensions": { ... },
+    "cps": {
+      "cps_score": 0.72,
+      "per_engine": {
+        "chatgpt_search": 0.75,
+        "claude_search": 0.68,
+        "gemini_search": 0.71,
+        "perplexity": 0.74
+      },
+      "per_query": [{"query": "best CRM software", "cps_score": 0.72}],
+      "model_version": "v1",
+      "feature_config": "option_b_full31",
+      "target_weight": 0.5
+    }
+  }
+}
+```
+
 ---
 
 ## 13. Task Management
@@ -1333,7 +1689,7 @@ GET /api/v1/tasks?pipeline=gap_analysis&status=completed
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `pipeline` | string | Filter by pipeline: `research` · `gap_analysis` · `content` · `content_v13` · `site_audit` · `knowledge_base` |
+| `pipeline` | string | Filter by pipeline: `onboarding` · `research_orchestrator` · `knowledge_base` · `audience_persona` · `voice_style_guide` · `topic_discovery` · `topic_expansion` · `gap_analysis` · `content` · `content_v13` · `site_audit` |
 | `status` | string | Filter by status: `running` · `pending_approval` · `completed` · `failed` · `cancelled` |
 
 **Response (200):**
@@ -1383,6 +1739,30 @@ Only tasks with status `running` or `pending_approval` can be cancelled.
 ```
 
 **Error (409):** Task is not in a cancellable state.
+
+### Create Stream Token
+
+```
+POST /api/v1/tasks/{task_id}/stream-token
+```
+
+Create a short-lived token for SSE `EventSource` clients. The browser's `EventSource` API doesn't support `Authorization` headers, so the frontend calls this endpoint first, then passes the token as a query parameter: `GET /api/v1/tasks/{task_id}/events?stream_token=xxx`.
+
+**Auth:** Requires authentication. Tenant-isolated (task must belong to user's company).
+
+**Response (200):**
+
+```json
+{
+  "stream_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+  "expires_in": 300
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `stream_token` | string | Short-lived JWT (5 minutes, stream-only flag) |
+| `expires_in` | int | Token TTL in seconds (always 300) |
 
 ---
 
@@ -1812,6 +2192,7 @@ GET /api/v1/companies/{slug}/settings/profile
   "name": "Acme Corp",
   "domain": "acme.com",
   "additional_domains": [],
+  "industry": "Fintech",
   "created_at": "2026-01-15T10:00:00Z",
   "updated_at": "2026-01-15T10:00:00Z"
 }
@@ -1831,11 +2212,19 @@ PUT /api/v1/companies/{slug}/settings/profile
 {
   "name": "Acme Corporation",
   "domain": "acme.com",
-  "additional_domains": ["blog.acme.com"]
+  "additional_domains": ["blog.acme.com"],
+  "industry": "SaaS"
 }
 ```
 
 All fields are optional — only non-null fields are applied.
+
+| Field | Type | Constraints | Description |
+|-------|------|-------------|-------------|
+| `name` | string | — | Company display name |
+| `domain` | string | — | Primary domain |
+| `additional_domains` | string[] | — | Additional domains |
+| `industry` | string | max 200 chars | Company industry |
 
 ### Get Pipeline Defaults
 
@@ -2078,16 +2467,15 @@ POST /api/v1/daily-tracker/runs
 
 **Response (202):**
 
+Returns a `PipelineRunResponse` with a `task_id`. The run executes asynchronously. Use `GET /tasks/{task_id}/events` for SSE progress streaming.
+
 ```json
 {
-  "run_id": "run-abc",
-  "company_id": "ramp",
-  "status": "completed",
-  "prompt_count": 50,
-  "engine_count": 2,
-  "started_at": "2026-03-01T10:00:00Z",
-  "completed_at": "2026-03-01T10:05:00Z",
-  "error": null
+  "run_id": "task-uuid-here",
+  "pipeline": "daily_tracker",
+  "company_slug": "ramp",
+  "status": "running",
+  "created_at": "2026-03-15T10:00:00Z"
 }
 ```
 
@@ -2097,11 +2485,35 @@ POST /api/v1/daily-tracker/runs
 GET /api/v1/daily-tracker/runs/{run_id}
 ```
 
+Returns run details from the database. Requires `run_id` in UUID format.
+
+**Response (200):**
+
+```json
+{
+  "run_id": "run-uuid",
+  "company_id": "ramp",
+  "status": "completed",
+  "prompt_count": 50,
+  "engine_count": 2,
+  "started_at": "2026-03-15T10:00:00Z",
+  "completed_at": "2026-03-15T10:05:00Z",
+  "error": null
+}
+```
+
+| Status | Description |
+|--------|-------------|
+| `404` | Run not found or belongs to different tenant |
+| `503` | Database not configured |
+
 #### List Runs
 
 ```
 GET /api/v1/daily-tracker/runs
 ```
+
+Returns paginated list of daily runs from the database, ordered by most recent first.
 
 **Query Parameters:**
 
@@ -2109,8 +2521,6 @@ GET /api/v1/daily-tracker/runs
 |-------|------|---------|-------------|
 | `limit` | int | `20` | Max results (1–100) |
 | `offset` | int | `0` | Offset |
-
-> **Note:** In v1, run listing returns empty as runs are transient. Full DB persistence is deferred.
 
 ### Analytics
 
@@ -2168,7 +2578,947 @@ Per-competitor visibility metrics.
 
 ---
 
-## 21. Server-Sent Events (SSE)
+## 21. Audience Persona Pipeline
+
+### Start Audience Persona Pipeline
+
+```
+POST /api/v1/audience-persona/start
+```
+
+**Auth:** `member` or `superuser` (Bearer token required)
+
+**Request Body:**
+```json
+{
+  "company_name": "Ramp",
+  "domain": "ramp.com",
+  "product_slug": null,
+  "max_personas": 5,
+  "auto_approve_checkpoints": [],
+  "force_rerun": false,
+  "language": "en",
+  "region": null,
+  "additional_constraints": null
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `company_name` | string | Yes | Company name (derives slug) |
+| `domain` | string | Yes | Company domain |
+| `product_slug` | string | No | Product scope (creates `{slug}__{product}` effective slug) |
+| `max_personas` | int | No | 3-7 personas to generate (default: 5) |
+| `auto_approve_checkpoints` | int[] | No | Checkpoint numbers to auto-approve: `[1]` = briefs, `[2]` = profiles, `[1,2]` = both |
+| `force_rerun` | bool | No | Override pipeline guard (default: false) |
+| `language` | string | No | Output language (default: "en") |
+| `region` | string | No | Geographic focus |
+| `additional_constraints` | string | No | Custom guidance for persona generation |
+
+**Response (202 — Pipeline Launched):**
+```json
+{
+  "run_id": "550e8400-...",
+  "pipeline": "audience_persona",
+  "company_slug": "ramp",
+  "product_slug": null,
+  "effective_slug": "ramp",
+  "status": "running",
+  "created_at": "2026-03-06T..."
+}
+```
+
+**Response (200 — Already Exists):**
+When approved personas already exist and KB hasn't been updated since last AP run:
+```json
+{
+  "run_id": "existing-ramp",
+  "pipeline": "audience_persona",
+  "company_slug": "ramp",
+  "status": "already_exists",
+  "already_exists": true,
+  "message": "Audience personas already exist (3 approved). Pass force_rerun=true to re-run."
+}
+```
+
+### Get Audience Persona Status
+
+```
+GET /api/v1/audience-persona/{run_id}/status
+```
+
+**Auth:** Any authenticated user
+
+**Response:** Standard `TaskResponse` with `approval_payload` containing HITL stage details.
+
+### HITL-1: Brief Approval
+
+```
+POST /api/v1/audience-persona/{run_id}/approve/briefs
+```
+
+**Auth:** `member` or `superuser`
+
+Called when the pipeline pauses at HITL-1 (persona brief review). The `approval_payload` in the task status will contain the suggested briefs.
+
+**Request Body:**
+```json
+{
+  "batch_decision": "partial",
+  "brief_reviews": [
+    {
+      "brief_id": "pb-abc12345",
+      "decision": "approve"
+    },
+    {
+      "brief_id": "pb-def67890",
+      "decision": "modify",
+      "modified_brief": {
+        "persona_name": "VP of Engineering",
+        "tagline": "Technical decision-maker",
+        "description": "Updated description...",
+        "rationale": ["Updated rationale"]
+      }
+    },
+    {
+      "brief_id": "pb-ghi11111",
+      "decision": "reject"
+    }
+  ],
+  "added_briefs": [
+    {
+      "persona_name": "Startup Founder",
+      "tagline": "Early-stage bootstrapper",
+      "description": "A manually added persona...",
+      "rationale": ["Custom reason"]
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `batch_decision` | `"approve_all" \| "partial" \| "reject_all"` | Batch decision for all briefs |
+| `brief_reviews` | array | Per-brief decisions (required for `partial`) |
+| `brief_reviews[].decision` | `"approve" \| "modify" \| "reject"` | Decision for this brief |
+| `brief_reviews[].modified_brief` | object | Modified brief data (required for `modify`) |
+| `added_briefs` | array | Manually added persona briefs |
+
+**Response:**
+```json
+{
+  "status": "accepted",
+  "stage": "persona_brief_review",
+  "message": "Brief approval submitted: partial"
+}
+```
+
+### HITL-2: Profile Approval
+
+```
+POST /api/v1/audience-persona/{run_id}/approve/profiles
+```
+
+**Auth:** `member` or `superuser`
+
+Called when the pipeline pauses at HITL-2 (profile review). The `approval_payload` in the task status will contain profile summaries with content previews.
+
+**Request Body:**
+```json
+{
+  "profile_reviews": [
+    {
+      "persona_id": "vp-engineering",
+      "decision": "approve"
+    },
+    {
+      "persona_id": "startup-founder",
+      "decision": "revise",
+      "revision_note": "Add more detail about pain points with expense management."
+    },
+    {
+      "persona_id": "finance-director",
+      "decision": "reject"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `profile_reviews` | array | Per-profile decisions (min 1 required) |
+| `profile_reviews[].persona_id` | string | Persona ID (lowercase alphanumeric + hyphens) |
+| `profile_reviews[].decision` | `"approve" \| "revise" \| "reject"` | Decision for this profile |
+| `profile_reviews[].revision_note` | string | Feedback for revision (required for `revise`) |
+
+**Response:**
+```json
+{
+  "status": "accepted",
+  "stage": "persona_profile_review",
+  "message": "Profile approval submitted"
+}
+```
+
+### Add Standalone Persona
+
+```
+POST /api/v1/audience-persona/{slug}/add-persona
+```
+
+**Auth:** `member` or `superuser`
+
+Generates a single persona profile outside the pipeline flow. Creates a brief, runs Agent 2 (Perplexity deep research), and stores the result. The profile will need standalone approval afterwards.
+
+**Request Body:**
+```json
+{
+  "persona_name": "CFO at Series B Startup",
+  "tagline": "Budget-conscious finance leader",
+  "description": "A hands-on CFO at a fast-growing startup...",
+  "rationale": ["High-value segment", "Underserved by current content"]
+}
+```
+
+**Response (202):**
+```json
+{
+  "persona_id": "cfo-at-series-b-startup",
+  "task_id": "550e8400-..."
+}
+```
+
+### Approve/Reject Standalone Persona
+
+```
+POST /api/v1/audience-persona/{slug}/personas/{persona_id}/approve
+```
+
+**Auth:** `member` or `superuser`
+
+Approves or rejects a persona in `pending_review` status (e.g., after standalone add-persona generation).
+
+**Request Body:**
+```json
+{
+  "decision": "approve"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `decision` | `"approve" \| "reject"` | Approve sets status to `fresh`, reject sets to `archived` |
+
+**Response:**
+```json
+{
+  "persona_id": "cfo-at-series-b-startup",
+  "status": "fresh"
+}
+```
+
+### List Personas
+
+```
+GET /api/v1/audience-persona/{slug}/personas
+```
+
+**Auth:** Any authenticated user
+
+Returns all personas for a company with their current status, version, and word count.
+
+**Response:**
+```json
+{
+  "slug": "ramp",
+  "personas": [
+    {
+      "persona_id": "vp-engineering",
+      "persona_name": "VP of Engineering",
+      "tagline": "Technical decision-maker",
+      "kind": "icp",
+      "status": "fresh",
+      "current_version": 2,
+      "last_updated": "2026-03-06T...",
+      "created_by": "agent",
+      "word_count": 3200
+    }
+  ],
+  "total": 3
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `fresh` | Approved and current |
+| `stale` | Approved but outdated (>60 days or KB updated) |
+| `pending_review` | Generated, awaiting approval |
+| `archived` | Rejected or superseded |
+| `missing` | Expected but not yet generated |
+
+---
+
+## 22. Voice Style Guide Pipeline
+
+The Voice Style Guide pipeline runs 3 agents in sequence: **Author Discovery** (Gemini) → **Author Research** (Perplexity) → **Voice Synthesis** (Claude). One HITL checkpoint after author discovery.
+
+### Start Voice Style Guide
+
+```
+POST /api/v1/voice-style-guide/start
+```
+
+**Auth:** Requires `member` or `superuser` role. Tenant-isolated.
+
+**Request Body:**
+
+```json
+{
+  "company_name": "Ramp",
+  "domain": "ramp.com",
+  "product_slug": null,
+  "max_authors": 5,
+  "auto_approve_checkpoints": [],
+  "force_rerun": false,
+  "language": "en",
+  "region": null,
+  "additional_constraints": null
+}
+```
+
+**Fields:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `company_name` | string | Yes | — | Company name |
+| `domain` | string | Yes | — | Company domain |
+| `product_slug` | string | No | `null` | Product scope |
+| `max_authors` | int | No | `5` | Authors to discover (3–5) |
+| `auto_approve_checkpoints` | int[] | No | `[]` | Checkpoint numbers to auto-approve (`[1]` = authors) |
+| `force_rerun` | bool | No | `false` | Bypass already-exists guard |
+| `language` | string | No | `"en"` | Language code |
+| `region` | string | No | `null` | Region context |
+| `additional_constraints` | string | No | `null` | Extra instructions |
+
+**Response (202):** `PipelineRunResponse` with `pipeline: "voice_style_guide"`.
+
+**Response (200):** When a fresh guide already exists and `force_rerun` is false. Returns `already_exists: true`.
+
+### Get Voice Style Guide Status
+
+```
+GET /api/v1/voice-style-guide/{run_id}/status
+```
+
+**Auth:** Requires authentication.
+
+**Response (200):** Standard `TaskResponse`. When `status` is `"pending_approval"`, the `approval_payload` contains the discovered authors for review.
+
+### HITL-1: Author Approval
+
+```
+POST /api/v1/voice-style-guide/{run_id}/approve/authors
+```
+
+**Auth:** Requires `member` or `superuser` role.
+
+Called when the pipeline pauses at HITL-1 (author review). The `approval_payload` in the task status contains the discovered authors with their relevance scores and writing samples.
+
+**Request Body:**
+
+```json
+{
+  "batch_decision": "partial",
+  "author_reviews": [
+    {
+      "author_id": "paul-graham",
+      "decision": "approve"
+    },
+    {
+      "author_id": "seth-godin",
+      "decision": "modify",
+      "modified_author": {
+        "name": "Seth Godin",
+        "relevance_note": "Focus on his marketing philosophy"
+      }
+    },
+    {
+      "author_id": "unknown-author",
+      "decision": "reject"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `batch_decision` | `"approve_all"` · `"partial"` · `"reject_all"` | Batch decision for all authors |
+| `author_reviews` | array | Per-author decisions (required for `partial`) |
+| `author_reviews[].author_id` | string | Author identifier |
+| `author_reviews[].decision` | `"approve"` · `"modify"` · `"reject"` | Decision for this author |
+| `author_reviews[].modified_author` | object | Modified author data (for `modify`) |
+
+**Response:**
+
+```json
+{
+  "status": "accepted",
+  "stage": "vsg_author_review",
+  "message": "Author review submitted: partial"
+}
+```
+
+### Get Latest Guide
+
+```
+GET /api/v1/voice-style-guide/{slug}/guide
+```
+
+**Auth:** Requires authentication.
+
+Returns the latest approved voice style guide content.
+
+**Response (200):**
+
+```json
+{
+  "slug": "ramp",
+  "guide_md": "# Voice & Style Guide: Ramp\n\n## Core Voice Attributes\n...",
+  "version": 1,
+  "word_count": 2800,
+  "last_updated": "2026-03-10T15:00:00Z",
+  "source_authors": ["paul-graham", "shreyas-doshi", "leila-hormozi"]
+}
+```
+
+**Error (404):** No voice style guide found for this slug.
+
+---
+
+## 23. Topic Discovery Pipeline
+
+The Topic Discovery pipeline generates a content taxonomy and prioritized topic matrix for a company. It runs in 3 main phases with 3 HITL checkpoints:
+
+1. **Taxonomy Generation** → HITL-1 (taxonomy review)
+2. **Subdomain Scoring + Selection** → HITL-1.5 (subdomain selection)
+3. **Matrix Generation** → HITL-2 (matrix review)
+
+A separate **Topic Expansion** (Pipeline B) allows expanding additional subdomains into the matrix after the initial discovery completes.
+
+### Start Topic Discovery
+
+```
+POST /api/v1/topic-discovery/start
+```
+
+**Auth:** Requires `member` or `superuser` role. Tenant-isolated.
+
+**Request Body:**
+
+```json
+{
+  "company_name": "Ramp",
+  "domain": "ramp.com",
+  "product_slug": null,
+  "auto_approve_checkpoints": [],
+  "force_rerun": false,
+  "max_expansion_rounds": 4,
+  "dedup_threshold": 0.85,
+  "top_n_expand": 10,
+  "persona_filter": null,
+  "language": "en",
+  "region": null,
+  "additional_constraints": null
+}
+```
+
+**Fields:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `company_name` | string | Yes | — | Company name |
+| `domain` | string | Yes | — | Company domain |
+| `product_slug` | string | No | `null` | Product scope |
+| `auto_approve_checkpoints` | int[] | No | `[]` | Checkpoints to auto-approve: `1`=taxonomy, `2`=matrix, `3`=subdomain selection |
+| `force_rerun` | bool | No | `false` | Bypass already-exists guard |
+| `max_expansion_rounds` | int | No | `4` | Max taxonomy expansion rounds (1–10) |
+| `dedup_threshold` | float | No | `0.85` | Deduplication cosine similarity threshold (0.5–1.0) |
+| `top_n_expand` | int | No | `10` | Top-scored subdomains to expand (1–50) |
+| `persona_filter` | string | No | `null` | Optional persona_id to focus scoring/expansion |
+| `language` | string | No | `"en"` | Language code |
+| `region` | string | No | `null` | Region context |
+| `additional_constraints` | string | No | `null` | Extra instructions |
+
+**Response (202):** `PipelineRunResponse` with `pipeline: "topic_discovery"`.
+
+**Response (200):** When approved taxonomy + matrix already exist and `force_rerun` is false.
+
+### Get Topic Discovery Status
+
+```
+GET /api/v1/topic-discovery/{run_id}/status
+```
+
+**Auth:** Requires authentication. Tenant-isolated.
+
+**Response (200):** Standard `TaskResponse`.
+
+### HITL-1: Taxonomy Approval
+
+```
+POST /api/v1/topic-discovery/{run_id}/approve/taxonomy
+```
+
+**Auth:** Requires `member` or `superuser` role. Tenant-isolated.
+
+Called when the pipeline pauses after taxonomy generation. The `approval_payload` contains the generated taxonomy tree with subdomains, descriptions, and coverage scores.
+
+**Request Body:**
+
+```json
+{
+  "batch_decision": "modify",
+  "user_edits": [
+    {
+      "op": "rename",
+      "node_id": "sd-123",
+      "new_name": "Month-End Close Automation"
+    },
+    {
+      "op": "add",
+      "parent_id": "sd-100",
+      "name": "Spend Forecasting",
+      "description": "AI-powered spend prediction and budget planning"
+    },
+    {
+      "op": "delete",
+      "node_id": "sd-456"
+    },
+    {
+      "op": "reparent",
+      "node_id": "sd-789",
+      "new_parent_id": "sd-100"
+    }
+  ],
+  "user_feedback": "Focus more on finance automation use cases"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `batch_decision` | `"approve"` · `"modify"` · `"retry"` | Batch decision |
+| `user_edits` | array | Edit operations on the taxonomy tree |
+| `user_edits[].op` | `"add"` · `"delete"` · `"rename"` · `"reparent"` | Operation type |
+| `user_edits[].node_id` | string | Target node (for delete/rename/reparent) |
+| `user_edits[].parent_id` | string | Parent node (for add) |
+| `user_edits[].new_parent_id` | string | New parent (for reparent) |
+| `user_edits[].name` | string | Node name (for add) |
+| `user_edits[].new_name` | string | New name (for rename) |
+| `user_edits[].description` | string | Node description (for add) |
+| `user_feedback` | string | General feedback for retry |
+
+**Response:**
+
+```json
+{
+  "status": "accepted",
+  "stage": "td_taxonomy_review",
+  "message": "Taxonomy review submitted: modify"
+}
+```
+
+### HITL-1.5: Subdomain Selection
+
+```
+POST /api/v1/topic-discovery/{run_id}/approve/subdomains
+```
+
+**Auth:** Requires `member` or `superuser` role. Tenant-isolated.
+
+Called after subdomain scoring completes. The user selects which subdomains to expand into the content matrix.
+
+**Request Body:**
+
+```json
+{
+  "batch_decision": "select",
+  "selected_subdomain_ids": ["sd-123", "sd-456", "sd-789"],
+  "top_n": null,
+  "persona_filter": null
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `batch_decision` | `"select"` · `"select_top_n"` | Selection mode |
+| `selected_subdomain_ids` | string[] | Manually selected subdomain IDs (for `select`) |
+| `top_n` | int | Auto-select top N by score (for `select_top_n`, 1–50) |
+| `persona_filter` | string | Optional persona_id to filter ranking |
+
+**Response:**
+
+```json
+{
+  "status": "accepted",
+  "stage": "td_subdomain_selection",
+  "message": "Subdomain selection submitted: select"
+}
+```
+
+### HITL-2: Matrix Approval
+
+```
+POST /api/v1/topic-discovery/{run_id}/approve/matrix
+```
+
+**Auth:** Requires `member` or `superuser` role. Tenant-isolated.
+
+Called after the content matrix is generated. The matrix contains `buyer_stage × intent_type` topic assignments for each expanded subdomain.
+
+**Request Body:**
+
+```json
+{
+  "batch_decision": "modify",
+  "user_edits": [
+    {
+      "op": "adjust_priority",
+      "assignment_id": "ta-001",
+      "new_priority": 0.95
+    },
+    {
+      "op": "remove",
+      "assignment_id": "ta-002"
+    },
+    {
+      "op": "add",
+      "topic_text": "How Mid-Market CFOs Cut Month-End Close from 15 Days to 5",
+      "subdomain_name": "Month-End Close Acceleration",
+      "buyer_stage": "mofu",
+      "intent_type": "informational",
+      "audience_segment": "CFO",
+      "priority_score": 0.85
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `batch_decision` | `"approve"` · `"modify"` | Batch decision |
+| `user_edits` | array | Edit operations on the matrix |
+| `user_edits[].op` | `"adjust_priority"` · `"remove"` · `"add"` | Operation type |
+| `user_edits[].assignment_id` | string | Target assignment (for adjust/remove) |
+| `user_edits[].new_priority` | float | New priority score (for adjust) |
+| `user_edits[].topic_text` | string | Topic title (for add) |
+| `user_edits[].subdomain_name` | string | Subdomain (for add) |
+| `user_edits[].buyer_stage` | `"tofu"` · `"mofu"` · `"bofu"` | Buyer stage (for add) |
+| `user_edits[].intent_type` | `"informational"` · `"commercial"` · `"navigational"` · `"transactional"` | Intent type (for add) |
+| `user_edits[].audience_segment` | string | Target audience (for add) |
+| `user_edits[].priority_score` | float | Priority 0.0–1.0 (for add) |
+
+**Response:**
+
+```json
+{
+  "status": "accepted",
+  "stage": "td_matrix_review",
+  "message": "Matrix review submitted: modify"
+}
+```
+
+### Get Latest Taxonomy
+
+```
+GET /api/v1/topic-discovery/{slug}/taxonomy
+```
+
+**Auth:** Requires authentication. Tenant-isolated.
+
+Returns the latest approved taxonomy tree.
+
+**Response (200):**
+
+```json
+{
+  "slug": "ramp",
+  "taxonomy": {
+    "version": 2,
+    "total_subdomains": 15,
+    "coverage_score": 0.87,
+    "root_nodes": [
+      {
+        "id": "sd-001",
+        "name": "Expense Management",
+        "description": "...",
+        "children": [
+          { "id": "sd-002", "name": "Receipt Automation", "description": "..." }
+        ]
+      }
+    ]
+  },
+  "version": 2,
+  "total_subdomains": 15,
+  "coverage_score": 0.87
+}
+```
+
+### Get Latest Matrix
+
+```
+GET /api/v1/topic-discovery/{slug}/matrix
+```
+
+**Auth:** Requires authentication. Tenant-isolated.
+
+Returns the latest approved content matrix.
+
+**Response (200):**
+
+```json
+{
+  "slug": "ramp",
+  "matrix": {
+    "version": 1,
+    "total_assignments": 42,
+    "assignments": [
+      {
+        "id": "ta-001",
+        "topic_text": "How Mid-Market CFOs Cut Month-End Close from 15 Days to 5",
+        "subdomain_name": "Month-End Close Acceleration",
+        "buyer_stage": "mofu",
+        "intent_type": "informational",
+        "audience_segment": "CFO",
+        "priority_score": 0.92
+      }
+    ]
+  },
+  "version": 1,
+  "total_assignments": 42
+}
+```
+
+### Get Scored Subdomains
+
+```
+GET /api/v1/topic-discovery/{slug}/scored-subdomains
+```
+
+**Auth:** Requires authentication. Tenant-isolated.
+
+Returns subdomains with their composite priority scores and scoring signal breakdown.
+
+**Response (200):**
+
+```json
+{
+  "slug": "ramp",
+  "scored_subdomains": {
+    "version": 1,
+    "total_scored": 15,
+    "signals_used": ["gap_coverage", "persona_affinity", "search_volume", "competitive_density"],
+    "subdomains": [
+      {
+        "id": "sd-001",
+        "name": "Expense Management",
+        "priority_score": 0.92,
+        "signal_scores": { "gap_coverage": 0.85, "persona_affinity": 0.95, "search_volume": 0.88, "competitive_density": 0.72 }
+      }
+    ]
+  },
+  "version": 1,
+  "total_scored": 15,
+  "signals_used": ["gap_coverage", "persona_affinity", "search_volume", "competitive_density"]
+}
+```
+
+### Get Persona Affinity
+
+```
+GET /api/v1/topic-discovery/{slug}/personas
+```
+
+**Auth:** Requires authentication. Tenant-isolated.
+
+Returns persona-to-subdomain affinity data showing which subdomains are most relevant to each audience persona.
+
+**Query Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `persona_id` | string | `null` | Filter to a specific persona |
+
+**Response (200):**
+
+```json
+{
+  "slug": "ramp",
+  "persona_entries": {
+    "cfo-mid-market": {
+      "persona_name": "CFO at Mid-Market",
+      "top_subdomains": ["Month-End Close Acceleration", "Spend Forecasting"],
+      "affinity_scores": { "sd-001": 0.95, "sd-002": 0.72 }
+    }
+  },
+  "total_personas": 3,
+  "total_subdomains": 15
+}
+```
+
+### Start Topic Expansion (Pipeline B)
+
+```
+POST /api/v1/topic-discovery/expand
+```
+
+**Auth:** Requires `member` or `superuser` role. Tenant-isolated.
+
+Expands selected subdomains into the content matrix. Requires Topic Discovery (Pipeline A) to have completed first. Each expansion run adds new topic assignments to the existing matrix.
+
+**Request Body:**
+
+```json
+{
+  "company_name": "Ramp",
+  "domain": "ramp.com",
+  "product_slug": null,
+  "subdomain_ids": ["sd-005", "sd-008"],
+  "persona_filter": null,
+  "taxonomy_version": null,
+  "auto_approve_checkpoints": []
+}
+```
+
+**Fields:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `company_name` | string | Yes | — | Company name |
+| `domain` | string | Yes | — | Company domain |
+| `product_slug` | string | No | `null` | Product scope |
+| `subdomain_ids` | string[] | Yes | — | Subdomain IDs to expand (min 1) |
+| `persona_filter` | string | No | `null` | Optional persona_id to focus expansion |
+| `taxonomy_version` | int | No | `null` | Specific taxonomy version (null = latest) |
+| `auto_approve_checkpoints` | int[] | No | `[]` | Only `[2]` is valid (auto-approve matrix) |
+
+**Response (202):** `PipelineRunResponse` with `pipeline: "topic_expansion"`.
+
+**Error (409):** Topic discovery has not been completed yet.
+
+### Get Expansion Status
+
+```
+GET /api/v1/topic-discovery/{slug}/expansion-status
+```
+
+**Auth:** Requires authentication. Tenant-isolated.
+
+Returns which subdomains have been expanded and which are available for expansion.
+
+**Response (200):**
+
+```json
+{
+  "slug": "ramp",
+  "effective_slug": "ramp",
+  "total_subdomains": 15,
+  "expanded": 10,
+  "not_expanded": 5,
+  "expanded_ids": ["sd-001", "sd-002", "sd-003"],
+  "available_for_expansion": [
+    {
+      "id": "sd-011",
+      "name": "Vendor Payment Optimization",
+      "priority_score": 0.78,
+      "expansion_status": "not_expanded"
+    }
+  ]
+}
+```
+
+---
+
+## 24. CPS Scoring (Citation Probability Scorer)
+
+### Score Content
+
+```
+POST /api/v1/cps/score
+```
+
+**Auth:** Any authenticated user (Bearer token required)
+
+Scores markdown content for citation probability across 4 AI answer engines. Returns a CPS score (0.0–1.0) indicating how likely the content is to be cited when AI engines answer the given queries. Requires PyTorch and the model checkpoint to be available on the server.
+
+**Request Body:**
+```json
+{
+  "content_markdown": "# Best CRM Software for Small Business\n\nWhen choosing a CRM...",
+  "target_queries": [
+    "best CRM software",
+    "CRM for small business"
+  ],
+  "content_url": "https://example.com/crm-guide"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `content_markdown` | string | Yes | Markdown content to score (min 50 chars) |
+| `target_queries` | string[] | Yes | 1-10 search queries to score against |
+| `content_url` | string | No | URL for authority feature extraction (default: `https://example.com`) |
+
+**Response (200):**
+```json
+{
+  "cps_score": 0.72,
+  "per_engine": {
+    "chatgpt_search": 0.75,
+    "claude_search": 0.68,
+    "gemini_search": 0.71,
+    "perplexity": 0.74
+  },
+  "per_query": [
+    {"query": "best CRM software", "cps_score": 0.73},
+    {"query": "CRM for small business", "cps_score": 0.71}
+  ],
+  "model_version": "v1",
+  "feature_config": "option_a_top11",
+  "target_weight": 0.5
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `cps_score` | float | Overall citation probability (0.0–1.0) — average across all engines |
+| `per_engine` | object | Per-engine scores: `chatgpt_search`, `claude_search`, `gemini_search`, `perplexity` |
+| `per_query` | array | Per-query average scores across all engines |
+| `model_version` | string | Model version identifier |
+| `feature_config` | string | Feature selection config used (e.g., `option_a_top11`, `option_b_full31`) |
+| `target_weight` | float | Contrastive vs regression signal weight |
+
+**Score Interpretation:**
+
+| CPS Score | Interpretation |
+|-----------|----------------|
+| 0.0 – 0.2 | Very unlikely to be cited |
+| 0.2 – 0.4 | Low citation probability |
+| 0.4 – 0.6 | Moderate citation probability |
+| 0.6 – 0.8 | High citation probability |
+| 0.8 – 1.0 | Very high citation probability |
+
+**Error Responses:**
+- `503` — CPS scoring unavailable (torch not installed, model checkpoint missing, or CPS disabled in settings)
+- `500` — CPS scoring failed during inference
+
+**Notes:**
+- CPS scoring is also integrated into Content Engine v1.3 as Stage 4.5 (between evaluator and HITL-3). The standalone endpoint is for ad-hoc scoring outside the pipeline.
+- Settings: `cps_enabled` (bool, default `true`), `cps_target_weight` (float, default `0.5`)
+- The model extracts 30 features: 12 structural (HTML), 9 citability (text), 9 authority (URL)
+
+---
+
+## 25. Server-Sent Events (SSE)
 
 ### Endpoint
 
@@ -2192,6 +3542,13 @@ GET /api/v1/tasks/{task_id}/events
 | `completed` | `{ "pipeline": "..." }` | Pipeline finished successfully |
 | `failed` | `{ "error": "exception message" }` | Pipeline encountered an error |
 | `cancelled` | `{}` | Task was cancelled |
+| `ap_phase_start` | `{ "phase": 0-3, "agents": [...] }` | Audience Persona phase begins |
+| `ap_agent_complete` | `{ "agent": "...", "persona_name": "...", ... }` | AP agent finished |
+| `ap_phase_complete` | `{ "phase": 0-3 }` | AP phase finished |
+| `vsg_stage_start` | `{ "stage": "discovery" \| "research" \| "synthesis" }` | VSG stage begins |
+| `vsg_stage_complete` | `{ "stage": "...", "authors_count": N }` | VSG stage finished |
+| `td_stage_start` | `{ "stage": "taxonomy" \| "scoring" \| "matrix" }` | TD stage begins |
+| `td_stage_complete` | `{ "stage": "...", "count": N }` | TD stage finished |
 
 ### Terminal Events
 
@@ -2203,7 +3560,7 @@ The browser's `EventSource` automatically sends `Last-Event-ID` on reconnection.
 
 ---
 
-## 22. Error Handling
+## 26. Error Handling
 
 ### Error Response Shape
 
@@ -2226,12 +3583,15 @@ The browser's `EventSource` automatically sends `Last-Event-ID` on reconnection.
 | **404** | — | Artifact/file/document not found | Show "Not found" |
 | **409** | `task_conflict` | Concurrent run for same company | Show "A pipeline is already running" |
 | **409** | — | Wrong state for action (cancel completed, approve non-pending) | Show the `detail` message |
+| **409** | — | Domain already taken (registration) | Show "Ask admin for invite code" |
+| **409** | — | HITL window mismatch (approval nonce mismatch) | Re-fetch status, retry |
+| **409** | — | Product slug already exists | Show the `detail` message |
 | **422** | — | Invalid request body | Show validation error from `detail` |
 | **500** | `pipeline_error` | Unhandled pipeline exception | Show "Pipeline error: {detail}" |
 
 ---
 
-## 23. Data Models Reference
+## 27. Data Models Reference
 
 ### Common Response Models
 
@@ -2345,6 +3705,71 @@ interface CompanyResponse {
   slug: string;
   name: string;
   domain: string;
+}
+
+interface InviteRequest {
+  role?: 'member' | 'viewer';  // default "member"
+}
+
+interface InviteResponse {
+  invite_code: string;
+  company_slug: string;
+  role: string;
+}
+
+interface JoinRequest {
+  invite_code: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  password: string;           // min 8 chars
+}
+```
+
+### Product Models
+
+```typescript
+interface ProductCreateRequest {
+  name: string;
+  slug: string;               // ^[a-z0-9][a-z0-9-]*$
+  domain?: string;
+  description?: string;
+}
+
+interface ProductUpdateRequest {
+  name?: string;
+  domain?: string;
+  description?: string;
+}
+
+interface ProductDetailResponse {
+  id: string;
+  slug: string;
+  name: string;
+  domain: string | null;
+  description: string | null;
+  company_id: string;
+  created_at: string;         // ISO 8601
+  updated_at: string;
+}
+```
+
+### Onboarding Models
+
+```typescript
+interface OnboardingStartRequest {
+  industry?: string;                    // max 200 chars
+  seed_personas?: string[];             // max 7
+  seed_urls?: string[];                 // max 10
+  max_pages?: number;                   // 10–500, default 200
+  max_depth?: number;                   // 1–10, default 4
+  max_personas?: number;                // 3–7, default 5
+  max_authors?: number;                 // 2–3, default 3
+  max_queries?: number;                 // 10–500, default 75
+  platforms?: string[];                 // default all 4
+  language?: string;                    // default "en"
+  region?: string;
+  force_rerun?: boolean;
 }
 ```
 
@@ -2511,6 +3936,32 @@ interface ApprovalResponseV13 {
   brief_id: string | null;
   message: string | null;
 }
+
+interface TopicContentStartRequest {
+  company_name: string;
+  domain: string;
+  effective_slug: string;
+  topic_assignment_ids: string[];        // 1–20, each must be valid UUID
+  product_slug?: string;
+  product_name?: string;
+  product_description?: string;
+  auto_approve?: boolean;
+  platforms?: string[];                  // default all 4
+}
+
+interface TopicContentStatusItem {
+  topic_assignment_id: string;
+  topic_text: string;
+  status: string;
+  content_piece_id: string | null;
+  content_title: string | null;
+}
+
+interface TopicContentStatusResponse {
+  effective_slug: string;
+  total_assignments: number;
+  items: TopicContentStatusItem[];
+}
 ```
 
 ### Knowledge Document Models
@@ -2556,8 +4007,16 @@ interface CompanyProfileSettingsResponse {
   name: string;
   domain: string;
   additional_domains: string[];
+  industry: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface UpdateCompanyProfileRequest {
+  name?: string;
+  domain?: string;
+  additional_domains?: string[];
+  industry?: string;                    // max 200 chars
 }
 
 interface PipelineDefaultsResponse {
@@ -2574,9 +4033,290 @@ interface PipelineDefaultsResponse {
 }
 ```
 
+### Audience Persona Models
+
+```typescript
+interface AudiencePersonaStartRequest {
+  company_name: string;
+  domain: string;
+  product_slug?: string;
+  max_personas?: number;              // 3-7, default 5
+  auto_approve_checkpoints?: number[]; // [1]=briefs, [2]=profiles
+  force_rerun?: boolean;
+  language?: string;
+  region?: string;
+  additional_constraints?: string;
+}
+
+interface PersonaBriefApprovalRequest {
+  batch_decision: 'approve_all' | 'partial' | 'reject_all';
+  brief_reviews?: BriefReviewItem[];
+  added_briefs?: ManualBriefItem[];
+}
+
+interface BriefReviewItem {
+  brief_id: string;
+  decision: 'approve' | 'modify' | 'reject';
+  modified_brief?: ManualBriefItem;
+}
+
+interface ManualBriefItem {
+  persona_name: string;
+  tagline?: string;
+  description?: string;
+  rationale?: string[];
+}
+
+interface PersonaProfileApprovalRequest {
+  profile_reviews: ProfileReviewItem[];
+}
+
+interface ProfileReviewItem {
+  persona_id: string;                 // ^[a-z0-9][a-z0-9-]*$
+  decision: 'approve' | 'revise' | 'reject';
+  revision_note?: string;
+}
+
+interface PersonaListItem {
+  persona_id: string;
+  persona_name: string;
+  tagline: string;
+  kind: 'icp' | 'secondary';
+  status: 'fresh' | 'stale' | 'missing' | 'pending_review' | 'archived';
+  current_version: number;
+  last_updated: string | null;
+  created_by: 'agent' | 'manual' | 'hybrid';
+  word_count: number;
+}
+
+interface PersonaListResponse {
+  slug: string;
+  personas: PersonaListItem[];
+  total: number;
+}
+```
+
+### Research Orchestrator Models
+
+```typescript
+interface AutoApproveRequest {
+  kb?: number[];               // KB checkpoints: [1, 2, 3]
+  ap?: number[];               // AP checkpoints: [1, 2]
+  vsg?: number[];              // VSG checkpoints: [1]
+}
+
+interface ResearchOrchestratorStartRequest {
+  company_name: string;
+  domain: string;
+  product_slug?: string;
+  seed_urls?: string[];
+  max_personas?: number;            // 3–7, default 5
+  max_authors?: number;             // 3–5, default 5
+  force_rerun?: boolean;
+  skip_fresh?: boolean;             // Default true
+  pipelines?: ('kb' | 'ap' | 'vsg')[];  // Default all 3
+  auto_approve?: AutoApproveRequest;
+  language?: string;
+  region?: string;
+  additional_constraints?: string;
+}
+```
+
+### Voice Style Guide Models
+
+```typescript
+interface VoiceStyleGuideStartRequest {
+  company_name: string;
+  domain: string;
+  product_slug?: string;
+  max_authors?: number;              // 3–5, default 5
+  auto_approve_checkpoints?: number[];  // [1] = authors
+  force_rerun?: boolean;
+  language?: string;
+  region?: string;
+  additional_constraints?: string;
+}
+
+interface AuthorReviewItem {
+  author_id: string;
+  decision: 'approve' | 'modify' | 'reject';
+  modified_author?: Record<string, any>;
+}
+
+interface AuthorApprovalRequest {
+  batch_decision: 'approve_all' | 'partial' | 'reject_all';
+  author_reviews?: AuthorReviewItem[];
+}
+
+interface ApprovalResponseVSG {
+  status: string;
+  stage: string;
+  message: string | null;
+}
+
+interface GuideReadResponse {
+  slug: string;
+  guide_md: string;
+  version: number;
+  word_count: number;
+  last_updated: string | null;
+  source_authors: string[];
+}
+```
+
+### Topic Discovery Models
+
+```typescript
+type BuyerStage = 'tofu' | 'mofu' | 'bofu';
+type IntentType = 'informational' | 'commercial' | 'navigational' | 'transactional';
+
+interface TopicDiscoveryStartRequest {
+  company_name: string;
+  domain: string;
+  product_slug?: string;
+  auto_approve_checkpoints?: number[];   // 1=taxonomy, 2=matrix, 3=subdomains
+  force_rerun?: boolean;
+  max_expansion_rounds?: number;         // 1–10, default 4
+  dedup_threshold?: number;              // 0.5–1.0, default 0.85
+  top_n_expand?: number;                 // 1–50, default 10
+  persona_filter?: string;
+  language?: string;
+  region?: string;
+  additional_constraints?: string;
+}
+
+interface TaxonomyEditItem {
+  op: 'add' | 'delete' | 'rename' | 'reparent';
+  node_id?: string;
+  parent_id?: string;
+  new_parent_id?: string;
+  name?: string;
+  new_name?: string;
+  description?: string;
+}
+
+interface TaxonomyApprovalRequest {
+  batch_decision: 'approve' | 'modify' | 'retry';
+  user_edits?: TaxonomyEditItem[];
+  user_feedback?: string;
+}
+
+interface SubdomainSelectionRequest {
+  batch_decision: 'select' | 'select_top_n';
+  selected_subdomain_ids?: string[];
+  top_n?: number;                        // 1–50
+  persona_filter?: string;
+}
+
+interface MatrixEditItem {
+  op: 'adjust_priority' | 'remove' | 'add';
+  assignment_id?: string;
+  new_priority?: number;
+  topic_text?: string;
+  subdomain_name?: string;
+  buyer_stage?: BuyerStage;
+  intent_type?: IntentType;
+  audience_segment?: string;
+  priority_score?: number;
+}
+
+interface MatrixApprovalRequest {
+  batch_decision: 'approve' | 'modify';
+  user_edits?: MatrixEditItem[];
+}
+
+interface ApprovalResponseTD {
+  status: string;
+  stage: string;
+  message: string | null;
+}
+
+interface TaxonomyReadResponse {
+  slug: string;
+  taxonomy: Record<string, any>;
+  version: number;
+  total_subdomains: number;
+  coverage_score: number;
+}
+
+interface MatrixReadResponse {
+  slug: string;
+  matrix: Record<string, any>;
+  version: number;
+  total_assignments: number;
+}
+
+interface ScoredSubdomainsResponse {
+  slug: string;
+  scored_subdomains: Record<string, any>;
+  version: number;
+  total_scored: number;
+  signals_used: string[];
+}
+
+interface PersonaAffinityResponse {
+  slug: string;
+  persona_entries: Record<string, any>;
+  total_personas: number;
+  total_subdomains: number;
+}
+
+interface TopicExpansionStartRequest {
+  company_name: string;
+  domain: string;
+  product_slug?: string;
+  subdomain_ids: string[];               // Min 1
+  persona_filter?: string;
+  taxonomy_version?: number;
+  auto_approve_checkpoints?: number[];   // Only [2] valid
+}
+
+interface ExpansionStatusResponse {
+  slug: string;
+  effective_slug: string;
+  total_subdomains: number;
+  expanded: number;
+  not_expanded: number;
+  expanded_ids: string[];
+  available_for_expansion: Array<{
+    id: string;
+    name: string;
+    priority_score: number;
+    expansion_status: string;
+  }>;
+}
+```
+
+### CPS Scoring Models
+
+```typescript
+interface CPSScoreRequest {
+  content_markdown: string;           // Min 50 chars
+  target_queries: string[];           // 1-10 queries
+  content_url?: string;               // Default: "https://example.com"
+}
+
+interface CPSScoreResponse {
+  cps_score: number;                  // 0.0-1.0 overall
+  per_engine: {
+    chatgpt_search: number;
+    claude_search: number;
+    gemini_search: number;
+    perplexity: number;
+  };
+  per_query: Array<{
+    query: string;
+    cps_score: number;
+  }>;
+  model_version: string;
+  feature_config: string;
+  target_weight: number;
+}
+```
+
 ---
 
-## 24. Artifact Directory Structure
+## 28. Artifact Directory Structure
 
 ```
 artifacts/
@@ -2630,6 +4370,44 @@ artifacts/
 │       ├── brand_perception.md
 │       └── synthesis.md
 │
+├── audience_personas/                   ← Versioned personas
+│   └── ramp/
+│       ├── _manifest.json               ← PersonaManifest (slug, personas{}, kb_synthesis_version)
+│       ├── vp-engineering/
+│       │   ├── brief.json               ← PersonaBrief (suggester output)
+│       │   ├── v1.md                    ← Profile version 1
+│       │   ├── v1.json                  ← Structured sidecar (optional)
+│       │   └── v2.md                    ← Profile version 2 (revision)
+│       └── startup-founder/
+│           ├── brief.json
+│           └── v1.md
+│
+├── voice_style_guide/                   ← Voice style guides
+│   └── ramp/
+│       ├── _manifest.json               ← VSG manifest (guide status, author versions)
+│       ├── discovery/
+│       │   └── v1.json                  ← Author discovery results
+│       ├── paul-graham/
+│       │   ├── brief.json               ← Author brief
+│       │   └── v1.md                    ← Author research profile
+│       ├── shreyas-doshi/
+│       │   ├── brief.json
+│       │   └── v1.md
+│       └── guide/
+│           └── v1.md                    ← Synthesized voice style guide
+│
+├── topic_discovery/                     ← Topic discovery artifacts
+│   └── ramp/
+│       ├── _manifest.json               ← TD manifest (status, versions)
+│       ├── taxonomy/
+│       │   └── v1.json                  ← Taxonomy tree
+│       ├── scored_subdomains/
+│       │   └── v1.json                  ← Subdomain scores + signals
+│       ├── persona_affinity/
+│       │   └── v1.json                  ← Persona-subdomain affinity map
+│       └── matrix/
+│           └── v1.json                  ← Content matrix (topic assignments)
+│
 ├── knowledge_docs/                      ← Uploaded documents
 │   └── ramp/
 │       ├── _index.json
@@ -2652,9 +4430,18 @@ artifacts/
 | Company context | `{slug}.md` | `ramp.md` |
 | Company context draft | `{slug}.draft.md` | `ramp.draft.md` |
 | Product-scoped | `{slug}__{product}.md` | `ramp__expense-mgmt.md` |
-| Persona (ICP) | `{slug}__persona-icp.md` | `ramp__persona-icp.md` |
-| Persona (secondary) | `{slug}__persona-secondary-{n}.md` | `ramp__persona-secondary-1.md` |
-| Style guide | `{slug}.md` | `ramp.md` |
+| Persona (ICP) [v1] | `{slug}__persona-icp.md` | `ramp__persona-icp.md` |
+| Persona (secondary) [v1] | `{slug}__persona-secondary-{n}.md` | `ramp__persona-secondary-1.md` |
+| Audience Persona [v2] | `{slug}/{persona_id}/v{N}.md` | `ramp/vp-engineering/v1.md` |
+| Audience Persona brief | `{slug}/{persona_id}/brief.json` | `ramp/vp-engineering/brief.json` |
+| Audience Persona manifest | `{slug}/_manifest.json` | `ramp/_manifest.json` |
+| Voice Style Guide manifest | `{slug}/_manifest.json` | `ramp/_manifest.json` |
+| Voice Style Guide output | `{slug}/guide/v{N}.md` | `ramp/guide/v1.md` |
+| Voice Style Guide author | `{slug}/{author_id}/v{N}.md` | `ramp/paul-graham/v1.md` |
+| Topic Discovery manifest | `{slug}/_manifest.json` | `ramp/_manifest.json` |
+| Topic Discovery taxonomy | `{slug}/taxonomy/v{N}.json` | `ramp/taxonomy/v1.json` |
+| Topic Discovery matrix | `{slug}/matrix/v{N}.json` | `ramp/matrix/v1.json` |
+| Style guide (legacy) | `{slug}.md` | `ramp.md` |
 | Gap analysis | `{slug}/{file}` | `ramp/gap_report.json` |
 | Content | `{slug}/content/brief-{id}/{file}` | `ramp/content/brief-001/final.md` |
 | Knowledge base | `{slug}/{doc_type}.md` | `ramp/company_overview.md` |
@@ -2665,8 +4452,12 @@ artifacts/
 | Pipeline | Artifacts | Key Files for Display |
 |----------|-----------|----------------------|
 | **Site Audit** | site_audit/{slug}/ | `audit_result.json` — scored results |
-| **Research** | company_context, personas, style_guides | `{slug}.md` — rendered markdown |
+| **Research Orchestrator** | Delegates to KB + AP + VSG | See individual pipelines below |
 | **Knowledge Base** | knowledge_base/{slug}/ | `*.md` docs + `_manifest.json` |
+| **Audience Persona** | audience_personas/{slug}/ | `_manifest.json` — manifest, `{persona_id}/v{N}.md` — profiles |
+| **Voice Style Guide** | voice_style_guide/{slug}/ | `_manifest.json` — manifest, `guide/v{N}.md` — guide |
+| **Topic Discovery** | topic_discovery/{slug}/ | `_manifest.json`, `taxonomy/v{N}.json`, `matrix/v{N}.json` |
 | **Gap Analysis** | gap_analysis/{slug}/ | `gap_report.json` — structured data, `visualizations/*.html` |
 | **Content** | content/{slug}/ | `briefs.json` — brief list, `content/brief-{id}/final.md` |
 | **Content v1.3** | content/{slug}/ | Same as content pipeline |
+| **Audience Persona** | audience_personas/{slug}/ | `_manifest.json` — manifest, `{persona_id}/v{N}.md` — profiles |

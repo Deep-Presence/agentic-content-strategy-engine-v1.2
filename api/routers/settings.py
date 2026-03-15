@@ -143,6 +143,7 @@ async def get_profile(
         name=company.name,
         domain=company.domain,
         additional_domains=company.additional_domains,
+        industry=company.industry,
         created_at=company.created_at,
         updated_at=company.updated_at,
     )
@@ -170,6 +171,7 @@ async def update_profile(
         name=company.name,
         domain=company.domain,
         additional_domains=company.additional_domains,
+        industry=company.industry,
         created_at=company.created_at,
         updated_at=company.updated_at,
     )

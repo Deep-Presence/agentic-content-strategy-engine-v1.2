@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any, Optional
 
 from core.models.gap_analysis import PlatformResult
 
@@ -13,5 +13,11 @@ class SearchEngine(ABC):
         self.model = model
 
     @abstractmethod
-    async def search(self, query_text: str, query_id: Optional[str] = None) -> PlatformResult:
+    async def search(
+        self,
+        query_text: str,
+        query_id: Optional[str] = None,
+        *,
+        client: Any = None,
+    ) -> PlatformResult:
         raise NotImplementedError

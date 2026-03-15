@@ -37,6 +37,7 @@ def get_chroma_client() -> chromadb.ClientAPI:
 
 
 _CITATIONS_COLLECTION_PREFIX = "gap_citations"
+_PERSONA_COLLECTION_PREFIX = "persona"
 
 
 def get_company_collection(
@@ -181,3 +182,69 @@ def upsert_citation_embeddings(
         _CITATIONS_COLLECTION_PREFIX,
         company_slug,
     )
+
+
+# ---------------------------------------------------------------------------
+# Persona profile embeddings
+# ---------------------------------------------------------------------------
+
+
+def get_persona_collection(
+    effective_slug: str,
+    client: Optional[chromadb.ClientAPI] = None,
+) -> chromadb.Collection:
+    """Get or create the ChromaDB collection for persona profile embeddings."""
+    client = client or get_chroma_client()
+    collection_name = f"{_PERSONA_COLLECTION_PREFIX}_{effective_slug}"
+    if len(collection_name) > 63:
+        collection_name = collection_name[:63]
+    return client.get_or_create_collection(
+        name=collection_name,
+        metadata={"hnsw:space": "cosine"},
+    )
+
+
+def upsert_persona_embeddings(
+    effective_slug: str,
+    persona_ids: List[str],
+    texts: List[str],
+    embeddings: List[List[float]],
+) -> None:
+    """Upsert persona profile embeddings into ChromaDB."""
+    collection = get_persona_collection(effective_slug)
+    doc_ids = [f"{effective_slug}__{pid}" for pid in persona_ids]
+    collection.upsert(
+        ids=doc_ids,
+        documents=texts,
+        embeddings=embeddings,
+    )
+    logger.info(
+        "Upserted %d persona embeddings into ChromaDB collection '%s_%s'.",
+        len(doc_ids),
+        _PERSONA_COLLECTION_PREFIX,
+        effective_slug,
+    )
+
+
+def get_persona_embeddings(
+    effective_slug: str,
+    persona_ids: Optional[List[str]] = None,
+) -> Dict[str, List[float]]:
+    """Retrieve persona profile embeddings from ChromaDB.
+
+    Returns a dict mapping persona_id -> embedding vector.
+    If persona_ids is None, returns all persona embeddings for the slug.
+    """
+    collection = get_persona_collection(effective_slug)
+    if persona_ids:
+        doc_ids = [f"{effective_slug}__{pid}" for pid in persona_ids]
+        result = collection.get(ids=doc_ids, include=["embeddings"])
+    else:
+        result = collection.get(include=["embeddings"])
+
+    mapping: Dict[str, List[float]] = {}
+    if result and result["ids"] and result["embeddings"] is not None:
+        for doc_id, emb in zip(result["ids"], result["embeddings"]):
+            original_id = doc_id.split("__", 1)[1] if "__" in doc_id else doc_id
+            mapping[original_id] = [float(x) for x in emb]
+    return mapping

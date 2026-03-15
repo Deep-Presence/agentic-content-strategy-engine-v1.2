@@ -93,35 +93,6 @@ class GapAnalysisStartRequest(BaseModel):
     max_crawl_depth: Optional[int] = None
 
 
-class ResearchStartRequest(BaseModel):
-    """Simplified request body for starting a research pipeline.
-
-    The frontend only needs to provide company_name + domain.  The backend
-    constructs the per-stage inputs and chains artifact paths automatically.
-    """
-
-    company_name: str
-    domain: str
-    product_slug: Optional[str] = None
-    seed_urls: List[HttpUrl] = Field(default_factory=list)
-
-    @field_validator("product_slug")
-    @classmethod
-    def _validate_product_slug(cls, v: Optional[str]) -> Optional[str]:
-        return _check_product_slug(v)
-    force_rerun: bool = False
-    stages: List[Literal["company", "persona", "style_guide"]] = Field(
-        default=["company", "persona", "style_guide"],
-        description="Which research stages to run. Order is always company → persona → style_guide.",
-    )
-    auto_approve: bool = False
-    language: str = "en"
-    region: Optional[str] = None
-    max_personas: int = Field(default=3, ge=1, le=3)
-    internal_sources: List[str] = Field(default_factory=list)
-    additional_constraints: Optional[str] = None
-
-
 _KB_DOC_TYPE_LITERAL = Literal[
     "company_overview", "customer_reviews", "competitor_registry",
     "weakness_analysis", "brand_perception",
@@ -154,6 +125,10 @@ class KnowledgeBaseStartRequest(BaseModel):
     auto_approve_checkpoints: List[int] = Field(
         default_factory=list,
         description="Checkpoint numbers to auto-approve (1, 2, 3)",
+    )
+    express_mode: bool = Field(
+        default=False,
+        description="Enable express onboarding: optimized parallel DAG + auto-approve intermediate HITL checkpoints.",
     )
 
     @field_validator("auto_approve_checkpoints")

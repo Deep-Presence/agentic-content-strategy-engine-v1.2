@@ -303,3 +303,68 @@ class TestFormatWorkerContextAsMarkdown:
         ctx = WorkerQueryContext(query_gap={"query_id": "x"})
         md = format_worker_context_as_markdown(ctx)
         assert "## Cluster Content Specification" not in md
+
+    # --- Feature 1: Company URL passthrough ---
+
+    def test_contains_company_best_url(self, sample_worker_context):
+        md = format_worker_context_as_markdown(sample_worker_context)
+        assert "**Source URL:** https://testco.com/cap-table" in md
+
+    def test_omits_source_url_when_empty(self):
+        ctx = WorkerQueryContext(
+            query_gap={"query_id": "x"},
+            company_best_text="some text",
+        )
+        md = format_worker_context_as_markdown(ctx)
+        assert "Source URL" not in md
+
+    # --- Feature 2: Company structural signals ---
+
+    def test_contains_company_page_structure(self, sample_worker_context):
+        md = format_worker_context_as_markdown(sample_worker_context)
+        assert "## Company Page Structure" in md
+        assert "**word_count:** 800" in md
+        assert "**header_count:** 3" in md
+
+    def test_omits_structure_when_no_signals(self):
+        ctx = WorkerQueryContext(query_gap={"query_id": "x"})
+        md = format_worker_context_as_markdown(ctx)
+        assert "## Company Page Structure" not in md
+
+    # --- Feature 3: Self-citation detection ---
+
+    def test_contains_self_citation_yes(self, sample_worker_context):
+        md = format_worker_context_as_markdown(sample_worker_context)
+        assert "**Company Already Cited:** Yes" in md
+        assert "perplexity" in md
+        assert "openai" in md
+
+    def test_contains_self_citation_no(self):
+        ctx = WorkerQueryContext(query_gap={"query_id": "x", "company_cited": False})
+        md = format_worker_context_as_markdown(ctx)
+        assert "**Company Already Cited:** No" in md
+
+
+class TestExtractScorecardCompanyCited:
+    """Tests for company_cited field in scorecard extraction."""
+
+    def test_company_cited_extracted(self, sample_analysis_json):
+        sc = extract_scorecard(sample_analysis_json)
+        # q-001 has company_cited=True in fixture
+        assert sc.queries[0].company_cited is True
+        # q-002 has no company_cited field → defaults to False
+        assert sc.queries[1].company_cited is False
+
+    def test_cited_column_in_scorecard_markdown(self, sample_scorecard):
+        md = format_scorecard_as_markdown(sample_scorecard)
+        assert "| Cited |" in md
+
+    def test_company_best_url_in_worker_context(self, sample_analysis_json):
+        result = extract_worker_context(sample_analysis_json, ["q-001"])
+        ctx = result["q-001"]
+        assert ctx.company_best_url == "https://testco.com/cap-table"
+
+    def test_company_best_url_empty_when_missing(self, sample_analysis_json):
+        result = extract_worker_context(sample_analysis_json, ["q-002"])
+        ctx = result["q-002"]
+        assert ctx.company_best_url == ""

@@ -60,13 +60,19 @@ async def _retry_async(
 
 
 async def async_embed_texts(
-    texts: List[str], batch_size: int = 64
+    texts: List[str],
+    batch_size: int | None = None,
+    max_concurrent_batches: int | None = None,
 ) -> List[List[float]]:
-    """Embed texts using AsyncOpenAI with batching and retry.
+    """Embed texts using AsyncOpenAI with concurrent batching and retry.
+
+    Dispatches multiple batches concurrently for speed, with a semaphore
+    to cap API pressure. Results are reassembled in input order.
 
     Args:
         texts: Texts to embed.
-        batch_size: Number of texts per API call.
+        batch_size: Number of texts per API call (default: settings).
+        max_concurrent_batches: Max batches in flight (default: settings).
 
     Returns:
         List of embedding vectors, one per input text, in the same order as input.
@@ -83,20 +89,32 @@ async def async_embed_texts(
     if not model:
         raise RuntimeError("EMBEDDING_MODEL is not set. Add it to .env.local.")
 
-    client = AsyncOpenAI(api_key=api_key)
-    all_embeddings: List[List[float]] = []
+    effective_batch_size = batch_size if batch_size is not None else settings.gap_analysis_s5_embed_batch_size
+    effective_concurrency = (
+        max_concurrent_batches
+        if max_concurrent_batches is not None
+        else settings.gap_analysis_s5_embed_concurrent_batches
+    )
 
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i : i + batch_size]
+    async with AsyncOpenAI(api_key=api_key) as client:
+        batches = [texts[i : i + effective_batch_size] for i in range(0, len(texts), effective_batch_size)]
+        sem = asyncio.Semaphore(effective_concurrency)
 
-        async def _call(b=batch):
-            return await client.embeddings.create(model=model, input=b)
+        async def _embed_batch(
+            batch: List[str], batch_idx: int
+        ) -> tuple[int, List[List[float]]]:
+            async def _call():
+                return await client.embeddings.create(model=model, input=batch)
 
-        response = await _retry_async(_call, max_retries=3, base_delay=1.0)
+            async with sem:
+                response = await _retry_async(_call, max_retries=3, base_delay=1.0)
+                sorted_data = sorted(response.data, key=lambda d: d.index)
+                return batch_idx, [item.embedding for item in sorted_data]
 
-        # Sort by response.data[i].index to guarantee correct ordering
-        # (Codex recommendation: don't rely on positional order)
-        sorted_data = sorted(response.data, key=lambda d: d.index)
-        all_embeddings.extend([item.embedding for item in sorted_data])
+        results = await asyncio.gather(
+            *[_embed_batch(b, i) for i, b in enumerate(batches)]
+        )
 
-    return all_embeddings
+        # Sort by batch_idx to maintain input order across concurrent batches
+        results_sorted = sorted(results, key=lambda x: x[0])
+        return [emb for _, batch_embs in results_sorted for emb in batch_embs]

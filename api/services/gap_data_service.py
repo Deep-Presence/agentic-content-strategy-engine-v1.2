@@ -277,12 +277,17 @@ def _safe_float(val: Any) -> Optional[float]:
 
 def _compute_signal_averages(
     enriched: List[Dict[str, Any]],
+    company_pages: Optional[List[Dict[str, Any]]] = None,
 ) -> List[SignalAverageRow]:
     """Compute mean structural signals across all enriched citations.
 
     Only includes signals that have at least one non-None value (handles
     old 11-field format vs new 45-field format).
+
+    When company_pages (from company_page_analysis.json) is provided,
+    computes company_avg from the company's own page structural signals.
     """
+    # Citation accumulators
     accumulators: Dict[str, List[float]] = defaultdict(list)
 
     for cit in enriched:
@@ -294,19 +299,42 @@ def _compute_signal_averages(
             if f is not None:
                 accumulators[sig_def["field"]].append(f)
 
+    # Company page accumulators
+    company_accumulators: Dict[str, List[float]] = defaultdict(list)
+    if company_pages:
+        for page in company_pages:
+            ss = page.get("structural_signals")
+            if not ss or not isinstance(ss, dict):
+                continue
+            for sig_def in _SIGNAL_DEFS:
+                f = _safe_float(ss.get(sig_def["field"]))
+                if f is not None:
+                    company_accumulators[sig_def["field"]].append(f)
+
     rows: List[SignalAverageRow] = []
     for sig_def in _SIGNAL_DEFS:
         values = accumulators.get(sig_def["field"])
         if not values:
             continue
-        avg = sum(values) / len(values)
-        rec = f"Citation average: {avg:.2f} {sig_def['unit']}"
+        cit_avg = sum(values) / len(values)
+
+        comp_values = company_accumulators.get(sig_def["field"])
+        comp_avg = (sum(comp_values) / len(comp_values)) if comp_values else 0.0
+
+        if comp_avg > 0:
+            rec = (
+                f"Citation average: {cit_avg:.2f}, Company average: {comp_avg:.2f} "
+                f"{sig_def['unit']}"
+            )
+        else:
+            rec = f"Citation average: {cit_avg:.2f} {sig_def['unit']}"
+
         rows.append(
             SignalAverageRow(
                 signal=sig_def["name"],
                 category=sig_def["category"],
-                citation_avg=round(avg, 4),
-                company_avg=0.0,
+                citation_avg=round(cit_avg, 4),
+                company_avg=round(comp_avg, 4),
                 unit=sig_def["unit"],
                 recommendation=rec,
             )
@@ -863,7 +891,10 @@ def get_signals(artifacts_root: Path, slug: str) -> SignalAveragesResponse:
     analysis = data.get("analysis", {})
     cluster_specs = data.get("cluster_specs", analysis.get("cluster_specs", []))
 
-    signals = _compute_signal_averages(enriched)
+    company_pages_raw = _load_json_cached(artifacts_root, slug, "company_page_analysis.json")
+    company_pages = company_pages_raw if isinstance(company_pages_raw, list) else None
+
+    signals = _compute_signal_averages(enriched, company_pages=company_pages)
     correlations = _compute_signal_correlations(enriched)
     cluster_patterns = _compute_cluster_patterns(enriched, cluster_specs)
     fingerprints = _compute_cluster_fingerprints(cluster_specs)

@@ -72,6 +72,13 @@ from core.models.content_generation_v13 import (
 
 logger = logging.getLogger(__name__)
 
+# Lazy guard: CPS scorer may not be importable if torch is absent
+try:
+    from core.cps_model.scorer import get_cps_scorer
+except Exception:  # pragma: no cover
+    def get_cps_scorer():  # type: ignore[misc]
+        return None
+
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 _STAGE_NAMES_V13: Dict[int, str] = {
@@ -199,6 +206,81 @@ def _update_task(task_store: Any, task_id: Optional[str], **kwargs: Any) -> None
                     round(stage / _TOTAL_STAGES_V13 * 100, 1),
                 )
         task_store.update_task(task_id, **kwargs)
+
+
+# ── CPS Scoring Helper ────────────────────────────────────────────────
+
+
+async def _score_cps_batch(
+    evaluated: List[tuple],
+    blueprint_by_id: Dict[str, Any],
+    domain: str,
+    parent_span: Any,
+    event_bus: Any,
+    task_id: Optional[str],
+) -> Dict[str, Dict[str, Any]]:
+    """Score all evaluated content pieces with the CPS model.
+
+    Returns a dict mapping brief_id -> cps_result dict.
+    Gracefully returns empty dict on any failure.
+    """
+    import asyncio
+
+    scorer = get_cps_scorer()
+    if scorer is None:
+        logger.info("CPS scoring skipped: scorer unavailable")
+        return {}
+
+    cps_span = create_span(parent_span, "cps-scoring") if parent_span else None
+    cps_results: Dict[str, Dict[str, Any]] = {}
+    content_url = f"https://{domain}"
+
+    async def _score_one(brief_id: str, content: FormattedContent) -> tuple:
+        blueprint = blueprint_by_id.get(brief_id)
+        query_texts: List[str] = []
+        if blueprint and hasattr(blueprint, "target_queries") and blueprint.target_queries:
+            query_texts = [
+                tq.query_text for tq in blueprint.target_queries if tq.query_text
+            ]
+        if not query_texts:
+            query_texts = [content.title]
+
+        try:
+            result = await scorer.score_async(
+                query_texts=query_texts,
+                content_markdown=content.markdown,
+                content_url=content_url,
+            )
+            return brief_id, result
+        except Exception:
+            logger.warning("CPS scoring failed for %s", brief_id, exc_info=True)
+            return brief_id, None
+
+    tasks = [
+        _score_one(brief_id, final_content)
+        for brief_id, final_content, _history, _feedback_route in evaluated
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for item in results:
+        if isinstance(item, Exception):
+            continue
+        brief_id, result = item
+        if result is not None:
+            cps_results[brief_id] = result
+
+    if cps_span:
+        end_span(cps_span, output={
+            "scored_count": len(cps_results),
+            "total_count": len(evaluated),
+        })
+
+    _emit(event_bus, task_id, "cps_scoring_complete", {
+        "scored": len(cps_results),
+        "scores": {bid: data.get("cps_score") for bid, data in cps_results.items()},
+    })
+
+    return cps_results
 
 
 # ── HITL-3 Feedback Loop Helpers ──────────────────────────────────────
@@ -944,6 +1026,98 @@ async def _run_pipeline_stages(
         )
         approved_blueprints = blueprints
 
+    elif input_data.entry_mode == EntryMode.TOPIC_DISCOVERY:
+        # Topic Discovery mode — skips Stage 1. Topics come pre-approved from TD HITL-2.
+        # Loads topic-scoped analysis + builds per-topic WorkerQueryContext, then feeds
+        # into Brief Builder (Stage 2) + optional HITL-2.
+        logger.info("Topic Discovery mode — loading scoped analysis")
+
+        from core.content_engine.context_router import (
+            extract_topic_contexts,
+            topic_assignment_to_selection,
+        )
+        from core.topic_discovery.storage import TopicDiscoveryStorage
+
+        td_slug = input_data.td_effective_slug or slug
+        td_storage = TopicDiscoveryStorage(
+            artifacts_root=_PROJECT_ROOT / "artifacts", slug=td_slug,
+        )
+        matrix = td_storage.get_latest_matrix()
+
+        # Filter to requested assignments
+        requested_ids = set(input_data.topic_assignment_ids)
+        assignments = [
+            a for a in (matrix.assignments if matrix else [])
+            if a.id in requested_ids
+        ]
+        if not assignments:
+            logger.warning("No matching TopicAssignments found for IDs: %s", requested_ids)
+
+        # Load topic-scoped analysis
+        td_analysis_json: dict[str, Any] = {}
+        if input_data.td_ga_run_id:
+            scoped_path = (
+                _PROJECT_ROOT / "artifacts" / "gap_analysis" / slug
+                / "topic_scoped" / input_data.td_ga_run_id / "analysis.json"
+            )
+            if scoped_path.exists():
+                td_analysis_json = json.loads(scoped_path.read_text(encoding="utf-8"))
+            else:
+                logger.warning("Scoped analysis not found: %s", scoped_path)
+
+        topic_query_map = td_analysis_json.get("topic_query_map", {})
+        gaps_raw = td_analysis_json.get("gaps", [])
+
+        # Build per-topic contexts
+        worker_contexts = extract_topic_contexts(td_analysis_json, topic_query_map)
+
+        # Build TopicSelection per assignment
+        approved_topics: list[TopicSelection] = []
+        for rank_idx, assignment in enumerate(assignments):
+            qids = topic_query_map.get(assignment.id, [])
+            qtexts = [
+                g.get("query_text", "")
+                for g in gaps_raw
+                if g.get("query_id") in set(qids)
+            ]
+            ts = topic_assignment_to_selection(assignment, qids, qtexts, rank=rank_idx)
+            approved_topics.append(ts)
+
+        if approved_topics and worker_contexts:
+            blueprints = await build_briefs_parallel(
+                contexts=worker_contexts,
+                topics=approved_topics,
+                company_context_md=company_context_md,
+                persona_mds=persona_mds,
+                style_guide_md=style_guide_md,
+                max_concurrent=input_data.max_concurrent_workers,
+                parent_span=pipeline_trace,
+            )
+
+            if input_data.auto_approve:
+                approved_blueprints = blueprints
+            else:
+                # HITL-2: Brief approval (same as AUTONOMOUS mode)
+                # For now, auto-approve in TD mode; full HITL-2 can be added later
+                approved_blueprints = blueprints
+
+            # Tag blueprints with topic_assignment_id for downstream traceability
+            for bp in approved_blueprints:
+                for topic in approved_topics:
+                    if topic.query_ids and bp.target_queries:
+                        tq_ids = {tq.query_text for tq in bp.target_queries}
+                        if set(topic.query_texts) & tq_ids:
+                            if topic.rank < len(assignments):
+                                bp.topic_assignment_id = assignments[topic.rank].id
+                            break
+
+    # Build brief_id → topic_assignment_id lookup for ContentPiece traceability
+    _bp_ta_map: Dict[str, str] = {}
+    for bp in approved_blueprints:
+        ta_id = getattr(bp, "topic_assignment_id", None)
+        if ta_id and hasattr(bp, "brief_id"):
+            _bp_ta_map[bp.brief_id] = ta_id
+
     # Initialize pieces before Stage 3 (worker failures append to it)
     pieces: List[ContentPiece] = []
 
@@ -977,6 +1151,7 @@ async def _run_pipeline_stages(
                 title=f"[Worker Failed] {wf['brief_id']}",
                 status=ContentStatus.REJECTED,
                 eval_summary={"worker_error": wf["error"]},
+                topic_assignment_id=_bp_ta_map.get(wf["brief_id"]),
             ))
             _emit(event_bus, task_id, "worker_failed", {
                 "brief_id": wf["brief_id"],
@@ -1035,6 +1210,22 @@ async def _run_pipeline_stages(
             for bid, fc in formatted_contents
         ]
 
+    # ── Stage 4.5: CPS Scoring ───────────────────────────────────
+    cps_results: Dict[str, Dict[str, Any]] = {}
+    if evaluated:
+        try:
+            _bp_map = {bp.brief_id: bp for bp in approved_blueprints}
+            cps_results = await _score_cps_batch(
+                evaluated=evaluated,
+                blueprint_by_id=_bp_map,
+                domain=input_data.domain,
+                parent_span=pipeline_trace,
+                event_bus=event_bus,
+                task_id=task_id,
+            )
+        except Exception:
+            logger.warning("CPS scoring batch failed, continuing without CPS", exc_info=True)
+
     # ── Stage 5: Final HITL Review ────────────────────────────────
     _MAX_EDIT_ATTEMPTS = 2
     _MAX_REBRIEFS = 2
@@ -1087,6 +1278,11 @@ async def _run_pipeline_stages(
                             for d in last_eval.dimensions
                         },
                     }
+                # CPS scored at Stage 4.5; may be stale after edit/rebrief loops
+                # (acceptable for v1 — CPS is informational, not a gate)
+                cps_data = cps_results.get(brief_id)
+                if cps_data:
+                    eval_summary["cps"] = cps_data
 
                 # HITL Checkpoint 3: Final Content Review
                 set_current_span(stage5_span)
@@ -1126,6 +1322,7 @@ async def _run_pipeline_stages(
                             eval_summary=eval_summary,
                             human_notes=review_state.get("editor_notes"),
                             artifact_path=str(final_path.relative_to(_PROJECT_ROOT)),
+                            topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                         )
                     )
                     piece_resolved = True
@@ -1208,6 +1405,7 @@ async def _run_pipeline_stages(
                                 status=ContentStatus.REJECTED,
                                 eval_summary=eval_summary,
                                 human_notes=review_state.get("editor_notes"),
+                                topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                             )
                         )
                         piece_resolved = True
@@ -1222,6 +1420,7 @@ async def _run_pipeline_stages(
                             status=ContentStatus.REJECTED,
                             eval_summary=eval_summary,
                             human_notes=review_state.get("editor_notes"),
+                            topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                         )
                     )
                     piece_resolved = True
@@ -1233,13 +1432,29 @@ async def _run_pipeline_stages(
             bd = _brief_dir(artifact_dir, final_content.brief_id)
             final_path = bd / "final.md"
             final_path.write_text(final_content.markdown, encoding="utf-8")
+            auto_eval: Dict[str, Any] = {}
+            if history.cycles:
+                last_eval = history.cycles[-1]
+                auto_eval = {
+                    "overall_score": last_eval.overall_score,
+                    "overall_passed": last_eval.overall_passed,
+                    "dimensions": {
+                        d.dimension: {"score": d.score, "passed": d.passed}
+                        for d in last_eval.dimensions
+                    },
+                }
+            cps_data = cps_results.get(_brief_id)
+            if cps_data:
+                auto_eval["cps"] = cps_data
             pieces.append(
                 ContentPiece(
                     brief_id=final_content.brief_id,
                     title=final_content.title,
                     status=ContentStatus.APPROVED,
                     final_markdown=final_content.markdown,
+                    eval_summary=auto_eval,
                     artifact_path=str(final_path.relative_to(_PROJECT_ROOT)),
+                    topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                 )
             )
 

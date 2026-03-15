@@ -35,26 +35,26 @@ def upgrade() -> None:
 
     # Run history: WHERE effective_slug = :slug ORDER BY created_at DESC
     op.execute(
-        "CREATE INDEX ix_pipeline_runs_slug_created "
+        "CREATE INDEX IF NOT EXISTS ix_pipeline_runs_slug_created "
         "ON pipeline_runs (effective_slug, created_at DESC)"
     )
 
     # Slug resolution: WHERE effective_slug = :slug AND status = 'completed'
     # AND pipeline_type = :type ORDER BY completed_at DESC LIMIT 1
     op.execute(
-        "CREATE INDEX ix_pipeline_runs_slug_type_status "
+        "CREATE INDEX IF NOT EXISTS ix_pipeline_runs_slug_type_status "
         "ON pipeline_runs (effective_slug, pipeline_type, status, completed_at DESC)"
     )
 
     # Gap queries by run + classification (used by get_gaps_by_run with filter)
     op.execute(
-        "CREATE INDEX ix_query_gaps_run_classification "
+        "CREATE INDEX IF NOT EXISTS ix_query_gaps_run_classification "
         "ON query_gaps (run_id, classification)"
     )
 
     # Run citations by run (used by signal aggregation queries)
     op.execute(
-        "CREATE INDEX ix_run_citations_run_id "
+        "CREATE INDEX IF NOT EXISTS ix_run_citations_run_id "
         "ON run_citations (run_id)"
     )
 

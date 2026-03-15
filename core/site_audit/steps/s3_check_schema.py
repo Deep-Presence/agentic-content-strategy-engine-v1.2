@@ -130,6 +130,26 @@ def generate_schema_findings(
             )
         )
 
+    if page_type == "homepage" and "WebSite" not in schema_types_set:
+        findings.append(
+            AuditFinding(
+                finding_type="missing_website_schema",
+                dimension=AuditDimension.schema_markup,
+                severity=AuditCheckSeverity.medium,
+                url=url,
+                message=(
+                    "Homepage is missing WebSite schema markup. "
+                    "WebSite schema with SearchAction helps AI engines "
+                    "understand your site's search capabilities."
+                ),
+                recommendation=(
+                    "Add a WebSite JSON-LD block to your homepage with url, name, "
+                    "and a SearchAction potentialAction."
+                ),
+                details={"page_type": page_type, "found_types": result.schema_types},
+            )
+        )
+
     if page_type == "article" and not (
         "Article" in schema_types_set or "BlogPosting" in schema_types_set
     ):

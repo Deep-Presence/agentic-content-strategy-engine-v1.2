@@ -6,13 +6,13 @@ requests>=2.31,<3
 # Reddit read-only client
 praw>=7.7,<8
 
-# Existing imports in this repo
+# LangChain / LangGraph ecosystem
 langgraph>=0.2
+langchain>=0.3
+langchain-core>=0.3
 langchain-google-genai>=2.0
 perplexityai>=0.2
-
-# deepagents is required by existing agents/graphs
-deepagents
+google-genai>=1.0
 
 # Gap analysis pipeline
 openai
@@ -28,6 +28,8 @@ httpx
 playwright
 trafilatura>=1.6.0
 textstat>=0.7.0
+defusedxml>=0.7
+python-dateutil>=2.8
 
 # Content engine — LLM abstraction + observability
 litellm>=1.50
@@ -49,6 +51,11 @@ asyncpg>=0.29
 psycopg2-binary>=2.9
 alembic>=1.13
 pgvector>=0.3
+
+# CPS model — PyTorch inference (CPU-only)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+markdown>=3.5
 
 # Testing
 pytest>=8.0

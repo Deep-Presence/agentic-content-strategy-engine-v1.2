@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_kb_data_service, get_task_store
 from api.schemas.common import (
     ApprovalRequest,
     ApprovalResponse,
@@ -145,41 +145,15 @@ async def get_knowledge_base_health(
     request: Request,
     threshold_override: Optional[int] = Query(None, ge=1, le=365),
     _user: UserProfile = Depends(require_auth),
-    artifacts_root: Path = Depends(get_artifacts_root),
+    kb_svc=Depends(get_kb_data_service),
 ) -> KBHealthResponse:
     """Get health report for a knowledge base — staleness, missing docs, score."""
     user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
     if not user_company_slug or slug != user_company_slug:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    storage = KBStorage(artifacts_root, slug)
-    report = storage.get_staleness_report(threshold_override=threshold_override)
-
-    # Convert to response model
-    doc_health_resp: Dict[str, KBDocHealthResponse] = {}
-    for key, health in report.doc_health.items():
-        doc_health_resp[key] = KBDocHealthResponse(
-            doc_type=health.doc_type.value,
-            status=health.status,
-            current_version=health.current_version,
-            last_updated=health.last_updated,
-            age_days=health.age_days,
-            staleness_threshold_days=health.staleness_threshold_days,
-            stale_reason=health.stale_reason,
-            dependencies=[d.value for d in health.dependencies],
-        )
-
-    return KBHealthResponse(
-        slug=report.slug,
-        overall_score=report.overall_score,
-        doc_health=doc_health_resp,
-        synthesis_version=report.synthesis_version,
-        synthesis_last_updated=report.synthesis_last_updated,
-        synthesis_needs_refresh=report.synthesis_needs_refresh,
-        stale_docs=report.stale_docs,
-        missing_docs=report.missing_docs,
-        last_full_refresh=report.last_full_refresh,
-    )
+    report_dict = await kb_svc.get_health(slug, threshold_override=threshold_override)
+    return KBHealthResponse.model_validate(report_dict)
 
 
 @router.post(
@@ -289,7 +263,7 @@ def _topological_sort_stale(stale_doc_values: List[str]) -> List[str]:
 
 
 @router.get("/{run_id}/status")
-def get_knowledge_base_status(
+async def get_knowledge_base_status(
     run_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
@@ -315,7 +289,7 @@ def get_knowledge_base_status(
 
 
 @router.post("/{run_id}/approve")
-def approve_knowledge_base(
+async def approve_knowledge_base(
     run_id: str,
     body: ApprovalRequest,
     http_request: Request,

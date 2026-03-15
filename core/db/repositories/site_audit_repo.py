@@ -20,11 +20,15 @@ from __future__ import annotations
 import uuid as _uuid
 from typing import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func as sa_func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db.enums import PipelineStatus
-from core.db.models.site_audit import AuditFindingModel, SiteAuditModel
+from core.db.models.site_audit import (
+    AuditFindingModel,
+    AuditPageResultModel,
+    SiteAuditModel,
+)
 from core.db.repositories.base import SQLAlchemyRepository
 
 
@@ -38,25 +42,14 @@ class SiteAuditRepository(SQLAlchemyRepository[SiteAuditModel]):
     model_class = SiteAuditModel
 
     def __init__(self, session: AsyncSession) -> None:
-        """Initialise the repository with an async session.
-
-        Args:
-            session: SQLAlchemy async session owned by the caller.
-        """
         super().__init__(session)
+
+    # ── Existing methods ────────────────────────────────────────────────
 
     async def get_latest_for_company(
         self, company_id: _uuid.UUID | str
     ) -> SiteAuditModel | None:
-        """Return the most recently completed audit for a company.
-
-        Args:
-            company_id: UUID of the company whose audit we want.
-
-        Returns:
-            The newest :class:`SiteAuditModel` with
-            ``status=PipelineStatus.completed``, or ``None`` if none exists.
-        """
+        """Return the most recently completed audit for a company."""
         cid = _uuid.UUID(str(company_id)) if isinstance(company_id, str) else company_id
         stmt = (
             select(SiteAuditModel)
@@ -75,15 +68,7 @@ class SiteAuditRepository(SQLAlchemyRepository[SiteAuditModel]):
         company_id: _uuid.UUID | str,
         limit: int = 20,
     ) -> Sequence[SiteAuditModel]:
-        """Return the most recent audits for a company (any status).
-
-        Args:
-            company_id: UUID of the company.
-            limit: Maximum number of rows to return.  Defaults to 20.
-
-        Returns:
-            Sequence of :class:`SiteAuditModel`, newest first.
-        """
+        """Return the most recent audits for a company (any status)."""
         cid = _uuid.UUID(str(company_id)) if isinstance(company_id, str) else company_id
         stmt = (
             select(SiteAuditModel)
@@ -102,20 +87,7 @@ class SiteAuditRepository(SQLAlchemyRepository[SiteAuditModel]):
         limit: int = 200,
         offset: int = 0,
     ) -> Sequence[AuditFindingModel]:
-        """Return all findings for a specific audit run.
-
-        Args:
-            audit_id: UUID of the :class:`SiteAuditModel` run.
-            severity: Optional filter — only return findings with this
-                severity value (e.g. ``"critical"``).
-            limit: Max rows to return.
-            offset: Pagination offset.
-
-        Returns:
-            Sequence of :class:`AuditFindingModel` rows, ordered by
-            creation time ascending (oldest first = most stable ordering
-            for pagination).
-        """
+        """Return all findings for a specific audit run."""
         aid = _uuid.UUID(str(audit_id)) if isinstance(audit_id, str) else audit_id
         stmt = select(AuditFindingModel).where(AuditFindingModel.audit_id == aid)
 
@@ -136,16 +108,7 @@ class SiteAuditRepository(SQLAlchemyRepository[SiteAuditModel]):
         site_domain: str,
         **kwargs: object,
     ) -> SiteAuditModel:
-        """Create a new :class:`SiteAuditModel` row and flush.
-
-        Args:
-            company_id: UUID of the owning company.
-            site_domain: Domain being audited.
-            **kwargs: Any additional column values (e.g. ``status``, ``config``).
-
-        Returns:
-            The newly created and flushed :class:`SiteAuditModel` instance.
-        """
+        """Create a new :class:`SiteAuditModel` row and flush."""
         cid = _uuid.UUID(str(company_id)) if isinstance(company_id, str) else company_id
         return await self.create(
             company_id=cid,
@@ -158,16 +121,7 @@ class SiteAuditRepository(SQLAlchemyRepository[SiteAuditModel]):
         company_id: _uuid.UUID | str,
         domain: str,
     ) -> SiteAuditModel | None:
-        """Return the most recently completed audit for a specific domain.
-
-        Args:
-            company_id: UUID of the company.
-            domain: Site domain to filter on.
-
-        Returns:
-            The newest completed :class:`SiteAuditModel` for *domain*,
-            or ``None`` if none exists.
-        """
+        """Return the most recently completed audit for a specific domain."""
         cid = _uuid.UUID(str(company_id)) if isinstance(company_id, str) else company_id
         stmt = (
             select(SiteAuditModel)
@@ -187,17 +141,7 @@ class SiteAuditRepository(SQLAlchemyRepository[SiteAuditModel]):
         company_id: _uuid.UUID | str,
         domain: str,
     ) -> bool:
-        """Check if at least one completed audit exists for *domain*.
-
-        Args:
-            company_id: UUID of the company.
-            domain: Site domain to check.
-
-        Returns:
-            True if a completed audit exists for the given domain.
-        """
-        from sqlalchemy import func as sa_func
-
+        """Check if at least one completed audit exists for *domain*."""
         cid = _uuid.UUID(str(company_id)) if isinstance(company_id, str) else company_id
         stmt = (
             select(sa_func.count())
@@ -216,17 +160,7 @@ class SiteAuditRepository(SQLAlchemyRepository[SiteAuditModel]):
         audit_id: _uuid.UUID | str,
         findings: list[dict[str, object]],
     ) -> Sequence[AuditFindingModel]:
-        """Insert multiple findings for a single audit in one flush.
-
-        Args:
-            audit_id: UUID of the parent :class:`SiteAuditModel`.
-            findings: List of dicts.  Each dict is unpacked as kwargs into
-                :class:`AuditFindingModel`.  The ``audit_id`` key is injected
-                automatically — do not include it in the dicts.
-
-        Returns:
-            Sequence of the newly created :class:`AuditFindingModel` instances.
-        """
+        """Insert multiple findings for a single audit in one flush."""
         aid = _uuid.UUID(str(audit_id)) if isinstance(audit_id, str) else audit_id
         instances: list[AuditFindingModel] = []
         for finding_data in findings:
@@ -235,3 +169,147 @@ class SiteAuditRepository(SQLAlchemyRepository[SiteAuditModel]):
             instances.append(instance)
         await self._session.flush()
         return instances
+
+    # ── New methods (migration 0009) ────────────────────────────────────
+
+    async def list_for_slug(
+        self,
+        effective_slug: str,
+        limit: int = 20,
+    ) -> Sequence[SiteAuditModel]:
+        """Return the most recent audits for an effective_slug (any status)."""
+        stmt = (
+            select(SiteAuditModel)
+            .where(SiteAuditModel.effective_slug == effective_slug)
+            .order_by(SiteAuditModel.created_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_by_slug_and_audit_id(
+        self,
+        effective_slug: str,
+        audit_id: _uuid.UUID | str,
+    ) -> SiteAuditModel | None:
+        """Return audit matching both effective_slug and audit_id (tenant-safe)."""
+        aid = _uuid.UUID(str(audit_id)) if isinstance(audit_id, str) else audit_id
+        stmt = (
+            select(SiteAuditModel)
+            .where(
+                SiteAuditModel.effective_slug == effective_slug,
+                SiteAuditModel.id == aid,
+            )
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def has_enriched_data(
+        self, audit_id: _uuid.UUID | str
+    ) -> bool:
+        """Check if audit has been fully persisted (overall_score IS NOT NULL)."""
+        aid = _uuid.UUID(str(audit_id)) if isinstance(audit_id, str) else audit_id
+        stmt = (
+            select(sa_func.count())
+            .select_from(SiteAuditModel)
+            .where(
+                SiteAuditModel.id == aid,
+                SiteAuditModel.overall_score.isnot(None),
+            )
+        )
+        result = await self._session.execute(stmt)
+        return (result.scalar() or 0) > 0
+
+    async def get_findings_for_audit(
+        self,
+        audit_id: _uuid.UUID | str,
+        *,
+        severity: str | None = None,
+        dimension: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[Sequence[AuditFindingModel], int]:
+        """Return paginated findings with optional filters.
+
+        Returns:
+            Tuple of (findings, total_count).
+        """
+        aid = _uuid.UUID(str(audit_id)) if isinstance(audit_id, str) else audit_id
+
+        # Base filter
+        base_where = [AuditFindingModel.audit_id == aid]
+        if severity is not None:
+            base_where.append(AuditFindingModel.severity == severity)
+        if dimension is not None:
+            base_where.append(AuditFindingModel.dimension == dimension)
+
+        # Count query
+        count_stmt = (
+            select(sa_func.count())
+            .select_from(AuditFindingModel)
+            .where(*base_where)
+        )
+        count_result = await self._session.execute(count_stmt)
+        total = count_result.scalar() or 0
+
+        # Data query
+        data_stmt = (
+            select(AuditFindingModel)
+            .where(*base_where)
+            .order_by(AuditFindingModel.created_at.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        data_result = await self._session.execute(data_stmt)
+        findings = data_result.scalars().all()
+
+        return findings, total
+
+    async def get_page_results_for_audit(
+        self,
+        audit_id: _uuid.UUID | str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[Sequence[AuditPageResultModel], int]:
+        """Return paginated page results ordered by page_index.
+
+        Returns:
+            Tuple of (page_results, total_count).
+        """
+        aid = _uuid.UUID(str(audit_id)) if isinstance(audit_id, str) else audit_id
+
+        # Count
+        count_stmt = (
+            select(sa_func.count())
+            .select_from(AuditPageResultModel)
+            .where(AuditPageResultModel.audit_id == aid)
+        )
+        count_result = await self._session.execute(count_stmt)
+        total = count_result.scalar() or 0
+
+        # Data
+        data_stmt = (
+            select(AuditPageResultModel)
+            .where(AuditPageResultModel.audit_id == aid)
+            .order_by(AuditPageResultModel.page_index.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        data_result = await self._session.execute(data_stmt)
+        pages = data_result.scalars().all()
+
+        return pages, total
+
+    async def bulk_insert_page_results(
+        self,
+        audit_id: _uuid.UUID | str,
+        page_results: list[dict[str, object]],
+    ) -> None:
+        """Bulk insert page result rows for an audit."""
+        aid = _uuid.UUID(str(audit_id)) if isinstance(audit_id, str) else audit_id
+        for pr_data in page_results:
+            instance = AuditPageResultModel(audit_id=aid, **pr_data)
+            self._session.add(instance)
+        await self._session.flush()

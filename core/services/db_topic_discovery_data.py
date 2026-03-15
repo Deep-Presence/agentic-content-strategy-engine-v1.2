@@ -1,0 +1,321 @@
+"""DbTopicDiscoveryDataService — Postgres-backed implementation of TopicDiscoveryDataServiceProtocol.
+
+Uses TD-specific repositories for all queries.  Falls back to filesystem
+via JsonTopicDiscoveryDataService only when DB data is missing (e.g. tree_json
+is NULL, or no persona affinity rows exist).
+"""
+from __future__ import annotations
+
+from collections import defaultdict
+from pathlib import Path
+from typing import Optional
+
+from core.db.repositories.topic_discovery_repo import (
+    PersonaAffinityRepository,
+    SourceResultRepository,
+    SubdomainNodeRepository,
+    TopicAssignmentRepository,
+    TopicDiscoveryRepository,
+    TaxonomyTreeRepository,
+)
+
+
+class DbTopicDiscoveryDataService:
+    """Postgres-backed TD data service.
+
+    Metadata + content queries from DB via repos.
+    Falls back to JSON service when DB data is incomplete.
+    """
+
+    def __init__(
+        self,
+        td_repo: TopicDiscoveryRepository,
+        taxonomy_repo: TaxonomyTreeRepository,
+        assignment_repo: TopicAssignmentRepository,
+        artifacts_root: Path,
+        *,
+        node_repo: Optional[SubdomainNodeRepository] = None,
+        source_result_repo: Optional[SourceResultRepository] = None,
+        persona_affinity_repo: Optional[PersonaAffinityRepository] = None,
+        backend: Optional["StorageBackend"] = None,
+    ) -> None:
+        from core.storage.backends import LocalStorageBackend
+
+        self._td_repo = td_repo
+        self._taxonomy_repo = taxonomy_repo
+        self._assignment_repo = assignment_repo
+        self._node_repo = node_repo
+        self._source_result_repo = source_result_repo
+        self._persona_affinity_repo = persona_affinity_repo
+        self._artifacts_root = artifacts_root
+        self._backend = backend or LocalStorageBackend(artifacts_root)
+
+    def _json_fallback(self):
+        """Lazy-construct a JsonTopicDiscoveryDataService for fallback."""
+        from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
+
+        return JsonTopicDiscoveryDataService(
+            self._artifacts_root, backend=self._backend,
+        )
+
+    async def get_discovery_summary(self, effective_slug: str) -> Optional[dict]:
+        row = await self._td_repo.get_by_effective_slug(effective_slug)
+        if row is None:
+            return None
+
+        return {
+            "slug": effective_slug,
+            "company_name": "",
+            "has_taxonomy": (row.taxonomy_version or 0) > 0,
+            "taxonomy_version": row.taxonomy_version or 0,
+            "has_matrix": (row.matrix_version or 0) > 0,
+            "matrix_version": row.matrix_version or 0,
+            "scoring_version": row.scoring_version or 0,
+            "persona_affinity_version": row.persona_affinity_version or 0,
+            "status": row.status.value if row.status else None,
+            "last_updated": row.updated_at.isoformat() if row.updated_at else None,
+        }
+
+    async def get_taxonomy(
+        self,
+        effective_slug: str,
+        *,
+        version: Optional[int] = None,
+    ) -> Optional[dict]:
+        discovery = await self._td_repo.get_by_effective_slug(effective_slug)
+        if discovery is None:
+            return None
+
+        tax = await self._taxonomy_repo.get_by_discovery(
+            discovery.id, version=version,
+        )
+        if tax is not None and tax.tree_json is not None:
+            return tax.tree_json
+
+        # Fallback to JSON if tree_json is NULL
+        return await self._json_fallback().get_taxonomy(
+            effective_slug, version=version,
+        )
+
+    async def get_matrix(
+        self,
+        effective_slug: str,
+        *,
+        version: Optional[int] = None,
+    ) -> Optional[dict]:
+        discovery = await self._td_repo.get_by_effective_slug(effective_slug)
+        if discovery is None:
+            return None
+
+        items = await self._assignment_repo.get_by_discovery(
+            discovery.id, matrix_version=version,
+        )
+        if not items:
+            # Fallback to JSON
+            return await self._json_fallback().get_matrix(
+                effective_slug, version=version,
+            )
+
+        assignments = []
+        for r in items:
+            assignments.append({
+                "id": str(r.id),
+                "subdomain_id": r.subdomain_id_text or "",
+                "subdomain_name": r.subdomain_name or "",
+                "topic_text": r.topic_text,
+                "buyer_stage": r.buyer_stage.value if r.buyer_stage else "tofu",
+                "intent_type": r.intent_type.value if r.intent_type else "informational",
+                "audience_segment": r.audience_segment,
+                "audience_segment_type": r.audience_segment_type.value if r.audience_segment_type else "individual_persona",
+                "relevance": r.relevance.value if r.relevance else "relevant",
+                "priority_score": r.priority_score or 0.0,
+                "priority_factors": r.priority_factors or {},
+                "status": r.status.value if r.status else "not_started",
+                "is_manually_added": r.is_manually_added,
+                "metadata": r.metadata_json or {},
+                "persona_id": r.persona_id,
+                "persona_name": r.persona_name,
+            })
+
+        return {
+            "version": version or discovery.matrix_version or 1,
+            "status": "approved",
+            "assignments": assignments,
+            "total_assignments": len(assignments),
+        }
+
+    async def list_assignments(
+        self,
+        effective_slug: str,
+        *,
+        buyer_stage: Optional[str] = None,
+        intent_type: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict:
+        discovery = await self._td_repo.get_by_effective_slug(effective_slug)
+        if discovery is None:
+            return {"items": [], "total": 0, "page": page, "page_size": page_size}
+
+        # Map string filters to DB enums
+        bs_enum = None
+        it_enum = None
+        if buyer_stage:
+            from core.db.enums import BuyerStage
+            try:
+                bs_enum = BuyerStage(buyer_stage)
+            except ValueError:
+                pass
+        if intent_type:
+            from core.db.enums import IntentType
+            try:
+                it_enum = IntentType(intent_type)
+            except ValueError:
+                pass
+
+        items, total = await self._assignment_repo.list_paginated(
+            discovery.id,
+            buyer_stage=bs_enum,
+            intent_type=it_enum,
+            persona_id=persona_id,
+            page=page,
+            page_size=page_size,
+        )
+
+        result_items = [
+            {
+                "id": str(r.id),
+                "topic_text": r.topic_text,
+                "buyer_stage": r.buyer_stage.value if r.buyer_stage else None,
+                "intent_type": r.intent_type.value if r.intent_type else None,
+                "audience_segment": r.audience_segment,
+                "relevance": r.relevance.value if r.relevance else None,
+                "priority_score": r.priority_score,
+                "status": r.status.value if r.status else None,
+                "persona_id": r.persona_id,
+                "persona_name": r.persona_name,
+                "subdomain_id": r.subdomain_id_text,
+                "subdomain_name": r.subdomain_name,
+            }
+            for r in items
+        ]
+
+        return {
+            "items": result_items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    async def get_scored_subdomains(
+        self,
+        effective_slug: str,
+        *,
+        version: Optional[int] = None,
+    ) -> Optional[dict]:
+        if self._node_repo is None:
+            return await self._json_fallback().get_scored_subdomains(
+                effective_slug, version=version,
+            )
+
+        discovery = await self._td_repo.get_by_effective_slug(effective_slug)
+        if discovery is None:
+            return None
+
+        tax = await self._taxonomy_repo.get_by_discovery(
+            discovery.id, version=version,
+        )
+        if tax is None:
+            return await self._json_fallback().get_scored_subdomains(
+                effective_slug, version=version,
+            )
+
+        nodes = await self._node_repo.get_by_taxonomy(tax.id)
+        if not nodes:
+            return await self._json_fallback().get_scored_subdomains(
+                effective_slug, version=version,
+            )
+
+        # Check if any node has scoring data
+        has_scoring = any(n.priority_score is not None for n in nodes)
+        if not has_scoring:
+            return await self._json_fallback().get_scored_subdomains(
+                effective_slug, version=version,
+            )
+
+        scores = []
+        for rank, n in enumerate(
+            sorted(nodes, key=lambda x: x.priority_score or 0.0, reverse=True),
+            start=1,
+        ):
+            scores.append({
+                "subdomain_id": str(n.id),
+                "subdomain_name": n.name,
+                "composite_score": n.priority_score or 0.0,
+                "signal_scores": (n.priority_factors or {}),
+                "signal_weights": {},
+                "signals_available": list((n.priority_factors or {}).keys()),
+                "rank": rank,
+                "persona_affinity": n.persona_affinity_json or {},
+                "metadata": n.metadata_json or {},
+            })
+
+        return {
+            "version": discovery.scoring_version or 1,
+            "scores": scores,
+            "total_scored": len(scores),
+            "signals_used": [],
+            "weights_config": {},
+        }
+
+    async def get_persona_affinity(
+        self,
+        effective_slug: str,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        if self._persona_affinity_repo is None:
+            return await self._json_fallback().get_persona_affinity(
+                effective_slug, persona_id=persona_id,
+            )
+
+        discovery = await self._td_repo.get_by_effective_slug(effective_slug)
+        if discovery is None:
+            return None
+
+        if persona_id:
+            rows = await self._persona_affinity_repo.get_by_persona(
+                discovery.id, persona_id,
+            )
+        else:
+            rows = await self._persona_affinity_repo.get_by_discovery(
+                discovery.id,
+            )
+
+        if not rows:
+            return await self._json_fallback().get_persona_affinity(
+                effective_slug, persona_id=persona_id,
+            )
+
+        # Group by persona_id
+        persona_entries: dict = defaultdict(list)
+        for r in rows:
+            persona_entries[r.persona_id].append({
+                "subdomain_id": r.subdomain_id_str or str(r.subdomain_node_id or ""),
+                "subdomain_name": r.subdomain_name or "",
+                "affinity_score": r.affinity_score,
+                "provenance": r.provenance,
+                "pain_points": r.pain_points or [],
+            })
+
+        return {
+            "version": discovery.persona_affinity_version or 1,
+            "persona_entries": dict(persona_entries),
+            "total_personas": len(persona_entries),
+            "total_subdomains": len({
+                e["subdomain_id"]
+                for entries in persona_entries.values()
+                for e in entries
+            }),
+        }
