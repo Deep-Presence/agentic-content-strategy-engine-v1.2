@@ -238,10 +238,13 @@ class TestHashText:
 
 
 # ── persist_s1 tests ─────────────────────────────────────────────────────
+# persist_s1 is now a no-op (VectorStoreClient writes during S1 execution).
+# Tests verify it doesn't crash and doesn't touch the DB.
 
 
 @pytest.mark.asyncio
-async def test_persist_s1_stores_data():
+async def test_persist_s1_noop_with_units():
+    """persist_s1 is a no-op — should not touch DB, just log."""
     factory = _make_session_factory()
     units = [
         SemanticUnit(
@@ -250,29 +253,20 @@ async def test_persist_s1_stores_data():
             char_count=100, word_count=20, discovery_source="website",
         ),
     ]
-
-    with patch(_EMBEDDING_REPO) as MockRepo, \
-         patch(_SEMANTIC_UNIT_MODEL):
-        mock_repo = AsyncMock()
-        MockRepo.return_value = mock_repo
-
-        await persist_s1(factory, RUN_ID, COMPANY_ID, SLUG, units)
-
-        session = factory._session
-        session.execute.assert_called()
-        session.commit.assert_awaited_once()
-        mock_repo.bulk_store_embeddings.assert_awaited_once()
+    await persist_s1(factory, RUN_ID, COMPANY_ID, SLUG, units)
+    # Should NOT have opened a session
+    factory.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_persist_s1_skips_without_session():
-    """Guard: None session_factory => no DB calls."""
+async def test_persist_s1_noop_without_session():
+    """persist_s1 no-op works even with None session_factory."""
     units = [SemanticUnit(unit_id="u1", text="x", embedding=EMBEDDING_1536)]
     await persist_s1(None, RUN_ID, COMPANY_ID, SLUG, units)
 
 
 @pytest.mark.asyncio
-async def test_persist_s1_skips_without_run_id():
+async def test_persist_s1_noop_without_run_id():
     factory = _make_session_factory()
     units = [SemanticUnit(unit_id="u1", text="x", embedding=EMBEDDING_1536)]
     await persist_s1(factory, None, COMPANY_ID, SLUG, units)
@@ -280,33 +274,10 @@ async def test_persist_s1_skips_without_run_id():
 
 
 @pytest.mark.asyncio
-async def test_persist_s1_handles_exception():
+async def test_persist_s1_noop_empty_units():
     factory = _make_session_factory()
-    units = [SemanticUnit(unit_id="u1", text="x", embedding=EMBEDDING_1536)]
-
-    with patch(_EMBEDDING_REPO, side_effect=RuntimeError("boom")), \
-         patch(_SEMANTIC_UNIT_MODEL):
-        # Should NOT raise
-        await persist_s1(factory, RUN_ID, COMPANY_ID, SLUG, units)
-
-
-@pytest.mark.asyncio
-async def test_persist_s1_skips_units_without_embedding():
-    factory = _make_session_factory()
-    units = [
-        SemanticUnit(unit_id="u1", text="no embedding", embedding=None),
-        SemanticUnit(unit_id="u2", text="wrong dim", embedding=[0.1] * 100),
-    ]
-
-    with patch(_EMBEDDING_REPO) as MockRepo, \
-         patch(_SEMANTIC_UNIT_MODEL):
-        mock_repo = AsyncMock()
-        MockRepo.return_value = mock_repo
-
-        await persist_s1(factory, RUN_ID, COMPANY_ID, SLUG, units)
-
-        mock_repo.bulk_store_embeddings.assert_not_awaited()
-        factory._session.commit.assert_awaited_once()
+    await persist_s1(factory, RUN_ID, COMPANY_ID, SLUG, [])
+    factory.assert_not_called()
 
 
 # ── persist_s2 tests ─────────────────────────────────────────────────────
@@ -511,6 +482,59 @@ async def test_persist_s4_skips_signals_when_none():
 
 
 @pytest.mark.asyncio
+async def test_persist_s4_deterministic_enrichment_id():
+    """Regression: enrichment_id must be deterministic (uuid5 from url_hash).
+
+    Previously used uuid4(), causing FK mismatch on reruns: upsert on url_hash
+    kept the original id, but signal rows referenced the new random id.
+    """
+    import uuid as _uuid
+
+    factory = _make_session_factory()
+    enriched = [
+        EnrichedCitation(
+            url="https://example.com/page",
+            domain="example.com",
+            paragraphs=["para 1"],
+            structural_signals=StructuralSignals(
+                word_count=100, paragraph_count=1, header_count=0,
+                has_headers=False, has_lists=False,
+            ),
+        ),
+    ]
+
+    captured_enrichment_rows: list = []
+    captured_signal_rows: list = []
+
+    with patch(_CACHE_REPO) as MockRepo:
+        mock_repo = AsyncMock()
+        MockRepo.return_value = mock_repo
+        mock_repo.bulk_upsert_url_enrichments.side_effect = (
+            lambda rows: captured_enrichment_rows.extend(rows)
+        )
+        mock_repo.bulk_insert_structural_signals.side_effect = (
+            lambda rows: captured_signal_rows.extend(rows)
+        )
+
+        # Run twice to simulate rerun
+        await persist_s4(factory, RUN_ID, COMPANY_ID, SLUG, enriched)
+        await persist_s4(factory, RUN_ID, COMPANY_ID, SLUG, enriched)
+
+    # Both runs must produce the SAME enrichment_id for the same URL
+    assert len(captured_enrichment_rows) == 2
+    assert captured_enrichment_rows[0]["id"] == captured_enrichment_rows[1]["id"]
+
+    # Signal rows must reference the same id as enrichment rows
+    assert len(captured_signal_rows) == 2
+    assert captured_signal_rows[0]["url_enrichment_id"] == captured_enrichment_rows[0]["id"]
+    assert captured_signal_rows[1]["url_enrichment_id"] == captured_enrichment_rows[1]["id"]
+
+    # Must be uuid5 (deterministic), not uuid4 (random)
+    eid = captured_enrichment_rows[0]["id"]
+    assert eid.version == 5
+
+
+@pytest.mark.asyncio
 async def test_persist_s4_skips_without_session():
     await persist_s4(None, RUN_ID, COMPANY_ID, SLUG, [])
 
@@ -524,6 +548,7 @@ async def test_persist_s4_handles_exception():
 
 
 # ── persist_s5 tests ─────────────────────────────────────────────────────
+# persist_s5 writes query embeddings to DB (citation embeddings handled by VectorStoreClient).
 
 
 @pytest.mark.asyncio
@@ -538,8 +563,7 @@ async def test_persist_s5_stores_query_embeddings():
     enriched: list = []
 
     with patch(_EMBEDDING_REPO) as MockRepo, \
-         patch(_QUERY_EMBEDDING_MODEL), \
-         patch(_PARAGRAPH_EMBEDDING_MODEL):
+         patch(_QUERY_EMBEDDING_MODEL):
         mock_repo = AsyncMock()
         MockRepo.return_value = mock_repo
 
@@ -558,8 +582,7 @@ async def test_persist_s5_skips_queries_without_embedding():
     ]
 
     with patch(_EMBEDDING_REPO) as MockRepo, \
-         patch(_QUERY_EMBEDDING_MODEL), \
-         patch(_PARAGRAPH_EMBEDDING_MODEL):
+         patch(_QUERY_EMBEDDING_MODEL):
         mock_repo = AsyncMock()
         MockRepo.return_value = mock_repo
 
@@ -580,8 +603,7 @@ async def test_persist_s5_handles_exception():
     queries = [GeneratedQuery(query_id="q1", cluster_id="c1", cluster_name="T", query_text="Q?", embedding=EMBEDDING_1536)]
 
     with patch(_EMBEDDING_REPO, side_effect=RuntimeError("s5 boom")), \
-         patch(_QUERY_EMBEDDING_MODEL), \
-         patch(_PARAGRAPH_EMBEDDING_MODEL):
+         patch(_QUERY_EMBEDDING_MODEL):
         await persist_s5(factory, RUN_ID, COMPANY_ID, SLUG, queries, [])
 
 

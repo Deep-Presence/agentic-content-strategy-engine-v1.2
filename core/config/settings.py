@@ -84,10 +84,6 @@ class Settings(BaseSettings):
     gap_analysis_s5_embed_batch_size: int = 256
     gap_analysis_s5_embed_concurrent_batches: int = 6
 
-    # ChromaDB (local vector store for gap analysis embeddings)
-    chroma_persist_dir: str = "artifacts/chroma_db"
-    chroma_collection_prefix: str = "gap_company"
-
     # Gap Analysis – Models
     gap_analysis_query_gen_model: str = "gpt-5.2-2025-12-11"
     gap_analysis_report_model: str = "gpt-5.2-2025-12-11"

@@ -60,7 +60,7 @@ async def _embed_persona_profiles_bg(
     Runs as a background task — failures are logged but never crash the pipeline.
     """
     try:
-        from core.shared_tools.async_chroma_client import async_upsert_persona_embeddings
+        from core.shared_tools.vector_store import async_upsert_persona_embeddings
         from core.shared_tools.async_embedding_client import async_embed_texts
 
         # Collect approved persona texts (skip errored and rejected)

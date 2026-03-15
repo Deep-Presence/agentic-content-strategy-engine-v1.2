@@ -59,7 +59,7 @@ from core.models.gap_analysis import (
     PlatformResult,
     SemanticUnit,
 )
-from core.shared_tools.async_chroma_client import async_collection_exists, async_get_all_embeddings
+from core.shared_tools.vector_store import async_collection_exists, async_get_all_embeddings
 
 
 def _company_slug(args: argparse.Namespace) -> str:
@@ -108,7 +108,7 @@ def _build_input(args: argparse.Namespace) -> GapAnalysisInput:
 
 
 def _load_company_units_with_embeddings(artifact_dir: Path) -> list[SemanticUnit]:
-    """Load company units from JSON and hydrate embeddings from ChromaDB."""
+    """Load company units from JSON and hydrate embeddings from pgvector."""
     company_units = _load_json_list(artifact_dir / "company_embeddings.json", SemanticUnit)
     if not any(u.embedding for u in company_units):
         slug = artifact_dir.name
@@ -119,9 +119,9 @@ def _load_company_units_with_embeddings(artifact_dir: Path) -> list[SemanticUnit
                 if unit.unit_id in embedding_map:
                     unit.embedding = embedding_map[unit.unit_id]
                     hydrated += 1
-            print(f"  Hydrated {hydrated}/{len(company_units)} unit embeddings from ChromaDB.")
+            print(f"  Hydrated {hydrated}/{len(company_units)} unit embeddings from pgvector.")
         else:
-            print(f"  WARNING: No ChromaDB collection found for '{slug}' and JSON has no embeddings.")
+            print(f"  WARNING: No pgvector collection found for '{slug}' and JSON has no embeddings.")
     return company_units
 
 

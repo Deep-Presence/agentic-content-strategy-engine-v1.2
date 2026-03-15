@@ -187,9 +187,6 @@ class TestAsyncEmbedCompanyAssets:
             new_callable=AsyncMock,
             return_value=[[0.1, 0.2] for _ in range(5)],  # Enough for any chunks
         ) as mock_embed, patch(
-            "core.gap_analysis.steps.s1_embed_assets.async_delete_company_collection",
-            new_callable=AsyncMock,
-        ) as mock_delete, patch(
             "core.gap_analysis.steps.s1_embed_assets.async_upsert_embeddings",
             new_callable=AsyncMock,
         ) as mock_upsert:
@@ -197,9 +194,8 @@ class TestAsyncEmbedCompanyAssets:
 
             units = await embed_company_assets(input_data)
 
-        # Should have called async versions
+        # Should have called async versions (delete is now atomic inside upsert)
         mock_embed.assert_awaited_once()
-        mock_delete.assert_awaited_once()
         mock_upsert.assert_awaited_once()
         assert len(units) >= 0  # May be 0 if chunks are empty
 

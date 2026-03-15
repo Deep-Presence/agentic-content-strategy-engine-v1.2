@@ -16,7 +16,6 @@ dependencies = [
     "perplexityai>=0.2",
     "openai",
     "anthropic",
-    "chromadb>=0.5.0,<1.0",
     "plotly",
     "beautifulsoup4",
     "numpy",

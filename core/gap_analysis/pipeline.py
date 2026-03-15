@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from core.gap_analysis.steps.s1_embed_assets import embed_company_assets
 from core.models.gap_analysis import PlatformResult
 from core.research.audience_persona.storage import PersonaStorage
-from core.shared_tools.async_chroma_client import (
+from core.shared_tools.vector_store import (
     async_collection_exists,
     async_get_all_embeddings,
 )
@@ -247,12 +247,12 @@ async def run_gap_analysis(
                             unit.embedding = embedding_map[unit.unit_id]
                             hydrated += 1
                     logger.info(
-                        "Hydrated %d/%d unit embeddings from ChromaDB.",
+                        "Hydrated %d/%d unit embeddings from pgvector.",
                         hydrated, len(units),
                     )
                 else:
                     logger.warning(
-                        "No ChromaDB collection found for '%s' and JSON has no embeddings. "
+                        "No pgvector collection found for '%s' and JSON has no embeddings. "
                         "S6/S7 may produce degraded results.", slug,
                     )
         else:
@@ -490,7 +490,7 @@ async def run_topic_scoped_gap_analysis(
 
     if embeddings_path.exists():
         company_units = _load_json_list(embeddings_path, SemanticUnit)
-        # Hydrate from ChromaDB if needed
+        # Hydrate from pgvector if needed
         if not any(u.embedding for u in company_units):
             if await async_collection_exists(cache_slug):
                 embedding_map = await async_get_all_embeddings(cache_slug)

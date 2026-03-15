@@ -33,6 +33,7 @@ class SemanticUnitModel(UUIDPKMixin, Base):
     __tablename__ = "semantic_units"
     __table_args__ = (
         Index("ix_semantic_units_company_run", "company_id", "run_id"),
+        Index("ix_semantic_units_slug_unit", "company_slug", "unit_id"),
         # HNSW index on the embedding column — actually created in migration 0002
         # to control index parameters (m, ef_construction) and avoid blocking
         # table creation during initial Alembic run.
@@ -43,12 +44,13 @@ class SemanticUnitModel(UUIDPKMixin, Base):
         ForeignKey("companies.id", ondelete="CASCADE"),
         nullable=False,
     )
-    run_id: Mapped[_uuid.UUID] = mapped_column(
+    run_id: Mapped[_uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("pipeline_runs.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
     unit_id: Mapped[str] = mapped_column(String, nullable=False)
+    company_slug: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -96,12 +98,13 @@ class ParagraphEmbeddingModel(UUIDPKMixin, Base):
     __tablename__ = "paragraph_embeddings"
     __table_args__ = (Index("ix_paragraph_embeddings_url_enrichment", "url_enrichment_id"),)
 
-    url_enrichment_id: Mapped[_uuid.UUID] = mapped_column(
+    url_enrichment_id: Mapped[_uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("url_enrichment_cache.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
     embedding_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    company_slug: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     paragraph_text: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[Any] = mapped_column(Vector(1536), nullable=False)
     original_paragraph_index: Mapped[int | None] = mapped_column(
@@ -135,3 +138,27 @@ class RunParagraphScoreModel(UUIDPKMixin, Base):
     )
     similarity: Mapped[float] = mapped_column(Float, nullable=False)
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+# ── Persona Embeddings ──────────────────────────────────────────────────
+
+
+class PersonaEmbeddingModel(UUIDPKMixin, Base):
+    """Embedded audience persona profile for vector similarity search."""
+
+    __tablename__ = "persona_embeddings"
+    __table_args__ = (
+        UniqueConstraint(
+            "effective_slug", "persona_id", name="uq_persona_embeddings_slug_persona"
+        ),
+        Index("ix_persona_embeddings_slug", "effective_slug"),
+    )
+
+    company_slug: Mapped[str] = mapped_column(String, nullable=False)
+    effective_slug: Mapped[str] = mapped_column(String, nullable=False)
+    persona_id: Mapped[str] = mapped_column(String, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[Any] = mapped_column(Vector(1536), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
