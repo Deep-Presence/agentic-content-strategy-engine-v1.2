@@ -7,14 +7,18 @@ Task ownership is verified before streaming begins.
 """
 from __future__ import annotations
 
+import uuid
+from typing import AsyncIterator
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from api.auth.dependencies import require_auth
 from api.dependencies import get_event_bus, get_task_store
 from api.tasks.event_bus import EventBus
-from core.services.task_store import TaskStoreProtocol
 from core.models.organization import UserProfile
+from core.services.task_store import TaskStoreProtocol
+from core.shared_tools.structured_logging import bind_context, clear_context
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["events"])
 
@@ -35,6 +39,17 @@ async def stream_events(
     if task.company_slug != company_slug:
         raise HTTPException(status_code=403, detail="Access denied")
 
+    # SSE bypasses RequestLoggingMiddleware — bind context explicitly
+    raw_corr = request.headers.get("X-Correlation-ID", "")
+    correlation_id = raw_corr[:128] if raw_corr else str(uuid.uuid4())
+    bind_context(
+        correlation_id=correlation_id,
+        user_id=getattr(request.state, "user_id", None),
+        company_slug=company_slug,
+        task_id=task_id,
+        pipeline_name=task.pipeline,
+    )
+
     last_event_id_str = request.headers.get("Last-Event-ID")
     last_event_id: int | None = None
     if last_event_id_str:
@@ -43,8 +58,15 @@ async def stream_events(
         except ValueError:
             pass  # Ignore malformed Last-Event-ID, replay all
 
+    async def _stream_with_cleanup() -> AsyncIterator[str]:
+        try:
+            async for event in event_bus.stream(task_id, last_event_id=last_event_id):
+                yield event
+        finally:
+            clear_context()
+
     return StreamingResponse(
-        event_bus.stream(task_id, last_event_id=last_event_id),
+        _stream_with_cleanup(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

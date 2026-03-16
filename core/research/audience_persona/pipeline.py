@@ -37,6 +37,7 @@ from core.research.audience_persona.graph import (
     run_ap_hitl_checkpoint,
 )
 from core.research.audience_persona.storage import PersonaStorage
+from core.shared_tools.structured_logging import scoped_bind
 from core.shared_tools.tracing import create_session, create_span, create_trace, end_span, flush, log_generation
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ async def _embed_persona_profiles_bg(
     Runs as a background task — failures are logged but never crash the pipeline.
     """
     try:
-        from core.shared_tools.async_chroma_client import async_upsert_persona_embeddings
+        from core.shared_tools.vector_store import async_upsert_persona_embeddings
         from core.shared_tools.async_embedding_client import async_embed_texts
 
         # Collect approved persona texts (skip errored and rejected)
@@ -295,13 +296,14 @@ async def run_audience_persona_pipeline(
         _emit(event_bus, task_id, "ap_phase_start", {"phase": 1, "agents": ["persona_suggester"]})
         _update_task(task_store, task_id, current_step="phase_1_suggester")
 
-        briefs, suggester_time = await run_persona_suggester(
-            input_data=input_data,
-            company_context_md=company_md,
-            customer_reviews_md=reviews_md,
-            knowledge_docs_text=kdocs_text,
-            parent_span=trace_span,
-        )
+        with scoped_bind(agent_name="persona_suggester"):
+            briefs, suggester_time = await run_persona_suggester(
+                input_data=input_data,
+                company_context_md=company_md,
+                customer_reviews_md=reviews_md,
+                knowledge_docs_text=kdocs_text,
+                parent_span=trace_span,
+            )
 
         if not briefs:
             raise RuntimeError(
@@ -385,39 +387,40 @@ async def run_audience_persona_pipeline(
         persona_results: Dict[str, PersonaAgentResult] = {}
 
         async def _run_single_generator(brief: PersonaBrief, kind: str) -> Tuple[str, PersonaAgentResult]:
-            persona_id = id_map[brief.brief_id]
-            async with semaphore:
-                result = await run_persona_profile_generator(
-                    brief=brief,
-                    input_data=input_data,
-                    company_context_md=company_md,
-                    customer_reviews_md=reviews_md,
-                    knowledge_docs_text=kdocs_text,
-                    parent_span=trace_span,
-                )
+            with scoped_bind(agent_name="persona_profile_generator"):
+                persona_id = id_map[brief.brief_id]
+                async with semaphore:
+                    result = await run_persona_profile_generator(
+                        brief=brief,
+                        input_data=input_data,
+                        company_context_md=company_md,
+                        customer_reviews_md=reviews_md,
+                        knowledge_docs_text=kdocs_text,
+                        parent_span=trace_span,
+                    )
 
-                if not result.error:
-                    async with storage_lock:
-                        storage.write_brief(persona_id, brief)
-                        storage.write_version(
-                            persona_id,
-                            brief.persona_name,
-                            result.content_md,
-                            result.content_json,
-                            kind=kind,
-                            created_by=brief.source,
-                            tagline=brief.tagline,
-                        )
+                    if not result.error:
+                        async with storage_lock:
+                            storage.write_brief(persona_id, brief)
+                            storage.write_version(
+                                persona_id,
+                                brief.persona_name,
+                                result.content_md,
+                                result.content_json,
+                                kind=kind,
+                                created_by=brief.source,
+                                tagline=brief.tagline,
+                            )
 
-                _emit(event_bus, task_id, "ap_agent_complete", {
-                    "agent": "persona_generator",
-                    "persona_name": brief.persona_name,
-                    "persona_id": persona_id,
-                    "word_count": result.word_count,
-                    "has_error": result.error is not None,
-                })
+                    _emit(event_bus, task_id, "ap_agent_complete", {
+                        "agent": "persona_generator",
+                        "persona_name": brief.persona_name,
+                        "persona_id": persona_id,
+                        "word_count": result.word_count,
+                        "has_error": result.error is not None,
+                    })
 
-                return persona_id, result
+                    return persona_id, result
 
         tasks = []
         for i, brief in enumerate(approved_briefs):

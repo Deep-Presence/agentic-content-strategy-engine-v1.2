@@ -39,6 +39,7 @@ from core.research.voice_style_guide.graph import (
 )
 from core.research.utils import load_persona_profiles, read_company_context
 from core.research.voice_style_guide.storage import VoiceStyleGuideStorage
+from core.shared_tools.structured_logging import scoped_bind
 from core.shared_tools.tracing import (
     create_session,
     create_span,
@@ -222,12 +223,13 @@ async def run_voice_style_guide_pipeline(
         _emit(event_bus, task_id, "vsg_phase_start", {"phase": 1, "agents": ["author_discovery"]})
         _update_task(task_store, task_id, current_step="phase_1_author_discovery")
 
-        briefs, discovery_time = await run_author_discovery(
-            input_data=input_data,
-            company_context_md=company_md,
-            persona_mds=persona_mds,
-            parent_span=trace_span,
-        )
+        with scoped_bind(agent_name="author_discovery"):
+            briefs, discovery_time = await run_author_discovery(
+                input_data=input_data,
+                company_context_md=company_md,
+                persona_mds=persona_mds,
+                parent_span=trace_span,
+            )
 
         if not briefs:
             raise RuntimeError(
@@ -311,35 +313,36 @@ async def run_voice_style_guide_pipeline(
         research_results: Dict[str, AuthorResearchResult] = {}
 
         async def _run_single_researcher(author: AuthorBrief) -> Tuple[str, AuthorResearchResult]:
-            author_id = id_map[author.author_id]
-            async with semaphore:
-                result = await run_author_research(
-                    brief=author,
-                    input_data=input_data,
-                    company_context_md=company_md,
-                    persona_summaries=persona_summaries,
-                    parent_span=trace_span,
-                )
+            with scoped_bind(agent_name="author_research"):
+                author_id = id_map[author.author_id]
+                async with semaphore:
+                    result = await run_author_research(
+                        brief=author,
+                        input_data=input_data,
+                        company_context_md=company_md,
+                        persona_summaries=persona_summaries,
+                        parent_span=trace_span,
+                    )
 
-                if not result.error:
-                    async with storage_lock:
-                        await asyncio.to_thread(
-                            storage.write_author_brief, author_id, author,
-                        )
-                        await asyncio.to_thread(
-                            storage.write_author_research,
-                            author_id, author.name, result.content_md,
-                        )
+                    if not result.error:
+                        async with storage_lock:
+                            await asyncio.to_thread(
+                                storage.write_author_brief, author_id, author,
+                            )
+                            await asyncio.to_thread(
+                                storage.write_author_research,
+                                author_id, author.name, result.content_md,
+                            )
 
-                _emit(event_bus, task_id, "vsg_agent_complete", {
-                    "agent": "author_research",
-                    "author_name": author.name,
-                    "author_id": author_id,
-                    "word_count": result.word_count,
-                    "has_error": result.error is not None,
-                })
+                    _emit(event_bus, task_id, "vsg_agent_complete", {
+                        "agent": "author_research",
+                        "author_name": author.name,
+                        "author_id": author_id,
+                        "word_count": result.word_count,
+                        "has_error": result.error is not None,
+                    })
 
-                return author_id, result
+                    return author_id, result
 
         tasks = [_run_single_researcher(author) for author in approved_authors]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -391,13 +394,14 @@ async def run_voice_style_guide_pipeline(
         _emit(event_bus, task_id, "vsg_phase_start", {"phase": 3, "agents": ["voice_synthesis"]})
         _update_task(task_store, task_id, current_step="phase_3_voice_synthesis")
 
-        guide_md, synthesis_time = await run_voice_synthesis(
-            author_research_mds=author_research_mds,
-            company_context_md=company_md,
-            persona_mds=persona_mds,
-            input_data=input_data,
-            parent_span=trace_span,
-        )
+        with scoped_bind(agent_name="voice_synthesis"):
+            guide_md, synthesis_time = await run_voice_synthesis(
+                author_research_mds=author_research_mds,
+                company_context_md=company_md,
+                persona_mds=persona_mds,
+                input_data=input_data,
+                parent_span=trace_span,
+            )
 
         if not guide_md.strip():
             logger.error("Voice synthesis returned empty guide")

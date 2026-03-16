@@ -5,6 +5,7 @@ All environment variables for the content-strategy-engine are loaded here via py
 Import `settings` and use `settings.perplexity_api_key`, etc. instead of load_dotenv/os.getenv.
 """
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -83,10 +84,6 @@ class Settings(BaseSettings):
     # Gap Analysis — S5 Embedding
     gap_analysis_s5_embed_batch_size: int = 256
     gap_analysis_s5_embed_concurrent_batches: int = 6
-
-    # ChromaDB (local vector store for gap analysis embeddings)
-    chroma_persist_dir: str = "artifacts/chroma_db"
-    chroma_collection_prefix: str = "gap_company"
 
     # Gap Analysis – Models
     gap_analysis_query_gen_model: str = "gpt-5.2-2025-12-11"
@@ -205,6 +202,11 @@ class Settings(BaseSettings):
     # --- CPS Model (Citation Signal Predictor) ---
     cps_enabled: bool = True
     cps_target_weight: float = 0.5
+
+    # --- Logging ---
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_format: Literal["console", "json"] = "console"
+    log_include_caller: bool = False
 
     # Legacy / optional
     tavily_api_key_company_context: str | None = None

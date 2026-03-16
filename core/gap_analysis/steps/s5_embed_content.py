@@ -12,7 +12,7 @@ import numpy as np
 
 from core.models.gap_analysis import EnrichedCitation, GeneratedQuery, ParagraphMatch
 from core.config.settings import settings
-from core.shared_tools.async_chroma_client import async_upsert_citation_embeddings
+from core.shared_tools.vector_store import async_upsert_citation_embeddings
 from core.shared_tools.async_embedding_client import async_embed_texts
 
 logger = logging.getLogger(__name__)
@@ -168,9 +168,13 @@ async def embed_queries(
 # ---------------------------------------------------------------------------
 
 
-def _embedding_id(url: str, para_idx: int) -> str:
-    """Generate a stable unique ID for a citation paragraph embedding."""
-    h = hashlib.sha256(f"{url}_{para_idx}".encode()).hexdigest()[:24]
+def _embedding_id(url: str, para_idx: int, company_slug: str = "") -> str:
+    """Generate a stable unique ID for a citation paragraph embedding.
+
+    Includes company_slug in the hash to prevent cross-tenant collisions
+    when two companies cite the same URL paragraph.
+    """
+    h = hashlib.sha256(f"{company_slug}_{url}_{para_idx}".encode()).hexdigest()[:24]
     return f"cite_{h}"
 
 
@@ -275,10 +279,10 @@ async def embed_enriched_citations(
     logger.info("Phase 2 complete: embedded %d texts.", len(all_embeddings))
 
     # ------------------------------------------------------------------
-    # Phase 3: Score paragraphs, select top-k, deduplicate for ChromaDB
+    # Phase 3: Score paragraphs, select top-k, deduplicate for pgvector
     # ------------------------------------------------------------------
     # Dict for deduplication: emb_id -> (document, embedding)
-    chroma_map: Dict[str, Tuple[str, List[float]]] = {}
+    dedup_map: Dict[str, Tuple[str, List[float]]] = {}
 
     for w in work_items:
         citation = citations[w.citation_idx]
@@ -307,24 +311,24 @@ async def embed_enriched_citations(
         url_str = str(citation.url)
 
         for pm, orig_idx in best:
-            emb_id = _embedding_id(url_str, orig_idx)
+            emb_id = _embedding_id(url_str, orig_idx, company_slug or "")
             pm.embedding_id = emb_id
             # Deduplicate: same URL+paragraph from different queries
-            if emb_id not in chroma_map:
-                chroma_map[emb_id] = (pm.paragraph, pm.embedding or [])
+            if emb_id not in dedup_map:
+                dedup_map[emb_id] = (pm.paragraph, pm.embedding or [])
 
         citation.best_paragraphs = [pm for pm, _ in best]
 
-    # Upsert deduplicated embeddings to ChromaDB
-    if company_slug and chroma_map:
-        dedup_ids = list(chroma_map.keys())
-        dedup_docs = [chroma_map[eid][0] for eid in dedup_ids]
-        dedup_embs = [chroma_map[eid][1] for eid in dedup_ids]
+    # Upsert deduplicated embeddings to pgvector
+    if company_slug and dedup_map:
+        dedup_ids = list(dedup_map.keys())
+        dedup_docs = [dedup_map[eid][0] for eid in dedup_ids]
+        dedup_embs = [dedup_map[eid][1] for eid in dedup_ids]
         total_best = sum(
             len(citations[w.citation_idx].best_paragraphs) for w in work_items
         )
         logger.info(
-            "Phase 3 complete: upserting %d unique embeddings to ChromaDB "
+            "Phase 3 complete: upserting %d unique embeddings to pgvector "
             "(deduplicated from %d total best-paragraphs).",
             len(dedup_ids), total_best,
         )

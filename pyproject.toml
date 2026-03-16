@@ -16,7 +16,6 @@ dependencies = [
     "perplexityai>=0.2",
     "openai",
     "anthropic",
-    "chromadb>=0.5.0,<1.0",
     "plotly",
     "beautifulsoup4",
     "numpy",
@@ -40,6 +39,8 @@ dependencies = [
     "pgvector>=0.3",
     # CPS model — Markdown-to-HTML conversion for feature extraction
     "markdown>=3.5.0",
+    # Structured logging (Layer 1 — JSON output + contextvars propagation)
+    "structlog>=24.1",
 ]
 
 [project.optional-dependencies]

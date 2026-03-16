@@ -1,7 +1,7 @@
 {
-  "sprint": "daily-tracker-db-persistence-v15",
-  "sprint_goal": "Daily Tracker DB Persistence & Production Readiness — Make daily tracker fully DB-ready with persistence layer, async task runner, router refactor, and DB integration tests.",
-  "sprint_status": "COMPLETE — 392 daily tracker tests passing (8 DB integration skipped without TEST_DATABASE_URL). 6 phases complete. Codex-reviewed plan with all 7 findings addressed.",
+  "sprint": "structured-logging-layer2-v18",
+  "sprint_goal": "Structured Logging Layer 2 — Correlation & Context Propagation. X-Request-ID middleware, LangSmith trace linkage, SSE context binding (PB-83), auth failure logging (PB-84), per-step/per-agent context binding (PB-85), run_id binding, async context propagation tests.",
+  "sprint_status": "COMPLETE — 8 phases, 4 new test files, 12 modified files. 48 new tests. Codex-reviewed (6 findings incorporated). 3 backlog items resolved (PB-83, PB-84, PB-85). Zero regressions.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -16,29 +16,29 @@
     "LangSmith is sole tracing backend — Langfuse fully removed",
     "Hub prompts opt-in via langsmith_use_hub=False — local Python prompts authoritative by default"
   ],
-  "active_branches": ["research-agent-v1.2.0"],
+  "active_branches": ["feat/deployment-prep-sprints"],
   "environment_notes": [
     "Python 3.12", "async-first", "VS Code + Claude Code extension",
-    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, pdfplumber >=0.10, python-docx >=1.0, python-dateutil >=2.9"
+    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, structlog >=24.1"
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/daily_tracker/persistence.py (NEW — 5 persistence functions)",
-    "core/db/migrations/versions/0014_daily_tracker_enum.py (NEW — PG ENUM migration)",
-    "api/tasks/runner.py (added run_daily_tracker_task)",
-    "api/routers/daily_tracker.py (refactored POST /runs, GET /runs, GET /runs/{run_id})",
-    "api/tasks/models.py (added daily_tracker to PipelineTask Literal)",
-    "tests/api/test_daily_tracker_runner.py (NEW — 11 runner tests)",
-    "tests/daily_tracker/test_persistence.py (NEW — 16 persistence tests)"
+    "core/shared_tools/structured_logging.py (MODIFIED — added get_context_value + scoped_bind)",
+    "core/shared_tools/tracing.py (MODIFIED — langsmith_trace_id binding)",
+    "api/app.py (MODIFIED — X-Request-ID, try/finally, correlation ID sanitization)",
+    "api/routers/events.py (MODIFIED — SSE context binding)",
+    "api/auth/middleware.py (MODIFIED — auth failure structured logging)",
+    "api/tasks/runner.py (MODIFIED — run_id binding in all 14 runner functions)",
+    "6 pipeline files (MODIFIED — scoped_bind for step_name/agent_name)"
   ],
-  "test_count": 2703,
-  "phases_completed_count": 40,
+  "test_count": 2773,
+  "phases_completed_count": 50,
   "recent_phases": [
+    "structured-logging-layer2 v18 — 8 phases (48 new tests, 3 backlog items resolved)",
+    "structured-logging v17 — Phase A (foundation) + Phase B (context propagation) + Codex audit (22 new tests)",
+    "pgvector-migration v16 — 8 phases + Codex audit (493 new tests, 198 deleted)",
     "daily-tracker-db-persistence v15 — 6 phases + Codex audit (392 DT tests, 41 new)",
-    "td-content-integration v1.2.0 — 8 phases (44 new tests)",
-    "research-orchestrator v13 — 7 phases + Codex audit (67 tests)",
-    "site-audit-db-persistence v12 — 8 phases + Codex audit (62 tests, 899 SA total)",
-    "gap-content-enrichment v9 — 3 features: URL passthrough, structural analysis, self-citation detection (24 tests)"
+    "td-content-integration v1.2.0 — 8 phases (44 new tests)"
   ],
   "phases_remaining": [
     "audience-persona Phase E — API Router + Runner (~30 tests)",

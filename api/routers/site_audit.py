@@ -27,6 +27,7 @@ from api.schemas.site_audit import (
 from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask
 from api.tasks.runner import run_site_audit_task
+from core.audit import log_pipeline_launch
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
 from core.models.organization import UserProfile
@@ -147,6 +148,17 @@ async def start_site_audit(
     ):
         last_task = _get_latest_audit_run(task_store, slug, body.product_slug, domain=body.domain)
         response.status_code = 200
+        await log_pipeline_launch(
+            user_id=_user.id,
+            pipeline="site_audit",
+            company_slug=slug,
+            task_id=last_task.task_id if last_task else f"existing-{effective_slug}",
+            detail={
+                "outcome": "already_exists",
+                "product_slug": body.product_slug,
+                "effective_slug": effective_slug,
+            },
+        )
         return PipelineRunResponse(
             run_id=last_task.task_id if last_task else f"existing-{effective_slug}",
             pipeline="site_audit",
@@ -173,6 +185,18 @@ async def start_site_audit(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="site_audit",
+        company_slug=slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "domain": body.domain,
+            "effective_slug": effective_slug,
+        },
+    )
 
     return PipelineRunResponse(
         run_id=task.task_id,

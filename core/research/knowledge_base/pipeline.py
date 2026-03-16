@@ -47,6 +47,7 @@ from core.research.knowledge_base.graph import (
     run_kb_hitl_checkpoint,
 )
 from core.research.knowledge_base.storage import KBStorage
+from core.shared_tools.structured_logging import scoped_bind
 from core.shared_tools.tracing import create_session, create_span, end_span, flush, log_generation
 
 logger = logging.getLogger(__name__)
@@ -184,36 +185,37 @@ async def _run_single_agent(
     revision_note: Optional[str] = None,
 ) -> KBAgentResult:
     """Run a single agent by doc type with optional revision note."""
-    if doc_type == KBDocType.COMPANY_OVERVIEW:
-        return await run_company_overview_agent(
-            input_data, parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.CUSTOMER_REVIEWS:
-        return await run_customer_reviews_agent(
-            input_data, parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.COMPETITOR_REGISTRY:
-        overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
-        return await run_competitor_scanner_agent(
-            input_data, company_overview_md=overview_md,
-            parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.WEAKNESS_ANALYSIS:
-        overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
-        competitor_md = _get_doc_md(results, KBDocType.COMPETITOR_REGISTRY, storage)
-        return await run_weakness_analyst_agent(
-            input_data, company_overview_md=overview_md,
-            competitor_registry_md=competitor_md,
-            parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.BRAND_PERCEPTION:
-        upstream_docs = _build_upstream_docs(results, storage)
-        return await run_brand_perception_agent(
-            input_data, upstream_docs=upstream_docs,
-            parent_span=parent_span, revision_note=revision_note,
-        )
-    else:
-        return KBAgentResult(doc_type=doc_type, error=f"Unknown doc type: {doc_type}")
+    with scoped_bind(agent_name=doc_type.value):
+        if doc_type == KBDocType.COMPANY_OVERVIEW:
+            return await run_company_overview_agent(
+                input_data, parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.CUSTOMER_REVIEWS:
+            return await run_customer_reviews_agent(
+                input_data, parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.COMPETITOR_REGISTRY:
+            overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
+            return await run_competitor_scanner_agent(
+                input_data, company_overview_md=overview_md,
+                parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.WEAKNESS_ANALYSIS:
+            overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
+            competitor_md = _get_doc_md(results, KBDocType.COMPETITOR_REGISTRY, storage)
+            return await run_weakness_analyst_agent(
+                input_data, company_overview_md=overview_md,
+                competitor_registry_md=competitor_md,
+                parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.BRAND_PERCEPTION:
+            upstream_docs = _build_upstream_docs(results, storage)
+            return await run_brand_perception_agent(
+                input_data, upstream_docs=upstream_docs,
+                parent_span=parent_span, revision_note=revision_note,
+            )
+        else:
+            return KBAgentResult(doc_type=doc_type, error=f"Unknown doc type: {doc_type}")
 
 
 # ---------------------------------------------------------------------------
@@ -255,126 +257,131 @@ async def _run_eager_dag(
     _update_task(task_store, task_id, current_step="eager_dag")
 
     async def _agent_co() -> None:
-        try:
-            result = await run_company_overview_agent(
-                input_data, parent_span=trace_span,
-            )
-            results[KBDocType.COMPANY_OVERVIEW] = result
-            if not result.error:
-                storage.write_version(
-                    KBDocType.COMPANY_OVERVIEW, result.content_md, result.content_json,
+        with scoped_bind(agent_name="company_overview"):
+            try:
+                result = await run_company_overview_agent(
+                    input_data, parent_span=trace_span,
                 )
-                changed_doc_types.append(KBDocType.COMPANY_OVERVIEW)
-            _emit(event_bus, task_id, "kb_agent_complete", {
-                "agent": "company_overview",
-                "word_count": result.word_count,
-                "has_error": result.error is not None,
-            })
-        except Exception as exc:
-            results[KBDocType.COMPANY_OVERVIEW] = KBAgentResult(
-                doc_type=KBDocType.COMPANY_OVERVIEW, error=str(exc),
-            )
-        finally:
-            overview_done.set()
+                results[KBDocType.COMPANY_OVERVIEW] = result
+                if not result.error:
+                    storage.write_version(
+                        KBDocType.COMPANY_OVERVIEW, result.content_md, result.content_json,
+                    )
+                    changed_doc_types.append(KBDocType.COMPANY_OVERVIEW)
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "company_overview",
+                    "word_count": result.word_count,
+                    "has_error": result.error is not None,
+                })
+            except Exception as exc:
+                results[KBDocType.COMPANY_OVERVIEW] = KBAgentResult(
+                    doc_type=KBDocType.COMPANY_OVERVIEW, error=str(exc),
+                )
+            finally:
+                overview_done.set()
 
     async def _agent_cr() -> None:
-        try:
-            result = await run_customer_reviews_agent(
-                input_data, parent_span=trace_span,
-            )
-            results[KBDocType.CUSTOMER_REVIEWS] = result
-            if not result.error:
-                storage.write_version(
-                    KBDocType.CUSTOMER_REVIEWS, result.content_md, result.content_json,
+        with scoped_bind(agent_name="customer_reviews"):
+            try:
+                result = await run_customer_reviews_agent(
+                    input_data, parent_span=trace_span,
                 )
-                changed_doc_types.append(KBDocType.CUSTOMER_REVIEWS)
-            _emit(event_bus, task_id, "kb_agent_complete", {
-                "agent": "customer_reviews",
-                "word_count": result.word_count,
-                "has_error": result.error is not None,
-            })
-        except Exception as exc:
-            results[KBDocType.CUSTOMER_REVIEWS] = KBAgentResult(
-                doc_type=KBDocType.CUSTOMER_REVIEWS, error=str(exc),
-            )
-        finally:
-            reviews_done.set()
+                results[KBDocType.CUSTOMER_REVIEWS] = result
+                if not result.error:
+                    storage.write_version(
+                        KBDocType.CUSTOMER_REVIEWS, result.content_md, result.content_json,
+                    )
+                    changed_doc_types.append(KBDocType.CUSTOMER_REVIEWS)
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "customer_reviews",
+                    "word_count": result.word_count,
+                    "has_error": result.error is not None,
+                })
+            except Exception as exc:
+                results[KBDocType.CUSTOMER_REVIEWS] = KBAgentResult(
+                    doc_type=KBDocType.CUSTOMER_REVIEWS, error=str(exc),
+                )
+            finally:
+                reviews_done.set()
 
     async def _agent_cs() -> None:
-        await overview_done.wait()
-        try:
-            overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
-            result = await run_competitor_scanner_agent(
-                input_data, company_overview_md=overview_md, parent_span=trace_span,
-            )
-            results[KBDocType.COMPETITOR_REGISTRY] = result
-            if not result.error:
-                storage.write_version(
-                    KBDocType.COMPETITOR_REGISTRY, result.content_md, result.content_json,
+        with scoped_bind(agent_name="competitor_scanner"):
+            await overview_done.wait()
+            try:
+                overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
+                result = await run_competitor_scanner_agent(
+                    input_data, company_overview_md=overview_md, parent_span=trace_span,
                 )
-                changed_doc_types.append(KBDocType.COMPETITOR_REGISTRY)
-            _emit(event_bus, task_id, "kb_agent_complete", {
-                "agent": "competitor_registry",
-                "word_count": result.word_count,
-                "has_error": result.error is not None,
-            })
-        except Exception as exc:
-            results[KBDocType.COMPETITOR_REGISTRY] = KBAgentResult(
-                doc_type=KBDocType.COMPETITOR_REGISTRY, error=str(exc),
-            )
-        finally:
-            competitor_done.set()
+                results[KBDocType.COMPETITOR_REGISTRY] = result
+                if not result.error:
+                    storage.write_version(
+                        KBDocType.COMPETITOR_REGISTRY, result.content_md, result.content_json,
+                    )
+                    changed_doc_types.append(KBDocType.COMPETITOR_REGISTRY)
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "competitor_registry",
+                    "word_count": result.word_count,
+                    "has_error": result.error is not None,
+                })
+            except Exception as exc:
+                results[KBDocType.COMPETITOR_REGISTRY] = KBAgentResult(
+                    doc_type=KBDocType.COMPETITOR_REGISTRY, error=str(exc),
+                )
+            finally:
+                competitor_done.set()
 
     async def _agent_wa() -> None:
-        await overview_done.wait()
-        await competitor_done.wait()
-        try:
-            overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
-            competitor_md = _get_doc_md(results, KBDocType.COMPETITOR_REGISTRY, storage)
-            result = await run_weakness_analyst_agent(
-                input_data, company_overview_md=overview_md,
-                competitor_registry_md=competitor_md, parent_span=trace_span,
-            )
-            results[KBDocType.WEAKNESS_ANALYSIS] = result
-            if not result.error:
-                storage.write_version(
-                    KBDocType.WEAKNESS_ANALYSIS, result.content_md, result.content_json,
+        with scoped_bind(agent_name="weakness_analyst"):
+            await overview_done.wait()
+            await competitor_done.wait()
+            try:
+                overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
+                competitor_md = _get_doc_md(results, KBDocType.COMPETITOR_REGISTRY, storage)
+                result = await run_weakness_analyst_agent(
+                    input_data, company_overview_md=overview_md,
+                    competitor_registry_md=competitor_md, parent_span=trace_span,
                 )
-                changed_doc_types.append(KBDocType.WEAKNESS_ANALYSIS)
-            _emit(event_bus, task_id, "kb_agent_complete", {
-                "agent": "weakness_analysis",
-                "word_count": result.word_count,
-                "has_error": result.error is not None,
-            })
-        except Exception as exc:
-            results[KBDocType.WEAKNESS_ANALYSIS] = KBAgentResult(
-                doc_type=KBDocType.WEAKNESS_ANALYSIS, error=str(exc),
-            )
+                results[KBDocType.WEAKNESS_ANALYSIS] = result
+                if not result.error:
+                    storage.write_version(
+                        KBDocType.WEAKNESS_ANALYSIS, result.content_md, result.content_json,
+                    )
+                    changed_doc_types.append(KBDocType.WEAKNESS_ANALYSIS)
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "weakness_analysis",
+                    "word_count": result.word_count,
+                    "has_error": result.error is not None,
+                })
+            except Exception as exc:
+                results[KBDocType.WEAKNESS_ANALYSIS] = KBAgentResult(
+                    doc_type=KBDocType.WEAKNESS_ANALYSIS, error=str(exc),
+                )
 
     async def _agent_bp() -> None:
-        await overview_done.wait()
-        await reviews_done.wait()
-        await competitor_done.wait()
-        try:
-            upstream_docs = _build_upstream_docs(results, storage)
-            result = await run_brand_perception_agent(
-                input_data, upstream_docs=upstream_docs, parent_span=trace_span,
-            )
-            results[KBDocType.BRAND_PERCEPTION] = result
-            if not result.error:
-                storage.write_version(
-                    KBDocType.BRAND_PERCEPTION, result.content_md, result.content_json,
+        with scoped_bind(agent_name="brand_perception"):
+            await overview_done.wait()
+            await reviews_done.wait()
+            await competitor_done.wait()
+            try:
+                upstream_docs = _build_upstream_docs(results, storage)
+                result = await run_brand_perception_agent(
+                    input_data, upstream_docs=upstream_docs, parent_span=trace_span,
                 )
-                changed_doc_types.append(KBDocType.BRAND_PERCEPTION)
-            _emit(event_bus, task_id, "kb_agent_complete", {
-                "agent": "brand_perception",
-                "word_count": result.word_count,
-                "has_error": result.error is not None,
-            })
-        except Exception as exc:
-            results[KBDocType.BRAND_PERCEPTION] = KBAgentResult(
-                doc_type=KBDocType.BRAND_PERCEPTION, error=str(exc),
-            )
+                results[KBDocType.BRAND_PERCEPTION] = result
+                if not result.error:
+                    storage.write_version(
+                        KBDocType.BRAND_PERCEPTION, result.content_md, result.content_json,
+                    )
+                    changed_doc_types.append(KBDocType.BRAND_PERCEPTION)
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "brand_perception",
+                    "word_count": result.word_count,
+                    "has_error": result.error is not None,
+                })
+            except Exception as exc:
+                results[KBDocType.BRAND_PERCEPTION] = KBAgentResult(
+                    doc_type=KBDocType.BRAND_PERCEPTION, error=str(exc),
+                )
 
     await asyncio.gather(
         _agent_co(), _agent_cr(), _agent_cs(), _agent_wa(), _agent_bp(),
@@ -537,23 +544,24 @@ async def run_knowledge_base_pipeline(
 
             available_docs, missing_docs = _collect_synthesis_inputs(storage)
 
-            synthesis_result = await run_synthesis_agent(
-                input_data,
-                kb_base_dir=storage.base_dir,
-                available_docs=available_docs,
-                missing_docs=missing_docs,
-                parent_span=trace_span,
-            )
+            with scoped_bind(agent_name="synthesis"):
+                synthesis_result = await run_synthesis_agent(
+                    input_data,
+                    kb_base_dir=storage.base_dir,
+                    available_docs=available_docs,
+                    missing_docs=missing_docs,
+                    parent_span=trace_span,
+                )
 
-            synthesis_md = ""
-            if not synthesis_result.error:
-                synthesis_md = synthesis_result.content_md
-                storage.write_synthesis(synthesis_md)
+                synthesis_md = ""
+                if not synthesis_result.error:
+                    synthesis_md = synthesis_result.content_md
+                    storage.write_synthesis(synthesis_md)
 
-            _emit(event_bus, task_id, "kb_agent_complete", {
-                "agent": "synthesis", "word_count": synthesis_result.word_count,
-                "has_error": synthesis_result.error is not None,
-            })
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "synthesis", "word_count": synthesis_result.word_count,
+                    "has_error": synthesis_result.error is not None,
+                })
             _emit(event_bus, task_id, "kb_phase_complete", {"phase": 4})
 
             # HITL-3: review synthesis (NOT auto-approved unless user set it)
@@ -590,17 +598,18 @@ async def run_knowledge_base_pipeline(
 
                 if cp3_decision == "revise":
                     revision_note_3 = hitl3_result.get("revision_note", "")
-                    synthesis_result = await run_synthesis_agent(
-                        input_data,
-                        kb_base_dir=storage.base_dir,
-                        available_docs=available_docs,
-                        missing_docs=missing_docs,
-                        parent_span=trace_span,
-                        revision_note=revision_note_3,
-                    )
-                    if not synthesis_result.error:
-                        synthesis_md = synthesis_result.content_md
-                        storage.write_synthesis(synthesis_md)
+                    with scoped_bind(agent_name="synthesis"):
+                        synthesis_result = await run_synthesis_agent(
+                            input_data,
+                            kb_base_dir=storage.base_dir,
+                            available_docs=available_docs,
+                            missing_docs=missing_docs,
+                            parent_span=trace_span,
+                            revision_note=revision_note_3,
+                        )
+                        if not synthesis_result.error:
+                            synthesis_md = synthesis_result.content_md
+                            storage.write_synthesis(synthesis_md)
 
                 # Promote approved synthesis
                 if synthesis_md:
@@ -896,27 +905,28 @@ async def run_knowledge_base_pipeline(
             }
             use_delta = True
 
-        synthesis_result = await run_synthesis_agent(
-            input_data,
-            kb_base_dir=storage.base_dir,
-            available_docs=available_docs,
-            missing_docs=missing_docs,
-            parent_span=trace_span,
-            delta_mode=use_delta,
-            changed_docs=changed_docs_for_synth,
-            previous_synthesis_path=previous_synthesis_path,
-        )
+        with scoped_bind(agent_name="synthesis"):
+            synthesis_result = await run_synthesis_agent(
+                input_data,
+                kb_base_dir=storage.base_dir,
+                available_docs=available_docs,
+                missing_docs=missing_docs,
+                parent_span=trace_span,
+                delta_mode=use_delta,
+                changed_docs=changed_docs_for_synth,
+                previous_synthesis_path=previous_synthesis_path,
+            )
 
-        synthesis_md = ""
-        if not synthesis_result.error:
-            synthesis_md = synthesis_result.content_md
-            # Write synthesis version to KB storage (versioned draft)
-            storage.write_synthesis(synthesis_md)
+            synthesis_md = ""
+            if not synthesis_result.error:
+                synthesis_md = synthesis_result.content_md
+                # Write synthesis version to KB storage (versioned draft)
+                storage.write_synthesis(synthesis_md)
 
-        _emit(event_bus, task_id, "kb_agent_complete", {
-            "agent": "synthesis", "word_count": synthesis_result.word_count,
-            "has_error": synthesis_result.error is not None,
-        })
+            _emit(event_bus, task_id, "kb_agent_complete", {
+                "agent": "synthesis", "word_count": synthesis_result.word_count,
+                "has_error": synthesis_result.error is not None,
+            })
         _emit(event_bus, task_id, "kb_phase_complete", {"phase": 4})
 
         # ── HITL-3: review synthesis ──
@@ -953,20 +963,21 @@ async def run_knowledge_base_pipeline(
 
             if cp3_decision == "revise":
                 revision_note = hitl3_result.get("revision_note", "")
-                synthesis_result = await run_synthesis_agent(
-                    input_data,
-                    kb_base_dir=storage.base_dir,
-                    available_docs=available_docs,
-                    missing_docs=missing_docs,
-                    parent_span=trace_span,
-                    revision_note=revision_note,
-                    delta_mode=use_delta,
-                    changed_docs=changed_docs_for_synth,
-                    previous_synthesis_path=previous_synthesis_path,
-                )
-                if not synthesis_result.error:
-                    synthesis_md = synthesis_result.content_md
-                    storage.write_synthesis(synthesis_md)
+                with scoped_bind(agent_name="synthesis"):
+                    synthesis_result = await run_synthesis_agent(
+                        input_data,
+                        kb_base_dir=storage.base_dir,
+                        available_docs=available_docs,
+                        missing_docs=missing_docs,
+                        parent_span=trace_span,
+                        revision_note=revision_note,
+                        delta_mode=use_delta,
+                        changed_docs=changed_docs_for_synth,
+                        previous_synthesis_path=previous_synthesis_path,
+                    )
+                    if not synthesis_result.error:
+                        synthesis_md = synthesis_result.content_md
+                        storage.write_synthesis(synthesis_md)
 
             # Promote approved synthesis to company_context
             if synthesis_md:

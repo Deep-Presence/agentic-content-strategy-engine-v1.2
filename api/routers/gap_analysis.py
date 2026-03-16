@@ -17,6 +17,7 @@ from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask
 from api.tasks.runner import run_gap_pipeline_task
 from core.services.task_store import TaskStoreProtocol
+from core.audit import log_pipeline_launch
 from core.models.organization import UserProfile
 
 router = APIRouter(prefix="/api/v1/gap-analysis", tags=["gap-analysis"])
@@ -73,6 +74,17 @@ async def start_gap_analysis(
     if not body.force_rerun and _gap_analysis_artifacts_exist(artifacts_root, effective_slug):
         last_task = _get_latest_gap_run(task_store, slug, body.product_slug)
         response.status_code = 200
+        await log_pipeline_launch(
+            user_id=_user.id,
+            pipeline="gap_analysis",
+            company_slug=slug,
+            task_id=last_task.task_id if last_task else f"existing-{effective_slug}",
+            detail={
+                "outcome": "already_exists",
+                "product_slug": body.product_slug,
+                "effective_slug": effective_slug,
+            },
+        )
         return PipelineRunResponse(
             run_id=last_task.task_id if last_task else f"existing-{effective_slug}",
             pipeline="gap_analysis",
@@ -98,6 +110,18 @@ async def start_gap_analysis(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="gap_analysis",
+        company_slug=slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "force_rerun": body.force_rerun,
+            "effective_slug": effective_slug,
+        },
+    )
 
     return PipelineRunResponse(
         run_id=task.task_id,

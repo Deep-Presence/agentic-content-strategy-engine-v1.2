@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from core.shared_tools.structured_logging import bind_context, scoped_bind
 from core.shared_tools.task_status import TaskStatus
 from core.config.settings import settings
 from core.content_engine.brief_builder import build_briefs_parallel
@@ -661,21 +662,23 @@ async def _run_pipeline_stages(
     """Internal stage execution — called by run_content_generation_v13 inside try/except."""
 
     # ── Stage 0: Entry Routing + Artifact Loading ──────────────────
-    stage0_span = create_span(pipeline_trace, "stage/0-entry-router")
-    _update_task(task_store, task_id, status=TaskStatus.RUNNING.value, progress={"stage": 0, "stage_name": "Entry Router"})
+    with scoped_bind(step_name="stage_0_entry_router"):
+        stage0_span = create_span(pipeline_trace, "stage/0-entry-router")
+        _update_task(task_store, task_id, status=TaskStatus.RUNNING.value, progress={"stage": 0, "stage_name": "Entry Router"})
 
-    company_context_md = _load_artifact_text(input_data.company_context_path)
-    style_guide_md = _load_artifact_text(input_data.style_guide_path)
-    persona_mds = [_load_artifact_text(p) for p in input_data.persona_paths]
-    analysis_json = _load_artifact_json(input_data.analysis_json_path)
+        company_context_md = _load_artifact_text(input_data.company_context_path)
+        style_guide_md = _load_artifact_text(input_data.style_guide_path)
+        persona_mds = [_load_artifact_text(p) for p in input_data.persona_paths]
+        analysis_json = _load_artifact_json(input_data.analysis_json_path)
 
-    end_span(stage0_span, output={"entry_mode": input_data.entry_mode.value})
+        end_span(stage0_span, output={"entry_mode": input_data.entry_mode.value})
 
     approved_blueprints: List[ContentBlueprint] = []
 
     if input_data.entry_mode == EntryMode.AUTONOMOUS:
         # ── Stage 1: Strategic Planner + HITL-1 ───────────────────
         if 1 not in input_data.skip_stages:
+            bind_context(step_name="stage_1_strategic_planner")
             stage1_span = create_span(pipeline_trace, "stage/1-strategic-planner")
             _update_task(task_store, task_id, progress={"stage": 1, "stage_name": "Strategic Planner"})
             _emit(event_bus, task_id, "stage_started", {"stage": 1, "name": "Strategic Planner"})
@@ -831,6 +834,7 @@ async def _run_pipeline_stages(
 
         # ── Stage 2: Brief Builder + HITL-2 ───────────────────────
         if 2 not in input_data.skip_stages and approved_topics:
+            bind_context(step_name="stage_2_brief_builder")
             stage2_span = create_span(pipeline_trace, "stage/2-brief-builder")
             _update_task(task_store, task_id, progress={"stage": 2, "stage_name": "Brief Builder"})
             _emit(event_bus, task_id, "stage_started", {"stage": 2, "name": "Brief Builder"})
@@ -1121,94 +1125,99 @@ async def _run_pipeline_stages(
     # Initialize pieces before Stage 3 (worker failures append to it)
     pieces: List[ContentPiece] = []
 
+    # Clear stale step_name left by bind_context() in stages 1/2
+    bind_context(step_name=None)
+
     # ── Stage 3: Content Workers ──────────────────────────────────
-    if 3 not in input_data.skip_stages and approved_blueprints:
-        stage3_span = create_span(pipeline_trace, "stage/3-content-workers")
-        _update_task(task_store, task_id, progress={"stage": 3, "stage_name": "Content Workers"})
-        _emit(event_bus, task_id, "stage_started", {"stage": 3, "name": "Content Workers"})
+    with scoped_bind(step_name="stage_3_content_workers"):
+        if 3 not in input_data.skip_stages and approved_blueprints:
+            stage3_span = create_span(pipeline_trace, "stage/3-content-workers")
+            _update_task(task_store, task_id, progress={"stage": 3, "stage_name": "Content Workers"})
+            _emit(event_bus, task_id, "stage_started", {"stage": 3, "name": "Content Workers"})
 
-        # Extract site pages for linker (from s1 discovery data in analysis.json)
-        site_pages = _extract_site_pages(analysis_json)
+            # Extract site pages for linker (from s1 discovery data in analysis.json)
+            site_pages = _extract_site_pages(analysis_json)
 
-        # v1.3 dispatcher: Outliner → Drafter → Linker → Fact Checker
-        from core.content_engine.workers.dispatcher import dispatch_workers_v13
+            # v1.3 dispatcher: Outliner → Drafter → Linker → Fact Checker
+            from core.content_engine.workers.dispatcher import dispatch_workers_v13
 
-        formatted_contents, worker_failures = await dispatch_workers_v13(
-            briefs=approved_blueprints,  # ContentBlueprint extends ContentBrief
-            input_data=input_data,
-            style_guide_md=style_guide_md,
-            company_context_md=company_context_md,
-            max_concurrent=input_data.max_concurrent_workers,
-            artifact_dir=artifact_dir,
-            site_pages=site_pages,
-            parent_span=stage3_span,
-        )
+            formatted_contents, worker_failures = await dispatch_workers_v13(
+                briefs=approved_blueprints,  # ContentBlueprint extends ContentBrief
+                input_data=input_data,
+                style_guide_md=style_guide_md,
+                company_context_md=company_context_md,
+                max_concurrent=input_data.max_concurrent_workers,
+                artifact_dir=artifact_dir,
+                site_pages=site_pages,
+                parent_span=stage3_span,
+            )
 
-        # H2 FIX: Surface worker failures as rejected pieces + SSE events
-        for wf in worker_failures:
-            pieces.append(ContentPiece(
-                brief_id=wf["brief_id"],
-                title=f"[Worker Failed] {wf['brief_id']}",
-                status=ContentStatus.REJECTED,
-                eval_summary={"worker_error": wf["error"]},
-                topic_assignment_id=_bp_ta_map.get(wf["brief_id"]),
-            ))
-            _emit(event_bus, task_id, "worker_failed", {
-                "brief_id": wf["brief_id"],
-                "error": wf["error"],
+            # H2 FIX: Surface worker failures as rejected pieces + SSE events
+            for wf in worker_failures:
+                pieces.append(ContentPiece(
+                    brief_id=wf["brief_id"],
+                    title=f"[Worker Failed] {wf['brief_id']}",
+                    status=ContentStatus.REJECTED,
+                    eval_summary={"worker_error": wf["error"]},
+                    topic_assignment_id=_bp_ta_map.get(wf["brief_id"]),
+                ))
+                _emit(event_bus, task_id, "worker_failed", {
+                    "brief_id": wf["brief_id"],
+                    "error": wf["error"],
+                })
+
+            end_span(stage3_span, output={
+                "formatted_count": len(formatted_contents),
+                "failed_count": len(worker_failures),
             })
-
-        end_span(stage3_span, output={
-            "formatted_count": len(formatted_contents),
-            "failed_count": len(worker_failures),
-        })
-        _emit(event_bus, task_id, "stage_complete", {
-            "stage": 3,
-            "pieces": len(formatted_contents),
-            "failed": len(worker_failures),
-        })
-    else:
-        formatted_contents = []
+            _emit(event_bus, task_id, "stage_complete", {
+                "stage": 3,
+                "pieces": len(formatted_contents),
+                "failed": len(worker_failures),
+            })
+        else:
+            formatted_contents = []
 
     # ── Stage 4: Evaluator with Dual Feedback ─────────────────────
-    if 4 not in input_data.skip_stages and formatted_contents:
-        stage4_span = create_span(pipeline_trace, "stage/4-evaluator")
-        _update_task(task_store, task_id, progress={"stage": 4, "stage_name": "Evaluator"})
-        _emit(event_bus, task_id, "stage_started", {"stage": 4, "name": "Evaluator"})
+    with scoped_bind(step_name="stage_4_evaluator"):
+        if 4 not in input_data.skip_stages and formatted_contents:
+            stage4_span = create_span(pipeline_trace, "stage/4-evaluator")
+            _update_task(task_store, task_id, progress={"stage": 4, "stage_name": "Evaluator"})
+            _emit(event_bus, task_id, "stage_started", {"stage": 4, "name": "Evaluator"})
 
-        from core.content_engine.evaluator.loop import evaluate_and_optimize
+            from core.content_engine.evaluator.loop import evaluate_and_optimize
 
-        evaluated: List[tuple] = []
-        blueprint_by_id = {bp.brief_id: bp for bp in approved_blueprints}
-        for brief_id, content in formatted_contents:
-            blueprint = blueprint_by_id.get(brief_id)
-            if blueprint is None:
-                logger.warning(
-                    "Stage 4: no blueprint found for brief_id=%s, skipping", brief_id
+            evaluated: List[tuple] = []
+            blueprint_by_id = {bp.brief_id: bp for bp in approved_blueprints}
+            for brief_id, content in formatted_contents:
+                blueprint = blueprint_by_id.get(brief_id)
+                if blueprint is None:
+                    logger.warning(
+                        "Stage 4: no blueprint found for brief_id=%s, skipping", brief_id
+                    )
+                    continue
+                final_content, history, feedback_route = await evaluate_and_optimize(
+                    content=content,
+                    brief=blueprint,
+                    company_context_md=company_context_md,
+                    style_guide_md=style_guide_md,
+                    input_data=input_data,
+                    max_cycles=input_data.max_revision_cycles,
+                    session_id=session_id,
+                    artifact_dir=artifact_dir,
+                    parent_span=stage4_span,
+                    use_eeat=True,
+                    use_targeted_revision=True,
                 )
-                continue
-            final_content, history, feedback_route = await evaluate_and_optimize(
-                content=content,
-                brief=blueprint,
-                company_context_md=company_context_md,
-                style_guide_md=style_guide_md,
-                input_data=input_data,
-                max_cycles=input_data.max_revision_cycles,
-                session_id=session_id,
-                artifact_dir=artifact_dir,
-                parent_span=stage4_span,
-                use_eeat=True,
-                use_targeted_revision=True,
-            )
-            evaluated.append((brief_id, final_content, history, feedback_route))
+                evaluated.append((brief_id, final_content, history, feedback_route))
 
-        end_span(stage4_span, output={"evaluated_count": len(evaluated)})
-        _emit(event_bus, task_id, "stage_complete", {"stage": 4, "evaluated": len(evaluated)})
-    else:
-        evaluated = [
-            (bid, fc, RevisionHistory(brief_id=fc.brief_id, final_passed=True), "pass")
-            for bid, fc in formatted_contents
-        ]
+            end_span(stage4_span, output={"evaluated_count": len(evaluated)})
+            _emit(event_bus, task_id, "stage_complete", {"stage": 4, "evaluated": len(evaluated)})
+        else:
+            evaluated = [
+                (bid, fc, RevisionHistory(brief_id=fc.brief_id, final_passed=True), "pass")
+                for bid, fc in formatted_contents
+            ]
 
     # ── Stage 4.5: CPS Scoring ───────────────────────────────────
     cps_results: Dict[str, Dict[str, Any]] = {}
@@ -1227,162 +1236,31 @@ async def _run_pipeline_stages(
             logger.warning("CPS scoring batch failed, continuing without CPS", exc_info=True)
 
     # ── Stage 5: Final HITL Review ────────────────────────────────
-    _MAX_EDIT_ATTEMPTS = 2
-    _MAX_REBRIEFS = 2
+    with scoped_bind(step_name="stage_5_final_review"):
+        _MAX_EDIT_ATTEMPTS = 2
+        _MAX_REBRIEFS = 2
 
-    if 5 not in input_data.skip_stages and evaluated:
-        stage5_span = create_span(pipeline_trace, "stage/5-final-review")
-        _update_task(task_store, task_id, progress={"stage": 5, "stage_name": "Final Review"})
-        _emit(event_bus, task_id, "stage_started", {"stage": 5, "name": "Final Review"})
+        if 5 not in input_data.skip_stages and evaluated:
+            stage5_span = create_span(pipeline_trace, "stage/5-final-review")
+            _update_task(task_store, task_id, progress={"stage": 5, "stage_name": "Final Review"})
+            _emit(event_bus, task_id, "stage_started", {"stage": 5, "name": "Final Review"})
 
-        _bp_by_id = {bp.brief_id: bp for bp in approved_blueprints}
-        for brief_id, final_content, history, feedback_route in evaluated:
-            blueprint = _bp_by_id.get(brief_id)
-            rebrief_count = 0
-            edit_count = 0
+            _bp_by_id = {bp.brief_id: bp for bp in approved_blueprints}
+            for brief_id, final_content, history, feedback_route in evaluated:
+                blueprint = _bp_by_id.get(brief_id)
+                rebrief_count = 0
+                edit_count = 0
 
-            # Handle evaluator major_change signal → immediate re-brief
-            if feedback_route == "major_change" and blueprint and rebrief_count < _MAX_REBRIEFS:
-                logger.info(
-                    "Evaluator major_change for %s — triggering re-brief",
-                    final_content.brief_id,
-                )
-                rebrief_count += 1
-                rebriefed = await _rebrief_and_rerun(
-                    blueprint=blueprint,
-                    user_comment="Evaluator detected major direction misalignment (semantic < 0.5)",
-                    input_data=input_data,
-                    company_context_md=company_context_md,
-                    persona_mds=persona_mds,
-                    style_guide_md=style_guide_md,
-                    analysis_json=analysis_json,
-                    artifact_dir=artifact_dir,
-                    session_id=session_id,
-                    parent_span=stage5_span,
-                )
-                if rebriefed:
-                    final_content, history, feedback_route = rebriefed
-
-            # HITL-3 review loop (edit/reject with bounded retries)
-            piece_resolved = False
-            while not piece_resolved:
-                # Build eval summary
-                eval_summary = {}
-                if history.cycles:
-                    last_eval = history.cycles[-1]
-                    eval_summary = {
-                        "overall_score": last_eval.overall_score,
-                        "overall_passed": last_eval.overall_passed,
-                        "dimensions": {
-                            d.dimension: {"score": d.score, "passed": d.passed}
-                            for d in last_eval.dimensions
-                        },
-                    }
-                # CPS scored at Stage 4.5; may be stale after edit/rebrief loops
-                # (acceptable for v1 — CPS is informational, not a gate)
-                cps_data = cps_results.get(brief_id)
-                if cps_data:
-                    eval_summary["cps"] = cps_data
-
-                # HITL Checkpoint 3: Final Content Review
-                set_current_span(stage5_span)
-                review_graph = build_content_review_graph()
-                review_state = await run_hitl_checkpoint(
-                    graph=review_graph,
-                    initial_state={
-                        "content": {
-                            "brief_id": final_content.brief_id,
-                            "title": final_content.title,
-                            "markdown": final_content.markdown,
-                            "word_count": final_content.word_count,
-                        },
-                        "eval_summary": eval_summary,
-                        "auto_approve": input_data.auto_approve,
-                    },
-                    thread_id=f"{task_id or 'cli'}-content-review-{final_content.brief_id}-e{edit_count}-r{rebrief_count}",
-                    task_store=task_store,
-                    event_bus=event_bus,
-                    task_id=task_id,
-                    stage_name=f"Content Review ({final_content.brief_id})",
-                )
-
-                content_decision = review_state.get("content_decision", "approve")
-
-                if content_decision == "approve" or review_state.get("finalized"):
-                    # Approved — write final.md
-                    bd = _brief_dir(artifact_dir, final_content.brief_id)
-                    final_path = bd / "final.md"
-                    final_path.write_text(final_content.markdown, encoding="utf-8")
-                    pieces.append(
-                        ContentPiece(
-                            brief_id=final_content.brief_id,
-                            title=final_content.title,
-                            status=ContentStatus.APPROVED,
-                            final_markdown=final_content.markdown,
-                            eval_summary=eval_summary,
-                            human_notes=review_state.get("editor_notes"),
-                            artifact_path=str(final_path.relative_to(_PROJECT_ROOT)),
-                            topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
-                        )
-                    )
-                    piece_resolved = True
-
-                elif content_decision == "edit" and edit_count < _MAX_EDIT_ATTEMPTS:
-                    # Edit → drafter revision with human notes → fact checker → re-present
-                    edit_count += 1
-                    editor_notes = review_state.get("editor_notes", "")
+                # Handle evaluator major_change signal → immediate re-brief
+                if feedback_route == "major_change" and blueprint and rebrief_count < _MAX_REBRIEFS:
                     logger.info(
-                        "HITL-3 edit for %s (attempt %d/%d)",
+                        "Evaluator major_change for %s — triggering re-brief",
                         final_content.brief_id,
-                        edit_count,
-                        _MAX_EDIT_ATTEMPTS,
                     )
-                    revised = await _apply_human_edits(
-                        final_content=final_content,
-                        blueprint=blueprint,
-                        editor_notes=editor_notes,
-                        style_guide_md=style_guide_md,
-                        company_context_md=company_context_md,
-                        company_name=input_data.company_name,
-                        domain=input_data.domain,
-                    )
-                    if revised:
-                        final_content = revised
-                        # Re-evaluate after edit
-                        from core.content_engine.evaluator.loop import evaluate_and_optimize
-                        final_content, history, feedback_route = await evaluate_and_optimize(
-                            content=final_content,
-                            brief=blueprint,
-                            company_context_md=company_context_md,
-                            style_guide_md=style_guide_md,
-                            input_data=input_data,
-                            max_cycles=1,
-                            session_id=session_id,
-                            artifact_dir=artifact_dir,
-                            parent_span=stage5_span,
-                            use_eeat=True,
-                            use_targeted_revision=True,
-                        )
-                    # Loop back to re-present at HITL-3
-
-                elif (
-                    content_decision == "reject"
-                    and review_state.get("rethink", False)  # H3 FIX: only re-brief when rethink=True
-                    and blueprint
-                    and rebrief_count < _MAX_REBRIEFS
-                ):
-                    # Reject + rethink → re-brief with user comment → re-run full chain
                     rebrief_count += 1
-                    user_comment = review_state.get("editor_notes", "")
-                    logger.info(
-                        "HITL-3 reject for %s — re-briefing (attempt %d/%d)",
-                        final_content.brief_id,
-                        rebrief_count,
-                        _MAX_REBRIEFS,
-                    )
                     rebriefed = await _rebrief_and_rerun(
                         blueprint=blueprint,
-                        user_comment=user_comment,
+                        user_comment="Evaluator detected major direction misalignment (semantic < 0.5)",
                         input_data=input_data,
                         company_context_md=company_context_md,
                         persona_mds=persona_mds,
@@ -1394,10 +1272,157 @@ async def _run_pipeline_stages(
                     )
                     if rebriefed:
                         final_content, history, feedback_route = rebriefed
-                        # Reset edit count for new content
-                        edit_count = 0
+
+                # HITL-3 review loop (edit/reject with bounded retries)
+                piece_resolved = False
+                while not piece_resolved:
+                    # Build eval summary
+                    eval_summary = {}
+                    if history.cycles:
+                        last_eval = history.cycles[-1]
+                        eval_summary = {
+                            "overall_score": last_eval.overall_score,
+                            "overall_passed": last_eval.overall_passed,
+                            "dimensions": {
+                                d.dimension: {"score": d.score, "passed": d.passed}
+                                for d in last_eval.dimensions
+                            },
+                        }
+                    # CPS scored at Stage 4.5; may be stale after edit/rebrief loops
+                    # (acceptable for v1 — CPS is informational, not a gate)
+                    cps_data = cps_results.get(brief_id)
+                    if cps_data:
+                        eval_summary["cps"] = cps_data
+
+                    # HITL Checkpoint 3: Final Content Review
+                    set_current_span(stage5_span)
+                    review_graph = build_content_review_graph()
+                    review_state = await run_hitl_checkpoint(
+                        graph=review_graph,
+                        initial_state={
+                            "content": {
+                                "brief_id": final_content.brief_id,
+                                "title": final_content.title,
+                                "markdown": final_content.markdown,
+                                "word_count": final_content.word_count,
+                            },
+                            "eval_summary": eval_summary,
+                            "auto_approve": input_data.auto_approve,
+                        },
+                        thread_id=f"{task_id or 'cli'}-content-review-{final_content.brief_id}-e{edit_count}-r{rebrief_count}",
+                        task_store=task_store,
+                        event_bus=event_bus,
+                        task_id=task_id,
+                        stage_name=f"Content Review ({final_content.brief_id})",
+                    )
+
+                    content_decision = review_state.get("content_decision", "approve")
+
+                    if content_decision == "approve" or review_state.get("finalized"):
+                        # Approved — write final.md
+                        bd = _brief_dir(artifact_dir, final_content.brief_id)
+                        final_path = bd / "final.md"
+                        final_path.write_text(final_content.markdown, encoding="utf-8")
+                        pieces.append(
+                            ContentPiece(
+                                brief_id=final_content.brief_id,
+                                title=final_content.title,
+                                status=ContentStatus.APPROVED,
+                                final_markdown=final_content.markdown,
+                                eval_summary=eval_summary,
+                                human_notes=review_state.get("editor_notes"),
+                                artifact_path=str(final_path.relative_to(_PROJECT_ROOT)),
+                                topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
+                            )
+                        )
+                        piece_resolved = True
+
+                    elif content_decision == "edit" and edit_count < _MAX_EDIT_ATTEMPTS:
+                        # Edit → drafter revision with human notes → fact checker → re-present
+                        edit_count += 1
+                        editor_notes = review_state.get("editor_notes", "")
+                        logger.info(
+                            "HITL-3 edit for %s (attempt %d/%d)",
+                            final_content.brief_id,
+                            edit_count,
+                            _MAX_EDIT_ATTEMPTS,
+                        )
+                        revised = await _apply_human_edits(
+                            final_content=final_content,
+                            blueprint=blueprint,
+                            editor_notes=editor_notes,
+                            style_guide_md=style_guide_md,
+                            company_context_md=company_context_md,
+                            company_name=input_data.company_name,
+                            domain=input_data.domain,
+                        )
+                        if revised:
+                            final_content = revised
+                            # Re-evaluate after edit
+                            from core.content_engine.evaluator.loop import evaluate_and_optimize
+                            final_content, history, feedback_route = await evaluate_and_optimize(
+                                content=final_content,
+                                brief=blueprint,
+                                company_context_md=company_context_md,
+                                style_guide_md=style_guide_md,
+                                input_data=input_data,
+                                max_cycles=1,
+                                session_id=session_id,
+                                artifact_dir=artifact_dir,
+                                parent_span=stage5_span,
+                                use_eeat=True,
+                                use_targeted_revision=True,
+                            )
+                        # Loop back to re-present at HITL-3
+
+                    elif (
+                        content_decision == "reject"
+                        and review_state.get("rethink", False)  # H3 FIX: only re-brief when rethink=True
+                        and blueprint
+                        and rebrief_count < _MAX_REBRIEFS
+                    ):
+                        # Reject + rethink → re-brief with user comment → re-run full chain
+                        rebrief_count += 1
+                        user_comment = review_state.get("editor_notes", "")
+                        logger.info(
+                            "HITL-3 reject for %s — re-briefing (attempt %d/%d)",
+                            final_content.brief_id,
+                            rebrief_count,
+                            _MAX_REBRIEFS,
+                        )
+                        rebriefed = await _rebrief_and_rerun(
+                            blueprint=blueprint,
+                            user_comment=user_comment,
+                            input_data=input_data,
+                            company_context_md=company_context_md,
+                            persona_mds=persona_mds,
+                            style_guide_md=style_guide_md,
+                            analysis_json=analysis_json,
+                            artifact_dir=artifact_dir,
+                            session_id=session_id,
+                            parent_span=stage5_span,
+                        )
+                        if rebriefed:
+                            final_content, history, feedback_route = rebriefed
+                            # Reset edit count for new content
+                            edit_count = 0
+                        else:
+                            # Re-brief failed — reject permanently
+                            pieces.append(
+                                ContentPiece(
+                                    brief_id=final_content.brief_id,
+                                    title=final_content.title,
+                                    status=ContentStatus.REJECTED,
+                                    eval_summary=eval_summary,
+                                    human_notes=review_state.get("editor_notes"),
+                                    topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
+                                )
+                            )
+                            piece_resolved = True
+                        # Loop back to re-present at HITL-3
+
                     else:
-                        # Re-brief failed — reject permanently
+                        # Exhausted edit/rebrief attempts or explicit reject — permanent rejection
                         pieces.append(
                             ContentPiece(
                                 brief_id=final_content.brief_id,
@@ -1409,54 +1434,39 @@ async def _run_pipeline_stages(
                             )
                         )
                         piece_resolved = True
-                    # Loop back to re-present at HITL-3
 
-                else:
-                    # Exhausted edit/rebrief attempts or explicit reject — permanent rejection
-                    pieces.append(
-                        ContentPiece(
-                            brief_id=final_content.brief_id,
-                            title=final_content.title,
-                            status=ContentStatus.REJECTED,
-                            eval_summary=eval_summary,
-                            human_notes=review_state.get("editor_notes"),
-                            topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
-                        )
+            end_span(stage5_span, output={"pieces": len(pieces)})
+        else:
+            # Auto-approve all
+            for _brief_id, final_content, history, _feedback_route in evaluated:
+                bd = _brief_dir(artifact_dir, final_content.brief_id)
+                final_path = bd / "final.md"
+                final_path.write_text(final_content.markdown, encoding="utf-8")
+                auto_eval: Dict[str, Any] = {}
+                if history.cycles:
+                    last_eval = history.cycles[-1]
+                    auto_eval = {
+                        "overall_score": last_eval.overall_score,
+                        "overall_passed": last_eval.overall_passed,
+                        "dimensions": {
+                            d.dimension: {"score": d.score, "passed": d.passed}
+                            for d in last_eval.dimensions
+                        },
+                    }
+                cps_data = cps_results.get(_brief_id)
+                if cps_data:
+                    auto_eval["cps"] = cps_data
+                pieces.append(
+                    ContentPiece(
+                        brief_id=final_content.brief_id,
+                        title=final_content.title,
+                        status=ContentStatus.APPROVED,
+                        final_markdown=final_content.markdown,
+                        eval_summary=auto_eval,
+                        artifact_path=str(final_path.relative_to(_PROJECT_ROOT)),
+                        topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                     )
-                    piece_resolved = True
-
-        end_span(stage5_span, output={"pieces": len(pieces)})
-    else:
-        # Auto-approve all
-        for _brief_id, final_content, history, _feedback_route in evaluated:
-            bd = _brief_dir(artifact_dir, final_content.brief_id)
-            final_path = bd / "final.md"
-            final_path.write_text(final_content.markdown, encoding="utf-8")
-            auto_eval: Dict[str, Any] = {}
-            if history.cycles:
-                last_eval = history.cycles[-1]
-                auto_eval = {
-                    "overall_score": last_eval.overall_score,
-                    "overall_passed": last_eval.overall_passed,
-                    "dimensions": {
-                        d.dimension: {"score": d.score, "passed": d.passed}
-                        for d in last_eval.dimensions
-                    },
-                }
-            cps_data = cps_results.get(_brief_id)
-            if cps_data:
-                auto_eval["cps"] = cps_data
-            pieces.append(
-                ContentPiece(
-                    brief_id=final_content.brief_id,
-                    title=final_content.title,
-                    status=ContentStatus.APPROVED,
-                    final_markdown=final_content.markdown,
-                    eval_summary=auto_eval,
-                    artifact_path=str(final_path.relative_to(_PROJECT_ROOT)),
-                    topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                 )
-            )
 
     # ── Finalize ──────────────────────────────────────────────────
     total_approved = sum(1 for p in pieces if p.status == ContentStatus.APPROVED)

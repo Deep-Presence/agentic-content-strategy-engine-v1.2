@@ -18,6 +18,7 @@ from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.onboarding import OnboardingStartRequest
 from api.tasks.event_bus import EventBus
 from api.tasks.runner import run_onboarding_task
+from core.audit import log_pipeline_launch
 from core.services.task_store import TaskStoreProtocol
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,16 @@ async def start_onboarding(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="onboarding",
+        company_slug=company_slug,
+        task_id=task.task_id,
+        detail={
+            "company_name": company_name,
+        },
+    )
 
     return PipelineRunResponse(
         run_id=task.task_id,

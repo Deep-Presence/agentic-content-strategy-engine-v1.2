@@ -70,57 +70,6 @@ def mock_openai_embeddings():
 
 
 # ---------------------------------------------------------------------------
-# Mock ChromaDB collection
-# ---------------------------------------------------------------------------
-class FakeChromaCollection:
-    """In-memory ChromaDB collection for tests."""
-
-    def __init__(self, name: str = "test_collection") -> None:
-        self.name = name
-        self._store: Dict[str, dict] = {}
-
-    def upsert(
-        self,
-        ids: List[str],
-        documents: Optional[List[str]] = None,
-        embeddings: Optional[List[List[float]]] = None,
-        metadatas: Optional[List[dict]] = None,
-    ) -> None:
-        for i, doc_id in enumerate(ids):
-            self._store[doc_id] = {
-                "document": documents[i] if documents else None,
-                "embedding": embeddings[i] if embeddings else None,
-                "metadata": metadatas[i] if metadatas else None,
-            }
-
-    def get(
-        self,
-        ids: Optional[List[str]] = None,
-        include: Optional[List[str]] = None,
-    ) -> dict:
-        if ids is None:
-            target_ids = list(self._store.keys())
-        else:
-            target_ids = [i for i in ids if i in self._store]
-
-        result_ids = target_ids
-        result_embeddings = None
-        if include and "embeddings" in include:
-            result_embeddings = [self._store[i]["embedding"] for i in target_ids]
-
-        return {"ids": result_ids, "embeddings": result_embeddings}
-
-    def count(self) -> int:
-        return len(self._store)
-
-
-@pytest.fixture
-def fake_chroma_collection():
-    """Provide a FakeChromaCollection for tests."""
-    return FakeChromaCollection()
-
-
-# ---------------------------------------------------------------------------
 # Mock settings (no real API keys needed)
 # ---------------------------------------------------------------------------
 @pytest.fixture
@@ -129,6 +78,4 @@ def mock_settings():
     with patch("core.config.settings.settings") as mock_s:
         mock_s.openai_api_key = "test-api-key"
         mock_s.embedding_model = "text-embedding-3-small"
-        mock_s.chroma_persist_dir = "/tmp/test_chroma"
-        mock_s.chroma_collection_prefix = "test_gap"
         yield mock_s

@@ -65,10 +65,9 @@ from core.topic_discovery.scoring import (
 )
 from core.topic_discovery.storage import TopicDiscoveryStorage
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-)
+from core.shared_tools.structured_logging import configure_logging
+
+configure_logging()
 logger = logging.getLogger("td_rescore")
 
 

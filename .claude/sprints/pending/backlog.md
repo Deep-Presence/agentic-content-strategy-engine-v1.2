@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-15 (Sprint v15 Daily Tracker DB Persistence)
-> **Total items:** 48
+> **Last synced:** 2026-03-15 (Sprint v18 Structured Logging Layer 2)
+> **Total items:** 51
 
 ## Critical (Fix Before Production)
 
@@ -548,6 +548,42 @@
 - **Files affected:** `core/content_engine/pipeline_v13.py` (lines 395-435)
 - **Blocked by:** nothing
 
+### PB-80: DB integration tests for migrations 0016+0017
+- **Source:** pgvector-migration-v16 — Codex review deferred
+- **Date added:** 2026-03-15
+- **Description:** Migrations 0016 (pgvector_migration) and 0017 (cps_training_tables) need DB integration tests verifying table creation, HNSW indexes, backfill correctness, and downgrade safety. Requires `TEST_DATABASE_URL`.
+- **Files affected:** `tests/db/test_pgvector_migration.py`
+- **Status:** ✅ RESOLVED 2026-03-15 — 13 DB integration tests (persona_embeddings CRUD + unique constraints, semantic_units nullable run_id + slug query, paragraph_embeddings nullable FK, CPS training tables, EmbeddingRepository end-to-end). Auto-skip without TEST_DATABASE_URL.
+
+### PB-81: Tests for new EmbeddingRepository methods
+- **Source:** pgvector-migration-v16 — Phase 3 deferred
+- **Date added:** 2026-03-15
+- **Description:** 7 new methods added to `embedding_repo.py` (slug-based queries, upserts, persona embeddings, count/delete). Need mocked session unit tests.
+- **Files affected:** `tests/shared_tools/test_embedding_repo_extended.py`
+- **Status:** ✅ RESOLVED 2026-03-15 — 15 mocked-session unit tests covering all 7 methods (get_by_slug, get_by_ids, count, delete, upsert paragraphs, upsert personas, get personas).
+
+### PB-82: Integration test for migrate_chroma_to_pgvector.py script
+- **Source:** pgvector-migration-v16 — Phase 8 deferred
+- **Date added:** 2026-03-15
+- **Description:** Data migration script needs integration test with mock ChromaDB client + mock pgvector. Verify collection enumeration, batch processing, idempotent ON CONFLICT, dry-run mode, and summary report.
+- **Files affected:** `tests/scripts/test_migrate_chroma_to_pgvector.py`
+- **Status:** ✅ RESOLVED 2026-03-15 — 17 tests (slug extraction, 3 collection types, dry-run, empty collections, missing chroma dir, missing chromadb, missing DATABASE_URL, null documents, multi-company).
+
+### PB-83: [LOG-C1] SSE `/events` endpoint context binding
+- **Source:** Structured Logging v17 — Phase C deferred (Codex finding)
+- **Date added:** 2026-03-15
+- **Status:** ✅ RESOLVED 2026-03-15 — Sprint v18 Phase 4. SSE endpoint now binds correlation_id, user_id, company_slug, task_id, pipeline_name. Clears context on disconnect via _stream_with_cleanup(). 6 tests.
+
+### PB-84: [LOG-C2] Auth failure request logging
+- **Source:** Structured Logging v17 — Phase C deferred (Codex finding)
+- **Date added:** 2026-03-15
+- **Status:** ✅ RESOLVED 2026-03-15 — Sprint v18 Phase 5. _send_401() now logs structured auth_failure warning with error_code, path, method. All 4 call sites updated. 5 tests.
+
+### PB-85: [LOG-C3] Per-step and per-agent context binding
+- **Source:** Structured Logging v17 — Phase C deferred
+- **Date added:** 2026-03-15
+- **Status:** ✅ RESOLVED 2026-03-15 — Sprint v18 Phase 6. scoped_bind(step_name/agent_name) added to all 6 pipelines: GA (S1-S8), KB (6 agents), AP (2 agents), VSG (3 agents), CE v1.3 (6 stages), SA (S1-S6). 3 tests.
+
 ### PB-44: Knowledge doc upload content_type inferred from extension only
 - **Source:** Settings-knowledge-docs sprint self-review
 - **Date added:** 2026-02-27
@@ -606,3 +642,12 @@
 
 ### PB-49: Re-brief brief_id collision overwrites original artifact ✅ RESOLVED 2026-03-02
 - **Resolved by:** v1.3 critical fixes — Added `brief_id_overrides` to `build_briefs_parallel()`; `_rebrief_and_rerun()` passes `rebrief-{uuid8}` override; 4 collision-prevention tests added
+
+### PB-83: SSE context binding ✅ RESOLVED 2026-03-15
+- **Resolved by:** Sprint v18 Phase 4 — SSE endpoint binds correlation_id, user_id, company_slug, task_id, pipeline_name. Clears on disconnect. 6 tests.
+
+### PB-84: Auth failure request logging ✅ RESOLVED 2026-03-15
+- **Resolved by:** Sprint v18 Phase 5 — `_send_401()` logs structured auth_failure warning. All 4 call sites updated. 5 tests.
+
+### PB-85: Per-step/per-agent context binding ✅ RESOLVED 2026-03-15
+- **Resolved by:** Sprint v18 Phase 6 — `scoped_bind()` in all 6 pipelines (GA S1-S8, KB 6 agents, AP 2 agents, VSG 3 agents, CE 6 stages, SA S1-S6). 3 tests.

@@ -1,5 +1,20 @@
 [
   {
+    "id": "D-L2-1",
+    "timestamp": "2026-03-15",
+    "task": "Structured Logging Layer 2 — Correlation & Context Propagation",
+    "approach": "8-phase plan: (1) get_context_value + scoped_bind helpers, (2) X-Request-ID + middleware hardening, (3) LangSmith trace linkage, (4) SSE context binding, (5) Auth failure logging, (6) Per-step/per-agent binding, (7) run_id in runners, (8) async propagation tests",
+    "rationale": "Completes structured logging story — every log line traceable from HTTP request through pipeline step through LangSmith trace. X-Request-ID separate from X-Correlation-ID for proper distributed tracing. scoped_bind context manager prevents context leaks across sequential pipeline steps.",
+    "alternatives_rejected": [
+      "Explicit ContextVar objects alongside structlog — dual source of truth with no benefit",
+      "Pure ASGI middleware for request-id — too big a refactor for marginal gain",
+      "Bind trace_id at each callsite instead of in tracing.py — not DRY, 14+ changes"
+    ],
+    "outcome": "48 new tests, zero regressions. 3 backlog items resolved (PB-83, PB-84, PB-85). All 6 pipelines enriched with step/agent context.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-async-1",
     "timestamp": "2026-02-15",
     "task": "Async-first pipeline conversion approach",
@@ -570,6 +585,56 @@
     "rationale": "s4 dedup collapses multi-engine citations into a single EnrichedCitation. If flagging happens after dedup, we lose which engines cited the company. _flag_company_citations runs in pipeline.py after s3, _build_company_citation_map also runs before s4.",
     "alternatives_rejected": ["Flag after s4 dedup (loses multi-engine information)"],
     "outcome": "_flag_company_citations() and _build_company_citation_map() in pipeline.py, called between s3 and s4. is_company_citation carried through s4 dedup into EnrichedCitation.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-pgvector-1",
+    "timestamp": "2026-03-15",
+    "task": "Replace ChromaDB with pgvector as primary vector store",
+    "approach": "8-phase migration: VectorStoreClient with drop-in API, 2 Alembic migrations, EmbeddingRepository extensions, consumer migration, full ChromaDB removal, data migration script.",
+    "rationale": "ChromaDB is local SQLite-backed, single-process — not production-ready. pgvector infrastructure already existed (3 tables + HNSW indexes + EmbeddingRepository). Migration makes pgvector PRIMARY and ONLY store, requires DATABASE_URL.",
+    "alternatives_rejected": [
+      "In-memory fallback without DATABASE_URL (undermines production readiness)",
+      "Keep ChromaDB alongside pgvector (dual-write complexity, maintenance burden)"
+    ],
+    "outcome": "ChromaDB fully removed. VectorStoreClient (469 lines) is single write path. persist_s1 is no-op (VectorStoreClient writes during S1). persist_s5 handles query embeddings only. Codex-reviewed: 11 findings, all addressed.",
+    "reversible": false,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-pgvector-2",
+    "timestamp": "2026-03-15",
+    "task": "Consolidate persist_s1/s5 with VectorStoreClient",
+    "approach": "persist_s1 → logging-only no-op (VectorStoreClient writes during S1 execution). persist_s5 → query embeddings only (needs run_id FK not available in VectorStoreClient). Citation paragraph embeddings handled by VectorStoreClient during S5.",
+    "rationale": "Single write path eliminates double-writes. Query embeddings require run_id FK (pipeline_runs table) which is only available in pipeline context, not in VectorStoreClient.",
+    "alternatives_rejected": ["Full no-op for persist_s5 (loses query embedding persistence)", "Pass run_id through VectorStoreClient (coupling pipeline concerns into vector store)"],
+    "outcome": "Clean separation: VectorStoreClient handles embeddings, persist_s5 handles query embeddings with run_id FK.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-pgvector-3",
+    "timestamp": "2026-03-15",
+    "task": "Deterministic enrichment IDs for S4 FK integrity",
+    "approach": "Replace uuid4() with uuid5(NAMESPACE_URL, url_hash) in persist_s4 for enrichment IDs.",
+    "rationale": "uuid4() generates new IDs on every rerun, breaking FK references from paragraph_embeddings.url_enrichment_id. uuid5 is deterministic — same URL always produces same enrichment ID.",
+    "alternatives_rejected": ["Query existing enrichment IDs before insert (extra DB round-trip)", "Remove FK constraint (loses referential integrity)"],
+    "outcome": "Deterministic IDs prevent FK mismatch on reruns. Pre-existing bug fixed during migration.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-LOG-1",
+    "timestamp": "2026-03-15",
+    "task": "Structured logging library choice — structlog vs python-json-logger",
+    "approach": "structlog with stdlib ProcessorFormatter bridge. Single configure_logging() call at app startup. JSON renderer for prod, ConsoleRenderer for dev. Context propagation via structlog.contextvars.",
+    "rationale": "structlog's contextvars integration natively propagates bound fields (correlation_id, company_slug) into every log record. stdlib bridge means zero changes to 115 existing logging.getLogger() call sites. Dev/prod renderer switching built-in. Codebase already uses contextvars for LangSmith tracing.",
+    "alternatives_rejected": [
+      "python-json-logger (requires building context propagation with custom logging.Filter by hand, always outputs JSON)",
+      "Pure stdlib dictConfig + JSON formatter + ContextVar filter (more code, less battle-tested, reinventing structlog)"
+    ],
+    "outcome": "22 new tests, 2 new files, 13 modified files. All 1063 API tests passing with zero regressions. Codex-reviewed (6 findings incorporated).",
     "reversible": true,
     "approved_by": "Aryan"
   }

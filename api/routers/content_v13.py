@@ -41,6 +41,7 @@ from core.auth.service import AuthServiceProtocol
 from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation_v13 import ContentGenerationInputV13, EntryMode
 from core.models.organization import UserProfile
+from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,19 @@ async def start_content_v13(
     )
     task_store.register_task_handle(task.task_id, handle)
 
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="content_v13",
+        company_slug=company_slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "entry_mode": body.entry_mode,
+            "max_topics": body.max_topics,
+            "effective_slug": scope.effective_slug,
+        },
+    )
+
     return PipelineRunResponseV13(
         run_id=task.task_id,
         status="started",
@@ -243,7 +257,26 @@ async def approve_topics(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="content_v13",
+            stage="topic_approval",
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc))
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="content_v13",
+        stage="topic_approval",
+        decision=body.decision,
+        company_slug=user_company_slug,
+        detail={"approved_ranks_count": len(body.approved_topic_ranks or []), "has_feedback": bool(body.feedback)},
+    )
 
     return ApprovalResponseV13(
         status="accepted",
@@ -291,7 +324,26 @@ async def approve_brief(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="content_v13",
+            stage="brief_approval",
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc))
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="content_v13",
+        stage="brief_approval",
+        decision=body.decision,
+        company_slug=user_company_slug,
+        detail={"brief_id": body.brief_id, "has_feedback": bool(body.feedback)},
+    )
 
     return ApprovalResponseV13(
         status="accepted",
@@ -346,7 +398,26 @@ async def approve_content(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="content_v13",
+            stage="content_review",
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc))
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="content_v13",
+        stage="content_review",
+        decision=body.decision,
+        company_slug=user_company_slug,
+        detail={"brief_id": body.brief_id, "rethink": body.rethink, "has_editor_notes": bool(body.editor_notes)},
+    )
 
     return ApprovalResponseV13(
         status="accepted",
@@ -405,6 +476,17 @@ async def start_from_topics(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="td_content",
+        company_slug=company_slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "effective_slug": body.effective_slug,
+        },
+    )
 
     return PipelineRunResponseV13(
         run_id=task.task_id,

@@ -17,7 +17,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from core.gap_analysis.steps.s1_embed_assets import embed_company_assets
 from core.models.gap_analysis import PlatformResult
 from core.research.audience_persona.storage import PersonaStorage
-from core.shared_tools.async_chroma_client import (
+from core.shared_tools.structured_logging import scoped_bind
+from core.shared_tools.vector_store import (
     async_collection_exists,
     async_get_all_embeddings,
 )
@@ -232,49 +233,51 @@ async def run_gap_analysis(
 
     # ── S1 + S2: run in parallel when neither is skipped ──────────────
     async def _run_s1() -> tuple[List[SemanticUnit], float]:
-        t = time.monotonic()
-        logger.info("Step 1 started: embed_company_assets")
-        if 1 in skip_steps:
-            units = _load_json_list(
-                artifact_dir / "company_embeddings.json", SemanticUnit
-            )
-            if not any(u.embedding for u in units):
-                if await async_collection_exists(slug):
-                    embedding_map = await async_get_all_embeddings(slug)
-                    hydrated = 0
-                    for unit in units:
-                        if unit.unit_id in embedding_map:
-                            unit.embedding = embedding_map[unit.unit_id]
-                            hydrated += 1
-                    logger.info(
-                        "Hydrated %d/%d unit embeddings from ChromaDB.",
-                        hydrated, len(units),
-                    )
-                else:
-                    logger.warning(
-                        "No ChromaDB collection found for '%s' and JSON has no embeddings. "
-                        "S6/S7 may produce degraded results.", slug,
-                    )
-        else:
-            units = await embed_company_assets(input_data)
-        elapsed = time.monotonic() - t
-        logger.info("Step 1 completed: embed_company_assets (%.1fs)", elapsed)
-        return units, elapsed
+        with scoped_bind(step_name="s1_embed_company_assets"):
+            t = time.monotonic()
+            logger.info("Step 1 started: embed_company_assets")
+            if 1 in skip_steps:
+                units = _load_json_list(
+                    artifact_dir / "company_embeddings.json", SemanticUnit
+                )
+                if not any(u.embedding for u in units):
+                    if await async_collection_exists(slug):
+                        embedding_map = await async_get_all_embeddings(slug)
+                        hydrated = 0
+                        for unit in units:
+                            if unit.unit_id in embedding_map:
+                                unit.embedding = embedding_map[unit.unit_id]
+                                hydrated += 1
+                        logger.info(
+                            "Hydrated %d/%d unit embeddings from pgvector.",
+                            hydrated, len(units),
+                        )
+                    else:
+                        logger.warning(
+                            "No pgvector collection found for '%s' and JSON has no embeddings. "
+                            "S6/S7 may produce degraded results.", slug,
+                        )
+            else:
+                units = await embed_company_assets(input_data)
+            elapsed = time.monotonic() - t
+            logger.info("Step 1 completed: embed_company_assets (%.1fs)", elapsed)
+            return units, elapsed
 
     async def _run_s2() -> tuple[List[GeneratedQuery], float]:
-        t = time.monotonic()
-        logger.info("Step 2 started: generate_queries")
-        if 2 in skip_steps:
-            qs = _load_json_list(artifact_dir / "queries.json", GeneratedQuery)
-        else:
-            qs = await generate_queries(input_data)
-            (artifact_dir / "queries.json").write_text(
-                json.dumps([q.model_dump(mode="json") for q in qs], indent=2, default=str),
-                encoding="utf-8",
-            )
-        elapsed = time.monotonic() - t
-        logger.info("Step 2 completed: generate_queries (%.1fs)", elapsed)
-        return qs, elapsed
+        with scoped_bind(step_name="s2_generate_queries"):
+            t = time.monotonic()
+            logger.info("Step 2 started: generate_queries")
+            if 2 in skip_steps:
+                qs = _load_json_list(artifact_dir / "queries.json", GeneratedQuery)
+            else:
+                qs = await generate_queries(input_data)
+                (artifact_dir / "queries.json").write_text(
+                    json.dumps([q.model_dump(mode="json") for q in qs], indent=2, default=str),
+                    encoding="utf-8",
+                )
+            elapsed = time.monotonic() - t
+            logger.info("Step 2 completed: generate_queries (%.1fs)", elapsed)
+            return qs, elapsed
 
     (company_units, s1_elapsed), (queries, s2_elapsed) = await asyncio.gather(
         _run_s1(), _run_s2(),
@@ -303,139 +306,145 @@ async def run_gap_analysis(
     _cli_step(2, s2_elapsed, skipped=2 in skip_steps)
 
     # Step 3: search platforms
-    step_start = time.monotonic()
-    logger.info("Step 3 started: search_platforms")
-    if 3 in skip_steps:
-        platform_results = []
-        for name in input_data.platforms:
-            path = artifact_dir / "platform_results" / f"{name}_results.jsonl"
-            if not path.exists():
-                continue
-            items = [
-                PlatformResult(**json.loads(line))
-                for line in path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-            platform_results.extend(items)
-    else:
-        platform_results = await search_platforms(queries, input_data.platforms)
-        save_platform_results(platform_results, artifact_dir / "platform_results")
-    logger.info("Step 3 completed: search_platforms (%.1fs)", time.monotonic() - step_start)
+    with scoped_bind(step_name="s3_search_platforms"):
+        step_start = time.monotonic()
+        logger.info("Step 3 started: search_platforms")
+        if 3 in skip_steps:
+            platform_results = []
+            for name in input_data.platforms:
+                path = artifact_dir / "platform_results" / f"{name}_results.jsonl"
+                if not path.exists():
+                    continue
+                items = [
+                    PlatformResult(**json.loads(line))
+                    for line in path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                platform_results.extend(items)
+        else:
+            platform_results = await search_platforms(queries, input_data.platforms)
+            save_platform_results(platform_results, artifact_dir / "platform_results")
+        logger.info("Step 3 completed: search_platforms (%.1fs)", time.monotonic() - step_start)
 
-    # Flag company self-citations and build citation map (before s4 dedup)
-    _flag_company_citations(platform_results, input_data.domain)
-    company_citation_map = _build_company_citation_map(platform_results)
-    if company_citation_map:
-        logger.info(
-            "Self-citation detection: company cited for %d queries across platforms",
-            len(company_citation_map),
-        )
+        # Flag company self-citations and build citation map (before s4 dedup)
+        _flag_company_citations(platform_results, input_data.domain)
+        company_citation_map = _build_company_citation_map(platform_results)
+        if company_citation_map:
+            logger.info(
+                "Self-citation detection: company cited for %d queries across platforms",
+                len(company_citation_map),
+            )
 
-    await persist_s3(session_factory, run_id, company_id, slug, platform_results, queries)
-    _cli_step(3, time.monotonic() - step_start, skipped=3 in skip_steps)
+        await persist_s3(session_factory, run_id, company_id, slug, platform_results, queries)
+        _cli_step(3, time.monotonic() - step_start, skipped=3 in skip_steps)
 
     # Step 4: enrich citations
-    step_start = time.monotonic()
-    logger.info("Step 4 started: enrich_citations")
-    if 4 in skip_steps:
-        enriched = _load_json_list(
-            artifact_dir / "enriched_citations.json", EnrichedCitation
-        )
-    else:
-        query_lookup = {q.query_id: q for q in queries}
-        enriched = await enrich_citations(platform_results, query_lookup=query_lookup)
-        save_enriched_citations(enriched, artifact_dir / "enriched_citations.json")
-    logger.info("Step 4 completed: enrich_citations (%.1fs)", time.monotonic() - step_start)
-    await persist_s4(session_factory, run_id, company_id, slug, enriched)
-    _cli_step(4, time.monotonic() - step_start, skipped=4 in skip_steps)
+    with scoped_bind(step_name="s4_enrich_citations"):
+        step_start = time.monotonic()
+        logger.info("Step 4 started: enrich_citations")
+        if 4 in skip_steps:
+            enriched = _load_json_list(
+                artifact_dir / "enriched_citations.json", EnrichedCitation
+            )
+        else:
+            query_lookup = {q.query_id: q for q in queries}
+            enriched = await enrich_citations(platform_results, query_lookup=query_lookup)
+            save_enriched_citations(enriched, artifact_dir / "enriched_citations.json")
+        logger.info("Step 4 completed: enrich_citations (%.1fs)", time.monotonic() - step_start)
+        await persist_s4(session_factory, run_id, company_id, slug, enriched)
+        _cli_step(4, time.monotonic() - step_start, skipped=4 in skip_steps)
 
     # Step 5: embed content
-    step_start = time.monotonic()
-    logger.info("Step 5 started: embed_content")
-    if 5 in skip_steps:
-        queries = _load_json_list(
-            artifact_dir / "embeddings" / "queries_with_embeddings.json",
-            GeneratedQuery,
-        )
-        enriched = _load_json_list(
-            artifact_dir / "embeddings" / "citations_with_embeddings.json",
-            EnrichedCitation,
-        )
-    else:
-        queries, enriched = await embed_all(queries, enriched, company_slug=slug)
-        save_embeddings(queries, enriched, artifact_dir / "embeddings")
-    logger.info("Step 5 completed: embed_content (%.1fs)", time.monotonic() - step_start)
-    await persist_s5(session_factory, run_id, company_id, slug, queries, enriched)
-    _cli_step(5, time.monotonic() - step_start, skipped=5 in skip_steps)
+    with scoped_bind(step_name="s5_embed_content"):
+        step_start = time.monotonic()
+        logger.info("Step 5 started: embed_content")
+        if 5 in skip_steps:
+            queries = _load_json_list(
+                artifact_dir / "embeddings" / "queries_with_embeddings.json",
+                GeneratedQuery,
+            )
+            enriched = _load_json_list(
+                artifact_dir / "embeddings" / "citations_with_embeddings.json",
+                EnrichedCitation,
+            )
+        else:
+            queries, enriched = await embed_all(queries, enriched, company_slug=slug)
+            save_embeddings(queries, enriched, artifact_dir / "embeddings")
+        logger.info("Step 5 completed: embed_content (%.1fs)", time.monotonic() - step_start)
+        await persist_s5(session_factory, run_id, company_id, slug, queries, enriched)
+        _cli_step(5, time.monotonic() - step_start, skipped=5 in skip_steps)
 
     # Step 6: analyze
-    step_start = time.monotonic()
-    logger.info("Step 6 started: compute_gap_analysis")
-    if 6 in skip_steps:
-        analysis = AnalysisResult(
-            **json.loads((artifact_dir / "analysis.json").read_text(encoding="utf-8"))
-        )
-    else:
-        analysis = compute_gap_analysis(
-            queries,
-            company_units,
-            enriched,
-            company_citation_map=company_citation_map,
-            page_analysis_lookup=page_analysis_lookup or None,
-        )
-        (artifact_dir / "analysis.json").write_text(
-            json.dumps(analysis.model_dump(mode="json"), indent=2, default=str), encoding="utf-8"
-        )
-    logger.info("Step 6 completed: compute_gap_analysis (%.1fs)", time.monotonic() - step_start)
-    await persist_s6(session_factory, run_id, company_id, slug, analysis)
-    _cli_step(6, time.monotonic() - step_start, skipped=6 in skip_steps)
+    with scoped_bind(step_name="s6_compute_gap_analysis"):
+        step_start = time.monotonic()
+        logger.info("Step 6 started: compute_gap_analysis")
+        if 6 in skip_steps:
+            analysis = AnalysisResult(
+                **json.loads((artifact_dir / "analysis.json").read_text(encoding="utf-8"))
+            )
+        else:
+            analysis = compute_gap_analysis(
+                queries,
+                company_units,
+                enriched,
+                company_citation_map=company_citation_map,
+                page_analysis_lookup=page_analysis_lookup or None,
+            )
+            (artifact_dir / "analysis.json").write_text(
+                json.dumps(analysis.model_dump(mode="json"), indent=2, default=str), encoding="utf-8"
+            )
+        logger.info("Step 6 completed: compute_gap_analysis (%.1fs)", time.monotonic() - step_start)
+        await persist_s6(session_factory, run_id, company_id, slug, analysis)
+        _cli_step(6, time.monotonic() - step_start, skipped=6 in skip_steps)
 
     # Step 7: visualize
-    step_start = time.monotonic()
-    logger.info("Step 7 started: generate_visualizations")
-    if 7 in skip_steps:
-        visualization_paths = json.loads(
-            (artifact_dir / "visualizations" / "visualization_paths.json").read_text(
-                encoding="utf-8"
+    with scoped_bind(step_name="s7_generate_visualizations"):
+        step_start = time.monotonic()
+        logger.info("Step 7 started: generate_visualizations")
+        if 7 in skip_steps:
+            visualization_paths = json.loads(
+                (artifact_dir / "visualizations" / "visualization_paths.json").read_text(
+                    encoding="utf-8"
+                )
             )
-        )
-    else:
-        visualization_paths = generate_visualizations(
-            queries, enriched, company_units, analysis, artifact_dir / "visualizations"
-        )
-        (artifact_dir / "visualizations" / "visualization_paths.json").write_text(
-            json.dumps(visualization_paths, indent=2), encoding="utf-8"
-        )
-    logger.info("Step 7 completed: generate_visualizations (%.1fs)", time.monotonic() - step_start)
-    await persist_s7(session_factory, run_id, company_id, slug, visualization_paths)
-    _cli_step(7, time.monotonic() - step_start, skipped=7 in skip_steps)
+        else:
+            visualization_paths = generate_visualizations(
+                queries, enriched, company_units, analysis, artifact_dir / "visualizations"
+            )
+            (artifact_dir / "visualizations" / "visualization_paths.json").write_text(
+                json.dumps(visualization_paths, indent=2), encoding="utf-8"
+            )
+        logger.info("Step 7 completed: generate_visualizations (%.1fs)", time.monotonic() - step_start)
+        await persist_s7(session_factory, run_id, company_id, slug, visualization_paths)
+        _cli_step(7, time.monotonic() - step_start, skipped=7 in skip_steps)
 
     # Step 8: report
-    step_start = time.monotonic()
-    logger.info("Step 8 started: generate_gap_report")
-    if 8 in skip_steps:
-        report = GapReport(
-            report_md=(artifact_dir / "gap_report.md").read_text(encoding="utf-8"),
-            report_json=json.loads(
-                (artifact_dir / "gap_report.json").read_text(encoding="utf-8")
-            ),
-            generation_spec_md=(artifact_dir / "generation_spec.md").read_text(
-                encoding="utf-8"
-            ),
-            generation_spec_json=json.loads(
-                (artifact_dir / "generation_spec.json").read_text(encoding="utf-8")
-            ),
-            visualization_paths=list(visualization_paths.values())
-            if isinstance(visualization_paths, dict)
-            else visualization_paths,
-        )
-    else:
-        report = await generate_gap_report(analysis, queries, enriched)
-        report.visualization_paths = list(visualization_paths.values())
-        save_report(report, artifact_dir, analysis=analysis)
-    logger.info("Step 8 completed: generate_gap_report (%.1fs)", time.monotonic() - step_start)
-    await persist_s8(session_factory, run_id, company_id, slug, report, analysis)
-    _cli_step(8, time.monotonic() - step_start, skipped=8 in skip_steps)
+    with scoped_bind(step_name="s8_generate_gap_report"):
+        step_start = time.monotonic()
+        logger.info("Step 8 started: generate_gap_report")
+        if 8 in skip_steps:
+            report = GapReport(
+                report_md=(artifact_dir / "gap_report.md").read_text(encoding="utf-8"),
+                report_json=json.loads(
+                    (artifact_dir / "gap_report.json").read_text(encoding="utf-8")
+                ),
+                generation_spec_md=(artifact_dir / "generation_spec.md").read_text(
+                    encoding="utf-8"
+                ),
+                generation_spec_json=json.loads(
+                    (artifact_dir / "generation_spec.json").read_text(encoding="utf-8")
+                ),
+                visualization_paths=list(visualization_paths.values())
+                if isinstance(visualization_paths, dict)
+                else visualization_paths,
+            )
+        else:
+            report = await generate_gap_report(analysis, queries, enriched)
+            report.visualization_paths = list(visualization_paths.values())
+            save_report(report, artifact_dir, analysis=analysis)
+        logger.info("Step 8 completed: generate_gap_report (%.1fs)", time.monotonic() - step_start)
+        await persist_s8(session_factory, run_id, company_id, slug, report, analysis)
+        _cli_step(8, time.monotonic() - step_start, skipped=8 in skip_steps)
 
     total = time.monotonic() - pipeline_start
     logger.info("Pipeline completed: all steps finished (%.1fs total)", total)
@@ -483,132 +492,140 @@ async def run_topic_scoped_gap_analysis(
     _resolve_persona_paths(base_input, slug)
 
     # ── S1: Reuse cached company embeddings ──
-    s1_start = time.monotonic()
-    cache_slug = existing_ga_slug or slug
-    cache_dir = _PROJECT_ROOT / "artifacts" / "gap_analysis" / cache_slug
-    embeddings_path = cache_dir / "company_embeddings.json"
+    with scoped_bind(step_name="s1_embed_company_assets"):
+        s1_start = time.monotonic()
+        cache_slug = existing_ga_slug or slug
+        cache_dir = _PROJECT_ROOT / "artifacts" / "gap_analysis" / cache_slug
+        embeddings_path = cache_dir / "company_embeddings.json"
 
-    if embeddings_path.exists():
-        company_units = _load_json_list(embeddings_path, SemanticUnit)
-        # Hydrate from ChromaDB if needed
-        if not any(u.embedding for u in company_units):
-            if await async_collection_exists(cache_slug):
-                embedding_map = await async_get_all_embeddings(cache_slug)
-                for unit in company_units:
-                    if unit.unit_id in embedding_map:
-                        unit.embedding = embedding_map[unit.unit_id]
-        logger.info("S1: reused %d cached embeddings from '%s'", len(company_units), cache_slug)
-    else:
-        company_units = await embed_company_assets(base_input)
-        logger.info("S1: computed %d embeddings (no cache)", len(company_units))
+        if embeddings_path.exists():
+            company_units = _load_json_list(embeddings_path, SemanticUnit)
+            # Hydrate from pgvector if needed
+            if not any(u.embedding for u in company_units):
+                if await async_collection_exists(cache_slug):
+                    embedding_map = await async_get_all_embeddings(cache_slug)
+                    for unit in company_units:
+                        if unit.unit_id in embedding_map:
+                            unit.embedding = embedding_map[unit.unit_id]
+            logger.info("S1: reused %d cached embeddings from '%s'", len(company_units), cache_slug)
+        else:
+            company_units = await embed_company_assets(base_input)
+            logger.info("S1: computed %d embeddings (no cache)", len(company_units))
 
-    # Load page analysis (if available)
-    page_analysis_lookup: Dict[str, CompanyPageAnalysis] = {}
-    page_analysis_path = cache_dir / "company_page_analysis.json"
-    if page_analysis_path.exists():
-        try:
-            raw = json.loads(page_analysis_path.read_text(encoding="utf-8"))
-            for item in raw:
-                pa = CompanyPageAnalysis(**item)
-                page_analysis_lookup[pa.url] = pa
-        except Exception:
-            pass
-    s1_elapsed = time.monotonic() - s1_start
-    logger.info("S1 completed (%.1fs)", s1_elapsed)
+        # Load page analysis (if available)
+        page_analysis_lookup: Dict[str, CompanyPageAnalysis] = {}
+        page_analysis_path = cache_dir / "company_page_analysis.json"
+        if page_analysis_path.exists():
+            try:
+                raw = json.loads(page_analysis_path.read_text(encoding="utf-8"))
+                for item in raw:
+                    pa = CompanyPageAnalysis(**item)
+                    page_analysis_lookup[pa.url] = pa
+            except Exception:
+                pass
+        s1_elapsed = time.monotonic() - s1_start
+        logger.info("S1 completed (%.1fs)", s1_elapsed)
 
     # ── S2: Topic-scoped query generation ──
-    s2_start = time.monotonic()
-    queries = await generate_queries_from_topics(
-        topics=topics,
-        company_context_path=base_input.company_context_path,
-        persona_paths=base_input.persona_paths,
-        company_name=base_input.company_name,
-        company_domain=base_input.domain,
-        product_name=base_input.product_name,
-        product_slug=base_input.product_slug,
-        product_description=base_input.product_description,
-    )
-    (scoped_dir / "queries.json").write_text(
-        json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
-        encoding="utf-8",
-    )
-    s2_elapsed = time.monotonic() - s2_start
-    logger.info("S2 completed: %d queries (%.1fs)", len(queries), s2_elapsed)
+    with scoped_bind(step_name="s2_generate_queries"):
+        s2_start = time.monotonic()
+        queries = await generate_queries_from_topics(
+            topics=topics,
+            company_context_path=base_input.company_context_path,
+            persona_paths=base_input.persona_paths,
+            company_name=base_input.company_name,
+            company_domain=base_input.domain,
+            product_name=base_input.product_name,
+            product_slug=base_input.product_slug,
+            product_description=base_input.product_description,
+        )
+        (scoped_dir / "queries.json").write_text(
+            json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
+            encoding="utf-8",
+        )
+        s2_elapsed = time.monotonic() - s2_start
+        logger.info("S2 completed: %d queries (%.1fs)", len(queries), s2_elapsed)
 
-    if not queries:
-        logger.warning("Topic-scoped S2 produced 0 queries. Returning empty report.")
-        empty_report = GapReport()
-        return empty_report, {}
+        if not queries:
+            logger.warning("Topic-scoped S2 produced 0 queries. Returning empty report.")
+            empty_report = GapReport()
+            return empty_report, {}
 
     # ── S3: Search platforms ──
-    s3_start = time.monotonic()
-    platform_results = await search_platforms(queries, base_input.platforms)
-    results_dir = scoped_dir / "platform_results"
-    save_platform_results(platform_results, results_dir)
+    with scoped_bind(step_name="s3_search_platforms"):
+        s3_start = time.monotonic()
+        platform_results = await search_platforms(queries, base_input.platforms)
+        results_dir = scoped_dir / "platform_results"
+        save_platform_results(platform_results, results_dir)
 
-    _flag_company_citations(platform_results, base_input.domain)
-    company_citation_map = _build_company_citation_map(platform_results)
-    s3_elapsed = time.monotonic() - s3_start
-    logger.info("S3 completed: %d results (%.1fs)", len(platform_results), s3_elapsed)
+        _flag_company_citations(platform_results, base_input.domain)
+        company_citation_map = _build_company_citation_map(platform_results)
+        s3_elapsed = time.monotonic() - s3_start
+        logger.info("S3 completed: %d results (%.1fs)", len(platform_results), s3_elapsed)
 
     # ── S4: Enrich citations ──
-    s4_start = time.monotonic()
-    query_lookup = {q.query_id: q for q in queries}
-    enriched = await enrich_citations(platform_results, query_lookup=query_lookup)
-    save_enriched_citations(enriched, scoped_dir / "enriched_citations.json")
-    s4_elapsed = time.monotonic() - s4_start
-    logger.info("S4 completed: %d enriched (%.1fs)", len(enriched), s4_elapsed)
+    with scoped_bind(step_name="s4_enrich_citations"):
+        s4_start = time.monotonic()
+        query_lookup = {q.query_id: q for q in queries}
+        enriched = await enrich_citations(platform_results, query_lookup=query_lookup)
+        save_enriched_citations(enriched, scoped_dir / "enriched_citations.json")
+        s4_elapsed = time.monotonic() - s4_start
+        logger.info("S4 completed: %d enriched (%.1fs)", len(enriched), s4_elapsed)
 
     # ── S5: Embed content ──
-    s5_start = time.monotonic()
-    queries, enriched = await embed_all(queries, enriched, company_slug=slug)
-    save_embeddings(queries, enriched, scoped_dir / "embeddings")
-    s5_elapsed = time.monotonic() - s5_start
-    logger.info("S5 completed (%.1fs)", s5_elapsed)
+    with scoped_bind(step_name="s5_embed_content"):
+        s5_start = time.monotonic()
+        queries, enriched = await embed_all(queries, enriched, company_slug=slug)
+        save_embeddings(queries, enriched, scoped_dir / "embeddings")
+        s5_elapsed = time.monotonic() - s5_start
+        logger.info("S5 completed (%.1fs)", s5_elapsed)
 
     # ── S6: Analyze gaps ──
-    s6_start = time.monotonic()
-    analysis = compute_gap_analysis(
-        queries,
-        company_units,
-        enriched,
-        company_citation_map=company_citation_map,
-        page_analysis_lookup=page_analysis_lookup or None,
-    )
-    (scoped_dir / "analysis.json").write_text(
-        json.dumps(analysis.model_dump(mode="json"), indent=2, default=str),
-        encoding="utf-8",
-    )
-    s6_elapsed = time.monotonic() - s6_start
-    logger.info("S6 completed (%.1fs)", s6_elapsed)
+    with scoped_bind(step_name="s6_compute_gap_analysis"):
+        s6_start = time.monotonic()
+        analysis = compute_gap_analysis(
+            queries,
+            company_units,
+            enriched,
+            company_citation_map=company_citation_map,
+            page_analysis_lookup=page_analysis_lookup or None,
+        )
+        (scoped_dir / "analysis.json").write_text(
+            json.dumps(analysis.model_dump(mode="json"), indent=2, default=str),
+            encoding="utf-8",
+        )
+        s6_elapsed = time.monotonic() - s6_start
+        logger.info("S6 completed (%.1fs)", s6_elapsed)
 
     # ── S7: Skip visualizations by default ──
-    if not skip_visualizations:
-        generate_visualizations(
-            queries, enriched, company_units, analysis, scoped_dir / "visualizations"
-        )
+    with scoped_bind(step_name="s7_generate_visualizations"):
+        if not skip_visualizations:
+            generate_visualizations(
+                queries, enriched, company_units, analysis, scoped_dir / "visualizations"
+            )
 
     # ── S8: Report + per-topic aggregation ──
-    s8_start = time.monotonic()
-    report = await generate_gap_report(analysis, queries, enriched)
-    save_report(report, scoped_dir, analysis=analysis)
+    with scoped_bind(step_name="s8_generate_gap_report"):
+        s8_start = time.monotonic()
+        report = await generate_gap_report(analysis, queries, enriched)
+        save_report(report, scoped_dir, analysis=analysis)
 
-    # Per-topic aggregation (sets analysis.topic_query_map as side effect)
-    topic_metrics = aggregate_per_topic(analysis, queries)
-    topic_query_map = analysis.topic_query_map
+        # Per-topic aggregation (sets analysis.topic_query_map as side effect)
+        topic_metrics = aggregate_per_topic(analysis, queries)
+        topic_query_map = analysis.topic_query_map
 
-    # Re-save analysis.json with topic_query_map populated
-    (scoped_dir / "analysis.json").write_text(
-        json.dumps(analysis.model_dump(mode="json"), indent=2, default=str),
-        encoding="utf-8",
-    )
-    # Save per-topic metrics separately
-    (scoped_dir / "topic_metrics.json").write_text(
-        json.dumps(topic_metrics, indent=2, default=str),
-        encoding="utf-8",
-    )
-    s8_elapsed = time.monotonic() - s8_start
-    logger.info("S8 completed (%.1fs)", s8_elapsed)
+        # Re-save analysis.json with topic_query_map populated
+        (scoped_dir / "analysis.json").write_text(
+            json.dumps(analysis.model_dump(mode="json"), indent=2, default=str),
+            encoding="utf-8",
+        )
+        # Save per-topic metrics separately
+        (scoped_dir / "topic_metrics.json").write_text(
+            json.dumps(topic_metrics, indent=2, default=str),
+            encoding="utf-8",
+        )
+        s8_elapsed = time.monotonic() - s8_start
+        logger.info("S8 completed (%.1fs)", s8_elapsed)
 
     total = time.monotonic() - pipeline_start
     logger.info(

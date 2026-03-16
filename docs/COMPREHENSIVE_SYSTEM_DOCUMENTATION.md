@@ -3,7 +3,7 @@
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
 > **Stack:** Python 3.12 · LangGraph · FastAPI · Pydantic v2 · LangSmith · LiteLLM
-> **Document Date:** 2026-03-11 (updated: Research Orchestrator KB→AP→VSG DAG)
+> **Document Date:** 2026-03-15 (updated: Structured Logging Foundation — structlog, correlation IDs, context propagation)
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -104,7 +104,7 @@
 9. [Storage Architecture](#9-storage-architecture)
    - 9.1 [Filesystem Layer (Source of Truth)](#91-filesystem-layer-source-of-truth)
    - 9.2 [DeepAgents Backend Routing (REMOVED)](#92-deepagents-backend-routing-removed)
-   - 9.3 [ChromaDB Vector Store](#93-chromadb-vector-store)
+   - 9.3 [pgvector Vector Store](#93-pgvector-vector-store)
    - 9.4 [Supabase Mirror (Optional DB Layer)](#94-supabase-mirror-optional-db-layer)
    - 9.5 [Storage Backend Abstraction (Interface)](#95-storage-backend-abstraction-interface)
 10. [Data Models — Complete Pydantic v2 Schema Reference](#10-data-models--complete-pydantic-v2-schema-reference)
@@ -286,7 +286,7 @@ Company Website + Internal Docs
 │  ┌─────────────────────────────────────────┐  ┌───────────────────────┐  │
 │  │           Artifact Storage               │  │  LangSmith           │  │
 │  │  Filesystem (SoT) ◀──▶ Supabase Mirror  │  │  (LLM Observability) │  │
-│  │  ChromaDB (vectors)                      │  └───────────────────────┘  │
+│  │  pgvector (vectors)                       │  └───────────────────────┘  │
 │  └─────────────────────────────────────────┘                             │
 │                                                                          │
 │  ┌─────────────────┐                                                     │
@@ -298,7 +298,7 @@ Company Website + Internal Docs
 │  • Perplexity (sonar-deep-research)  • Google Gemini (3-flash-preview)   │
 │  • OpenAI (text-embedding-3-small)   • Anthropic Claude (sonnet-4.5)     │
 │  • Reddit (PRAW read-only)           • Slack / Discord (webhooks)        │
-│  • Supabase (PostgREST + Storage)    • ChromaDB (local vector DB)        │
+│  • Supabase (PostgREST + Storage)    • pgvector (PostgreSQL vectors)     │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -314,7 +314,7 @@ Company Website + Internal Docs
 | **Web Research** | Perplexity SDK (sonar-deep-research) | Deep web research with citations |
 | **LLM Providers** | Google Gemini, Anthropic Claude, OpenAI GPT | Agent reasoning, query gen, reports |
 | **Embeddings** | OpenAI text-embedding-3-small (1536-dim) | Semantic similarity in gap analysis |
-| **Vector Store** | ChromaDB (local, persistent) | Embedding storage and retrieval |
+| **Vector Store** | pgvector (PostgreSQL extension) | Embedding storage and retrieval via `DATABASE_URL` |
 | **Database** | Supabase (PostgreSQL 17 + pgvector) | Optional artifact mirroring, versioning |
 | **Visualization** | Plotly | Interactive HTML charts (UMAP, t-SNE, heatmaps) |
 | **Dimensionality Reduction** | UMAP, t-SNE (scikit-learn) | Embedding space visualization |
@@ -531,8 +531,7 @@ content-strategy-engine/
 │       ├── __init__.py
 │       ├── embedding_client.py            # embed_texts() — OpenAI text-embedding-3-small wrapper (42 lines)
 │       ├── async_embedding_client.py      # async_embed_texts() — Async variant with batching
-│       ├── async_chroma_client.py         # Async ChromaDB wrappers (asyncio.to_thread)
-│       ├── chroma_client.py               # ChromaDB persistent client with company/citation collections (184 lines)
+│       ├── vector_store.py                # pgvector-backed vector store (async, requires DATABASE_URL)
 │       ├── text_extraction.py             # extract_text() — canonical text extraction for .md/.txt/.pdf/.docx
 │       └── knowledge_doc_metadata.py      # Shared metadata lock + I/O for knowledge document _metadata.json
 │
@@ -638,7 +637,7 @@ content-strategy-engine/
 │   │   ├── users.json                     # User registry
 │   │   └── settings/                      # Per-company pipeline defaults
 │   │       └── {company_slug}.json        # CompanyPipelineDefaults
-│   ├── chroma_db/                         # ChromaDB persistent vector store
+│   ├── chroma_db/                         # (LEGACY) — vector storage now in PostgreSQL via pgvector
 │   └── _logs/
 │       ├── debug.log                      # Agent debug logging
 │       └── reddit_monitor/                # Reddit seen-thread cache
@@ -654,8 +653,8 @@ content-strategy-engine/
 │       └── 20260207120000_rls_enums_hnsw.sql           # HNSW indexes + 13 enums + 20 RLS policies
 │
 ├── tests/                                 # Test suite (276 tests)
-│   ├── conftest.py                        # Shared fixtures (FakeChromaCollection, mock clients)
-│   ├── shared_tools/                      # Async embedding + ChromaDB client tests
+│   ├── conftest.py                        # Shared fixtures (mock clients)
+│   ├── shared_tools/                      # Async embedding + pgvector store tests
 │   ├── gap_analysis/                      # Pipeline + step tests (s1, s2, s4, s5, s8)
 │   ├── content_engine/                    # 57 tests — full coverage
 │   ├── api/                               # 126 tests — FastAPI integration tests
@@ -2497,7 +2496,7 @@ The Gap Analysis Pipeline is an 8-step sequential data pipeline (not LangGraph-b
 
 **All outputs stored in:** `/artifacts/gap_analysis/{company_slug}/`
 
-**Skip Logic:** Each step can be independently skipped via `skip_steps` parameter. Skipped steps load from cached JSON/ChromaDB instead of rerunning. This enables fast re-analysis without re-crawling or re-searching.
+**Skip Logic:** Each step can be independently skipped via `skip_steps` parameter. Skipped steps load from cached JSON/pgvector instead of rerunning. This enables fast re-analysis without re-crawling or re-searching.
 
 ---
 
@@ -2505,7 +2504,7 @@ The Gap Analysis Pipeline is an 8-step sequential data pipeline (not LangGraph-b
 
 **File:** `core/gap_analysis/steps/s1_embed_assets.py`
 
-**Purpose:** Crawl the company's entire website, extract semantic units (meaningful text chunks), embed them using OpenAI, and store in ChromaDB.
+**Purpose:** Crawl the company's entire website, extract semantic units (meaningful text chunks), embed them using OpenAI, and store in pgvector.
 
 **Process (4-phase discovery):**
 
@@ -2530,7 +2529,7 @@ The Gap Analysis Pipeline is an 8-step sequential data pipeline (not LangGraph-b
 
 **Embedding & Storage:**
 - Embeds all texts using OpenAI `text-embedding-3-small` (1536 dimensions)
-- Stores raw embeddings in ChromaDB (indexed by company slug)
+- Stores raw embeddings in pgvector (indexed by company slug)
 - Saves lightweight JSON with `embedding_id` only (no raw vectors in JSON — saves disk space)
 
 **Knowledge Document Integration (Phase 2B — added 2026-02-27):**
@@ -2541,7 +2540,7 @@ After website discovery and chunking, s1 checks for uploaded knowledge documents
 3. Extracts text from each file using `core/shared_tools/text_extraction.py` (supports `.md`, `.txt`, `.pdf` via pdfplumber, `.docx` via python-docx)
 4. Chunks extracted text using the same `_chunk_paragraphs()` function (min_words=80, max_words=220)
 5. Creates `SemanticUnit` objects with `discovery_source="knowledge_doc"` and `url=None`
-6. Merges knowledge doc units with website units → embeds all → stores in ChromaDB
+6. Merges knowledge doc units with website units → embeds all → stores in pgvector
 7. After embedding, calls `mark_documents_embedded()` from `core/shared_tools/knowledge_doc_metadata.py` to set `is_embedded=True` and `last_embedded_at` on all processed documents
 
 **Shared module coordination:** Both the upload service (`api/services/knowledge_doc_service.py`) and s1's mark-as-embedded share the **same** `metadata_lock` from `core/shared_tools/knowledge_doc_metadata.py`. This prevents race conditions when a user uploads a document while a pipeline is marking documents as embedded.
@@ -2571,9 +2570,9 @@ After `build_semantic_units()`, s1 computes structural signals for each crawled 
 | `site_discovery/discovered_pages.json` | All discovered URLs with metadata |
 | `site_discovery/site_tree.json` | Hierarchical site structure |
 | `site_discovery/discovery_summary.json` | Discovery statistics |
-| ChromaDB collection: `gap_company_{slug}` | Raw embeddings for similarity queries |
+| pgvector table: `persona_embeddings` (company-scoped) | Raw embeddings for similarity queries |
 
-**Skip Logic:** If step 1 already ran, loads embeddings from JSON and hydrates from ChromaDB if needed.
+**Skip Logic:** If step 1 already ran, loads embeddings from JSON and hydrates from pgvector if needed.
 
 ---
 
@@ -2740,14 +2739,14 @@ After `build_semantic_units()`, s1 computes structural signals for each crawled 
 **Phase 3: Score & Select**
 - Compute cosine similarity between anchor text embedding and paragraph embeddings
 - Select top-k (k=3) best-matching paragraphs per citation
-- Upsert deduplicated embeddings to ChromaDB citations collection
+- Upsert deduplicated embeddings to pgvector citations table
 
 **Outputs:**
 | File | Content |
 |------|---------|
 | `embeddings/queries_with_embeddings.json` | GeneratedQuery objects with embedding vectors |
 | `embeddings/citations_with_embeddings.json` | EnrichedCitation objects with best_paragraphs |
-| ChromaDB collection: `gap_citations_{slug}` | Citation paragraph embeddings |
+| pgvector table: `cps_training_snippets` (company-scoped) | Citation paragraph embeddings |
 
 ---
 
@@ -2936,7 +2935,7 @@ class SearchEngine(ABC):
 ```
 GapAnalysisInput
   │
-  ├── S1: domain, seed_urls ──────────────────────▶ company_embeddings.json + ChromaDB
+  ├── S1: domain, seed_urls ──────────────────────▶ company_embeddings.json + pgvector
   │                                                   + company_page_analysis.json
   │                                                   │
   ├── S2: company_context_path, persona_paths ────▶ queries.json
@@ -2947,7 +2946,7 @@ GapAnalysisInput
   │                                                   │
   ├── S4: platform_results ────────────────────────▶ enriched_citations.json
   │                                                   │
-  ├── S5: queries + citations ─────────────────────▶ embeddings/*.json + ChromaDB
+  ├── S5: queries + citations ─────────────────────▶ embeddings/*.json + pgvector
   │                                                   │
   ├── S6: company_units + queries + citations ─────▶ analysis.json
   │       + company_citation_map                       (best_company_url,
@@ -2965,8 +2964,8 @@ GapAnalysisInput
 - S2 requires: `persona_paths` (reads persona artifacts from disk)
 - S2 requires: `style_guide_path` (reads style guide from disk)
 - S2 requires: query taxonomy file (`b2b_queries_180.json` — hardcoded path)
-- S5 requires: ChromaDB collection from S1 (for company embedding IDs)
-- S6 requires: ChromaDB collections from S1 + S5 (for embedding vectors)
+- S5 requires: pgvector embeddings from S1 (for company embedding IDs)
+- S6 requires: pgvector embeddings from S1 + S5 (for embedding vectors)
 
 ---
 
@@ -3854,34 +3853,32 @@ Mirror to Supabase                  ← Optional DB snapshot
 > The new research pipelines (KB, AP, VSG) use direct filesystem storage via their own `Storage` classes
 > (`KBStorage`, `PersonaStorage`, `VSGStorage`), each with versioned document management and manifest tracking.
 
-### 9.3 ChromaDB Vector Store
+### 9.3 pgvector Vector Store
 
-**File:** `core/shared_tools/chroma_client.py`
+**File:** `core/shared_tools/vector_store.py`
 
-**Purpose:** Persistent local vector storage for gap analysis embeddings.
+**Purpose:** PostgreSQL-backed vector storage for gap analysis embeddings. Requires `DATABASE_URL` to be set.
 
-**Collections per company:**
-- `gap_company_{slug}` — Company asset embeddings (from S1)
-- `gap_citations_{slug}` — Citation paragraph embeddings (from S5)
+**Tables:**
+- `persona_embeddings` — Company asset embeddings (from S1), `Vector(1536)` with HNSW index
+- `cps_training_snippets` — Citation paragraph embeddings (from S5)
+- `cps_training_queries` — Query embeddings for training data
 
 **Configuration:**
 ```python
-chroma_persist_dir = settings.chroma_persist_dir  # Default: "artifacts/chroma_db"
-chroma_collection_prefix = settings.chroma_collection_prefix  # Default: "gap_company"
+# Requires DATABASE_URL environment variable (PostgreSQL with pgvector extension)
+# HNSW indexes created via Alembic migration 0002_hnsw_indexes.py
 ```
 
 **Key Functions:**
 | Function | Purpose |
 |----------|---------|
-| `get_chroma_client()` | Persistent ChromaDB client (anonymized telemetry disabled) |
-| `get_company_collection(slug)` | Get/create company collection (cosine metric) |
-| `upsert_embeddings(slug, ids, texts, embeddings, metadatas)` | Batch upsert (chunks of 500) |
+| `upsert_embeddings(slug, ids, texts, embeddings, metadatas)` | Batch upsert to `persona_embeddings` |
 | `get_embeddings_by_ids(slug, ids)` | Retrieve specific embeddings by ID |
 | `get_all_embeddings(slug)` | Retrieve all embeddings for a company |
-| `collection_exists(slug)` | Check if collection has data |
-| `delete_company_collection(slug)` | Delete for re-runs (idempotent) |
-| `get_citations_collection(slug)` | Separate collection for citation embeddings |
-| `upsert_citation_embeddings(slug, ids, docs, embeddings, metadatas)` | Citation-specific upsert |
+| `collection_exists(slug)` | Check if embeddings exist for company |
+| `delete_company_embeddings(slug)` | Delete for re-runs (idempotent) |
+| `upsert_citation_embeddings(slug, ids, docs, embeddings, metadatas)` | Citation-specific upsert to `cps_training_snippets` |
 
 ### 9.4 Supabase Mirror (Optional DB Layer)
 
@@ -4414,8 +4411,7 @@ DraftNotification:   thread, fit_score (0.0-1.0), why_match, draft_markdown, met
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `CHROMA_PERSIST_DIR` | `artifacts/chroma_db` | ChromaDB storage path |
-| `CHROMA_COLLECTION_PREFIX` | `gap_company` | ChromaDB collection naming |
+| `DATABASE_URL` | — | PostgreSQL connection URL (required for pgvector vector storage) |
 | `SUPABASE_URL` | — | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | Supabase admin key (preferred) |
 | `SUPABASE_ANON_KEY` | — | Supabase anon key (fallback) |
@@ -4771,10 +4767,10 @@ All access scoped through `is_company_member()` — tenant isolation across all 
 
 ```
 tests/
-├── conftest.py                           # Shared fixtures (FakeChromaCollection, mock clients)
+├── conftest.py                           # Shared fixtures (mock clients)
 ├── shared_tools/
 │   ├── test_async_embedding_client.py    # Async embedding client tests
-│   └── test_async_chroma_client.py       # Async ChromaDB client tests
+│   └── test_vector_store.py             # pgvector store tests
 ├── gap_analysis/
 │   └── steps/
 │       ├── test_s1_embed_assets.py       # Site discovery + embedding tests
@@ -5034,7 +5030,7 @@ LLM Providers:
 └── perplexityai SDK → sonar-deep-research (web research)
 
 Data Processing:
-├── chromadb v0.5+ → Persistent vector storage (local)
+├── pgvector + SQLAlchemy → PostgreSQL vector storage (replaces ChromaDB)
 ├── numpy, scipy, scikit-learn → Statistics + cosine similarity + TF-IDF themes
 ├── umap-learn → UMAP dimensionality reduction
 ├── plotly → Interactive HTML visualizations
@@ -5139,17 +5135,18 @@ scripts/run_server.py ← API entry point (uvicorn)
 
 **Tradeoff:** Added complexity. Cannot use `asyncio` directly with agent invocations. Timeout handling requires careful management.
 
-### Decision 5: ChromaDB for Local Vector Storage
+### Decision 5: pgvector for Vector Storage
 
-**Choice:** Use ChromaDB (persistent, local) for embedding storage during gap analysis.
+**Choice:** Use pgvector (PostgreSQL extension) for embedding storage during gap analysis. Migrated from ChromaDB.
 
 **Rationale:**
-- No external database dependency for development
+- Multi-tenant production-ready (row-level company scoping)
 - Persistent across process restarts
-- Fast cosine similarity queries
-- Simple API (upsert, query, delete)
+- Fast cosine similarity queries via HNSW indexes
+- Unified storage layer — same PostgreSQL instance as other application data
+- Tables: `persona_embeddings`, `cps_training_snippets`, `cps_training_queries`
 
-**Tradeoff:** Not suitable for multi-tenant production. Should migrate to pgvector (Supabase) for production deployment.
+**Requirement:** `DATABASE_URL` must be set. pgvector extension enabled via Alembic migration.
 
 ### Decision 6: 4-Engine Search Strategy
 
@@ -5354,12 +5351,11 @@ scripts/run_server.py ← API entry point (uvicorn)
 **Impact:** Could break without warning if OpenAI deprecates or changes the responses API.
 **Recommendation:** Add fallback to standard `chat.completions.create()` endpoint.
 
-#### 7. No Structured Logging
-**Severity:** Medium
-**Description:** CLAUDE.md mandates "structured JSON logging with correlation IDs" but this is not fully implemented. Each graph file has its own `_log_event()` function. No central logging config.
-**Location:** `core/config/logging_config.py` — File does not exist.
-**Impact:** No unified log format, no correlation IDs for tracing across pipeline stages, difficult to debug production issues.
-**Recommendation:** Implement `core/config/logging_config.py` with structured JSON logging, correlation IDs, and centralized configuration.
+#### 7. ~~No Structured Logging~~ ✅ RESOLVED (Sprint v17)
+**Severity:** ~~Medium~~ → **Resolved**
+**Description:** Structured logging foundation implemented via `structlog`. Central config in `core/shared_tools/structured_logging.py`. JSON output in prod, colored console in dev. Context propagation via `structlog.contextvars` (correlation_id, user_id, company_slug, task_id, pipeline_name). All 115 existing `logging.getLogger(__name__)` call sites work unchanged via structlog's `ProcessorFormatter` stdlib bridge.
+**Files:** `core/shared_tools/structured_logging.py` (new), `core/config/settings.py` (3 new fields: `log_level`, `log_format`, `log_include_caller`), `api/app.py` (middleware rewrite), `api/tasks/runner.py` (14 functions), 5 scripts, 2 print() eliminations.
+**Tests:** 22 new tests (17 structured logging + 5 middleware).
 
 #### 8. Duplicated Helper Functions
 **Severity:** Low
@@ -5409,10 +5405,8 @@ scripts/run_server.py ← API entry point (uvicorn)
 **Impact:** Some binary content may slip through to embedding, producing garbage vectors.
 **Recommendation:** Use Content-Type headers and more robust binary detection.
 
-#### 16. ChromaDB Not Production-Ready for Multi-Tenant
-**Description:** ChromaDB runs locally with file-based persistence. Not suitable for multi-user production deployment.
-**Impact:** Single-machine limitation. No concurrent access from multiple processes.
-**Recommendation:** Migrate to pgvector (Supabase) for production. ChromaDB remains appropriate for local development.
+#### 16. (RESOLVED) ChromaDB Migrated to pgvector
+**Description:** ChromaDB has been replaced by pgvector (PostgreSQL extension). Vector storage now uses tables `persona_embeddings`, `cps_training_snippets`, and `cps_training_queries` with HNSW indexes. `DATABASE_URL` is required.
 
 #### 17. Hardcoded Default Paths in Utility Scripts
 **Description:** `resolve_vertexai_redirects.py` defaults input to Ramp's enriched citations path. `strip_embeddings_from_json.py` defaults to Ramp's embeddings path.
@@ -5557,7 +5551,7 @@ scripts/run_server.py ← API entry point (uvicorn)
 | 6 | **Reddit HIL Tests** | Only untested module (PRAW mocking, webhook delivery) | Existing codebase |
 | 7 | **DB Integration for New Research Pipelines** | Add PostgreSQL persistence for KB/AP/VSG | SQLAlchemy + Alembic |
 | 8 | **Cloud Storage Backends** | S3/GCS/Supabase Storage implementations | StorageBackend interface |
-| 9 | **Structured Logging** | JSON logging with correlation IDs | logging_config.py |
+| 9 | ~~**Structured Logging**~~ | ✅ **DONE** — structlog foundation, JSON/console modes, correlation IDs, context propagation | `core/shared_tools/structured_logging.py` |
 | 10 | **CI/CD Pipeline** | Automated tests, linting, deployment | Tests + Docker |
 | 11 | **Redis/PG TaskStore** | Replace JSON-file TaskStore for multi-server | FastAPI backend |
 
@@ -5578,15 +5572,16 @@ def create_app() -> FastAPI:
 ```
 
 **Startup (lifespan context manager):**
-1. Initialize `EventBus` (in-memory pub/sub for SSE)
-2. Initialize `TaskStore` (JSON-file-backed persistence + semaphore)
-3. Scan disk for orphan tasks — marks stale "running" tasks as `FAILED_RESTART`
-4. Store shared state in `app.state` (accessed via dependency injection)
+1. **Initialize structured logging** — `configure_logging()` from `core.shared_tools.structured_logging` (structlog + stdlib bridge, JSON or console mode based on `LOG_FORMAT` env var)
+2. Initialize `EventBus` (in-memory pub/sub for SSE)
+3. Initialize `TaskStore` (JSON-file-backed persistence + semaphore)
+4. Scan disk for orphan tasks — marks stale "running" tasks as `FAILED_RESTART`
+5. Store shared state in `app.state` (accessed via dependency injection)
 
 **Middleware (applied in order — FastAPI adds in reverse, so last-added = outermost):**
 1. `CORSMiddleware` — outermost. Handles OPTIONS preflight before auth. Configurable origins (default: `localhost:3000`, `localhost:3001`), credentials enabled.
 2. `AuthMiddleware` — **pure ASGI middleware** (not BaseHTTPMiddleware — safe for SSE streaming, Codex W1). **Default-deny** posture: blocks unauthenticated requests to protected routes with 401 JSON. Reads `Authorization: Bearer {token}` header (or `?stream_token=` query param for SSE). If valid, injects `scope["state"]["user_id"]` and `scope["state"]["company_slug"]`. Public path whitelist: `/health`, `/readiness`, `/docs`, `/redoc`, `/openapi.json`, `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/join`.
-3. `RequestLoggingMiddleware` — logs `METHOD PATH STATUS_CODE DURATION_MS`. Returns early for `/events` paths (SSE safe).
+3. `RequestLoggingMiddleware` — Structured request logging via `structlog.contextvars`. Generates/extracts `X-Correlation-ID` header, binds context (correlation_id, method, path, user_id, company_slug), logs `"request_completed"` with `status_code` and `duration_ms` as structured fields. Returns early for `/events` paths (SSE safe). Clears context after each request.
 
 **Exception Handlers:**
 | Exception | HTTP Status | Error Code |
@@ -6368,7 +6363,7 @@ artifacts/knowledge_docs/{effective_slug}/
 **Integration point in `embed_company_assets()`:**
 1. After site discovery + chunking → existing SemanticUnits
 2. If `knowledge_doc_dir` is set → load docs from `_metadata.json` → extract text → chunk via `_chunk_paragraphs()` → create SemanticUnits with `discovery_source="knowledge_doc"` and `url=None`
-3. Merge both lists → embed all → store in ChromaDB
+3. Merge both lists → embed all → store in pgvector
 
 **Text extraction:** Uses canonical `extract_text()` from `core/shared_tools/text_extraction.py` (supports .md, .txt, .pdf via pdfplumber, .docx via python-docx).
 
@@ -6598,7 +6593,7 @@ SQLAlchemy won a 6-0 scorecard against SQLModel across the six features that mat
 
 **Three-Tier Storage Model:**
 - **Tier 1 (Normalized Postgres tables):** Citation metadata, structural signals, query gaps, cluster specs, SPA results, pipeline runs, auth data. Every operation filters/joins/aggregates individual rows — relational is the correct abstraction.
-- **Tier 2 (pgvector columns):** Embedding vectors for similarity search (replaces ChromaDB in production). `Vector(1536)` with HNSW indexes.
+- **Tier 2 (pgvector columns):** Embedding vectors for similarity search. `Vector(1536)` with HNSW indexes. Tables: `persona_embeddings`, `cps_training_snippets`, `cps_training_queries`.
 - **Tier 3 (Filesystem/S3):** Large blobs — raw paragraphs, platform response JSONLs, Plotly HTML visualizations, pipeline JSON archives. Too large for Postgres rows (enriched_citations.json exceeds 20MB for some clients).
 
 ---
@@ -7728,7 +7723,7 @@ from core.research.audience_persona.pipeline import run_ap_pipeline
 from core.research.voice_style_guide.pipeline import run_vsg_pipeline
 from core.gap_analysis.pipeline import run_gap_analysis
 from core.shared_tools.embedding_client import embed_texts
-from core.shared_tools.chroma_client import upsert_embeddings
+from core.shared_tools.vector_store import upsert_embeddings
 from core.content_engine.pipeline import run_content_generation
 from core.models.content_generation import ContentGenerationInput, ContentBrief, FormattedContent
 ```

@@ -25,6 +25,7 @@ from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.research_orchestrator import ResearchOrchestratorStartRequest
 from api.tasks.event_bus import EventBus
 from api.tasks.runner import run_research_orchestrator_task
+from core.audit import log_pipeline_launch
 from core.auth.utils.domain import derive_slug
 from core.services.task_store import TaskStoreProtocol
 
@@ -77,6 +78,17 @@ async def start_research_orchestrator(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="research_orchestrator",
+        company_slug=slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "effective_slug": effective_slug,
+        },
+    )
 
     return PipelineRunResponse(
         run_id=task.task_id,
