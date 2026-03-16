@@ -1125,6 +1125,9 @@ async def _run_pipeline_stages(
     # Initialize pieces before Stage 3 (worker failures append to it)
     pieces: List[ContentPiece] = []
 
+    # Clear stale step_name left by bind_context() in stages 1/2
+    bind_context(step_name=None)
+
     # ── Stage 3: Content Workers ──────────────────────────────────
     with scoped_bind(step_name="stage_3_content_workers"):
         if 3 not in input_data.skip_stages and approved_blueprints:

@@ -30,6 +30,7 @@ from core.auth.utils.domain import derive_slug
 from core.models.knowledge_base import KB_DEPENDENCY_GRAPH, KBDocType
 from core.models.organization import UserProfile
 from core.research.knowledge_base.storage import KBStorage
+from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,18 @@ async def start_knowledge_base(
     if not body.force_rerun and _kb_artifacts_exist(artifacts_root, effective_slug):
         last_task = _get_latest_kb_run(task_store, slug, body.product_slug)
         response.status_code = 200
+        await log_pipeline_launch(
+            user_id=_user.id,
+            pipeline="knowledge_base",
+            company_slug=slug,
+            task_id=last_task.task_id if last_task else f"existing-{effective_slug}",
+            detail={
+                "outcome": "already_exists",
+                "product_slug": body.product_slug,
+                "mode": body.mode,
+                "effective_slug": effective_slug,
+            },
+        )
         return PipelineRunResponse(
             run_id=last_task.task_id if last_task else f"existing-{effective_slug}",
             pipeline="knowledge_base",
@@ -127,6 +140,19 @@ async def start_knowledge_base(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="knowledge_base",
+        company_slug=slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "mode": body.mode,
+            "force_rerun": body.force_rerun,
+            "effective_slug": effective_slug,
+        },
+    )
 
     return PipelineRunResponse(
         run_id=task.task_id,
@@ -328,7 +354,26 @@ async def approve_knowledge_base(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="knowledge_base",
+            stage=stage,
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="knowledge_base",
+        stage=stage,
+        decision=body.decision,
+        company_slug=user_company_slug,
+        detail={"revision_note_provided": bool(body.revision_note)},
+    )
 
     return ApprovalResponse(
         run_id=run_id,

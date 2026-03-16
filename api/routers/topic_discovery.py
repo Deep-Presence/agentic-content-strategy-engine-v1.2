@@ -31,6 +31,7 @@ from api.tasks.runner import run_topic_discovery_pipeline_task, run_topic_expans
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
 from core.models.organization import UserProfile
+from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 from core.topic_discovery.storage import TopicDiscoveryStorage
 
@@ -121,6 +122,17 @@ async def start_topic_discovery(
         should_guard, message = _td_should_guard(artifacts_root, effective_slug)
         if should_guard:
             response.status_code = 200
+            await log_pipeline_launch(
+                user_id=_user.id,
+                pipeline="topic_discovery",
+                company_slug=slug,
+                task_id=f"existing-{effective_slug}",
+                detail={
+                    "outcome": "already_exists",
+                    "product_slug": body.product_slug,
+                    "effective_slug": effective_slug,
+                },
+            )
             return PipelineRunResponse(
                 run_id=f"existing-{effective_slug}",
                 pipeline="topic_discovery",
@@ -146,6 +158,18 @@ async def start_topic_discovery(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="topic_discovery",
+        company_slug=slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "force_rerun": body.force_rerun,
+            "effective_slug": effective_slug,
+        },
+    )
 
     return PipelineRunResponse(
         run_id=task.task_id,
@@ -228,7 +252,26 @@ async def approve_taxonomy(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="topic_discovery",
+            stage="td_taxonomy_review",
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="topic_discovery",
+        stage="td_taxonomy_review",
+        decision=body.batch_decision,
+        company_slug=user_company_slug,
+        detail={"edit_count": len(body.user_edits), "has_feedback": bool(body.user_feedback)},
+    )
 
     return ApprovalResponseTD(
         status="accepted",
@@ -277,7 +320,26 @@ async def approve_subdomains(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="topic_discovery",
+            stage="td_subdomain_selection",
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="topic_discovery",
+        stage="td_subdomain_selection",
+        decision=body.batch_decision,
+        company_slug=user_company_slug,
+        detail={"selected_count": len(body.selected_subdomain_ids or []), "top_n": body.top_n},
+    )
 
     return ApprovalResponseTD(
         status="accepted",
@@ -324,7 +386,26 @@ async def approve_matrix(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="topic_discovery",
+            stage="td_matrix_review",
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="topic_discovery",
+        stage="td_matrix_review",
+        decision=body.batch_decision,
+        company_slug=user_company_slug,
+        detail={"has_feedback": bool(getattr(body, "user_feedback", None))},
+    )
 
     return ApprovalResponseTD(
         status="accepted",
@@ -500,6 +581,17 @@ async def start_topic_expansion(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="topic_expansion",
+        company_slug=slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "effective_slug": effective_slug,
+        },
+    )
 
     return PipelineRunResponse(
         run_id=task.task_id,

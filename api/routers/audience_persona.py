@@ -32,6 +32,7 @@ from core.auth.utils.domain import derive_slug
 from core.models.audience_persona import PersonaBrief
 from core.models.organization import UserProfile
 from core.research.audience_persona.storage import PersonaStorage
+from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 
 logger = logging.getLogger(__name__)
@@ -153,6 +154,17 @@ async def start_audience_persona(
         should_guard, message = _ap_should_guard(artifacts_root, effective_slug, slug)
         if should_guard:
             response.status_code = 200
+            await log_pipeline_launch(
+                user_id=_user.id,
+                pipeline="audience_persona",
+                company_slug=slug,
+                task_id=f"existing-{effective_slug}",
+                detail={
+                    "outcome": "already_exists",
+                    "product_slug": body.product_slug,
+                    "effective_slug": effective_slug,
+                },
+            )
             return PipelineRunResponse(
                 run_id=f"existing-{effective_slug}",
                 pipeline="audience_persona",
@@ -178,6 +190,18 @@ async def start_audience_persona(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="audience_persona",
+        company_slug=slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "force_rerun": body.force_rerun,
+            "effective_slug": effective_slug,
+        },
+    )
 
     return PipelineRunResponse(
         run_id=task.task_id,
@@ -254,7 +278,26 @@ async def approve_briefs(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="audience_persona",
+            stage="persona_brief_review",
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="audience_persona",
+        stage="persona_brief_review",
+        decision=body.batch_decision,
+        company_slug=user_company_slug,
+        detail={"brief_count": len(body.brief_reviews), "added_count": len(body.added_briefs)},
+    )
 
     return ApprovalResponseAP(
         status="accepted",
@@ -296,7 +339,26 @@ async def approve_profiles(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="audience_persona",
+            stage="persona_profile_review",
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="audience_persona",
+        stage="persona_profile_review",
+        decision="profile_review",
+        company_slug=user_company_slug,
+        detail={"profile_count": len(body.profile_reviews)},
+    )
 
     return ApprovalResponseAP(
         status="accepted",
@@ -371,7 +433,7 @@ async def add_persona(
 
 
 @router.post("/{slug}/personas/{persona_id}/approve")
-def standalone_approve_persona(
+async def standalone_approve_persona(
     slug: str,
     persona_id: str,
     body: StandaloneApproveRequest,
@@ -398,6 +460,15 @@ def standalone_approve_persona(
 
     new_status = "fresh" if body.decision == "approve" else "archived"
     storage.mark_persona_status(persona_id, new_status)
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=persona_id,
+        pipeline="audience_persona",
+        stage="standalone_persona_approval",
+        decision=body.decision,
+        company_slug=slug,
+    )
 
     return {"persona_id": persona_id, "status": new_status}
 

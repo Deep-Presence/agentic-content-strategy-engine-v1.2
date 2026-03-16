@@ -185,36 +185,37 @@ async def _run_single_agent(
     revision_note: Optional[str] = None,
 ) -> KBAgentResult:
     """Run a single agent by doc type with optional revision note."""
-    if doc_type == KBDocType.COMPANY_OVERVIEW:
-        return await run_company_overview_agent(
-            input_data, parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.CUSTOMER_REVIEWS:
-        return await run_customer_reviews_agent(
-            input_data, parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.COMPETITOR_REGISTRY:
-        overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
-        return await run_competitor_scanner_agent(
-            input_data, company_overview_md=overview_md,
-            parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.WEAKNESS_ANALYSIS:
-        overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
-        competitor_md = _get_doc_md(results, KBDocType.COMPETITOR_REGISTRY, storage)
-        return await run_weakness_analyst_agent(
-            input_data, company_overview_md=overview_md,
-            competitor_registry_md=competitor_md,
-            parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.BRAND_PERCEPTION:
-        upstream_docs = _build_upstream_docs(results, storage)
-        return await run_brand_perception_agent(
-            input_data, upstream_docs=upstream_docs,
-            parent_span=parent_span, revision_note=revision_note,
-        )
-    else:
-        return KBAgentResult(doc_type=doc_type, error=f"Unknown doc type: {doc_type}")
+    with scoped_bind(agent_name=doc_type.value):
+        if doc_type == KBDocType.COMPANY_OVERVIEW:
+            return await run_company_overview_agent(
+                input_data, parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.CUSTOMER_REVIEWS:
+            return await run_customer_reviews_agent(
+                input_data, parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.COMPETITOR_REGISTRY:
+            overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
+            return await run_competitor_scanner_agent(
+                input_data, company_overview_md=overview_md,
+                parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.WEAKNESS_ANALYSIS:
+            overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
+            competitor_md = _get_doc_md(results, KBDocType.COMPETITOR_REGISTRY, storage)
+            return await run_weakness_analyst_agent(
+                input_data, company_overview_md=overview_md,
+                competitor_registry_md=competitor_md,
+                parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.BRAND_PERCEPTION:
+            upstream_docs = _build_upstream_docs(results, storage)
+            return await run_brand_perception_agent(
+                input_data, upstream_docs=upstream_docs,
+                parent_span=parent_span, revision_note=revision_note,
+            )
+        else:
+            return KBAgentResult(doc_type=doc_type, error=f"Unknown doc type: {doc_type}")
 
 
 # ---------------------------------------------------------------------------

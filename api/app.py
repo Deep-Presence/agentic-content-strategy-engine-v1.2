@@ -112,6 +112,17 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.debug("DB session factory not available — using JSON services")
 
+    # Layer 7: Initialize audit logging sink
+    from core.audit.logger import set_sink
+    from core.audit.sink import DbAuditSink, NoOpAuditSink
+
+    db_sf = getattr(app.state, "db_session_factory", None)
+    if db_sf:
+        set_sink(DbAuditSink(db_sf))
+        logger.info("Audit sink: DbAuditSink")
+    else:
+        set_sink(NoOpAuditSink())
+
     logger.info(
         "API started — task store: %s", type(app.state.task_store).__name__
     )

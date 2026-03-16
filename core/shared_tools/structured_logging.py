@@ -132,6 +132,11 @@ def configure_logging(
         structlog.processors.format_exc_info,
     ])
 
+    # Layer 7: Sensitive data masking — last processor before renderer
+    from core.audit.masking import SensitiveDataMasker
+
+    shared_processors.append(SensitiveDataMasker())
+
     # -- Renderer (final processor) --
     if log_format == "json":
         renderer = structlog.processors.JSONRenderer()
