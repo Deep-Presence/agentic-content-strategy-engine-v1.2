@@ -1,7 +1,7 @@
 {
-  "current_sprint": "pgvector-migration-v16",
+  "current_sprint": "structured-logging-layer2-v18",
   "last_updated": "2026-03-15",
-  "test_count": 2703,
+  "test_count": 2773,
   "completed_sprints_summary": {
     "total_tasks_completed": 37,
     "sprints": [
@@ -23,10 +23,70 @@
       {"sprint": "research-orchestrator-v13", "date": "2026-03-11", "summary": "Research Orchestrator — KB→AP→VSG sequential DAG. 7 phases + Codex audit (8 findings, 5 fixed). 67 tests (50 core + 17 API). Skip logic, HITL pass-through, auto-approve, error propagation."},
       {"sprint": "td-content-integration-v1.2.0", "date": "2026-03-15", "summary": "TD→GA→CE integration — 8-phase plan. Topic-scoped GA (cluster mapping, S2 topic queries, cross-topic dedup), CE TOPIC_DISCOVERY mode, orchestrator, DB persistence (migration 0011), API layer (2 endpoints, task runner). ~44 new tests."},
       {"sprint": "daily-tracker-db-persistence-v15", "date": "2026-03-15", "summary": "Daily Tracker DB persistence — 6-phase plan. Persistence layer (5 functions), task runner, router refactor (async + DB queries), PG ENUM migration 0014, DB integration tests. Codex-reviewed (7 findings addressed). 392 DT tests, 8 skipped."},
-      {"sprint": "pgvector-migration-v16", "date": "2026-03-15", "summary": "ChromaDB→pgvector migration — 8-phase plan. VectorStoreClient (469 lines), 2 Alembic migrations (0016+0017), EmbeddingRepository extensions, consumer migration (GA+AP+CPS), full ChromaDB removal, data migration script. Codex-reviewed (11 findings addressed). 429 GA tests passing."}
+      {"sprint": "pgvector-migration-v16", "date": "2026-03-15", "summary": "ChromaDB→pgvector migration — 8-phase plan. VectorStoreClient (469 lines), 2 Alembic migrations (0016+0017), EmbeddingRepository extensions, consumer migration (GA+AP+CPS), full ChromaDB removal, data migration script. Codex-reviewed (11 findings addressed). 429 GA tests passing."},
+      {"sprint": "structured-logging-v17", "date": "2026-03-15", "summary": "Structured Logging Foundation (Layer 1) — structlog with stdlib bridge. Central config (core/shared_tools/structured_logging.py), 3 Settings fields, middleware rewrite (correlation IDs, context propagation), 14 runner functions, 5 scripts, 2 print eliminations. Codex-reviewed (6 findings incorporated). 22 new tests."},
+      {"sprint": "structured-logging-layer2-v18", "date": "2026-03-15", "summary": "Structured Logging Layer 2 — Correlation & Context Propagation. 8 phases: get_context_value+scoped_bind, X-Request-ID+middleware hardening, LangSmith trace linkage, SSE context binding (PB-83), auth failure logging (PB-84), per-step/per-agent binding (PB-85), run_id binding in runners, async context propagation tests. Codex-reviewed. 48 new tests. 3 backlog items resolved."}
     ]
   },
   "completed": [
+    {
+      "id": "T-structured-logging-layer2",
+      "task": "Structured Logging Layer 2 — Correlation & Context Propagation. 8 phases: (1) get_context_value + scoped_bind helpers, (2) X-Request-ID + middleware hardening (try/finally, correlation_id sanitization), (3) LangSmith trace linkage (langsmith_trace_id auto-bind), (4) SSE context binding (PB-83), (5) Auth failure logging (PB-84), (6) Per-step/per-agent context binding across 6 pipelines (PB-85), (7) run_id binding in 14 runner functions, (8) Async context propagation integration tests. Codex-reviewed (6 findings incorporated, 2 rejected).",
+      "sprint": "structured-logging-layer2-v18",
+      "status": "done",
+      "completed_at": "2026-03-15",
+      "tests_added": 48,
+      "files_created": [
+        "tests/shared_tools/test_tracing_context.py",
+        "tests/api/test_events_context.py",
+        "tests/api/test_auth_failure_logging.py",
+        "tests/api/test_context_propagation.py",
+        "tests/test_step_context_binding.py"
+      ],
+      "files_modified": [
+        "core/shared_tools/structured_logging.py",
+        "core/shared_tools/tracing.py",
+        "api/app.py",
+        "api/routers/events.py",
+        "api/auth/middleware.py",
+        "api/tasks/runner.py",
+        "core/gap_analysis/pipeline.py",
+        "core/research/knowledge_base/pipeline.py",
+        "core/research/audience_persona/pipeline.py",
+        "core/research/voice_style_guide/pipeline.py",
+        "core/content_engine/pipeline_v13.py",
+        "core/site_audit/pipeline.py",
+        "tests/shared_tools/test_structured_logging.py",
+        "tests/api/test_middleware.py"
+      ]
+    },
+    {
+      "id": "T-structured-logging",
+      "task": "Structured Logging Foundation (Layer 1) — structlog with stdlib bridge, JSON/console modes, correlation IDs, context propagation via contextvars. Phase A: dependency, settings, central module, app/script init, basicConfig replacement, print elimination, 17 tests. Phase B: middleware rewrite (correlation_id, user_id, company_slug binding), 14 runner functions (task_id, pipeline_name binding), 5 middleware tests. Codex-reviewed (6 findings incorporated, 2 rejected with reasoning, 3 deferred).",
+      "sprint": "structured-logging-v17",
+      "status": "done",
+      "completed_at": "2026-03-15",
+      "tests_added": 22,
+      "files_created": [
+        "core/shared_tools/structured_logging.py",
+        "tests/shared_tools/test_structured_logging.py"
+      ],
+      "files_modified": [
+        "pyproject.toml",
+        "core/config/settings.py",
+        "api/app.py",
+        "api/tasks/runner.py",
+        "scripts/run_server.py",
+        "scripts/run_kb.py",
+        "scripts/run_topic_discovery.py",
+        "scripts/run_td_rescore.py",
+        "scripts/backfill_gap_data.py",
+        "scripts/migrate_chroma_to_pgvector.py",
+        "core/research/prompts/persona_suggester.py",
+        "core/reddit_hil/cli.py",
+        "tests/api/test_middleware.py"
+      ]
+    },
     {
       "id": "T-pgvector-migration",
       "task": "ChromaDB→pgvector Migration — 8-phase plan: (1) VectorStoreClient + module-level API, (2) DB migration 0016 (persona_embeddings, company_slug columns, nullable FKs, backfill), (3) EmbeddingRepository extensions (7 new methods), (4) Gap analysis consumer migration (S1, S5, pipeline, persistence), (5) Audience persona import migration, (6) CPS model config + migration 0017, (7) Full ChromaDB removal (3 files deleted, deps removed), (8) Data migration script.",

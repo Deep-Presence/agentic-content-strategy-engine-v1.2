@@ -17,6 +17,7 @@ from core.services.task_store import TaskStoreProtocol
 from core.gap_analysis.pipeline import run_gap_analysis
 from core.auth.utils.domain import derive_slug
 from core.models.gap_analysis import GapAnalysisInput
+from core.shared_tools.structured_logging import bind_context, clear_context
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +322,7 @@ async def run_gap_pipeline_task(
             scope.effective_slug, "gap_analysis",
         )
 
+    bind_context(task_id=task_id, pipeline_name="gap_analysis", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
         async with task_store.semaphore:
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "gap_analysis"})
@@ -411,6 +413,7 @@ async def run_gap_pipeline_task(
     finally:
         task_store.release_slug_lock(f"gap_analysis:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 # ── Research pipeline runner ─────────────────────────────────────────
@@ -450,6 +453,7 @@ async def run_site_audit_task(
     run_id: Any = None
     company_id: Any = None
 
+    bind_context(task_id=task_id, pipeline_name="site_audit", company_slug=scope.company_slug)
     try:
         # Resolve DB context for site audit persistence
         session_factory, run_id, company_id = await _resolve_db_context(
@@ -460,6 +464,8 @@ async def run_site_audit_task(
                 session_factory, run_id, company_id,
                 scope.effective_slug, "site_audit",
             )
+        if run_id:
+            bind_context(run_id=str(run_id))
 
         async with task_store.semaphore:
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "site_audit"})
@@ -557,6 +563,7 @@ async def run_site_audit_task(
     finally:
         task_store.release_slug_lock(f"site_audit:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 async def run_content_pipeline_task(
@@ -587,6 +594,7 @@ async def run_content_pipeline_task(
             effective, "content",
         )
 
+    bind_context(task_id=task_id, pipeline_name="content", company_slug=company_slug, run_id=str(run_id) if run_id else None)
     try:
         async with task_store.semaphore:
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "content"})
@@ -633,6 +641,7 @@ async def run_content_pipeline_task(
     finally:
         task_store.release_slug_lock(f"content:{effective}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 async def run_content_v13_pipeline_task(
@@ -659,6 +668,7 @@ async def run_content_v13_pipeline_task(
             session_factory, run_id, company_id, effective, "content_v13"
         )
 
+    bind_context(task_id=task_id, pipeline_name="content_v13", company_slug=company_slug, run_id=str(run_id) if run_id else None)
     try:
         async with task_store.semaphore:
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "content_v13"})
@@ -701,6 +711,7 @@ async def run_content_v13_pipeline_task(
     finally:
         task_store.release_slug_lock(f"content_v13:{effective}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 # ── Knowledge Base pipeline runner ─────────────────────────────────
@@ -735,6 +746,7 @@ async def run_kb_pipeline_task(
             scope.effective_slug, "knowledge_base",
         )
 
+    bind_context(task_id=task_id, pipeline_name="knowledge_base", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
         async with task_store.semaphore:
             input_data = KnowledgeBaseInput(
@@ -801,6 +813,7 @@ async def run_kb_pipeline_task(
     finally:
         task_store.release_slug_lock(f"knowledge_base:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -834,6 +847,7 @@ async def run_audience_persona_pipeline_task(
             scope.effective_slug, "audience_persona",
         )
 
+    bind_context(task_id=task_id, pipeline_name="audience_persona", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
         async with task_store.semaphore:
             input_data = AudiencePersonaInput(
@@ -890,6 +904,7 @@ async def run_audience_persona_pipeline_task(
     finally:
         task_store.release_slug_lock(f"audience_persona:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 async def run_single_persona_generator_task(
@@ -906,6 +921,7 @@ async def run_single_persona_generator_task(
     from core.research.audience_persona.pipeline import _preflight_check
     from core.research.audience_persona.storage import PersonaStorage
 
+    bind_context(task_id=task_id, pipeline_name="audience_persona", company_slug=slug)
     try:
         async with task_store.semaphore:
             root = Path(artifacts_root) if artifacts_root else Path("artifacts")
@@ -970,6 +986,7 @@ async def run_single_persona_generator_task(
     finally:
         task_store.release_slug_lock(f"audience_persona:{slug}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 # ---------------------------------------------------------------------------
@@ -1003,6 +1020,7 @@ async def run_voice_style_guide_pipeline_task(
             scope.effective_slug, "voice_style_guide",
         )
 
+    bind_context(task_id=task_id, pipeline_name="voice_style_guide", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
         async with task_store.semaphore:
             input_data = VoiceStyleGuideInput(
@@ -1061,6 +1079,7 @@ async def run_voice_style_guide_pipeline_task(
     finally:
         task_store.release_slug_lock(f"voice_style_guide:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 # ---------------------------------------------------------------------------
@@ -1091,6 +1110,7 @@ async def run_research_orchestrator_task(
     run_id: Any = None
 
     # All pre-run awaits inside try/finally for slug-lock safety (Codex Fix #8)
+    bind_context(task_id=task_id, pipeline_name="research_orchestrator", company_slug=company_slug)
     try:
         scope = await _resolve_scope_async(company_slug, product_slug, auth_service)
 
@@ -1102,6 +1122,8 @@ async def run_research_orchestrator_task(
                 session_factory, run_id, company_id,
                 scope.effective_slug, "research_orchestrator",
             )
+        if run_id:
+            bind_context(run_id=str(run_id))
 
         async with task_store.semaphore:
             # Build auto-approve config
@@ -1209,6 +1231,7 @@ async def run_research_orchestrator_task(
         _eff = scope.effective_slug if scope else company_slug
         task_store.release_slug_lock(f"research_orchestrator:{_eff}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 # ---------------------------------------------------------------------------
@@ -1242,6 +1265,7 @@ async def run_topic_discovery_pipeline_task(
             scope.effective_slug, "topic_discovery",
         )
 
+    bind_context(task_id=task_id, pipeline_name="topic_discovery", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
         async with task_store.semaphore:
             input_data = TopicDiscoveryInput(
@@ -1302,6 +1326,7 @@ async def run_topic_discovery_pipeline_task(
     finally:
         task_store.release_slug_lock(f"topic_discovery:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 async def run_topic_expansion_pipeline_task(
@@ -1329,6 +1354,7 @@ async def run_topic_expansion_pipeline_task(
             scope.effective_slug, "topic_expansion",
         )
 
+    bind_context(task_id=task_id, pipeline_name="topic_expansion", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
         async with task_store.semaphore:
             input_data = TopicExpansionInput(
@@ -1384,6 +1410,7 @@ async def run_topic_expansion_pipeline_task(
     finally:
         task_store.release_slug_lock(f"topic_expansion:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 # ── TD → Content pipeline runner ──────────────────────────────────
@@ -1424,6 +1451,7 @@ async def run_td_content_pipeline_task(
             effective_slug, "content",
         )
 
+    bind_context(task_id=task_id, pipeline_name="td_content", company_slug=company_slug, run_id=str(run_id) if run_id else None)
     try:
         async with task_store.semaphore:
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "td_content"})
@@ -1475,6 +1503,7 @@ async def run_td_content_pipeline_task(
     finally:
         task_store.release_slug_lock(f"td_content:{effective_slug}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 # ---------------------------------------------------------------------------
@@ -1504,6 +1533,7 @@ async def run_onboarding_task(
     session_factory: Any = None
     run_id: Any = None
 
+    bind_context(task_id=task_id, pipeline_name="onboarding", company_slug=company_slug)
     try:
         session_factory, run_id, company_id = await _resolve_db_context(
             company_slug, company_slug,
@@ -1513,6 +1543,8 @@ async def run_onboarding_task(
                 session_factory, run_id, company_id,
                 company_slug, "onboarding",
             )
+        if run_id:
+            bind_context(run_id=str(run_id))
 
         async with task_store.semaphore:
             input_data = OnboardingInput(
@@ -1600,6 +1632,7 @@ async def run_onboarding_task(
     finally:
         task_store.release_slug_lock(f"onboarding:{company_slug}")
         task_store.remove_task_handle(task_id)
+        clear_context()
 
 
 # ── Daily Tracker pipeline runner ────────────────────────────────────
@@ -1641,6 +1674,7 @@ async def run_daily_tracker_task(
     pipeline_run_id: Any = None
     daily_run_id: Optional[str] = None
 
+    bind_context(task_id=task_id, pipeline_name="daily_tracker", company_slug=company_slug)
     try:
         # 1. Resolve DB context — session_factory for orchestrator + persistence,
         #    pipeline_run_id/company_id for PipelineRunModel only.
@@ -1652,6 +1686,8 @@ async def run_daily_tracker_task(
                 session_factory, pipeline_run_id, company_id,
                 company_slug, "daily_tracker",
             )
+        if pipeline_run_id:
+            bind_context(run_id=str(pipeline_run_id))
 
         # 2. Daily tracker REQUIRES DB for prompt storage
         if session_factory is None:
@@ -1771,3 +1807,4 @@ async def run_daily_tracker_task(
         if daily_run_id and session_factory:
             from core.daily_tracker.persistence import mark_daily_run_failed as _mark_dt_failed
             await _mark_dt_failed(session_factory, daily_run_id)
+        clear_context()

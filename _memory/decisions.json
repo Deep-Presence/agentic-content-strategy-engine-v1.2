@@ -1,5 +1,20 @@
 [
   {
+    "id": "D-L2-1",
+    "timestamp": "2026-03-15",
+    "task": "Structured Logging Layer 2 — Correlation & Context Propagation",
+    "approach": "8-phase plan: (1) get_context_value + scoped_bind helpers, (2) X-Request-ID + middleware hardening, (3) LangSmith trace linkage, (4) SSE context binding, (5) Auth failure logging, (6) Per-step/per-agent binding, (7) run_id in runners, (8) async propagation tests",
+    "rationale": "Completes structured logging story — every log line traceable from HTTP request through pipeline step through LangSmith trace. X-Request-ID separate from X-Correlation-ID for proper distributed tracing. scoped_bind context manager prevents context leaks across sequential pipeline steps.",
+    "alternatives_rejected": [
+      "Explicit ContextVar objects alongside structlog — dual source of truth with no benefit",
+      "Pure ASGI middleware for request-id — too big a refactor for marginal gain",
+      "Bind trace_id at each callsite instead of in tracing.py — not DRY, 14+ changes"
+    ],
+    "outcome": "48 new tests, zero regressions. 3 backlog items resolved (PB-83, PB-84, PB-85). All 6 pipelines enriched with step/agent context.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-async-1",
     "timestamp": "2026-02-15",
     "task": "Async-first pipeline conversion approach",
@@ -606,6 +621,20 @@
     "rationale": "uuid4() generates new IDs on every rerun, breaking FK references from paragraph_embeddings.url_enrichment_id. uuid5 is deterministic — same URL always produces same enrichment ID.",
     "alternatives_rejected": ["Query existing enrichment IDs before insert (extra DB round-trip)", "Remove FK constraint (loses referential integrity)"],
     "outcome": "Deterministic IDs prevent FK mismatch on reruns. Pre-existing bug fixed during migration.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-LOG-1",
+    "timestamp": "2026-03-15",
+    "task": "Structured logging library choice — structlog vs python-json-logger",
+    "approach": "structlog with stdlib ProcessorFormatter bridge. Single configure_logging() call at app startup. JSON renderer for prod, ConsoleRenderer for dev. Context propagation via structlog.contextvars.",
+    "rationale": "structlog's contextvars integration natively propagates bound fields (correlation_id, company_slug) into every log record. stdlib bridge means zero changes to 115 existing logging.getLogger() call sites. Dev/prod renderer switching built-in. Codebase already uses contextvars for LangSmith tracing.",
+    "alternatives_rejected": [
+      "python-json-logger (requires building context propagation with custom logging.Filter by hand, always outputs JSON)",
+      "Pure stdlib dictConfig + JSON formatter + ContextVar filter (more code, less battle-tested, reinventing structlog)"
+    ],
+    "outcome": "22 new tests, 2 new files, 13 modified files. All 1063 API tests passing with zero regressions. Codex-reviewed (6 findings incorporated).",
     "reversible": true,
     "approved_by": "Aryan"
   }

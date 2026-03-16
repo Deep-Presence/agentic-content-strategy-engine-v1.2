@@ -1,7 +1,7 @@
 {
-  "sprint": "pgvector-migration-v16",
-  "sprint_goal": "ChromaDB→pgvector Migration — Replace ChromaDB with pgvector as primary and only vector store. Full production readiness.",
-  "sprint_status": "COMPLETE — 8 phases complete. VectorStoreClient (469 lines), 2 migrations, EmbeddingRepository extensions, all consumers migrated, ChromaDB fully removed, data migration script. Codex-reviewed (11 findings addressed). 429 GA tests passing.",
+  "sprint": "structured-logging-layer2-v18",
+  "sprint_goal": "Structured Logging Layer 2 — Correlation & Context Propagation. X-Request-ID middleware, LangSmith trace linkage, SSE context binding (PB-83), auth failure logging (PB-84), per-step/per-agent context binding (PB-85), run_id binding, async context propagation tests.",
+  "sprint_status": "COMPLETE — 8 phases, 4 new test files, 12 modified files. 48 new tests. Codex-reviewed (6 findings incorporated). 3 backlog items resolved (PB-83, PB-84, PB-85). Zero regressions.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -19,26 +19,26 @@
   "active_branches": ["feat/deployment-prep-sprints"],
   "environment_notes": [
     "Python 3.12", "async-first", "VS Code + Claude Code extension",
-    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, pdfplumber >=0.10, python-docx >=1.0, python-dateutil >=2.9"
+    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, structlog >=24.1"
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/shared_tools/vector_store.py (NEW — pgvector-backed VectorStoreClient, 469 lines)",
-    "core/db/migrations/versions/0016_pgvector_migration.py (NEW — persona_embeddings, company_slug, nullable FKs)",
-    "core/db/migrations/versions/0017_cps_training_tables.py (NEW — CPS training tables)",
-    "core/db/repositories/embedding_repo.py (EXTENDED — 7 new methods)",
-    "core/gap_analysis/persistence.py (MODIFIED — persist_s1 no-op, persist_s5 query-only)",
-    "core/gap_analysis/steps/s5_embed_content.py (MODIFIED — tenant-isolated _embedding_id)",
-    "scripts/migrate_chroma_to_pgvector.py (NEW — one-time data migration script)"
+    "core/shared_tools/structured_logging.py (MODIFIED — added get_context_value + scoped_bind)",
+    "core/shared_tools/tracing.py (MODIFIED — langsmith_trace_id binding)",
+    "api/app.py (MODIFIED — X-Request-ID, try/finally, correlation ID sanitization)",
+    "api/routers/events.py (MODIFIED — SSE context binding)",
+    "api/auth/middleware.py (MODIFIED — auth failure structured logging)",
+    "api/tasks/runner.py (MODIFIED — run_id binding in all 14 runner functions)",
+    "6 pipeline files (MODIFIED — scoped_bind for step_name/agent_name)"
   ],
-  "test_count": 2703,
-  "phases_completed_count": 40,
+  "test_count": 2773,
+  "phases_completed_count": 50,
   "recent_phases": [
-    "pgvector-migration v16 — 8 phases + Codex audit (493 new tests, 198 deleted, 11 findings addressed)",
+    "structured-logging-layer2 v18 — 8 phases (48 new tests, 3 backlog items resolved)",
+    "structured-logging v17 — Phase A (foundation) + Phase B (context propagation) + Codex audit (22 new tests)",
+    "pgvector-migration v16 — 8 phases + Codex audit (493 new tests, 198 deleted)",
     "daily-tracker-db-persistence v15 — 6 phases + Codex audit (392 DT tests, 41 new)",
-    "td-content-integration v1.2.0 — 8 phases (44 new tests)",
-    "research-orchestrator v13 — 7 phases + Codex audit (67 tests)",
-    "site-audit-db-persistence v12 — 8 phases + Codex audit (62 tests, 899 SA total)"
+    "td-content-integration v1.2.0 — 8 phases (44 new tests)"
   ],
   "phases_remaining": [
     "audience-persona Phase E — API Router + Runner (~30 tests)",

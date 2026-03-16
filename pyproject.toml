@@ -39,6 +39,8 @@ dependencies = [
     "pgvector>=0.3",
     # CPS model — Markdown-to-HTML conversion for feature extraction
     "markdown>=3.5.0",
+    # Structured logging (Layer 1 — JSON output + contextvars propagation)
+    "structlog>=24.1",
 ]
 
 [project.optional-dependencies]

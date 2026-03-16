@@ -160,6 +160,8 @@ def create_pipeline_trace(
             ls_client=_get_client(),
         )
         run_tree.post()
+        from core.shared_tools.structured_logging import bind_context
+        bind_context(langsmith_trace_id=str(run_tree.id))
         return run_tree
     except Exception as exc:
         logger.warning("Failed to create LangSmith pipeline trace: %s", exc)
@@ -208,6 +210,8 @@ def create_trace(
             ls_client=_get_client(),
         )
         run_tree.post()
+        from core.shared_tools.structured_logging import bind_context
+        bind_context(langsmith_trace_id=str(run_tree.id))
         return run_tree
     except Exception as exc:
         logger.warning("Failed to create LangSmith trace '%s': %s", name, exc)
@@ -503,6 +507,8 @@ def create_research_trace(
             ls_client=_get_client(),
         )
         run_tree.post()
+        from core.shared_tools.structured_logging import bind_context
+        bind_context(langsmith_trace_id=str(run_tree.id))
         return run_tree
     except Exception as exc:
         logger.warning("Failed to create research KB trace: %s", exc)

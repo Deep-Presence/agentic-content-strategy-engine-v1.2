@@ -72,10 +72,9 @@ from core.topic_discovery.pipeline import (
     run_topic_expansion_pipeline,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
-)
+from core.shared_tools.structured_logging import configure_logging
+
+configure_logging()
 logger = logging.getLogger("run_td")
 
 

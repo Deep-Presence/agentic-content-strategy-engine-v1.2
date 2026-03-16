@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from typing import List, Optional
 
 from core.reddit_hil.graph import build_graph
 from core.models.reddit_hil import RedditMonitorInput
+
+logger = logging.getLogger(__name__)
 
 
 def _split_csv(v: Optional[str]) -> List[str]:
@@ -73,22 +76,19 @@ def main() -> None:
     notified = result.get("notified_ids") or []
     errors = result.get("notify_errors") or []
 
-    print("\n=== Reddit HIL Monitor Summary ===")
-    print(f"Drafts: {len(drafts)}")
-    print(f"Notified IDs: {len(notified)}")
-    if errors:
-        print(f"Notify errors: {len(errors)}")
-        for e in errors:
-            print(f"- {e}")
-
-    # Print a compact JSON summary for scripting.
     summary = {
         "draft_count": len(drafts),
         "notified_ids": notified,
         "notify_errors": errors,
     }
-    print("\nJSON Summary:")
-    print(json.dumps(summary, indent=2))
+    logger.info(
+        "Reddit HIL Monitor complete: drafts=%d notified=%d errors=%d",
+        len(drafts), len(notified), len(errors),
+    )
+    if errors:
+        for e in errors:
+            logger.warning("Notify error: %s", e)
+    logger.info("run_summary: %s", json.dumps(summary, indent=2))
 
 
 if __name__ == "__main__":

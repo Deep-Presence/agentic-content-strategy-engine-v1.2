@@ -3,7 +3,7 @@
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
 > **Stack:** Python 3.12 · LangGraph · FastAPI · Pydantic v2 · LangSmith · LiteLLM
-> **Document Date:** 2026-03-11 (updated: Research Orchestrator KB→AP→VSG DAG)
+> **Document Date:** 2026-03-15 (updated: Structured Logging Foundation — structlog, correlation IDs, context propagation)
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -5351,12 +5351,11 @@ scripts/run_server.py ← API entry point (uvicorn)
 **Impact:** Could break without warning if OpenAI deprecates or changes the responses API.
 **Recommendation:** Add fallback to standard `chat.completions.create()` endpoint.
 
-#### 7. No Structured Logging
-**Severity:** Medium
-**Description:** CLAUDE.md mandates "structured JSON logging with correlation IDs" but this is not fully implemented. Each graph file has its own `_log_event()` function. No central logging config.
-**Location:** `core/config/logging_config.py` — File does not exist.
-**Impact:** No unified log format, no correlation IDs for tracing across pipeline stages, difficult to debug production issues.
-**Recommendation:** Implement `core/config/logging_config.py` with structured JSON logging, correlation IDs, and centralized configuration.
+#### 7. ~~No Structured Logging~~ ✅ RESOLVED (Sprint v17)
+**Severity:** ~~Medium~~ → **Resolved**
+**Description:** Structured logging foundation implemented via `structlog`. Central config in `core/shared_tools/structured_logging.py`. JSON output in prod, colored console in dev. Context propagation via `structlog.contextvars` (correlation_id, user_id, company_slug, task_id, pipeline_name). All 115 existing `logging.getLogger(__name__)` call sites work unchanged via structlog's `ProcessorFormatter` stdlib bridge.
+**Files:** `core/shared_tools/structured_logging.py` (new), `core/config/settings.py` (3 new fields: `log_level`, `log_format`, `log_include_caller`), `api/app.py` (middleware rewrite), `api/tasks/runner.py` (14 functions), 5 scripts, 2 print() eliminations.
+**Tests:** 22 new tests (17 structured logging + 5 middleware).
 
 #### 8. Duplicated Helper Functions
 **Severity:** Low
@@ -5552,7 +5551,7 @@ scripts/run_server.py ← API entry point (uvicorn)
 | 6 | **Reddit HIL Tests** | Only untested module (PRAW mocking, webhook delivery) | Existing codebase |
 | 7 | **DB Integration for New Research Pipelines** | Add PostgreSQL persistence for KB/AP/VSG | SQLAlchemy + Alembic |
 | 8 | **Cloud Storage Backends** | S3/GCS/Supabase Storage implementations | StorageBackend interface |
-| 9 | **Structured Logging** | JSON logging with correlation IDs | logging_config.py |
+| 9 | ~~**Structured Logging**~~ | ✅ **DONE** — structlog foundation, JSON/console modes, correlation IDs, context propagation | `core/shared_tools/structured_logging.py` |
 | 10 | **CI/CD Pipeline** | Automated tests, linting, deployment | Tests + Docker |
 | 11 | **Redis/PG TaskStore** | Replace JSON-file TaskStore for multi-server | FastAPI backend |
 
@@ -5573,15 +5572,16 @@ def create_app() -> FastAPI:
 ```
 
 **Startup (lifespan context manager):**
-1. Initialize `EventBus` (in-memory pub/sub for SSE)
-2. Initialize `TaskStore` (JSON-file-backed persistence + semaphore)
-3. Scan disk for orphan tasks — marks stale "running" tasks as `FAILED_RESTART`
-4. Store shared state in `app.state` (accessed via dependency injection)
+1. **Initialize structured logging** — `configure_logging()` from `core.shared_tools.structured_logging` (structlog + stdlib bridge, JSON or console mode based on `LOG_FORMAT` env var)
+2. Initialize `EventBus` (in-memory pub/sub for SSE)
+3. Initialize `TaskStore` (JSON-file-backed persistence + semaphore)
+4. Scan disk for orphan tasks — marks stale "running" tasks as `FAILED_RESTART`
+5. Store shared state in `app.state` (accessed via dependency injection)
 
 **Middleware (applied in order — FastAPI adds in reverse, so last-added = outermost):**
 1. `CORSMiddleware` — outermost. Handles OPTIONS preflight before auth. Configurable origins (default: `localhost:3000`, `localhost:3001`), credentials enabled.
 2. `AuthMiddleware` — **pure ASGI middleware** (not BaseHTTPMiddleware — safe for SSE streaming, Codex W1). **Default-deny** posture: blocks unauthenticated requests to protected routes with 401 JSON. Reads `Authorization: Bearer {token}` header (or `?stream_token=` query param for SSE). If valid, injects `scope["state"]["user_id"]` and `scope["state"]["company_slug"]`. Public path whitelist: `/health`, `/readiness`, `/docs`, `/redoc`, `/openapi.json`, `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/join`.
-3. `RequestLoggingMiddleware` — logs `METHOD PATH STATUS_CODE DURATION_MS`. Returns early for `/events` paths (SSE safe).
+3. `RequestLoggingMiddleware` — Structured request logging via `structlog.contextvars`. Generates/extracts `X-Correlation-ID` header, binds context (correlation_id, method, path, user_id, company_slug), logs `"request_completed"` with `status_code` and `duration_ms` as structured fields. Returns early for `/events` paths (SSE safe). Clears context after each request.
 
 **Exception Handlers:**
 | Exception | HTTP Status | Error Code |
