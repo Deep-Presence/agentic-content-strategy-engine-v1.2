@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Backgrounds — Slate-tinted grays */
+    --bg: #F8F9FA;
+    --surface: #FBFCFD;
+    --surface-raised: #FFFFFF;
+    --surface-overlay: #FBFCFD;
+
+    /* Borders — visible, Slate-based */
+    --border: #ECEEF0;
+    --border-subtle: #F1F3F5;
+    --border-strong: #D7DBDF;
+    --border-control: #D7DBDF;
+
+    /* Text — Slate.12 → Slate.9 */
+    --text-primary: #11181C;
+    --text-secondary: #687076;
+    --text-tertiary: #889096;
+    --text-on-accent: #FFFFFF;
+
+    /* Accent — Deep Presence Teal */
+    --accent: #5BA4C4;
+    --accent-hover: #4A93B3;
+    --accent-subtle: rgba(91,164,196,0.08);
+
+    /* Semantic */
+    --success: #34B27B;
+    --success-subtle: rgba(52,178,123,0.08);
+    --warning: #DC7B18;
+    --warning-subtle: rgba(220,123,24,0.08);
+    --error: #E5484D;
+    --error-subtle: rgba(229,72,77,0.06);
+    --info: #5BA4C4;
+    --info-subtle: rgba(91,164,196,0.08);
+
+    /* Brand */
+    --deep-verdigris: #5BA4C4;
+    --signal-amber: #DC7B18;
+    --signal-amber-subtle: rgba(220,123,24,0.1);
+
+    /* Radius */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-xl: 12px;
+    --radius-full: 9999px;
+
+    /* Shadows — minimal */
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 2px 4px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
+    --shadow-lg: 0 4px 8px rgba(0,0,0,0.04), 0 2px 4px rgba(0,0,0,0.06);
+    --shadow-float: 0 8px 30px rgba(0,0,0,0.08), 0 0 0 1px #ECEEF0;
+
+    /* Typography — references next/font CSS variables with fallbacks */
+    --font-display: var(--font-space-grotesk, 'Space Grotesk'), sans-serif;
+    --font-body: var(--font-space-grotesk, 'Space Grotesk'), sans-serif;
+    --font-mono: var(--font-jetbrains-mono, 'JetBrains Mono'), monospace;
+
+    /* Spacing */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+    --space-12: 48px;
+    --space-16: 64px;
+    --space-20: 80px;
+  }
+
+  [data-theme="dark"] {
+    /* Backgrounds — pure neutral grays */
+    --bg: #171717;
+    --surface: #1F1F1F;
+    --surface-raised: #292929;
+    --surface-overlay: #242424;
+
+    /* Borders — pure gray, visible */
+    --border: #2E2E2E;
+    --border-subtle: #242424;
+    --border-strong: #3E3E3E;
+    --border-control: #3E3E3E;
+
+    /* Text */
+    --text-primary: #EDEDED;
+    --text-secondary: #A0A0A0;
+    --text-tertiary: #707070;
+    --text-on-accent: #FFFFFF;
+
+    /* Accent — lighter teal for dark mode */
+    --accent: #6CB8D2;
+    --accent-hover: #7CC8E2;
+    --accent-subtle: rgba(108,184,210,0.1);
+
+    /* Semantic */
+    --success: #3ECF8E;
+    --success-subtle: rgba(62,207,142,0.12);
+    --warning: #FFB224;
+    --warning-subtle: rgba(255,178,36,0.12);
+    --error: #F87171;
+    --error-subtle: rgba(248,113,113,0.12);
+    --info: #6CB8D2;
+    --info-subtle: rgba(108,184,210,0.1);
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.3);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.4);
+    --shadow-float: 0 8px 30px rgba(0,0,0,0.4), 0 0 0 1px #2E2E2E;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  /* Skeleton shimmer animation */
+  @keyframes shimmer {
+    0% { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+  }
+
+  /* Locus logo animations */
+  @keyframes locusDotsIn {
+    0% { opacity: 0; transform: scale(0); transform-origin: center; }
+    100% { opacity: 1; transform: scale(1); transform-origin: center; }
+  }
+
+  @keyframes locusArcDraw {
+    0% { stroke-dashoffset: 120; opacity: 0.2; }
+    10% { opacity: 1; }
+    100% { stroke-dashoffset: 0; opacity: 1; }
+  }
+
+  @keyframes locusPulse {
+    0%, 100% { transform: scale(1); transform-origin: center; }
+    50% { transform: scale(1.2); transform-origin: center; }
+  }
+
+  @keyframes phasePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+}
