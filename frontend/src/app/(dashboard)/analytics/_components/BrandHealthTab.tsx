@@ -1,7 +1,8 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Card, Badge, ScoreGauge } from '@/components/ui';
+import { Card, Badge, ScoreGauge, Skeleton } from '@/components/ui';
+import { useSiteAuditLatest } from '@/lib/hooks/useSiteAudit';
 import {
   ResponsiveContainer,
   RadarChart,
@@ -10,36 +11,9 @@ import {
   PolarRadiusAxis,
   Radar,
 } from 'recharts';
-import rawAudit from '../../../../../data/artifacts/site_audit/lovable/039d53f8-cf4c-43c7-bae9-614ddd2cb472/audit_result.json';
 
-interface RawAuditData {
-  overall_score: number;
-  grade: string;
-  pages_crawled: number;
-  total_findings: number;
-  avg_snippet_readiness: number;
-  pages_with_schema: number;
-  avg_question_heading_ratio: number;
-  dimension_scores: Array<{
-    dimension: string;
-    score: number;
-    weight: number;
-    weighted_score: number;
-    finding_count: number;
-    critical_count: number;
-    high_count: number;
-    medium_count: number;
-    low_count: number;
-  }>;
-  ai_bot_access: Record<string, boolean | number | null>;
-  top_findings: Array<{
-    finding_type: string;
-    dimension: string;
-    severity: string;
-    message: string;
-    recommendation: string;
-    count: number;
-  }>;
+interface BrandHealthTabProps {
+  slug: string;
 }
 
 const DIM_NAMES: Record<string, string> = {
@@ -54,36 +28,55 @@ const BOT_NAMES: Record<string, string> = {
   ccbot_allowed: 'CCBot (Common Crawl)',
 };
 
-export function BrandHealthTab() {
-  const audit = rawAudit as unknown as RawAuditData;
+export function BrandHealthTab({ slug }: BrandHealthTabProps) {
+  const { audit, isLoading } = useSiteAuditLatest(slug);
 
-  const radarData = useMemo(() => audit.dimension_scores.map((d) => ({
-    dimension: DIM_NAMES[d.dimension] || d.dimension,
-    score: Math.round(d.score),
-    fullMark: 100,
-  })), [audit.dimension_scores]);
+  const radarData = useMemo(() => {
+    if (!audit) return [];
+    return audit.dimension_scores.map((d) => ({
+      dimension: DIM_NAMES[d.dimension] || d.dimension,
+      score: Math.round(d.score),
+      fullMark: 100,
+    }));
+  }, [audit]);
+
+  const botEntries = useMemo(() => {
+    if (!audit) return [];
+    const access = audit.ai_bot_access;
+    return Object.entries(BOT_NAMES).map(([key, label]) => ({
+      name: label,
+      allowed: access[key as keyof typeof access] === true,
+    }));
+  }, [audit]);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <Skeleton className="h-[350px] rounded-md" />
+          <Skeleton className="h-[350px] rounded-md" />
+        </div>
+        <Skeleton className="h-[200px] rounded-md" />
+      </div>
+    );
+  }
+
+  if (!audit) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <p className="text-[14px] text-text-secondary mb-2">No site audit data yet</p>
+        <p className="text-[12px] text-text-tertiary">Run a site audit pipeline to see brand health metrics here.</p>
+      </div>
+    );
+  }
 
   const aeoScore = Math.round(audit.avg_snippet_readiness * 10) / 10;
 
-  const botEntries = useMemo(() => Object.entries(BOT_NAMES).map(([key, label]) => ({
-    name: label,
-    allowed: audit.ai_bot_access[key] === true,
-  })), [audit.ai_bot_access]);
-
-  // AEO readiness breakdown
   const aeoBreakdown = [
     { label: 'Snippet Readiness', value: `${aeoScore}%`, pct: aeoScore, target: 70 },
-    { label: 'Structured Data Coverage', value: `${audit.pages_with_schema}/${audit.pages_crawled}`, pct: (audit.pages_with_schema / audit.pages_crawled) * 100, target: 90 },
+    { label: 'Structured Data Coverage', value: `${audit.pages_with_schema}/${audit.pages_crawled}`, pct: (audit.pages_with_schema / Math.max(audit.pages_crawled, 1)) * 100, target: 90 },
     { label: 'Question-Heading Ratio', value: `${(audit.avg_question_heading_ratio * 100).toFixed(1)}%`, pct: audit.avg_question_heading_ratio * 100, target: 30 },
-    { label: 'FAQ Section Rate', value: '34%', pct: 34, target: 50 },
-    { label: 'Average Reading Level', value: 'Grade 8', pct: 75, target: 85 },
   ];
-
-  // Sort findings by severity
-  const sortedFindings = useMemo(() => {
-    const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-    return [...audit.top_findings].sort((a, b) => (order[a.severity] ?? 5) - (order[b.severity] ?? 5));
-  }, [audit.top_findings]);
 
   return (
     <div className="space-y-4">
@@ -138,7 +131,6 @@ export function BrandHealthTab() {
                     backgroundColor: item.pct >= item.target ? 'var(--success)' : item.pct >= item.target * 0.6 ? 'var(--warning)' : 'var(--error)',
                   }}
                 />
-                {/* Target marker */}
                 <div
                   className="absolute top-0 h-[8px] w-[2px] bg-text-tertiary"
                   style={{ left: `${item.target}%` }}
@@ -204,29 +196,24 @@ export function BrandHealthTab() {
             </table>
           </div>
           <div className="mt-3 space-y-1 text-[11px] text-text-secondary">
-            <p>robots.txt: <span className="text-success font-medium">Present</span></p>
-            <p>llms.txt: <span className="text-error font-medium">Missing</span></p>
+            <p>robots.txt: <span className={audit.ai_bot_access.robots_txt_exists ? 'text-success' : 'text-error'} style={{ fontWeight: 500 }}>{audit.ai_bot_access.robots_txt_exists ? 'Present' : 'Missing'}</span></p>
+            <p>llms.txt: <span className={audit.ai_bot_access.has_llms_txt ? 'text-success' : 'text-error'} style={{ fontWeight: 500 }}>{audit.ai_bot_access.has_llms_txt ? 'Present' : 'Missing'}</span></p>
           </div>
         </Card>
       </div>
 
-      {/* Top Findings — severity-sorted cards */}
+      {/* Findings summary */}
       <Card hoverable={false}>
         <h3 className="text-[14px] font-semibold text-text-primary tracking-[-0.01em] mb-3">
-          Top Findings ({audit.total_findings} total)
+          Findings Summary ({audit.total_findings} total)
         </h3>
-        <div className="space-y-2">
-          {sortedFindings.map((f, i) => (
-            <div key={i} className="bg-bg border border-border rounded-md p-2.5 space-y-1">
-              <div className="flex items-center gap-2">
-                <Badge variant={f.severity === 'critical' ? 'error' : f.severity === 'high' ? 'warning' : f.severity === 'medium' ? 'info' : 'neutral'}>
-                  {f.severity}
-                </Badge>
-                <Badge variant="neutral">{DIM_NAMES[f.dimension] || f.dimension}</Badge>
-                <span className="text-[10px] font-mono text-text-tertiary ml-auto">{f.count} pages</span>
-              </div>
-              <p className="text-[12px] text-text-primary">{f.message}</p>
-              <p className="text-[11px] text-text-secondary">{f.recommendation}</p>
+        <div className="flex gap-3 flex-wrap">
+          {Object.entries(audit.findings_by_severity).map(([severity, count]) => (
+            <div key={severity} className="bg-bg border border-border rounded-md p-2.5 flex items-center gap-2">
+              <Badge variant={severity === 'critical' ? 'error' : severity === 'high' ? 'warning' : severity === 'medium' ? 'info' : 'neutral'}>
+                {severity}
+              </Badge>
+              <span className="text-[14px] font-mono font-semibold text-text-primary">{count}</span>
             </div>
           ))}
         </div>

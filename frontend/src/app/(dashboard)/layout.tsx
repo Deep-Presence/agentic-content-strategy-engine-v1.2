@@ -3,8 +3,12 @@
 import { Sidebar } from '@/components/ui/Sidebar';
 import { TopBar } from '@/components/ui/TopBar';
 import { SearchCommand } from '@/components/ui/SearchCommand';
+import { SWRProvider } from '@/lib/api/SWRProvider';
 import { useThemeStore } from '@/stores/theme';
-import { useState, useEffect } from 'react';
+import { useAuthStore } from '@/stores/auth';
+import { useWorkspaceStore } from '@/stores/workspace';
+import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function DashboardLayout({
   children,
@@ -12,8 +16,45 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const { mode } = useThemeStore();
+  const { company, hydrateFromStorage, fetchMe } = useAuthStore();
+  const { setCompany, setProject } = useWorkspaceStore();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+  const router = useRouter();
+  const checkedRef = useRef(false);
 
+  // Auth guard: validate token on mount
+  useEffect(() => {
+    if (checkedRef.current) return;
+    checkedRef.current = true;
+
+    const checkAuth = async () => {
+      hydrateFromStorage();
+      const storedToken = localStorage.getItem('dp_token');
+      if (!storedToken) {
+        router.replace('/login');
+        return;
+      }
+      const valid = await fetchMe();
+      if (!valid) {
+        router.replace('/login');
+        return;
+      }
+      setAuthChecked(true);
+    };
+
+    checkAuth();
+  }, [hydrateFromStorage, fetchMe, router]);
+
+  // Sync workspace store with auth company
+  useEffect(() => {
+    if (company) {
+      setCompany(company.name);
+      setProject(company.domain);
+    }
+  }, [company, setCompany, setProject]);
+
+  // Theme sync
   useEffect(() => {
     if (mode === 'dark') {
       document.documentElement.setAttribute('data-theme', 'dark');
@@ -22,6 +63,7 @@ export default function DashboardLayout({
     }
   }, [mode]);
 
+  // Cmd+K shortcut
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
@@ -33,13 +75,27 @@ export default function DashboardLayout({
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  // Show loading state while checking auth
+  if (!authChecked) {
+    return (
+      <div className="flex h-screen bg-bg items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          <span className="text-[13px] text-text-secondary">Loading...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen bg-bg overflow-hidden">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <TopBar onSearchClick={() => setSearchOpen(true)} />
         <main className="flex-1 overflow-y-auto p-4">
-          {children}
+          <SWRProvider>
+            {children}
+          </SWRProvider>
         </main>
       </div>
       <SearchCommand

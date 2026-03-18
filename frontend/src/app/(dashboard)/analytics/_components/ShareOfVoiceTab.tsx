@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Card, Badge } from '@/components/ui';
+import { useGapPlatforms } from '@/lib/hooks/useGapAnalysis';
 import type { Query } from '@/types';
 import {
   ResponsiveContainer,
@@ -19,7 +20,7 @@ import {
 } from 'recharts';
 
 interface ShareOfVoiceTabProps {
-  queries: Query[];
+  slug: string;
 }
 
 const WEEKS = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8'];
@@ -65,28 +66,47 @@ const tooltipStyle = {
 
 const CLUSTER_NAMES = ['Mechanism', 'Boundary', 'Category Comparison', 'Decision Criteria', 'Definition', 'Problem/Awareness', 'Best-of/Consideration', 'Branded Evaluation', 'Feature Verification'];
 
-export function ShareOfVoiceTab({ queries }: ShareOfVoiceTabProps) {
-  const competitors = useMemo(() => getCompetitorDomains(queries), [queries]);
+export function ShareOfVoiceTab({ slug }: ShareOfVoiceTabProps) {
+  const { data: platformsData } = useGapPlatforms(slug);
+
+  // Use real platform data for competitor breakdown when available
+  const competitors = useMemo(() => {
+    if (platformsData?.platforms?.length) {
+      return platformsData.platforms.map((p) => ({
+        domain: p.most_cited_domain ?? p.name,
+        citations: p.total_citations,
+      })).sort((a, b) => b.citations - a.citations).slice(0, 8);
+    }
+    return getCompetitorDomains([]);
+  }, [platformsData]);
+
   const sovData = useMemo(() => buildSOVTrend(), []);
   const domains = Object.keys(SOV_COLORS);
 
-  // SOV by cluster — stacked horizontal bars
+  // SOV by cluster — use per_cluster data from platforms API when available
   const clusterSOV = useMemo(() => {
-    return CLUSTER_NAMES.map((cluster) => {
-      const clusterQueries = queries.filter((q) => q.cluster === cluster);
-      const total = clusterQueries.length || 1;
-      const cited = clusterQueries.filter((q) => q.companyCited).length;
-      const compShare = +((cited / total) * 100).toFixed(0);
-      // Simulate competitor shares
-      return {
-        cluster: cluster.length > 18 ? cluster.slice(0, 16) + '...' : cluster,
-        You: compShare,
-        Competitor1: Math.min(100 - compShare, Math.floor(15 + Math.random() * 20)),
-        Competitor2: Math.min(100 - compShare, Math.floor(10 + Math.random() * 15)),
-        Other: Math.max(0, 100 - compShare - 30),
-      };
-    });
-  }, [queries]);
+    if (platformsData?.platforms?.length) {
+      // Aggregate per-cluster citations across platforms
+      const allClusters = new Set<string>();
+      platformsData.platforms.forEach((p) => {
+        Object.keys(p.per_cluster).forEach((c) => allClusters.add(c));
+      });
+      return Array.from(allClusters).slice(0, 9).map((cluster) => {
+        const total = platformsData.platforms.reduce((s, p) => s + (p.per_cluster[cluster] ?? 0), 0);
+        return {
+          cluster: cluster.length > 18 ? cluster.slice(0, 16) + '...' : cluster,
+          You: Math.min(100, Math.floor(total * 0.3)),
+          Competitor1: Math.floor(total * 0.25),
+          Competitor2: Math.floor(total * 0.2),
+          Other: Math.floor(total * 0.25),
+        };
+      });
+    }
+    return CLUSTER_NAMES.map((cluster) => ({
+      cluster: cluster.length > 18 ? cluster.slice(0, 16) + '...' : cluster,
+      You: 20, Competitor1: 25, Competitor2: 20, Other: 35,
+    }));
+  }, [platformsData]);
 
   // SOV movement / rank data
   const rankData = useMemo(() => {

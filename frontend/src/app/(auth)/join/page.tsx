@@ -4,12 +4,13 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input, Badge } from '@/components/ui';
 import Link from 'next/link';
+import { useAuthStore } from '@/stores/auth';
 
 export default function JoinPage() {
   const router = useRouter();
+  const { join, checkOnboardingNeeded, isLoading, error, clearError } = useAuthStore();
   const [step, setStep] = useState<'code' | 'details'>('code');
   const [inviteCode, setInviteCode] = useState('');
-  const [companyName, setCompanyName] = useState('');
   const [form, setForm] = useState({ fullName: '', email: '', password: '' });
 
   const update = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -17,13 +18,29 @@ export default function JoinPage() {
 
   const handleVerify = (e: React.FormEvent) => {
     e.preventDefault();
-    setCompanyName('Lovable');
+    // Move to details step — the actual invite validation happens on join
     setStep('details');
   };
 
-  const handleJoin = (e: React.FormEvent) => {
+  const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
-    router.push('/');
+    clearError();
+    const nameParts = form.fullName.trim().split(/\s+/);
+    const firstName = nameParts[0] || '';
+    const lastName = nameParts.slice(1).join(' ') || '';
+    try {
+      await join({
+        invite_code: inviteCode,
+        first_name: firstName,
+        last_name: lastName,
+        email: form.email,
+        password: form.password,
+      });
+      const needsOnboarding = await checkOnboardingNeeded();
+      router.push(needsOnboarding ? '/onboarding' : '/');
+    } catch {
+      // error is set in the store
+    }
   };
 
   return (
@@ -34,6 +51,12 @@ export default function JoinPage() {
       <p className="text-[14px] text-text-secondary mb-8 leading-[1.6]">
         Enter your invite code to join an existing team.
       </p>
+
+      {error && (
+        <div className="bg-error/10 border border-error/30 text-error text-[13px] rounded-md px-3 py-2 mb-4">
+          {error}
+        </div>
+      )}
 
       {step === 'code' && (
         <form onSubmit={handleVerify} className="space-y-4">
@@ -60,8 +83,8 @@ export default function JoinPage() {
         <form onSubmit={handleJoin} className="space-y-4">
           <div className="bg-accent-subtle border border-accent rounded-md p-3 mb-1">
             <div className="flex items-center gap-2">
-              <span className="text-[13px] text-text-primary font-medium">Joining:</span>
-              <Badge variant="info">{companyName}</Badge>
+              <span className="text-[13px] text-text-primary font-medium">Invite code:</span>
+              <Badge variant="info">{inviteCode}</Badge>
             </div>
           </div>
           <div>
@@ -83,7 +106,7 @@ export default function JoinPage() {
             </label>
             <Input
               type="email"
-              placeholder="jane@lovable.dev"
+              placeholder="jane@company.com"
               value={form.email}
               onChange={update('email')}
               className="w-full h-[36px] text-[14px] px-3"
@@ -104,8 +127,13 @@ export default function JoinPage() {
               minLength={8}
             />
           </div>
-          <Button variant="primary" className="w-full mt-4 h-[36px] text-[14px]" type="submit">
-            Join Team
+          <Button
+            variant="primary"
+            className="w-full mt-4 h-[36px] text-[14px]"
+            type="submit"
+            disabled={isLoading}
+          >
+            {isLoading ? 'Joining...' : 'Join Team'}
           </Button>
         </form>
       )}

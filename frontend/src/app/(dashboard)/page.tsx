@@ -1,11 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { EmptyState } from '@/components/ui';
+import { EmptyState, Skeleton } from '@/components/ui';
 import { ActiveTasks } from './_components/home/ActiveTasks';
 import { HITLReviews } from './_components/home/HITLReviews';
 import { RecentActivity } from './_components/home/RecentActivity';
+import { useAuthStore } from '@/stores/auth';
+import { useApiQuery } from '@/lib/hooks/useApiQuery';
+import { GAP_DATA, CONTENT_DATA, SITE_AUDIT, TASKS } from '@/lib/api/endpoints';
 
 function getGreeting(): string {
   const hour = new Date().getHours();
@@ -23,18 +26,125 @@ function formatDate(): string {
   });
 }
 
-const KPI_DATA = [
-  { label: 'Published', value: '7', delta: '+2 this week', deltaType: 'positive' as const },
-  { label: 'Cited Queries', value: '8', delta: '4 platforms', deltaType: 'neutral' as const },
-  { label: 'Total Citations', value: '1,816', delta: '+142', deltaType: 'positive' as const },
-  { label: 'SOV', value: '12.4%', delta: '+1.8pp', deltaType: 'positive' as const },
-  { label: 'Pipeline Value', value: '$284K', delta: '3 briefs active', deltaType: 'neutral' as const },
-  { label: 'AEO Score', value: '38.7', delta: '/100', deltaType: 'neutral' as const },
-];
+interface KPI {
+  label: string;
+  value: string;
+  delta: string;
+  deltaType: 'positive' | 'negative' | 'neutral';
+}
 
 export default function HomePage() {
   const router = useRouter();
-  const [hasData] = useState(true);
+  const user = useAuthStore((s) => s.user);
+  const company = useAuthStore((s) => s.company);
+  const slug = company?.slug;
+
+  const { data: gapData, isLoading: gapLoading } = useApiQuery<{
+    total_queries: number;
+    total_citations: number;
+    spa_score: { t_stat: number };
+    average_gap: number;
+  }>(slug ? GAP_DATA.summary(slug) : null);
+
+  const { data: briefsData, isLoading: briefsLoading } = useApiQuery<{
+    briefs: { status: string }[];
+    total: number;
+  }>(slug ? CONTENT_DATA.briefs(slug) : null);
+
+  const { data: auditsData, isLoading: auditsLoading } = useApiQuery<
+    { id: string; result?: { overall_score?: number } }[]
+  >(slug ? SITE_AUDIT.audits(slug) : null);
+
+  const { data: tasksData, isLoading: tasksLoading } = useApiQuery<
+    { task_id: string }[]
+  >(`${TASKS.list}?status=running`);
+
+  const loading = gapLoading || briefsLoading || auditsLoading || tasksLoading;
+
+  const hasData = !!(
+    gapData ||
+    (briefsData && briefsData.total > 0) ||
+    (auditsData && Array.isArray(auditsData) && auditsData.length > 0)
+  );
+
+  const kpis = useMemo<KPI[]>(() => {
+    if (!hasData) return [];
+
+    const publishedCount = briefsData?.briefs?.filter((b) => b.status === 'published').length ?? 0;
+    const totalQueries = gapData?.total_queries ?? 0;
+    const totalCitations = gapData?.total_citations ?? 0;
+    const activeTaskCount = Array.isArray(tasksData) ? tasksData.length : 0;
+
+    const result: KPI[] = [
+      {
+        label: 'Published',
+        value: String(publishedCount),
+        delta: briefsData ? `${briefsData.total} total briefs` : '',
+        deltaType: 'neutral',
+      },
+      {
+        label: 'Queries Tracked',
+        value: totalQueries.toLocaleString(),
+        delta: gapData ? `${gapData.spa_score?.t_stat?.toFixed(1) ?? '—'} SPA` : '',
+        deltaType: 'neutral',
+      },
+      {
+        label: 'Total Citations',
+        value: totalCitations.toLocaleString(),
+        delta: '',
+        deltaType: 'neutral',
+      },
+      {
+        label: 'Avg Gap',
+        value: gapData?.average_gap?.toFixed(2) ?? '—',
+        delta: '',
+        deltaType: 'neutral',
+      },
+      {
+        label: 'Active Tasks',
+        value: String(activeTaskCount),
+        delta: activeTaskCount > 0 ? 'running' : 'idle',
+        deltaType: activeTaskCount > 0 ? 'positive' : 'neutral',
+      },
+      {
+        label: 'AEO Score',
+        value: '—',
+        delta: '/100',
+        deltaType: 'neutral',
+      },
+    ];
+
+    // Try to get AEO score from latest audit
+    if (auditsData && Array.isArray(auditsData) && auditsData.length > 0) {
+      const latest = auditsData[0];
+      const score = (latest as Record<string, unknown>).result;
+      if (score && typeof score === 'object' && 'overall_score' in (score as Record<string, unknown>)) {
+        const s = (score as Record<string, unknown>).overall_score;
+        if (typeof s === 'number') {
+          result[5] = { label: 'AEO Score', value: s.toFixed(1), delta: '/100', deltaType: 'neutral' };
+        }
+      }
+    }
+
+    return result;
+  }, [gapData, briefsData, auditsData, tasksData, hasData]);
+
+  if (loading) {
+    return (
+      <div className="max-w-[960px] mx-auto space-y-6">
+        <Skeleton className="h-[60px] w-[300px]" />
+        <div className="grid grid-cols-6 gap-[1px]">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-[80px]" />
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-6">
+          <Skeleton className="h-[300px]" />
+          <Skeleton className="h-[300px]" />
+        </div>
+      </div>
+    );
+  }
 
   if (!hasData) {
     return (
@@ -42,50 +152,54 @@ export default function HomePage() {
         title="Welcome to Deep Presence"
         description="Start by analyzing your brand to see how you're cited across AI platforms."
         action={{
-          label: 'Begin Analysis →',
+          label: 'Begin Analysis',
           onClick: () => router.push('/onboarding'),
         }}
       />
     );
   }
 
+  const firstName = user?.first_name ?? '';
+
   return (
     <div className="max-w-[960px] mx-auto space-y-6">
       {/* Welcome header */}
       <div>
         <h1 className="font-display text-[24px] font-semibold tracking-[-0.02em] text-text-primary mb-0.5">
-          {getGreeting()}, Shank
+          {getGreeting()}{firstName ? `, ${firstName}` : ''}
         </h1>
         <p className="text-[14px] text-text-secondary leading-[1.6]">
           {formatDate()}
         </p>
       </div>
 
-      {/* Outcomes Strip — 6 KPIs */}
-      <div
-        className="grid gap-[1px] bg-border rounded-sm overflow-hidden"
-        style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}
-      >
-        {KPI_DATA.map((kpi) => (
-          <div key={kpi.label} className="bg-bg px-3 py-3">
-            <p className="text-[11px] font-medium uppercase tracking-[0.06em] text-text-tertiary leading-[1.4]">
-              {kpi.label}
-            </p>
-            <div className="flex items-baseline gap-1.5 mt-1">
-              <p className="font-display text-[28px] font-semibold tracking-[-0.02em] text-text-primary">
-                {kpi.value}
+      {/* Outcomes Strip — KPIs */}
+      {kpis.length > 0 && (
+        <div
+          className="grid gap-[1px] bg-border rounded-sm overflow-hidden"
+          style={{ gridTemplateColumns: `repeat(${kpis.length}, 1fr)` }}
+        >
+          {kpis.map((kpi) => (
+            <div key={kpi.label} className="bg-bg px-3 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-[0.06em] text-text-tertiary leading-[1.4]">
+                {kpi.label}
               </p>
-              {kpi.delta && (
-                <p className={`text-[11px] font-medium ${
-                  kpi.deltaType === 'positive' ? 'text-success' : 'text-text-tertiary'
-                }`}>
-                  {kpi.delta}
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <p className="font-display text-[28px] font-semibold tracking-[-0.02em] text-text-primary">
+                  {kpi.value}
                 </p>
-              )}
+                {kpi.delta && (
+                  <p className={`text-[11px] font-medium ${
+                    kpi.deltaType === 'positive' ? 'text-success' : 'text-text-tertiary'
+                  }`}>
+                    {kpi.delta}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Two-column layout for tasks + reviews */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

@@ -7,8 +7,17 @@ import { ScreenInput } from './_components/ScreenInput';
 import { ScreenBriefing } from './_components/ScreenBriefing';
 import { ScreenPipeline } from './_components/ScreenPipeline';
 import { ScreenComplete } from './_components/ScreenComplete';
+import { apiPost } from '@/lib/api/client';
+import { ONBOARDING } from '@/lib/api/endpoints';
 
 type Screen = 'input' | 'briefing' | 'pipeline' | 'complete';
+
+export interface OnboardingFormData {
+  companyName: string;
+  websiteUrl: string;
+  industry: string;
+  audience: string;
+}
 
 const pageVariants = {
   initial: { opacity: 0, y: 20 },
@@ -18,6 +27,47 @@ const pageVariants = {
 
 export default function OnboardingPage() {
   const [screen, setScreen] = useState<Screen>('input');
+  const [formData, setFormData] = useState<OnboardingFormData | null>(null);
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+
+  const handleInputNext = (data: OnboardingFormData) => {
+    setFormData(data);
+    setScreen('briefing');
+  };
+
+  const handleStartAnalysis = async () => {
+    if (!formData) return;
+    setLaunchError(null);
+
+    try {
+      // Build seed_urls from websiteUrl
+      const seedUrls: string[] = [];
+      if (formData.websiteUrl) {
+        let url = formData.websiteUrl;
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+          url = `https://${url}`;
+        }
+        seedUrls.push(url);
+      }
+
+      // Build seed_personas from audience text (split by newline or comma)
+      const seedPersonas = formData.audience
+        ? formData.audience.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean)
+        : [];
+
+      const res = await apiPost<{ run_id: string }>(ONBOARDING.start, {
+        industry: formData.industry || undefined,
+        seed_urls: seedUrls,
+        seed_personas: seedPersonas,
+      });
+
+      setTaskId(res.run_id);
+      setScreen('pipeline');
+    } catch (err) {
+      setLaunchError(err instanceof Error ? err.message : 'Failed to start analysis');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-bg flex flex-col">
@@ -38,7 +88,7 @@ export default function OnboardingPage() {
               exit="exit"
               transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             >
-              <ScreenInput onNext={() => setScreen('briefing')} />
+              <ScreenInput onNext={handleInputNext} />
             </motion.div>
           )}
 
@@ -51,7 +101,12 @@ export default function OnboardingPage() {
               exit="exit"
               transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             >
-              <ScreenBriefing onStart={() => setScreen('pipeline')} />
+              <ScreenBriefing onStart={handleStartAnalysis} />
+              {launchError && (
+                <div className="mt-4 bg-error/10 border border-error/30 text-error text-[13px] rounded-md px-3 py-2">
+                  {launchError}
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -64,7 +119,10 @@ export default function OnboardingPage() {
               exit="exit"
               transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             >
-              <ScreenPipeline onComplete={() => setScreen('complete')} />
+              <ScreenPipeline
+                taskId={taskId}
+                onComplete={() => setScreen('complete')}
+              />
             </motion.div>
           )}
 

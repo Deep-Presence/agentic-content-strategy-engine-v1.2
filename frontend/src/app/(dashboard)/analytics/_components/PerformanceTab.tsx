@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { Card, Badge, Sparkline } from '@/components/ui';
-import type { Query, Cluster } from '@/types';
+import { useGapSummary, useGapClusters, useGapPlatforms } from '@/lib/hooks/useGapAnalysis';
+import type { Query } from '@/types';
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -19,8 +20,7 @@ import {
 } from 'recharts';
 
 interface PerformanceTabProps {
-  queries: Query[];
-  clusters: Cluster[];
+  slug: string;
 }
 
 /* ── Demo data generators (seeded from real report data) ────────── */
@@ -204,7 +204,11 @@ function InlineSelect({ value, onChange, options }: { value: string; onChange: (
 
 /* ── Component ──────────────────────────────────────────────────── */
 
-export function PerformanceTab({ queries, clusters }: PerformanceTabProps) {
+export function PerformanceTab({ slug }: PerformanceTabProps) {
+  const { data: summary } = useGapSummary(slug);
+  const { data: clustersData } = useGapClusters(slug);
+  const { data: platformsData } = useGapPlatforms(slug);
+
   const [showByPlatform, setShowByPlatform] = useState(false);
   const [clusterFilter, setClusterFilter] = useState('all');
   const [visibleBots, setVisibleBots] = useState<Record<string, boolean>>({
@@ -213,19 +217,58 @@ export function PerformanceTab({ queries, clusters }: PerformanceTabProps) {
 
   const citationData = useMemo(() => buildCitationMomentum(showByPlatform), [showByPlatform]);
   const sovData = useMemo(() => buildSOVTrend(), []);
-  const platformBreakdown = useMemo(() => buildPlatformBreakdown(queries), [queries]);
+
+  // Use real platform data from API when available, fall back to demo
+  const platformBreakdown = useMemo(() => {
+    if (platformsData?.platforms?.length) {
+      const platformColors: Record<string, string> = {
+        perplexity: '#DC7B18', openai: '#10A37F', gemini: '#886FBF',
+        claude: 'var(--accent)', google_ai_overview: '#4285F4',
+      };
+      return platformsData.platforms.map((p) => ({
+        platform: p.name,
+        cited: p.total_citations,
+        total: summary?.total_queries ?? 0,
+        rate: summary?.total_queries ? +((p.total_citations / summary.total_queries) * 100).toFixed(1) : 0,
+        color: platformColors[p.name] ?? 'var(--accent)',
+      })).sort((a, b) => b.rate - a.rate);
+    }
+    return buildPlatformBreakdown([]);
+  }, [platformsData, summary]);
+
   const accuracyData = useMemo(() => buildCitationAccuracy(), []);
   const crawlData = useMemo(() => buildCrawlActivity(), []);
   const brandLiftData = useMemo(() => buildBrandSearchLift(), []);
-  const publishedContent = useMemo(() => {
-    const filtered = clusterFilter === 'all' ? queries : queries.filter((q) => q.cluster === clusterFilter);
-    return buildPublishedContent(filtered);
-  }, [queries, clusterFilter]);
 
-  const clusterOptions = useMemo(() => [
-    { value: 'all', label: 'All Clusters' },
-    ...clusters.map((c) => ({ value: c.name, label: c.name })),
-  ], [clusters]);
+  // Use cluster performance data from API for the published content table
+  const publishedContent = useMemo(() => {
+    if (summary?.cluster_performance?.length) {
+      return summary.cluster_performance
+        .filter((cp) => clusterFilter === 'all' || cp.cluster_name === clusterFilter)
+        .slice(0, 7)
+        .map((cp, i) => ({
+          id: i + 1,
+          title: cp.cluster_name,
+          cluster: cp.cluster_name,
+          citations: cp.citation_count,
+          cpsScore: +(cp.avg_citation_sim).toFixed(3),
+          referralSessions: Math.floor(cp.avg_citation_sim * 200),
+          velocity: +(cp.avg_gap * 10).toFixed(1),
+          trend: [3, 5, 4, 7, 8, 6, 9, 11],
+          status: 'published',
+          date: '—',
+        }));
+    }
+    return buildPublishedContent([]);
+  }, [summary, clusterFilter]);
+
+  const clusterOptions = useMemo(() => {
+    const clusters = clustersData?.clusters ?? [];
+    return [
+      { value: 'all', label: 'All Clusters' },
+      ...clusters.map((c) => ({ value: c.cluster_name, label: c.cluster_name })),
+    ];
+  }, [clustersData]);
 
   const tooltipStyle = {
     backgroundColor: 'var(--surface)',

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Input } from '@/components/ui';
+import { useAuthStore } from '@/stores/auth';
 
 const INDUSTRIES = [
   'SaaS / Software', 'Developer Tools', 'FinTech', 'HealthTech',
@@ -13,8 +14,9 @@ interface ScreenInputProps {
 }
 
 export function ScreenInput({ onNext }: ScreenInputProps) {
-  const [companyName, setCompanyName] = useState('Lovable');
-  const [websiteUrl, setWebsiteUrl] = useState('');
+  const company = useAuthStore((s) => s.company);
+  const [companyName, setCompanyName] = useState(company?.name ?? '');
+  const [websiteUrl, setWebsiteUrl] = useState(company?.domain ? `https://${company.domain}` : '');
   const [industry, setIndustry] = useState('');
   const [audience, setAudience] = useState('');
 
@@ -50,7 +52,7 @@ export function ScreenInput({ onNext }: ScreenInputProps) {
           </label>
           <Input
             type="url"
-            placeholder="https://lovable.dev"
+            placeholder="https://example.com"
             value={websiteUrl}
             onChange={(e) => setWebsiteUrl(e.target.value)}
             className="w-full h-[36px] text-[14px] px-3"

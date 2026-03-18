@@ -13,6 +13,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid as _uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -26,6 +28,85 @@ from core.models.onboarding import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Child pipeline_run record helpers
+# ---------------------------------------------------------------------------
+
+
+async def _create_child_pipeline_run(
+    session_factory: Optional[Any],
+    parent_run_id: Optional[Any],
+    company_id: Optional[Any],
+    effective_slug: str,
+    pipeline_type_str: str,
+) -> Optional[_uuid.UUID]:
+    """Create a pipeline_runs record for a sub-pipeline within onboarding.
+
+    Returns a fresh run_id for the child, or None if DB not available.
+    Uses parent_run_id to link the child back to the onboarding parent.
+    """
+    if not session_factory or not company_id:
+        return None
+    try:
+        from core.db.models.pipelines import PipelineRunModel, PipelineStatus
+        from core.db.enums import PipelineType
+
+        child_run_id = _uuid.uuid4()
+        async with session_factory() as session:
+            run = PipelineRunModel(
+                id=child_run_id,
+                company_id=company_id,
+                effective_slug=effective_slug,
+                pipeline_type=PipelineType(pipeline_type_str),
+                parent_run_id=parent_run_id,
+                status=PipelineStatus.running,
+                started_at=datetime.now(timezone.utc),
+            )
+            session.add(run)
+            await session.commit()
+        return child_run_id
+    except Exception:
+        logger.warning(
+            "Failed to create child pipeline_run for %s", pipeline_type_str,
+            exc_info=True,
+        )
+        return None
+
+
+async def _complete_child_pipeline_run(
+    session_factory: Optional[Any],
+    child_run_id: Optional[_uuid.UUID],
+    *,
+    error: Optional[str] = None,
+    summary: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Mark a child pipeline_run as completed or failed."""
+    if not session_factory or not child_run_id:
+        return
+    try:
+        from core.db.models.pipelines import PipelineRunModel, PipelineStatus
+
+        async with session_factory() as session:
+            run = await session.get(PipelineRunModel, child_run_id)
+            if run:
+                run.status = PipelineStatus.failed if error else PipelineStatus.completed
+                run.completed_at = datetime.now(timezone.utc)
+                if run.started_at:
+                    run.duration_seconds = int(
+                        (run.completed_at - run.started_at).total_seconds()
+                    )
+                if error:
+                    run.error_message = str(error)[:1000]
+                if summary:
+                    run.summary = summary
+                await session.commit()
+    except Exception:
+        logger.warning(
+            "Failed to complete child pipeline_run %s", child_run_id,
+            exc_info=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -249,32 +330,43 @@ async def _run_site_audit_stage(
     event_bus: Optional[Any],
     task_id: Optional[str],
     root: Path,
+    session_factory: Optional[Any] = None,
+    parent_run_id: Optional[Any] = None,
+    company_id: Optional[Any] = None,
 ) -> OnboardingSubResult:
     """Run site audit. Returns result (never raises)."""
     from core.site_audit.pipeline import run_site_audit
+
+    child_run_id = await _create_child_pipeline_run(
+        session_factory, parent_run_id, company_id, slug, "site_audit",
+    )
 
     start = time.time()
     try:
         sa_input = _build_sa_input(input_data, slug)
         progress_fn = _make_sa_progress_bridge(event_bus, task_id)
-        output_dir = root / "site_audit" / slug
         result = await run_site_audit(
             sa_input,
             on_progress=progress_fn,
-            output_dir=output_dir,
         )
         elapsed = time.time() - start
 
         # Site audit returns status="failed" instead of raising
         if getattr(result, "status", None) == "failed":
+            err = getattr(result, "error_message", "Site audit failed")
+            await _complete_child_pipeline_run(session_factory, child_run_id, error=err)
             return OnboardingSubResult(
                 pipeline="site_audit",
                 phase="phase_a",
                 status="failed",
                 execution_time_s=elapsed,
-                error=getattr(result, "error_message", "Site audit failed"),
+                error=err,
             )
 
+        await _complete_child_pipeline_run(session_factory, child_run_id, summary={
+            "audit_id": getattr(result, "audit_id", ""),
+            "pages_crawled": getattr(result, "pages_crawled", 0),
+        })
         return OnboardingSubResult(
             pipeline="site_audit",
             phase="phase_a",
@@ -288,6 +380,7 @@ async def _run_site_audit_stage(
     except Exception as exc:
         elapsed = time.time() - start
         logger.exception("Onboarding: site_audit failed")
+        await _complete_child_pipeline_run(session_factory, child_run_id, error=str(exc))
         return OnboardingSubResult(
             pipeline="site_audit",
             phase="phase_a",
@@ -306,35 +399,47 @@ async def _run_kb_stage(
     event_bus: Optional[Any],
     root: Path,
     session_factory: Optional[Any],
-    run_id: Optional[Any],
+    parent_run_id: Optional[Any],
     company_id: Optional[Any],
 ) -> Tuple[OnboardingSubResult, Any]:
     """Run KB pipeline. Returns (result, raw_output)."""
     from core.research.knowledge_base.pipeline import run_knowledge_base_pipeline
 
+    child_run_id = await _create_child_pipeline_run(
+        session_factory, parent_run_id, company_id, slug, "knowledge_base",
+    )
+
     start = time.time()
-    kb_input = _build_kb_input(input_data, slug, constraints)
-    output = await run_knowledge_base_pipeline(
-        kb_input,
-        task_id=task_id,
-        task_store=task_store,
-        event_bus=event_bus,
-        artifacts_root=root,
-        session_factory=session_factory,
-        run_id=run_id,
-        company_id=company_id,
-    )
-    elapsed = time.time() - start
-    result = OnboardingSubResult(
-        pipeline="kb",
-        phase="phase_a",
-        status="completed",
-        execution_time_s=elapsed,
-        output_summary={
+    try:
+        kb_input = _build_kb_input(input_data, slug, constraints)
+        output = await run_knowledge_base_pipeline(
+            kb_input,
+            task_id=task_id,
+            task_store=task_store,
+            event_bus=event_bus,
+            artifacts_root=root,
+            session_factory=session_factory,
+            run_id=child_run_id or parent_run_id,
+            company_id=company_id,
+        )
+        elapsed = time.time() - start
+        await _complete_child_pipeline_run(session_factory, child_run_id, summary={
             "company_profile_path": getattr(output, "company_profile_path", ""),
-        },
-    )
-    return result, output
+        })
+        result = OnboardingSubResult(
+            pipeline="kb",
+            phase="phase_a",
+            status="completed",
+            execution_time_s=elapsed,
+            output_summary={
+                "company_profile_path": getattr(output, "company_profile_path", ""),
+            },
+        )
+        return result, output
+    except Exception as exc:
+        elapsed = time.time() - start
+        await _complete_child_pipeline_run(session_factory, child_run_id, error=str(exc))
+        raise
 
 
 async def _run_ap_stage(
@@ -346,36 +451,49 @@ async def _run_ap_stage(
     event_bus: Optional[Any],
     root: Path,
     session_factory: Optional[Any],
-    run_id: Optional[Any],
+    parent_run_id: Optional[Any],
     company_id: Optional[Any],
 ) -> Tuple[OnboardingSubResult, Any]:
     """Run AP pipeline with seed_personas. Returns (result, raw_output)."""
     from core.research.audience_persona.pipeline import run_audience_persona_pipeline
 
-    start = time.time()
-    ap_input = _build_ap_input(input_data, slug, constraints)
-    output = await run_audience_persona_pipeline(
-        ap_input,
-        task_id=task_id,
-        task_store=task_store,
-        event_bus=event_bus,
-        artifacts_root=root,
-        session_factory=session_factory,
-        run_id=run_id,
-        company_id=company_id,
+    child_run_id = await _create_child_pipeline_run(
+        session_factory, parent_run_id, company_id, slug, "audience_persona",
     )
-    elapsed = time.time() - start
-    result = OnboardingSubResult(
-        pipeline="ap",
-        phase="phase_b",
-        status="completed",
-        execution_time_s=elapsed,
-        output_summary={
+
+    start = time.time()
+    try:
+        ap_input = _build_ap_input(input_data, slug, constraints)
+        output = await run_audience_persona_pipeline(
+            ap_input,
+            task_id=task_id,
+            task_store=task_store,
+            event_bus=event_bus,
+            artifacts_root=root,
+            session_factory=session_factory,
+            run_id=child_run_id or parent_run_id,
+            company_id=company_id,
+        )
+        elapsed = time.time() - start
+        await _complete_child_pipeline_run(session_factory, child_run_id, summary={
             "persona_dir": getattr(output, "persona_dir", ""),
             "profiles_generated": getattr(output, "profiles_generated", 0),
-        },
-    )
-    return result, output
+        })
+        result = OnboardingSubResult(
+            pipeline="ap",
+            phase="phase_b",
+            status="completed",
+            execution_time_s=elapsed,
+            output_summary={
+                "persona_dir": getattr(output, "persona_dir", ""),
+                "profiles_generated": getattr(output, "profiles_generated", 0),
+            },
+        )
+        return result, output
+    except Exception as exc:
+        elapsed = time.time() - start
+        await _complete_child_pipeline_run(session_factory, child_run_id, error=str(exc))
+        raise
 
 
 async def _run_vsg_stage(
@@ -387,25 +505,37 @@ async def _run_vsg_stage(
     event_bus: Optional[Any],
     root: Path,
     session_factory: Optional[Any],
-    run_id: Optional[Any],
+    parent_run_id: Optional[Any],
     company_id: Optional[Any],
 ) -> OnboardingSubResult:
     """Run VSG pipeline. Returns result."""
     from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
 
-    start = time.time()
-    vsg_input = _build_vsg_input(input_data, slug, constraints)
-    output = await run_voice_style_guide_pipeline(
-        vsg_input,
-        task_id=task_id,
-        task_store=task_store,
-        event_bus=event_bus,
-        artifacts_root=root,
-        session_factory=session_factory,
-        run_id=run_id,
-        company_id=company_id,
+    child_run_id = await _create_child_pipeline_run(
+        session_factory, parent_run_id, company_id, slug, "voice_style_guide",
     )
-    elapsed = time.time() - start
+
+    start = time.time()
+    try:
+        vsg_input = _build_vsg_input(input_data, slug, constraints)
+        output = await run_voice_style_guide_pipeline(
+            vsg_input,
+            task_id=task_id,
+            task_store=task_store,
+            event_bus=event_bus,
+            artifacts_root=root,
+            session_factory=session_factory,
+            run_id=child_run_id or parent_run_id,
+            company_id=company_id,
+        )
+        elapsed = time.time() - start
+        await _complete_child_pipeline_run(session_factory, child_run_id, summary={
+            "style_guide_path": getattr(output, "style_guide_path", ""),
+        })
+    except Exception as exc:
+        elapsed = time.time() - start
+        await _complete_child_pipeline_run(session_factory, child_run_id, error=str(exc))
+        raise
     return OnboardingSubResult(
         pipeline="vsg",
         phase="phase_c",
@@ -423,21 +553,33 @@ async def _run_ga_stage(
     constraints: Optional[str],
     root: Path,
     session_factory: Optional[Any],
-    run_id: Optional[Any],
+    parent_run_id: Optional[Any],
     company_id: Optional[Any],
 ) -> OnboardingSubResult:
     """Run Gap Analysis pipeline. Returns result."""
     from core.gap_analysis.pipeline import run_gap_analysis
 
-    start = time.time()
-    ga_input = _build_ga_input(input_data, slug, constraints)
-    output = await run_gap_analysis(
-        ga_input,
-        session_factory=session_factory,
-        run_id=run_id,
-        company_id=company_id,
+    child_run_id = await _create_child_pipeline_run(
+        session_factory, parent_run_id, company_id, slug, "gap_analysis",
     )
-    elapsed = time.time() - start
+
+    start = time.time()
+    try:
+        ga_input = _build_ga_input(input_data, slug, constraints)
+        output = await run_gap_analysis(
+            ga_input,
+            session_factory=session_factory,
+            run_id=child_run_id or parent_run_id,
+            company_id=company_id,
+        )
+        elapsed = time.time() - start
+        await _complete_child_pipeline_run(session_factory, child_run_id, summary={
+            "gap_slug": getattr(output, "slug", ""),
+        })
+    except Exception as exc:
+        elapsed = time.time() - start
+        await _complete_child_pipeline_run(session_factory, child_run_id, error=str(exc))
+        raise
     return OnboardingSubResult(
         pipeline="ga",
         phase="phase_c",
@@ -458,25 +600,37 @@ async def _run_td_stage(
     event_bus: Optional[Any],
     root: Path,
     session_factory: Optional[Any],
-    run_id: Optional[Any],
+    parent_run_id: Optional[Any],
     company_id: Optional[Any],
 ) -> OnboardingSubResult:
     """Run Topic Discovery pipeline. Returns result."""
     from core.topic_discovery.pipeline import run_topic_discovery_pipeline
 
-    start = time.time()
-    td_input = _build_td_input(input_data, slug, constraints)
-    output = await run_topic_discovery_pipeline(
-        td_input,
-        task_id=task_id,
-        task_store=task_store,
-        event_bus=event_bus,
-        artifacts_root=root,
-        session_factory=session_factory,
-        run_id=run_id,
-        company_id=company_id,
+    child_run_id = await _create_child_pipeline_run(
+        session_factory, parent_run_id, company_id, slug, "topic_discovery",
     )
-    elapsed = time.time() - start
+
+    start = time.time()
+    try:
+        td_input = _build_td_input(input_data, slug, constraints)
+        output = await run_topic_discovery_pipeline(
+            td_input,
+            task_id=task_id,
+            task_store=task_store,
+            event_bus=event_bus,
+            artifacts_root=root,
+            session_factory=session_factory,
+            run_id=child_run_id or parent_run_id,
+            company_id=company_id,
+        )
+        elapsed = time.time() - start
+        await _complete_child_pipeline_run(session_factory, child_run_id, summary={
+            "topic_count": getattr(output, "total_subdomains_discovered", 0),
+        })
+    except Exception as exc:
+        elapsed = time.time() - start
+        await _complete_child_pipeline_run(session_factory, child_run_id, error=str(exc))
+        raise
     return OnboardingSubResult(
         pipeline="td",
         phase="phase_c",
@@ -523,6 +677,19 @@ async def run_onboarding_pipeline(
     sub_results: Dict[str, OnboardingSubResult] = {}
     phases: Dict[str, OnboardingPhaseResult] = {}
 
+    # Progress tracking — 6 sub-pipelines total
+    _sub_done_count = 0
+    _total_subs = 6  # SA, KB, AP, VSG, GA, TD
+
+    def _emit_progress() -> None:
+        nonlocal _sub_done_count
+        _sub_done_count += 1
+        pct = int((_sub_done_count / _total_subs) * 100)
+        _emit(event_bus, task_id, "progress", {
+            "progress_pct": pct,
+            "message": f"{_sub_done_count}/{_total_subs} pipelines complete",
+        })
+
     # Artifact paths
     audit_run_id: Optional[str] = None
     company_context_path: Optional[str] = None
@@ -555,7 +722,12 @@ async def run_onboarding_pipeline(
             "phase": "phase_a", "pipeline": "site_audit",
         })
         sa_task = asyncio.create_task(
-            _run_site_audit_stage(input_data, slug, proxy_bus, task_id, root)
+            _run_site_audit_stage(
+                input_data, slug, proxy_bus, task_id, root,
+                session_factory=session_factory,
+                parent_run_id=run_id,
+                company_id=company_id,
+            )
         )
 
         # Run KB (blocking)
@@ -577,6 +749,7 @@ async def run_onboarding_pipeline(
                 "phase": "phase_a", "pipeline": "kb",
                 "time_s": kb_result.execution_time_s,
             })
+            _emit_progress()
         except Exception as exc:
             logger.exception("Onboarding: KB failed")
             sub_results["kb"] = OnboardingSubResult(
@@ -586,6 +759,7 @@ async def run_onboarding_pipeline(
             _emit(event_bus, task_id, "onboarding_sub_failed", {
                 "phase": "phase_a", "pipeline": "kb", "error": str(exc),
             })
+            _emit_progress()
 
         # Harvest SA result
         sa_result = await sa_task
@@ -601,6 +775,7 @@ async def run_onboarding_pipeline(
                 "phase": "phase_a", "pipeline": "site_audit",
                 "error": sa_result.error or "",
             })
+        _emit_progress()
 
         phase_a_time = time.time() - phase_a_start
         phase_a_status = "completed" if kb_succeeded else "failed"
@@ -651,6 +826,7 @@ async def run_onboarding_pipeline(
                     "phase": "phase_b", "pipeline": "ap",
                     "time_s": ap_result.execution_time_s,
                 })
+                _emit_progress()
             except Exception as exc:
                 logger.exception("Onboarding: AP failed")
                 sub_results["ap"] = OnboardingSubResult(
@@ -660,6 +836,7 @@ async def run_onboarding_pipeline(
                 _emit(event_bus, task_id, "onboarding_sub_failed", {
                     "phase": "phase_b", "pipeline": "ap", "error": str(exc),
                 })
+                _emit_progress()
 
             phase_b_time = time.time() - phase_b_start
             phase_b_status = "completed" if ap_succeeded else "failed"
@@ -705,7 +882,7 @@ async def run_onboarding_pipeline(
             infra_kw = dict(
                 task_id=task_id, task_store=task_store, event_bus=proxy_bus,
                 root=root, session_factory=session_factory,
-                run_id=run_id, company_id=company_id,
+                parent_run_id=run_id, company_id=company_id,
             )
 
             tasks: List[asyncio.Task] = []
@@ -726,7 +903,7 @@ async def run_onboarding_pipeline(
                 _run_ga_stage(
                     input_data=input_data, slug=slug, constraints=constraints,
                     root=root, session_factory=session_factory,
-                    run_id=run_id, company_id=company_id,
+                    parent_run_id=run_id, company_id=company_id,
                 )
             ))
             task_names.append("ga")
@@ -753,6 +930,7 @@ async def run_onboarding_pipeline(
                         "phase": "phase_c", "pipeline": name,
                         "error": str(res),
                     })
+                    _emit_progress()
                 else:
                     sub_results[name] = res
                     if res.status == "completed":
@@ -777,6 +955,7 @@ async def run_onboarding_pipeline(
                             "phase": "phase_c", "pipeline": name,
                             "error": res.error or "",
                         })
+                    _emit_progress()
 
             phase_c_time = time.time() - phase_c_start
             phase_c_failed = any(

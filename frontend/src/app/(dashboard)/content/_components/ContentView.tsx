@@ -8,14 +8,8 @@ import { ContentEditor } from './ContentEditor';
 import { ScoringPanel } from './ScoringPanel';
 import { AgentActivitySidebar } from './AgentActivitySidebar';
 import { motion, AnimatePresence } from 'framer-motion';
-
-import brief001Content from '@/../data/artifacts/content/carta/content/brief-001/formatted.md';
-import brief002Content from '@/../data/artifacts/content/carta/content/brief-002/formatted.md';
-
-const contentMap: Record<string, string> = {
-  'brief-001': brief001Content,
-  'brief-002': brief002Content,
-};
+import { useAuthStore } from '@/stores/auth';
+import { useContentStage } from '@/lib/hooks/useContent';
 
 interface ContentViewProps {
   brief: ExtendedBrief;
@@ -23,6 +17,9 @@ interface ContentViewProps {
 }
 
 export function ContentView({ brief, onClose }: ContentViewProps) {
+  const slug = useAuthStore((s) => s.company?.slug);
+  const { data: stageData } = useContentStage(slug ?? undefined, brief.id, 'formatted');
+
   const [editorContent, setEditorContent] = useState('');
   const [activityCollapsed, setActivityCollapsed] = useState(true);
   const [toast, setToast] = useState<{ open: boolean; message: string; variant: 'success' | 'error' | 'info' }>({
@@ -30,9 +27,12 @@ export function ContentView({ brief, onClose }: ContentViewProps) {
   });
 
   useEffect(() => {
-    const rawContent = contentMap[brief.id] || `# ${brief.title}\n\nContent is being generated. Check back soon.\n\n---\n\n**Target:** ${brief.structuralTargets.words} words\n\n**Cluster:** ${brief.targetCluster}\n\n**Query:** ${brief.targetQuery}`;
-    setEditorContent(rawContent);
-  }, [brief.id, brief.title, brief.structuralTargets.words, brief.targetCluster, brief.targetQuery]);
+    if (stageData?.content && typeof stageData.content === 'string') {
+      setEditorContent(stageData.content);
+    } else {
+      setEditorContent(`# ${brief.title}\n\nContent is being generated. Check back soon.\n\n---\n\n**Target:** ${brief.structuralTargets.words} words\n\n**Cluster:** ${brief.targetCluster}\n\n**Query:** ${brief.targetQuery}`);
+    }
+  }, [stageData, brief.id, brief.title, brief.structuralTargets.words, brief.targetCluster, brief.targetQuery]);
 
   const showToast = useCallback((message: string, variant: 'success' | 'error' | 'info' = 'info') => {
     setToast({ open: true, message, variant });

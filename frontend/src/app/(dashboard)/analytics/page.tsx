@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { TabBar } from '@/components/ui';
-import { getGapReport } from '@/data/gap-report';
+import { useState } from 'react';
+import { TabBar, Skeleton } from '@/components/ui';
+import { useAuthStore } from '@/stores/auth';
+import { useGapSummary } from '@/lib/hooks/useGapAnalysis';
 import { PerformanceTab } from './_components/PerformanceTab';
 import { ShareOfVoiceTab } from './_components/ShareOfVoiceTab';
 import { CitationsTab } from './_components/CitationsTab';
@@ -18,12 +19,44 @@ const TABS = [
 ];
 
 export default function AnalyticsPage() {
-  const report = useMemo(() => getGapReport(), []);
+  const slug = useAuthStore((s) => s.company?.slug);
+  const { data: summary, isLoading, error } = useGapSummary(slug);
   const [activeTab, setActiveTab] = useState('performance');
 
-  // Compute KPI values from real data
-  const companyCitedCount = report.queries.filter((q) => q.companyCited).length;
-  const citationPresence = ((companyCitedCount / report.summary.totalQueries) * 100).toFixed(1);
+  // Compute KPI values from API data
+  const counts = summary?.classification_counts;
+  const totalQueries = summary?.total_queries ?? 0;
+  const companyWins = counts?.company_wins ?? 0;
+  const citationPresence = totalQueries > 0 ? ((companyWins / totalQueries) * 100).toFixed(1) : '—';
+  const spaScore = summary?.spa_score?.t_stat?.toFixed(3) ?? '—';
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <div className="w-full"><Skeleton className="h-[80px] w-full rounded-md" /></div>
+        <Skeleton className="h-[36px] w-full rounded-md" />
+        <Skeleton className="h-[400px] w-full rounded-md" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <p className="text-[14px] text-error mb-2">Failed to load analytics data</p>
+        <p className="text-[12px] text-text-tertiary">{error.detail}</p>
+      </div>
+    );
+  }
+
+  if (!summary) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <p className="text-[14px] text-text-secondary mb-2">No gap analysis data yet</p>
+        <p className="text-[12px] text-text-tertiary">Run a gap analysis pipeline to see performance metrics here.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -32,32 +65,27 @@ export default function AnalyticsPage() {
         <div className="grid grid-cols-5 bg-surface border border-border rounded-md overflow-hidden">
           <KPICell
             label="SOV %"
-            value="12.4%"
-            delta="+2.1%"
-            deltaType="positive"
+            value="—"
+            delta="Coming Soon"
           />
           <KPICell
             label="Citation Presence"
             value={`${citationPresence}%`}
-            delta="+4.2%"
-            deltaType="positive"
             border
           />
           <KPICell
             label="SPA Score"
-            value={report.summary.spaScore.toFixed(3)}
+            value={spaScore}
             border
           />
           <KPICell
             label="Queries Tracked"
-            value={String(report.summary.totalQueries)}
+            value={String(totalQueries)}
             border
           />
           <KPICell
-            label="Published"
-            value="7"
-            delta="+3 this week"
-            deltaType="positive"
+            label="Total Citations"
+            value={String(summary.total_citations)}
             border
           />
         </div>
@@ -70,22 +98,22 @@ export default function AnalyticsPage() {
         onTabClick={setActiveTab}
       />
 
-      {/* Tab Content — NO global filter bar. Each chart has its own. */}
+      {/* Tab Content — each tab fetches its own data via slug */}
       <div>
-        {activeTab === 'performance' && (
-          <PerformanceTab queries={report.queries} clusters={report.clusters} />
+        {activeTab === 'performance' && slug && (
+          <PerformanceTab slug={slug} />
         )}
-        {activeTab === 'sov' && (
-          <ShareOfVoiceTab queries={report.queries} />
+        {activeTab === 'sov' && slug && (
+          <ShareOfVoiceTab slug={slug} />
         )}
-        {activeTab === 'citations' && (
-          <CitationsTab queries={report.queries} />
+        {activeTab === 'citations' && slug && (
+          <CitationsTab slug={slug} />
         )}
-        {activeTab === 'competitors' && (
-          <CompetitorsTab queries={report.queries} />
+        {activeTab === 'competitors' && slug && (
+          <CompetitorsTab slug={slug} />
         )}
-        {activeTab === 'brand-health' && (
-          <BrandHealthTab />
+        {activeTab === 'brand-health' && slug && (
+          <BrandHealthTab slug={slug} />
         )}
       </div>
     </div>

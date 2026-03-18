@@ -1,24 +1,13 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Button, Input, Badge, Toast } from '@/components/ui';
+import { Button, Badge, Toast, Skeleton } from '@/components/ui';
 import { Copy } from 'lucide-react';
+import { useAuthStore } from '@/stores/auth';
+import { useTeam, useUpdateTeamMember, useInvite } from '@/lib/hooks/useSettings';
 
-interface TeamMember {
-  id: string;
-  name: string;
-  email: string;
-  role: 'admin' | 'editor' | 'viewer';
-  status: 'active' | 'invited';
-}
-
-const initialMembers: TeamMember[] = [
-  { id: '1', name: 'Sarah Chen', email: 'sarah@company.com', role: 'admin', status: 'active' },
-  { id: '2', name: 'Marcus Rivera', email: 'marcus@company.com', role: 'editor', status: 'active' },
-  { id: '3', name: 'Elena Kowalski', email: 'elena@company.com', role: 'editor', status: 'active' },
-  { id: '4', name: 'Priya Sharma', email: 'priya@company.com', role: 'viewer', status: 'invited' },
-];
-
+const ROLE_MAP: Record<string, string> = { superuser: 'admin', member: 'editor', viewer: 'viewer' };
+const ROLE_REVERSE: Record<string, string> = { admin: 'superuser', editor: 'member', viewer: 'viewer' };
 const roles = ['admin', 'editor', 'viewer'] as const;
 
 const roleDescriptions: Record<string, string> = {
@@ -28,134 +17,128 @@ const roleDescriptions: Record<string, string> = {
 };
 
 export function TeamTab() {
-  const [members, setMembers] = useState<TeamMember[]>(initialMembers);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'admin' | 'editor' | 'viewer'>('viewer');
-  const [inviteCode] = useState('DP-INV-2024-A7X9');
+  const slug = useAuthStore((s) => s.company?.slug);
+  const userRole = useAuthStore((s) => s.user?.role);
+  const { data: teamData, isLoading, refetch } = useTeam(slug);
+  const { update: updateMember, isUpdating } = useUpdateTeamMember(slug);
+  const { invite, isInviting } = useInvite();
+
+  const [inviteRole, setInviteRole] = useState<'editor' | 'viewer'>('viewer');
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [toast, setToast] = useState({ open: false, message: '' });
 
-  const handleRoleChange = (id: string, role: 'admin' | 'editor' | 'viewer') => {
-    setMembers(members.map((m) => (m.id === id ? { ...m, role } : m)));
-  };
+  const handleRoleChange = useCallback(async (userId: string, displayRole: string) => {
+    const backendRole = ROLE_REVERSE[displayRole] ?? 'viewer';
+    await updateMember(userId, { role: backendRole });
+    refetch();
+  }, [updateMember, refetch]);
 
-  const handleInvite = () => {
-    if (!inviteEmail) return;
-    setMembers([...members, {
-      id: String(Date.now()),
-      name: inviteEmail.split('@')[0],
-      email: inviteEmail,
-      role: inviteRole,
-      status: 'invited',
-    }]);
-    setInviteEmail('');
-    setToast({ open: true, message: `Invite sent to ${inviteEmail}` });
-  };
+  const handleInvite = useCallback(async () => {
+    // Only member/viewer can be invited — never superuser
+    const backendRole = inviteRole === 'editor' ? 'member' : 'viewer';
+    const result = await invite(backendRole as 'member' | 'viewer');
+    if (result) {
+      setInviteCode(result.invite_code);
+      setToast({ open: true, message: 'Invite code generated!' });
+    }
+  }, [invite, inviteRole]);
 
-  const handleCopyCode = useCallback(() => {
-    navigator.clipboard.writeText(inviteCode);
-    setToast({ open: true, message: 'Copied to clipboard' });
-  }, [inviteCode]);
+  const isSuperuser = userRole === 'superuser';
+
+  if (isLoading) {
+    return <div className="space-y-3"><Skeleton className="h-12 w-full rounded-md" /><Skeleton className="h-40 w-full rounded-md" /></div>;
+  }
+
+  const members = (teamData?.members ?? []).map((m) => ({
+    id: m.id,
+    name: `${m.first_name} ${m.last_name}`,
+    email: m.email,
+    role: (ROLE_MAP[m.role] ?? 'viewer') as 'admin' | 'editor' | 'viewer',
+    status: m.is_active ? 'active' as const : 'invited' as const,
+  }));
 
   return (
-    <div className="space-y-5">
-      {/* Members Table */}
-      <div className="bg-surface border border-border rounded-md p-4">
-        <h3 className="text-[16px] font-semibold text-text-primary mb-3">
-          Team Members
-        </h3>
-        <div className="w-full overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                <th className="text-[11px] font-medium tracking-[0.06em] uppercase text-text-tertiary text-left py-[8px] px-[10px] border-b border-border">Name</th>
-                <th className="text-[11px] font-medium tracking-[0.06em] uppercase text-text-tertiary text-left py-[8px] px-[10px] border-b border-border">Email</th>
-                <th className="text-[11px] font-medium tracking-[0.06em] uppercase text-text-tertiary text-left py-[8px] px-[10px] border-b border-border">Role</th>
-                <th className="text-[11px] font-medium tracking-[0.06em] uppercase text-text-tertiary text-left py-[8px] px-[10px] border-b border-border">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {members.map((m) => (
-                <tr key={m.id} className="hover:bg-accent-subtle transition-colors h-[40px]">
-                  <td className="py-[8px] px-[10px] text-[13px] text-text-primary border-b border-border-subtle font-medium">{m.name}</td>
-                  <td className="py-[8px] px-[10px] text-[13px] text-text-secondary border-b border-border-subtle">{m.email}</td>
-                  <td className="py-[8px] px-[10px] border-b border-border-subtle">
-                    <div className="group relative">
-                      <select
-                        value={m.role}
-                        onChange={(e) => handleRoleChange(m.id, e.target.value as 'admin' | 'editor' | 'viewer')}
-                        className="h-[30px] px-2 rounded-sm border border-border bg-surface text-[13px] text-text-primary outline-none cursor-pointer hover:border-border-strong transition-colors"
-                      >
-                        {roles.map((r) => (
-                          <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
-                        ))}
-                      </select>
-                      {/* Role description tooltip */}
-                      <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block z-10 bg-surface-raised border border-border rounded-md px-2 py-1 shadow-float whitespace-nowrap">
-                        <span className="text-[11px] text-text-secondary">{roleDescriptions[m.role]}</span>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-[8px] px-[10px] border-b border-border-subtle">
-                    <Badge variant={m.status === 'active' ? 'success' : 'warning'}>
-                      {m.status === 'active' ? 'Active' : 'Invited'}
-                    </Badge>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Invite Form */}
-      <div className="bg-surface border border-border rounded-md p-4">
-        <h3 className="text-[16px] font-semibold text-text-primary mb-3">
-          Invite Team Member
-        </h3>
-        <div className="flex items-end gap-3 flex-wrap">
-          <div className="flex-1 min-w-[220px]">
-            <label className="text-[13px] font-medium text-text-secondary block mb-1.5">Email</label>
-            <Input
-              type="email"
-              placeholder="colleague@company.com"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              className="text-[14px] h-[34px]"
-            />
-          </div>
-          <div>
-            <label className="text-[13px] font-medium text-text-secondary block mb-1.5">Role</label>
+    <div className="space-y-6">
+      {/* Invite Section */}
+      {isSuperuser && (
+        <div className="bg-surface border border-border rounded-md p-4 space-y-3">
+          <h3 className="text-[13px] font-semibold text-text-primary">Invite Team Member</h3>
+          <div className="flex gap-2 items-end">
             <select
               value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value as 'admin' | 'editor' | 'viewer')}
-              className="h-[34px] px-3 rounded-sm border border-border bg-surface text-[13px] text-text-primary outline-none cursor-pointer hover:border-border-strong transition-colors"
+              onChange={(e) => setInviteRole(e.target.value as 'editor' | 'viewer')}
+              className="h-[30px] px-2 rounded-sm border border-border bg-surface text-[12px] text-text-primary outline-none"
             >
-              {roles.map((r) => (
-                <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
-              ))}
+              <option value="editor">editor</option>
+              <option value="viewer">viewer</option>
             </select>
+            <Button variant="primary" size="sm" onClick={handleInvite} disabled={isInviting}>
+              {isInviting ? 'Generating...' : 'Generate Invite Code'}
+            </Button>
           </div>
-          <Button onClick={handleInvite}>Send Invite</Button>
+          {inviteCode && (
+            <div className="flex items-center gap-2 bg-bg border border-border rounded-sm p-2">
+              <code className="text-[12px] font-mono text-accent flex-1">{inviteCode}</code>
+              <button
+                className="p-1 hover:bg-accent-subtle rounded-sm transition-colors cursor-pointer"
+                onClick={() => {
+                  navigator.clipboard.writeText(inviteCode);
+                  setToast({ open: true, message: 'Copied!' });
+                }}
+              >
+                <Copy size={12} strokeWidth={1.5} className="text-text-secondary" />
+              </button>
+            </div>
+          )}
+          <p className="text-[10px] text-text-tertiary">Share this code for them to join via /join</p>
         </div>
+      )}
+
+      {/* Members Table */}
+      <div className="bg-surface border border-border rounded-md overflow-hidden">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border">
+              {['Member', 'Email', 'Role', 'Status'].map((h) => (
+                <th key={h} className="text-left p-[8px_12px] text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {members.map((m) => (
+              <tr key={m.id} className="border-b border-border-subtle hover:bg-accent-subtle transition-colors">
+                <td className="p-[8px_12px] text-[12px] text-text-primary font-medium">{m.name}</td>
+                <td className="p-[8px_12px] text-[12px] text-text-secondary">{m.email}</td>
+                <td className="p-[8px_12px]">
+                  {isSuperuser ? (
+                    <select
+                      value={m.role}
+                      onChange={(e) => handleRoleChange(m.id, e.target.value)}
+                      disabled={isUpdating}
+                      className="h-[24px] px-1.5 rounded-sm border border-border bg-surface text-[10px] text-text-primary outline-none cursor-pointer"
+                    >
+                      {roles.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  ) : (
+                    <Badge variant="neutral">{m.role}</Badge>
+                  )}
+                </td>
+                <td className="p-[8px_12px]">
+                  <Badge variant={m.status === 'active' ? 'success' : 'warning'}>{m.status}</Badge>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      {/* Invite Code */}
-      <div className="bg-surface border border-border rounded-md p-4">
-        <h3 className="text-[16px] font-semibold text-text-primary mb-3">
-          Invite Code
-        </h3>
-        <div className="flex items-center gap-2">
-          <code className="font-mono text-[14px] bg-surface border border-border rounded-sm px-3 py-1.5 select-all text-text-primary">
-            {inviteCode}
-          </code>
-          <button
-            onClick={handleCopyCode}
-            className="p-1.5 rounded-sm border border-border hover:border-border-strong text-text-tertiary hover:text-text-primary transition-colors cursor-pointer"
-          >
-            <Copy size={14} strokeWidth={1.5} />
-          </button>
-        </div>
-        <p className="text-[13px] text-text-secondary mt-2">Share this code to let new members join your workspace.</p>
+      {/* Role descriptions */}
+      <div className="space-y-1">
+        {Object.entries(roleDescriptions).map(([role, desc]) => (
+          <p key={role} className="text-[10px] text-text-tertiary">
+            <span className="font-medium text-text-secondary">{role}</span>: {desc}
+          </p>
+        ))}
       </div>
 
       <Toast open={toast.open} onClose={() => setToast({ ...toast, open: false })} variant="success" message={toast.message} />

@@ -8,8 +8,8 @@ interface WorkspaceState {
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
-  companyName: 'Lovable',
-  projectName: 'lovable.dev',
+  companyName: '',
+  projectName: '',
   setCompany: (name) => set({ companyName: name }),
   setProject: (name) => set({ projectName: name }),
 }));

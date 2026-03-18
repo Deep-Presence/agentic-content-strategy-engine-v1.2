@@ -218,7 +218,8 @@ class TestAllProtocolConformance:
 class TestDISwitching:
     """Verify DI functions return correct service type based on DATABASE_URL."""
 
-    def test_kb_di_returns_json_without_db(self):
+    @pytest.mark.asyncio
+    async def test_kb_di_returns_json_without_db(self):
         """Without db_session_factory, get_kb_data_service returns JsonKBDataService."""
         from api.dependencies import get_kb_data_service
         from core.services.json_kb_data import JsonKBDataService
@@ -226,47 +227,51 @@ class TestDISwitching:
         mock_request = MagicMock()
         mock_request.app.state = MagicMock(spec=[])
         mock_request.app.state.artifacts_root = Path("/tmp")
-        result = get_kb_data_service(mock_request)
+        result = await get_kb_data_service(mock_request).__anext__()
         assert isinstance(result, JsonKBDataService)
 
-    def test_persona_di_returns_json_without_db(self):
+    @pytest.mark.asyncio
+    async def test_persona_di_returns_json_without_db(self):
         from api.dependencies import get_persona_data_service
         from core.services.json_persona_data import JsonPersonaDataService
 
         mock_request = MagicMock()
         mock_request.app.state = MagicMock(spec=[])
         mock_request.app.state.artifacts_root = Path("/tmp")
-        result = get_persona_data_service(mock_request)
+        result = await get_persona_data_service(mock_request).__anext__()
         assert isinstance(result, JsonPersonaDataService)
 
-    def test_vsg_di_returns_json_without_db(self):
+    @pytest.mark.asyncio
+    async def test_vsg_di_returns_json_without_db(self):
         from api.dependencies import get_vsg_data_service
         from core.services.json_vsg_data import JsonVSGDataService
 
         mock_request = MagicMock()
         mock_request.app.state = MagicMock(spec=[])
         mock_request.app.state.artifacts_root = Path("/tmp")
-        result = get_vsg_data_service(mock_request)
+        result = await get_vsg_data_service(mock_request).__anext__()
         assert isinstance(result, JsonVSGDataService)
 
-    def test_td_di_returns_json_without_db(self):
+    @pytest.mark.asyncio
+    async def test_td_di_returns_json_without_db(self):
         from api.dependencies import get_td_data_service
         from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
 
         mock_request = MagicMock()
         mock_request.app.state = MagicMock(spec=[])
         mock_request.app.state.artifacts_root = Path("/tmp")
-        result = get_td_data_service(mock_request)
+        result = await get_td_data_service(mock_request).__anext__()
         assert isinstance(result, JsonTopicDiscoveryDataService)
 
-    def test_kb_di_returns_override_when_set(self):
+    @pytest.mark.asyncio
+    async def test_kb_di_returns_override_when_set(self):
         """Pre-built override takes priority."""
         from api.dependencies import get_kb_data_service
 
         override = MagicMock()
         mock_request = MagicMock()
         mock_request.app.state.kb_data_service = override
-        result = get_kb_data_service(mock_request)
+        result = await get_kb_data_service(mock_request).__anext__()
         assert result is override
 
 
