@@ -661,6 +661,9 @@ def get_summary(artifacts_root: Path, slug: str) -> GapSummaryResponse:
     # Decision metrics
     dm = report.get("decision_metrics", analysis.get("decision_metrics", {}))
 
+    # Count queries where company was actually cited (domain-matched)
+    company_cited_count = sum(1 for gap in gaps if gap.get("company_cited", False))
+
     return GapSummaryResponse(
         spa_score=spa,
         proximity_stats=proximity_stats,
@@ -668,6 +671,7 @@ def get_summary(artifacts_root: Path, slug: str) -> GapSummaryResponse:
         cluster_performance=cluster_perf,
         total_queries=dm.get("total_queries", len(gaps)),
         total_citations=dm.get("total_citations", 0),
+        company_cited_count=company_cited_count,
         average_gap=dm.get("avg_gap", 0.0) or 0.0,
         executive_summary=report.get("executive_summary", ""),
         recommendations=report.get("recommendations", []),
@@ -778,6 +782,8 @@ def get_queries(
                 top_domain=top_domain,
                 top_exemplar_sim=top_exemplar_sim,
                 platform_citations=dict(platform_index.get(qid, {})),
+                company_cited=gap.get("company_cited", False),
+                company_cited_platforms=gap.get("company_cited_platforms", []),
                 content_brief=content_brief_resp,
                 top_exemplars=exemplars,
             )

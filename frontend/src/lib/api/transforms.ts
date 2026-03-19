@@ -51,8 +51,10 @@ export function toQuery(row: QueryRow): Query {
         readingLevel: row.reading_level?.max ?? undefined,
       },
     })),
-    companyCited: row.classification === 'company_wins' || row.company_sim > row.citation_sim,
-    platforms: Object.keys(row.platform_citations).filter((k) => VALID_PLATFORMS.has(k)) as Platform[],
+    companyCited: row.company_cited ?? (row.classification === 'company_wins' || row.company_sim > row.citation_sim),
+    platforms: row.company_cited_platforms?.length
+      ? row.company_cited_platforms.filter((k) => VALID_PLATFORMS.has(k)) as Platform[]
+      : Object.keys(row.platform_citations).filter((k) => VALID_PLATFORMS.has(k)) as Platform[],
   };
 }
 

@@ -55,7 +55,7 @@ export function CitationsTab({ slug }: CitationsTabProps) {
   // Summary stats from gap summary API
   const stats = useMemo(() => ({
     sigGaps: summary?.classification_counts?.significant_gap ?? 0,
-    companyCited: summary?.classification_counts?.company_wins ?? 0,
+    companyCited: summary?.company_cited_count ?? summary?.classification_counts?.company_wins ?? 0,
     avgGap: summary?.average_gap ?? 0,
   }), [summary]);
 

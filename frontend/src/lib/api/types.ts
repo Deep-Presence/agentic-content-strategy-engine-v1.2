@@ -49,6 +49,7 @@ export interface GapSummaryResponse {
   cluster_performance: ClusterPerformanceRow[];
   total_queries: number;
   total_citations: number;
+  company_cited_count: number;
   average_gap: number;
   executive_summary: string;
   recommendations: Record<string, unknown>[];
@@ -90,6 +91,8 @@ export interface QueryRow {
   top_domain: string | null;
   top_exemplar_sim: number;
   platform_citations: Record<string, number>;
+  company_cited: boolean;
+  company_cited_platforms: string[];
   content_brief: QueryContentBrief | null;
   top_exemplars: QueryExemplar[];
 }
