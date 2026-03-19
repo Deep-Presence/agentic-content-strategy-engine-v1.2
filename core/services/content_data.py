@@ -39,4 +39,5 @@ class ContentDataServiceProtocol(Protocol):
         cluster: str = "",
         description: str = "",
         source: str = "manual",
+        gap_query_id: str = "",
     ) -> ContentBriefListItem: ...

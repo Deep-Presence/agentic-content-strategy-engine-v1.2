@@ -62,6 +62,7 @@ class JsonContentDataService:
         cluster: str = "",
         description: str = "",
         source: str = "manual",
+        gap_query_id: str = "",
     ) -> ContentBriefListItem:
         return await asyncio.to_thread(
             _content_svc.add_brief,
@@ -71,4 +72,5 @@ class JsonContentDataService:
             cluster,
             description,
             source,
+            gap_query_id,
         )

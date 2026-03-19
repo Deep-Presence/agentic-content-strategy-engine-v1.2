@@ -650,12 +650,18 @@ async def run_content_v13_pipeline_task(
     task_store: TaskStoreProtocol,
     event_bus: EventBus,
     artifacts_root: Optional[Path] = None,
+    *,
+    is_parallel: bool = False,
 ) -> None:
     """Background task wrapper for v1.3 content generation pipeline.
 
     Follows the same semaphore + slug-lock + handle pattern as
     run_content_pipeline_task. Enforces the global max-3-concurrent
     semaphore and registers the task handle for cancellation.
+
+    Args:
+        is_parallel: If True, the task was created without a slug lock
+            (manual mode parallel runs). Skip lock release in finally.
     """
     from core.content_engine.pipeline_v13 import run_content_generation_v13
 
@@ -721,7 +727,8 @@ async def run_content_v13_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
-        task_store.release_slug_lock(f"content_v13:{effective}")
+        if not is_parallel:
+            task_store.release_slug_lock(f"content_v13:{effective}")
         task_store.remove_task_handle(task_id)
         clear_context()
 

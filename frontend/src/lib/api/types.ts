@@ -276,6 +276,18 @@ export interface AuditDetailResponse {
 
 // ── Content v1.3 ──────────────────────────────────────────────────────
 
+export interface GapContextSummary {
+  gap_score: number;
+  classification: string;
+  company_similarity: number;
+  citation_similarity: number;
+  company_cited: boolean;
+  company_best_url: string;
+  why_picked: string[];
+  success_indicators: { label: string; value: string; sub: string }[];
+  exemplars: { url: string; domain: string; similarity: number; word_count: number; authority_type: string }[];
+}
+
 export interface ContentBriefItem {
   id: string;
   title: string;
@@ -287,6 +299,7 @@ export interface ContentBriefItem {
   cycle_id: string | null;
   created_at: string;
   updated_at: string;
+  gap_context: GapContextSummary | null;
 }
 
 export interface ContentBriefListResponse {

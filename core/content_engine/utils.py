@@ -41,13 +41,48 @@ def _extract_json_block(text: str) -> str:
     return text.strip()
 
 
+def _repair_json(raw: str) -> str:
+    """Attempt to repair common LLM JSON errors.
+
+    Handles:
+    - Trailing commas before } or ]
+    - Single-line // comments
+    - Missing commas between object fields (}\n" or ]\n")
+    - Unescaped newlines inside string values
+    - Truncated JSON (unclosed braces/brackets)
+    """
+    # Strip single-line comments
+    text = re.sub(r"//.*$", "", raw, flags=re.MULTILINE)
+
+    # Strip trailing commas
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+
+    # Fix missing commas between fields: }\n  " or ]\n  " or "\n  "
+    # e.g., "value"\n  "next_key" → "value",\n  "next_key"
+    text = re.sub(r'(?<=["}\]])\s*\n(\s*")', r',\n\1', text)
+
+    # Fix missing commas after true/false/null/numbers before a new key
+    text = re.sub(r'(true|false|null|\d)\s*\n(\s*")', r'\1,\n\2', text)
+
+    # Close unclosed braces/brackets (truncated output)
+    open_braces = text.count("{") - text.count("}")
+    open_brackets = text.count("[") - text.count("]")
+    if open_braces > 0 or open_brackets > 0:
+        # Strip any trailing incomplete key-value pair
+        text = re.sub(r',\s*"[^"]*"\s*:\s*$', "", text.rstrip())
+        text += "]" * max(open_brackets, 0) + "}" * max(open_braces, 0)
+
+    return text
+
+
 def safe_parse(text: str, model_cls: Type[M]) -> M:
     """Parse LLM text output into a Pydantic model.
 
-    Handles:
-    - JSON wrapped in markdown code fences
-    - Trailing commas, comments
-    - Falls back to re-extraction on first failure
+    4-layer parsing strategy:
+    1. Direct parse (handles well-formed JSON)
+    2. Trailing comma + comment cleanup
+    3. Full JSON repair (missing commas, unclosed braces, etc.)
+    4. Raises ValueError with diagnostics
 
     Raises:
         ValueError: If parsing fails after all attempts.
@@ -66,6 +101,15 @@ def safe_parse(text: str, model_cls: Type[M]) -> M:
     cleaned = re.sub(r"//.*$", "", cleaned, flags=re.MULTILINE)
     try:
         data = json.loads(cleaned, strict=False)
+        return model_cls.model_validate(data)
+    except (json.JSONDecodeError, Exception):
+        pass
+
+    # Attempt 3: full JSON repair
+    repaired = _repair_json(raw)
+    try:
+        data = json.loads(repaired, strict=False)
+        logger.info("JSON repair succeeded for %s (repaired from malformed LLM output)", model_cls.__name__)
         return model_cls.model_validate(data)
     except (json.JSONDecodeError, Exception) as exc:
         raise ValueError(

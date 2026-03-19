@@ -21,6 +21,7 @@ from api.schemas.content_data import (
     StageContentResponse,
 )
 from core.db.enums import ContentArtifactStage, ContentPieceStatus, PipelineType
+from core.services.gap_context_helper import extract_gap_context, load_analysis_json
 from core.db.repositories.content_artifact_repo import ContentArtifactRepository
 from core.db.repositories.content_repo import ContentRepository
 from core.db.repositories.pipeline_repo import PipelineRepository
@@ -92,6 +93,13 @@ class DbContentDataService:
         if not pieces:
             return ContentBriefListResponse(briefs=[], total=0)
 
+        # Load gap analysis data for sidebar enrichment (filesystem-first)
+        # Derive base company slug from effective_slug for gap analysis lookup
+        base_slug = effective_slug.split("__")[0] if "__" in effective_slug else effective_slug
+        analysis_json = await asyncio.to_thread(
+            load_analysis_json, self._artifacts_root, base_slug,
+        )
+
         items: List[ContentBriefListItem] = []
         for piece in pieces:
             # Status mapping
@@ -118,6 +126,10 @@ class DbContentDataService:
             # Cluster from evaluation_results JSONB or cluster_name column
             cluster = piece.cluster_name or ""
 
+            # Gap context for sidebar (filesystem-based enrichment)
+            brief_dict = {"title": piece.title or "", "target_cluster": cluster}
+            gap_ctx = extract_gap_context(brief_dict, analysis_json)
+
             items.append(ContentBriefListItem(
                 id=str(piece.id),
                 title=piece.title or "",
@@ -133,6 +145,7 @@ class DbContentDataService:
                     if hasattr(piece, "updated_at") and piece.updated_at
                     else (piece.created_at.isoformat() if piece.created_at else "")
                 ),
+                gap_context=gap_ctx,
             ))
 
         return ContentBriefListResponse(briefs=items, total=len(items))
@@ -292,6 +305,7 @@ class DbContentDataService:
         cluster: str = "",
         description: str = "",
         source: str = "manual",
+        gap_query_id: str = "",
     ) -> ContentBriefListItem:
         """Create a brief entry on disk AND in DB.
 
@@ -308,6 +322,7 @@ class DbContentDataService:
             cluster,
             description,
             source,
+            gap_query_id,
         )
 
         # DB write (additive) — create ContentPieceModel with status=planned

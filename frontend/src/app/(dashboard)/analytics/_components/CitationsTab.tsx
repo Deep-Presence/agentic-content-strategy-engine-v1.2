@@ -54,6 +54,7 @@ export function CitationsTab({ slug }: CitationsTabProps) {
         cluster: query.cluster,
         description: `Gap query (${query.classification.replace(/_/g, ' ')}). Gap score: ${query.gap.toFixed(4)}.`,
         source: 'citation',
+        gap_query_id: query.id,
       });
 
       // Step 2: Kick off the content pipeline in the background

@@ -56,7 +56,7 @@ class TaskStore:
         self,
         base_dir: Path,
         event_bus: EventBus,
-        max_concurrent: int = 3,
+        max_concurrent: int = 10,
     ) -> None:
         self._tasks: Dict[str, PipelineTask] = {}
         self._base_dir = base_dir
@@ -79,18 +79,25 @@ class TaskStore:
         pipeline: str,
         company_slug: str,
         product_slug: Optional[str] = None,
+        allow_parallel: bool = False,
     ) -> PipelineTask:
-        """Create a new task and acquire slug lock.
+        """Create a new task and optionally acquire slug lock.
 
         Lock key is ``pipeline:effective_slug`` so different pipeline types
         can run concurrently for the same company.  When product_slug is set,
         effective_slug = ``company_slug__product_slug``.
+
+        Args:
+            allow_parallel: If True, skip slug lock acquisition. Used for
+                manual content pipeline entries that can run in parallel.
         """
         effective = (
             f"{company_slug}__{product_slug}" if product_slug else company_slug
         )
         lock_key = f"{pipeline}:{effective}"
-        self.acquire_slug_lock(lock_key)
+
+        if not allow_parallel:
+            self.acquire_slug_lock(lock_key)
 
         task_id = str(uuid.uuid4())
         task = PipelineTask(
@@ -101,7 +108,8 @@ class TaskStore:
             effective_slug=effective,
         )
         self._tasks[task_id] = task
-        self._slug_locks[lock_key] = task_id
+        if not allow_parallel:
+            self._slug_locks[lock_key] = task_id
         self._persist(task)
         return task
 

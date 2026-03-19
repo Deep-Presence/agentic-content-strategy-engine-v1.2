@@ -1,9 +1,10 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { Search, Bell } from 'lucide-react';
+import { Search, Bell, Sun, Moon } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { Avatar } from './Avatar';
+import { useThemeStore } from '@/stores/theme';
 
 const routeLabels: Record<string, string> = {
   '/': 'Home',
@@ -24,6 +25,7 @@ interface TopBarProps {
 
 export function TopBar({ onSearchClick, notificationCount = 0, className }: TopBarProps) {
   const pathname = usePathname();
+  const { mode, toggle: toggleTheme } = useThemeStore();
 
   const breadcrumbs = pathname.split('/').filter(Boolean);
   const pageTitle = routeLabels[pathname] || breadcrumbs[breadcrumbs.length - 1] || 'Home';
@@ -70,6 +72,14 @@ export function TopBar({ onSearchClick, notificationCount = 0, className }: TopB
               {notificationCount > 9 ? '9+' : notificationCount}
             </span>
           )}
+        </button>
+
+        <button
+          onClick={toggleTheme}
+          className="p-1.5 rounded-sm text-text-tertiary hover:text-text-primary hover:bg-bg transition-colors cursor-pointer"
+          title={mode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+        >
+          {mode === 'light' ? <Moon size={16} strokeWidth={1.5} /> : <Sun size={16} strokeWidth={1.5} />}
         </button>
 
         <Avatar name="User" size="md" className="!w-[28px] !h-[28px] !text-[10px]" />

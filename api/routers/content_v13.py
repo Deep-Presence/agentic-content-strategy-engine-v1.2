@@ -153,16 +153,22 @@ async def start_content_v13(
         analysis_json_path=str(analysis_json_path),
     )
 
-    # Create task (this also acquires the slug lock)
+    # Manual mode can run in parallel (each brief is namespaced by brief_id).
+    # Autonomous and topic_discovery modes need exclusive artifact directory access.
+    is_manual = input_data.entry_mode == EntryMode.MANUAL
     task = task_store.create_task(
         pipeline="content_v13",
         company_slug=company_slug,
         product_slug=body.product_slug,
+        allow_parallel=is_manual,
     )
 
     # H2: Route through runner to enforce semaphore, handle registration, and slug lock cleanup
     handle = asyncio.create_task(
-        run_content_v13_pipeline_task(task.task_id, input_data, task_store, event_bus, artifacts_root)
+        run_content_v13_pipeline_task(
+            task.task_id, input_data, task_store, event_bus, artifacts_root,
+            is_parallel=is_manual,
+        )
     )
     task_store.register_task_handle(task.task_id, handle)
 

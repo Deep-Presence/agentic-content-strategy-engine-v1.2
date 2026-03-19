@@ -61,6 +61,7 @@ async def add_brief(
         cluster=body.cluster,
         description=body.description,
         source=body.source,
+        gap_query_id=body.gap_query_id,
     )
 
 

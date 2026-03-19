@@ -69,8 +69,20 @@ function SuggestedView({
   onApprove: () => void;
   onSkip: () => void;
 }) {
+  const hasWhyPicked = brief.whyPicked && brief.whyPicked.length > 0;
+  const hasIndicators = brief.successIndicators && brief.successIndicators.length > 0;
+  const hasExemplars = brief.exemplars && brief.exemplars.length > 0;
+
   return (
-    <div className="space-y-5 max-w-[720px]">
+    <div className="space-y-5 max-w-full">
+      {/* Gap Score Badge */}
+      {brief.gapScore > 0 && (
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary">Gap Score</span>
+          <span className="font-mono text-[16px] font-semibold text-text-primary">{brief.gapScore.toFixed(4)}</span>
+        </div>
+      )}
+
       {/* Why we picked this */}
       <section>
         <div className="flex items-center gap-2 mb-3">
@@ -79,14 +91,18 @@ function SuggestedView({
             Why We Picked This
           </h3>
         </div>
-        <div className="space-y-2">
-          {brief.whyPicked?.map((reason, i) => (
-            <div key={i} className="flex items-start gap-2 p-2 bg-surface border border-border rounded-sm">
-              <span className="text-[10px] text-accent font-medium mt-0.5">{i + 1}</span>
-              <span className="text-[12px] text-text-secondary leading-relaxed">{reason}</span>
-            </div>
-          ))}
-        </div>
+        {hasWhyPicked ? (
+          <div className="space-y-2">
+            {brief.whyPicked!.map((reason, i) => (
+              <div key={i} className="flex items-start gap-2 p-2 bg-surface border border-border rounded-sm">
+                <span className="text-[10px] text-accent font-medium mt-0.5">{i + 1}</span>
+                <span className="text-[12px] text-text-secondary leading-relaxed">{reason}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[12px] text-text-tertiary">Gap analysis context not available for this brief.</p>
+        )}
       </section>
 
       {/* Key Success Indicators — 2x2 grid */}
@@ -97,20 +113,53 @@ function SuggestedView({
             Key Success Indicators
           </h3>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          {brief.successIndicators?.map((ind, i) => (
-            <div key={i} className="bg-surface border border-border rounded-sm p-3">
-              <span className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary block mb-1">
-                {ind.label}
-              </span>
-              <span className="text-[20px] font-semibold text-text-primary tracking-[-0.02em] block">
-                {ind.value}
-              </span>
-              <span className="text-[10px] text-text-tertiary">{ind.sub}</span>
-            </div>
-          ))}
-        </div>
+        {hasIndicators ? (
+          <div className="grid grid-cols-2 gap-2">
+            {brief.successIndicators!.map((ind, i) => (
+              <div key={i} className="bg-surface border border-border rounded-sm p-3">
+                <span className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary block mb-1">
+                  {ind.label}
+                </span>
+                <span className="text-[20px] font-semibold text-text-primary tracking-[-0.02em] block">
+                  {ind.value}
+                </span>
+                <span className="text-[10px] text-text-tertiary">{ind.sub}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[12px] text-text-tertiary">Run gap analysis to see success metrics.</p>
+        )}
       </section>
+
+      {/* Top Cited Exemplars */}
+      {hasExemplars && (
+        <section>
+          <h3 className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary mb-2">
+            Top Cited Exemplars
+          </h3>
+          <div className="border border-border rounded-sm overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr>
+                  <th className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary text-left p-[6px_10px] border-b border-border">Domain</th>
+                  <th className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary text-right p-[6px_10px] border-b border-border">Words</th>
+                  <th className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary text-right p-[6px_10px] border-b border-border">Sim</th>
+                </tr>
+              </thead>
+              <tbody>
+                {brief.exemplars!.map((ex, i) => (
+                  <tr key={i} className="hover:bg-accent-subtle">
+                    <td className="text-[12px] text-accent p-[6px_10px] border-b border-border-subtle truncate max-w-[200px]">{ex.domain || ex.url}</td>
+                    <td className="text-[12px] text-text-primary p-[6px_10px] border-b border-border-subtle text-right font-mono">{ex.words > 0 ? ex.words.toLocaleString() : '\u2014'}</td>
+                    <td className="text-[12px] text-text-primary p-[6px_10px] border-b border-border-subtle text-right font-mono">{(ex as unknown as { similarity?: number }).similarity?.toFixed(4) ?? '\u2014'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* Actions */}
       <div className="flex items-center gap-2 pt-2">
@@ -131,7 +180,7 @@ function SuggestedView({
 
 function InProgressView({ brief }: { brief: ExtendedBrief }) {
   return (
-    <div className="space-y-5 max-w-[720px]">
+    <div className="space-y-5 max-w-full">
       {/* Sources discovered */}
       {brief.sources && brief.sources.length > 0 && (
         <section>
@@ -249,7 +298,7 @@ function ReviewView({
   const [feedback, setFeedback] = useState('');
 
   return (
-    <div className="space-y-5 max-w-[720px]">
+    <div className="space-y-5 max-w-full">
       {/* Brief card */}
       <div className="bg-surface border border-border rounded-md p-4">
         <h3 className="text-[14px] font-semibold text-text-primary leading-tight mb-2">
@@ -432,11 +481,21 @@ export function DetailView({ brief, onClose, onOpenFullEditor }: DetailViewProps
 
   return (
     <AnimatePresence>
+      {/* Backdrop — click to close */}
       <motion.div
         initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
+        animate={{ opacity: 0.3 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-40 bg-bg flex flex-col"
+        className="fixed inset-0 z-40 bg-black"
+        onClick={onClose}
+      />
+      {/* Sidebar panel — right-aligned, 40% width */}
+      <motion.div
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '100%' }}
+        transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+        className="fixed right-0 top-0 h-full w-[48%] min-w-[400px] max-w-[720px] z-50 bg-bg border-l border-border flex flex-col shadow-float"
       >
         {/* Top Bar */}
         <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface shrink-0">
@@ -473,7 +532,7 @@ export function DetailView({ brief, onClose, onOpenFullEditor }: DetailViewProps
         )}
 
         {/* Content area */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4">
           {brief.stage === 'triage' && (
             <SuggestedView
               brief={brief}
@@ -493,7 +552,7 @@ export function DetailView({ brief, onClose, onOpenFullEditor }: DetailViewProps
             />
           )}
           {brief.stage === 'approved' && (
-            <div className="space-y-4 max-w-[720px]">
+            <div className="space-y-4 max-w-full">
               <div className="bg-success-subtle border border-success rounded-sm p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <Check size={14} strokeWidth={1.5} className="text-success" />
@@ -530,7 +589,7 @@ export function DetailView({ brief, onClose, onOpenFullEditor }: DetailViewProps
           variant={toast.variant}
           message={toast.message}
         />
-      </motion.div>
+      </motion.div>  {/* end sidebar panel */}
     </AnimatePresence>
   );
 }

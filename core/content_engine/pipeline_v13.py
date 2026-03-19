@@ -534,7 +534,14 @@ async def _finalize_pipeline(
       6. Emit pipeline_complete SSE event
     """
     # 1. Save run metadata
-    meta_path = artifact_dir / "run_metadata_v13.json"
+    # For manual mode parallel runs, namespace by first brief_id to avoid
+    # overwriting metadata from concurrent pipelines.
+    entry_mode = output.run_metadata.get("entry_mode", "autonomous") if output.run_metadata else "autonomous"
+    if entry_mode == "manual" and pieces:
+        first_brief = pieces[0].brief_id
+        meta_path = artifact_dir / f"run_metadata_v13_{first_brief}.json"
+    else:
+        meta_path = artifact_dir / "run_metadata_v13.json"
     meta_path.write_text(output.model_dump_json(indent=2), encoding="utf-8")
 
     # 2-3. Persist to DB

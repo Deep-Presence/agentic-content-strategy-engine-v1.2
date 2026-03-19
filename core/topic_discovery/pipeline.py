@@ -1087,7 +1087,7 @@ async def run_topic_expansion_pipeline(
 
             discovery_id = await persist_td_discovery(
                 session_factory, run_id, company_id,
-                effective_slug, domain, manifest.taxonomy_version,
+                effective_slug, domain,
             )
             await persist_td_assignments(
                 session_factory, run_id, company_id,

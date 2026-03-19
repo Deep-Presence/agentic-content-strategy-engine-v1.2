@@ -34,12 +34,22 @@ export default function ContentStudioPage() {
     if (!briefsData?.briefs) return [];
     return briefsData.briefs.map((item) => {
       const base = toBrief(item);
+      const gc = item.gap_context;
       return {
         ...base,
         contentFormat: item.content_type,
         funnelStage: '',
         priorityScore: 0,
-        gapScore: 0,
+        gapScore: gc?.gap_score ?? 0,
+        whyPicked: gc?.why_picked,
+        successIndicators: gc?.success_indicators,
+        exemplars: gc?.exemplars?.map((e) => ({
+          url: e.url,
+          domain: e.domain,
+          words: e.word_count,
+          headers: 0,
+          stats: 0,
+        })),
       } as ExtendedBrief;
     });
   }, [briefsData]);

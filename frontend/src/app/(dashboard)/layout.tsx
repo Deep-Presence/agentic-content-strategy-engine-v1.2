@@ -15,7 +15,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { mode } = useThemeStore();
+  const { mode, hydrate: hydrateTheme } = useThemeStore();
   const { company, hydrateFromStorage, fetchMe } = useAuthStore();
   const { setCompany, setProject } = useWorkspaceStore();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -53,6 +53,9 @@ export default function DashboardLayout({
       setProject(company.domain);
     }
   }, [company, setCompany, setProject]);
+
+  // Hydrate theme from localStorage on mount
+  useEffect(() => { hydrateTheme(); }, [hydrateTheme]);
 
   // Theme sync
   useEffect(() => {

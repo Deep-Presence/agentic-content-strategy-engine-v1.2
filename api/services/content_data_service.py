@@ -26,6 +26,7 @@ from api.schemas.content_data import (
     EvalDimension,
     StageContentResponse,
 )
+from core.services.gap_context_helper import extract_gap_context, load_analysis_json
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +282,9 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
     if not briefs_list:
         return ContentBriefListResponse(briefs=[], total=0)
 
+    # Load gap analysis data for sidebar enrichment
+    analysis_json = load_analysis_json(artifacts_root, slug)
+
     # Load run_metadata for pieces + session_id
     run_meta = _load_json_cached(content_root, "run_metadata.json")
     pieces = (run_meta or {}).get("pieces", [])
@@ -319,6 +323,12 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
         # Updated at (latest stage file mtime)
         updated_at = _latest_stage_mtime(brief_dir) if brief_dir.is_dir() else created_at
 
+        # Gap context for sidebar
+        gap_ctx = extract_gap_context(
+            brief, analysis_json,
+            gap_query_id=brief.get("_gap_query_id", ""),
+        )
+
         items.append(ContentBriefListItem(
             id=brief_id,
             title=brief.get("title", ""),
@@ -330,6 +340,7 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
             cycle_id=session_id,
             created_at=created_at,
             updated_at=updated_at or created_at,
+            gap_context=gap_ctx,
         ))
 
     return ContentBriefListResponse(briefs=items, total=len(items))
@@ -342,6 +353,7 @@ def add_brief(
     cluster: str = "",
     description: str = "",
     source: str = "manual",
+    gap_query_id: str = "",
 ) -> ContentBriefListItem:
     """Immediately create a brief entry on disk so it appears in Content Studio.
 
@@ -386,6 +398,7 @@ def add_brief(
         "_source": source,
         "_description": description,
         "_created_at": now,
+        "_gap_query_id": gap_query_id,
     }
 
     existing.append(new_entry)
