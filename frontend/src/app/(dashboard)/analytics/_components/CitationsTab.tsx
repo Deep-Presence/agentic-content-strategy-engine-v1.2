@@ -1,11 +1,15 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { Badge, Skeleton } from '@/components/ui';
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { Badge, Skeleton, Toast } from '@/components/ui';
 import { CitationDrillDown } from './CitationDrillDown';
 import { useGapSummary } from '@/lib/hooks/useGapAnalysis';
 import { usePaginatedQuery } from '@/lib/hooks/usePaginatedQuery';
-import { GAP_DATA } from '@/lib/api/endpoints';
+import { useTaskStream } from '@/lib/hooks/useTaskStream';
+import { useAuthStore } from '@/stores/auth';
+import { apiPost } from '@/lib/api/client';
+import { GAP_DATA, CONTENT_DATA, CONTENT_ENGINE } from '@/lib/api/endpoints';
 import { toQuery } from '@/lib/api/transforms';
 import type { QueryListResponse } from '@/lib/api/types';
 import type { Query, Platform } from '@/types';
@@ -30,6 +34,71 @@ export function CitationsTab({ slug }: CitationsTabProps) {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [classFilter, setClassFilter] = useState('');
   const [clusterFilter, setClusterFilter] = useState('');
+
+  // Content cycle state
+  const companyName = useAuthStore((s) => s.company?.name) ?? '';
+  const companyDomain = useAuthStore((s) => s.company?.domain) ?? '';
+  const [isSendingContent, setIsSendingContent] = useState(false);
+  const [contentTaskId, setContentTaskId] = useState<string | null>(null);
+  const router = useRouter();
+  const [contentToast, setContentToast] = useState<{ open: boolean; variant: 'success' | 'error' | 'info'; message: string; action?: { label: string; onClick: () => void } }>({ open: false, variant: 'success', message: '' });
+  const contentStream = useTaskStream(contentTaskId);
+
+  const handleAddToContentCycle = useCallback(async (query: Query) => {
+    if (!slug || !companyName || !companyDomain) return;
+    setIsSendingContent(true);
+    try {
+      // Step 1: Immediately create the brief on disk so it appears in Content Studio
+      await apiPost(CONTENT_DATA.briefs(slug), {
+        title: query.text,
+        cluster: query.cluster,
+        description: `Gap query (${query.classification.replace(/_/g, ' ')}). Gap score: ${query.gap.toFixed(4)}.`,
+        source: 'citation',
+      });
+
+      // Step 2: Kick off the content pipeline in the background
+      let pipelineStarted = false;
+      try {
+        const res = await apiPost<{ run_id: string }>(CONTENT_ENGINE.start, {
+          company_name: companyName,
+          domain: companyDomain,
+          entry_mode: 'manual',
+          manual_prompt: query.text,
+          manual_cluster: query.cluster,
+          manual_description: `Gap query (${query.classification.replace(/_/g, ' ')}). Gap score: ${query.gap.toFixed(4)}.`,
+          gap_query_id: query.id,
+          auto_approve: true,
+        });
+        setContentTaskId(res.run_id);
+        pipelineStarted = true;
+      } catch {
+        // Pipeline may fail (409 conflict etc.) but the brief is already created
+      }
+
+      setIsSendingContent(false);
+      const studioAction = { label: 'View in Studio \u2192', onClick: () => router.push('/content') };
+      if (pipelineStarted) {
+        setContentToast({ open: true, variant: 'success', message: 'Topic added. Pipeline started.', action: studioAction });
+      } else {
+        setContentToast({ open: true, variant: 'info', message: 'Topic added. Pipeline could not start \u2014 trigger from Content Studio.', action: studioAction });
+      }
+    } catch (err: unknown) {
+      setIsSendingContent(false);
+      const message = err instanceof Error ? err.message : 'Failed to add topic to content cycle.';
+      setContentToast({ open: true, variant: 'error', message });
+    }
+  }, [slug, companyName, companyDomain, router]);
+
+  useEffect(() => {
+    if (contentStream.status === 'completed') {
+      setIsSendingContent(false);
+      setContentTaskId(null);
+    } else if (contentStream.status === 'error') {
+      setIsSendingContent(false);
+      setContentTaskId(null);
+      setContentToast({ open: true, variant: 'error', message: 'Content pipeline failed.' });
+    }
+  }, [contentStream.status]);
 
   const { data: summary } = useGapSummary(slug);
 
@@ -214,7 +283,20 @@ export function CitationsTab({ slug }: CitationsTabProps) {
         )}
       </div>
 
-      <CitationDrillDown query={selectedQuery} onClose={() => setSelectedQuery(null)} />
+      <CitationDrillDown
+        query={selectedQuery}
+        onClose={() => setSelectedQuery(null)}
+        onAddToContentCycle={handleAddToContentCycle}
+        isSending={isSendingContent}
+      />
+
+      <Toast
+        open={contentToast.open}
+        onClose={() => setContentToast((t) => ({ ...t, open: false }))}
+        variant={contentToast.variant}
+        message={contentToast.message}
+        action={contentToast.action}
+      />
     </>
   );
 }

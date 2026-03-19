@@ -3,8 +3,8 @@
 Supports two entry modes:
   AUTONOMOUS: Gap Analysis → Planner → HITL-1 → Brief Builder → HITL-2
               → Workers → Evaluator → HITL-3 → Publish
-  MANUAL:     User Prompt → Lightweight Gap Analysis (s3-s6)
-              → Brief Builder → HITL-2 → Workers → Evaluator → HITL-3 → Publish
+  MANUAL:     User Prompt → Brief Builder → Workers → Evaluator → HITL-3 → Publish
+              (Skips Stage 1 + HITL-1/HITL-2. Lightweight gap s3-s6 deferred: PB-45)
 
 Key differences from v1.0 (pipeline.py):
   - Two-phase context loading (scorecard → full context)
@@ -113,6 +113,36 @@ def _load_artifact_json(path: Optional[str]) -> Dict[str, Any]:
     if p.exists():
         return json.loads(p.read_text(encoding="utf-8"))
     return {}
+
+
+def _merge_and_write_blueprints(
+    bp_path: Path,
+    pipeline_blueprints: list,
+) -> None:
+    """Write pipeline blueprints to disk, preserving externally-added entries.
+
+    Entries with a ``_source`` field (e.g. "manual", "citation") were created
+    via the ``add_brief()`` API and must survive pipeline writes. Pipeline-
+    generated blueprints do not carry ``_source``.
+
+    Strategy: load existing file → partition by ``_source`` → replace pipeline
+    entries with the new set → keep sourced entries intact.
+    """
+    existing: list[dict] = []
+    if bp_path.is_file():
+        try:
+            raw = json.loads(bp_path.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                existing = raw
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Preserve entries that have a _source field (non-pipeline)
+    preserved = [e for e in existing if e.get("_source")]
+
+    new_entries = [bp.model_dump(mode="json") for bp in pipeline_blueprints]
+    merged = new_entries + preserved
+    bp_path.write_text(json.dumps(merged, indent=2), encoding="utf-8")
 
 
 def _resolve_slug(input_data: ContentGenerationInputV13) -> str:
@@ -673,6 +703,9 @@ async def _run_pipeline_stages(
 
         end_span(stage0_span, output={"entry_mode": input_data.entry_mode.value})
 
+    # H7-fix: track actually-executed stages (not derived from skip_stages)
+    stages_actually_executed: set[int] = {0}  # Stage 0 (Entry Router) always executes
+
     approved_blueprints: List[ContentBlueprint] = []
 
     if input_data.entry_mode == EntryMode.AUTONOMOUS:
@@ -682,6 +715,7 @@ async def _run_pipeline_stages(
             stage1_span = create_span(pipeline_trace, "stage/1-strategic-planner")
             _update_task(task_store, task_id, progress={"stage": 1, "stage_name": "Strategic Planner"})
             _emit(event_bus, task_id, "stage_started", {"stage": 1, "name": "Strategic Planner"})
+            stages_actually_executed.add(1)
 
             # Phase 1: Extract scorecard (~11K tokens)
             product_focus = None
@@ -777,7 +811,7 @@ async def _run_pipeline_stages(
                         "entry_mode": input_data.entry_mode.value,
                         "exit_reason": f"topic_{topic_decision}",
                         "duration_seconds": round(time.time() - start_time, 1),
-                        "stages_executed": [0, 1],
+                        "stages_executed": sorted(stages_actually_executed),
                     },
                 )
                 await _finalize_pipeline(
@@ -838,6 +872,7 @@ async def _run_pipeline_stages(
             stage2_span = create_span(pipeline_trace, "stage/2-brief-builder")
             _update_task(task_store, task_id, progress={"stage": 2, "stage_name": "Brief Builder"})
             _emit(event_bus, task_id, "stage_started", {"stage": 2, "name": "Brief Builder"})
+            stages_actually_executed.add(2)
 
             # Phase 2: Extract full context for approved queries only
             all_query_ids = []
@@ -860,15 +895,9 @@ async def _run_pipeline_stages(
                 parent_span=stage2_span,
             )
 
-            # Save blueprints
+            # Save blueprints (C1-fix: merge to preserve manually-added entries)
             blueprints_path = artifact_dir / "blueprints.json"
-            blueprints_path.write_text(
-                json.dumps(
-                    [bp.model_dump(mode="json") for bp in blueprints],
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
+            _merge_and_write_blueprints(blueprints_path, blueprints)
 
             # HITL Checkpoint 2: Brief Approval (per blueprint) with feedback loop
             _MAX_BRIEF_FEEDBACK_RETRIES = 1
@@ -976,48 +1005,128 @@ async def _run_pipeline_stages(
         # sufficient for v0. See .claude/sprints/pending/backlog.md PB-45.
         logger.info("Manual mode entry — creating brief from prompt")
 
+        # H4-fix: emit Stage 2 progress events so frontend SSE shows Brief Builder active
+        _update_task(task_store, task_id, progress={"stage": 2, "stage_name": "Brief Builder"})
+        _emit(event_bus, task_id, "stage_started", {"stage": 2, "name": "Brief Builder"})
+        stages_actually_executed.add(2)
+
+        # L1-fix: unique query ID per manual run (avoids hardcoded "manual-1" collision risk)
+        manual_query_id = f"manual-{uuid.uuid4().hex[:8]}"
+
+        # C3-fix: inject manual_description into rationale so Brief Builder
+        # receives the gap context (classification, score) from the frontend.
+        rationale_parts = ["User-specified topic"]
+        if input_data.manual_description:
+            rationale_parts.append(input_data.manual_description.strip())
+
         manual_topic = TopicSelection(
             rank=0,
-            query_ids=["manual-1"],
+            query_ids=[manual_query_id],
             query_texts=[input_data.manual_prompt or ""],
             cluster_name=input_data.manual_cluster or "manual",
-            rationale="User-specified topic",
-            estimated_impact="high",
+            rationale=". ".join(rationale_parts),
+            estimated_impact="medium",  # H9-fix: placeholder, derived after gap lookup below
         )
 
-        # Manual mode always builds context inline.
-        # "manual-1" is a synthetic ID that never appears in real gap data, so calling
-        # extract_worker_context() with it always returns {} (H4 root cause). Instead,
-        # build context directly and enrich with cluster-level data from analysis_json
-        # when available, matching by cluster_name rather than by query_id.
-        cluster_spec: dict[str, Any] = {}
-        exemplars: list[dict[str, Any]] = []
+        # H1-fix: 3-tier gap data lookup — query_id → query_text → cluster fallback.
+        # When triggered from Analytics "Add to Content Cycle", gap_query_id provides
+        # a direct key into analysis_json for autonomous-quality context.
+        matched_gap: dict[str, Any] | None = None
         if analysis_json:
-            cluster_name_key = input_data.manual_cluster or "manual"
-            cluster_specs_raw = analysis_json.get("cluster_specs", [])
+            gaps_raw = analysis_json.get("gaps", [])
+
+            # Tier 1: Direct query_id lookup (from Analytics)
+            if input_data.gap_query_id:
+                matched_gap = next(
+                    (g for g in gaps_raw if g.get("query_id") == input_data.gap_query_id),
+                    None,
+                )
+
+            # Tier 2: query_text match fallback (non-Analytics callers)
+            if not matched_gap:
+                prompt_norm = (input_data.manual_prompt or "").strip().lower()
+                if prompt_norm:
+                    matched_gap = next(
+                        (g for g in gaps_raw
+                         if (g.get("query_text", "").strip().lower()) == prompt_norm),
+                        None,
+                    )
+
+        if matched_gap:
+            # Full autonomous-quality context from the matched gap entry
+            matched_cluster = matched_gap.get("cluster_name") or input_data.manual_cluster or "manual"
             cluster_spec = next(
-                (s for s in cluster_specs_raw if s.get("cluster_name") == cluster_name_key),
+                (s for s in analysis_json.get("cluster_specs", [])
+                 if (s.get("cluster_name") or "").strip().lower() == matched_cluster.strip().lower()),
                 {},
             )
-            gaps_raw = analysis_json.get("gaps", [])
-            exemplars = [
-                ex
-                for g in gaps_raw
-                if g.get("cluster_name") == cluster_name_key
-                for ex in g.get("top_cited_exemplars", [])
-            ][:5]
-
-        worker_contexts: dict[str, WorkerQueryContext] = {
-            "manual-1": WorkerQueryContext(
-                query_gap={
-                    "query_id": "manual-1",
-                    "query_text": input_data.manual_prompt or "",
-                    "cluster_name": input_data.manual_cluster or "manual",
-                },
-                cluster_spec=cluster_spec,
-                exemplars=exemplars,
+            worker_contexts: dict[str, WorkerQueryContext] = {
+                manual_query_id: WorkerQueryContext(
+                    query_gap=matched_gap,
+                    cluster_spec=cluster_spec,
+                    exemplars=matched_gap.get("top_cited_exemplars", [])[:5],
+                    gap_content_brief=matched_gap.get("content_brief"),
+                    company_best_text=(matched_gap.get("best_company_unit_text") or "")[:200],
+                    company_best_url=matched_gap.get("best_company_url") or "",
+                )
+            }
+            logger.info(
+                "Manual mode: matched gap data (tier=%s) — full context extracted",
+                "query_id" if input_data.gap_query_id else "query_text",
             )
-        }
+        else:
+            # Tier 3: Cluster-level fallback (H2-fix: case-insensitive matching)
+            cluster_spec: dict[str, Any] = {}
+            exemplars: list[dict[str, Any]] = []
+            if analysis_json:
+                cluster_name_key = (input_data.manual_cluster or "manual").strip().lower()
+                cluster_specs_raw = analysis_json.get("cluster_specs", [])
+                cluster_spec = next(
+                    (s for s in cluster_specs_raw
+                     if (s.get("cluster_name") or "").strip().lower() == cluster_name_key),
+                    {},
+                )
+                # H8-fix: collect, deduplicate by URL, rank by similarity
+                gaps_raw = analysis_json.get("gaps", [])
+                all_exemplars: list[dict[str, Any]] = []
+                seen_urls: set[str] = set()
+                for g in gaps_raw:
+                    if (g.get("cluster_name") or "").strip().lower() != cluster_name_key:
+                        continue
+                    for ex in g.get("top_cited_exemplars", []):
+                        url = ex.get("url", "")
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            all_exemplars.append(ex)
+                all_exemplars.sort(key=lambda e: e.get("similarity", 0.0), reverse=True)
+                exemplars = all_exemplars[:5]
+
+            if cluster_spec:
+                logger.info("Manual mode: cluster '%s' matched in analysis data", input_data.manual_cluster)
+            else:
+                logger.info("Manual mode: no cluster match for '%s' — using empty spec", input_data.manual_cluster)
+
+            worker_contexts = {
+                manual_query_id: WorkerQueryContext(
+                    query_gap={
+                        "query_id": manual_query_id,
+                        "query_text": input_data.manual_prompt or "",
+                        "cluster_name": input_data.manual_cluster or "manual",
+                    },
+                    cluster_spec=cluster_spec,
+                    exemplars=exemplars,
+                )
+            }
+
+        # H9-fix: derive estimated_impact from gap score when available
+        if matched_gap and matched_gap.get("gap") is not None:
+            gap_score = float(matched_gap.get("gap", 0.0))
+            if gap_score >= 0.6:
+                manual_topic.estimated_impact = "high"
+            elif gap_score >= 0.3:
+                manual_topic.estimated_impact = "medium"
+            else:
+                manual_topic.estimated_impact = "low"
 
         blueprints = await build_briefs_parallel(
             contexts=worker_contexts,
@@ -1029,12 +1138,18 @@ async def _run_pipeline_stages(
             parent_span=pipeline_trace,
         )
         approved_blueprints = blueprints
+        _emit(event_bus, task_id, "stage_complete", {"stage": 2, "briefs_approved": len(approved_blueprints)})
 
     elif input_data.entry_mode == EntryMode.TOPIC_DISCOVERY:
         # Topic Discovery mode — skips Stage 1. Topics come pre-approved from TD HITL-2.
         # Loads topic-scoped analysis + builds per-topic WorkerQueryContext, then feeds
         # into Brief Builder (Stage 2) + optional HITL-2.
         logger.info("Topic Discovery mode — loading scoped analysis")
+
+        # H4-fix: emit Stage 2 progress events for TD mode
+        _update_task(task_store, task_id, progress={"stage": 2, "stage_name": "Brief Builder"})
+        _emit(event_bus, task_id, "stage_started", {"stage": 2, "name": "Brief Builder"})
+        stages_actually_executed.add(2)
 
         from core.content_engine.context_router import (
             extract_topic_contexts,
@@ -1115,6 +1230,8 @@ async def _run_pipeline_stages(
                                 bp.topic_assignment_id = assignments[topic.rank].id
                             break
 
+        _emit(event_bus, task_id, "stage_complete", {"stage": 2, "briefs_approved": len(approved_blueprints)})
+
     # Build brief_id → topic_assignment_id lookup for ContentPiece traceability
     _bp_ta_map: Dict[str, str] = {}
     for bp in approved_blueprints:
@@ -1122,8 +1239,85 @@ async def _run_pipeline_stages(
         if ta_id and hasattr(bp, "brief_id"):
             _bp_ta_map[bp.brief_id] = ta_id
 
+    # Persist blueprints for all entry modes so the Content Studio can display them
+    # C1-fix: merge to preserve manually-added entries (those with _source field)
+    if approved_blueprints:
+        bp_path = artifact_dir / "blueprints.json"
+        _merge_and_write_blueprints(bp_path, approved_blueprints)
+
+    # C6-fix: fail early when manual/TD modes produce zero blueprints.
+    # Autonomous mode may legitimately have zero if user rejected all at HITL-2.
+    if not approved_blueprints and input_data.entry_mode in (
+        EntryMode.MANUAL, EntryMode.TOPIC_DISCOVERY,
+    ):
+        error_msg = (
+            f"Brief Builder produced zero blueprints in {input_data.entry_mode.value} mode. "
+            "This indicates an LLM failure or invalid input."
+        )
+        logger.error(error_msg)
+        _update_task(task_store, task_id, status=TaskStatus.FAILED.value, error=error_msg)
+        _emit(event_bus, task_id, "pipeline_failed", {"error": error_msg})
+        update_trace_output(pipeline_trace, output={"error": error_msg})
+        flush()
+        return ContentGenerationOutput(
+            company_slug=slug,
+            total_briefs=0,
+            total_approved=0,
+            total_rejected=0,
+            pieces=[],
+            run_metadata={
+                "pipeline_version": "1.3",
+                "entry_mode": input_data.entry_mode.value,
+                "duration_seconds": round(time.time() - start_time, 1),
+                "error": error_msg,
+                "stages_executed": sorted(stages_actually_executed),
+            },
+        )
+
     # Initialize pieces before Stage 3 (worker failures append to it)
     pieces: List[ContentPiece] = []
+
+    # DB-ready: create ContentPieceModel rows early (before Stage 3)
+    # so stage artifacts can be linked via FK. Upsert by (slug, brief_id)
+    # to handle briefs pre-created by add_brief().
+    piece_id_map: Dict[str, Any] = {}
+    if session_factory and run_id and approved_blueprints:
+        try:
+            from core.db.enums import ContentPieceStatus as _CPS
+            from core.db.repositories.content_repo import ContentRepository as _CR
+
+            async with session_factory() as _sess:
+                _repo = _CR(_sess)
+                for bp in approved_blueprints:
+                    existing = await _repo.get_by_slug_and_brief_id(slug, bp.brief_id)
+                    if existing:
+                        existing.run_id = run_id
+                        existing.status = _CPS.planned
+                        await _sess.flush()
+                        piece_id_map[bp.brief_id] = existing.id
+                    else:
+                        _piece = await _repo.create_piece(
+                            run_id=run_id,
+                            effective_slug=slug,
+                            brief_id=bp.brief_id,
+                            company_id=company_id,
+                            title=bp.title,
+                            cluster_name=getattr(bp, "target_cluster", ""),
+                            content_type=getattr(bp, "content_format", "long_blog"),
+                            status=_CPS.planned,
+                            word_count=0,
+                            topic_assignment_id=_bp_ta_map.get(bp.brief_id),
+                        )
+                        piece_id_map[bp.brief_id] = _piece.id
+                await _sess.commit()
+        except Exception:
+            logger.warning("Failed to create early ContentPieceModel rows", exc_info=True)
+
+    # Initialize StorageBackend for stage artifact persistence
+    # Root must be PROJECT_ROOT/artifacts (not artifact_dir.parent which is artifacts/content)
+    # so that storage keys are relative to the same root the reader uses.
+    from core.storage import get_storage_backend
+    storage = get_storage_backend(_PROJECT_ROOT / "artifacts") if artifact_dir else None
 
     # Clear stale step_name left by bind_context() in stages 1/2
     bind_context(step_name=None)
@@ -1134,6 +1328,7 @@ async def _run_pipeline_stages(
             stage3_span = create_span(pipeline_trace, "stage/3-content-workers")
             _update_task(task_store, task_id, progress={"stage": 3, "stage_name": "Content Workers"})
             _emit(event_bus, task_id, "stage_started", {"stage": 3, "name": "Content Workers"})
+            stages_actually_executed.add(3)
 
             # Extract site pages for linker (from s1 discovery data in analysis.json)
             site_pages = _extract_site_pages(analysis_json)
@@ -1150,6 +1345,9 @@ async def _run_pipeline_stages(
                 artifact_dir=artifact_dir,
                 site_pages=site_pages,
                 parent_span=stage3_span,
+                storage=storage,
+                session_factory=session_factory,
+                piece_id_map=piece_id_map,
             )
 
             # H2 FIX: Surface worker failures as rejected pieces + SSE events
@@ -1184,6 +1382,7 @@ async def _run_pipeline_stages(
             stage4_span = create_span(pipeline_trace, "stage/4-evaluator")
             _update_task(task_store, task_id, progress={"stage": 4, "stage_name": "Evaluator"})
             _emit(event_bus, task_id, "stage_started", {"stage": 4, "name": "Evaluator"})
+            stages_actually_executed.add(4)
 
             from core.content_engine.evaluator.loop import evaluate_and_optimize
 
@@ -1244,6 +1443,7 @@ async def _run_pipeline_stages(
             stage5_span = create_span(pipeline_trace, "stage/5-final-review")
             _update_task(task_store, task_id, progress={"stage": 5, "stage_name": "Final Review"})
             _emit(event_bus, task_id, "stage_started", {"stage": 5, "name": "Final Review"})
+            stages_actually_executed.add(5)
 
             _bp_by_id = {bp.brief_id: bp for bp in approved_blueprints}
             for brief_id, final_content, history, feedback_route in evaluated:
@@ -1323,6 +1523,18 @@ async def _run_pipeline_stages(
                         bd = _brief_dir(artifact_dir, final_content.brief_id)
                         final_path = bd / "final.md"
                         final_path.write_text(final_content.markdown, encoding="utf-8")
+                        # DB-ready: persist final artifact metadata
+                        if storage and piece_id_map.get(final_content.brief_id):
+                            from core.content_engine.artifact_writer import persist_stage_artifact
+                            from core.db.enums import ContentArtifactStage as _CAS
+
+                            await persist_stage_artifact(
+                                storage=storage, session_factory=session_factory,
+                                piece_id=piece_id_map[final_content.brief_id],
+                                stage=_CAS.final,
+                                relative_path=str(final_path.relative_to(storage.root)),
+                                content=final_content.markdown,
+                            )
                         pieces.append(
                             ContentPiece(
                                 brief_id=final_content.brief_id,
@@ -1442,6 +1654,18 @@ async def _run_pipeline_stages(
                 bd = _brief_dir(artifact_dir, final_content.brief_id)
                 final_path = bd / "final.md"
                 final_path.write_text(final_content.markdown, encoding="utf-8")
+                # DB-ready: persist final artifact metadata
+                if storage and piece_id_map.get(final_content.brief_id):
+                    from core.content_engine.artifact_writer import persist_stage_artifact
+                    from core.db.enums import ContentArtifactStage as _CAS
+
+                    await persist_stage_artifact(
+                        storage=storage, session_factory=session_factory,
+                        piece_id=piece_id_map[final_content.brief_id],
+                        stage=_CAS.final,
+                        relative_path=str(final_path.relative_to(storage.root)),
+                        content=final_content.markdown,
+                    )
                 auto_eval: Dict[str, Any] = {}
                 if history.cycles:
                     last_eval = history.cycles[-1]
@@ -1482,9 +1706,7 @@ async def _run_pipeline_stages(
             "pipeline_version": "1.3",
             "entry_mode": input_data.entry_mode.value,
             "duration_seconds": round(time.time() - start_time, 1),
-            "stages_executed": [
-                s for s in range(6) if s not in input_data.skip_stages
-            ],
+            "stages_executed": sorted(stages_actually_executed),
         },
     )
 

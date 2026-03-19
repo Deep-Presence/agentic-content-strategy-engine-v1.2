@@ -10,6 +10,7 @@ from pathlib import Path
 
 from api.schemas.content_data import (
     ContentBriefDetailResponse,
+    ContentBriefListItem,
     ContentBriefListResponse,
     StageContentResponse,
 )
@@ -52,4 +53,22 @@ class JsonContentDataService:
             effective_slug,
             brief_id,
             stage,
+        )
+
+    async def add_brief(
+        self,
+        effective_slug: str,
+        title: str,
+        cluster: str = "",
+        description: str = "",
+        source: str = "manual",
+    ) -> ContentBriefListItem:
+        return await asyncio.to_thread(
+            _content_svc.add_brief,
+            self._artifacts_root,
+            effective_slug,
+            title,
+            cluster,
+            description,
+            source,
         )

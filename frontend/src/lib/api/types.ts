@@ -42,6 +42,13 @@ export interface ClusterPerformanceRow {
   structural_rates: Record<string, number>;
 }
 
+export interface Recommendation {
+  title_idea: string;
+  target_cluster: string;
+  structural_signals: string;
+  expected_impact: string;
+}
+
 export interface GapSummaryResponse {
   spa_score: SPAScore;
   proximity_stats: ProximityStats;
@@ -52,7 +59,7 @@ export interface GapSummaryResponse {
   company_cited_count: number;
   average_gap: number;
   executive_summary: string;
-  recommendations: Record<string, unknown>[];
+  recommendations: Recommendation[];
 }
 
 export interface QueryContentBrief {

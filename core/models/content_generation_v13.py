@@ -241,6 +241,7 @@ class ContentGenerationInputV13(ContentGenerationInput):
     manual_prompt: Optional[str] = None
     manual_description: Optional[str] = None
     manual_cluster: Optional[str] = None
+    gap_query_id: Optional[str] = None  # Direct gap lookup key from Analytics
     # Topic Discovery mode fields
     topic_assignment_ids: List[str] = Field(default_factory=list)
     td_effective_slug: Optional[str] = None

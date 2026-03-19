@@ -171,6 +171,7 @@ def _build_db_brand_data_service(request: Request, session: Any) -> BrandDataSer
 def _build_db_content_data_service(request: Request, session: Any) -> ContentDataServiceProtocol | None:
     """Construct a DbContentDataService from an existing *session*."""
     try:
+        from core.db.repositories.content_artifact_repo import ContentArtifactRepository
         from core.db.repositories.content_repo import ContentRepository
         from core.db.repositories.pipeline_repo import PipelineRepository
         from core.services.db_content_data import DbContentDataService
@@ -179,6 +180,7 @@ def _build_db_content_data_service(request: Request, session: Any) -> ContentDat
             content_repo=ContentRepository(session),
             pipeline_repo=PipelineRepository(session),
             artifacts_root=request.app.state.artifacts_root,
+            artifact_repo=ContentArtifactRepository(session),
         )
     except Exception:
         _logger.debug("Failed to build DbContentDataService", exc_info=True)

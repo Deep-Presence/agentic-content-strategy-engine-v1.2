@@ -93,6 +93,15 @@ class ContentPieceStatus(str, Enum):
     archived = "archived"
 
 
+class ContentArtifactStage(str, Enum):
+    outline = "outline"
+    draft = "draft"
+    linked = "linked"
+    enriched = "enriched"
+    eval_history = "eval_history"
+    final = "final"
+
+
 # ── Site Audit ────────────────────────────────────────────────────────
 class FindingSeverity(str, Enum):
     critical = "critical"

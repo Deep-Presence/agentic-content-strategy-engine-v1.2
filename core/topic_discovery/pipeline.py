@@ -1006,6 +1006,17 @@ async def run_topic_expansion_pipeline(
                 assignment.priority_score = priority
                 assignment.priority_factors = factors
 
+        # ── Merge with previous matrix (re-entrant accumulation) ──
+        # Keep assignments from subdomains NOT touched in this run;
+        # only successful expansions replace previous assignments.
+        previous_matrix = await asyncio.to_thread(storage.get_latest_matrix)
+        if previous_matrix and previous_matrix.assignments:
+            previous_kept = [
+                a for a in previous_matrix.assignments
+                if a.subdomain_id not in expanded_ids
+            ]
+            all_assignments = previous_kept + all_assignments
+
         # Build matrix
         distributions = _compute_distributions(all_assignments)
         matrix = TopicAssignmentMatrix(

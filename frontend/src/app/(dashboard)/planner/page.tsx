@@ -1,10 +1,13 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
-import { Button, Badge, TabBar, EmptyState, Skeleton } from '@/components/ui';
+import { useState, useCallback, useMemo, useEffect } from 'react';
+import { Button, Badge, TabBar, EmptyState, Skeleton, Toast } from '@/components/ui';
 import { BarChart3, Check, MessageSquare } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth';
 import { useTaxonomy, useMatrix } from '@/lib/hooks/useTopicDiscovery';
+import { useTaskStream } from '@/lib/hooks/useTaskStream';
+import { apiPost } from '@/lib/api/client';
+import { TOPIC_DISCOVERY, CONTENT_ENGINE, CONTENT_DATA } from '@/lib/api/endpoints';
 import { TaxonomyTree } from './_components/TaxonomyTree';
 import { SubdomainDetail } from './_components/SubdomainDetail';
 import { AssignmentsView } from './_components/AssignmentsView';
@@ -20,8 +23,8 @@ type RightTab = 'detail' | 'assignments';
 
 export default function TopicDiscoveryPage() {
   const slug = useAuthStore((s) => s.company?.slug);
-  const { data: taxonomyData, isLoading: taxLoading } = useTaxonomy(slug);
-  const { data: matrixData } = useMatrix(slug);
+  const { data: taxonomyData, isLoading: taxLoading, refetch: refetchTaxonomy } = useTaxonomy(slug);
+  const { data: matrixData, refetch: refetchMatrix } = useMatrix(slug);
 
   const [selectedSub, setSelectedSub] = useState<SubdomainNode | null>(null);
   const [selectedCat, setSelectedCat] = useState<CategoryNode | null>(null);
@@ -30,6 +33,94 @@ export default function TopicDiscoveryPage() {
   const [sortDimension, setSortDimension] = useState<SortDimension>('return');
 
   const companyName = useAuthStore((s) => s.company?.name) ?? '';
+  const companyDomain = useAuthStore((s) => s.company?.domain) ?? '';
+
+  // Pipeline B expansion state
+  const [expandingSubdomainId, setExpandingSubdomainId] = useState<string | null>(null);
+  const [expandTaskId, setExpandTaskId] = useState<string | null>(null);
+  const expandStream = useTaskStream(expandTaskId);
+
+  const handleExpandTopics = useCallback(async (subdomainId: string) => {
+    if (!slug || !companyName || !companyDomain) return;
+    setExpandingSubdomainId(subdomainId);
+    try {
+      const res = await apiPost<{ run_id: string }>(TOPIC_DISCOVERY.expand, {
+        company_name: companyName,
+        domain: companyDomain,
+        subdomain_ids: [subdomainId],
+        auto_approve_checkpoints: [2],
+      });
+      setExpandTaskId(res.run_id);
+    } catch {
+      setExpandingSubdomainId(null);
+    }
+  }, [slug, companyName, companyDomain]);
+
+  // React to expansion task completion
+  useEffect(() => {
+    if (expandStream.status === 'completed') {
+      refetchMatrix();
+      refetchTaxonomy();
+      setExpandingSubdomainId(null);
+      setExpandTaskId(null);
+    } else if (expandStream.status === 'error') {
+      setExpandingSubdomainId(null);
+      setExpandTaskId(null);
+    }
+  }, [expandStream.status, refetchMatrix, refetchTaxonomy]);
+
+  // Content engine state
+  const [sendingAssignmentId, setSendingAssignmentId] = useState<string | null>(null);
+  const [contentTaskId, setContentTaskId] = useState<string | null>(null);
+  const [contentToast, setContentToast] = useState<{ open: boolean; variant: 'success' | 'error'; message: string }>({ open: false, variant: 'success', message: '' });
+  const contentStream = useTaskStream(contentTaskId);
+
+  const handleSendToContentEngine = useCallback(async (assignment: Assignment) => {
+    if (!slug || !companyName || !companyDomain) return;
+    setSendingAssignmentId(assignment.id);
+    try {
+      // Step 1: Immediately create the brief so it appears in Content Studio
+      await apiPost(CONTENT_DATA.briefs(slug), {
+        title: assignment.topic_text,
+        cluster: assignment.metadata?.slug ?? '',
+        description: assignment.metadata?.description ?? '',
+        source: 'topic_discovery',
+      });
+
+      // Step 2: Kick off the pipeline in the background
+      try {
+        const res = await apiPost<{ run_id: string }>(CONTENT_ENGINE.fromTopics, {
+          company_name: companyName,
+          domain: companyDomain,
+          effective_slug: slug,
+          topic_assignment_ids: [assignment.id],
+        });
+        setContentTaskId(res.run_id);
+      } catch {
+        // Pipeline may fail (409 etc.) but brief is already created
+      }
+
+      setSendingAssignmentId(null);
+      setContentToast({ open: true, variant: 'success', message: 'Topic added to Content Studio. Pipeline started.' });
+    } catch (err: unknown) {
+      setSendingAssignmentId(null);
+      const message = err instanceof Error ? err.message : 'Failed to add topic.';
+      setContentToast({ open: true, variant: 'error', message });
+    }
+  }, [slug, companyName, companyDomain]);
+
+  useEffect(() => {
+    if (contentStream.status === 'completed') {
+      refetchMatrix();
+      setSendingAssignmentId(null);
+      setContentTaskId(null);
+    } else if (contentStream.status === 'error') {
+      setSendingAssignmentId(null);
+      setContentTaskId(null);
+      setContentToast({ open: true, variant: 'error', message: 'Content pipeline failed.' });
+    }
+  }, [contentStream.status, refetchMatrix]);
+
   const taxonomyVersion = taxonomyData?.version ?? 0;
 
   // Parse taxonomy root_nodes from API response (Dict[str, Any])
@@ -56,6 +147,19 @@ export default function TopicDiscoveryPage() {
     }
     return map;
   }, [matrixData]);
+
+  // Sync selectedSub with refreshed taxonomy data (e.g. after expansion updates expansion_status)
+  useEffect(() => {
+    if (!selectedSub || categories.length === 0) return;
+    for (const cat of categories) {
+      const found = cat.children.find((s) => s.id === selectedSub.id);
+      if (found) {
+        setSelectedSub(found);
+        setSelectedCat(cat);
+        break;
+      }
+    }
+  }, [categories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelectSubdomain = useCallback(
     (sub: SubdomainNode, cat: CategoryNode) => {
@@ -194,11 +298,15 @@ export default function TopicDiscoveryPage() {
                   assignments={selectedAssignments}
                   scoring={undefined}
                   companyName={companyName}
+                  onExpandTopics={handleExpandTopics}
+                  expandingSubdomainId={expandingSubdomainId}
                 />
               ) : (
                 <AssignmentsView
                   subdomain={selectedSub}
                   assignments={selectedAssignments}
+                  onSendToContentEngine={handleSendToContentEngine}
+                  sendingAssignmentId={sendingAssignmentId}
                 />
               )}
             </>
@@ -210,6 +318,13 @@ export default function TopicDiscoveryPage() {
           )}
         </div>
       </div>
+
+      <Toast
+        open={contentToast.open}
+        onClose={() => setContentToast((t) => ({ ...t, open: false }))}
+        variant={contentToast.variant}
+        message={contentToast.message}
+      />
     </div>
   );
 }

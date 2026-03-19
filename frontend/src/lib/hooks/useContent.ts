@@ -7,7 +7,10 @@ import { CONTENT_DATA } from '@/lib/api/endpoints';
 import type { ContentBriefListResponse, ContentBriefDetailResponse, StageContentResponse } from '@/lib/api/types';
 
 export function useContentBriefs(slug: string | undefined) {
-  return useApiQuery<ContentBriefListResponse>(slug ? CONTENT_DATA.briefs(slug) : null);
+  return useApiQuery<ContentBriefListResponse>(
+    slug ? CONTENT_DATA.briefs(slug) : null,
+    { refreshInterval: 5000 },
+  );
 }
 
 export function useContentBriefDetail(slug: string | undefined, briefId: string | null) {

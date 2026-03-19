@@ -6,9 +6,12 @@ import { EmptyState, Skeleton } from '@/components/ui';
 import { ActiveTasks } from './_components/home/ActiveTasks';
 import { HITLReviews } from './_components/home/HITLReviews';
 import { RecentActivity } from './_components/home/RecentActivity';
+import { RecommendedActions } from './_components/home/RecommendedActions';
 import { useAuthStore } from '@/stores/auth';
 import { useApiQuery } from '@/lib/hooks/useApiQuery';
+import { useGapSummary } from '@/lib/hooks/useGapAnalysis';
 import { GAP_DATA, CONTENT_DATA, SITE_AUDIT, TASKS } from '@/lib/api/endpoints';
+import type { QueryListResponse } from '@/lib/api/types';
 
 function getGreeting(): string {
   const hour = new Date().getHours();
@@ -39,12 +42,15 @@ export default function HomePage() {
   const company = useAuthStore((s) => s.company);
   const slug = company?.slug;
 
-  const { data: gapData, isLoading: gapLoading } = useApiQuery<{
-    total_queries: number;
-    total_citations: number;
-    spa_score: { t_stat: number };
-    average_gap: number;
-  }>(slug ? GAP_DATA.summary(slug) : null);
+  const companyName = company?.name ?? '';
+  const companyDomain = company?.domain ?? '';
+
+  const { data: gapData, isLoading: gapLoading } = useGapSummary(slug);
+
+  // Top gap queries for the recommendations section
+  const { data: topGapsData } = useApiQuery<QueryListResponse>(
+    slug ? `${GAP_DATA.queries(slug)}?classification=significant_gap&sort_by=gap_score&sort_dir=desc&page_size=10` : null,
+  );
 
   const { data: briefsData, isLoading: briefsLoading } = useApiQuery<{
     briefs: { status: string }[];
@@ -138,6 +144,7 @@ export default function HomePage() {
             <Skeleton key={i} className="h-[80px]" />
           ))}
         </div>
+        <Skeleton className="h-[200px] rounded-md" />
         <div className="grid grid-cols-2 gap-6">
           <Skeleton className="h-[300px]" />
           <Skeleton className="h-[300px]" />
@@ -199,6 +206,18 @@ export default function HomePage() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Recommended Actions from Gap Analysis */}
+      {gapData?.recommendations && gapData.recommendations.length > 0 && slug && (
+        <RecommendedActions
+          recommendations={gapData.recommendations}
+          executiveSummary={gapData.executive_summary ?? ''}
+          slug={slug}
+          companyName={companyName}
+          companyDomain={companyDomain}
+          topGapQueries={topGapsData?.queries}
+        />
       )}
 
       {/* Two-column layout for tasks + reviews */}

@@ -2,7 +2,7 @@
 
 import { cn } from '@/lib/utils';
 import { Card, Button } from '@/components/ui';
-import { ArrowRight, Pencil, Move, Plus, Trash2 } from 'lucide-react';
+import { ArrowRight, Pencil, Move, Plus, Trash2, Zap, RefreshCw, Loader2, AlertTriangle } from 'lucide-react';
 import {
   type SubdomainNode,
   type CategoryNode,
@@ -20,6 +20,8 @@ interface SubdomainDetailProps {
   assignments: Assignment[];
   scoring: ScoringEntry | undefined;
   companyName: string;
+  onExpandTopics: (subdomainId: string) => void;
+  expandingSubdomainId: string | null;
 }
 
 const SOURCE_KEYS = ['source_a', 'source_b', 'source_c', 'source_d'] as const;
@@ -31,7 +33,7 @@ function ConfidenceColor(confidence: number): string {
   return 'text-error';
 }
 
-export function SubdomainDetail({ subdomain, category, onViewAssignments, assignments, scoring, companyName }: SubdomainDetailProps) {
+export function SubdomainDetail({ subdomain, category, onViewAssignments, assignments, scoring, companyName, onExpandTopics, expandingSubdomainId }: SubdomainDetailProps) {
   const sourceCount = getSourceCount(subdomain.source_provenance);
   const factors = subdomain.priority_factors;
 
@@ -217,6 +219,60 @@ export function SubdomainDetail({ subdomain, category, onViewAssignments, assign
       {/* Node Actions */}
       <Card hoverable={false}>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Expand Topics Button */}
+          {(() => {
+            const isExpanding = expandingSubdomainId === subdomain.id;
+            const isExpanded = subdomain.expansion_status === 'expanded';
+            const isFailed = subdomain.expansion_status === 'failed';
+
+            if (isExpanding) {
+              return (
+                <Button variant="primary" size="sm" disabled>
+                  <Loader2 size={11} strokeWidth={1.5} className="mr-1 animate-spin" />
+                  Expanding...
+                </Button>
+              );
+            }
+            if (isFailed) {
+              return (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="bg-warning-subtle text-warning hover:bg-warning/10"
+                  onClick={() => onExpandTopics(subdomain.id)}
+                  disabled={expandingSubdomainId !== null}
+                >
+                  <AlertTriangle size={11} strokeWidth={1.5} className="mr-1" />
+                  Retry Expansion
+                </Button>
+              );
+            }
+            if (isExpanded) {
+              return (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onExpandTopics(subdomain.id)}
+                  disabled={expandingSubdomainId !== null}
+                >
+                  <RefreshCw size={11} strokeWidth={1.5} className="mr-1" />
+                  Re-expand
+                </Button>
+              );
+            }
+            return (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => onExpandTopics(subdomain.id)}
+                disabled={expandingSubdomainId !== null}
+              >
+                <Zap size={11} strokeWidth={1.5} className="mr-1" />
+                Expand Topics
+              </Button>
+            );
+          })()}
+
           {assignments.length > 0 ? (
             <Button
               variant="ghost"

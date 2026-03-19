@@ -54,9 +54,9 @@ def safe_parse(text: str, model_cls: Type[M]) -> M:
     """
     raw = _extract_json_block(text)
 
-    # Attempt 1: direct parse
+    # Attempt 1: direct parse (strict=False tolerates control chars in strings)
     try:
-        data = json.loads(raw)
+        data = json.loads(raw, strict=False)
         return model_cls.model_validate(data)
     except (json.JSONDecodeError, Exception):
         pass
@@ -65,7 +65,7 @@ def safe_parse(text: str, model_cls: Type[M]) -> M:
     cleaned = re.sub(r",\s*([}\]])", r"\1", raw)
     cleaned = re.sub(r"//.*$", "", cleaned, flags=re.MULTILINE)
     try:
-        data = json.loads(cleaned)
+        data = json.loads(cleaned, strict=False)
         return model_cls.model_validate(data)
     except (json.JSONDecodeError, Exception) as exc:
         raise ValueError(

@@ -1,18 +1,22 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
-import { Button, Badge } from '@/components/ui';
+import { Button, Badge, Toast } from '@/components/ui';
 import type { Query } from '@/types';
 
 interface CitationDrillDownProps {
   query: Query | null;
   onClose: () => void;
+  onAddToContentCycle?: (query: Query) => void;
+  isSending?: boolean;
 }
 
-export function CitationDrillDown({ query, onClose }: CitationDrillDownProps) {
+export function CitationDrillDown({ query, onClose, onAddToContentCycle, isSending }: CitationDrillDownProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const [toastOpen, setToastOpen] = useState(false);
+  const closeToast = useCallback(() => setToastOpen(false), []);
 
   // Close on Escape
   useEffect(() => {
@@ -212,10 +216,26 @@ export function CitationDrillDown({ query, onClose }: CitationDrillDownProps) {
             )}
 
             {/* Action Button */}
-            <Button variant="primary" className="w-full mt-4">
-              Add to Content Cycle
+            <Button
+              variant="primary"
+              className="w-full mt-4"
+              disabled={isSending}
+              onClick={() => {
+                if (query && onAddToContentCycle) {
+                  onAddToContentCycle(query);
+                }
+              }}
+            >
+              {isSending ? 'Adding...' : 'Add to Content Cycle'}
             </Button>
           </div>
+
+          <Toast
+            open={toastOpen}
+            onClose={closeToast}
+            variant="success"
+            message="Content pipeline started. Track progress in Content Studio."
+          />
         </motion.div>
       )}
     </AnimatePresence>

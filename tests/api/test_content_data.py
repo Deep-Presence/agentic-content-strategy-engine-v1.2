@@ -147,7 +147,9 @@ def _setup_content_dir(
     content_dir.mkdir(parents=True, exist_ok=True)
 
     if briefs_data is not None:
-        (content_dir / "briefs.json").write_text(json.dumps(briefs_data))
+        # Write as blueprints.json (v1.3 format: flat list of briefs)
+        briefs_list = briefs_data.get("briefs", [])
+        (content_dir / "blueprints.json").write_text(json.dumps(briefs_list))
 
     if run_metadata is not None:
         (content_dir / "run_metadata.json").write_text(json.dumps(run_metadata))
@@ -770,15 +772,31 @@ class TestStatusInference:
         resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "enriching"
 
-    def test_status_formatting(self, client: TestClient, artifacts_root: Path):
-        """formatted.md exists → formatting."""
+    def test_status_formatting_removed_v13(self, client: TestClient, artifacts_root: Path):
+        """M3-fix: formatted.md is a v1.0-only stage — no longer inferred as 'formatting'.
+
+        v1.3 pipeline skips the Formatter stage. A brief with only formatted.md
+        (legacy artifact) falls through to 'suggested' since no v1.3 stage
+        files are present.
+        """
         _setup_content_dir(
             artifacts_root,
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"formatted.md": "# Formatted"}},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
-        assert resp.json()["briefs"][0]["status"] == "formatting"
+        assert resp.json()["briefs"][0]["status"] == "suggested"
+
+    def test_status_enriched_to_evaluating(self, client: TestClient, artifacts_root: Path):
+        """M3-fix: enriched.md + eval_history.json → evaluating (not stuck at formatting)."""
+        _setup_content_dir(
+            artifacts_root,
+            briefs_data=_make_briefs_json(1),
+            brief_stages={"brief-0": {"enriched.md": "# Enriched"}},
+            eval_histories={"brief-0": _make_eval_history(cycles=1, final_passed=False)},
+        )
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
+        assert resp.json()["briefs"][0]["status"] == "evaluating"
 
     def test_status_evaluating(self, client: TestClient, artifacts_root: Path):
         """eval_history.json exists but final_passed=False → evaluating."""

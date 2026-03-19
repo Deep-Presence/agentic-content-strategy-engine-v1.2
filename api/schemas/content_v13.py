@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +28,8 @@ class ContentStartRequestV13(BaseModel):
     # Manual mode
     manual_prompt: Optional[str] = Field(default=None, max_length=2000)
     manual_description: Optional[str] = Field(default=None, max_length=2000)
-    manual_cluster: Optional[str] = None
+    manual_cluster: Optional[str] = Field(default=None, max_length=200)
+    gap_query_id: Optional[str] = None  # Direct gap lookup key from Analytics
 
     # Product scope
     product_slug: Optional[str] = None
@@ -40,6 +41,28 @@ class ContentStartRequestV13(BaseModel):
     max_concurrent_workers: int = Field(default=3, ge=1, le=10)
     max_revision_cycles: int = Field(default=2, ge=0, le=5)
     skip_stages: List[int] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_manual_fields(self) -> "ContentStartRequestV13":
+        """Ensure manual mode has a non-empty prompt and valid skip_stages."""
+        if self.entry_mode == "manual":
+            if not self.manual_prompt or not self.manual_prompt.strip():
+                raise ValueError(
+                    "manual_prompt is required and must be non-empty "
+                    "when entry_mode is 'manual'"
+                )
+            # M1-fix: normalize manual_cluster whitespace at input boundary
+            if self.manual_cluster:
+                self.manual_cluster = self.manual_cluster.strip()
+            # H6-fix: stages 0-1 are skipped by design, stage 2 is required
+            invalid_skips = set(self.skip_stages) & {0, 1, 2}
+            if invalid_skips:
+                raise ValueError(
+                    f"Manual mode cannot skip stages {sorted(invalid_skips)}. "
+                    "Stages 0-1 are already skipped by design, and stage 2 "
+                    "(Brief Builder) is required. Only stages 3, 4, 5 may be skipped."
+                )
+        return self
 
 
 # ---------------------------------------------------------------------------

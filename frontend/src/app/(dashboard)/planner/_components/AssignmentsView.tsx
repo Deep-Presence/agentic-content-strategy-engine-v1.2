@@ -14,6 +14,8 @@ import {
 interface AssignmentsViewProps {
   subdomain: SubdomainNode;
   assignments: Assignment[];
+  onSendToContentEngine?: (assignment: Assignment) => void;
+  sendingAssignmentId?: string | null;
 }
 
 type StageFilter = 'tofu' | 'mofu' | 'bofu';
@@ -41,7 +43,7 @@ const STATUS_STYLES: Record<StatusFilter, { label: string; variant: 'neutral' | 
   published: { label: 'Published', variant: 'success' },
 };
 
-export function AssignmentsView({ subdomain, assignments }: AssignmentsViewProps) {
+export function AssignmentsView({ subdomain, assignments, onSendToContentEngine, sendingAssignmentId }: AssignmentsViewProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [stageFilters, setStageFilters] = useState<Set<StageFilter>>(new Set());
   const [intentFilters, setIntentFilters] = useState<Set<IntentFilter>>(new Set());
@@ -367,9 +369,14 @@ export function AssignmentsView({ subdomain, assignments }: AssignmentsViewProps
 
                     {/* Action buttons */}
                     <div className="flex items-center gap-2">
-                      <Button variant="primary" size="sm">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={!!sendingAssignmentId}
+                        onClick={() => onSendToContentEngine?.(a)}
+                      >
                         <Send size={10} strokeWidth={1.5} className="mr-1" />
-                        Send to Content Engine
+                        {sendingAssignmentId === a.id ? 'Sending...' : 'Send to Content Engine'}
                       </Button>
                       <Button variant="secondary" size="sm">
                         <Pencil size={10} strokeWidth={1.5} className="mr-1" />

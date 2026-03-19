@@ -14,8 +14,9 @@ import asyncio
 import json
 import logging
 import sys
+import uuid as _uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.config.settings import settings
 from core.content_engine.pipeline import _brief_dir, _cli_worker_progress
@@ -258,6 +259,9 @@ async def _run_worker_chain_v13(
     semaphore: asyncio.Semaphore,
     site_pages: Optional[List[str]] = None,
     parent_span: Optional[object] = None,
+    storage: Any = None,  # Optional[StorageBackend]
+    session_factory: Any = None,  # Optional[async_sessionmaker]
+    piece_id: Optional[_uuid.UUID] = None,
 ) -> FormattedContent:
     """Run the v1.3 4-step worker chain for a single brief.
 
@@ -299,6 +303,10 @@ async def _run_worker_chain_v13(
         bdir = _brief_dir(artifact_dir, brief.brief_id)
 
         try:
+            # Helper to compute relative storage path from brief dir
+            def _rel(filename: str) -> str:
+                return str((bdir / filename).relative_to(storage.root)) if storage else ""
+
             # Step 1: Outline
             logger.info("Worker #%d: Outlining \"%s\"", worker_num, display_title)
             outline = await generate_outline(
@@ -306,10 +314,18 @@ async def _run_worker_chain_v13(
                 company_context_md=company_context_md,
                 trace=span,
             )
-            (bdir / "outline.json").write_text(
-                json.dumps(outline.model_dump(mode="json"), indent=2, default=str),
-                encoding="utf-8",
-            )
+            outline_json = json.dumps(outline.model_dump(mode="json"), indent=2, default=str)
+            if storage:
+                from core.content_engine.artifact_writer import persist_stage_artifact
+                from core.db.enums import ContentArtifactStage
+
+                await persist_stage_artifact(
+                    storage=storage, session_factory=session_factory, piece_id=piece_id,
+                    stage=ContentArtifactStage.outline, relative_path=_rel("outline.json"),
+                    content=outline_json, content_type="application/json",
+                )
+            else:
+                (bdir / "outline.json").write_text(outline_json, encoding="utf-8")
 
             # Step 2: Draft
             logger.info("Worker #%d: Drafting \"%s\"", worker_num, display_title)
@@ -320,7 +336,14 @@ async def _run_worker_chain_v13(
                 company_context_md=company_context_md,
                 trace=span,
             )
-            (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
+            if storage:
+                await persist_stage_artifact(
+                    storage=storage, session_factory=session_factory, piece_id=piece_id,
+                    stage=ContentArtifactStage.draft, relative_path=_rel("draft.md"),
+                    content=draft.markdown,
+                )
+            else:
+                (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
 
             # Step 3: Link
             logger.info("Worker #%d: Linking \"%s\"", worker_num, display_title)
@@ -332,7 +355,14 @@ async def _run_worker_chain_v13(
                 site_pages=site_pages,
                 trace=span,
             )
-            (bdir / "linked.md").write_text(linked.markdown, encoding="utf-8")
+            if storage:
+                await persist_stage_artifact(
+                    storage=storage, session_factory=session_factory, piece_id=piece_id,
+                    stage=ContentArtifactStage.linked, relative_path=_rel("linked.md"),
+                    content=linked.markdown,
+                )
+            else:
+                (bdir / "linked.md").write_text(linked.markdown, encoding="utf-8")
 
             # Step 4: Fact Check (verify-only, no new content)
             logger.info("Worker #%d: Fact checking \"%s\"", worker_num, display_title)
@@ -349,7 +379,14 @@ async def _run_worker_chain_v13(
                 domain=input_data.domain,
                 trace=span,
             )
-            (bdir / "fact_checked.md").write_text(checked.markdown, encoding="utf-8")
+            if storage:
+                await persist_stage_artifact(
+                    storage=storage, session_factory=session_factory, piece_id=piece_id,
+                    stage=ContentArtifactStage.enriched, relative_path=_rel("enriched.md"),
+                    content=checked.markdown,
+                )
+            else:
+                (bdir / "fact_checked.md").write_text(checked.markdown, encoding="utf-8")
 
             # Compute structural counts inline (no formatter step)
             counts = _count_structural_elements(checked.markdown)
@@ -396,6 +433,9 @@ async def dispatch_workers_v13(
     artifact_dir: Path = Path("."),
     site_pages: Optional[List[str]] = None,
     parent_span: Optional[object] = None,
+    storage: Any = None,  # Optional[StorageBackend]
+    session_factory: Any = None,  # Optional[async_sessionmaker]
+    piece_id_map: Optional[Dict[str, _uuid.UUID]] = None,
 ) -> Tuple[List[Tuple[str, FormattedContent]], List[Dict[str, str]]]:
     """Dispatch v1.3 worker chains in parallel.
 
@@ -418,6 +458,7 @@ async def dispatch_workers_v13(
           - failures: List of {"brief_id": str, "error": str} dicts
     """
     semaphore = asyncio.Semaphore(max_concurrent)
+    pid_map = piece_id_map or {}
 
     tasks = [
         _run_worker_chain_v13(
@@ -430,6 +471,9 @@ async def dispatch_workers_v13(
             semaphore=semaphore,
             site_pages=site_pages,
             parent_span=parent_span,
+            storage=storage,
+            session_factory=session_factory,
+            piece_id=pid_map.get(brief.brief_id),
         )
         for i, brief in enumerate(briefs)
     ]

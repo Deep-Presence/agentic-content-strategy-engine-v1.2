@@ -1,8 +1,9 @@
 """Service layer for content data endpoints (Phase 3).
 
-Reads content pipeline artifacts from disk (briefs.json, run_metadata.json,
-per-brief stage files), reshapes them to match the frontend TypeScript types,
-and infers brief statuses from artifacts + run metadata.
+Reads content pipeline v1.3 artifacts from disk (blueprints.json,
+planner_selections.json, run_metadata.json, per-brief stage files),
+reshapes them to match the frontend TypeScript types, and infers brief
+statuses from artifacts + run metadata.
 """
 from __future__ import annotations
 
@@ -185,8 +186,9 @@ def _infer_brief_status(
         except (json.JSONDecodeError, KeyError, OSError):
             pass
         return "evaluating"
-    if (brief_dir / "formatted.md").exists():
-        return "formatting"
+    # NOTE: "formatted.md" check removed — v1.3 pipeline does not produce
+    # a formatted stage file. The v1.0 Formatter was merged into v1.3 workers.
+    # _STAGE_FILES still includes "formatted" for backward compat with v1.0 artifacts.
     if (brief_dir / "enriched.md").exists():
         return "enriching"
     if (brief_dir / "draft.md").exists():
@@ -244,8 +246,34 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
     if not content_root.is_dir():
         return ContentBriefListResponse(briefs=[], total=0)
 
-    # Load briefs.json (PlannerOutput)
-    briefs_data = _load_json_cached(content_root, "briefs.json")
+    # v1.3 pipeline outputs: blueprints.json (after brief builder) or
+    # planner_selections.json (while strategic planner is still running).
+    # ContentBlueprint extends ContentBrief, so the same fields are present.
+    briefs_data: Optional[Dict[str, Any]] = None
+
+    blueprints_raw = _load_json_cached(content_root, "blueprints.json")
+    if blueprints_raw and isinstance(blueprints_raw, list) and blueprints_raw:
+        briefs_data = {"briefs": blueprints_raw}
+    else:
+        # Strategic planner in progress — surface topics as early-stage briefs
+        planner_data = _load_json_cached(content_root, "planner_selections.json")
+        if planner_data and isinstance(planner_data, dict):
+            selections = planner_data.get("selections", [])
+            if selections:
+                briefs_data = {"briefs": [
+                    {
+                        "brief_id": f"brief-{i + 1:03d}",
+                        "title": (
+                            sel.get("query_texts", [""])[0]
+                            or f"Topic {i + 1}"
+                        ),
+                        "target_cluster": sel.get("cluster_name", ""),
+                        "content_format": "long_blog",
+                        "word_count_range": [0, 0],
+                    }
+                    for i, sel in enumerate(selections)
+                ]}
+
     if not briefs_data:
         return ContentBriefListResponse(briefs=[], total=0)
 
@@ -258,9 +286,14 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
     pieces = (run_meta or {}).get("pieces", [])
     session_id = (run_meta or {}).get("run_metadata", {}).get("session_id")
 
-    # briefs.json mtime as created_at
-    briefs_path = content_root / "briefs.json"
-    created_at = _mtime_iso(briefs_path) if briefs_path.is_file() else ""
+    # Use mtime of the source artifact as created_at
+    for _fname in ("blueprints.json", "planner_selections.json"):
+        _src = content_root / _fname
+        if _src.is_file():
+            created_at = _mtime_iso(_src)
+            break
+    else:
+        created_at = ""
 
     items: List[ContentBriefListItem] = []
     for brief in briefs_list:
@@ -302,6 +335,78 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
     return ContentBriefListResponse(briefs=items, total=len(items))
 
 
+def add_brief(
+    artifacts_root: Path,
+    slug: str,
+    title: str,
+    cluster: str = "",
+    description: str = "",
+    source: str = "manual",
+) -> ContentBriefListItem:
+    """Immediately create a brief entry on disk so it appears in Content Studio.
+
+    Appends to blueprints.json (or creates it). The brief starts with
+    status "suggested" and can later be enriched by the content pipeline.
+    """
+    _validate_slug(slug)
+    content_root = _content_dir(artifacts_root, slug)
+    content_root.mkdir(parents=True, exist_ok=True)
+
+    # Load existing blueprints or start fresh
+    bp_path = content_root / "blueprints.json"
+    existing: List[Dict[str, Any]] = []
+    if bp_path.is_file():
+        try:
+            raw = json.loads(bp_path.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                existing = raw
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Determine next brief_id
+    existing_ids = {b.get("brief_id", "") for b in existing}
+    idx = len(existing) + 1
+    while f"brief-{idx:03d}" in existing_ids:
+        idx += 1
+    brief_id = f"brief-{idx:03d}"
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Create minimal blueprint entry
+    new_entry: Dict[str, Any] = {
+        "brief_id": brief_id,
+        "title": title,
+        "target_cluster": cluster,
+        "content_format": "long_blog",
+        "word_count_range": [0, 0],
+        "key_topics": [title],
+        "key_angles": [],
+        "priority_score": 0.0,
+        "target_queries": [{"query_text": title, "cluster_name": cluster}],
+        "_source": source,
+        "_description": description,
+        "_created_at": now,
+    }
+
+    existing.append(new_entry)
+    bp_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+    # Invalidate cache for this file
+    cache_key = (str(content_root), "blueprints.json")
+    _CACHE.pop(cache_key, None)
+
+    return ContentBriefListItem(
+        id=brief_id,
+        title=title,
+        status="suggested",
+        content_type="blog",
+        cluster=cluster,
+        target_word_count=0,
+        created_at=now,
+        updated_at=now,
+    )
+
+
 def get_brief_detail(
     artifacts_root: Path, slug: str, brief_id: str
 ) -> ContentBriefDetailResponse:
@@ -310,14 +415,31 @@ def get_brief_detail(
     _validate_brief_id(brief_id)
     content_root = _require_content_dir(artifacts_root, slug)
 
-    # Load briefs
-    briefs_data = _load_json_cached(content_root, "briefs.json")
-    if not briefs_data:
-        raise HTTPException(404, f"No briefs.json for company '{slug}'")
+    # Load briefs from v1.3 artifacts
+    briefs_list: List[Dict[str, Any]] = []
+    blueprints_raw = _load_json_cached(content_root, "blueprints.json")
+    if blueprints_raw and isinstance(blueprints_raw, list):
+        briefs_list = blueprints_raw
+    else:
+        planner_data = _load_json_cached(content_root, "planner_selections.json")
+        if planner_data and isinstance(planner_data, dict):
+            selections = planner_data.get("selections", [])
+            briefs_list = [
+                {
+                    "brief_id": f"brief-{i + 1:03d}",
+                    "title": sel.get("query_texts", [""])[0] or f"Topic {i + 1}",
+                    "target_cluster": sel.get("cluster_name", ""),
+                    "content_format": "long_blog",
+                    "word_count_range": [0, 0],
+                }
+                for i, sel in enumerate(selections)
+            ]
+    if not briefs_list:
+        raise HTTPException(404, f"No content briefs for company '{slug}'")
 
     # Find the brief
     brief = None
-    for b in briefs_data.get("briefs", []):
+    for b in briefs_list:
         if b.get("brief_id") == brief_id:
             brief = b
             break

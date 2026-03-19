@@ -139,6 +139,7 @@ async def start_content_v13(
         manual_prompt=body.manual_prompt,
         manual_description=body.manual_description,
         manual_cluster=body.manual_cluster,
+        gap_query_id=body.gap_query_id,
         product_slug=body.product_slug,
         product_name=body.product_name or scope.product_name,
         product_description=body.product_description or scope.product_description,
@@ -146,9 +147,9 @@ async def start_content_v13(
         max_concurrent_workers=body.max_concurrent_workers,
         max_revision_cycles=body.max_revision_cycles,
         skip_stages=body.skip_stages,
-        # Resolve artifact paths
-        company_context_path=str(artifacts_root / "company_context" / f"{scope.effective_slug}.md"),
-        style_guide_path=str(artifacts_root / "style_guides" / f"{scope.effective_slug}.md"),
+        # H5-fix: company_context_path, style_guide_path, and persona_paths
+        # are now resolved by the runner via resolve_artifacts() fallback chain.
+        # Only analysis_json_path stays here (uses gap_slug, not standard fallback).
         analysis_json_path=str(analysis_json_path),
     )
 
@@ -161,7 +162,7 @@ async def start_content_v13(
 
     # H2: Route through runner to enforce semaphore, handle registration, and slug lock cleanup
     handle = asyncio.create_task(
-        run_content_v13_pipeline_task(task.task_id, input_data, task_store, event_bus)
+        run_content_v13_pipeline_task(task.task_id, input_data, task_store, event_bus, artifacts_root)
     )
     task_store.register_task_handle(task.task_id, handle)
 

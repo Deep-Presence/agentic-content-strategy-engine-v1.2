@@ -37,6 +37,15 @@ class ContentBriefListResponse(BaseModel):
     total: int = 0
 
 
+class AddBriefRequest(BaseModel):
+    """Request body for POST /briefs — immediately add a topic to the content cycle."""
+
+    title: str = Field(..., min_length=1, max_length=500)
+    cluster: str = ""
+    description: str = ""
+    source: str = "manual"  # "citation", "topic_discovery", "manual"
+
+
 # ---------------------------------------------------------------------------
 # Brief detail
 # ---------------------------------------------------------------------------

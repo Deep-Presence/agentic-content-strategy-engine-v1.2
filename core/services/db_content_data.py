@@ -7,6 +7,8 @@ since they are large blobs read as whole units.
 from __future__ import annotations
 
 import asyncio
+import logging
+import uuid as _uuid
 from pathlib import Path
 from typing import List, Optional
 
@@ -18,9 +20,12 @@ from api.schemas.content_data import (
     ContentBriefListResponse,
     StageContentResponse,
 )
-from core.db.enums import PipelineType
+from core.db.enums import ContentArtifactStage, ContentPieceStatus, PipelineType
+from core.db.repositories.content_artifact_repo import ContentArtifactRepository
 from core.db.repositories.content_repo import ContentRepository
 from core.db.repositories.pipeline_repo import PipelineRepository
+
+logger = logging.getLogger(__name__)
 
 
 # Map ContentPieceStatus → frontend display status
@@ -56,10 +61,12 @@ class DbContentDataService:
         content_repo: ContentRepository,
         pipeline_repo: PipelineRepository,
         artifacts_root: Path,
+        artifact_repo: Optional[ContentArtifactRepository] = None,
     ) -> None:
         self._content_repo = content_repo
         self._pipeline_repo = pipeline_repo
         self._artifacts_root = artifacts_root
+        self._artifact_repo = artifact_repo
 
     async def _resolve_run_id(self, effective_slug: str) -> Optional[str]:
         """Resolve effective_slug → latest completed content run id."""
@@ -73,12 +80,15 @@ class DbContentDataService:
     async def get_briefs(
         self, effective_slug: str,
     ) -> ContentBriefListResponse:
-        """List content pieces from the DB."""
+        """List content pieces from the DB (including pre-pipeline planned briefs)."""
+        # Resolve run_id for cycle_id display (may be None for pre-pipeline briefs)
         run_id = await self._resolve_run_id(effective_slug)
-        if run_id is None:
-            return ContentBriefListResponse(briefs=[], total=0)
 
-        pieces = await self._content_repo.list_by_run(run_id)
+        # Query by effective_slug to include run_id=NULL pieces from add_brief()
+        pieces = await self._content_repo.list_by_slug(effective_slug)
+        if not pieces and run_id:
+            # Fallback: try run-scoped query for backward compat
+            pieces = await self._content_repo.list_by_run(run_id)
         if not pieces:
             return ContentBriefListResponse(briefs=[], total=0)
 
@@ -116,7 +126,7 @@ class DbContentDataService:
                 cluster=cluster,
                 target_word_count=word_count,
                 citability_score=citability,
-                cycle_id=str(run_id),
+                cycle_id=str(run_id) if run_id else str(piece.run_id or ""),
                 created_at=piece.created_at.isoformat() if piece.created_at else "",
                 updated_at=(
                     piece.updated_at.isoformat()
@@ -190,15 +200,79 @@ class DbContentDataService:
             eval_history=eval_history,
             final_passed=final_passed,
             exemplars=exemplars,
-            available_stages=[],  # DB doesn't track stage files
+            available_stages=await self._get_available_stages(piece.id)
         )
 
-    # ── Stage Content (filesystem-backed) ────────────────────────────
+    async def _get_available_stages(self, piece_id: _uuid.UUID) -> list[str]:
+        """Query artifact table for available stages."""
+        if not self._artifact_repo:
+            return []
+        try:
+            artifacts = await self._artifact_repo.list_by_piece(piece_id)
+            return [a.stage.value for a in artifacts]
+        except Exception:
+            return []
+
+    # ── Stage Content (DB metadata → StorageBackend, filesystem fallback) ──
+
+    _API_TO_ARTIFACT_STAGE = {
+        "outline": ContentArtifactStage.outline,
+        "draft": ContentArtifactStage.draft,
+        "linked": ContentArtifactStage.linked,
+        "enriched": ContentArtifactStage.enriched,
+        "formatted": ContentArtifactStage.enriched,  # v1.0 compat alias
+        "eval_history": ContentArtifactStage.eval_history,
+        "final": ContentArtifactStage.final,
+    }
 
     async def get_brief_stage_content(
         self, effective_slug: str, brief_id: str, stage: str,
     ) -> StageContentResponse:
-        """Delegate to filesystem — stage files are large blobs."""
+        """Read stage content via DB artifact metadata → StorageBackend.
+
+        Falls back to filesystem heuristic if DB artifact row is missing.
+        """
+        # Try DB path: artifact metadata → StorageBackend
+        if self._artifact_repo and stage in self._API_TO_ARTIFACT_STAGE:
+            try:
+                piece = await self._content_repo.get_by_slug_and_brief_id(
+                    effective_slug, brief_id,
+                )
+                if piece:
+                    artifact_stage = self._API_TO_ARTIFACT_STAGE[stage]
+                    artifact = await self._artifact_repo.get_by_piece_and_stage(
+                        piece.id, artifact_stage,
+                    )
+                    if artifact:
+                        from core.storage import get_storage_backend
+
+                        storage = get_storage_backend(self._artifacts_root)
+                        content = storage.read(artifact.storage_key)
+                        if content is not None:
+                            import json
+
+                            if artifact.content_type == "application/json":
+                                try:
+                                    parsed = json.loads(content)
+                                    return StageContentResponse(
+                                        brief_id=brief_id, stage=stage,
+                                        content_type=artifact.content_type,
+                                        content=parsed,
+                                    )
+                                except json.JSONDecodeError:
+                                    pass
+                            return StageContentResponse(
+                                brief_id=brief_id, stage=stage,
+                                content_type=artifact.content_type,
+                                content=content,
+                            )
+            except Exception:
+                logger.warning(
+                    "DB artifact lookup failed for %s/%s/%s — falling back to filesystem",
+                    effective_slug, brief_id, stage, exc_info=True,
+                )
+
+        # Fallback: filesystem heuristic (backward compat)
         from api.services.content_data_service import get_brief_stage_content
 
         return await asyncio.to_thread(
@@ -208,3 +282,49 @@ class DbContentDataService:
             brief_id,
             stage,
         )
+
+    # ── Add Brief (filesystem-backed) ─────────────────────────────
+
+    async def add_brief(
+        self,
+        effective_slug: str,
+        title: str,
+        cluster: str = "",
+        description: str = "",
+        source: str = "manual",
+    ) -> ContentBriefListItem:
+        """Create a brief entry on disk AND in DB.
+
+        Filesystem write (blueprints.json) is the source of truth for
+        Content Studio. DB row (status=planned) enables DB-backed queries.
+        """
+        from api.services.content_data_service import add_brief
+
+        item = await asyncio.to_thread(
+            add_brief,
+            self._artifacts_root,
+            effective_slug,
+            title,
+            cluster,
+            description,
+            source,
+        )
+
+        # DB write (additive) — create ContentPieceModel with status=planned
+        try:
+            await self._content_repo.create_piece(
+                effective_slug=effective_slug,
+                brief_id=item.id,
+                title=title,
+                cluster_name=cluster,
+                content_type="long_blog",
+                status=ContentPieceStatus.planned,
+                word_count=0,
+            )
+        except Exception:
+            logger.warning(
+                "add_brief: DB write failed for %s/%s — brief exists on filesystem",
+                effective_slug, item.id, exc_info=True,
+            )
+
+        return item

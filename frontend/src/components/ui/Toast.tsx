@@ -5,12 +5,18 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, AlertCircle, Info, X } from 'lucide-react';
 import { useEffect } from 'react';
 
+interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 interface ToastProps {
   open: boolean;
   onClose: () => void;
   variant?: 'success' | 'error' | 'info';
   message: string;
   duration?: number;
+  action?: ToastAction;
 }
 
 const icons = {
@@ -19,7 +25,7 @@ const icons = {
   info: Info,
 };
 
-export function Toast({ open, onClose, variant = 'info', message, duration = 4000 }: ToastProps) {
+export function Toast({ open, onClose, variant = 'info', message, duration = 4000, action }: ToastProps) {
   const Icon = icons[variant];
 
   useEffect(() => {
@@ -56,7 +62,17 @@ export function Toast({ open, onClose, variant = 'info', message, duration = 400
               variant === 'info' && 'text-accent',
             )}
           />
-          <span className="text-[12px] text-text-primary flex-1">{message}</span>
+          <span className="text-[12px] text-text-primary flex-1">
+            {message}
+            {action && (
+              <button
+                onClick={(e) => { e.stopPropagation(); action.onClick(); onClose(); }}
+                className="text-[11px] font-medium text-accent hover:underline cursor-pointer whitespace-nowrap ml-1.5"
+              >
+                {action.label}
+              </button>
+            )}
+          </span>
           <button
             onClick={onClose}
             className="p-0.5 text-text-tertiary hover:text-text-primary cursor-pointer"

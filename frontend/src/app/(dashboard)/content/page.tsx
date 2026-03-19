@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Button, Skeleton } from '@/components/ui';
 import { Plus, LayoutGrid, List, ChevronDown } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth';
 import { useContentBriefs } from '@/lib/hooks/useContent';
+import { useTaskStream } from '@/lib/hooks/useTaskStream';
 import { toBrief } from '@/lib/api/transforms';
 import { type ExtendedBrief } from './_components/content-data';
 import { CyclesSidebar } from './_components/CyclesSidebar';
@@ -15,7 +17,17 @@ import { ContentView } from './_components/ContentView';
 
 export default function ContentStudioPage() {
   const slug = useAuthStore((s) => s.company?.slug);
-  const { data: briefsData, isLoading } = useContentBriefs(slug);
+  const { data: briefsData, isLoading, refetch } = useContentBriefs(slug);
+
+  // Pipeline progress tracking via URL param
+  const searchParams = useSearchParams();
+  const pipelineTaskId = searchParams.get('pipeline_task') ?? null;
+  const stream = useTaskStream(pipelineTaskId);
+
+  // Force refetch when pipeline completes
+  useEffect(() => {
+    if (stream.status === 'completed') refetch();
+  }, [stream.status, refetch]);
 
   // Transform API briefs to ExtendedBrief for the kanban board
   const apiBriefs = useMemo<ExtendedBrief[]>(() => {
@@ -83,7 +95,7 @@ export default function ContentStudioPage() {
     );
   }
 
-  if (items.length === 0) {
+  if (items.length === 0 && stream.status !== 'connected' && stream.status !== 'connecting') {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <p className="text-[14px] text-text-secondary mb-2">No content briefs yet</p>
@@ -104,6 +116,21 @@ export default function ContentStudioPage() {
 
         {/* Center: Board View */}
         <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+          {/* Pipeline progress bar */}
+          {(stream.status === 'connected' || stream.status === 'connecting') && (
+            <div className="px-4 py-1.5 bg-accent-subtle border-b border-border flex items-center gap-2 shrink-0">
+              <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+              <span className="text-[11px] text-accent font-medium">
+                Content pipeline running{stream.currentStep ? `: ${stream.currentStep}` : '...'}
+              </span>
+              {stream.progressPct > 0 && (
+                <span className="text-[10px] text-text-tertiary font-mono ml-auto">
+                  {stream.progressPct}%
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
             <div className="flex items-center gap-3">
               <h1 className="text-[20px] font-semibold text-text-primary tracking-[-0.02em]">

@@ -649,6 +649,7 @@ async def run_content_v13_pipeline_task(
     input_data: Any,
     task_store: TaskStoreProtocol,
     event_bus: EventBus,
+    artifacts_root: Optional[Path] = None,
 ) -> None:
     """Background task wrapper for v1.3 content generation pipeline.
 
@@ -662,10 +663,21 @@ async def run_content_v13_pipeline_task(
     effective = _task.effective_slug or _task.company_slug or _derive_slug(input_data.company_name)
     company_slug = _task.company_slug or _derive_slug(input_data.company_name)
 
+    # H5-fix: resolve research artifacts with product→company fallback chain
+    # (same pattern as run_gap_analysis_pipeline_task)
+    if artifacts_root:
+        resolved = resolve_artifacts(company_slug, artifacts_root, effective_slug=effective)
+        if resolved["company_context_path"]:
+            input_data.company_context_path = resolved["company_context_path"]
+        if resolved["style_guide_path"]:
+            input_data.style_guide_path = resolved["style_guide_path"]
+        if resolved["persona_paths"]:
+            input_data.persona_paths = resolved["persona_paths"]
+
     session_factory, run_id, company_id = await _resolve_db_context(company_slug, effective)
     if session_factory and run_id and company_id:
         await _create_pipeline_run(
-            session_factory, run_id, company_id, effective, "content_v13"
+            session_factory, run_id, company_id, effective, "content"
         )
 
     bind_context(task_id=task_id, pipeline_name="content_v13", company_slug=company_slug, run_id=str(run_id) if run_id else None)
