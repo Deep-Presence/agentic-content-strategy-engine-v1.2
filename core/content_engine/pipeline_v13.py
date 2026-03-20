@@ -39,6 +39,11 @@ from core.content_engine.graph_v13 import (
     run_hitl_checkpoint,
 )
 from core.content_engine.llm_client import configure_litellm_callbacks
+from core.content_engine.state_helpers import (
+    _cleanup_pipeline_state,
+    _emit,
+    _write_pipeline_state,
+)
 from core.content_engine.persistence import (
     persist_content_pieces,
     persist_content_run_summary,
@@ -206,10 +211,8 @@ def _extract_site_pages(analysis_json: Dict[str, Any]) -> List[str]:
 # ── Event helpers ─────────────────────────────────────────────────────
 
 
-def _emit(event_bus: Any, task_id: Optional[str], event_type: str, data: Dict[str, Any]) -> None:
-    """Publish an SSE event if event_bus and task_id are available."""
-    if event_bus and task_id:
-        event_bus.publish(task_id, event_type, data)
+# _emit, _write_pipeline_state, _cleanup_pipeline_state are imported from
+# core.content_engine.state_helpers (see imports above).
 
 
 _TOTAL_STAGES_V13: int = 5  # stages 0-5; pct = stage / _TOTAL_STAGES_V13 * 100
@@ -239,53 +242,8 @@ def _update_task(task_store: Any, task_id: Optional[str], **kwargs: Any) -> None
         task_store.update_task(task_id, **kwargs)
 
 
-def _write_pipeline_state(artifact_dir: Path, brief_ids: List[str], phase: str) -> None:
-    """Write per-brief status to pipeline_state.json.
-
-    This file is the highest-priority status source during pipeline execution.
-    It is read by content_data_service._infer_brief_status() as Phase 0
-    (before pieces and file-based inference).
-
-    Merges with existing state to support concurrent manual runs.
-    Cleaned up by _cleanup_pipeline_state once run_metadata_v13.json is written.
-    """
-    state_path = artifact_dir / "pipeline_state.json"
-    existing: Dict[str, str] = {}
-    if state_path.is_file():
-        try:
-            raw = json.loads(state_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                existing = raw
-        except (json.JSONDecodeError, OSError):
-            pass
-    for bid in brief_ids:
-        existing[bid] = phase
-    state_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
 
-def _cleanup_pipeline_state(artifact_dir: Path, brief_ids: List[str]) -> None:
-    """Remove specific brief IDs from pipeline_state.json.
-
-    Only deletes the file if no entries remain — concurrency-safe for parallel
-    manual runs where another run may still have in-flight state.
-    """
-    state_path = artifact_dir / "pipeline_state.json"
-    if not state_path.is_file():
-        return
-    try:
-        raw = json.loads(state_path.read_text(encoding="utf-8"))
-        existing = raw if isinstance(raw, dict) else {}
-    except (json.JSONDecodeError, OSError):
-        existing = {}
-    for bid in brief_ids:
-        existing.pop(bid, None)
-    if existing:
-        state_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
-    else:
-        try:
-            state_path.unlink()
-        except OSError:
-            pass
 
 
 # ── CPS Scoring Helper ────────────────────────────────────────────────
@@ -445,6 +403,8 @@ async def _rebrief_and_rerun(
     artifact_dir: Path,
     session_id: str,
     parent_span: Optional[object] = None,
+    event_bus: Any = None,
+    task_id: Optional[str] = None,
 ) -> Optional[tuple]:
     """Re-brief a piece via Agent 2 and re-run the full worker+evaluator chain.
 
@@ -521,6 +481,8 @@ async def _rebrief_and_rerun(
             artifact_dir=artifact_dir,
             site_pages=site_pages,
             parent_span=parent_span,
+            event_bus=event_bus,
+            task_id=task_id,
         )
 
         if not formatted_list:
@@ -543,6 +505,8 @@ async def _rebrief_and_rerun(
             parent_span=parent_span,
             use_eeat=True,
             use_targeted_revision=True,
+            event_bus=event_bus,
+            task_id=task_id,
         )
 
         return (final_content, history, feedback_route)
@@ -919,6 +883,7 @@ async def _run_pipeline_stages(
                 artifact_dir,
                 [f"brief-{r + 1:03d}" for r in approved_ranks],
                 "approved",
+                task_id=task_id,
             )
 
         else:
@@ -966,6 +931,15 @@ async def _run_pipeline_stages(
             blueprints_path = artifact_dir / "blueprints.json"
             _merge_and_write_blueprints(blueprints_path, blueprints)
 
+            # Mark blueprints as "brief_review" pending HITL-2
+            # (Uses actual brief_ids from build_briefs_parallel, not predicted IDs)
+            _write_pipeline_state(
+                artifact_dir,
+                [bp.brief_id for bp in blueprints],
+                "brief_review",
+                task_id=task_id,
+            )
+
             # HITL Checkpoint 2: Brief Approval (per blueprint) with feedback loop
             _MAX_BRIEF_FEEDBACK_RETRIES = 1
 
@@ -996,7 +970,7 @@ async def _run_pipeline_stages(
                         if feedback:
                             bp.user_feedback = feedback
                         approved_blueprints.append(bp)
-                        _write_pipeline_state(artifact_dir, [bp.brief_id], "approved")
+                        _write_pipeline_state(artifact_dir, [bp.brief_id], "approved", task_id=task_id)
                         brief_decision_log.append({
                             "brief_id": bp.brief_id,
                             "decision": "approve",
@@ -1195,21 +1169,27 @@ async def _run_pipeline_stages(
             else:
                 manual_topic.estimated_impact = "low"
 
-        # Determine next available brief ID to avoid collisions with existing briefs.
-        # Reads blueprints.json for existing IDs and picks the next sequential one.
-        _existing_ids: set[str] = set()
-        _bp_path = artifact_dir / "blueprints.json"
-        if _bp_path.is_file():
-            try:
-                _existing = json.loads(_bp_path.read_text(encoding="utf-8"))
-                if isinstance(_existing, list):
-                    _existing_ids = {b.get("brief_id", "") for b in _existing if isinstance(b, dict)}
-            except (json.JSONDecodeError, OSError):
-                pass
-        _next_idx = 1
-        while f"brief-{_next_idx:03d}" in _existing_ids:
-            _next_idx += 1
-        _manual_brief_id = f"brief-{_next_idx:03d}"
+        # Determine brief ID: use hint from frontend if available, else auto-generate.
+        if input_data.brief_id_hint:
+            _manual_brief_id = input_data.brief_id_hint
+        else:
+            # Reads blueprints.json for existing IDs and picks the next sequential one.
+            _existing_ids: set[str] = set()
+            _bp_path = artifact_dir / "blueprints.json"
+            if _bp_path.is_file():
+                try:
+                    _existing = json.loads(_bp_path.read_text(encoding="utf-8"))
+                    if isinstance(_existing, list):
+                        _existing_ids = {b.get("brief_id", "") for b in _existing if isinstance(b, dict)}
+                except (json.JSONDecodeError, OSError):
+                    pass
+            _next_idx = 1
+            while f"brief-{_next_idx:03d}" in _existing_ids:
+                _next_idx += 1
+            _manual_brief_id = f"brief-{_next_idx:03d}"
+
+        # Mark brief as "briefing" for Kanban sync — Brief Builder is about to run
+        _write_pipeline_state(artifact_dir, [_manual_brief_id], "briefing", task_id=task_id)
 
         blueprints = await build_briefs_parallel(
             contexts=worker_contexts,
@@ -1226,8 +1206,8 @@ async def _run_pipeline_stages(
         blueprints_path = artifact_dir / "blueprints.json"
         _merge_and_write_blueprints(blueprints_path, blueprints)
 
-        # Write "suggested" state so frontend Kanban shows the brief in Suggested column
-        _write_pipeline_state(artifact_dir, [bp.brief_id for bp in blueprints], "suggested")
+        # Write "brief_review" state — brief is built, pending HITL-2 review
+        _write_pipeline_state(artifact_dir, [bp.brief_id for bp in blueprints], "brief_review", task_id=task_id)
 
         # HITL Checkpoint 2: Brief Approval (per blueprint) with feedback loop
         # Same as autonomous mode — user reviews the generated blueprint before
@@ -1261,7 +1241,7 @@ async def _run_pipeline_stages(
                     if feedback:
                         bp.user_feedback = feedback
                     approved_blueprints.append(bp)
-                    _write_pipeline_state(artifact_dir, [bp.brief_id], "approved")
+                    _write_pipeline_state(artifact_dir, [bp.brief_id], "approved", task_id=task_id)
                     brief_decision_log.append({
                         "brief_id": bp.brief_id,
                         "decision": "approve",
@@ -1514,12 +1494,8 @@ async def _run_pipeline_stages(
             _emit(event_bus, task_id, "stage_started", {"stage": 3, "name": "Content Workers"})
             stages_actually_executed.add(3)
 
-            # Mark all approved briefs as "in_progress" for Kanban sync
-            _write_pipeline_state(
-                artifact_dir,
-                [bp.brief_id for bp in approved_blueprints],
-                "in_progress",
-            )
+            # Per-brief "outlining" state is written by the dispatcher before each worker starts.
+            # No coarse "in_progress" write needed here.
 
             # Extract site pages for linker (from s1 discovery data in analysis.json)
             site_pages = _extract_site_pages(analysis_json)
@@ -1539,6 +1515,8 @@ async def _run_pipeline_stages(
                 storage=storage,
                 session_factory=session_factory,
                 piece_id_map=piece_id_map,
+                event_bus=event_bus,
+                task_id=task_id,
             )
 
             # H2 FIX: Surface worker failures as rejected pieces + SSE events
@@ -1586,6 +1564,12 @@ async def _run_pipeline_stages(
                         "Stage 4: no blueprint found for brief_id=%s, skipping", brief_id
                     )
                     continue
+                # Mark brief as "evaluating" for Kanban sync
+                _write_pipeline_state(artifact_dir, [brief_id], "evaluating", task_id=task_id)
+                _emit(event_bus, task_id, "worker_progress", {
+                    "brief_id": brief_id, "step": "evaluating",
+                })
+
                 final_content, history, feedback_route = await evaluate_and_optimize(
                     content=content,
                     brief=blueprint,
@@ -1598,6 +1582,8 @@ async def _run_pipeline_stages(
                     parent_span=stage4_span,
                     use_eeat=True,
                     use_targeted_revision=True,
+                    event_bus=event_bus,
+                    task_id=task_id,
                 )
                 evaluated.append((brief_id, final_content, history, feedback_route))
 
@@ -1609,6 +1595,7 @@ async def _run_pipeline_stages(
                 artifact_dir,
                 [bid for bid, _, _, _ in evaluated],
                 "review",
+                task_id=task_id,
             )
         else:
             evaluated = [
@@ -1667,6 +1654,8 @@ async def _run_pipeline_stages(
                         artifact_dir=artifact_dir,
                         session_id=session_id,
                         parent_span=stage5_span,
+                        event_bus=event_bus,
+                        task_id=task_id,
                     )
                     if rebriefed:
                         final_content, history, feedback_route = rebriefed
@@ -1717,6 +1706,10 @@ async def _run_pipeline_stages(
                     content_decision = review_state.get("content_decision", "approve")
 
                     if content_decision == "approve" or review_state.get("finalized"):
+                        # Emit brief completion event for Kanban sync
+                        _emit(event_bus, task_id, "brief_completed", {
+                            "brief_id": final_content.brief_id, "decision": "approve",
+                        })
                         # Approved — write final.md
                         bd = _brief_dir(artifact_dir, final_content.brief_id)
                         final_path = bd / "final.md"
@@ -1745,12 +1738,18 @@ async def _run_pipeline_stages(
                                 topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                             )
                         )
-                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "completed")
+                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "completed", task_id=task_id)
                         piece_resolved = True
 
                     elif content_decision == "edit" and edit_count < _MAX_EDIT_ATTEMPTS:
                         # Edit → drafter revision with human notes → fact checker → re-present
                         edit_count += 1
+                        # Mark as revising for Kanban sync (tile moves back to Generating)
+                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "revising", task_id=task_id)
+                        _emit(event_bus, task_id, "worker_progress", {
+                            "brief_id": final_content.brief_id, "step": "revising",
+                            "edit_attempt": edit_count,
+                        })
                         editor_notes = review_state.get("editor_notes", "")
                         logger.info(
                             "HITL-3 edit for %s (attempt %d/%d)",
@@ -1783,6 +1782,8 @@ async def _run_pipeline_stages(
                                 parent_span=stage5_span,
                                 use_eeat=True,
                                 use_targeted_revision=True,
+                                event_bus=event_bus,
+                                task_id=task_id,
                             )
                         # Loop back to re-present at HITL-3
 
@@ -1794,6 +1795,12 @@ async def _run_pipeline_stages(
                     ):
                         # Reject + rethink → re-brief with user comment → re-run full chain
                         rebrief_count += 1
+                        # Mark as "briefing" for Kanban sync (tile moves back to Brief column)
+                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "briefing", task_id=task_id)
+                        _emit(event_bus, task_id, "worker_progress", {
+                            "brief_id": final_content.brief_id, "step": "briefing",
+                            "rebrief_attempt": rebrief_count,
+                        })
                         user_comment = review_state.get("editor_notes", "")
                         logger.info(
                             "HITL-3 reject for %s — re-briefing (attempt %d/%d)",
@@ -1812,6 +1819,8 @@ async def _run_pipeline_stages(
                             artifact_dir=artifact_dir,
                             session_id=session_id,
                             parent_span=stage5_span,
+                            event_bus=event_bus,
+                            task_id=task_id,
                         )
                         if rebriefed:
                             final_content, history, feedback_route = rebriefed
@@ -1834,6 +1843,10 @@ async def _run_pipeline_stages(
 
                     else:
                         # Exhausted edit/rebrief attempts or explicit reject — permanent rejection
+                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "rejected", task_id=task_id)
+                        _emit(event_bus, task_id, "brief_rejected", {
+                            "brief_id": final_content.brief_id,
+                        })
                         pieces.append(
                             ContentPiece(
                                 brief_id=final_content.brief_id,

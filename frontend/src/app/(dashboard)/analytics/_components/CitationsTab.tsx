@@ -49,7 +49,7 @@ export function CitationsTab({ slug }: CitationsTabProps) {
     setIsSendingContent(true);
     try {
       // Step 1: Immediately create the brief on disk so it appears in Content Studio
-      await apiPost(CONTENT_DATA.briefs(slug), {
+      const brief = await apiPost<{ id: string }>(CONTENT_DATA.briefs(slug), {
         title: query.text,
         cluster: query.cluster,
         description: `Gap query (${query.classification.replace(/_/g, ' ')}). Gap score: ${query.gap.toFixed(4)}.`,
@@ -68,7 +68,7 @@ export function CitationsTab({ slug }: CitationsTabProps) {
           manual_cluster: query.cluster,
           manual_description: `Gap query (${query.classification.replace(/_/g, ' ')}). Gap score: ${query.gap.toFixed(4)}.`,
           gap_query_id: query.id,
-          auto_approve: true,
+          brief_id_hint: brief.id,
         });
         setContentTaskId(res.run_id);
         pipelineStarted = true;

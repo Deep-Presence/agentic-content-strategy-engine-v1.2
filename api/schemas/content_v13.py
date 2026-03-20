@@ -30,6 +30,9 @@ class ContentStartRequestV13(BaseModel):
     manual_description: Optional[str] = Field(default=None, max_length=2000)
     manual_cluster: Optional[str] = Field(default=None, max_length=200)
     gap_query_id: Optional[str] = None  # Direct gap lookup key from Analytics
+    brief_id_hint: Optional[str] = Field(
+        default=None, max_length=20, pattern=r"^brief-\d{1,4}$",
+    )  # Pre-created brief_id (validated to prevent path traversal)
 
     # Product scope
     product_slug: Optional[str] = None

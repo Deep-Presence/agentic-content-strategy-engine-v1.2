@@ -7,10 +7,11 @@ since they are large blobs read as whole units.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid as _uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
@@ -100,11 +101,35 @@ class DbContentDataService:
             load_analysis_json, self._artifacts_root, base_slug,
         )
 
+        # Load pipeline_state.json for in-progress status overlay (Phase 0,
+        # highest priority during pipeline execution). The pipeline writes
+        # fine-grained statuses here that the DB doesn't have yet.
+        content_root = self._artifacts_root / "content" / effective_slug
+        pipeline_state: Dict[str, Any] = {}
+        ps_path = content_root / "pipeline_state.json"
+        if ps_path.is_file():
+            try:
+                raw_ps = json.loads(ps_path.read_text(encoding="utf-8"))
+                if isinstance(raw_ps, dict):
+                    pipeline_state = raw_ps
+            except (json.JSONDecodeError, OSError):
+                pass
+        # Extract brief_id → task_id mapping for frontend HITL approval calls
+        task_id_map: Dict[str, str] = {}
+        raw_task_ids = pipeline_state.get("__task_ids__")
+        if isinstance(raw_task_ids, dict):
+            task_id_map = raw_task_ids
+
         items: List[ContentBriefListItem] = []
         for piece in pieces:
-            # Status mapping
-            raw_status = piece.status.value if piece.status else "planned"
-            display_status = _PIECE_STATUS_MAP.get(raw_status, "suggested")
+            # Status mapping: pipeline_state.json overrides DB status (Phase 0)
+            brief_id = piece.brief_id or ""
+            ps_status = pipeline_state.get(brief_id)
+            if isinstance(ps_status, str):
+                display_status = ps_status
+            else:
+                raw_status = piece.status.value if piece.status else "planned"
+                display_status = _PIECE_STATUS_MAP.get(raw_status, "suggested")
 
             # Content type mapping
             content_type = _FORMAT_TO_TYPE.get(
@@ -130,8 +155,13 @@ class DbContentDataService:
             brief_dict = {"title": piece.title or "", "target_cluster": cluster}
             gap_ctx = extract_gap_context(brief_dict, analysis_json)
 
+            # Use filesystem brief_id when available — this is what the pipeline,
+            # artifact directories, and HITL approval endpoints use. Fall back
+            # to DB UUID only when brief_id was never set.
+            display_id = piece.brief_id or str(piece.id)
+
             items.append(ContentBriefListItem(
-                id=str(piece.id),
+                id=display_id,
                 title=piece.title or "",
                 status=display_status,
                 content_type=content_type,
@@ -139,6 +169,7 @@ class DbContentDataService:
                 target_word_count=word_count,
                 citability_score=citability,
                 cycle_id=str(run_id) if run_id else str(piece.run_id or ""),
+                task_id=task_id_map.get(brief_id),
                 created_at=piece.created_at.isoformat() if piece.created_at else "",
                 updated_at=(
                     piece.updated_at.isoformat()
@@ -155,12 +186,25 @@ class DbContentDataService:
     async def get_brief_detail(
         self, effective_slug: str, brief_id: str,
     ) -> ContentBriefDetailResponse:
-        """Get full detail for a single content piece from DB."""
-        run_id = await self._resolve_run_id(effective_slug)
-        if run_id is None:
-            raise HTTPException(404, f"No content runs for '{effective_slug}'")
+        """Get full detail for a single content piece from DB.
 
-        piece = await self._content_repo.get_piece_detail(run_id, brief_id)
+        Accepts both filesystem brief IDs (e.g. "brief-017") and DB UUIDs.
+        Tries slug+brief_id lookup first, falls back to run-scoped UUID lookup.
+        """
+        # Try filesystem brief_id lookup first (handles "brief-NNN" IDs)
+        piece = await self._content_repo.get_by_slug_and_brief_id(
+            effective_slug, brief_id,
+        )
+
+        # Fallback: try UUID-based lookup via run_id (legacy path)
+        if piece is None:
+            run_id = await self._resolve_run_id(effective_slug)
+            if run_id:
+                try:
+                    piece = await self._content_repo.get_piece_detail(run_id, brief_id)
+                except (ValueError, Exception):
+                    pass  # brief_id is not a valid UUID — already tried slug lookup
+
         if piece is None:
             raise HTTPException(
                 404, f"Brief '{brief_id}' not found for '{effective_slug}'",
@@ -198,8 +242,33 @@ class DbContentDataService:
         priority_score = eval_results.get("priority_score", 0.0)
         exemplars = eval_results.get("exemplars", [])
 
+        # Filesystem fallback: if DB has no blueprint data (common for
+        # newly created briefs), read from blueprints.json on disk.
+        fs_brief_id = piece.brief_id or brief_id
+        if not key_topics and not key_angles:
+            content_root = self._artifacts_root / "content" / effective_slug
+            bp_path = content_root / "blueprints.json"
+            if bp_path.is_file():
+                try:
+                    bp_list = json.loads(bp_path.read_text(encoding="utf-8"))
+                    if isinstance(bp_list, list):
+                        bp_entry = next(
+                            (b for b in bp_list if b.get("brief_id") == fs_brief_id),
+                            None,
+                        )
+                        if bp_entry:
+                            key_topics = bp_entry.get("key_topics", key_topics)
+                            key_angles = bp_entry.get("key_angles", key_angles)
+                            structural_targets = structural_targets or bp_entry.get("structural_targets", {})
+                            wc_range = bp_entry.get("word_count_range", [0, 0])
+                            if isinstance(wc_range, (list, tuple)) and len(wc_range) >= 2:
+                                word_count_range = {"min": wc_range[0], "max": wc_range[1]}
+                            priority_score = priority_score or bp_entry.get("priority_score", 0.0)
+                except (json.JSONDecodeError, OSError):
+                    pass
+
         return ContentBriefDetailResponse(
-            id=str(piece.id),
+            id=piece.brief_id or str(piece.id),
             title=piece.title or "",
             status=display_status,
             content_type=content_type,

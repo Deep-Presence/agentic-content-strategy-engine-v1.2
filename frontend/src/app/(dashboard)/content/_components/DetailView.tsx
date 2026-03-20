@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { Button, Badge, StatusDot, ProgressBar, Toast } from '@/components/ui';
+import { Button, Badge, StatusDot, Toast } from '@/components/ui';
 import {
   X, Check, ChevronRight, Lightbulb,
   Target, Eye, AlertTriangle, Compass,
@@ -10,9 +10,11 @@ import {
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { ExtendedBrief } from './content-data';
-import { agentActivities, platformLabels } from './content-data';
+import { agentActivities } from './content-data';
 import { apiPost } from '@/lib/api/client';
 import { CONTENT_ENGINE } from '@/lib/api/endpoints';
+import { useContentBriefDetail, useContentStage } from '@/lib/hooks/useContent';
+import { useAuthStore } from '@/stores/auth';
 
 // --- Phase Progress Bar ---
 
@@ -66,37 +68,22 @@ function SuggestedView({
   brief,
   onApprove,
   onSkip,
-  pipelineTaskId,
   onBriefApproved,
 }: {
   brief: ExtendedBrief;
   onApprove: () => void;
   onSkip: () => void;
-  pipelineTaskId: string | null;
   onBriefApproved?: () => void;
 }) {
-  const [approving, setApproving] = useState(false);
+  // Manual mode: pipeline already started, no approval needed from Triage.
+  // Autonomous mode: no taskId yet, user must approve to start the pipeline.
+  const pipelineAlreadyRunning = !!brief.taskId;
 
-  const handleApprove = useCallback(async () => {
-    if (!pipelineTaskId) {
-      onApprove();
-      return;
-    }
-    setApproving(true);
-    try {
-      await apiPost(CONTENT_ENGINE.approveBriefs(pipelineTaskId), {
-        brief_id: brief.id,
-        decision: 'approve',
-      });
-      onApprove();
-      onBriefApproved?.();
-    } catch {
-      // Fallback: if no pipeline is pending approval, just show the toast
-      onApprove();
-    } finally {
-      setApproving(false);
-    }
-  }, [pipelineTaskId, brief.id, onApprove, onBriefApproved]);
+  const handleApprove = useCallback(() => {
+    if (pipelineAlreadyRunning) return;
+    onApprove();
+    onBriefApproved?.();
+  }, [pipelineAlreadyRunning, onApprove, onBriefApproved]);
 
   const hasWhyPicked = brief.whyPicked && brief.whyPicked.length > 0;
   const hasIndicators = brief.successIndicators && brief.successIndicators.length > 0;
@@ -104,6 +91,16 @@ function SuggestedView({
 
   return (
     <div className="space-y-5 max-w-full">
+      {/* Pipeline status banner — shown when pipeline is already running (manual mode) */}
+      {pipelineAlreadyRunning && (
+        <div className="flex items-center gap-2 p-3 bg-accent-subtle border border-accent/20 rounded-sm">
+          <Loader2 size={14} strokeWidth={1.5} className="text-accent animate-spin" />
+          <span className="text-[12px] font-medium text-accent">
+            Pipeline starting — generating brief...
+          </span>
+        </div>
+      )}
+
       {/* Gap Score Badge */}
       {brief.gapScore > 0 && (
         <div className="flex items-center gap-2">
@@ -190,21 +187,19 @@ function SuggestedView({
         </section>
       )}
 
-      {/* Actions */}
-      <div className="flex items-center gap-2 pt-2">
-        <Button variant="primary" onClick={handleApprove} disabled={approving}>
-          {approving ? (
-            <Loader2 size={12} strokeWidth={1.5} className="mr-1.5 animate-spin" />
-          ) : (
+      {/* Actions — hidden when pipeline is already running (manual mode) */}
+      {!pipelineAlreadyRunning && (
+        <div className="flex items-center gap-2 pt-2">
+          <Button variant="primary" onClick={handleApprove}>
             <Check size={12} strokeWidth={1.5} className="mr-1.5" />
-          )}
-          {approving ? 'Approving...' : 'Approve Brief'}
-        </Button>
-        <Button variant="secondary" onClick={onSkip}>
-          <SkipForward size={12} strokeWidth={1.5} className="mr-1.5" />
-          Next Cycle
-        </Button>
-      </div>
+            Approve Brief
+          </Button>
+          <Button variant="secondary" onClick={onSkip}>
+            <SkipForward size={12} strokeWidth={1.5} className="mr-1.5" />
+            Next Cycle
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -315,6 +310,201 @@ function InProgressView({ brief }: { brief: ExtendedBrief }) {
   );
 }
 
+// ===== BRIEF APPROVAL VIEW (HITL-2 — user reviews generated brief) =====
+
+function BriefApprovalView({
+  brief,
+  onApprove,
+  onRevise,
+  onReject,
+  onBriefApproved,
+  onError,
+}: {
+  brief: ExtendedBrief;
+  onApprove: () => void;
+  onRevise: () => void;
+  onReject: () => void;
+  onBriefApproved?: () => void;
+  onError?: (msg: string) => void;
+}) {
+  const slug = useAuthStore((s) => s.company?.slug);
+  const { data: detail } = useContentBriefDetail(slug, brief.id);
+  const [feedback, setFeedback] = useState('');
+  const [submitting, setSubmitting] = useState<'approve' | 'feedback' | 'reject' | null>(null);
+
+  const handleDecision = useCallback(async (decision: 'approve' | 'feedback' | 'reject') => {
+    const taskId = brief.taskId;
+    if (!taskId) {
+      onError?.('No active pipeline — cannot submit approval.');
+      return;
+    }
+    if (decision === 'feedback' && !feedback.trim()) {
+      onError?.('Please provide feedback for the revision.');
+      return;
+    }
+    setSubmitting(decision);
+    try {
+      await apiPost(CONTENT_ENGINE.approveBriefs(taskId), {
+        brief_id: brief.id,
+        decision,
+        ...(decision === 'feedback' ? { feedback: feedback.trim() } : {}),
+      });
+      if (decision === 'approve') onApprove();
+      else if (decision === 'feedback') onRevise();
+      else onReject();
+      onBriefApproved?.();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Submission failed.';
+      onError?.(message);
+    } finally {
+      setSubmitting(null);
+    }
+  }, [brief.taskId, brief.id, feedback, onApprove, onRevise, onReject, onBriefApproved, onError]);
+
+  const keyTopics = detail?.key_topics ?? [];
+  const keyAngles = detail?.key_angles ?? [];
+  const wordCount = detail?.target_word_count ?? { min: 0, max: 0 };
+  const exemplars = detail?.exemplars ?? [];
+
+  return (
+    <div className="space-y-5 max-w-full">
+      {/* Brief Summary Card */}
+      <div className="bg-surface border border-border rounded-md p-4">
+        <h3 className="text-[14px] font-semibold text-text-primary leading-tight mb-2">
+          {brief.title}
+        </h3>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="neutral">{brief.contentFormat || 'blog'}</Badge>
+          <Badge variant="info">{brief.targetCluster}</Badge>
+          {wordCount.max > 0 && (
+            <span className="text-[10px] text-text-tertiary font-mono">
+              {wordCount.min.toLocaleString()}–{wordCount.max.toLocaleString()} words
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Key Topics */}
+      {keyTopics.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-2">
+            <Target size={14} strokeWidth={1.5} className="text-accent" />
+            <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-[0.04em]">
+              Key Topics
+            </h3>
+          </div>
+          <div className="space-y-1.5">
+            {keyTopics.map((topic, i) => (
+              <div key={i} className="flex items-start gap-2 p-2 bg-surface border border-border rounded-sm">
+                <span className="text-[10px] text-accent font-medium mt-0.5">{i + 1}</span>
+                <span className="text-[12px] text-text-secondary leading-relaxed">{topic}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Key Angles */}
+      {keyAngles.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-2">
+            <Compass size={14} strokeWidth={1.5} className="text-accent" />
+            <h3 className="text-[12px] font-semibold text-text-primary uppercase tracking-[0.04em]">
+              Key Angles
+            </h3>
+          </div>
+          <div className="space-y-1.5">
+            {keyAngles.map((angle, i) => (
+              <div key={i} className="flex items-start gap-2 p-2 bg-surface border border-border rounded-sm">
+                <span className="text-[10px] text-text-tertiary mt-0.5">│</span>
+                <span className="text-[12px] text-text-secondary leading-relaxed">{angle}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Exemplars */}
+      {exemplars.length > 0 && (
+        <section>
+          <h3 className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary mb-2">
+            Cited Exemplars to Beat
+          </h3>
+          <div className="border border-border rounded-sm overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr>
+                  <th className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary text-left p-[6px_10px] border-b border-border">URL</th>
+                  <th className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary text-right p-[6px_10px] border-b border-border">Words</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exemplars.map((ex, i) => (
+                  <tr key={i} className="hover:bg-accent-subtle">
+                    <td className="text-[12px] text-accent p-[6px_10px] border-b border-border-subtle truncate max-w-[300px]">{ex.url}</td>
+                    <td className="text-[12px] text-text-primary p-[6px_10px] border-b border-border-subtle text-right font-mono">{ex.word_count.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* Loading state for detail */}
+      {!detail && (
+        <div className="flex items-center gap-2 p-3">
+          <Loader2 size={14} strokeWidth={1.5} className="text-accent animate-spin" />
+          <span className="text-[12px] text-text-tertiary">Loading brief details...</span>
+        </div>
+      )}
+
+      {/* Feedback */}
+      <section>
+        <h3 className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary mb-2">
+          Feedback (optional for approve, required for revise)
+        </h3>
+        <textarea
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+          placeholder="e.g. 'Focus more on enterprise use cases, add comparison with Contentful...'"
+          className="w-full h-[80px] p-2 bg-surface border border-border rounded-sm text-[12px] text-text-primary placeholder:text-text-tertiary resize-none outline-none focus:border-accent focus:ring-1 focus:ring-accent-subtle"
+        />
+      </section>
+
+      {/* HITL Actions */}
+      <div className="flex items-center gap-2 pt-1">
+        <Button
+          variant="primary"
+          disabled={submitting !== null}
+          onClick={() => handleDecision('approve')}
+        >
+          {submitting === 'approve' ? (
+            <Loader2 size={12} strokeWidth={1.5} className="mr-1.5 animate-spin" />
+          ) : (
+            <Check size={12} strokeWidth={1.5} className="mr-1.5" />
+          )}
+          {submitting === 'approve' ? 'Approving...' : 'Approve Brief'}
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={submitting !== null}
+          onClick={() => handleDecision('feedback')}
+        >
+          {submitting === 'feedback' ? 'Sending...' : 'Revise'}
+        </Button>
+        <Button
+          variant="destructive"
+          disabled={submitting !== null}
+          onClick={() => handleDecision('reject')}
+        >
+          {submitting === 'reject' ? 'Rejecting...' : 'Reject'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ===== REVIEW PHASE VIEW (HITL checkpoint) =====
 
 function ReviewView({
@@ -322,13 +512,19 @@ function ReviewView({
   onApprove,
   onRevise,
   onOpenFullView,
+  onBriefApproved,
+  onError,
 }: {
   brief: ExtendedBrief;
   onApprove: () => void;
   onRevise: () => void;
   onOpenFullView: () => void;
+  onBriefApproved?: () => void;
+  onError?: (msg: string) => void;
 }) {
   const [feedback, setFeedback] = useState('');
+  const [approving, setApproving] = useState(false);
+  const [revising, setRevising] = useState(false);
 
   return (
     <div className="space-y-5 max-w-full">
@@ -466,12 +662,69 @@ function ReviewView({
 
       {/* Actions */}
       <div className="flex items-center gap-2 pt-1">
-        <Button variant="primary" onClick={onApprove}>
-          <Check size={12} strokeWidth={1.5} className="mr-1.5" />
-          Approve &amp; Generate Content
+        <Button
+          variant="primary"
+          disabled={approving}
+          onClick={async () => {
+            const taskId = brief.taskId;
+            if (!taskId) {
+              onError?.('No active pipeline for this brief.');
+              return;
+            }
+            setApproving(true);
+            try {
+              await apiPost(CONTENT_ENGINE.approveContent(taskId), {
+                brief_id: brief.id,
+                decision: 'approve',
+              });
+              onApprove();
+              onBriefApproved?.();
+            } catch (err: unknown) {
+              const message = err instanceof Error ? err.message : 'Approval failed.';
+              onError?.(message);
+            } finally {
+              setApproving(false);
+            }
+          }}
+        >
+          {approving ? (
+            <Loader2 size={12} strokeWidth={1.5} className="mr-1.5 animate-spin" />
+          ) : (
+            <Check size={12} strokeWidth={1.5} className="mr-1.5" />
+          )}
+          {approving ? 'Approving...' : 'Approve & Publish'}
         </Button>
-        <Button variant="secondary" onClick={onRevise}>
-          Revise
+        <Button
+          variant="secondary"
+          disabled={revising}
+          onClick={async () => {
+            const taskId = brief.taskId;
+            if (!taskId) {
+              onError?.('No active pipeline for this brief.');
+              return;
+            }
+            if (!feedback.trim()) {
+              onError?.('Please provide feedback for the revision.');
+              return;
+            }
+            setRevising(true);
+            try {
+              await apiPost(CONTENT_ENGINE.approveContent(taskId), {
+                brief_id: brief.id,
+                decision: 'edit',
+                editor_notes: feedback.trim(),
+              });
+              onRevise();
+              onBriefApproved?.();
+            } catch (err: unknown) {
+              const message = err instanceof Error ? err.message : 'Revision request failed.';
+              onError?.(message);
+            } finally {
+              setRevising(false);
+            }
+          }}
+        >
+          {revising ? 'Revising...' : 'Revise'}
         </Button>
         <Button variant="ghost" onClick={onOpenFullView} className="ml-auto">
           <ExternalLink size={12} strokeWidth={1.5} className="mr-1.5" />
@@ -482,17 +735,126 @@ function ReviewView({
   );
 }
 
+// ===== APPROVED VIEW (completed content) =====
+
+function ApprovedView({
+  brief,
+  onOpenFullView,
+}: {
+  brief: ExtendedBrief;
+  onOpenFullView: () => void;
+}) {
+  const slug = useAuthStore((s) => s.company?.slug);
+  const { data: detail } = useContentBriefDetail(slug, brief.id);
+  const { data: finalStage } = useContentStage(slug ?? undefined, brief.id, 'final');
+
+  const finalContent = typeof finalStage?.content === 'string' ? finalStage.content : '';
+  const wordCount = finalContent.split(/\s+/).filter(Boolean).length;
+  const evalHistory = detail?.eval_history ?? [];
+  const lastCycle = evalHistory.length > 0 ? evalHistory[evalHistory.length - 1] : null;
+
+  return (
+    <div className="space-y-5 max-w-full">
+      {/* Published banner */}
+      <div className="bg-success-subtle border border-success rounded-sm p-4">
+        <div className="flex items-center gap-2 mb-1">
+          <Check size={14} strokeWidth={1.5} className="text-success" />
+          <span className="text-[12px] font-medium text-success">Content Approved</span>
+        </div>
+        <span className="text-[11px] text-text-secondary">
+          {brief.createdAt ? new Date(brief.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''}
+        </span>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="bg-surface border border-border rounded-sm p-3 text-center">
+          <span className="text-[18px] font-semibold text-text-primary block">{wordCount > 0 ? wordCount.toLocaleString() : '\u2014'}</span>
+          <span className="text-[10px] text-text-tertiary uppercase tracking-[0.06em]">Words</span>
+        </div>
+        <div className="bg-surface border border-border rounded-sm p-3 text-center">
+          <span className="text-[18px] font-semibold text-text-primary block">
+            {detail?.citability_score != null ? detail.citability_score.toFixed(0) : '\u2014'}
+          </span>
+          <span className="text-[10px] text-text-tertiary uppercase tracking-[0.06em]">Citability</span>
+        </div>
+        <div className="bg-surface border border-border rounded-sm p-3 text-center">
+          <span className="text-[18px] font-semibold text-text-primary block">{evalHistory.length}</span>
+          <span className="text-[10px] text-text-tertiary uppercase tracking-[0.06em]">Eval Cycles</span>
+        </div>
+      </div>
+
+      {/* Eval scores from last cycle */}
+      {lastCycle && lastCycle.dimensions && lastCycle.dimensions.length > 0 && (
+        <section>
+          <h3 className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary mb-2">
+            Final Evaluation Scores
+          </h3>
+          <div className="space-y-1.5">
+            {lastCycle.dimensions.map((d, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-[11px] text-text-secondary w-[100px] capitalize">{d.dimension}</span>
+                <div className="flex-1 h-[6px] bg-border rounded-sm overflow-hidden">
+                  <div
+                    className={cn(
+                      'h-full rounded-sm transition-all',
+                      d.passed ? 'bg-success' : 'bg-warning',
+                    )}
+                    style={{ width: `${Math.min(100, d.score * 100)}%` }}
+                  />
+                </div>
+                <span className="text-[10px] font-mono text-text-primary w-[32px] text-right">
+                  {(d.score * 100).toFixed(0)}%
+                </span>
+                <span className={cn('text-[9px] font-medium', d.passed ? 'text-success' : 'text-warning')}>
+                  {d.passed ? 'PASS' : 'FAIL'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Content preview */}
+      {finalContent && (
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary">
+              Content Preview
+            </h3>
+            <Button variant="ghost" size="sm" onClick={onOpenFullView}>
+              <Eye size={11} strokeWidth={1.5} className="mr-1" />
+              Open Full View
+            </Button>
+          </div>
+          <div className="bg-surface border border-border rounded-sm p-3 max-h-[300px] overflow-y-auto">
+            <pre className="text-[11px] text-text-secondary whitespace-pre-wrap font-body leading-relaxed">
+              {finalContent.slice(0, 2000)}{finalContent.length > 2000 ? '\n\n...' : ''}
+            </pre>
+          </div>
+        </section>
+      )}
+
+      {!finalContent && !finalStage && (
+        <div className="flex items-center gap-2 p-3">
+          <Loader2 size={14} strokeWidth={1.5} className="text-accent animate-spin" />
+          <span className="text-[12px] text-text-tertiary">Loading content...</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== MAIN DETAIL VIEW =====
 
 interface DetailViewProps {
   brief: ExtendedBrief;
   onClose: () => void;
   onOpenFullEditor: () => void;
-  pipelineTaskId?: string | null;
   onBriefApproved?: () => void;
 }
 
-export function DetailView({ brief, onClose, onOpenFullEditor, pipelineTaskId = null, onBriefApproved }: DetailViewProps) {
+export function DetailView({ brief, onClose, onOpenFullEditor, onBriefApproved }: DetailViewProps) {
   const [toast, setToast] = useState<{ open: boolean; message: string; variant: 'success' | 'error' | 'info' }>({
     open: false, message: '', variant: 'info',
   });
@@ -573,50 +935,34 @@ export function DetailView({ brief, onClose, onOpenFullEditor, pipelineTaskId = 
               brief={brief}
               onApprove={() => showToast('Brief approved — content generation starting', 'success')}
               onSkip={() => showToast('Moved to next cycle', 'info')}
-              pipelineTaskId={pipelineTaskId}
               onBriefApproved={onBriefApproved}
             />
           )}
-          {(brief.stage === 'brief' || brief.stage === 'generating') && (
+          {brief.stage === 'brief' && (brief.status === 'brief_review' || brief.status === 'approved') && (
+            <BriefApprovalView
+              brief={brief}
+              onApprove={() => showToast('Brief approved — workers starting', 'success')}
+              onRevise={() => showToast('Revision feedback sent — brief rebuilding', 'info')}
+              onReject={() => showToast('Brief rejected', 'info')}
+              onBriefApproved={onBriefApproved}
+              onError={(msg) => showToast(msg, 'error')}
+            />
+          )}
+          {((brief.stage === 'brief' && brief.status !== 'brief_review' && brief.status !== 'approved') || brief.stage === 'generating') && (
             <InProgressView brief={brief} />
           )}
           {brief.stage === 'review' && (
             <ReviewView
               brief={brief}
-              onApprove={() => showToast('Brief approved — content generation starting', 'success')}
+              onApprove={() => showToast('Content approved — publishing', 'success')}
               onRevise={() => showToast('Revision requested — agents notified', 'info')}
               onOpenFullView={onOpenFullEditor}
+              onBriefApproved={onBriefApproved}
+              onError={(msg) => showToast(msg, 'error')}
             />
           )}
           {brief.stage === 'approved' && (
-            <div className="space-y-4 max-w-full">
-              <div className="bg-success-subtle border border-success rounded-sm p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Check size={14} strokeWidth={1.5} className="text-success" />
-                  <span className="text-[12px] font-medium text-success">Published</span>
-                </div>
-                <span className="text-[12px] text-text-secondary">
-                  Published on {brief.publishedAt ? new Date(brief.publishedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'N/A'}
-                </span>
-              </div>
-              {/* CPS scores */}
-              <section>
-                <h3 className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary mb-2">
-                  Citation Prediction Scores
-                </h3>
-                <div className="space-y-1.5">
-                  {(['chatgpt', 'claude', 'perplexity', 'google_ai_overview', 'gemini'] as const).map((p) => (
-                    <div key={p} className="flex items-center gap-2">
-                      <span className="text-[11px] text-text-secondary w-[130px]">{platformLabels[p]}</span>
-                      <ProgressBar value={brief.cpsActual?.[p] || brief.cpsPredict[p]} className="flex-1" />
-                      <span className="text-[11px] font-medium text-text-primary w-6 text-right">
-                        {brief.cpsActual?.[p] || brief.cpsPredict[p]}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
+            <ApprovedView brief={brief} onOpenFullView={onOpenFullEditor} />
           )}
         </div>
 

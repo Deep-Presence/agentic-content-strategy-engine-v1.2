@@ -22,11 +22,11 @@ export interface ExtendedBrief extends ContentBrief {
 export type StageId = 'triage' | 'brief' | 'generating' | 'review' | 'approved';
 
 export const stageColumns: { id: StageId; label: string; color: 'neutral' | 'info' | 'warning' | 'error' | 'success' }[] = [
-  { id: 'triage', label: 'Suggested', color: 'neutral' },
-  { id: 'brief', label: 'Approved', color: 'info' },
-  { id: 'generating', label: 'In Progress', color: 'warning' },
+  { id: 'triage', label: 'Triage', color: 'neutral' },
+  { id: 'brief', label: 'Brief', color: 'info' },
+  { id: 'generating', label: 'Generating', color: 'warning' },
   { id: 'review', label: 'Review', color: 'error' },
-  { id: 'approved', label: 'Published', color: 'success' },
+  { id: 'approved', label: 'Approved', color: 'success' },
 ];
 
 export const agentActivities = [

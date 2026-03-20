@@ -7,7 +7,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useTaxonomy, useMatrix } from '@/lib/hooks/useTopicDiscovery';
 import { useTaskStream } from '@/lib/hooks/useTaskStream';
 import { apiPost } from '@/lib/api/client';
-import { TOPIC_DISCOVERY, CONTENT_ENGINE, CONTENT_DATA } from '@/lib/api/endpoints';
+import { TOPIC_DISCOVERY, CONTENT_ENGINE } from '@/lib/api/endpoints';
 import { TaxonomyTree } from './_components/TaxonomyTree';
 import { SubdomainDetail } from './_components/SubdomainDetail';
 import { AssignmentsView } from './_components/AssignmentsView';
@@ -79,15 +79,9 @@ export default function TopicDiscoveryPage() {
     if (!slug || !companyName || !companyDomain) return;
     setSendingAssignmentId(assignment.id);
     try {
-      // Step 1: Immediately create the brief so it appears in Content Studio
-      await apiPost(CONTENT_DATA.briefs(slug), {
-        title: assignment.topic_text,
-        cluster: assignment.metadata?.slug ?? '',
-        description: assignment.metadata?.description ?? '',
-        source: 'topic_discovery',
-      });
-
-      // Step 2: Kick off the pipeline in the background
+      // Topic Discovery → Content pipeline handles brief creation internally.
+      // No pre-creation needed (avoids dual brief_id problem).
+      let pipelineStarted = false;
       try {
         const res = await apiPost<{ run_id: string }>(CONTENT_ENGINE.fromTopics, {
           company_name: companyName,
@@ -96,12 +90,19 @@ export default function TopicDiscoveryPage() {
           topic_assignment_ids: [assignment.id],
         });
         setContentTaskId(res.run_id);
+        pipelineStarted = true;
       } catch {
-        // Pipeline may fail (409 etc.) but brief is already created
+        // Pipeline may fail (409 etc.)
       }
 
       setSendingAssignmentId(null);
-      setContentToast({ open: true, variant: 'success', message: 'Topic added to Content Studio. Pipeline started.' });
+      setContentToast({
+        open: true,
+        variant: pipelineStarted ? 'success' : 'error',
+        message: pipelineStarted
+          ? 'Pipeline started. Topic will appear in Content Studio.'
+          : 'Failed to start pipeline.',
+      });
     } catch (err: unknown) {
       setSendingAssignmentId(null);
       const message = err instanceof Error ? err.message : 'Failed to add topic.';

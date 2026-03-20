@@ -49,7 +49,9 @@ export interface AuditFinding { severity: 'critical' | 'high' | 'medium' | 'low'
 // === Content Pipeline ===
 export interface ContentBrief {
   id: string; title: string; targetCluster: string; targetQuery: string;
-  stage: 'triage' | 'brief' | 'generating' | 'review' | 'approved' | 'published';
+  status: string; // Raw backend status (e.g. "outlining", "drafting") for sub-step badges
+  stage: 'triage' | 'brief' | 'generating' | 'review' | 'approved';
+  taskId?: string; // Pipeline task_id for HITL approval API calls
   personas: string[]; cpsPredict: Record<Platform, number>; cpsActual?: Record<Platform, number>;
   structuralTargets: PageStructure; createdAt: string; publishedAt?: string; publishedUrl?: string;
 }

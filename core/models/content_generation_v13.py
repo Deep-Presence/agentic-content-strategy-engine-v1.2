@@ -242,6 +242,7 @@ class ContentGenerationInputV13(ContentGenerationInput):
     manual_description: Optional[str] = None
     manual_cluster: Optional[str] = None
     gap_query_id: Optional[str] = None  # Direct gap lookup key from Analytics
+    brief_id_hint: Optional[str] = None  # Pre-created brief_id to reuse (fixes dual-ID)
     # Topic Discovery mode fields
     topic_assignment_ids: List[str] = Field(default_factory=list)
     td_effective_slug: Optional[str] = None

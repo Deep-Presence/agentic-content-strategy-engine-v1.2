@@ -40,6 +40,7 @@ class ContentBriefListItem(BaseModel):
     target_word_count: int = 0
     citability_score: Optional[float] = None  # 0-100, from eval overall_score
     cycle_id: Optional[str] = None  # run_metadata session_id
+    task_id: Optional[str] = None  # pipeline task_id for HITL approval calls
     created_at: str = ""  # ISO string, from briefs.json mtime
     updated_at: str = ""  # ISO string, from latest stage file mtime
     gap_context: Optional[GapContextSummary] = None

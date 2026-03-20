@@ -7,7 +7,7 @@ import { Plus, LayoutGrid, List, ChevronDown } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth';
 import { useContentBriefs } from '@/lib/hooks/useContent';
 import { useTaskStream } from '@/lib/hooks/useTaskStream';
-import { toBrief } from '@/lib/api/transforms';
+import { toBrief, toBriefStage } from '@/lib/api/transforms';
 import { type ExtendedBrief } from './_components/content-data';
 import { CyclesSidebar } from './_components/CyclesSidebar';
 import { KanbanBoard } from './_components/KanbanBoard';
@@ -19,30 +19,99 @@ export default function ContentStudioPage() {
   const slug = useAuthStore((s) => s.company?.slug);
   const { data: briefsData, isLoading, refetch } = useContentBriefs(slug);
 
-  // Pipeline progress tracking via URL param
+  // Pipeline progress tracking: prefer URL param, fall back to auto-discovery from brief data
   const searchParams = useSearchParams();
-  const pipelineTaskId = searchParams.get('pipeline_task') ?? null;
+  const urlTaskId = searchParams.get('pipeline_task') ?? null;
+
+  // Auto-discover active task IDs from brief data (briefs with task_id have a running pipeline)
+  const discoveredTaskId = useMemo(() => {
+    if (urlTaskId) return urlTaskId;
+    if (!briefsData?.briefs) return null;
+    // Find the first brief with an active task_id (status not completed/rejected/failed)
+    const activeBrief = briefsData.briefs.find(
+      (b) => b.task_id && !['completed', 'published', 'rejected', 'failed'].includes(b.status),
+    );
+    return activeBrief?.task_id ?? null;
+  }, [urlTaskId, briefsData]);
+
+  const pipelineTaskId = discoveredTaskId;
   const stream = useTaskStream(pipelineTaskId);
+
+  // SSE-driven status overlay: real-time sub-step status from worker_progress events
+  // Takes priority over the GET /briefs polling data during pipeline execution
+  const [briefStatusOverrides, setBriefStatusOverrides] = useState<
+    Map<string, { status: string; substep?: string }>
+  >(new Map());
 
   // Force refetch on pipeline completion and stage transitions (Kanban sync)
   const lastEventCount = useRef(0);
   // Reset counter when task ID changes (new pipeline run resets stream.events)
-  useEffect(() => { lastEventCount.current = 0; }, [pipelineTaskId]);
   useEffect(() => {
-    if (stream.status === 'completed') {
+    lastEventCount.current = 0;
+    setBriefStatusOverrides(new Map());
+  }, [pipelineTaskId]);
+
+  useEffect(() => {
+    if (stream.status === 'completed' || stream.status === 'error') {
+      setBriefStatusOverrides(new Map());
       refetch();
       return;
     }
-    // Refetch when stage transitions occur so Kanban columns update
+    // Process new SSE events for direct Kanban state updates
     if (stream.events.length > lastEventCount.current) {
       const newEvents = stream.events.slice(lastEventCount.current);
       lastEventCount.current = stream.events.length;
-      const hasStageChange = newEvents.some(
-        (e) => e.type === 'stage_started' || e.type === 'stage_complete' || e.type === 'pipeline_complete'
-      );
-      if (hasStageChange) refetch();
+
+      let shouldRefetch = false;
+      // Batch all override updates into a single setState call
+      const overrideUpdates = new Map<string, { status: string; substep?: string }>();
+
+      for (const e of newEvents) {
+        const briefId = typeof e.data?.brief_id === 'string' ? e.data.brief_id : '';
+        const step = typeof e.data?.step === 'string' ? e.data.step : '';
+        const stage = typeof e.data?.stage === 'string' ? e.data.stage : '';
+
+        if (e.type === 'worker_progress' && briefId && step) {
+          overrideUpdates.set(briefId, { status: step, substep: step });
+        }
+        if (e.type === 'pending_approval' && briefId && stage) {
+          const statusVal = stage === 'content_review' ? 'review' : 'brief_review';
+          overrideUpdates.set(briefId, { status: statusVal });
+          shouldRefetch = true;
+        }
+        if (e.type === 'brief_completed' && briefId) {
+          overrideUpdates.set(briefId, { status: 'completed' });
+          shouldRefetch = true;
+        }
+        if (e.type === 'brief_rejected' && briefId) {
+          overrideUpdates.set(briefId, { status: 'rejected' });
+          shouldRefetch = true;
+        }
+        if (
+          e.type === 'stage_started' ||
+          e.type === 'stage_complete' ||
+          e.type === 'pipeline_complete'
+        ) {
+          shouldRefetch = true;
+        }
+      }
+
+      // Apply batched override updates in one setState
+      if (overrideUpdates.size > 0) {
+        const lastEvent = newEvents[newEvents.length - 1];
+        const clearAll = lastEvent?.type === 'pipeline_complete';
+        setBriefStatusOverrides((prev) => {
+          if (clearAll) return new Map();
+          const next = new Map(prev);
+          overrideUpdates.forEach((v, k) => next.set(k, v));
+          return next;
+        });
+      }
+
+      if (shouldRefetch) refetch();
     }
-  }, [stream.status, stream.events.length, refetch]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream.status, stream.events, refetch]);
 
   // Transform API briefs to ExtendedBrief for the kanban board
   const apiBriefs = useMemo<ExtendedBrief[]>(() => {
@@ -50,6 +119,14 @@ export default function ContentStudioPage() {
     return briefsData.briefs.map((item) => {
       const base = toBrief(item);
       const gc = item.gap_context;
+
+      // Apply SSE-driven status override if available (real-time sub-step)
+      const override = briefStatusOverrides.get(item.id);
+      if (override) {
+        base.status = override.status;
+        base.stage = toBriefStage(override.status);
+      }
+
       return {
         ...base,
         contentFormat: item.content_type,
@@ -67,7 +144,7 @@ export default function ContentStudioPage() {
         })),
       } as ExtendedBrief;
     });
-  }, [briefsData]);
+  }, [briefsData, briefStatusOverrides]);
 
   // Use API data directly; localItems only for optimistic DnD reorder within a session
   // Reset local overrides when API data refreshes
@@ -197,7 +274,6 @@ export default function ContentStudioPage() {
           brief={detailBrief}
           onClose={() => setDetailBriefId(null)}
           onOpenFullEditor={handleOpenFullEditor}
-          pipelineTaskId={pipelineTaskId}
           onBriefApproved={refetch}
         />
       )}

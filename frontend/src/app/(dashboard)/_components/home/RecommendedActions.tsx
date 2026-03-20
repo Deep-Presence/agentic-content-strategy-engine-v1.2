@@ -44,7 +44,7 @@ export function RecommendedActions({
     if (!slug || !companyName || !companyDomain) return;
     setApprovingIndex(index);
     try {
-      await apiPost(CONTENT_DATA.briefs(slug), {
+      const brief = await apiPost<{ id: string }>(CONTENT_DATA.briefs(slug), {
         title: rec.title_idea,
         cluster: rec.target_cluster,
         description: rec.expected_impact,
@@ -59,7 +59,7 @@ export function RecommendedActions({
           entry_mode: 'manual',
           manual_prompt: rec.title_idea,
           manual_cluster: rec.target_cluster,
-          auto_approve: true,
+          brief_id_hint: brief.id,
         });
         pipelineStarted = true;
       } catch {
@@ -87,7 +87,7 @@ export function RecommendedActions({
     if (!slug || !companyName || !companyDomain) return;
     setApprovingGapIndex(index);
     try {
-      await apiPost(CONTENT_DATA.briefs(slug), {
+      const brief = await apiPost<{ id: string }>(CONTENT_DATA.briefs(slug), {
         title: query.query_text,
         cluster: query.cluster_name ?? '',
         description: `Gap query (${query.classification.replace(/_/g, ' ')}). Gap score: ${query.gap_score.toFixed(4)}.`,
@@ -103,7 +103,7 @@ export function RecommendedActions({
           manual_prompt: query.query_text,
           manual_cluster: query.cluster_name ?? '',
           gap_query_id: query.query_id,
-          auto_approve: true,
+          brief_id_hint: brief.id,
         });
         pipelineStarted = true;
       } catch {

@@ -127,19 +127,30 @@ export function toEmbeddingPoint(point: {
 // ── Content Briefs ────────────────────────────────────────────────────
 
 const STATUS_TO_STAGE: Record<string, ContentBrief['stage']> = {
+  // Triage
   suggested: 'triage',
+  // Brief
+  briefing: 'brief',
+  brief_review: 'brief',
   approved: 'brief',
-  in_progress: 'generating',
+  // Generating
+  outlining: 'generating',
   drafting: 'generating',
+  linking: 'generating',
   enriching: 'generating',
-  formatting: 'generating',
   evaluating: 'generating',
-  research: 'generating',
+  revising: 'generating',
+  in_progress: 'generating', // legacy compat
+  research: 'generating', // legacy compat (v1.0 outline status)
+  // Review
   review: 'review',
   pending_review: 'review',
+  // Approved
   completed: 'approved',
   published: 'approved',
+  // Hidden
   rejected: 'triage',
+  failed: 'triage',
 };
 
 export function toBriefStage(status: string): ContentBrief['stage'] {
@@ -152,7 +163,9 @@ export function toBrief(item: ContentBriefItem): ContentBrief {
     title: item.title,
     targetCluster: item.cluster,
     targetQuery: '',
+    status: item.status,
     stage: toBriefStage(item.status),
+    taskId: item.task_id ?? undefined,
     personas: [],
     cpsPredict: {} as Record<Platform, number>,
     structuralTargets: { words: item.target_word_count, paragraphs: 0, headers: 0, lists: 0, stats: 0, citations: 0 },

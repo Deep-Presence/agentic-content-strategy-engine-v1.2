@@ -53,6 +53,41 @@ function ContentCard({
         {brief.title}
       </h4>
 
+      {/* Sub-step badge — real-time pipeline status */}
+      {(() => {
+        const badgeText: Record<string, string> = {
+          suggested: 'Awaiting approval',
+          briefing: 'Generating brief',
+          brief_review: 'Approve brief',
+          approved: 'Brief approved',
+          outlining: 'Outlining',
+          drafting: 'Drafting',
+          linking: 'Linking',
+          enriching: 'Enriching',
+          evaluating: 'Evaluating',
+          revising: 'Revising',
+          review: 'Final review',
+          completed: 'Published',
+          published: 'Published',
+        };
+        const isHitl = ['suggested', 'brief_review', 'review'].includes(brief.status);
+        const isDone = ['completed', 'published'].includes(brief.status);
+        const label = badgeText[brief.status];
+        if (!label) return null;
+        return (
+          <span
+            className={cn(
+              'inline-block text-[10px] font-medium px-1.5 py-0.5 rounded mb-1.5',
+              isHitl && 'bg-warning/10 text-warning',
+              !isHitl && !isDone && 'bg-accent/10 text-accent',
+              isDone && 'bg-success/10 text-success',
+            )}
+          >
+            {label}
+          </span>
+        );
+      })()}
+
       {/* Content type + cluster badges */}
       <div className="flex items-center gap-1 mb-2 flex-wrap">
         <Badge variant="neutral">{brief.contentFormat}</Badge>

@@ -140,6 +140,7 @@ async def start_content_v13(
         manual_description=body.manual_description,
         manual_cluster=body.manual_cluster,
         gap_query_id=body.gap_query_id,
+        brief_id_hint=body.brief_id_hint,
         product_slug=body.product_slug,
         product_name=body.product_name or scope.product_name,
         product_description=body.product_description or scope.product_description,

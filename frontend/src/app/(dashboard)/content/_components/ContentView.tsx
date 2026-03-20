@@ -20,7 +20,7 @@ export function ContentView({ brief, onClose }: ContentViewProps) {
   const slug = useAuthStore((s) => s.company?.slug);
   // M3-fix: v1.3 pipeline doesn't produce formatted.md. Show final.md for
   // approved/published briefs, enriched.md for in-progress ones.
-  const editorStage = brief.stage === 'published' || brief.stage === 'approved' ? 'final' : 'enriched';
+  const editorStage = brief.stage === 'approved' ? 'final' : 'enriched';
   const { data: stageData } = useContentStage(slug ?? undefined, brief.id, editorStage);
 
   const [editorContent, setEditorContent] = useState('');

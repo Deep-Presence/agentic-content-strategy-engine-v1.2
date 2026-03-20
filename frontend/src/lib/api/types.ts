@@ -297,6 +297,7 @@ export interface ContentBriefItem {
   target_word_count: number;
   citability_score: number | null;
   cycle_id: string | null;
+  task_id: string | null;
   created_at: string;
   updated_at: string;
   gap_context: GapContextSummary | null;

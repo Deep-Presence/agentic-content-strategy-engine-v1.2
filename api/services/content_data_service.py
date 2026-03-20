@@ -158,7 +158,7 @@ def _infer_brief_status(
     brief_id: str,
     pieces: List[Dict[str, Any]],
     content_dir: Path,
-    pipeline_state: Optional[Dict[str, str]] = None,
+    pipeline_state: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Infer brief status from pipeline state, run_metadata pieces, or stage files.
 
@@ -167,8 +167,11 @@ def _infer_brief_status(
     Phase 2: File-based inference (during/after pipeline execution).
     """
     # Phase 0: pipeline_state.json (highest priority during pipeline execution)
+    # Skip reserved keys like __task_ids__ (dict, not a status string)
     if pipeline_state and brief_id in pipeline_state:
-        return pipeline_state[brief_id]
+        val = pipeline_state[brief_id]
+        if isinstance(val, str):
+            return val
 
     # Phase 1: Check pieces (post-HITL authoritative)
     for piece in pieces:
@@ -184,7 +187,7 @@ def _infer_brief_status(
     # Phase 2: File-based inference
     brief_dir = content_dir / "content" / brief_id
     if (brief_dir / "final.md").exists():
-        return "published"
+        return "completed"
     if (brief_dir / "eval_history.json").exists():
         try:
             eh = json.loads((brief_dir / "eval_history.json").read_text())
@@ -193,15 +196,14 @@ def _infer_brief_status(
         except (json.JSONDecodeError, KeyError, OSError):
             pass
         return "evaluating"
-    # NOTE: "formatted.md" check removed — v1.3 pipeline does not produce
-    # a formatted stage file. The v1.0 Formatter was merged into v1.3 workers.
-    # _STAGE_FILES still includes "formatted" for backward compat with v1.0 artifacts.
-    if (brief_dir / "enriched.md").exists():
+    if (brief_dir / "fact_checked.md").exists() or (brief_dir / "enriched.md").exists():
         return "enriching"
+    if (brief_dir / "linked.md").exists():
+        return "linking"
     if (brief_dir / "draft.md").exists():
         return "drafting"
     if (brief_dir / "outline.json").exists():
-        return "research"
+        return "outlining"
     return "suggested"
 
 
@@ -333,6 +335,11 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
 
     # Load pipeline_state.json for in-progress statuses (Phase 0, highest priority)
     pipeline_state = _load_json_cached(content_root, "pipeline_state.json") or {}
+    # Extract brief_id → task_id mapping for frontend HITL approval calls
+    task_id_map: Dict[str, str] = {}
+    raw_task_ids = pipeline_state.get("__task_ids__")
+    if isinstance(raw_task_ids, dict):
+        task_id_map = raw_task_ids
 
     # Use mtime of the source artifact as created_at
     for _fname in ("blueprints.json", "planner_selections.json"):
@@ -382,6 +389,7 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
             target_word_count=target_wc,
             citability_score=citability,
             cycle_id=session_id,
+            task_id=task_id_map.get(brief_id),
             created_at=created_at,
             updated_at=updated_at or created_at,
             gap_context=gap_ctx,

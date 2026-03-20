@@ -438,7 +438,7 @@ class TestBriefList:
             brief_stages={"brief-0": {"outline.json": '{"sections": []}'}},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
-        assert resp.json()["briefs"][0]["status"] == "research"
+        assert resp.json()["briefs"][0]["status"] == "outlining"
 
     # ── Namespaced Metadata (Manual Mode) Tests ─────────────────────
 
@@ -872,7 +872,7 @@ class TestStatusInference:
             brief_stages={"brief-0": {"outline.json": '{"sections": []}'}},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
-        assert resp.json()["briefs"][0]["status"] == "research"
+        assert resp.json()["briefs"][0]["status"] == "outlining"
 
     def test_status_drafting(self, client: TestClient, artifacts_root: Path):
         """draft.md exists → drafting."""
@@ -948,7 +948,7 @@ class TestStatusInference:
             brief_stages={"brief-0": {"final.md": "# Final"}},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
-        assert resp.json()["briefs"][0]["status"] == "published"
+        assert resp.json()["briefs"][0]["status"] == "completed"
 
     def test_status_piece_approved(self, client: TestClient, artifacts_root: Path):
         """Piece status 'approved' → completed (Published column, not Brief)."""

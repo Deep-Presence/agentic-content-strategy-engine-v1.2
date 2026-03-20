@@ -28,6 +28,8 @@ describe('API Transforms', () => {
         top_exemplar_sim: 0.85,
         platform_citations: { perplexity: 3, openai: 2 },
         content_brief: null,
+        company_cited: false,
+        company_cited_platforms: [],
         top_exemplars: [
           { similarity: 0.85, domain: 'example.com', url: 'https://example.com/post', snippet: 'A snippet', authority_type: 'industry', content_type: 'article' },
         ],
@@ -64,6 +66,8 @@ describe('API Transforms', () => {
         top_exemplar_sim: 0,
         platform_citations: {},
         content_brief: null,
+        company_cited: false,
+        company_cited_platforms: [],
         top_exemplars: [],
       };
 
