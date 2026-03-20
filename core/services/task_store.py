@@ -31,6 +31,7 @@ class TaskStoreProtocol(Protocol):
         pipeline: str,
         company_slug: str,
         product_slug: Optional[str] = None,
+        allow_parallel: bool = False,
     ) -> PipelineTask: ...
 
     def get_task(self, task_id: str) -> PipelineTask: ...

@@ -459,7 +459,8 @@ class TestExpansionReentrant:
 
     @pytest.mark.asyncio
     async def test_two_expansions_accumulate(self, artifacts_dir):
-        """Running Pipeline B twice with different subdomains accumulates expanded_subdomain_ids."""
+        """Running Pipeline B twice with different subdomains accumulates
+        expanded_subdomain_ids AND merges assignments from both runs."""
         # First expansion: sd-1
         inp1 = TopicExpansionInput(
             company_name="Test Co",
@@ -481,6 +482,11 @@ class TestExpansionReentrant:
         assert manifest1.expanded_subdomain_ids == ["sd-1"]
         v1 = manifest1.matrix_version
 
+        mat1 = storage.get_latest_matrix()
+        assert mat1 is not None
+        sd1_count = len([a for a in mat1.assignments if a.subdomain_id == "sd-1"])
+        assert sd1_count > 0
+
         # Second expansion: sd-2
         inp2 = TopicExpansionInput(
             company_name="Test Co",
@@ -499,6 +505,126 @@ class TestExpansionReentrant:
         assert sorted(manifest2.expanded_subdomain_ids) == ["sd-1", "sd-2"]
         assert manifest2.matrix_version > v1
         assert manifest2.last_expansion_task_id == "task-2"
+
+        # Verify assignments from BOTH runs are in the latest matrix
+        mat2 = storage.get_latest_matrix()
+        assert mat2 is not None
+        sd1_assignments = [a for a in mat2.assignments if a.subdomain_id == "sd-1"]
+        sd2_assignments = [a for a in mat2.assignments if a.subdomain_id == "sd-2"]
+        assert len(sd1_assignments) == sd1_count, "sd-1 assignments must be preserved"
+        assert len(sd2_assignments) > 0, "sd-2 assignments must be added"
+        assert mat2.total_assignments == len(sd1_assignments) + len(sd2_assignments)
+
+    @pytest.mark.asyncio
+    async def test_reexpand_replaces_old_assignments(self, artifacts_dir):
+        """Re-expanding the same subdomain replaces its old assignments."""
+        inp = TopicExpansionInput(
+            company_name="Test Co",
+            company_slug="test-co",
+            effective_slug="test-co",
+            subdomain_ids=["sd-1"],
+            auto_approve_checkpoints=[2],
+        )
+
+        # First expansion: 2 topics
+        with _expansion_patches():
+            from core.topic_discovery.pipeline import run_topic_expansion_pipeline
+            await run_topic_expansion_pipeline(inp, artifacts_root=artifacts_dir)
+
+        from core.topic_discovery.storage import TopicDiscoveryStorage
+        storage = TopicDiscoveryStorage(artifacts_dir, "test-co")
+        mat1 = storage.get_latest_matrix()
+        assert mat1 is not None
+        first_count = len([a for a in mat1.assignments if a.subdomain_id == "sd-1"])
+
+        # Second expansion of sd-1: returns 3 topics this time
+        with (
+            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.create_session", return_value="s"),
+            patch(f"{_P}.create_trace", return_value=MagicMock()),
+            patch(f"{_P}.end_span"),
+            patch(f"{_P}.flush"),
+            patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
+            patch(f"{_P}.run_subdomain_expansion", return_value=_make_topics(3)),
+        ):
+            await run_topic_expansion_pipeline(inp, artifacts_root=artifacts_dir)
+
+        mat2 = storage.get_latest_matrix()
+        assert mat2 is not None
+        sd1_assignments = [a for a in mat2.assignments if a.subdomain_id == "sd-1"]
+        assert len(sd1_assignments) == 3, "Re-expansion should replace with fresh topics"
+
+    @pytest.mark.asyncio
+    async def test_failed_expansion_preserves_previous(self, artifacts_dir):
+        """If a subdomain fails during re-expansion, its previous assignments are kept."""
+        # First: successfully expand sd-1 and sd-2
+        # Use side_effect to return fresh objects per call (avoid shared mutation)
+        inp1 = TopicExpansionInput(
+            company_name="Test Co",
+            company_slug="test-co",
+            effective_slug="test-co",
+            subdomain_ids=["sd-1", "sd-2"],
+            auto_approve_checkpoints=[2],
+        )
+
+        with (
+            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.create_session", return_value="s"),
+            patch(f"{_P}.create_trace", return_value=MagicMock()),
+            patch(f"{_P}.end_span"),
+            patch(f"{_P}.flush"),
+            patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
+            patch(f"{_P}.run_subdomain_expansion", side_effect=lambda **kw: _make_topics(2)),
+        ):
+            from core.topic_discovery.pipeline import run_topic_expansion_pipeline  # noqa: F811
+            await run_topic_expansion_pipeline(inp1, artifacts_root=artifacts_dir)
+
+        from core.topic_discovery.storage import TopicDiscoveryStorage
+        storage = TopicDiscoveryStorage(artifacts_dir, "test-co")
+        mat1 = storage.get_latest_matrix()
+        assert mat1 is not None
+        sd2_original = [a for a in mat1.assignments if a.subdomain_id == "sd-2"]
+        assert len(sd2_original) > 0
+
+        # Second: re-expand sd-2 but it FAILS
+        inp2 = TopicExpansionInput(
+            company_name="Test Co",
+            company_slug="test-co",
+            effective_slug="test-co",
+            subdomain_ids=["sd-2"],
+            auto_approve_checkpoints=[2],
+        )
+
+        async def _fail_expansion(subdomain_name, **kwargs):
+            raise RuntimeError("Simulated failure")
+
+        with (
+            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.create_session", return_value="s"),
+            patch(f"{_P}.create_trace", return_value=MagicMock()),
+            patch(f"{_P}.end_span"),
+            patch(f"{_P}.flush"),
+            patch(f"{_P}.load_persona_profiles", return_value=["persona md"]),
+            patch(f"{_P}._load_persona_entries", return_value=[("p1", "CFO")]),
+            patch(f"{_P}.run_subdomain_expansion", side_effect=_fail_expansion),
+        ):
+            # All subdomains fail → pipeline should still produce a matrix
+            # with previous assignments preserved
+            output = await run_topic_expansion_pipeline(inp2, artifacts_root=artifacts_dir)
+
+        assert output.subdomains_failed == 1
+        assert output.subdomains_expanded == 0
+
+        mat2 = storage.get_latest_matrix()
+        assert mat2 is not None
+        # sd-1 assignments preserved (not touched)
+        sd1_kept = [a for a in mat2.assignments if a.subdomain_id == "sd-1"]
+        assert len(sd1_kept) > 0, "sd-1 assignments must be preserved"
+        # sd-2 assignments also preserved (failed, not in expanded_ids)
+        sd2_kept = [a for a in mat2.assignments if a.subdomain_id == "sd-2"]
+        assert len(sd2_kept) == len(sd2_original), "sd-2 assignments must be preserved on failure"
 
 
 # ═══════════════════════════════════════════════════════════════════════

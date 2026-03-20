@@ -31,6 +31,8 @@ def _make_gap(
     gap: float = 0.15,
     with_brief: bool = True,
     with_exemplars: bool = True,
+    company_cited: bool = False,
+    company_cited_platforms: List[str] | None = None,
 ) -> Dict[str, Any]:
     """Build a single gap entry."""
     g: Dict[str, Any] = {
@@ -42,6 +44,8 @@ def _make_gap(
         "gap": gap,
         "best_company_similarity": 0.3 + idx * 0.01,
         "avg_citation_similarity": 0.5 + idx * 0.01,
+        "company_cited": company_cited,
+        "company_cited_platforms": company_cited_platforms or [],
     }
     if with_brief:
         g["content_brief"] = {
@@ -1732,3 +1736,75 @@ class TestGapDataProductSlug:
         assert t_product.task_id not in run_ids, (
             "Product-scoped run must not appear in company-level trend"
         )
+
+
+class TestCompanyCited:
+    """company_cited and company_cited_platforms pass-through from pipeline to API."""
+
+    def test_query_company_cited_fields_present(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """company_cited + company_cited_platforms appear in query response."""
+        gaps = [
+            _make_gap(0, company_cited=True, company_cited_platforms=["openai", "perplexity"]),
+            _make_gap(1, company_cited=False),
+        ]
+        data = _make_complete_new_format(num_gaps=0)
+        data["analysis"]["gaps"] = gaps
+        data["analysis"]["decision_metrics"]["total_queries"] = 2
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+
+        body = client.get(_url("test-co", "queries")).json()
+        assert body["total"] == 2
+
+        q0 = next(q for q in body["queries"] if q["query_id"] == "q0")
+        assert q0["company_cited"] is True
+        assert q0["company_cited_platforms"] == ["openai", "perplexity"]
+
+        q1 = next(q for q in body["queries"] if q["query_id"] == "q1")
+        assert q1["company_cited"] is False
+        assert q1["company_cited_platforms"] == []
+
+    def test_query_company_cited_defaults_false_for_old_data(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """Old artifacts without company_cited default to False."""
+        data = _make_analysis_old_format(num_gaps=3)
+        # Old format has no company_cited fields in gaps
+        for gap in data["gaps"]:
+            gap.pop("company_cited", None)
+            gap.pop("company_cited_platforms", None)
+        _write_artifact(artifacts_root, "test-co", "analysis.json", data)
+
+        body = client.get(_url("test-co", "queries")).json()
+        for q in body["queries"]:
+            assert q["company_cited"] is False
+            assert q["company_cited_platforms"] == []
+
+    def test_summary_company_cited_count(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """Summary includes company_cited_count from actual citation data."""
+        gaps = [
+            _make_gap(0, interpretation="significant_gap", company_cited=True, company_cited_platforms=["openai"]),
+            _make_gap(1, interpretation="significant_gap", company_cited=True, company_cited_platforms=["claude"]),
+            _make_gap(2, interpretation="gap_to_close", company_cited=False),
+            _make_gap(3, interpretation="company_wins", company_cited=True, company_cited_platforms=["perplexity"]),
+        ]
+        data = _make_complete_new_format(num_gaps=0)
+        data["analysis"]["gaps"] = gaps
+        data["analysis"]["decision_metrics"]["total_queries"] = 4
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+
+        body = client.get(_url("test-co", "summary")).json()
+        assert body["company_cited_count"] == 3
+
+    def test_summary_company_cited_count_zero_when_absent(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """company_cited_count is 0 when no gaps have company_cited."""
+        data = _make_complete_new_format(num_gaps=5)
+        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
+
+        body = client.get(_url("test-co", "summary")).json()
+        assert body["company_cited_count"] == 0

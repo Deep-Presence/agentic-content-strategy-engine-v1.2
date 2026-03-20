@@ -15,6 +15,20 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 
+class GapContextSummary(BaseModel):
+    """Gap analysis context attached to a content brief for the sidebar."""
+
+    gap_score: float = 0.0
+    classification: str = ""
+    company_similarity: float = 0.0
+    citation_similarity: float = 0.0
+    company_cited: bool = False
+    company_best_url: str = ""
+    why_picked: List[str] = Field(default_factory=list)
+    success_indicators: List[Dict[str, str]] = Field(default_factory=list)
+    exemplars: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class ContentBriefListItem(BaseModel):
     """Summary item for the brief list view."""
 
@@ -26,8 +40,10 @@ class ContentBriefListItem(BaseModel):
     target_word_count: int = 0
     citability_score: Optional[float] = None  # 0-100, from eval overall_score
     cycle_id: Optional[str] = None  # run_metadata session_id
+    task_id: Optional[str] = None  # pipeline task_id for HITL approval calls
     created_at: str = ""  # ISO string, from briefs.json mtime
     updated_at: str = ""  # ISO string, from latest stage file mtime
+    gap_context: Optional[GapContextSummary] = None
 
 
 class ContentBriefListResponse(BaseModel):
@@ -35,6 +51,16 @@ class ContentBriefListResponse(BaseModel):
 
     briefs: List[ContentBriefListItem] = Field(default_factory=list)
     total: int = 0
+
+
+class AddBriefRequest(BaseModel):
+    """Request body for POST /briefs — immediately add a topic to the content cycle."""
+
+    title: str = Field(..., min_length=1, max_length=500)
+    cluster: str = ""
+    description: str = ""
+    source: str = "manual"  # "citation", "topic_discovery", "manual"
+    gap_query_id: str = ""  # direct query_id for deterministic gap context lookup
 
 
 # ---------------------------------------------------------------------------

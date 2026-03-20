@@ -90,22 +90,45 @@ async def build_brief(
         topic_selection.cluster_name,
     )
 
-    # Call LLM via LiteLLM
-    response = await llm_call(
-        model=model,
-        system=BRIEF_BUILDER_SYSTEM_PROMPT,
-        user=user_prompt,
-        max_tokens=8192,
-        temperature=0.0,
-        metadata={
-            "agent": "brief_builder",
-            "brief_id": brief_id,
-            "cluster": topic_selection.cluster_name,
-        },
-    )
+    # Call LLM via LiteLLM — retry up to 2 times on JSON parse failure
+    _MAX_PARSE_RETRIES = 2
+    blueprint: ContentBlueprint | None = None
+    last_parse_error: Exception | None = None
 
-    # Parse output
-    blueprint = safe_parse(response.content, ContentBlueprint)
+    for parse_attempt in range(_MAX_PARSE_RETRIES + 1):
+        response = await llm_call(
+            model=model,
+            system=BRIEF_BUILDER_SYSTEM_PROMPT,
+            user=user_prompt,
+            max_tokens=8192,
+            temperature=0.0 if parse_attempt == 0 else 0.1,
+            metadata={
+                "agent": "brief_builder",
+                "brief_id": brief_id,
+                "cluster": topic_selection.cluster_name,
+                "parse_attempt": parse_attempt,
+            },
+        )
+
+        try:
+            blueprint = safe_parse(response.content, ContentBlueprint)
+            if parse_attempt > 0:
+                logger.info(
+                    "Brief %s parsed successfully on retry %d/%d",
+                    brief_id, parse_attempt, _MAX_PARSE_RETRIES,
+                )
+            break
+        except ValueError as exc:
+            last_parse_error = exc
+            if parse_attempt < _MAX_PARSE_RETRIES:
+                logger.warning(
+                    "Brief %s JSON parse failed (attempt %d/%d), retrying LLM call: %s",
+                    brief_id, parse_attempt + 1, _MAX_PARSE_RETRIES + 1, str(exc)[:200],
+                )
+            else:
+                raise
+
+    assert blueprint is not None  # guaranteed by loop logic: either set or raised
 
     # Ensure brief_id is set correctly
     blueprint.brief_id = brief_id

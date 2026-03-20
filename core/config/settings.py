@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     gap_analysis_query_gen_model: str = "gpt-5.2-2025-12-11"
     gap_analysis_report_model: str = "gpt-5.2-2025-12-11"
     gap_analysis_openai_engine_model: str = "gpt-5.2-2025-12-11"
-    gap_analysis_claude_engine_model: str = "claude-sonnet-4-5-20250929"
+    gap_analysis_claude_engine_model: str = "claude-sonnet-4-6"
     gap_analysis_gemini_engine_model: str = "gemini-3-flash-preview"
 
     # Supabase – primary env vars
@@ -113,10 +113,10 @@ class Settings(BaseSettings):
 
     # Content Generation Engine – Models
     content_engine_planner_model: str = "claude-opus-4-6"
-    content_engine_worker_model: str = "claude-sonnet-4-5-20250929"
+    content_engine_worker_model: str = "claude-sonnet-4-6"
     content_engine_formatter_model: str = "claude-haiku-4-5-20251001"
     content_engine_style_judge_model: str = "claude-haiku-4-5-20251001"
-    content_engine_factual_judge_model: str = "claude-sonnet-4-5-20250929"
+    content_engine_factual_judge_model: str = "claude-sonnet-4-6"
     content_engine_fact_enricher_model: str = "sonar-pro"
 
     # Content Generation Engine – Concurrency
@@ -131,13 +131,13 @@ class Settings(BaseSettings):
 
     # --- Content Engine v1.3 — LiteLLM model identifiers ---
     # Provider-prefixed strings for LiteLLM routing
-    content_engine_v13_planner_model: str = "anthropic/claude-sonnet-4-5-20250929"
-    content_engine_v13_brief_builder_model: str = "anthropic/claude-sonnet-4-5-20250929"
-    content_engine_v13_worker_model: str = "anthropic/claude-sonnet-4-5-20250929"
-    content_engine_v13_formatter_model: str = "anthropic/claude-haiku-4-5-20251001"
+    content_engine_v13_planner_model: str =  "anthropic/claude-sonnet-4-6"
+    content_engine_v13_brief_builder_model: str = "anthropic/claude-sonnet-4-6"
+    content_engine_v13_worker_model: str = "anthropic/claude-sonnet-4-6"
+    content_engine_v13_formatter_model: str =  "anthropic/claude-haiku-4-5-20251001"
     content_engine_v13_style_judge_model: str = "anthropic/claude-haiku-4-5-20251001"
-    content_engine_v13_factual_judge_model: str = "anthropic/claude-sonnet-4-5-20250929"
-    content_engine_v13_eeat_judge_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_factual_judge_model: str = "anthropic/claude-sonnet-4-6"
+    content_engine_v13_eeat_judge_model: str = "anthropic/claude-sonnet-4-6"
     content_engine_v13_fact_enricher_model: str = "perplexity/sonar-pro"
     content_engine_v13_linker_model: str = "perplexity/sonar-pro"
 
@@ -160,7 +160,7 @@ class Settings(BaseSettings):
     research_kb_competitor_scanner_model: str = "sonar-deep-research"
     research_kb_weakness_analyst_model: str = "sonar-deep-research"
     # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
-    research_kb_brand_perception_model: str = "claude-sonnet-4-5-20250929"
+    research_kb_brand_perception_model: str = "claude-sonnet-4-6"
     # Synthesis agent — init_chat_model(), needs provider:model format
     research_kb_synthesis_model: str = "anthropic:claude-opus-4-6"
 

@@ -123,6 +123,38 @@ async def lifespan(app: FastAPI):
     else:
         set_sink(NoOpAuditSink())
 
+    # ── Startup DB health checks ───────────────────────────────────────
+    app.state.db_healthy = False
+    app.state.pgvector_available = False
+    db_sf = getattr(app.state, "db_session_factory", None)
+    if db_sf is not None:
+        try:
+            async with db_sf() as session:
+                # 1. Basic connectivity
+                result = await session.execute(
+                    __import__("sqlalchemy").text("SELECT 1")
+                )
+                result.scalar_one()
+                app.state.db_healthy = True
+                logger.info("DB health check: PostgreSQL connected")
+
+                # 2. pgvector extension
+                row = await session.execute(
+                    __import__("sqlalchemy").text(
+                        "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+                    )
+                )
+                ext = row.scalar_one_or_none()
+                if ext:
+                    app.state.pgvector_available = True
+                    logger.info("DB health check: pgvector v%s available", ext)
+                else:
+                    logger.warning("DB health check: pgvector extension NOT installed")
+        except Exception:
+            logger.exception("DB health check failed — DB may be unreachable")
+    else:
+        logger.info("DB health check: skipped (no DATABASE_URL)")
+
     logger.info(
         "API started — task store: %s", type(app.state.task_store).__name__
     )

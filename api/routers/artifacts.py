@@ -21,7 +21,7 @@ from core.models.organization import UserProfile
 
 router = APIRouter(prefix="/api/v1/artifacts", tags=["artifacts"])
 
-VALID_TYPES = {"company_context", "personas", "style_guides", "gap_analysis", "content"}
+VALID_TYPES = {"company_context", "personas", "style_guides", "gap_analysis", "content", "knowledge_base"}
 _EXCLUDED_DIRS = {"chroma_db", "_logs", ".DS_Store"}
 
 # Artifact types where files live directly in the type dir (not in slug subdirs)

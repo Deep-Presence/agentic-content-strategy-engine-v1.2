@@ -41,7 +41,7 @@ class DbTaskStore:
     def __init__(
         self,
         session_factory: Callable[..., AsyncSession],
-        max_concurrent: int = 3,
+        max_concurrent: int = 10,
     ) -> None:
         self._tasks: Dict[str, PipelineTask] = {}
         self._session_factory = session_factory
@@ -89,17 +89,24 @@ class DbTaskStore:
         pipeline: str,
         company_slug: str,
         product_slug: Optional[str] = None,
+        allow_parallel: bool = False,
     ) -> PipelineTask:
-        """Create a new task, acquire slug lock, write to DB.
+        """Create a new task, optionally acquire slug lock, write to DB.
 
         Lock key is ``pipeline:effective_slug`` so different pipeline types
         can run concurrently for the same company.
+
+        Args:
+            allow_parallel: If True, skip slug lock acquisition. Used for
+                manual content pipeline entries that can run in parallel.
         """
         effective = (
             f"{company_slug}__{product_slug}" if product_slug else company_slug
         )
         lock_key = f"{pipeline}:{effective}"
-        self.acquire_slug_lock(lock_key)
+
+        if not allow_parallel:
+            self.acquire_slug_lock(lock_key)
 
         task_id = str(_uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -113,7 +120,8 @@ class DbTaskStore:
             updated_at=now,
         )
         self._tasks[task_id] = task
-        self._slug_locks[lock_key] = task_id
+        if not allow_parallel:
+            self._slug_locks[lock_key] = task_id
 
         # Write-through to DB (critical: must persist before returning)
         asyncio.create_task(self._db_create(task))

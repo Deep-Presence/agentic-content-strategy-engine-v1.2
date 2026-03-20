@@ -625,6 +625,135 @@ class TestContentV13SchemaValidation:
         )
         assert resp.status_code == 200
 
+    # -- C2-fix: manual_prompt required when entry_mode == "manual" -------
+
+    def test_manual_mode_rejects_none_prompt(self, client: TestClient):
+        """entry_mode='manual' with no manual_prompt must be rejected."""
+        resp = client.post(
+            "/api/v1/content/v13/start",
+            json={
+                "company_name": "Test Co",
+                "domain": "testco.com",
+                "entry_mode": "manual",
+                # manual_prompt omitted → None
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_manual_mode_rejects_whitespace_prompt(self, client: TestClient):
+        """entry_mode='manual' with whitespace-only prompt must be rejected."""
+        resp = client.post(
+            "/api/v1/content/v13/start",
+            json={
+                "company_name": "Test Co",
+                "domain": "testco.com",
+                "entry_mode": "manual",
+                "manual_prompt": "   ",
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_manual_mode_accepts_valid_prompt(self, client: TestClient):
+        """entry_mode='manual' with a real prompt must be accepted (202)."""
+        with patch("api.routers.content_v13.asyncio.create_task", return_value=MagicMock()):
+            resp = client.post(
+                "/api/v1/content/v13/start",
+                json={
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
+                    "entry_mode": "manual",
+                    "manual_prompt": "How does equity compensation work?",
+                },
+            )
+        assert resp.status_code == 202
+
+    def test_autonomous_mode_allows_none_prompt(self, client: TestClient):
+        """entry_mode='autonomous' must accept missing manual_prompt (no regression)."""
+        with patch("api.routers.content_v13.asyncio.create_task", return_value=MagicMock()):
+            resp = client.post(
+                "/api/v1/content/v13/start",
+                json={
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
+                    "entry_mode": "autonomous",
+                },
+            )
+        assert resp.status_code == 202
+
+    # -- H6-fix: skip_stages validation for manual mode -------------------
+
+    def test_manual_mode_rejects_skip_stage_2(self, client: TestClient):
+        """Manual mode cannot skip stage 2 (Brief Builder) — 422."""
+        resp = client.post(
+            "/api/v1/content/v13/start",
+            json={
+                "company_name": "Test Co",
+                "domain": "testco.com",
+                "entry_mode": "manual",
+                "manual_prompt": "What is equity?",
+                "skip_stages": [2],
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_manual_mode_rejects_skip_stage_0_1(self, client: TestClient):
+        """Manual mode cannot skip stages 0 or 1 (already skipped by design) — 422."""
+        resp = client.post(
+            "/api/v1/content/v13/start",
+            json={
+                "company_name": "Test Co",
+                "domain": "testco.com",
+                "entry_mode": "manual",
+                "manual_prompt": "What is equity?",
+                "skip_stages": [0, 1],
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_manual_mode_accepts_skip_stages_3_4_5(self, client: TestClient):
+        """Manual mode can skip stages 3, 4, 5 — 202."""
+        with patch("api.routers.content_v13.asyncio.create_task", return_value=MagicMock()):
+            resp = client.post(
+                "/api/v1/content/v13/start",
+                json={
+                    "company_name": "Test Co",
+                    "domain": "testco.com",
+                    "entry_mode": "manual",
+                    "manual_prompt": "What is equity?",
+                    "skip_stages": [3, 4, 5],
+                },
+            )
+        assert resp.status_code == 202
+
+    # -- M1-fix: manual_cluster validation --------------------------------
+
+    def test_manual_cluster_too_long_422(self, client: TestClient):
+        """manual_cluster exceeding 200 chars must be rejected."""
+        resp = client.post(
+            "/api/v1/content/v13/start",
+            json={
+                "company_name": "Test Co",
+                "domain": "testco.com",
+                "entry_mode": "manual",
+                "manual_prompt": "What is equity?",
+                "manual_cluster": "x" * 201,
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_manual_cluster_stripped(self, client: TestClient):
+        """manual_cluster with leading/trailing whitespace is stripped."""
+        from api.schemas.content_v13 import ContentStartRequestV13
+
+        req = ContentStartRequestV13(
+            company_name="Test Co",
+            domain="testco.com",
+            entry_mode="manual",
+            manual_prompt="What is equity?",
+            manual_cluster="  equity  ",
+        )
+        assert req.manual_cluster == "equity"
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # C2: Stage-Aware Approval Window Validation

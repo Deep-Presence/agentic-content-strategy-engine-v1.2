@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-15 (Sprint v18 Structured Logging Layer 2)
-> **Total items:** 51
+> **Last synced:** 2026-03-20 (Kanban-Pipeline Sync Sprint — Codex Review)
+> **Total items:** 58
 
 ## Critical (Fix Before Production)
 
@@ -123,6 +123,67 @@
 - **Blocked by:** nothing
 
 ## Medium Priority
+
+### PB-89: Stale pipeline_state.json entries on HITL-2 reject / zero-blueprint / exception paths
+- **Source:** Codex backend review, Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `core/content_engine/pipeline_v13.py` (_finalize_pipeline, manual mode early returns)
+- **Root cause:** `_cleanup_pipeline_state` only cleans brief IDs that made it into the `pieces` list. Briefs rejected at HITL-2, manual/TD zero-blueprint failures, or unhandled exceptions leave stale Phase-0 statuses in `pipeline_state.json` forever.
+- **Fix:** Track a `touched_brief_ids` set for all state writes and cleanup in a `finally` block on all exit paths (including error/early-return branches).
+
+### PB-90: Re-brief path writes state for old brief_id but reruns under new brief_id
+- **Source:** Codex backend review, Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `core/content_engine/pipeline_v13.py` (Stage 5 rethink), `_rebrief_and_rerun()`
+- **Root cause:** `_write_pipeline_state(... [final_content.brief_id], "briefing")` uses the original brief_id, but `_rebrief_and_rerun` generates a new `rebrief-{uuid}` brief_id. Cleanup uses piece IDs only. This orphans stale statuses.
+- **Fix:** Either reuse original brief_id for rebrief (`brief_id_overrides=[blueprint.brief_id]`) or explicitly cleanup both old and new IDs.
+
+### PB-91: pipeline_state.json read-modify-write is not process-safe
+- **Source:** Codex backend review, Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `core/content_engine/state_helpers.py` (_write_pipeline_state, _cleanup_pipeline_state)
+- **Root cause:** Concurrent writers in different processes can lose updates or read partial JSON. Currently single-process (Uvicorn), but will break with multi-process deployment.
+- **Fix:** Add file lock (`fcntl.flock`) + atomic write (`write temp` + `os.replace`).
+
+### PB-92: Stage-content API does not expose linked.md / fact_checked.md
+- **Source:** Codex backend review, Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `api/services/content_data_service.py` (_STAGE_FILES, _VALID_STAGES)
+- **Root cause:** v1.3 dispatcher writes `linked.md` and `fact_checked.md` but the GET `/briefs/{id}/{stage}` endpoint only recognizes legacy stage names (outline, draft, enriched, formatted, eval_history, final).
+- **Fix:** Add `linked` and `fact_checked` to `_VALID_STAGES`/`_STAGE_FILES`.
+
+### PB-93: Systematic audit — DbService ↔ filesystem state disconnect
+- **Source:** Kanban-Pipeline Sync sprint, 2026-03-20 — `DbContentDataService.get_briefs()` returned stale `status: "suggested"` because it read from Postgres (which had `planned`) instead of `pipeline_state.json` (which had `brief_review`)
+- **Date added:** 2026-03-20
+- **Files affected:** `core/services/db_content_data.py` (fixed for `get_briefs`), potentially other DbService methods
+- **Root cause:** The "filesystem-first, DB-additive" architecture means pipelines write real-time state to JSON artifacts, but DbService implementations query Postgres, which is only updated at coarser granularity. When `DATABASE_URL` is set, the frontend silently gets stale data. Additionally, the DB uses UUID primary keys as `id` while the pipeline uses filesystem IDs like `brief-016` — causing HITL approval mismatches.
+- **Fixed so far:** `DbContentDataService.get_briefs()` now overlays `pipeline_state.json` (Phase 0 status), returns `task_id` from `__task_ids__`, and uses `piece.brief_id` instead of UUID as the response `id`.
+- **Remaining work:**
+  1. Audit ALL other DbService methods for similar disconnects (get_brief_detail, stage content, etc.)
+  2. Audit `DbTaskStore` for any filesystem-state dependencies
+  3. When migrating to Redis-backed TaskStore/state, replace `pipeline_state.json` with Redis pub/sub — eliminates the JSON/DB split entirely
+  4. Consider writing pipeline status updates to both JSON AND DB simultaneously as an interim fix
+
+### PB-86: Pre-existing test failure — test_persistence.py mock doesn't support await
+- **Source:** Discovered during Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `tests/content_engine/test_persistence.py::TestPersistContentPieces::test_happy_path_single_piece`
+- **Root cause:** `session2.execute` is a `MagicMock`, not an `AsyncMock`. Line 94 in `persistence.py` does `await repo.get_by_slug_and_brief_id(...)` on a sync mock.
+- **Fix:** Replace `MagicMock` with `AsyncMock` for the session factory and repo methods.
+
+### PB-87: Pre-existing test failure — tracing_v13 module attribute `_langsmith_available` removed
+- **Source:** Discovered during Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `tests/content_engine/test_tracing_v13.py::TestCreatePipelineTrace::test_returns_none_when_disabled`
+- **Root cause:** Test patches `core.content_engine.tracing_v13._langsmith_available` but the module no longer has this attribute (likely renamed or refactored).
+- **Fix:** Update test to patch the current guard attribute in `tracing_v13.py`.
+
+### PB-88: Pre-existing test failure — tracing_compat patches non-existent `_is_enabled` attribute
+- **Source:** Discovered during Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `tests/content_engine/test_tracing_compat.py::TestCreateSpanCompat::test_input_kwarg_alias`
+- **Root cause:** Test patches `core.content_engine.tracing_v13._is_enabled` but no such attribute exists in the module.
+- **Fix:** Update test to use the correct attribute name or remove if obsolete.
 
 ### PB-58: [v1.3-M1] `"response" in dir()` check in E-E-A-T judge is unreliable
 - **Source:** v1.3 critical code review — content-engine-v13

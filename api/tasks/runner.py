@@ -295,6 +295,26 @@ async def _mark_pipeline_run_failed(
         logger.warning("Failed to mark PipelineRunModel as failed", exc_info=True)
 
 
+def _cleanup_stale_pipeline_state(
+    artifacts_root: Optional[Path], effective_slug: str,
+) -> None:
+    """Best-effort removal of pipeline_state.json on failure/cancel.
+
+    On error paths we cannot determine which brief IDs belong to this run
+    (pieces may be empty), so we remove the whole file. This is acceptable
+    because parallel runs are manual-mode only (no HITL-1/2 state to
+    preserve), and file-based inference (Phase 2) still works correctly.
+    """
+    if not artifacts_root:
+        return
+    state_path = artifacts_root / "content" / effective_slug / "pipeline_state.json"
+    if state_path.is_file():
+        try:
+            state_path.unlink()
+        except OSError:
+            pass
+
+
 async def run_gap_pipeline_task(
     task_id: str,
     request: Any,
@@ -649,12 +669,19 @@ async def run_content_v13_pipeline_task(
     input_data: Any,
     task_store: TaskStoreProtocol,
     event_bus: EventBus,
+    artifacts_root: Optional[Path] = None,
+    *,
+    is_parallel: bool = False,
 ) -> None:
     """Background task wrapper for v1.3 content generation pipeline.
 
     Follows the same semaphore + slug-lock + handle pattern as
     run_content_pipeline_task. Enforces the global max-3-concurrent
     semaphore and registers the task handle for cancellation.
+
+    Args:
+        is_parallel: If True, the task was created without a slug lock
+            (manual mode parallel runs). Skip lock release in finally.
     """
     from core.content_engine.pipeline_v13 import run_content_generation_v13
 
@@ -662,10 +689,21 @@ async def run_content_v13_pipeline_task(
     effective = _task.effective_slug or _task.company_slug or _derive_slug(input_data.company_name)
     company_slug = _task.company_slug or _derive_slug(input_data.company_name)
 
+    # H5-fix: resolve research artifacts with product→company fallback chain
+    # (same pattern as run_gap_analysis_pipeline_task)
+    if artifacts_root:
+        resolved = resolve_artifacts(company_slug, artifacts_root, effective_slug=effective)
+        if resolved["company_context_path"]:
+            input_data.company_context_path = resolved["company_context_path"]
+        if resolved["style_guide_path"]:
+            input_data.style_guide_path = resolved["style_guide_path"]
+        if resolved["persona_paths"]:
+            input_data.persona_paths = resolved["persona_paths"]
+
     session_factory, run_id, company_id = await _resolve_db_context(company_slug, effective)
     if session_factory and run_id and company_id:
         await _create_pipeline_run(
-            session_factory, run_id, company_id, effective, "content_v13"
+            session_factory, run_id, company_id, effective, "content"
         )
 
     bind_context(task_id=task_id, pipeline_name="content_v13", company_slug=company_slug, run_id=str(run_id) if run_id else None)
@@ -703,13 +741,16 @@ async def run_content_v13_pipeline_task(
 
     except asyncio.CancelledError:
         logger.info("Content v1.3 pipeline cancelled: task_id=%s", task_id)
+        _cleanup_stale_pipeline_state(artifacts_root, effective)
     except Exception as exc:
         logger.exception("Content v1.3 pipeline failed: %s", exc)
         task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+        _cleanup_stale_pipeline_state(artifacts_root, effective)
     finally:
-        task_store.release_slug_lock(f"content_v13:{effective}")
+        if not is_parallel:
+            task_store.release_slug_lock(f"content_v13:{effective}")
         task_store.remove_task_handle(task_id)
         clear_context()
 
