@@ -37,7 +37,9 @@ from core.research.voice_style_guide.graph import (
     build_vsg_author_review_graph,
     run_vsg_hitl_checkpoint,
 )
+from core.research.utils import load_persona_profiles, read_company_context
 from core.research.voice_style_guide.storage import VoiceStyleGuideStorage
+from core.shared_tools.structured_logging import scoped_bind
 from core.shared_tools.tracing import (
     create_session,
     create_span,
@@ -130,35 +132,6 @@ def _build_author_id_map(approved_authors: List[AuthorBrief]) -> Dict[str, str]:
     return id_map
 
 
-async def _load_persona_profiles(
-    artifacts_root: Path,
-    effective_slug: str,
-    company_slug: str,
-) -> List[str]:
-    """Load active persona profiles from PersonaStorage.
-
-    Returns list of markdown strings (one per persona).
-    Follows effective_slug → company_slug fallback.
-    """
-    for check_slug in (effective_slug, company_slug):
-        persona_storage = PersonaStorage(artifacts_root, check_slug)
-        manifest = persona_storage.read_manifest()
-        if manifest.personas:
-            break
-    else:
-        return []
-
-    persona_mds: List[str] = []
-    for pid, entry in manifest.personas.items():
-        if entry.status not in ("fresh", "stale"):
-            continue
-        version_data = persona_storage.get_latest_version(pid)
-        if version_data and version_data.get("content_md"):
-            persona_mds.append(version_data["content_md"])
-
-    return persona_mds
-
-
 def _build_persona_summaries(persona_mds: List[str], max_chars: int = 30_000) -> str:
     """Build a concatenated summary of all persona profiles for research prompts."""
     if not persona_mds:
@@ -182,6 +155,9 @@ async def run_voice_style_guide_pipeline(
     task_store: Optional[Any] = None,
     event_bus: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
+    session_factory: Optional[Any] = None,
+    run_id: Optional[Any] = None,
+    company_id: Optional[Any] = None,
 ) -> VoiceStyleGuideOutput:
     """Run the Voice Style Guide pipeline.
 
@@ -216,12 +192,10 @@ async def run_voice_style_guide_pipeline(
         _emit(event_bus, task_id, "vsg_phase_start", {"phase": 0, "agents": ["preflight"]})
 
         # Load company context
-        company_md = ""
-        for check_slug in (effective_slug, company_slug):
-            ctx_path = root / "company_context" / f"{check_slug}.md"
-            if ctx_path.exists():
-                company_md = ctx_path.read_text(encoding="utf-8")
-                break
+        from core.storage.backends import LocalStorageBackend
+
+        _backend = LocalStorageBackend(root)
+        company_md = read_company_context(_backend, effective_slug, company_slug) or ""
 
         if not company_md.strip():
             raise RuntimeError(
@@ -232,7 +206,7 @@ async def run_voice_style_guide_pipeline(
         company_md = company_md[:_MAX_COMPANY_CONTEXT_CHARS]
 
         # Load persona profiles
-        persona_mds = await _load_persona_profiles(root, effective_slug, company_slug)
+        persona_mds = load_persona_profiles(_backend, effective_slug, company_slug)
         if not persona_mds:
             raise RuntimeError(
                 f"No active persona profiles found for slug={effective_slug}. "
@@ -249,12 +223,13 @@ async def run_voice_style_guide_pipeline(
         _emit(event_bus, task_id, "vsg_phase_start", {"phase": 1, "agents": ["author_discovery"]})
         _update_task(task_store, task_id, current_step="phase_1_author_discovery")
 
-        briefs, discovery_time = await run_author_discovery(
-            input_data=input_data,
-            company_context_md=company_md,
-            persona_mds=persona_mds,
-            parent_span=trace_span,
-        )
+        with scoped_bind(agent_name="author_discovery"):
+            briefs, discovery_time = await run_author_discovery(
+                input_data=input_data,
+                company_context_md=company_md,
+                persona_mds=persona_mds,
+                parent_span=trace_span,
+            )
 
         if not briefs:
             raise RuntimeError(
@@ -338,35 +313,36 @@ async def run_voice_style_guide_pipeline(
         research_results: Dict[str, AuthorResearchResult] = {}
 
         async def _run_single_researcher(author: AuthorBrief) -> Tuple[str, AuthorResearchResult]:
-            author_id = id_map[author.author_id]
-            async with semaphore:
-                result = await run_author_research(
-                    brief=author,
-                    input_data=input_data,
-                    company_context_md=company_md,
-                    persona_summaries=persona_summaries,
-                    parent_span=trace_span,
-                )
+            with scoped_bind(agent_name="author_research"):
+                author_id = id_map[author.author_id]
+                async with semaphore:
+                    result = await run_author_research(
+                        brief=author,
+                        input_data=input_data,
+                        company_context_md=company_md,
+                        persona_summaries=persona_summaries,
+                        parent_span=trace_span,
+                    )
 
-                if not result.error:
-                    async with storage_lock:
-                        await asyncio.to_thread(
-                            storage.write_author_brief, author_id, author,
-                        )
-                        await asyncio.to_thread(
-                            storage.write_author_research,
-                            author_id, author.name, result.content_md,
-                        )
+                    if not result.error:
+                        async with storage_lock:
+                            await asyncio.to_thread(
+                                storage.write_author_brief, author_id, author,
+                            )
+                            await asyncio.to_thread(
+                                storage.write_author_research,
+                                author_id, author.name, result.content_md,
+                            )
 
-                _emit(event_bus, task_id, "vsg_agent_complete", {
-                    "agent": "author_research",
-                    "author_name": author.name,
-                    "author_id": author_id,
-                    "word_count": result.word_count,
-                    "has_error": result.error is not None,
-                })
+                    _emit(event_bus, task_id, "vsg_agent_complete", {
+                        "agent": "author_research",
+                        "author_name": author.name,
+                        "author_id": author_id,
+                        "word_count": result.word_count,
+                        "has_error": result.error is not None,
+                    })
 
-                return author_id, result
+                    return author_id, result
 
         tasks = [_run_single_researcher(author) for author in approved_authors]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -418,13 +394,14 @@ async def run_voice_style_guide_pipeline(
         _emit(event_bus, task_id, "vsg_phase_start", {"phase": 3, "agents": ["voice_synthesis"]})
         _update_task(task_store, task_id, current_step="phase_3_voice_synthesis")
 
-        guide_md, synthesis_time = await run_voice_synthesis(
-            author_research_mds=author_research_mds,
-            company_context_md=company_md,
-            persona_mds=persona_mds,
-            input_data=input_data,
-            parent_span=trace_span,
-        )
+        with scoped_bind(agent_name="voice_synthesis"):
+            guide_md, synthesis_time = await run_voice_synthesis(
+                author_research_mds=author_research_mds,
+                company_context_md=company_md,
+                persona_mds=persona_mds,
+                input_data=input_data,
+                parent_span=trace_span,
+            )
 
         if not guide_md.strip():
             logger.error("Voice synthesis returned empty guide")
@@ -474,6 +451,39 @@ async def run_voice_style_guide_pipeline(
         manifest.company_name = input_data.company_name
         manifest.last_full_run = datetime.now(timezone.utc)
         storage.write_manifest(manifest)
+
+        # ── DB persistence (fire-and-forget) ──
+        try:
+            from core.research.persistence import (
+                persist_author_research,
+                persist_pipeline_run_complete,
+                persist_voice_style_guide,
+            )
+
+            for aid, result in research_results.items():
+                if result.error or not result.content_md:
+                    continue
+                author_meta = (manifest.authors or {}).get(aid)
+                aver = author_meta.current_version if author_meta and author_meta.current_version > 0 else 1
+                await persist_author_research(
+                    session_factory, run_id, company_id, effective_slug,
+                    aid, result.name, aver, result.content_md,
+                    f"voice_style_guide/{effective_slug}/{aid}/v{aver}.md",
+                )
+            guide_ver = manifest.guide.current_version if manifest.guide and manifest.guide.current_version > 0 else 1
+            await persist_voice_style_guide(
+                session_factory, run_id, company_id, effective_slug,
+                guide_ver, guide_md,
+                f"voice_style_guide/{effective_slug}/guide/v{guide_ver}.md",
+                source_authors=source_authors,
+            )
+            await persist_pipeline_run_complete(
+                session_factory, run_id,
+                {"authors_researched": len(author_research_mds),
+                 "guide_generated": True},
+            )
+        except Exception:
+            logger.warning("VSG DB persistence failed, continuing", exc_info=True)
 
         output = VoiceStyleGuideOutput(
             slug=slug,

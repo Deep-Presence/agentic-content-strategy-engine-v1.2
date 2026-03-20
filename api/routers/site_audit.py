@@ -27,6 +27,7 @@ from api.schemas.site_audit import (
 from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask
 from api.tasks.runner import run_site_audit_task
+from core.audit import log_pipeline_launch
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
 from core.models.organization import UserProfile
@@ -75,12 +76,20 @@ def _get_latest_audit_run(
     task_store: TaskStoreProtocol,
     slug: str,
     product_slug: Optional[str],
+    domain: Optional[str] = None,
 ) -> Optional[PipelineTask]:
-    """Return the most-recent completed site_audit task for this scope."""
+    """Return the most-recent completed site_audit task for this scope.
+
+    When *domain* is given, only tasks whose ``result.domain`` matches
+    are considered — prevents returning a run_id for the wrong domain
+    when the same slug has audits for multiple domains.
+    """
     tasks = [
         t
         for t in task_store.list_tasks(pipeline="site_audit", company_slug=slug)
-        if t.product_slug == product_slug and t.status.value == "completed"
+        if t.product_slug == product_slug
+        and t.status.value == "completed"
+        and (domain is None or (t.result or {}).get("domain") == domain)
     ]
     return max(tasks, key=lambda t: t.created_at) if tasks else None
 
@@ -133,11 +142,23 @@ async def start_site_audit(
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
     # Force-rerun guard: return 200 when a completed audit already exists
+    # Filesystem check is sufficient — pipeline writes FS first, DB second
     if not body.force_rerun and _site_audit_artifacts_exist(
         artifacts_root, effective_slug, body.domain
     ):
-        last_task = _get_latest_audit_run(task_store, slug, body.product_slug)
+        last_task = _get_latest_audit_run(task_store, slug, body.product_slug, domain=body.domain)
         response.status_code = 200
+        await log_pipeline_launch(
+            user_id=_user.id,
+            pipeline="site_audit",
+            company_slug=slug,
+            task_id=last_task.task_id if last_task else f"existing-{effective_slug}",
+            detail={
+                "outcome": "already_exists",
+                "product_slug": body.product_slug,
+                "effective_slug": effective_slug,
+            },
+        )
         return PipelineRunResponse(
             run_id=last_task.task_id if last_task else f"existing-{effective_slug}",
             pipeline="site_audit",
@@ -164,6 +185,18 @@ async def start_site_audit(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="site_audit",
+        company_slug=slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "domain": body.domain,
+            "effective_slug": effective_slug,
+        },
+    )
 
     return PipelineRunResponse(
         run_id=task.task_id,

@@ -13,16 +13,16 @@ Layout::
             v1.md              (final voice style guide)
 
 Atomicity: version files are written first, manifest is updated last.
+All I/O goes through a ``StorageBackend`` so the underlying persistence
+layer (local filesystem, S3, GCS) can be swapped via configuration.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
-import os
-import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional
 
 from core.models.voice_style_guide import (
@@ -31,34 +31,26 @@ from core.models.voice_style_guide import (
     VoiceStyleGuideEntry,
     VoiceStyleGuideManifest,
 )
+from core.storage.backends.base import StorageBackend
+from core.storage.backends.local import LocalStorageBackend
 
 logger = logging.getLogger(__name__)
 
 
 class VoiceStyleGuideStorage:
-    """Read / write / version voice style guide artifacts on the filesystem."""
+    """Read / write / version voice style guide artifacts via a StorageBackend."""
 
-    def __init__(self, artifacts_root: Path, slug: str) -> None:
-        self._root = Path(artifacts_root) / "voice_style_guide" / slug
+    def __init__(
+        self,
+        artifacts_root: Path,
+        slug: str,
+        *,
+        backend: Optional[StorageBackend] = None,
+    ) -> None:
+        self._artifacts_root = Path(artifacts_root)
         self._slug = slug
-
-    @staticmethod
-    def _atomic_write(path: Path, content: str) -> None:
-        """Write content to *path* atomically via temp-file + os.replace."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(
-            dir=str(path.parent), suffix=".tmp", prefix=path.stem + "_",
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp_path, str(path))
-        except BaseException:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        self._backend = backend or LocalStorageBackend(self._artifacts_root)
+        self._prefix = f"voice_style_guide/{slug}/"
 
     # ------------------------------------------------------------------
     # Properties
@@ -66,61 +58,77 @@ class VoiceStyleGuideStorage:
 
     @property
     def base_dir(self) -> Path:
-        return self._root
+        return self._artifacts_root / "voice_style_guide" / self._slug
 
     @property
     def slug(self) -> str:
         return self._slug
 
     # ------------------------------------------------------------------
+    # Key helpers (return paths relative to backend root)
+    # ------------------------------------------------------------------
+
+    def _manifest_key(self) -> str:
+        return f"{self._prefix}_manifest.json"
+
+    def _discovery_key(self, version: int) -> str:
+        return f"{self._prefix}discovery/v{version}.json"
+
+    def _author_brief_key(self, author_id: str) -> str:
+        return f"{self._prefix}{author_id}/brief.json"
+
+    def _research_md_key(self, author_id: str, version: int) -> str:
+        return f"{self._prefix}{author_id}/v{version}.md"
+
+    def _guide_md_key(self, version: int) -> str:
+        return f"{self._prefix}guide/v{version}.md"
+
+    # ------------------------------------------------------------------
     # Manifest
     # ------------------------------------------------------------------
 
-    def _manifest_path(self) -> Path:
-        return self._root / "_manifest.json"
-
     def read_manifest(self) -> VoiceStyleGuideManifest:
         """Read the manifest, returning a blank one if it doesn't exist."""
-        path = self._manifest_path()
-        if not path.exists():
+        raw = self._backend.read(self._manifest_key())
+        if raw is None:
             return VoiceStyleGuideManifest(slug=self._slug)
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             return VoiceStyleGuideManifest.model_validate(data)
         except Exception as exc:
-            logger.warning("Failed to read VSG manifest at %s: %s", path, exc)
+            logger.warning(
+                "Failed to read VSG manifest for %s: %s", self._slug, exc,
+            )
             return VoiceStyleGuideManifest(slug=self._slug)
 
     def write_manifest(self, manifest: VoiceStyleGuideManifest) -> None:
-        """Persist the manifest to disk (atomic via temp-file + os.replace)."""
-        self._root.mkdir(parents=True, exist_ok=True)
-        self._atomic_write(self._manifest_path(), manifest.model_dump_json(indent=2))
+        """Persist the manifest (atomic via backend)."""
+        self._backend.write(
+            self._manifest_key(), manifest.model_dump_json(indent=2),
+        )
 
     # ------------------------------------------------------------------
     # Discovery artifact
     # ------------------------------------------------------------------
 
-    def _discovery_dir(self) -> Path:
-        return self._root / "discovery"
-
     def write_discovery(self, briefs: List[AuthorBrief], version: int = 0) -> int:
         """Write an author discovery artifact. Returns the version written."""
         manifest = self.read_manifest()
         if version == 0:
-            # Auto-increment: count existing discovery files
-            disc_dir = self._discovery_dir()
-            if disc_dir.exists():
-                existing = [f for f in disc_dir.iterdir() if f.suffix == ".json"]
-                version = len(existing) + 1
-            else:
-                version = 1
+            # Auto-increment: count existing discovery .json files
+            disc_prefix = f"{self._prefix}discovery"
+            entries = self._backend.list_dir(disc_prefix)
+            json_files = [
+                e for e in entries
+                if PurePosixPath(e).suffix == ".json"
+            ]
+            version = len(json_files) + 1
 
-        disc_dir = self._discovery_dir()
-        disc_dir.mkdir(parents=True, exist_ok=True)
-
-        path = disc_dir / f"v{version}.json"
         data = [b.model_dump(mode="json") for b in briefs]
-        self._atomic_write(path, json.dumps(data, indent=2, default=str))
+        self._backend.write(
+            self._discovery_key(version),
+            json.dumps(data, indent=2, default=str),
+        )
 
         manifest.slug = manifest.slug or self._slug
         self.write_manifest(manifest)
@@ -133,11 +141,11 @@ class VoiceStyleGuideStorage:
 
     def read_discovery(self, version: int) -> List[AuthorBrief]:
         """Read a discovery artifact. Returns empty list if missing."""
-        path = self._discovery_dir() / f"v{version}.json"
-        if not path.exists():
+        raw = self._backend.read(self._discovery_key(version))
+        if raw is None:
             return []
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             return [AuthorBrief.model_validate(item) for item in data]
         except Exception as exc:
             logger.warning("Failed to read discovery v%d: %s", version, exc)
@@ -147,22 +155,20 @@ class VoiceStyleGuideStorage:
     # Author brief persistence
     # ------------------------------------------------------------------
 
-    def _author_dir(self, author_id: str) -> Path:
-        return self._root / author_id
-
     def write_author_brief(self, author_id: str, brief: AuthorBrief) -> None:
         """Write an author brief to {author_id}/brief.json."""
-        d = self._author_dir(author_id)
-        d.mkdir(parents=True, exist_ok=True)
-        self._atomic_write(d / "brief.json", brief.model_dump_json(indent=2))
+        self._backend.write(
+            self._author_brief_key(author_id),
+            brief.model_dump_json(indent=2),
+        )
 
     def read_author_brief(self, author_id: str) -> Optional[AuthorBrief]:
         """Read an author brief. Returns None if missing."""
-        path = self._author_dir(author_id) / "brief.json"
-        if not path.exists():
+        raw = self._backend.read(self._author_brief_key(author_id))
+        if raw is None:
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             return AuthorBrief.model_validate(data)
         except Exception:
             return None
@@ -170,9 +176,6 @@ class VoiceStyleGuideStorage:
     # ------------------------------------------------------------------
     # Author research versioning
     # ------------------------------------------------------------------
-
-    def _research_md_path(self, author_id: str, version: int) -> Path:
-        return self._author_dir(author_id) / f"v{version}.md"
 
     def write_author_research(
         self,
@@ -189,11 +192,9 @@ class VoiceStyleGuideStorage:
         entry = manifest.authors.get(author_id)
         next_version = (entry.current_version + 1) if entry else 1
 
-        author_dir = self._author_dir(author_id)
-        author_dir.mkdir(parents=True, exist_ok=True)
-
-        md_path = self._research_md_path(author_id, next_version)
-        self._atomic_write(md_path, content_md)
+        self._backend.write(
+            self._research_md_key(author_id, next_version), content_md,
+        )
 
         sha = hashlib.sha256(content_md.encode("utf-8")).hexdigest()
         word_count = len(content_md.split())
@@ -221,10 +222,9 @@ class VoiceStyleGuideStorage:
         self, author_id: str, version: int,
     ) -> Optional[str]:
         """Read a specific version of an author's research markdown."""
-        md_path = self._research_md_path(author_id, version)
-        if not md_path.exists():
-            return None
-        return md_path.read_text(encoding="utf-8")
+        return self._backend.read(
+            self._research_md_key(author_id, version),
+        )
 
     def get_latest_author_research(self, author_id: str) -> Optional[str]:
         """Read the latest version of an author's research."""
@@ -238,12 +238,6 @@ class VoiceStyleGuideStorage:
     # Guide versioning
     # ------------------------------------------------------------------
 
-    def _guide_dir(self) -> Path:
-        return self._root / "guide"
-
-    def _guide_md_path(self, version: int) -> Path:
-        return self._guide_dir() / f"v{version}.md"
-
     def write_guide(
         self,
         content_md: str,
@@ -256,11 +250,9 @@ class VoiceStyleGuideStorage:
         manifest = self.read_manifest()
         next_version = manifest.guide.current_version + 1
 
-        guide_dir = self._guide_dir()
-        guide_dir.mkdir(parents=True, exist_ok=True)
-
-        md_path = self._guide_md_path(next_version)
-        self._atomic_write(md_path, content_md)
+        self._backend.write(
+            self._guide_md_key(next_version), content_md,
+        )
 
         sha = hashlib.sha256(content_md.encode("utf-8")).hexdigest()
         word_count = len(content_md.split())
@@ -288,10 +280,9 @@ class VoiceStyleGuideStorage:
         manifest = self.read_manifest()
         if manifest.guide.current_version == 0:
             return None
-        md_path = self._guide_md_path(manifest.guide.current_version)
-        if not md_path.exists():
-            return None
-        return md_path.read_text(encoding="utf-8")
+        return self._backend.read(
+            self._guide_md_key(manifest.guide.current_version),
+        )
 
     # ------------------------------------------------------------------
     # Promotion to style_guides/
@@ -306,11 +297,10 @@ class VoiceStyleGuideStorage:
         if not guide_md:
             return None
 
-        sg_dir = Path(artifacts_root) / "style_guides"
-        sg_dir.mkdir(parents=True, exist_ok=True)
-        target = sg_dir / f"{self._slug}.md"
-        self._atomic_write(target, guide_md)
+        self._backend.write(f"style_guides/{self._slug}.md", guide_md)
 
+        # Return absolute path for backward compatibility with callers
+        target = Path(artifacts_root) / "style_guides" / f"{self._slug}.md"
         logger.info("VSG/%s: promoted guide to %s", self._slug, target)
         return str(target)
 

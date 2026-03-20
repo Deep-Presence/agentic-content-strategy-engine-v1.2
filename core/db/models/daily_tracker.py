@@ -33,6 +33,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
@@ -130,6 +131,10 @@ class DailyRunResponseModel(UUIDPKMixin, Base):
         Index("ix_daily_run_responses_run_id", "run_id"),
         Index("ix_daily_run_responses_prompt_id", "prompt_id"),
         Index("ix_daily_run_responses_run_engine", "run_id", "engine"),
+        UniqueConstraint(
+            "run_id", "prompt_id", "engine",
+            name="uq_daily_run_responses_run_prompt_engine",
+        ),
     )
 
     run_id: Mapped[_uuid.UUID] = mapped_column(

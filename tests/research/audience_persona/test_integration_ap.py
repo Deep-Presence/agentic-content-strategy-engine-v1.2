@@ -64,7 +64,7 @@ def _create_ap_persona(
             tagline=f"Test {persona_id}",
             status=status,
         )
-    return str(storage._version_md_path(persona_id, version))
+    return str(storage._artifacts_root / storage._version_md_key(persona_id, version))
 
 
 def _create_legacy_persona(root: Path, slug: str, name: str = "icp") -> str:
@@ -391,8 +391,8 @@ class TestConcurrentWriteVersion:
 
         # All version files should exist
         for v in range(1, 4):
-            md_path = storage._version_md_path("vp-finance", v)
-            assert md_path.exists(), f"v{v}.md missing"
+            key = storage._version_md_key("vp-finance", v)
+            assert storage._backend.exists(key), f"v{v}.md missing"
 
     @pytest.mark.asyncio
     async def test_parallel_writes_interleaved_with_reads(self, tmp_path: Path) -> None:
@@ -459,7 +459,7 @@ class TestConcurrentWriteVersion:
 
         for pid in persona_ids:
             assert storage.read_brief(pid) is not None
-            assert storage._version_md_path(pid, 1).exists()
+            assert storage._backend.exists(storage._version_md_key(pid, 1))
 
 
 # ═══════════════════════════════════════════════════════════════════════

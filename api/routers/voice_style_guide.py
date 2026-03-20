@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store, get_vsg_data_service
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.voice_style_guide import (
     ApprovalResponseVSG,
@@ -25,6 +25,7 @@ from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
 from core.models.organization import UserProfile
 from core.research.voice_style_guide.storage import VoiceStyleGuideStorage
+from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,17 @@ async def start_voice_style_guide(
         should_guard, message = _vsg_should_guard(artifacts_root, effective_slug)
         if should_guard:
             response.status_code = 200
+            await log_pipeline_launch(
+                user_id=_user.id,
+                pipeline="voice_style_guide",
+                company_slug=slug,
+                task_id=f"existing-{effective_slug}",
+                detail={
+                    "outcome": "already_exists",
+                    "product_slug": body.product_slug,
+                    "effective_slug": effective_slug,
+                },
+            )
             return PipelineRunResponse(
                 run_id=f"existing-{effective_slug}",
                 pipeline="voice_style_guide",
@@ -136,6 +148,18 @@ async def start_voice_style_guide(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="voice_style_guide",
+        company_slug=slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "force_rerun": body.force_rerun,
+            "effective_slug": effective_slug,
+        },
+    )
 
     return PipelineRunResponse(
         run_id=task.task_id,
@@ -209,7 +233,26 @@ async def approve_authors(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="voice_style_guide",
+            stage="vsg_author_review",
+            decision="rejected",
+            company_slug=task.company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="voice_style_guide",
+        stage="vsg_author_review",
+        decision=body.batch_decision,
+        company_slug=task.company_slug,
+        detail={"author_count": len(body.author_reviews)},
+    )
 
     return ApprovalResponseVSG(
         status="accepted",
@@ -225,19 +268,17 @@ async def approve_authors(
 async def get_latest_guide(
     slug: str,
     _user: UserProfile = Depends(require_auth),
-    artifacts_root: Path = Depends(get_artifacts_root),
+    vsg_svc=Depends(get_vsg_data_service),
 ) -> Dict[str, Any]:
-    storage = VoiceStyleGuideStorage(artifacts_root, slug)
-    guide_md = storage.get_latest_guide()
-    if guide_md is None:
+    result = await vsg_svc.get_guide(slug)
+    if result is None:
         raise HTTPException(status_code=404, detail="No voice style guide found")
 
-    manifest = storage.read_manifest()
     return {
         "slug": slug,
-        "guide_md": guide_md,
-        "version": manifest.guide.current_version,
-        "word_count": manifest.guide.word_count,
-        "last_updated": manifest.guide.last_updated,
-        "source_authors": manifest.guide.source_authors,
+        "guide_md": result["content_md"],
+        "version": result.get("version", 0),
+        "word_count": result.get("word_count", 0),
+        "last_updated": result.get("last_updated"),
+        "source_authors": result.get("source_authors", []),
     }

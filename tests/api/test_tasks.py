@@ -11,7 +11,7 @@ from api.tasks.store import TaskStore
 class TestListTasks:
     def test_list_all_tasks(self, client: TestClient, task_store: TaskStore) -> None:
         task_store.create_task("gap_analysis", "test-co")
-        task_store.release_slug_lock("test-co")
+        task_store.release_slug_lock("gap_analysis:test-co")
         task_store.create_task("research", "test-co")
 
         resp = client.get("/api/v1/tasks")
@@ -21,7 +21,7 @@ class TestListTasks:
 
     def test_filter_by_pipeline(self, client: TestClient, task_store: TaskStore) -> None:
         task_store.create_task("gap_analysis", "test-co")
-        task_store.release_slug_lock("test-co")
+        task_store.release_slug_lock("gap_analysis:test-co")
         task_store.create_task("research", "test-co")
 
         resp = client.get("/api/v1/tasks?pipeline=gap_analysis")
@@ -33,7 +33,7 @@ class TestListTasks:
     def test_filter_by_status(self, client: TestClient, task_store: TaskStore) -> None:
         t1 = task_store.create_task("gap_analysis", "test-co")
         task_store.update_task(t1.task_id, status=TaskStatus.COMPLETED)
-        task_store.release_slug_lock("test-co")
+        task_store.release_slug_lock("gap_analysis:test-co")
         t2 = task_store.create_task("research", "test-co")
 
         resp = client.get("/api/v1/tasks?status=completed")

@@ -1,4 +1,4 @@
-"""Step 1 — Crawl company website, extract text, chunk, embed, store in ChromaDB.
+"""Step 1 — Crawl company website, extract text, chunk, embed, store in pgvector.
 
 Async-first comprehensive site-tree discovery + embedding pipeline.
 Discovers ALL pages via:
@@ -10,7 +10,7 @@ Discovers ALL pages via:
 Outputs:
   - Site discovery artifacts (discovered_pages.json, site_tree.json, discovery_summary.json)
   - Lightweight company_embeddings.json (with embedding_ids, NO raw vectors)
-  - Embeddings persisted to ChromaDB
+  - Embeddings persisted to pgvector
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ from core.models.gap_analysis import (
     SiteDiscoveryResult,
     SiteTreeNode,
 )
-from core.shared_tools.async_chroma_client import (
+from core.shared_tools.vector_store import (
     async_delete_company_collection,
     async_upsert_embeddings,
 )
@@ -1149,7 +1149,7 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
     """Crawl, chunk, embed, and store company assets (async).
 
     Uses multi-phase discovery (sitemap + RSS + BFS) and stores
-    embeddings in ChromaDB. JSON artifacts are lightweight (IDs only).
+    embeddings in pgvector. JSON artifacts are lightweight (IDs only).
     """
     company_slug = input_data.company_slug or re.sub(
         r"[^a-z0-9]+", "-", input_data.company_name.lower()
@@ -1280,8 +1280,7 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
         unit.embedding = embedding
         unit.embedding_id = f"{company_slug}__{unit.unit_id}"
 
-    # --- Store in ChromaDB (async, clear old data first for idempotent re-runs) ---
-    await async_delete_company_collection(company_slug)
+    # --- Store in pgvector (delete + insert is atomic inside upsert_embeddings) ---
     await async_upsert_embeddings(
         company_slug=company_slug,
         unit_ids=[u.unit_id for u in units],
@@ -1310,7 +1309,7 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
 
     logger.info(
         "[embed_company_assets] S1 complete: %d pages crawled, %d semantic units, "
-        "embeddings stored in ChromaDB.",
+        "embeddings stored in pgvector.",
         len(pages_with_html),
         len(units),
     )

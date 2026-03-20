@@ -54,8 +54,8 @@ class TestEnums:
         assert AudienceSegmentType.team_group.value == "team_group"
 
     def test_topic_discovery_status_values(self):
-        assert len(TopicDiscoveryStatus) == 4
-        expected = {"draft", "hitl_pending", "approved", "archived"}
+        assert len(TopicDiscoveryStatus) == 5
+        expected = {"draft", "hitl_pending", "discovery_complete", "approved", "archived"}
         assert {s.value for s in TopicDiscoveryStatus} == expected
 
     def test_td_source_values(self):

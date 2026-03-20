@@ -210,9 +210,16 @@ def _default_top_findings() -> list[dict[str, Any]]:
 
 @pytest.fixture
 def mock_site_audit_pipeline():
-    """Mock run_site_audit_task to return immediately without running the real pipeline."""
+    """Mock run_site_audit_task to return immediately without running the real pipeline.
+
+    IMPORTANT: Patch at the point of use (router's local binding), not the
+    source module.  The router does ``from api.tasks.runner import
+    run_site_audit_task`` which creates a local name — patching
+    ``api.tasks.runner.run_site_audit_task`` does NOT affect the router's
+    reference.
+    """
     with patch(
-        "api.tasks.runner.run_site_audit_task",
+        "api.routers.site_audit.run_site_audit_task",
         new_callable=AsyncMock,
     ) as mock_fn:
         yield mock_fn
@@ -380,7 +387,11 @@ class TestStartSiteAuditGuard:
         task = task_store.create_task("site_audit", "test-co")
         # Release the lock manually so we can update status
         task_store._slug_locks.pop("test-co", None)
-        task_store.update_task(task.task_id, status=TaskStatus.COMPLETED)
+        task_store.update_task(
+            task.task_id,
+            status=TaskStatus.COMPLETED,
+            result={"domain": "testco.com", "audit_id": audit_id},
+        )
         resp = client.post("/api/v1/site-audit/start", json=MINIMAL_PAYLOAD)
         assert resp.status_code == 200
         assert resp.json()["run_id"] == task.task_id

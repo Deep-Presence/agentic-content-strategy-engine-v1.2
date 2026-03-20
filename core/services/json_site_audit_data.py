@@ -14,6 +14,7 @@ import json
 import logging
 import math
 import re
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,8 +24,10 @@ _logger = logging.getLogger(__name__)
 
 # Module-level FIFO cache: key -> (mtime, data).
 # Max 10 entries; oldest evicted when full.
+# Protected by _CACHE_LOCK for thread safety (asyncio.to_thread callers).
 _CACHE: dict[str, tuple[float, Any]] = {}
 _CACHE_MAX = 10
+_CACHE_LOCK = threading.Lock()
 
 # Slug validation: bare slug OR effective slug (slug__product-slug)
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
@@ -45,7 +48,10 @@ def _validate_slug(slug: str) -> None:
 
 
 def _evict_if_full() -> None:
-    """Remove the oldest cache entry when the cache is full."""
+    """Remove the oldest cache entry when the cache is full.
+
+    Caller MUST hold ``_CACHE_LOCK``.
+    """
     if len(_CACHE) >= _CACHE_MAX:
         oldest_key = next(iter(_CACHE))
         del _CACHE[oldest_key]
@@ -55,7 +61,9 @@ def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
     """Load and cache audit_result.json from *audit_dir*.
 
     Returns an empty dict when the file is missing or unparseable.
-    Uses mtime-based cache invalidation.
+    Uses mtime-based cache invalidation.  All ``_CACHE`` access is
+    protected by ``_CACHE_LOCK`` for thread safety under
+    ``asyncio.to_thread()``.
     """
     result_file = audit_dir / "audit_result.json"
     cache_key = str(result_file)
@@ -64,9 +72,10 @@ def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
         return {}
 
     mtime = result_file.stat().st_mtime
-    cached = _CACHE.get(cache_key)
-    if cached is not None and cached[0] == mtime:
-        return cached[1]
+    with _CACHE_LOCK:
+        cached = _CACHE.get(cache_key)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
 
     try:
         data = json.loads(result_file.read_text(encoding="utf-8"))
@@ -74,8 +83,9 @@ def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
         _logger.warning("Failed to parse %s: %s", result_file, exc)
         return {}
 
-    _evict_if_full()
-    _CACHE[cache_key] = (mtime, data)
+    with _CACHE_LOCK:
+        _evict_if_full()
+        _CACHE[cache_key] = (mtime, data)
     return data
 
 

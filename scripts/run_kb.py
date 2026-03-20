@@ -61,10 +61,9 @@ def _parse_args() -> argparse.Namespace:
 async def main() -> int:
     args = _parse_args()
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
-    )
+    from core.shared_tools.structured_logging import configure_logging
+
+    configure_logging(level="DEBUG" if args.verbose else "INFO")
 
     inp = KnowledgeBaseInput(
         company_name=args.company_name,

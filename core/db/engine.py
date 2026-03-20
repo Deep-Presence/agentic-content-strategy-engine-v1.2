@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import (
 
 from core.config.settings import settings
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 

@@ -5,6 +5,7 @@ All environment variables for the content-strategy-engine are loaded here via py
 Import `settings` and use `settings.perplexity_api_key`, etc. instead of load_dotenv/os.getenv.
 """
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -58,19 +59,37 @@ class Settings(BaseSettings):
     # Pipeline / Agent
     aeo_agent_invoke_timeout_s: int = 900
 
-    # Gap Analysis
+    # Gap Analysis — Crawl
     gap_analysis_max_crawl_pages: int = 500
     gap_analysis_max_crawl_depth: int = 4
 
-    # ChromaDB (local vector store for gap analysis embeddings)
-    chroma_persist_dir: str = "artifacts/chroma_db"
-    chroma_collection_prefix: str = "gap_company"
+    # Gap Analysis — S3 Concurrency (two-level: global + per-engine)
+    gap_analysis_s3_global_concurrency: int = 30
+    gap_analysis_s3_concurrency_default: int = 8
+    gap_analysis_s3_openai_concurrency: int = 12
+    gap_analysis_s3_claude_concurrency: int = 6
+    gap_analysis_s3_gemini_concurrency: int = 10
+    gap_analysis_s3_perplexity_concurrency: int = 8
+
+    # Gap Analysis — S3 Retry + Circuit Breaker
+    gap_analysis_s3_max_retries: int = 2
+    gap_analysis_s3_retry_base_delay_s: float = 2.0
+    gap_analysis_s3_circuit_breaker_threshold: int = 5
+
+    # Gap Analysis — S4 Concurrency
+    gap_analysis_s4_fetch_concurrency: int = 40
+    gap_analysis_s4_parse_workers: int = 16
+    gap_analysis_s4_http_pool_size: int = 50
+
+    # Gap Analysis — S5 Embedding
+    gap_analysis_s5_embed_batch_size: int = 256
+    gap_analysis_s5_embed_concurrent_batches: int = 6
 
     # Gap Analysis – Models
     gap_analysis_query_gen_model: str = "gpt-5.2-2025-12-11"
     gap_analysis_report_model: str = "gpt-5.2-2025-12-11"
     gap_analysis_openai_engine_model: str = "gpt-5.2-2025-12-11"
-    gap_analysis_claude_engine_model: str = "claude-sonnet-4-5-20250929"
+    gap_analysis_claude_engine_model: str = "claude-sonnet-4-6"
     gap_analysis_gemini_engine_model: str = "gemini-3-flash-preview"
 
     # Supabase – primary env vars
@@ -94,10 +113,10 @@ class Settings(BaseSettings):
 
     # Content Generation Engine – Models
     content_engine_planner_model: str = "claude-opus-4-6"
-    content_engine_worker_model: str = "claude-sonnet-4-5-20250929"
+    content_engine_worker_model: str = "claude-sonnet-4-6"
     content_engine_formatter_model: str = "claude-haiku-4-5-20251001"
     content_engine_style_judge_model: str = "claude-haiku-4-5-20251001"
-    content_engine_factual_judge_model: str = "claude-sonnet-4-5-20250929"
+    content_engine_factual_judge_model: str = "claude-sonnet-4-6"
     content_engine_fact_enricher_model: str = "sonar-pro"
 
     # Content Generation Engine – Concurrency
@@ -112,13 +131,13 @@ class Settings(BaseSettings):
 
     # --- Content Engine v1.3 — LiteLLM model identifiers ---
     # Provider-prefixed strings for LiteLLM routing
-    content_engine_v13_planner_model: str = "anthropic/claude-sonnet-4-5-20250929"
-    content_engine_v13_brief_builder_model: str = "anthropic/claude-sonnet-4-5-20250929"
-    content_engine_v13_worker_model: str = "anthropic/claude-sonnet-4-5-20250929"
-    content_engine_v13_formatter_model: str = "anthropic/claude-haiku-4-5-20251001"
+    content_engine_v13_planner_model: str =  "anthropic/claude-sonnet-4-6"
+    content_engine_v13_brief_builder_model: str = "anthropic/claude-sonnet-4-6"
+    content_engine_v13_worker_model: str = "anthropic/claude-sonnet-4-6"
+    content_engine_v13_formatter_model: str =  "anthropic/claude-haiku-4-5-20251001"
     content_engine_v13_style_judge_model: str = "anthropic/claude-haiku-4-5-20251001"
-    content_engine_v13_factual_judge_model: str = "anthropic/claude-sonnet-4-5-20250929"
-    content_engine_v13_eeat_judge_model: str = "anthropic/claude-sonnet-4-5-20250929"
+    content_engine_v13_factual_judge_model: str = "anthropic/claude-sonnet-4-6"
+    content_engine_v13_eeat_judge_model: str = "anthropic/claude-sonnet-4-6"
     content_engine_v13_fact_enricher_model: str = "perplexity/sonar-pro"
     content_engine_v13_linker_model: str = "perplexity/sonar-pro"
 
@@ -135,8 +154,13 @@ class Settings(BaseSettings):
 
     # --- Research Knowledge Base ---
     research_kb_project: str = "research-kb"
+    # Per-agent Perplexity model overrides (KB pipeline)
+    research_kb_company_overview_model: str = "sonar-deep-research"
+    research_kb_customer_reviews_model: str = "sonar-pro"
+    research_kb_competitor_scanner_model: str = "sonar-deep-research"
+    research_kb_weakness_analyst_model: str = "sonar-deep-research"
     # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
-    research_kb_brand_perception_model: str = "claude-sonnet-4-5-20250929"
+    research_kb_brand_perception_model: str = "claude-sonnet-4-6"
     # Synthesis agent — init_chat_model(), needs provider:model format
     research_kb_synthesis_model: str = "anthropic:claude-opus-4-6"
 
@@ -154,14 +178,35 @@ class Settings(BaseSettings):
     # --- Topic Discovery Pipeline ---
     topic_discovery_brainstorm_model: str = "anthropic/claude-sonnet-4-6"
     topic_discovery_dedup_model: str = "anthropic/claude-haiku-4-5-20251001"
-    topic_discovery_max_expansion_rounds: int = 4
+    topic_discovery_max_expansion_rounds: int = 2
     topic_discovery_dedup_threshold: float = 0.85
     topic_discovery_max_concurrent_sources: int = 4
     topic_discovery_source_timeout_s: float = 120.0
+    topic_discovery_expansion_timeout_s: float = 300.0
+    # Algorithmic subdomain scoring weights (JSON string for env override)
+    topic_discovery_scoring_weights: str = (
+        '{"source_confidence": 0.30, "content_coverage": 0.20, '
+        '"gap_severity": 0.25, "competitive_density": 0.0, "persona_breadth": 0.25}'
+    )
+    topic_discovery_scoring_similarity_threshold: float = 0.60
+    topic_discovery_persona_affinity_weights: str = (
+        '{"provenance": 0.6, "embedding": 0.4}'
+    )
+    topic_discovery_max_subdomains_to_expand: int = 10
+    # Source C: Perplexity deep research for competitive content landscape
+    topic_discovery_source_c_model: str = "sonar-deep-research"
+    topic_discovery_source_c_timeout_s: float = 500.0
+    # Unified S2 model (hierarchy + scoring + persona affinity)
+    topic_discovery_unified_s2_model: str = "anthropic/claude-sonnet-4-6"
 
     # --- CPS Model (Citation Signal Predictor) ---
     cps_enabled: bool = True
     cps_target_weight: float = 0.5
+
+    # --- Logging ---
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_format: Literal["console", "json"] = "console"
+    log_include_caller: bool = False
 
     # Legacy / optional
     tavily_api_key_company_context: str | None = None

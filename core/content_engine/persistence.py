@@ -17,7 +17,7 @@ import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import delete
+# delete import removed — persist_content_pieces now uses upsert, not delete-recreate
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 logger = logging.getLogger(__name__)
@@ -59,20 +59,19 @@ async def persist_content_pieces(
     slug: str,
     pieces: list,
 ) -> None:
-    """Persist content pieces → content_pieces table."""
+    """Persist content pieces → content_pieces table.
+
+    Uses upsert by (effective_slug, brief_id) to preserve existing IDs
+    and FK relationships (e.g., query_gaps.targeted_by_content_id,
+    content_artifacts.piece_id). No DELETE — only update-or-insert.
+    """
     if not _should_persist(session_factory, run_id, company_id):
         return
     assert session_factory is not None and run_id is not None
     try:
-        from core.db.models.content import ContentPieceModel
         from core.db.repositories.content_repo import ContentRepository
 
         async with session_factory() as session:
-            # Idempotent: clear previous rows for this run
-            await session.execute(
-                delete(ContentPieceModel).where(ContentPieceModel.run_id == run_id)
-            )
-
             repo = ContentRepository(session)
             for piece in pieces:
                 status_val = piece.status.value if hasattr(piece.status, "value") else str(piece.status)
@@ -80,16 +79,43 @@ async def persist_content_pieces(
                 if eval_summary and hasattr(eval_summary, "model_dump"):
                     eval_summary = eval_summary.model_dump(mode="json")
 
-                await repo.create_piece(
-                    id=_uuid.uuid4(),
-                    run_id=run_id,
-                    title=piece.title,
-                    status=_map_content_status(status_val),
-                    storage_key=getattr(piece, "artifact_path", None),
-                    word_count=len(piece.final_markdown.split()) if piece.final_markdown else 0,
-                    evaluation_results=eval_summary,
-                    revision_count=0,
-                )
+                ta_id_raw = getattr(piece, "topic_assignment_id", None)
+                ta_id: _uuid.UUID | None = None
+                if ta_id_raw:
+                    try:
+                        ta_id = _uuid.UUID(str(ta_id_raw))
+                    except (ValueError, AttributeError):
+                        ta_id = None
+
+                word_count = len(piece.final_markdown.split()) if piece.final_markdown else 0
+                mapped_status = _map_content_status(status_val)
+
+                # Upsert: find existing by (slug, brief_id), patch fields, preserve ID
+                existing = await repo.get_by_slug_and_brief_id(slug, piece.brief_id)
+                if existing:
+                    existing.run_id = run_id
+                    existing.title = piece.title
+                    existing.status = mapped_status
+                    existing.storage_key = getattr(piece, "artifact_path", None)
+                    existing.word_count = word_count
+                    existing.evaluation_results = eval_summary
+                    existing.topic_assignment_id = ta_id
+                    existing.company_id = company_id
+                    await session.flush()
+                else:
+                    await repo.create_piece(
+                        run_id=run_id,
+                        effective_slug=slug,
+                        brief_id=piece.brief_id,
+                        company_id=company_id,
+                        title=piece.title,
+                        status=mapped_status,
+                        storage_key=getattr(piece, "artifact_path", None),
+                        word_count=word_count,
+                        evaluation_results=eval_summary,
+                        revision_count=0,
+                        topic_assignment_id=ta_id,
+                    )
             await session.commit()
         logger.info(
             "persist_content_pieces: %d pieces stored for %s", len(pieces), slug

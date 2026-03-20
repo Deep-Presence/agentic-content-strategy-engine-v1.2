@@ -5,9 +5,12 @@ Analyzes company context, customer reviews, and knowledge docs to suggest
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from core.models.audience_persona import AudiencePersonaInput
+
+logger = logging.getLogger(__name__)
 
 PERSONA_SUGGESTER_SYSTEM_PROMPT = """\
 You are a Strategic Audience Analyst specializing in B2B and B2C customer segmentation. Your job is to analyze raw business context — company overviews, customer reviews, support tickets, sales call transcripts, and any other available signals — and identify the 3–5 most strategically valuable audience personas for the given company.
@@ -108,7 +111,7 @@ def build_persona_suggester_user_prompt(
     parts.append("### Company Overview")
     if company_context_md:
         parts.append(company_context_md[:80_000])  # ~15k tokens
-        print(company_context_md[:80_000])
+        logger.debug("company_context_md loaded, chars=%d", len(company_context_md[:80_000]))
     else:
         parts.append("No company context available. Rely on other signals below.")
     parts.append("")
@@ -164,6 +167,18 @@ def build_persona_suggester_user_prompt(
         additional_parts.append(f"**Language:** {input_data.language}")
     if input_data.additional_constraints:
         additional_parts.append(f"**Additional Constraints:** {input_data.additional_constraints}")
+
+    if input_data.seed_personas:
+        additional_parts.append("")
+        additional_parts.append("### User-Provided Persona Seeds")
+        additional_parts.append(
+            "The user has indicated these audience personas are important. "
+            "You MUST include these in your recommendations (use them as the "
+            "persona_name values), but validate against the business context. "
+            "If a seed doesn't fit the data, flag it but still include it."
+        )
+        for i, name in enumerate(input_data.seed_personas, 1):
+            additional_parts.append(f"{i}. {name}")
 
     if additional_parts:
         parts.extend(additional_parts)

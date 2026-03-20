@@ -6,6 +6,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 
+from core.audit import log_auth_event, AuditEventType
 from api.auth.dependencies import require_auth, require_role
 from api.auth.models import (
     CompanyResponse,
@@ -57,6 +58,12 @@ async def register(
             )
         raise HTTPException(status_code=409, detail=msg)
 
+    await log_auth_event(
+        AuditEventType.REGISTER,
+        user_id=user.id, email=user.email, company_slug=company.slug,
+        detail={"role": user.role, "company_name": company.name},
+    )
+
     token = auth_service.create_access_token(user.id, company.slug)
 
     return LoginResponse(
@@ -92,12 +99,27 @@ async def login(
     if not user:
         # Constant-time dummy hash to prevent timing oracle (Codex W7)
         verify_password(body.password, DUMMY_HASH)
+        await log_auth_event(
+            AuditEventType.LOGIN_FAILED,
+            email=body.email,
+            detail={"reason": "invalid_credentials"},
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not verify_password(body.password, user["password_hash"]):
+        await log_auth_event(
+            AuditEventType.LOGIN_FAILED,
+            email=body.email,
+            detail={"reason": "invalid_credentials"},
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # C4 fix: reject deactivated users at login (before token issuance)
     if not user.get("is_active", True):
+        await log_auth_event(
+            AuditEventType.LOGIN_FAILED,
+            user_id=user["id"], email=body.email,
+            detail={"reason": "account_deactivated"},
+        )
         raise HTTPException(status_code=401, detail="Account deactivated")
 
     company = await auth_service.get_company_by_id(user.get("company_id", ""))
@@ -105,6 +127,11 @@ async def login(
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token = auth_service.create_access_token(user["id"], company.slug)
+
+    await log_auth_event(
+        AuditEventType.LOGIN_SUCCESS,
+        user_id=user["id"], email=body.email, company_slug=company.slug,
+    )
 
     return LoginResponse(
         access_token=token,
@@ -197,6 +224,11 @@ async def create_invite(
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     code = await auth_service.create_invite(company_slug, role=body.role)
+    await log_auth_event(
+        AuditEventType.INVITE_CREATED,
+        user_id=_user.id, company_slug=company_slug,
+        detail={"role": body.role},
+    )
     return InviteResponse(
         invite_code=code,
         company_slug=company_slug,
@@ -224,6 +256,12 @@ async def join_company(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    await log_auth_event(
+        AuditEventType.INVITE_REDEEMED,
+        user_id=user.id, email=user.email, company_slug=company.slug,
+        detail={"role": user.role},
+    )
 
     token = auth_service.create_access_token(user.id, company.slug)
 

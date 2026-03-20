@@ -39,3 +39,8 @@ class StorageBackend(ABC):
     def list_dir(self, prefix: str) -> list[str]:
         """List artifact paths under a prefix."""
         ...
+
+    @abstractmethod
+    def mkdir(self, path: str) -> None:
+        """Ensure a directory (prefix) exists. No-op for object stores."""
+        ...

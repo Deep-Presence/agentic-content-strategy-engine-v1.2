@@ -113,7 +113,7 @@ def get_content_status(
 
 
 @router.post("/{run_id}/approve")
-def approve_content(
+async def approve_content(
     run_id: str,
     body: ContentApprovalRequest,
     http_request: Request,

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import asyncio
+import logging
 from typing import Any, List, Optional, Tuple
 
 from core.gap_analysis.engines.base import SearchEngine
 from core.models.gap_analysis import CitationRef, PlatformResult
 from core.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_openai_output(output: List[Any]) -> Tuple[str, List[str]]:
@@ -33,43 +35,46 @@ class OpenAIEngine(SearchEngine):
     def __init__(self, model: Optional[str] = None) -> None:
         super().__init__(model=model or settings.gap_analysis_openai_engine_model)
 
-    async def search(self, query_text: str, query_id: Optional[str] = None) -> PlatformResult:
-        def _run() -> tuple[str, List[str]]:
-            from openai import OpenAI
+    async def search(self, query_text: str, query_id: Optional[str] = None, *, client: Any = None) -> PlatformResult:
+        from openai import AsyncOpenAI
 
-            api_key = settings.openai_api_key
-            if not api_key:
-                raise RuntimeError(
-                    "OPENAI_API_KEY is not set. Add it to .env.local to enable OpenAI search."
-                )
-            client = OpenAI(api_key=api_key)
-            try:
-                response = client.responses.create(
-                    model=self.model,
-                    reasoning={"effort": "low"},
-                    max_output_tokens=4096,  # Increased for detailed responses with citations
-                    tools=[{"type": "web_search"}],
-                    tool_choice={"type": "web_search"},
-                    include=["web_search_call.action.sources"],
-                    input=[
-                        {
-                            "role": "system",
-                            "content": "You are a helpful research assistant. Search the web to answer queries accurately. Always cite your sources with proper references.",
-                        },
-                        {"role": "user", "content": query_text},
-                    ],
-                )
-                output = getattr(response, "output", None) or []
-                return _extract_openai_output(output)
-            except Exception:
-                response = client.responses.create(
-                    model=self.model,
-                    input=query_text,
-                )
-                content = getattr(response, "output_text", None) or ""
-                return content, []
+        api_key = settings.openai_api_key
+        if not api_key:
+            raise RuntimeError(
+                "OPENAI_API_KEY is not set. Add it to .env.local to enable OpenAI search."
+            )
 
-        response_text, citations = await asyncio.to_thread(_run)
+        oai_client = client if client is not None else AsyncOpenAI(api_key=api_key)
+        try:
+            response = await oai_client.responses.create(
+                model=self.model,
+                reasoning={"effort": "low"},
+                max_output_tokens=2048,  # Increased for detailed responses with citations
+                tools=[{"type": "web_search"}],
+                tool_choice={"type": "web_search"},
+                include=["web_search_call.action.sources"],
+                input=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful research assistant. Search the web to answer queries accurately. Always cite your sources with proper references.",
+                    },
+                    {"role": "user", "content": query_text},
+                ],
+            )
+            output = getattr(response, "output", None) or []
+            response_text, citations = _extract_openai_output(output)
+        except Exception as exc:
+            logger.warning(
+                "OpenAI web_search failed for query %s, falling back to plain response: %s",
+                query_id,
+                exc,
+            )
+            response = await oai_client.responses.create(
+                model=self.model,
+                input=query_text,
+            )
+            content = getattr(response, "output_text", None) or ""
+            response_text, citations = content, []
         citation_refs: List[CitationRef] = []
         for index, url in enumerate(citations, start=1):
             try:

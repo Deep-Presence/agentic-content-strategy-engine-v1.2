@@ -59,6 +59,58 @@ class ContentRepository(SQLAlchemyRepository[ContentPieceModel]):
         result = await self._session.execute(stmt)
         return result.scalars().first()
 
+    async def list_by_topic_assignment(
+        self,
+        topic_assignment_id: _uuid.UUID | str,
+    ) -> Sequence[ContentPieceModel]:
+        """List all content pieces linked to a specific topic assignment."""
+        try:
+            pk = (
+                _uuid.UUID(str(topic_assignment_id))
+                if isinstance(topic_assignment_id, str)
+                else topic_assignment_id
+            )
+        except ValueError:
+            return []
+        stmt = (
+            select(ContentPieceModel)
+            .where(ContentPieceModel.topic_assignment_id == pk)
+            .order_by(ContentPieceModel.created_at.desc())
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    # ── Phase 4 additions (DB-ready pipeline) ───────────────────────────
+
+    async def get_by_slug_and_brief_id(
+        self,
+        effective_slug: str,
+        brief_id: str,
+    ) -> ContentPieceModel | None:
+        """Lookup by immutable external identity (effective_slug, brief_id)."""
+        stmt = select(ContentPieceModel).where(
+            ContentPieceModel.effective_slug == effective_slug,
+            ContentPieceModel.brief_id == brief_id,
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
+    async def list_by_slug(
+        self,
+        effective_slug: str,
+        *,
+        status: ContentPieceStatus | None = None,
+    ) -> Sequence[ContentPieceModel]:
+        """List all pieces for an effective_slug (including run_id=NULL briefs)."""
+        stmt = select(ContentPieceModel).where(
+            ContentPieceModel.effective_slug == effective_slug,
+        )
+        if status is not None:
+            stmt = stmt.where(ContentPieceModel.status == status)
+        stmt = stmt.order_by(ContentPieceModel.created_at.desc())
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
     # ── Phase 3 additions ─────────────────────────────────────────────
 
     async def get_piece_detail(

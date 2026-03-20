@@ -207,21 +207,23 @@ class TestHelpers:
 
 
 class TestLoadPersonaProfiles:
-    """Tests for _load_persona_profiles."""
+    """Tests for load_persona_profiles (shared util)."""
 
-    @pytest.mark.asyncio
-    async def test_loads_active_profiles(self, artifacts_dir: Path) -> None:
-        from core.research.voice_style_guide.pipeline import _load_persona_profiles
+    def test_loads_active_profiles(self, artifacts_dir: Path) -> None:
+        from core.research.utils import load_persona_profiles
+        from core.storage.backends import LocalStorageBackend
 
-        mds = await _load_persona_profiles(artifacts_dir, "ramp", "ramp")
+        backend = LocalStorageBackend(artifacts_dir)
+        mds = load_persona_profiles(backend, "ramp", "ramp")
         assert len(mds) == 2
         assert any("vp-finance" in md for md in mds)
 
-    @pytest.mark.asyncio
-    async def test_returns_empty_for_missing_slug(self, artifacts_dir: Path) -> None:
-        from core.research.voice_style_guide.pipeline import _load_persona_profiles
+    def test_returns_empty_for_missing_slug(self, artifacts_dir: Path) -> None:
+        from core.research.utils import load_persona_profiles
+        from core.storage.backends import LocalStorageBackend
 
-        mds = await _load_persona_profiles(artifacts_dir, "nonexistent", "nonexistent")
+        backend = LocalStorageBackend(artifacts_dir)
+        mds = load_persona_profiles(backend, "nonexistent", "nonexistent")
         assert mds == []
 
 

@@ -486,6 +486,52 @@ def validate_speakable_schema(block: dict[str, Any]) -> list[str]:
     return errors
 
 
+def validate_website_schema(block: dict[str, Any]) -> list[str]:
+    """Validate a WebSite schema block.
+
+    Required: ``url``.
+    Recommended (warning if absent): ``name``.
+    Optional: ``potentialAction`` with SearchAction (validated if present).
+
+    Args:
+        block: A single schema.org WebSite object dict.
+
+    Returns:
+        List of validation error/warning strings.  Empty list = valid.
+    """
+    errors: list[str] = []
+
+    if not block.get("url"):
+        errors.append("WebSite missing required field: url")
+
+    if not block.get("name"):
+        errors.append("WebSite missing recommended field: name")
+
+    # Validate SearchAction if present
+    action = block.get("potentialAction")
+    if action:
+        actions = action if isinstance(action, list) else [action]
+        for act in actions:
+            if not isinstance(act, dict):
+                continue
+            act_type = act.get("@type", "")
+            if isinstance(act_type, str):
+                act_type = act_type.split("/")[-1]
+            if act_type == "SearchAction":
+                target = act.get("target")
+                if not target:
+                    errors.append("SearchAction missing required field: target")
+                elif isinstance(target, str) and "{" not in target:
+                    errors.append(
+                        "SearchAction target URL should contain a template "
+                        "parameter (e.g. {search_term_string})"
+                    )
+                if not act.get("query-input") and not act.get("queryInput"):
+                    errors.append("SearchAction missing required field: query-input")
+
+    return errors
+
+
 def validate_schema_block(
     block: dict[str, Any],
 ) -> list[str]:
@@ -528,6 +574,9 @@ def validate_schema_block(
             break
         elif t == "Product":
             all_errors.extend(validate_product_schema(block))
+            break
+        elif t == "WebSite":
+            all_errors.extend(validate_website_schema(block))
             break
         elif t in ("Speakable", "SpeakableSpecification"):
             all_errors.extend(validate_speakable_schema(block))

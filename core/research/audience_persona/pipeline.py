@@ -37,12 +37,54 @@ from core.research.audience_persona.graph import (
     run_ap_hitl_checkpoint,
 )
 from core.research.audience_persona.storage import PersonaStorage
+from core.shared_tools.structured_logging import scoped_bind
 from core.shared_tools.tracing import create_session, create_span, create_trace, end_span, flush, log_generation
 
 logger = logging.getLogger(__name__)
 
 _MAX_COMPANY_CONTEXT_CHARS = 60_000  # ~15k tokens
 _MAX_CUSTOMER_REVIEWS_CHARS = 40_000  # ~10k tokens
+
+
+# ---------------------------------------------------------------------------
+# Background persona embedding (experimental)
+# ---------------------------------------------------------------------------
+
+
+async def _embed_persona_profiles_bg(
+    effective_slug: str,
+    persona_results: Dict[str, "PersonaAgentResult"],
+    rejected_profiles: List[str],
+) -> None:
+    """Embed approved persona profiles and store in ChromaDB (fire-and-forget).
+
+    Runs as a background task — failures are logged but never crash the pipeline.
+    """
+    try:
+        from core.shared_tools.vector_store import async_upsert_persona_embeddings
+        from core.shared_tools.async_embedding_client import async_embed_texts
+
+        # Collect approved persona texts (skip errored and rejected)
+        persona_ids: List[str] = []
+        texts: List[str] = []
+        for pid, result in persona_results.items():
+            if result.error or not result.content_md or pid in rejected_profiles:
+                continue
+            persona_ids.append(pid)
+            texts.append(result.content_md)
+
+        if not persona_ids:
+            logger.info("No approved persona profiles to embed for %s", effective_slug)
+            return
+
+        embeddings = await async_embed_texts(texts)
+        await async_upsert_persona_embeddings(effective_slug, persona_ids, texts, embeddings)
+        logger.info(
+            "Persona embedding complete: %d profiles stored for %s",
+            len(persona_ids), effective_slug,
+        )
+    except Exception:
+        logger.warning("Persona embedding failed for %s, continuing", effective_slug, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -125,19 +167,21 @@ async def _preflight_check(
     root: Path,
     effective_slug: str,
     company_slug: str,
+    *,
+    backend: Optional["StorageBackend"] = None,
 ) -> Tuple[str, str, str, Optional[int]]:
     """Validate KB outputs exist and load context.
 
     Returns (company_context_md, customer_reviews_md, knowledge_docs_text, kb_synthesis_version).
     Raises RuntimeError if company context is missing or empty.
     """
+    from core.research.utils import read_company_context
+    from core.storage.backends import LocalStorageBackend
+
+    _backend = backend or LocalStorageBackend(root)
+
     # Company context — check effective_slug first, fallback to company_slug
-    company_md = ""
-    for check_slug in (effective_slug, company_slug):
-        ctx_path = root / "company_context" / f"{check_slug}.md"
-        if ctx_path.exists():
-            company_md = ctx_path.read_text(encoding="utf-8")
-            break
+    company_md = read_company_context(_backend, effective_slug, company_slug) or ""
 
     if not company_md.strip():
         raise RuntimeError(
@@ -207,6 +251,9 @@ async def run_audience_persona_pipeline(
     task_store: Optional[Any] = None,
     event_bus: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
+    session_factory: Optional[Any] = None,
+    run_id: Optional[Any] = None,
+    company_id: Optional[Any] = None,
 ) -> AudiencePersonaOutput:
     """Run the Audience Persona pipeline.
 
@@ -249,13 +296,14 @@ async def run_audience_persona_pipeline(
         _emit(event_bus, task_id, "ap_phase_start", {"phase": 1, "agents": ["persona_suggester"]})
         _update_task(task_store, task_id, current_step="phase_1_suggester")
 
-        briefs, suggester_time = await run_persona_suggester(
-            input_data=input_data,
-            company_context_md=company_md,
-            customer_reviews_md=reviews_md,
-            knowledge_docs_text=kdocs_text,
-            parent_span=trace_span,
-        )
+        with scoped_bind(agent_name="persona_suggester"):
+            briefs, suggester_time = await run_persona_suggester(
+                input_data=input_data,
+                company_context_md=company_md,
+                customer_reviews_md=reviews_md,
+                knowledge_docs_text=kdocs_text,
+                parent_span=trace_span,
+            )
 
         if not briefs:
             raise RuntimeError(
@@ -339,39 +387,40 @@ async def run_audience_persona_pipeline(
         persona_results: Dict[str, PersonaAgentResult] = {}
 
         async def _run_single_generator(brief: PersonaBrief, kind: str) -> Tuple[str, PersonaAgentResult]:
-            persona_id = id_map[brief.brief_id]
-            async with semaphore:
-                result = await run_persona_profile_generator(
-                    brief=brief,
-                    input_data=input_data,
-                    company_context_md=company_md,
-                    customer_reviews_md=reviews_md,
-                    knowledge_docs_text=kdocs_text,
-                    parent_span=trace_span,
-                )
+            with scoped_bind(agent_name="persona_profile_generator"):
+                persona_id = id_map[brief.brief_id]
+                async with semaphore:
+                    result = await run_persona_profile_generator(
+                        brief=brief,
+                        input_data=input_data,
+                        company_context_md=company_md,
+                        customer_reviews_md=reviews_md,
+                        knowledge_docs_text=kdocs_text,
+                        parent_span=trace_span,
+                    )
 
-                if not result.error:
-                    async with storage_lock:
-                        storage.write_brief(persona_id, brief)
-                        storage.write_version(
-                            persona_id,
-                            brief.persona_name,
-                            result.content_md,
-                            result.content_json,
-                            kind=kind,
-                            created_by=brief.source,
-                            tagline=brief.tagline,
-                        )
+                    if not result.error:
+                        async with storage_lock:
+                            storage.write_brief(persona_id, brief)
+                            storage.write_version(
+                                persona_id,
+                                brief.persona_name,
+                                result.content_md,
+                                result.content_json,
+                                kind=kind,
+                                created_by=brief.source,
+                                tagline=brief.tagline,
+                            )
 
-                _emit(event_bus, task_id, "ap_agent_complete", {
-                    "agent": "persona_generator",
-                    "persona_name": brief.persona_name,
-                    "persona_id": persona_id,
-                    "word_count": result.word_count,
-                    "has_error": result.error is not None,
-                })
+                    _emit(event_bus, task_id, "ap_agent_complete", {
+                        "agent": "persona_generator",
+                        "persona_name": brief.persona_name,
+                        "persona_id": persona_id,
+                        "word_count": result.word_count,
+                        "has_error": result.error is not None,
+                    })
 
-                return persona_id, result
+                    return persona_id, result
 
         tasks = []
         for i, brief in enumerate(approved_briefs):
@@ -474,6 +523,43 @@ async def run_audience_persona_pipeline(
         profiles_generated = sum(
             1 for r in persona_results.values() if not r.error and r.content_md
         )
+
+        # ── Persona embedding (fire-and-forget background task) ──
+        rejected = rejected_profiles if successful_ids else []
+        asyncio.create_task(
+            _embed_persona_profiles_bg(effective_slug, persona_results, rejected)
+        )
+
+        # ── DB persistence (fire-and-forget) ──
+        try:
+            from core.research.persistence import (
+                persist_persona_profile,
+                persist_pipeline_run_complete,
+            )
+
+            manifest = storage.read_manifest()
+            for pid, result in persona_results.items():
+                if result.error or not result.content_md:
+                    continue
+                brief = pid_to_brief.get(pid)
+                kind = "icp" if pid == id_map.get(approved_briefs[0].brief_id) else "secondary"
+                meta = (manifest.personas or {}).get(pid)
+                ver = meta.current_version if meta and meta.current_version > 0 else 1
+                await persist_persona_profile(
+                    session_factory, run_id, company_id, effective_slug,
+                    pid, result.persona_name or (brief.persona_name if brief else pid),
+                    ver, result.content_md,
+                    f"audience_personas/{effective_slug}/{pid}/v{ver}.md",
+                    kind=kind,
+                )
+            await persist_pipeline_run_complete(
+                session_factory, run_id,
+                {"profiles_generated": profiles_generated,
+                 "briefs_suggested": len(briefs),
+                 "briefs_approved": len(approved_briefs)},
+            )
+        except Exception:
+            logger.warning("AP DB persistence failed, continuing", exc_info=True)
 
         output = AudiencePersonaOutput(
             slug=slug,

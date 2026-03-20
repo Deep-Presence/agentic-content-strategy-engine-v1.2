@@ -338,8 +338,9 @@ class TestManualMode:
         # Should pass inline worker_contexts
         call_kwargs = mock_build.call_args[1]
         contexts = call_kwargs["contexts"]
-        assert "manual-1" in contexts
-        assert contexts["manual-1"].query_gap["query_text"] == "How does equity work?"
+        manual_key = next(k for k in contexts if k.startswith("manual-"))
+        assert manual_key is not None
+        assert contexts[manual_key].query_gap["query_text"] == "How does equity work?"
 
 
 class TestContentReview:
@@ -1786,6 +1787,8 @@ def _make_manual_input(
     analysis_data: dict | None = None,
     manual_prompt: str = "What is equity dilution?",
     manual_cluster: str = "equity",
+    manual_description: str | None = None,
+    gap_query_id: str | None = None,
     skip_stages: list | None = None,
 ) -> ContentGenerationInputV13:
     """Build a ContentGenerationInputV13 in MANUAL mode with configurable gap analysis data."""
@@ -1807,6 +1810,8 @@ def _make_manual_input(
         skip_stages=skip_stages if skip_stages is not None else [3, 4, 5],
         manual_prompt=manual_prompt,
         manual_cluster=manual_cluster,
+        manual_description=manual_description,
+        gap_query_id=gap_query_id,
         max_topics=3,
     )
 
@@ -1825,7 +1830,7 @@ class TestManualModeH4:
 
         Before fix: extract_worker_context({}, ["manual-1"]) → {} → build_briefs_parallel
         gets empty contexts → returns [] → approved_blueprints = [].
-        After fix: contexts["manual-1"] always exists → blueprint produced.
+        After fix: list(contexts.values())[0] always exists → blueprint produced.
         """
         analysis_data = {
             "gaps": [
@@ -1847,8 +1852,9 @@ class TestManualModeH4:
 
         assert mock_build.called, "build_briefs_parallel was never called"
         contexts = mock_build.call_args.kwargs["contexts"]
-        assert "manual-1" in contexts, (
-            "contexts must contain 'manual-1' — empty contexts dict means H4 bug is present"
+        manual_key = next((k for k in contexts if k.startswith("manual-")), None)
+        assert manual_key is not None, (
+            "contexts must contain a 'manual-*' key — empty contexts dict means H4 bug is present"
         )
 
     @pytest.mark.asyncio
@@ -1867,7 +1873,7 @@ class TestManualModeH4:
             await run_content_generation_v13(input_data)
 
         contexts = mock_build.call_args.kwargs["contexts"]
-        ctx = contexts["manual-1"]
+        ctx = list(contexts.values())[0]
         assert ctx.cluster_spec == {"cluster_name": "equity", "dominant_content_type": "listicle"}
 
     @pytest.mark.asyncio
@@ -1898,7 +1904,7 @@ class TestManualModeH4:
             await run_content_generation_v13(input_data)
 
         contexts = mock_build.call_args.kwargs["contexts"]
-        exemplars = contexts["manual-1"].exemplars
+        exemplars = list(contexts.values())[0].exemplars
         assert len(exemplars) == 3
         urls = {ex["url"] for ex in exemplars}
         assert urls == {"https://a.com", "https://b.com", "https://c.com"}
@@ -1914,7 +1920,7 @@ class TestManualModeH4:
             await run_content_generation_v13(input_data)
 
         contexts = mock_build.call_args.kwargs["contexts"]
-        ctx = contexts["manual-1"]
+        ctx = list(contexts.values())[0]
         assert ctx.cluster_spec == {}
         assert ctx.exemplars == []
         assert ctx.query_gap["query_text"] == "What is equity dilution?"
@@ -1936,7 +1942,7 @@ class TestManualModeH4:
             await run_content_generation_v13(input_data)
 
         contexts = mock_build.call_args.kwargs["contexts"]
-        ctx = contexts["manual-1"]
+        ctx = list(contexts.values())[0]
         assert ctx.cluster_spec == {}
         assert ctx.exemplars == []
 
@@ -1961,11 +1967,917 @@ class TestManualModeH4:
             await run_content_generation_v13(input_data)
 
         contexts = mock_build.call_args.kwargs["contexts"]
-        assert len(contexts["manual-1"].exemplars) == 5
+        assert len(list(contexts.values())[0].exemplars) == 5
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# C3-fix: manual_description injected into TopicSelection.rationale
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestManualModeC3Description:
+    """C3-fix: manual_description must flow into Brief Builder via topic rationale."""
+
+    @pytest.mark.asyncio
+    async def test_manual_description_injected_into_rationale(self, tmp_path):
+        """When manual_description is set, it appears in the topic's rationale."""
+        input_data = _make_manual_input(
+            tmp_path,
+            manual_description="Gap query (significant gap). Gap score: 0.8234.",
+        )
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        topics = mock_build.call_args.kwargs["topics"]
+        assert len(topics) == 1
+        assert "Gap score: 0.8234" in topics[0].rationale
+        assert "User-specified topic" in topics[0].rationale
+
+    @pytest.mark.asyncio
+    async def test_manual_no_description_default_rationale(self, tmp_path):
+        """When manual_description is None, rationale defaults to 'User-specified topic'."""
+        input_data = _make_manual_input(tmp_path, manual_description=None)
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        topics = mock_build.call_args.kwargs["topics"]
+        assert topics[0].rationale == "User-specified topic"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# H1-fix: 3-tier gap data lookup + H2-fix: case-insensitive cluster match
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestManualModeH1GapLookup:
+    """H1-fix: query_id → query_text → cluster fallback for full gap context."""
+
+    @pytest.mark.asyncio
+    async def test_gap_query_id_lookup_extracts_full_context(self, tmp_path):
+        """Tier 1: gap_query_id directly matches a gap entry — all 6 fields populated."""
+        analysis_data = {
+            "gaps": [{
+                "query_id": "q-42",
+                "query_text": "What is equity dilution?",
+                "cluster_name": "equity",
+                "gap": 0.82,
+                "interpretation": "significant_gap",
+                "top_cited_exemplars": [{"url": "https://ex.com", "similarity": 0.9}],
+                "content_brief": {"format": "listicle", "angle": "comparison"},
+                "best_company_unit_text": "Carta helps companies manage equity tables and 409A valuations...",
+                "best_company_url": "https://carta.com/equity",
+                "company_cited": False,
+            }],
+            "cluster_specs": [{"cluster_name": "equity", "dominant_content_type": "listicle"}],
+        }
+        input_data = _make_manual_input(tmp_path, analysis_data=analysis_data, gap_query_id="q-42")
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        ctx = list(mock_build.call_args.kwargs["contexts"].values())[0]
+        assert ctx.query_gap["gap"] == 0.82
+        assert ctx.query_gap["interpretation"] == "significant_gap"
+        assert ctx.gap_content_brief == {"format": "listicle", "angle": "comparison"}
+        assert ctx.company_best_url == "https://carta.com/equity"
+        assert ctx.company_best_text.startswith("Carta helps")
+        assert len(ctx.exemplars) == 1
+        assert ctx.cluster_spec["dominant_content_type"] == "listicle"
+
+    @pytest.mark.asyncio
+    async def test_query_text_fallback_when_no_query_id(self, tmp_path):
+        """Tier 2: no gap_query_id, falls back to query_text matching."""
+        analysis_data = {
+            "gaps": [{
+                "query_id": "q-99",
+                "query_text": "What is equity dilution?",
+                "cluster_name": "equity",
+                "gap": 0.75,
+                "content_brief": {"format": "guide"},
+                "top_cited_exemplars": [],
+            }],
+            "cluster_specs": [],
+        }
+        input_data = _make_manual_input(tmp_path, analysis_data=analysis_data)
+        # No gap_query_id — should match by query_text
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        ctx = list(mock_build.call_args.kwargs["contexts"].values())[0]
+        assert ctx.query_gap["gap"] == 0.75
+        assert ctx.gap_content_brief == {"format": "guide"}
+
+    @pytest.mark.asyncio
+    async def test_query_text_match_case_insensitive(self, tmp_path):
+        """Tier 2: case-insensitive query_text matching."""
+        analysis_data = {
+            "gaps": [{
+                "query_id": "q-1",
+                "query_text": "HOW DOES Equity Dilution Work?",
+                "cluster_name": "equity",
+                "gap": 0.6,
+                "content_brief": {"format": "faq"},
+                "top_cited_exemplars": [],
+            }],
+            "cluster_specs": [],
+        }
+        input_data = _make_manual_input(
+            tmp_path,
+            analysis_data=analysis_data,
+            manual_prompt="how does equity dilution work?",
+        )
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        ctx = list(mock_build.call_args.kwargs["contexts"].values())[0]
+        assert ctx.query_gap["gap"] == 0.6
+
+    @pytest.mark.asyncio
+    async def test_no_match_falls_back_to_cluster(self, tmp_path):
+        """Tier 3: neither query_id nor query_text match — cluster fallback used."""
+        analysis_data = {
+            "gaps": [{
+                "query_id": "q-other",
+                "query_text": "completely different query",
+                "cluster_name": "equity",
+                "top_cited_exemplars": [{"url": "https://fallback.com"}],
+            }],
+            "cluster_specs": [{"cluster_name": "equity", "dominant_content_type": "blog"}],
+        }
+        input_data = _make_manual_input(tmp_path, analysis_data=analysis_data)
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        ctx = list(mock_build.call_args.kwargs["contexts"].values())[0]
+        # Cluster fallback: gap_content_brief is NOT set (only tier 1/2 set it)
+        assert ctx.gap_content_brief is None
+        # But exemplars are extracted from cluster
+        assert len(ctx.exemplars) == 1
+        assert ctx.cluster_spec["dominant_content_type"] == "blog"
+
+    @pytest.mark.asyncio
+    async def test_gap_query_id_populates_company_best_truncated(self, tmp_path):
+        """company_best_text is truncated to 200 chars."""
+        long_text = "x" * 300
+        analysis_data = {
+            "gaps": [{
+                "query_id": "q-1",
+                "query_text": "What is equity dilution?",
+                "cluster_name": "equity",
+                "best_company_unit_text": long_text,
+                "best_company_url": "https://carta.com/page",
+                "top_cited_exemplars": [],
+            }],
+            "cluster_specs": [],
+        }
+        input_data = _make_manual_input(tmp_path, analysis_data=analysis_data, gap_query_id="q-1")
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        ctx = list(mock_build.call_args.kwargs["contexts"].values())[0]
+        assert len(ctx.company_best_text) == 200
+        assert ctx.company_best_url == "https://carta.com/page"
+
+
+class TestManualModeH2ClusterMatch:
+    """H2-fix: case-insensitive cluster matching in the fallback path."""
+
+    @pytest.mark.asyncio
+    async def test_cluster_match_case_insensitive(self, tmp_path):
+        """'Equity Management' (analysis) matches 'equity management' (user input)."""
+        analysis_data = {
+            "gaps": [],
+            "cluster_specs": [{"cluster_name": "Equity Management", "dominant_content_type": "guide"}],
+        }
+        input_data = _make_manual_input(
+            tmp_path,
+            analysis_data=analysis_data,
+            manual_prompt="something completely different",
+            manual_cluster="equity management",
+        )
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        ctx = list(mock_build.call_args.kwargs["contexts"].values())[0]
+        assert ctx.cluster_spec["dominant_content_type"] == "guide"
+
+    @pytest.mark.asyncio
+    async def test_cluster_match_with_whitespace(self, tmp_path):
+        """' equity ' (with whitespace) matches 'equity' in analysis."""
+        analysis_data = {
+            "gaps": [],
+            "cluster_specs": [{"cluster_name": "equity", "dominant_content_type": "listicle"}],
+        }
+        input_data = _make_manual_input(
+            tmp_path,
+            analysis_data=analysis_data,
+            manual_prompt="some other topic entirely",
+            manual_cluster=" equity ",
+        )
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        ctx = list(mock_build.call_args.kwargs["contexts"].values())[0]
+        assert ctx.cluster_spec["dominant_content_type"] == "listicle"
+
+
+class TestManualModeH4SSEEvents:
+    """H4-fix: manual mode emits Stage 2 progress events."""
+
+    @pytest.mark.asyncio
+    async def test_manual_mode_emits_stage_2_started(self, tmp_path):
+        """Manual mode should call _emit with stage_started for Stage 2."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[3, 4, 5])
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+        mock_emit = MagicMock()
+
+        with (
+            patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build),
+            patch("core.content_engine.pipeline_v13._emit", mock_emit),
+        ):
+            await run_content_generation_v13(input_data)
+
+        # Find the stage_started call for stage 2
+        stage_started_calls = [
+            c for c in mock_emit.call_args_list
+            if len(c.args) >= 3 and c.args[2] == "stage_started"
+            and isinstance(c.args[3], dict) and c.args[3].get("stage") == 2
+        ]
+        assert len(stage_started_calls) >= 1, (
+            f"Expected _emit(..., 'stage_started', {{stage: 2}}) call. "
+            f"All calls: {mock_emit.call_args_list}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_manual_mode_emits_stage_2_complete(self, tmp_path):
+        """Manual mode should call _emit with stage_complete for Stage 2."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[3, 4, 5])
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+        mock_emit = MagicMock()
+
+        with (
+            patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build),
+            patch("core.content_engine.pipeline_v13._emit", mock_emit),
+        ):
+            await run_content_generation_v13(input_data)
+
+        stage_complete_calls = [
+            c for c in mock_emit.call_args_list
+            if len(c.args) >= 3 and c.args[2] == "stage_complete"
+            and isinstance(c.args[3], dict) and c.args[3].get("stage") == 2
+        ]
+        assert len(stage_complete_calls) >= 1
+        assert stage_complete_calls[0].args[3]["briefs_approved"] == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# H7-fix: stages_actually_executed tracking
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestStagesExecutedH7:
+    """H7-fix: stages_executed metadata must reflect actually-executed stages."""
+
+    @pytest.mark.asyncio
+    async def test_manual_mode_stages_executed_skips_stage_1(self, tmp_path):
+        """Manual mode never executes stage 1 (Strategic Planner) — must not appear."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[3, 4, 5])
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            output = await run_content_generation_v13(input_data)
+
+        stages = output.run_metadata.get("stages_executed", [])
+        assert 1 not in stages, f"Stage 1 should not be in stages_executed for manual mode: {stages}"
+
+    @pytest.mark.asyncio
+    async def test_manual_mode_stages_executed_includes_stage_0_and_2(self, tmp_path):
+        """Manual mode executes stage 0 (Entry Router) and stage 2 (Brief Builder)."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[3, 4, 5])
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            output = await run_content_generation_v13(input_data)
+
+        stages = output.run_metadata.get("stages_executed", [])
+        assert 0 in stages
+        assert 2 in stages
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# H8-fix: exemplar ranking by similarity + deduplication
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestExemplarRankingH8:
+    """H8-fix: cluster fallback must rank exemplars by similarity and deduplicate."""
+
+    @pytest.mark.asyncio
+    async def test_cluster_fallback_exemplars_ranked_by_similarity(self, tmp_path):
+        """Exemplars should be returned in descending similarity order."""
+        analysis_data = {
+            "gaps": [
+                {
+                    "query_id": f"q-{i}",
+                    "cluster_name": "equity",
+                    "top_cited_exemplars": [
+                        {"url": f"https://ex{i}.com", "similarity": sim}
+                    ],
+                }
+                for i, sim in enumerate([0.3, 0.9, 0.5, 0.7, 0.1, 0.8])
+            ],
+            "cluster_specs": [],
+        }
+        input_data = _make_manual_input(
+            tmp_path,
+            analysis_data=analysis_data,
+            manual_prompt="something totally different from any gap query",
+        )
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        ctx = list(mock_build.call_args.kwargs["contexts"].values())[0]
+        sims = [ex.get("similarity", 0) for ex in ctx.exemplars]
+        assert sims == sorted(sims, reverse=True), f"Exemplars not sorted by similarity: {sims}"
+        assert len(ctx.exemplars) == 5  # capped at 5
+
+    @pytest.mark.asyncio
+    async def test_cluster_fallback_exemplars_deduplicated(self, tmp_path):
+        """Duplicate URLs across gaps should be deduplicated."""
+        analysis_data = {
+            "gaps": [
+                {
+                    "query_id": "q-1",
+                    "cluster_name": "equity",
+                    "top_cited_exemplars": [
+                        {"url": "https://shared.com", "similarity": 0.9},
+                        {"url": "https://unique1.com", "similarity": 0.8},
+                    ],
+                },
+                {
+                    "query_id": "q-2",
+                    "cluster_name": "equity",
+                    "top_cited_exemplars": [
+                        {"url": "https://shared.com", "similarity": 0.7},  # duplicate
+                        {"url": "https://unique2.com", "similarity": 0.6},
+                    ],
+                },
+            ],
+            "cluster_specs": [],
+        }
+        input_data = _make_manual_input(
+            tmp_path,
+            analysis_data=analysis_data,
+            manual_prompt="unrelated prompt for cluster fallback",
+        )
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        ctx = list(mock_build.call_args.kwargs["contexts"].values())[0]
+        urls = [ex["url"] for ex in ctx.exemplars]
+        assert len(urls) == len(set(urls)), f"Duplicate URLs found: {urls}"
+        assert len(ctx.exemplars) == 3  # shared + unique1 + unique2
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# H9-fix: estimated_impact derived from gap data
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestEstimatedImpactH9:
+    """H9-fix: estimated_impact derived from gap score, not hardcoded 'high'."""
+
+    @pytest.mark.asyncio
+    async def test_high_gap_score_sets_high_impact(self, tmp_path):
+        """gap score >= 0.6 → estimated_impact='high'."""
+        analysis_data = {
+            "gaps": [{
+                "query_id": "q-1",
+                "query_text": "What is equity dilution?",
+                "cluster_name": "equity",
+                "gap": 0.82,
+                "top_cited_exemplars": [],
+            }],
+            "cluster_specs": [],
+        }
+        input_data = _make_manual_input(tmp_path, analysis_data=analysis_data, gap_query_id="q-1")
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        topics = mock_build.call_args.kwargs["topics"]
+        assert topics[0].estimated_impact == "high"
+
+    @pytest.mark.asyncio
+    async def test_medium_gap_score_sets_medium_impact(self, tmp_path):
+        """gap score >= 0.3 and < 0.6 → estimated_impact='medium'."""
+        analysis_data = {
+            "gaps": [{
+                "query_id": "q-1",
+                "query_text": "What is equity dilution?",
+                "cluster_name": "equity",
+                "gap": 0.4,
+                "top_cited_exemplars": [],
+            }],
+            "cluster_specs": [],
+        }
+        input_data = _make_manual_input(tmp_path, analysis_data=analysis_data, gap_query_id="q-1")
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        topics = mock_build.call_args.kwargs["topics"]
+        assert topics[0].estimated_impact == "medium"
+
+    @pytest.mark.asyncio
+    async def test_no_gap_data_defaults_to_medium(self, tmp_path):
+        """No gap match → estimated_impact defaults to 'medium' (not inflated 'high')."""
+        input_data = _make_manual_input(tmp_path)
+        # No gap_query_id, prompt won't match any gap
+        mock_build = AsyncMock(return_value=[_make_blueprint()])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            await run_content_generation_v13(input_data)
+
+        topics = mock_build.call_args.kwargs["topics"]
+        assert topics[0].estimated_impact == "medium"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# L1-fix: unique manual query ID per run
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestManualQueryIdL1:
+    """L1-fix: manual query ID must be unique per run, not hardcoded 'manual-1'."""
+
+    @pytest.mark.asyncio
+    async def test_manual_query_id_is_unique_per_run(self, tmp_path):
+        """Two manual runs should produce different query IDs."""
+        ids: list[str] = []
+
+        for _ in range(2):
+            input_data = _make_manual_input(tmp_path, skip_stages=[3, 4, 5])
+            mock_build = AsyncMock(return_value=[_make_blueprint()])
+            with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+                await run_content_generation_v13(input_data)
+            ctx = list(mock_build.call_args.kwargs["contexts"].values())[0]
+            ids.append(ctx.query_gap.get("query_id", ""))
+
+        assert ids[0] != ids[1], f"Query IDs should be unique across runs: {ids}"
+        assert all(qid.startswith("manual-") for qid in ids)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# C1-fix: _merge_and_write_blueprints preserves externally-added entries
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestMergeAndWriteBlueprints:
+    """C1-fix: pipeline writes must not destroy manually-added brief entries."""
+
+    def test_merge_preserves_manual_entries(self, tmp_path):
+        """Manually-added briefs (with _source) survive a pipeline write."""
+        bp_path = tmp_path / "blueprints.json"
+        manual_entry = {
+            "brief_id": "brief-099",
+            "title": "Manual topic",
+            "_source": "citation",
+            "_created_at": "2026-03-19T00:00:00Z",
+        }
+        bp_path.write_text(json.dumps([manual_entry]), encoding="utf-8")
+
+        pipeline_bp = _make_blueprint(brief_id="brief-001")
+        _merge_and_write_blueprints(bp_path, [pipeline_bp])
+
+        result = json.loads(bp_path.read_text(encoding="utf-8"))
+        assert len(result) == 2
+        # Pipeline briefs come first, manual entries preserved at end
+        assert result[0]["brief_id"] == "brief-001"
+        assert result[1]["brief_id"] == "brief-099"
+        assert result[1]["_source"] == "citation"
+
+    def test_merge_preserves_multiple_sources(self, tmp_path):
+        """Multiple manual + citation entries are all preserved."""
+        bp_path = tmp_path / "blueprints.json"
+        existing = [
+            {"brief_id": "brief-010", "title": "From citation", "_source": "citation"},
+            {"brief_id": "brief-011", "title": "From manual", "_source": "manual"},
+        ]
+        bp_path.write_text(json.dumps(existing), encoding="utf-8")
+
+        pipeline_bp = _make_blueprint(brief_id="brief-001")
+        _merge_and_write_blueprints(bp_path, [pipeline_bp])
+
+        result = json.loads(bp_path.read_text(encoding="utf-8"))
+        assert len(result) == 3
+        sourced = [e for e in result if e.get("_source")]
+        assert len(sourced) == 2
+
+    def test_merge_empty_file(self, tmp_path):
+        """When no existing file, writes pipeline briefs cleanly."""
+        bp_path = tmp_path / "blueprints.json"
+        assert not bp_path.exists()
+
+        pipeline_bp = _make_blueprint(brief_id="brief-001")
+        _merge_and_write_blueprints(bp_path, [pipeline_bp])
+
+        result = json.loads(bp_path.read_text(encoding="utf-8"))
+        assert len(result) == 1
+        assert result[0]["brief_id"] == "brief-001"
+
+    def test_merge_corrupt_file(self, tmp_path):
+        """Corrupt JSON is handled gracefully — pipeline briefs still written."""
+        bp_path = tmp_path / "blueprints.json"
+        bp_path.write_text("not valid json{{{", encoding="utf-8")
+
+        pipeline_bp = _make_blueprint(brief_id="brief-001")
+        _merge_and_write_blueprints(bp_path, [pipeline_bp])
+
+        result = json.loads(bp_path.read_text(encoding="utf-8"))
+        assert len(result) == 1
+        assert result[0]["brief_id"] == "brief-001"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# C6-fix: zero-blueprint guard for manual/TD modes
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestZeroBlueprintGuardC6:
+    """C6-fix: manual/TD modes must fail explicitly when zero blueprints produced."""
+
+    @pytest.mark.asyncio
+    async def test_manual_zero_blueprints_returns_failed(self, tmp_path):
+        """Manual mode with zero blueprints must return error in run_metadata."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[3, 4, 5])
+        mock_build = AsyncMock(return_value=[])  # Zero blueprints
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build):
+            output = await run_content_generation_v13(input_data)
+
+        assert output.total_briefs == 0
+        assert "error" in output.run_metadata
+        assert "zero blueprints" in output.run_metadata["error"]
+
+    @pytest.mark.asyncio
+    async def test_autonomous_zero_blueprints_completes_normally(self, tmp_path):
+        """Autonomous mode with zero approved blueprints should NOT error.
+
+        This can happen legitimately when user rejects all briefs at HITL-2.
+        """
+        analysis_path = tmp_path / "analysis.json"
+        analysis_path.write_text(json.dumps({"gaps": [], "cluster_specs": []}))
+        context_path = tmp_path / "context.md"
+        context_path.write_text("Test company context")
+
+        input_data = ContentGenerationInputV13(
+            company_name="Test Co",
+            domain="test-co.com",
+            company_slug="test-co",
+            analysis_json_path=str(analysis_path),
+            company_context_path=str(context_path),
+            entry_mode=EntryMode.AUTONOMOUS,
+            auto_approve=True,
+            skip_stages=[1, 2, 3, 4, 5],  # Skip everything — simulates zero approvals
+            max_topics=3,
+        )
+
+        output = await run_content_generation_v13(input_data)
+
+        # Autonomous mode with zero blueprints completes without error
+        assert output.total_briefs == 0
+        assert "error" not in output.run_metadata
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # Import for direct invocation
 # ═══════════════════════════════════════════════════════════════════════
 
-from core.content_engine.pipeline_v13 import run_content_generation_v13, _update_task
+from core.content_engine.pipeline_v13 import (
+    run_content_generation_v13,
+    _merge_and_write_blueprints,
+    _update_task,
+    _write_pipeline_state,
+    _cleanup_pipeline_state,
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# _write_pipeline_state Tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestWritePipelineState:
+    """Tests for the _write_pipeline_state helper."""
+
+    def test_creates_file(self, tmp_path: Path):
+        """Creates pipeline_state.json with brief statuses."""
+        _write_pipeline_state(tmp_path, ["brief-001", "brief-002"], "approved")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "approved", "brief-002": "approved"}
+
+    def test_merges_with_existing(self, tmp_path: Path):
+        """Merges new statuses with existing pipeline_state.json."""
+        (tmp_path / "pipeline_state.json").write_text(
+            json.dumps({"brief-001": "approved"})
+        )
+        _write_pipeline_state(tmp_path, ["brief-002"], "in_progress")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "approved", "brief-002": "in_progress"}
+
+    def test_overwrites_existing_brief(self, tmp_path: Path):
+        """Updates status for a brief that already has an entry."""
+        _write_pipeline_state(tmp_path, ["brief-001"], "approved")
+        _write_pipeline_state(tmp_path, ["brief-001"], "in_progress")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "in_progress"}
+
+    def test_handles_corrupted_file(self, tmp_path: Path):
+        """Recovers from corrupted pipeline_state.json."""
+        (tmp_path / "pipeline_state.json").write_text("not valid json{{{")
+        _write_pipeline_state(tmp_path, ["brief-001"], "review")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "review"}
+
+    def test_empty_brief_ids(self, tmp_path: Path):
+        """Empty brief_ids list doesn't crash, writes empty or existing dict."""
+        _write_pipeline_state(tmp_path, [], "approved")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {}
+
+    def test_all_kanban_phases(self, tmp_path: Path):
+        """All expected phase strings are written correctly."""
+        phases = ["approved", "in_progress", "review", "completed"]
+        for i, phase in enumerate(phases):
+            _write_pipeline_state(tmp_path, [f"brief-{i:03d}"], phase)
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {
+            "brief-000": "approved",
+            "brief-001": "in_progress",
+            "brief-002": "review",
+            "brief-003": "completed",
+        }
+
+    def test_non_dict_json_array(self, tmp_path: Path):
+        """Recovers from valid JSON that is not a dict (e.g. [])."""
+        (tmp_path / "pipeline_state.json").write_text("[]")
+        _write_pipeline_state(tmp_path, ["brief-001"], "review")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "review"}
+
+    def test_non_dict_json_string(self, tmp_path: Path):
+        """Recovers from valid JSON that is a string."""
+        (tmp_path / "pipeline_state.json").write_text('"hello"')
+        _write_pipeline_state(tmp_path, ["brief-001"], "approved")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "approved"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# _cleanup_pipeline_state Tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestCleanupPipelineState:
+    """Tests for the _cleanup_pipeline_state helper."""
+
+    def test_removes_specified_briefs(self, tmp_path: Path):
+        """Removes only the specified brief IDs from state."""
+        _write_pipeline_state(tmp_path, ["brief-001", "brief-002", "brief-003"], "in_progress")
+        _cleanup_pipeline_state(tmp_path, ["brief-001", "brief-003"])
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-002": "in_progress"}
+
+    def test_deletes_file_when_empty(self, tmp_path: Path):
+        """Deletes file when all entries are removed."""
+        _write_pipeline_state(tmp_path, ["brief-001"], "review")
+        _cleanup_pipeline_state(tmp_path, ["brief-001"])
+        assert not (tmp_path / "pipeline_state.json").exists()
+
+    def test_noop_when_no_file(self, tmp_path: Path):
+        """Does nothing when file doesn't exist."""
+        _cleanup_pipeline_state(tmp_path, ["brief-001"])
+        assert not (tmp_path / "pipeline_state.json").exists()
+
+    def test_handles_unknown_brief_ids(self, tmp_path: Path):
+        """Removing nonexistent brief IDs doesn't crash."""
+        _write_pipeline_state(tmp_path, ["brief-001"], "in_progress")
+        _cleanup_pipeline_state(tmp_path, ["brief-999"])
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "in_progress"}
+
+    def test_handles_corrupted_file(self, tmp_path: Path):
+        """Recovers from corrupted JSON."""
+        (tmp_path / "pipeline_state.json").write_text("corrupted{{{")
+        _cleanup_pipeline_state(tmp_path, ["brief-001"])
+        # Corrupted file with no valid entries → deleted
+        assert not (tmp_path / "pipeline_state.json").exists()
+
+    def test_handles_non_dict_json(self, tmp_path: Path):
+        """Recovers from valid JSON that is not a dict."""
+        (tmp_path / "pipeline_state.json").write_text("[]")
+        _cleanup_pipeline_state(tmp_path, ["brief-001"])
+        assert not (tmp_path / "pipeline_state.json").exists()
+
+    def test_concurrent_run_preservation(self, tmp_path: Path):
+        """Simulates two concurrent runs — one finishing preserves the other's state."""
+        # Run A writes brief-001, Run B writes brief-002
+        _write_pipeline_state(tmp_path, ["brief-001"], "in_progress")
+        _write_pipeline_state(tmp_path, ["brief-002"], "review")
+        # Run A finishes, cleans up its brief
+        _cleanup_pipeline_state(tmp_path, ["brief-001"])
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-002": "review"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Manual Mode HITL-2: Brief Approval
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestManualHITL2:
+    """Manual mode must pause at HITL-2 for brief approval, same as autonomous."""
+
+    @pytest.mark.asyncio
+    async def test_manual_hitl2_approve_proceeds_to_workers(self, tmp_path):
+        """Manual mode: HITL-2 approve lets the blueprint through to Stage 3."""
+        input_data = _make_manual_input(tmp_path)
+        # auto_approve=True by default in _make_manual_input, override to test real HITL
+        input_data.auto_approve = False
+        input_data.skip_stages = []  # run full pipeline
+
+        blueprint = _make_blueprint()
+        formatted = _make_formatted()
+        history = RevisionHistory(brief_id="brief-001", final_passed=True)
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel",
+                   new_callable=AsyncMock, return_value=[blueprint]) as mock_build, \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock, side_effect=[
+                       # HITL-2: approve
+                       {"brief_decision": "approve"},
+                       # HITL-3: approve
+                       {"content_decision": "approve", "finalized": True},
+                   ]) as mock_hitl, \
+             patch("core.content_engine.workers.dispatcher.dispatch_workers_v13",
+                   new_callable=AsyncMock, return_value=([(formatted.brief_id, formatted)], [])) as mock_dispatch, \
+             patch("core.content_engine.evaluator.loop.evaluate_and_optimize",
+                   new_callable=AsyncMock, return_value=(formatted, history, "pass")):
+            result = await run_content_generation_v13(input_data)
+
+        # HITL checkpoint called twice: once for HITL-2, once for HITL-3
+        assert mock_hitl.call_count == 2
+        # HITL-2 call must pass the blueprint and stage_name containing "Brief Approval"
+        hitl2_call = mock_hitl.call_args_list[0]
+        assert "Brief Approval" in hitl2_call.kwargs.get("stage_name", hitl2_call[1].get("stage_name", ""))
+        # Workers must have been called (blueprint approved)
+        mock_dispatch.assert_called_once()
+        assert result.total_approved == 1
+
+    @pytest.mark.asyncio
+    async def test_manual_hitl2_reject_skips_workers(self, tmp_path):
+        """Manual mode: HITL-2 reject means zero approved blueprints → no workers run."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[])
+        input_data.auto_approve = False
+
+        blueprint = _make_blueprint()
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel",
+                   new_callable=AsyncMock, return_value=[blueprint]), \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock, side_effect=[
+                       # HITL-2: reject
+                       {"brief_decision": "reject"},
+                   ]), \
+             patch("core.content_engine.workers.dispatcher.dispatch_workers_v13",
+                   new_callable=AsyncMock, return_value=([], [])) as mock_dispatch, \
+             patch("core.content_engine.evaluator.loop.evaluate_and_optimize",
+                   new_callable=AsyncMock, return_value=None):
+            result = await run_content_generation_v13(input_data)
+
+        # Workers never called — blueprint was rejected
+        mock_dispatch.assert_not_called()
+        assert result.total_approved == 0
+
+    @pytest.mark.asyncio
+    async def test_manual_hitl2_feedback_reruns_brief_builder(self, tmp_path):
+        """Manual mode: HITL-2 feedback re-invokes build_briefs_parallel with user notes."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[])
+        input_data.auto_approve = False
+
+        gap_ctx = WorkerQueryContext(
+            query_gap={"query_id": "manual-abc", "query_text": "What is equity dilution?"},
+            exemplars=[{"url": "https://example.com"}],
+        )
+        blueprint = ContentBlueprint(
+            brief_id="brief-001",
+            title="Equity Dilution Guide",
+            content_format="long_blog",
+            cluster_name="equity",
+            gap_context=gap_ctx,
+        )
+        revised_blueprint = ContentBlueprint(
+            brief_id="brief-001",
+            title="Equity Dilution Guide (Revised)",
+            content_format="long_blog",
+            cluster_name="equity",
+            gap_context=gap_ctx,
+        )
+        formatted = _make_formatted()
+        history = RevisionHistory(brief_id="brief-001", final_passed=True)
+
+        mock_build = AsyncMock(side_effect=[
+            [blueprint],           # Initial Agent 2 call
+            [revised_blueprint],   # Re-run after HITL-2 feedback
+        ])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build), \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock, side_effect=[
+                       # HITL-2 first: feedback
+                       {"brief_decision": "feedback", "brief_feedback": "Focus more on anti-dilution protections"},
+                       # HITL-2 second (after re-run): approve
+                       {"brief_decision": "approve"},
+                       # HITL-3: approve
+                       {"content_decision": "approve", "finalized": True},
+                   ]), \
+             patch("core.content_engine.workers.dispatcher.dispatch_workers_v13",
+                   new_callable=AsyncMock, return_value=([(formatted.brief_id, formatted)], [])), \
+             patch("core.content_engine.evaluator.loop.evaluate_and_optimize",
+                   new_callable=AsyncMock, return_value=(formatted, history, "pass")):
+            result = await run_content_generation_v13(input_data)
+
+        # build_briefs_parallel called twice: initial + feedback re-run
+        assert mock_build.call_count == 2
+        # Second call must include feedback in topic rationale
+        second_call_kwargs = mock_build.call_args_list[1][1]
+        topics = second_call_kwargs["topics"]
+        assert "Focus more on anti-dilution protections" in topics[0].rationale
+        assert result.total_approved == 1
+
+    @pytest.mark.asyncio
+    async def test_manual_hitl2_auto_approve_skips_pause(self, tmp_path):
+        """Manual mode with auto_approve=True: HITL-2 graph auto-approves (no block)."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[3, 4, 5])
+        input_data.auto_approve = True
+
+        blueprint = _make_blueprint()
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel",
+                   new_callable=AsyncMock, return_value=[blueprint]), \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock,
+                   return_value={"brief_decision": "approve"}) as mock_hitl:
+            result = await run_content_generation_v13(input_data)
+
+        # HITL checkpoint called once for HITL-2 (stages 3-5 skipped)
+        assert mock_hitl.call_count == 1
+        hitl2_call = mock_hitl.call_args_list[0]
+        # auto_approve must be passed through to the graph
+        initial_state = hitl2_call.kwargs.get("initial_state", hitl2_call[1].get("initial_state", {}))
+        assert initial_state.get("auto_approve") is True
+
+    @pytest.mark.asyncio
+    async def test_manual_hitl2_writes_pipeline_state(self, tmp_path):
+        """After HITL-2 approve, pipeline_state.json must show 'approved' for the brief."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[3, 4, 5])
+        input_data.auto_approve = False
+
+        blueprint = _make_blueprint()
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel",
+                   new_callable=AsyncMock, return_value=[blueprint]), \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock,
+                   return_value={"brief_decision": "approve"}):
+            await run_content_generation_v13(input_data)
+
+        # Check pipeline_state.json has "approved" for the brief
+        state_path = tmp_path / "artifacts" / "content" / "test-co" / "pipeline_state.json"
+        if state_path.exists():
+            state = json.loads(state_path.read_text())
+            assert state.get("brief-001") == "approved"

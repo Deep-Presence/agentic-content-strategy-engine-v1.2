@@ -161,9 +161,12 @@ class TrainingConfig(BaseModel):
 
     # Database paths
     sqlite_path: str
-    chroma_path: str
-    chroma_snippet_collection: str = "snippet_embeddings"
-    chroma_query_collection: str = "query_embeddings"
+    database_url: Optional[str] = None  # pgvector-backed storage (preferred)
+
+    # ChromaDB paths — DEPRECATED (retained for backward compat with external training repo)
+    chroma_path: Optional[str] = None
+    chroma_snippet_collection: Optional[str] = "snippet_embeddings"
+    chroma_query_collection: Optional[str] = "query_embeddings"
 
     # Feature dimensions (derived from Pydantic models in schemas/models.py)
     embedding_dim: int = 1536  # text-embedding-3-small

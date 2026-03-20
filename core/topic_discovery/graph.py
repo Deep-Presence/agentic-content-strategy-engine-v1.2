@@ -459,6 +459,148 @@ def build_td_matrix_review_graph(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# HITL-1.5: Subdomain Selection (between scoring and expansion)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TDSubdomainSelectionState(TypedDict, total=False):
+    """State for HITL-1.5: subdomain selection after scoring.
+
+    DEPRECATED: HITL-1.5 eliminated in pipeline split (Pipeline A + B).
+    Subdomain selection is now the trigger for Pipeline B, not an inline
+    checkpoint. Kept for backward compat with existing tests.
+    """
+
+    scored_subdomains: dict  # Serialized ScoredSubdomainList
+    persona_affinity: dict  # Serialized PersonaAffinityIndex
+    checkpoint: int  # Always 3
+    auto_approve: bool
+    top_n: int  # Default top-N for auto-approve
+    presented_at: int  # Unix timestamp
+    # Resume values:
+    selection_mode: str  # "manual" | "top_n"
+    selected_subdomain_ids: list  # List of subdomain IDs
+    persona_filter: str  # Optional persona_id filter
+    # Computed:
+    final_subdomain_ids: list  # IDs to expand
+
+
+def _subdomain_selection_present(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Add presentation timestamp."""
+    return {**state, "presented_at": int(time.time())}
+
+
+def _subdomain_selection_gate(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Pause for human subdomain selection via interrupt().
+
+    Auto-approve selects top-N by composite score.
+    Manual mode fires interrupt for user selection.
+    """
+    scored = state.get("scored_subdomains", {})
+    top_n = state.get("top_n", 10)
+    persona_affinity = state.get("persona_affinity", {})
+
+    if state.get("auto_approve"):
+        # Select top-N subdomain IDs by score
+        scores = scored.get("scores", [])
+        sorted_scores = sorted(
+            scores, key=lambda s: s.get("composite_score", 0.0), reverse=True
+        )
+        selected_ids = [s.get("subdomain_id", "") for s in sorted_scores[:top_n]]
+        return {
+            **state,
+            "selection_mode": "top_n",
+            "selected_subdomain_ids": selected_ids,
+            "final_subdomain_ids": selected_ids,
+        }
+
+    resume = interrupt(
+        {
+            "status": "pending_subdomain_selection",
+            "stage": "td_subdomain_selection",
+            "checkpoint": state.get("checkpoint", 3),
+            "scored_subdomains": scored,
+            "persona_affinity": persona_affinity,
+            "top_n_default": top_n,
+        }
+    )
+
+    if not isinstance(resume, dict):
+        resume = {}
+
+    selection_mode = resume.get("selection_mode", "top_n")
+    selected_ids = resume.get("selected_subdomain_ids", [])
+    persona_filter = resume.get("persona_filter", "")
+
+    if selection_mode == "top_n":
+        # User chose top-N but may have changed N
+        user_n = resume.get("top_n", top_n)
+        scores = scored.get("scores", [])
+
+        # Apply persona filter if set
+        if persona_filter:
+            entries = persona_affinity.get("persona_entries", {})
+            persona_subs = entries.get(persona_filter, [])
+            persona_sub_ids = {
+                e.get("subdomain_id", "")
+                for e in persona_subs
+                if e.get("affinity_score", 0.0) > 0.3
+            }
+            scores = [
+                s for s in scores
+                if s.get("subdomain_id", "") in persona_sub_ids
+            ]
+
+        sorted_scores = sorted(
+            scores, key=lambda s: s.get("composite_score", 0.0), reverse=True
+        )
+        selected_ids = [s.get("subdomain_id", "") for s in sorted_scores[:user_n]]
+
+    # Manual selection — use IDs as provided
+    final_ids = selected_ids if selected_ids else []
+
+    return {
+        **state,
+        "selection_mode": selection_mode,
+        "selected_subdomain_ids": selected_ids,
+        "persona_filter": persona_filter,
+        "final_subdomain_ids": final_ids,
+    }
+
+
+def _subdomain_selection_route(state: Dict[str, Any]) -> str:
+    """Route — always ends (no retry for subdomain selection)."""
+    return "done"
+
+
+def build_td_subdomain_selection_graph(
+    checkpointer: Optional[Any] = None,
+) -> Any:
+    # DEPRECATED: HITL-1.5 eliminated in pipeline split (Pipeline A + B).
+    # Kept for backward compat with existing tests. Remove in future cleanup.
+    """Build the Subdomain Selection sub-graph (HITL-1.5).
+
+    Nodes: present → gate → route → END
+    """
+    graph = StateGraph(TDSubdomainSelectionState)
+
+    graph.add_node("present", _subdomain_selection_present)
+    graph.add_node("gate", _subdomain_selection_gate)
+
+    graph.set_entry_point("present")
+    graph.add_edge("present", "gate")
+    graph.add_conditional_edges(
+        "gate",
+        _subdomain_selection_route,
+        {
+            "done": END,
+        },
+    )
+
+    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Graph Invocation Helper
 # ═══════════════════════════════════════════════════════════════════════
 

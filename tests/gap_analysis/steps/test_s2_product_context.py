@@ -98,7 +98,7 @@ class TestBuildSeedPromptProductContext:
         prompt = _build_seed_prompt(
             company_context="",
             persona_context="",
-            style_guide="",
+
             clusters=clusters,
             max_queries=20,
             company_name="Ramp",
@@ -119,7 +119,7 @@ class TestBuildSeedPromptProductContext:
         prompt = _build_seed_prompt(
             company_context="",
             persona_context="",
-            style_guide="",
+
             clusters=clusters,
             max_queries=20,
             company_name="Ramp",
@@ -140,7 +140,7 @@ class TestBuildSeedPromptProductContext:
         prompt = _build_seed_prompt(
             company_context="",
             persona_context="",
-            style_guide="",
+
             clusters=clusters,
             max_queries=20,
             company_name="Ramp",
@@ -157,7 +157,7 @@ class TestBuildSeedPromptProductContext:
         prompt = _build_seed_prompt(
             company_context="ctx",
             persona_context="persona",
-            style_guide="",
+
             clusters=clusters,
             max_queries=30,
             company_name="Ramp",

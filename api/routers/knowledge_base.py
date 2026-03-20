@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_kb_data_service, get_task_store
 from api.schemas.common import (
     ApprovalRequest,
     ApprovalResponse,
@@ -30,6 +30,7 @@ from core.auth.utils.domain import derive_slug
 from core.models.knowledge_base import KB_DEPENDENCY_GRAPH, KBDocType
 from core.models.organization import UserProfile
 from core.research.knowledge_base.storage import KBStorage
+from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,18 @@ async def start_knowledge_base(
     if not body.force_rerun and _kb_artifacts_exist(artifacts_root, effective_slug):
         last_task = _get_latest_kb_run(task_store, slug, body.product_slug)
         response.status_code = 200
+        await log_pipeline_launch(
+            user_id=_user.id,
+            pipeline="knowledge_base",
+            company_slug=slug,
+            task_id=last_task.task_id if last_task else f"existing-{effective_slug}",
+            detail={
+                "outcome": "already_exists",
+                "product_slug": body.product_slug,
+                "mode": body.mode,
+                "effective_slug": effective_slug,
+            },
+        )
         return PipelineRunResponse(
             run_id=last_task.task_id if last_task else f"existing-{effective_slug}",
             pipeline="knowledge_base",
@@ -128,6 +141,19 @@ async def start_knowledge_base(
     )
     task_store.register_task_handle(task.task_id, handle)
 
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="knowledge_base",
+        company_slug=slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "mode": body.mode,
+            "force_rerun": body.force_rerun,
+            "effective_slug": effective_slug,
+        },
+    )
+
     return PipelineRunResponse(
         run_id=task.task_id,
         pipeline="knowledge_base",
@@ -145,41 +171,15 @@ async def get_knowledge_base_health(
     request: Request,
     threshold_override: Optional[int] = Query(None, ge=1, le=365),
     _user: UserProfile = Depends(require_auth),
-    artifacts_root: Path = Depends(get_artifacts_root),
+    kb_svc=Depends(get_kb_data_service),
 ) -> KBHealthResponse:
     """Get health report for a knowledge base — staleness, missing docs, score."""
     user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
     if not user_company_slug or slug != user_company_slug:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    storage = KBStorage(artifacts_root, slug)
-    report = storage.get_staleness_report(threshold_override=threshold_override)
-
-    # Convert to response model
-    doc_health_resp: Dict[str, KBDocHealthResponse] = {}
-    for key, health in report.doc_health.items():
-        doc_health_resp[key] = KBDocHealthResponse(
-            doc_type=health.doc_type.value,
-            status=health.status,
-            current_version=health.current_version,
-            last_updated=health.last_updated,
-            age_days=health.age_days,
-            staleness_threshold_days=health.staleness_threshold_days,
-            stale_reason=health.stale_reason,
-            dependencies=[d.value for d in health.dependencies],
-        )
-
-    return KBHealthResponse(
-        slug=report.slug,
-        overall_score=report.overall_score,
-        doc_health=doc_health_resp,
-        synthesis_version=report.synthesis_version,
-        synthesis_last_updated=report.synthesis_last_updated,
-        synthesis_needs_refresh=report.synthesis_needs_refresh,
-        stale_docs=report.stale_docs,
-        missing_docs=report.missing_docs,
-        last_full_refresh=report.last_full_refresh,
-    )
+    report_dict = await kb_svc.get_health(slug, threshold_override=threshold_override)
+    return KBHealthResponse.model_validate(report_dict)
 
 
 @router.post(
@@ -289,7 +289,7 @@ def _topological_sort_stale(stale_doc_values: List[str]) -> List[str]:
 
 
 @router.get("/{run_id}/status")
-def get_knowledge_base_status(
+async def get_knowledge_base_status(
     run_id: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
@@ -315,7 +315,7 @@ def get_knowledge_base_status(
 
 
 @router.post("/{run_id}/approve")
-def approve_knowledge_base(
+async def approve_knowledge_base(
     run_id: str,
     body: ApprovalRequest,
     http_request: Request,
@@ -354,7 +354,26 @@ def approve_knowledge_base(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="knowledge_base",
+            stage=stage,
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="knowledge_base",
+        stage=stage,
+        decision=body.decision,
+        company_slug=user_company_slug,
+        detail={"revision_note_provided": bool(body.revision_note)},
+    )
 
     return ApprovalResponse(
         run_id=run_id,

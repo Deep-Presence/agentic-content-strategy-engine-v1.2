@@ -83,7 +83,7 @@ def _create_task(
     if updated_at is not None:
         stored.updated_at = updated_at
     # Release slug lock so we can create more tasks for the same slug
-    task_store.release_slug_lock(slug)
+    task_store.release_slug_lock(f"{pipeline}:{slug}")
     return task_store.get_task(task.task_id)
 
 

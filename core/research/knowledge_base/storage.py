@@ -18,14 +18,14 @@ Layout::
             v1.md
 
 Atomicity: version files are written first, manifest is updated last.
+All I/O goes through a ``StorageBackend`` so the underlying persistence
+layer (local filesystem, S3, GCS) can be swapped via configuration.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
-import os
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -41,16 +41,26 @@ from core.models.knowledge_base import (
     KBHealthReport,
     KBManifest,
 )
+from core.storage.backends.base import StorageBackend
+from core.storage.backends.local import LocalStorageBackend
 
 logger = logging.getLogger(__name__)
 
 
 class KBStorage:
-    """Read / write / version Knowledge Base documents on the filesystem."""
+    """Read / write / version Knowledge Base documents via a StorageBackend."""
 
-    def __init__(self, artifacts_root: Path, slug: str) -> None:
-        self._root = Path(artifacts_root) / "knowledge_base" / slug
+    def __init__(
+        self,
+        artifacts_root: Path,
+        slug: str,
+        *,
+        backend: Optional[StorageBackend] = None,
+    ) -> None:
+        self._artifacts_root = Path(artifacts_root)
         self._slug = slug
+        self._backend = backend or LocalStorageBackend(self._artifacts_root)
+        self._prefix = f"knowledge_base/{slug}/"
 
     # ------------------------------------------------------------------
     # Properties
@@ -58,63 +68,56 @@ class KBStorage:
 
     @property
     def base_dir(self) -> Path:
-        """Root directory for this slug's knowledge base."""
-        return self._root
+        """Root directory for this slug's knowledge base.
+
+        Retained for backward compatibility with tests and callers that
+        inspect the filesystem directly.
+        """
+        return self._artifacts_root / "knowledge_base" / self._slug
 
     @property
     def slug(self) -> str:
         return self._slug
 
     # ------------------------------------------------------------------
+    # Key helpers (return paths relative to backend root)
+    # ------------------------------------------------------------------
+
+    def _manifest_key(self) -> str:
+        return f"{self._prefix}_manifest.json"
+
+    def _doc_md_key(self, doc_type: KBDocType, version: int) -> str:
+        return f"{self._prefix}{doc_type.value}/v{version}.md"
+
+    def _doc_json_key(self, doc_type: KBDocType, version: int) -> str:
+        return f"{self._prefix}{doc_type.value}/v{version}.json"
+
+    def _synthesis_md_key(self, version: int) -> str:
+        return f"{self._prefix}synthesis/v{version}.md"
+
+    # ------------------------------------------------------------------
     # Manifest
     # ------------------------------------------------------------------
 
-    def _manifest_path(self) -> Path:
-        return self._root / "_manifest.json"
-
     def read_manifest(self) -> KBManifest:
         """Read the manifest, returning a blank one if it doesn't exist."""
-        path = self._manifest_path()
-        if not path.exists():
+        raw = self._backend.read(self._manifest_key())
+        if raw is None:
             return KBManifest(slug=self._slug)
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             return KBManifest.model_validate(data)
         except Exception as exc:
-            logger.warning("Failed to read manifest at %s: %s", path, exc)
+            logger.warning(
+                "Failed to read manifest for %s: %s", self._slug, exc,
+            )
             return KBManifest(slug=self._slug)
 
     def write_manifest(self, manifest: KBManifest) -> None:
-        """Persist the manifest to disk (atomic via temp-file + os.replace)."""
-        self._root.mkdir(parents=True, exist_ok=True)
-        path = self._manifest_path()
-        fd, tmp_path = tempfile.mkstemp(
-            dir=str(self._root), suffix=".tmp", prefix="_manifest_",
+        """Persist the manifest (atomic via backend)."""
+        self._backend.write(
+            self._manifest_key(), manifest.model_dump_json(indent=2),
         )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(manifest.model_dump_json(indent=2))
-            os.replace(tmp_path, str(path))
-        except BaseException:
-            # Clean up on failure
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
-
-    # ------------------------------------------------------------------
-    # Doc-type directory helpers
-    # ------------------------------------------------------------------
-
-    def _doc_dir(self, doc_type: KBDocType) -> Path:
-        return self._root / doc_type.value
-
-    def _version_md_path(self, doc_type: KBDocType, version: int) -> Path:
-        return self._doc_dir(doc_type) / f"v{version}.md"
-
-    def _version_json_path(self, doc_type: KBDocType, version: int) -> Path:
-        return self._doc_dir(doc_type) / f"v{version}.json"
 
     # ------------------------------------------------------------------
     # Write a new version
@@ -137,20 +140,16 @@ class KBStorage:
         entry = manifest.documents.get(entry_key)
         next_version = (entry.current_version + 1) if entry else 1
 
-        # Create directory
-        doc_dir = self._doc_dir(doc_type)
-        doc_dir.mkdir(parents=True, exist_ok=True)
-
         # Write markdown
-        md_path = self._version_md_path(doc_type, next_version)
-        md_path.write_text(content_md, encoding="utf-8")
+        self._backend.write(
+            self._doc_md_key(doc_type, next_version), content_md,
+        )
 
         # Write JSON sidecar (optional)
         if content_json is not None:
-            json_path = self._version_json_path(doc_type, next_version)
-            json_path.write_text(
+            self._backend.write(
+                self._doc_json_key(doc_type, next_version),
                 json.dumps(content_json, indent=2, default=str),
-                encoding="utf-8",
             )
 
         # Compute metadata
@@ -195,18 +194,17 @@ class KBStorage:
 
         Returns None if the version file doesn't exist.
         """
-        md_path = self._version_md_path(doc_type, version)
-        if not md_path.exists():
+        content_md = self._backend.read(self._doc_md_key(doc_type, version))
+        if content_md is None:
             return None
 
-        content_md = md_path.read_text(encoding="utf-8")
         sha = hashlib.sha256(content_md.encode("utf-8")).hexdigest()
 
         content_json: Optional[Dict[str, Any]] = None
-        json_path = self._version_json_path(doc_type, version)
-        if json_path.exists():
+        raw_json = self._backend.read(self._doc_json_key(doc_type, version))
+        if raw_json is not None:
             try:
-                content_json = json.loads(json_path.read_text(encoding="utf-8"))
+                content_json = json.loads(raw_json)
             except Exception:
                 pass
 
@@ -262,12 +260,6 @@ class KBStorage:
     # Synthesis (L3)
     # ------------------------------------------------------------------
 
-    def _synthesis_dir(self) -> Path:
-        return self._root / "synthesis"
-
-    def _synthesis_md_path(self, version: int) -> Path:
-        return self._synthesis_dir() / f"v{version}.md"
-
     def write_synthesis(self, content_md: str) -> int:
         """Write a new synthesis version and update the manifest.
 
@@ -276,11 +268,9 @@ class KBStorage:
         manifest = self.read_manifest()
         next_version = manifest.synthesis_version + 1
 
-        syn_dir = self._synthesis_dir()
-        syn_dir.mkdir(parents=True, exist_ok=True)
-
-        md_path = self._synthesis_md_path(next_version)
-        md_path.write_text(content_md, encoding="utf-8")
+        self._backend.write(
+            self._synthesis_md_key(next_version), content_md,
+        )
 
         manifest.synthesis_version = next_version
         manifest.synthesis_last_updated = datetime.now(timezone.utc)
@@ -303,16 +293,25 @@ class KBStorage:
         if version == 0:
             return None
 
-        md_path = self._synthesis_md_path(version)
-        if not md_path.exists():
+        content_md = self._backend.read(self._synthesis_md_key(version))
+        if content_md is None:
             return None
 
-        content_md = md_path.read_text(encoding="utf-8")
         return KBDocVersion(
             version=version,
             content_md=content_md,
             word_count=len(content_md.split()),
             sha256=hashlib.sha256(content_md.encode("utf-8")).hexdigest(),
+        )
+
+    # ------------------------------------------------------------------
+    # Promotion
+    # ------------------------------------------------------------------
+
+    def promote_synthesis_to_company_context(self, content_md: str) -> None:
+        """Promote synthesis markdown to ``company_context/{slug}.md``."""
+        self._backend.write(
+            f"company_context/{self._slug}.md", content_md,
         )
 
     # ------------------------------------------------------------------

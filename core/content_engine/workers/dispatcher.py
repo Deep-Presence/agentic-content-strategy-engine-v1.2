@@ -14,11 +14,13 @@ import asyncio
 import json
 import logging
 import sys
+import uuid as _uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.config.settings import settings
 from core.content_engine.pipeline import _brief_dir, _cli_worker_progress
+from core.content_engine.state_helpers import _emit, _write_pipeline_state
 from core.content_engine.tracing_v13 import create_span, create_trace, end_span, log_score, update_trace_output
 from core.content_engine.workers.drafter import generate_draft
 from core.content_engine.workers.fact_enricher import enrich_with_facts
@@ -258,6 +260,11 @@ async def _run_worker_chain_v13(
     semaphore: asyncio.Semaphore,
     site_pages: Optional[List[str]] = None,
     parent_span: Optional[object] = None,
+    storage: Any = None,  # Optional[StorageBackend]
+    session_factory: Any = None,  # Optional[async_sessionmaker]
+    piece_id: Optional[_uuid.UUID] = None,
+    event_bus: Any = None,
+    task_id: Optional[str] = None,
 ) -> FormattedContent:
     """Run the v1.3 4-step worker chain for a single brief.
 
@@ -299,19 +306,39 @@ async def _run_worker_chain_v13(
         bdir = _brief_dir(artifact_dir, brief.brief_id)
 
         try:
+            # Helper to compute relative storage path from brief dir
+            def _rel(filename: str) -> str:
+                return str((bdir / filename).relative_to(storage.root)) if storage else ""
+
             # Step 1: Outline
+            _write_pipeline_state(artifact_dir, [brief.brief_id], "outlining", task_id=task_id)
+            _emit(event_bus, task_id, "worker_progress", {
+                "brief_id": brief.brief_id, "step": "outlining", "worker_num": worker_num,
+            })
             logger.info("Worker #%d: Outlining \"%s\"", worker_num, display_title)
             outline = await generate_outline(
                 brief=brief,
                 company_context_md=company_context_md,
                 trace=span,
             )
-            (bdir / "outline.json").write_text(
-                json.dumps(outline.model_dump(mode="json"), indent=2, default=str),
-                encoding="utf-8",
-            )
+            outline_json = json.dumps(outline.model_dump(mode="json"), indent=2, default=str)
+            if storage:
+                from core.content_engine.artifact_writer import persist_stage_artifact
+                from core.db.enums import ContentArtifactStage
+
+                await persist_stage_artifact(
+                    storage=storage, session_factory=session_factory, piece_id=piece_id,
+                    stage=ContentArtifactStage.outline, relative_path=_rel("outline.json"),
+                    content=outline_json, content_type="application/json",
+                )
+            else:
+                (bdir / "outline.json").write_text(outline_json, encoding="utf-8")
 
             # Step 2: Draft
+            _write_pipeline_state(artifact_dir, [brief.brief_id], "drafting", task_id=task_id)
+            _emit(event_bus, task_id, "worker_progress", {
+                "brief_id": brief.brief_id, "step": "drafting", "worker_num": worker_num,
+            })
             logger.info("Worker #%d: Drafting \"%s\"", worker_num, display_title)
             draft = await generate_draft(
                 outline=outline,
@@ -320,9 +347,20 @@ async def _run_worker_chain_v13(
                 company_context_md=company_context_md,
                 trace=span,
             )
-            (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
+            if storage:
+                await persist_stage_artifact(
+                    storage=storage, session_factory=session_factory, piece_id=piece_id,
+                    stage=ContentArtifactStage.draft, relative_path=_rel("draft.md"),
+                    content=draft.markdown,
+                )
+            else:
+                (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
 
             # Step 3: Link
+            _write_pipeline_state(artifact_dir, [brief.brief_id], "linking", task_id=task_id)
+            _emit(event_bus, task_id, "worker_progress", {
+                "brief_id": brief.brief_id, "step": "linking", "worker_num": worker_num,
+            })
             logger.info("Worker #%d: Linking \"%s\"", worker_num, display_title)
             linked = await link_content(
                 draft=draft,
@@ -332,9 +370,20 @@ async def _run_worker_chain_v13(
                 site_pages=site_pages,
                 trace=span,
             )
-            (bdir / "linked.md").write_text(linked.markdown, encoding="utf-8")
+            if storage:
+                await persist_stage_artifact(
+                    storage=storage, session_factory=session_factory, piece_id=piece_id,
+                    stage=ContentArtifactStage.linked, relative_path=_rel("linked.md"),
+                    content=linked.markdown,
+                )
+            else:
+                (bdir / "linked.md").write_text(linked.markdown, encoding="utf-8")
 
             # Step 4: Fact Check (verify-only, no new content)
+            _write_pipeline_state(artifact_dir, [brief.brief_id], "enriching", task_id=task_id)
+            _emit(event_bus, task_id, "worker_progress", {
+                "brief_id": brief.brief_id, "step": "enriching", "worker_num": worker_num,
+            })
             logger.info("Worker #%d: Fact checking \"%s\"", worker_num, display_title)
             fact_check_draft = ContentDraft(
                 brief_id=linked.brief_id,
@@ -349,7 +398,14 @@ async def _run_worker_chain_v13(
                 domain=input_data.domain,
                 trace=span,
             )
-            (bdir / "fact_checked.md").write_text(checked.markdown, encoding="utf-8")
+            if storage:
+                await persist_stage_artifact(
+                    storage=storage, session_factory=session_factory, piece_id=piece_id,
+                    stage=ContentArtifactStage.enriched, relative_path=_rel("enriched.md"),
+                    content=checked.markdown,
+                )
+            else:
+                (bdir / "fact_checked.md").write_text(checked.markdown, encoding="utf-8")
 
             # Compute structural counts inline (no formatter step)
             counts = _count_structural_elements(checked.markdown)
@@ -396,6 +452,11 @@ async def dispatch_workers_v13(
     artifact_dir: Path = Path("."),
     site_pages: Optional[List[str]] = None,
     parent_span: Optional[object] = None,
+    storage: Any = None,  # Optional[StorageBackend]
+    session_factory: Any = None,  # Optional[async_sessionmaker]
+    piece_id_map: Optional[Dict[str, _uuid.UUID]] = None,
+    event_bus: Any = None,
+    task_id: Optional[str] = None,
 ) -> Tuple[List[Tuple[str, FormattedContent]], List[Dict[str, str]]]:
     """Dispatch v1.3 worker chains in parallel.
 
@@ -418,6 +479,7 @@ async def dispatch_workers_v13(
           - failures: List of {"brief_id": str, "error": str} dicts
     """
     semaphore = asyncio.Semaphore(max_concurrent)
+    pid_map = piece_id_map or {}
 
     tasks = [
         _run_worker_chain_v13(
@@ -430,6 +492,11 @@ async def dispatch_workers_v13(
             semaphore=semaphore,
             site_pages=site_pages,
             parent_span=parent_span,
+            storage=storage,
+            session_factory=session_factory,
+            piece_id=pid_map.get(brief.brief_id),
+            event_bus=event_bus,
+            task_id=task_id,
         )
         for i, brief in enumerate(briefs)
     ]

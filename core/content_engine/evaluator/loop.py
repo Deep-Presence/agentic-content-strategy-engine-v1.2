@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import List, Literal, Optional, Tuple
+from typing import Any, List, Literal, Optional, Tuple
 
 from core.config.settings import settings
 from core.content_engine.evaluator.factual_judge import evaluate_factual
@@ -21,6 +21,7 @@ from core.content_engine.evaluator.semantic import evaluate_semantic
 from core.content_engine.evaluator.structural import evaluate_structural
 from core.content_engine.evaluator.style_judge import evaluate_style
 from core.content_engine.pipeline import _cli_worker_progress
+from core.content_engine.state_helpers import _emit, _write_pipeline_state
 from core.content_engine.tracing_v13 import (
     create_span,
     create_trace,
@@ -290,6 +291,8 @@ async def evaluate_and_optimize(
     parent_span: Optional[object] = None,
     use_eeat: bool = False,
     use_targeted_revision: bool = False,
+    event_bus: Any = None,
+    task_id: Optional[str] = None,
 ) -> Tuple[FormattedContent, RevisionHistory, FeedbackRoute]:
     """Run the evaluation-optimization loop for a single content piece.
 
@@ -453,6 +456,13 @@ async def evaluate_and_optimize(
         # Compile feedback and trigger revision
         feedback = _compile_feedback(dimensions)
         failed_dims = [d.dimension for d in dimensions if not d.passed]
+
+        # Mark brief as "revising" for Kanban sync
+        _write_pipeline_state(artifact_dir, [brief.brief_id], "revising", task_id=task_id)
+        _emit(event_bus, task_id, "worker_progress", {
+            "brief_id": brief.brief_id, "step": "revising", "cycle": cycle + 1,
+        })
+
         _cli_worker_progress(
             f"{brief.brief_id}: Revision cycle {cycle + 1} — "
             f"fixing {len(failed_dims)} dimensions"

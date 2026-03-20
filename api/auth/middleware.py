@@ -90,8 +90,14 @@ def _extract_token(scope: Scope) -> Optional[str]:
 
 # ── 401 response sender ───────────────────────────────────
 
-async def _send_401(send: Send, detail: str, code: str) -> None:
-    """Send a raw ASGI 401 JSON response."""
+async def _send_401(
+    send: Send, detail: str, code: str, *, path: str = "", method: str = ""
+) -> None:
+    """Send a raw ASGI 401 JSON response with structured logging."""
+    logger.warning(
+        "auth_failure",
+        extra={"error_code": code, "path": path, "method": method},
+    )
     body = json.dumps({"detail": detail, "code": code}).encode("utf-8")
     await send({
         "type": "http.response.start",
@@ -141,26 +147,27 @@ class AuthMiddleware:
             return
 
         # Extract token
+        method = scope.get("method", "")
         token = _extract_token(scope)
         if not token:
-            await _send_401(send, "Missing authentication token", "missing_token")
+            await _send_401(send, "Missing authentication token", "missing_token", path=path, method=method)
             return
 
         # Verify token via extracted utility (no AuthStore dependency)
         secret_key = self._get_secret_key(scope)
         if not secret_key:
             logger.error("secret_key not available on app.state")
-            await _send_401(send, "Authentication service unavailable", "auth_unavailable")
+            await _send_401(send, "Authentication service unavailable", "auth_unavailable", path=path, method=method)
             return
 
         payload = _verify_token_util(secret_key, token)
         if not payload:
-            await _send_401(send, "Invalid or expired token", "invalid_token")
+            await _send_401(send, "Invalid or expired token", "invalid_token", path=path, method=method)
             return
 
         # Stream tokens can only be used for SSE endpoints (Codex C4)
         if payload.get("stream_only") and not path.endswith("/events"):
-            await _send_401(send, "Stream token cannot be used here", "invalid_token")
+            await _send_401(send, "Stream token cannot be used here", "invalid_token", path=path, method=method)
             return
 
         # Populate request state for downstream dependencies

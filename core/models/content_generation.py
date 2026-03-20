@@ -292,6 +292,8 @@ class ContentPiece(BaseModel):
     eval_summary: Dict[str, Any] = Field(default_factory=dict)
     human_notes: Optional[str] = None
     artifact_path: Optional[str] = None
+    # Topic Discovery traceability
+    topic_assignment_id: Optional[str] = None
 
 
 class ContentGenerationOutput(BaseModel):

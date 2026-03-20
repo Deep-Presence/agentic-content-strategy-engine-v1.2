@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +28,11 @@ class ContentStartRequestV13(BaseModel):
     # Manual mode
     manual_prompt: Optional[str] = Field(default=None, max_length=2000)
     manual_description: Optional[str] = Field(default=None, max_length=2000)
-    manual_cluster: Optional[str] = None
+    manual_cluster: Optional[str] = Field(default=None, max_length=200)
+    gap_query_id: Optional[str] = None  # Direct gap lookup key from Analytics
+    brief_id_hint: Optional[str] = Field(
+        default=None, max_length=20, pattern=r"^brief-\d{1,4}$",
+    )  # Pre-created brief_id (validated to prevent path traversal)
 
     # Product scope
     product_slug: Optional[str] = None
@@ -40,6 +44,28 @@ class ContentStartRequestV13(BaseModel):
     max_concurrent_workers: int = Field(default=3, ge=1, le=10)
     max_revision_cycles: int = Field(default=2, ge=0, le=5)
     skip_stages: List[int] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_manual_fields(self) -> "ContentStartRequestV13":
+        """Ensure manual mode has a non-empty prompt and valid skip_stages."""
+        if self.entry_mode == "manual":
+            if not self.manual_prompt or not self.manual_prompt.strip():
+                raise ValueError(
+                    "manual_prompt is required and must be non-empty "
+                    "when entry_mode is 'manual'"
+                )
+            # M1-fix: normalize manual_cluster whitespace at input boundary
+            if self.manual_cluster:
+                self.manual_cluster = self.manual_cluster.strip()
+            # H6-fix: stages 0-1 are skipped by design, stage 2 is required
+            invalid_skips = set(self.skip_stages) & {0, 1, 2}
+            if invalid_skips:
+                raise ValueError(
+                    f"Manual mode cannot skip stages {sorted(invalid_skips)}. "
+                    "Stages 0-1 are already skipped by design, and stage 2 "
+                    "(Brief Builder) is required. Only stages 3, 4, 5 may be skipped."
+                )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -131,3 +157,74 @@ class ApprovalResponseV13(BaseModel):
     stage: str = ""
     brief_id: Optional[str] = None
     message: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Topic Discovery → Content Pipeline
+# ---------------------------------------------------------------------------
+
+
+SUPPORTED_SEARCH_PLATFORMS: set[str] = {"perplexity", "openai", "gemini", "claude"}
+
+
+class TopicContentStartRequest(BaseModel):
+    """Launch the TD → GA → CE pipeline for approved topic assignments."""
+
+    company_name: str
+    domain: str
+    effective_slug: str
+    topic_assignment_ids: List[str] = Field(min_length=1, max_length=20)
+
+    @field_validator("topic_assignment_ids")
+    @classmethod
+    def _validate_topic_ids(cls, v: List[str]) -> List[str]:
+        import uuid as _uuid
+
+        for tid in v:
+            try:
+                _uuid.UUID(tid)
+            except ValueError:
+                raise ValueError(
+                    f"Each topic_assignment_id must be a valid UUID, got: {tid!r}"
+                )
+        return v
+
+    # Product scope
+    product_slug: Optional[str] = None
+    product_name: Optional[str] = None
+    product_description: Optional[str] = None
+
+    # Options
+    auto_approve: bool = False
+    platforms: List[str] = Field(
+        default_factory=lambda: ["perplexity", "openai", "gemini", "claude"]
+    )
+
+    @field_validator("platforms")
+    @classmethod
+    def _validate_platforms(cls, v: List[str]) -> List[str]:
+        invalid = [p for p in v if p not in SUPPORTED_SEARCH_PLATFORMS]
+        if invalid:
+            raise ValueError(
+                f"Unsupported platform(s): {invalid}. "
+                f"Allowed: {sorted(SUPPORTED_SEARCH_PLATFORMS)}"
+            )
+        return v
+
+
+class TopicContentStatusItem(BaseModel):
+    """Per-assignment status in a topic content run."""
+
+    topic_assignment_id: str
+    topic_text: str
+    status: str
+    content_piece_id: Optional[str] = None
+    content_title: Optional[str] = None
+
+
+class TopicContentStatusResponse(BaseModel):
+    """Response for topic content status query."""
+
+    effective_slug: str
+    total_assignments: int = 0
+    items: List[TopicContentStatusItem] = Field(default_factory=list)

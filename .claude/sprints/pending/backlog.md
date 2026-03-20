@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-07 (Sprint v9 Gap-Content Enrichment)
-> **Total items:** 37
+> **Last synced:** 2026-03-20 (Kanban-Pipeline Sync Sprint — Codex Review)
+> **Total items:** 58
 
 ## Critical (Fix Before Production)
 
@@ -123,6 +123,67 @@
 - **Blocked by:** nothing
 
 ## Medium Priority
+
+### PB-89: Stale pipeline_state.json entries on HITL-2 reject / zero-blueprint / exception paths
+- **Source:** Codex backend review, Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `core/content_engine/pipeline_v13.py` (_finalize_pipeline, manual mode early returns)
+- **Root cause:** `_cleanup_pipeline_state` only cleans brief IDs that made it into the `pieces` list. Briefs rejected at HITL-2, manual/TD zero-blueprint failures, or unhandled exceptions leave stale Phase-0 statuses in `pipeline_state.json` forever.
+- **Fix:** Track a `touched_brief_ids` set for all state writes and cleanup in a `finally` block on all exit paths (including error/early-return branches).
+
+### PB-90: Re-brief path writes state for old brief_id but reruns under new brief_id
+- **Source:** Codex backend review, Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `core/content_engine/pipeline_v13.py` (Stage 5 rethink), `_rebrief_and_rerun()`
+- **Root cause:** `_write_pipeline_state(... [final_content.brief_id], "briefing")` uses the original brief_id, but `_rebrief_and_rerun` generates a new `rebrief-{uuid}` brief_id. Cleanup uses piece IDs only. This orphans stale statuses.
+- **Fix:** Either reuse original brief_id for rebrief (`brief_id_overrides=[blueprint.brief_id]`) or explicitly cleanup both old and new IDs.
+
+### PB-91: pipeline_state.json read-modify-write is not process-safe
+- **Source:** Codex backend review, Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `core/content_engine/state_helpers.py` (_write_pipeline_state, _cleanup_pipeline_state)
+- **Root cause:** Concurrent writers in different processes can lose updates or read partial JSON. Currently single-process (Uvicorn), but will break with multi-process deployment.
+- **Fix:** Add file lock (`fcntl.flock`) + atomic write (`write temp` + `os.replace`).
+
+### PB-92: Stage-content API does not expose linked.md / fact_checked.md
+- **Source:** Codex backend review, Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `api/services/content_data_service.py` (_STAGE_FILES, _VALID_STAGES)
+- **Root cause:** v1.3 dispatcher writes `linked.md` and `fact_checked.md` but the GET `/briefs/{id}/{stage}` endpoint only recognizes legacy stage names (outline, draft, enriched, formatted, eval_history, final).
+- **Fix:** Add `linked` and `fact_checked` to `_VALID_STAGES`/`_STAGE_FILES`.
+
+### PB-93: Systematic audit — DbService ↔ filesystem state disconnect
+- **Source:** Kanban-Pipeline Sync sprint, 2026-03-20 — `DbContentDataService.get_briefs()` returned stale `status: "suggested"` because it read from Postgres (which had `planned`) instead of `pipeline_state.json` (which had `brief_review`)
+- **Date added:** 2026-03-20
+- **Files affected:** `core/services/db_content_data.py` (fixed for `get_briefs`), potentially other DbService methods
+- **Root cause:** The "filesystem-first, DB-additive" architecture means pipelines write real-time state to JSON artifacts, but DbService implementations query Postgres, which is only updated at coarser granularity. When `DATABASE_URL` is set, the frontend silently gets stale data. Additionally, the DB uses UUID primary keys as `id` while the pipeline uses filesystem IDs like `brief-016` — causing HITL approval mismatches.
+- **Fixed so far:** `DbContentDataService.get_briefs()` now overlays `pipeline_state.json` (Phase 0 status), returns `task_id` from `__task_ids__`, and uses `piece.brief_id` instead of UUID as the response `id`.
+- **Remaining work:**
+  1. Audit ALL other DbService methods for similar disconnects (get_brief_detail, stage content, etc.)
+  2. Audit `DbTaskStore` for any filesystem-state dependencies
+  3. When migrating to Redis-backed TaskStore/state, replace `pipeline_state.json` with Redis pub/sub — eliminates the JSON/DB split entirely
+  4. Consider writing pipeline status updates to both JSON AND DB simultaneously as an interim fix
+
+### PB-86: Pre-existing test failure — test_persistence.py mock doesn't support await
+- **Source:** Discovered during Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `tests/content_engine/test_persistence.py::TestPersistContentPieces::test_happy_path_single_piece`
+- **Root cause:** `session2.execute` is a `MagicMock`, not an `AsyncMock`. Line 94 in `persistence.py` does `await repo.get_by_slug_and_brief_id(...)` on a sync mock.
+- **Fix:** Replace `MagicMock` with `AsyncMock` for the session factory and repo methods.
+
+### PB-87: Pre-existing test failure — tracing_v13 module attribute `_langsmith_available` removed
+- **Source:** Discovered during Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `tests/content_engine/test_tracing_v13.py::TestCreatePipelineTrace::test_returns_none_when_disabled`
+- **Root cause:** Test patches `core.content_engine.tracing_v13._langsmith_available` but the module no longer has this attribute (likely renamed or refactored).
+- **Fix:** Update test to patch the current guard attribute in `tracing_v13.py`.
+
+### PB-88: Pre-existing test failure — tracing_compat patches non-existent `_is_enabled` attribute
+- **Source:** Discovered during Kanban-Pipeline Sync sprint, 2026-03-20
+- **Date added:** 2026-03-20
+- **Files affected:** `tests/content_engine/test_tracing_compat.py::TestCreateSpanCompat::test_input_kwarg_alias`
+- **Root cause:** Test patches `core.content_engine.tracing_v13._is_enabled` but no such attribute exists in the module.
+- **Fix:** Update test to use the correct attribute name or remove if obsolete.
 
 ### PB-58: [v1.3-M1] `"response" in dir()` check in E-E-A-T judge is unreliable
 - **Source:** v1.3 critical code review — content-engine-v13
@@ -253,6 +314,83 @@
 - **Date added:** 2026-03-06
 - **Description:** `list_persona_paths()` returns paths in manifest dict insertion order, not sorted. This means prompt context order can drift between runs depending on when personas were added. Should add `sorted()` for deterministic ordering.
 - **Files affected:** `core/research/audience_persona/storage.py:263`
+- **Blocked by:** nothing
+
+### PB-67: [DB-M1] `get_latest_by_slug_and_type()` is redundant wrapper
+- **Source:** Sprint v11 DB Foundation Review — M1
+- **Date added:** 2026-03-10
+- **Description:** `ResearchArtifactRepository.get_latest_by_slug_and_type()` delegates to `get_by_slug_and_type()` with no added value. Remove or document the distinction.
+- **Files affected:** `core/db/repositories/research_artifact_repo.py:41-47`
+- **Blocked by:** nothing
+
+### PB-68: [DB-M2] No input validation on `upsert_artifact()`
+- **Source:** Sprint v11 DB Foundation Review — M2
+- **Date added:** 2026-03-10
+- **Description:** Empty `effective_slug`, negative version, path traversal in `storage_key` — no validation at repo level. Add guards or document assumptions.
+- **Files affected:** `core/db/repositories/research_artifact_repo.py`
+- **Blocked by:** nothing
+
+### PB-69: [DB-M3] TD `list_assignments()` shape divergence
+- **Source:** Sprint v11 DB Foundation Review — M3
+- **Date added:** 2026-03-10
+- **Description:** JSON service uses `model_dump()`, DB service uses explicit field extraction with `.value` on enums. Define shared assignment DTO to avoid shape drift.
+- **Files affected:** `core/services/json_topic_discovery_data.py`, `core/services/db_topic_discovery_data.py`
+- **Blocked by:** nothing
+
+### PB-70: [DB-M4] JSON VSG `get_guide()` ignores `version` parameter
+- **Source:** Sprint v11 DB Foundation Review — M4
+- **Date added:** 2026-03-10
+- **Description:** `version` kwarg accepted but never used — always returns latest. Implement versioned reads or remove param.
+- **Files affected:** `core/services/json_vsg_data.py`
+- **Blocked by:** nothing
+
+### PB-71: [DB-M5] Missing multi-tenancy isolation tests
+- **Source:** Sprint v11 DB Foundation Review — M5
+- **Date added:** 2026-03-10
+- **Description:** No test verifying two companies with same slug don't collide in `upsert_artifact()`. C2 fix added `company_id` to WHERE but no integration test proves isolation.
+- **Files affected:** `tests/db/test_research_artifact_repo.py`
+- **Blocked by:** nothing
+
+### PB-72: [DB-M6] DB services return `""` instead of `None` for missing content files
+- **Source:** Sprint v11 DB Foundation Review — M6
+- **Date added:** 2026-03-10
+- **Description:** `content_md or ""` masks missing files. Downstream can't distinguish "empty doc" from "file not found". Consider returning `None` and letting callers decide.
+- **Files affected:** `core/services/db_kb_data.py`, `core/services/db_persona_data.py`
+- **Blocked by:** nothing
+
+### PB-73: [SA-R1] Distributed lock for multi-worker site audit deployment
+- **Source:** Sprint v12 Site Audit DB Persistence — Codex audit (deferred)
+- **Date added:** 2026-03-10
+- **Description:** Current slug lock is in-process only (`asyncio.Lock`). Multi-worker deployment needs PG advisory lock or Redis-based distributed lock to prevent duplicate audits across workers.
+- **Files affected:** `api/tasks/runner.py`, `api/tasks/store.py`
+- **Blocked by:** nothing
+
+### PB-74: [SA-C2] Product-scoped read endpoints for site audit
+- **Source:** Sprint v12 Site Audit DB Persistence — Codex audit (deferred)
+- **Date added:** 2026-03-10
+- **Description:** Routes use `{slug}` (company_slug) but DB stores `effective_slug` (`{company}__{product}`). Product-scoped reads need either an explicit `product_slug` query param or endpoint restructuring to `/companies/{slug}/products/{product}/audits`.
+- **Files affected:** `api/routers/site_audit.py`, `core/services/db_site_audit_data.py`
+- **Blocked by:** nothing
+
+### PB-76: [RO-M6] VSG skip logic never fires — ap_manifest_version never written by VSG pipeline
+- **Source:** Sprint v13 Research Orchestrator — Codex audit (deferred finding #6)
+- **Date added:** 2026-03-11
+- **Description:** `_should_skip_vsg()` in orchestrator compares `vsg_manifest.ap_manifest_version` against current AP manifest fingerprint (`last_full_run.isoformat()`). But the VSG pipeline's finalize phase never writes `ap_manifest_version` to the VSG manifest — only `company_name` and `last_full_run`. So VSG skip logic always sees `ap_manifest_version=None` and never skips.
+- **Files affected:** `core/research/voice_style_guide/pipeline.py:445-448`, `core/models/voice_style_guide.py`, `core/research/orchestrator.py:170`
+- **Blocked by:** nothing
+
+### PB-77: [RO-M7] Process-local concurrency — slug locks/semaphore lost in multi-worker deployment
+- **Source:** Sprint v13 Research Orchestrator — Codex audit (deferred finding #7)
+- **Date added:** 2026-03-11
+- **Description:** Slug locks, approval queues, task handles, and semaphore are in-memory only in both `TaskStore` and `DbTaskStore`. Multi-process deployments (gunicorn workers, horizontal scaling) can run the same slug concurrently and race on artifact writes. Known tech debt — needs PG advisory locks or Redis-based distributed locking.
+- **Files affected:** `api/tasks/store.py`, `core/services/db_task_store.py`, `api/tasks/runner.py`
+- **Blocked by:** nothing
+
+### PB-75: [SA-DI] Session/service DI lifecycle cleanup
+- **Source:** Sprint v12 Site Audit DB Persistence — Codex audit (deferred)
+- **Date added:** 2026-03-10
+- **Description:** `api/dependencies.py` creates DB services without `yield`/cleanup pattern. Session factories are created once at startup but services don't have explicit lifecycle management. Should use FastAPI `yield` dependencies for proper cleanup.
+- **Files affected:** `api/dependencies.py`
 - **Blocked by:** nothing
 
 ## Low Priority / Nice to Have
@@ -471,6 +609,42 @@
 - **Files affected:** `core/content_engine/pipeline_v13.py` (lines 395-435)
 - **Blocked by:** nothing
 
+### PB-80: DB integration tests for migrations 0016+0017
+- **Source:** pgvector-migration-v16 — Codex review deferred
+- **Date added:** 2026-03-15
+- **Description:** Migrations 0016 (pgvector_migration) and 0017 (cps_training_tables) need DB integration tests verifying table creation, HNSW indexes, backfill correctness, and downgrade safety. Requires `TEST_DATABASE_URL`.
+- **Files affected:** `tests/db/test_pgvector_migration.py`
+- **Status:** ✅ RESOLVED 2026-03-15 — 13 DB integration tests (persona_embeddings CRUD + unique constraints, semantic_units nullable run_id + slug query, paragraph_embeddings nullable FK, CPS training tables, EmbeddingRepository end-to-end). Auto-skip without TEST_DATABASE_URL.
+
+### PB-81: Tests for new EmbeddingRepository methods
+- **Source:** pgvector-migration-v16 — Phase 3 deferred
+- **Date added:** 2026-03-15
+- **Description:** 7 new methods added to `embedding_repo.py` (slug-based queries, upserts, persona embeddings, count/delete). Need mocked session unit tests.
+- **Files affected:** `tests/shared_tools/test_embedding_repo_extended.py`
+- **Status:** ✅ RESOLVED 2026-03-15 — 15 mocked-session unit tests covering all 7 methods (get_by_slug, get_by_ids, count, delete, upsert paragraphs, upsert personas, get personas).
+
+### PB-82: Integration test for migrate_chroma_to_pgvector.py script
+- **Source:** pgvector-migration-v16 — Phase 8 deferred
+- **Date added:** 2026-03-15
+- **Description:** Data migration script needs integration test with mock ChromaDB client + mock pgvector. Verify collection enumeration, batch processing, idempotent ON CONFLICT, dry-run mode, and summary report.
+- **Files affected:** `tests/scripts/test_migrate_chroma_to_pgvector.py`
+- **Status:** ✅ RESOLVED 2026-03-15 — 17 tests (slug extraction, 3 collection types, dry-run, empty collections, missing chroma dir, missing chromadb, missing DATABASE_URL, null documents, multi-company).
+
+### PB-83: [LOG-C1] SSE `/events` endpoint context binding
+- **Source:** Structured Logging v17 — Phase C deferred (Codex finding)
+- **Date added:** 2026-03-15
+- **Status:** ✅ RESOLVED 2026-03-15 — Sprint v18 Phase 4. SSE endpoint now binds correlation_id, user_id, company_slug, task_id, pipeline_name. Clears context on disconnect via _stream_with_cleanup(). 6 tests.
+
+### PB-84: [LOG-C2] Auth failure request logging
+- **Source:** Structured Logging v17 — Phase C deferred (Codex finding)
+- **Date added:** 2026-03-15
+- **Status:** ✅ RESOLVED 2026-03-15 — Sprint v18 Phase 5. _send_401() now logs structured auth_failure warning with error_code, path, method. All 4 call sites updated. 5 tests.
+
+### PB-85: [LOG-C3] Per-step and per-agent context binding
+- **Source:** Structured Logging v17 — Phase C deferred
+- **Date added:** 2026-03-15
+- **Status:** ✅ RESOLVED 2026-03-15 — Sprint v18 Phase 6. scoped_bind(step_name/agent_name) added to all 6 pipelines: GA (S1-S8), KB (6 agents), AP (2 agents), VSG (3 agents), CE v1.3 (6 stages), SA (S1-S6). 3 tests.
+
 ### PB-44: Knowledge doc upload content_type inferred from extension only
 - **Source:** Settings-knowledge-docs sprint self-review
 - **Date added:** 2026-02-27
@@ -529,3 +703,12 @@
 
 ### PB-49: Re-brief brief_id collision overwrites original artifact ✅ RESOLVED 2026-03-02
 - **Resolved by:** v1.3 critical fixes — Added `brief_id_overrides` to `build_briefs_parallel()`; `_rebrief_and_rerun()` passes `rebrief-{uuid8}` override; 4 collision-prevention tests added
+
+### PB-83: SSE context binding ✅ RESOLVED 2026-03-15
+- **Resolved by:** Sprint v18 Phase 4 — SSE endpoint binds correlation_id, user_id, company_slug, task_id, pipeline_name. Clears on disconnect. 6 tests.
+
+### PB-84: Auth failure request logging ✅ RESOLVED 2026-03-15
+- **Resolved by:** Sprint v18 Phase 5 — `_send_401()` logs structured auth_failure warning. All 4 call sites updated. 5 tests.
+
+### PB-85: Per-step/per-agent context binding ✅ RESOLVED 2026-03-15
+- **Resolved by:** Sprint v18 Phase 6 — `scoped_bind()` in all 6 pipelines (GA S1-S8, KB 6 agents, AP 2 agents, VSG 3 agents, CE 6 stages, SA S1-S6). 3 tests.

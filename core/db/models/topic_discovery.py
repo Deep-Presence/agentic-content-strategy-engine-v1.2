@@ -1,13 +1,16 @@
 """Topic Discovery ORM models.
 
 Extended from the initial scaffolds to support the full Topic Discovery
-Module architecture: taxonomy trees, subdomain nodes, and topic assignments.
+Module architecture: taxonomy trees, subdomain nodes, topic assignments,
+source results, and persona affinity.
 
 Tables:
 - topic_discoveries — top-level discovery run per company/product
 - taxonomy_trees — versioned taxonomy snapshots
 - subdomain_nodes — individual nodes in the taxonomy hierarchy (self-referencing)
 - topic_assignments — content opportunities in the dimensionality matrix
+- td_source_results — per-source S1 generation statistics
+- td_persona_affinity — persona-subdomain affinity scores
 """
 from __future__ import annotations
 
@@ -23,6 +26,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
@@ -73,6 +77,13 @@ class TopicDiscoveryModel(UUIDPKMixin, Base):
     matrix_version: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0",
     )
+    scoring_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    persona_affinity_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    manifest_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     discovered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -93,6 +104,10 @@ class TaxonomyTreeModel(UUIDPKMixin, Base):
     __tablename__ = "taxonomy_trees"
     __table_args__ = (
         Index("ix_taxonomy_trees_discovery", "discovery_id"),
+        UniqueConstraint(
+            "discovery_id", "version",
+            name="uq_taxonomy_trees_discovery_version",
+        ),
     )
 
     discovery_id: Mapped[_uuid.UUID] = mapped_column(
@@ -158,6 +173,14 @@ class SubdomainNodeModel(UUIDPKMixin, Base):
         Integer, nullable=False, default=0, server_default="0",
     )
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    priority_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    priority_factors: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    persona_affinity_json: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    expansion_status: Mapped[str | None] = mapped_column(
+        String, nullable=True, server_default="not_expanded",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -173,6 +196,7 @@ class TopicAssignmentModel(UUIDPKMixin, Base):
     __table_args__ = (
         Index("ix_topic_assignments_discovery", "discovery_id"),
         Index("ix_topic_assignments_subdomain", "subdomain_node_id"),
+        Index("ix_topic_assignments_persona", "persona_id"),
     )
 
     discovery_id: Mapped[_uuid.UUID] = mapped_column(
@@ -224,6 +248,93 @@ class TopicAssignmentModel(UUIDPKMixin, Base):
         Boolean, nullable=False, default=False, server_default="false",
     )
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    persona_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    persona_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    subdomain_id_text: Mapped[str | None] = mapped_column(String, nullable=True)
+    subdomain_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+# ── Source Results ──────────────────────────────────────────────────────
+
+
+class SourceResultModel(UUIDPKMixin, Base):
+    """Per-source S1 generation statistics and raw candidates."""
+
+    __tablename__ = "td_source_results"
+    __table_args__ = (
+        Index("ix_td_source_results_discovery", "discovery_id"),
+    )
+
+    discovery_id: Mapped[_uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("topic_discoveries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1",
+    )
+    total_candidates: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    total_rounds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    singletons: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    doubletons: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    chao1_estimate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_sample_coverage: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    execution_time_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidates_json: Mapped[list | dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+# ── Persona Affinity ───────────────────────────────────────────────────
+
+
+class PersonaAffinityModel(UUIDPKMixin, Base):
+    """Persona-subdomain affinity score (many-to-many join table)."""
+
+    __tablename__ = "td_persona_affinity"
+    __table_args__ = (
+        Index("ix_td_persona_affinity_discovery", "discovery_id"),
+        Index("ix_td_persona_affinity_persona", "persona_id"),
+    )
+
+    discovery_id: Mapped[_uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("topic_discoveries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    subdomain_node_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("subdomain_nodes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    persona_id: Mapped[str] = mapped_column(String, nullable=False)
+    persona_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    subdomain_id_str: Mapped[str | None] = mapped_column(String, nullable=True)
+    subdomain_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    affinity_score: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0",
+    )
+    provenance: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    pain_points: Mapped[list | dict | None] = mapped_column(JSONB, nullable=True)
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

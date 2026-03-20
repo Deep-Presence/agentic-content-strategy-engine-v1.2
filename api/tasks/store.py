@@ -56,12 +56,12 @@ class TaskStore:
         self,
         base_dir: Path,
         event_bus: EventBus,
-        max_concurrent: int = 3,
+        max_concurrent: int = 10,
     ) -> None:
         self._tasks: Dict[str, PipelineTask] = {}
         self._base_dir = base_dir
         self._event_bus = event_bus
-        self._slug_locks: Dict[str, str] = {}  # slug -> task_id
+        self._slug_locks: Dict[str, str] = {}  # "pipeline:effective_slug" -> task_id
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._approval_queues: Dict[str, asyncio.Queue] = {}
         self._task_handles: Dict[str, asyncio.Task] = {}  # task_id -> asyncio.Task
@@ -79,16 +79,25 @@ class TaskStore:
         pipeline: str,
         company_slug: str,
         product_slug: Optional[str] = None,
+        allow_parallel: bool = False,
     ) -> PipelineTask:
-        """Create a new task and acquire slug lock.
+        """Create a new task and optionally acquire slug lock.
 
-        When product_slug is set, the lock key is ``company_slug__product_slug``
-        so company-level and product-level runs can coexist.
+        Lock key is ``pipeline:effective_slug`` so different pipeline types
+        can run concurrently for the same company.  When product_slug is set,
+        effective_slug = ``company_slug__product_slug``.
+
+        Args:
+            allow_parallel: If True, skip slug lock acquisition. Used for
+                manual content pipeline entries that can run in parallel.
         """
         effective = (
             f"{company_slug}__{product_slug}" if product_slug else company_slug
         )
-        self.acquire_slug_lock(effective)
+        lock_key = f"{pipeline}:{effective}"
+
+        if not allow_parallel:
+            self.acquire_slug_lock(lock_key)
 
         task_id = str(uuid.uuid4())
         task = PipelineTask(
@@ -99,7 +108,8 @@ class TaskStore:
             effective_slug=effective,
         )
         self._tasks[task_id] = task
-        self._slug_locks[effective] = task_id
+        if not allow_parallel:
+            self._slug_locks[lock_key] = task_id
         self._persist(task)
         return task
 
@@ -117,6 +127,8 @@ class TaskStore:
         task = self._tasks[task_id]
         for key, value in kwargs.items():
             if hasattr(task, key):
+                if key == "status" and isinstance(value, str) and not isinstance(value, TaskStatus):
+                    value = TaskStatus(value)
                 setattr(task, key, value)
         task.updated_at = datetime.now(timezone.utc)
         self._persist(task)

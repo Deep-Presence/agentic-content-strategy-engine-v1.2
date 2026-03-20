@@ -68,6 +68,7 @@ class GapSummaryResponse(BaseModel):
     cluster_performance: List[ClusterPerformanceRow] = Field(default_factory=list)
     total_queries: int = 0
     total_citations: int = 0
+    company_cited_count: int = 0
     average_gap: float = 0.0
     executive_summary: str = ""
     recommendations: List[Dict[str, Any]] = Field(default_factory=list)
@@ -126,6 +127,8 @@ class QueryRow(BaseModel):
     top_domain: Optional[str] = None
     top_exemplar_sim: float = 0.0
     platform_citations: Dict[str, int] = Field(default_factory=dict)
+    company_cited: bool = False
+    company_cited_platforms: List[str] = Field(default_factory=list)
     content_brief: Optional[QueryContentBrief] = None
     top_exemplars: List[QueryExemplar] = Field(default_factory=list)
 

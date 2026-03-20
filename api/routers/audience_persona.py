@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_persona_data_service, get_task_store
 from api.schemas.audience_persona import (
     ApprovalResponseAP,
     AudiencePersonaStartRequest,
@@ -32,6 +32,7 @@ from core.auth.utils.domain import derive_slug
 from core.models.audience_persona import PersonaBrief
 from core.models.organization import UserProfile
 from core.research.audience_persona.storage import PersonaStorage
+from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 
 logger = logging.getLogger(__name__)
@@ -153,6 +154,17 @@ async def start_audience_persona(
         should_guard, message = _ap_should_guard(artifacts_root, effective_slug, slug)
         if should_guard:
             response.status_code = 200
+            await log_pipeline_launch(
+                user_id=_user.id,
+                pipeline="audience_persona",
+                company_slug=slug,
+                task_id=f"existing-{effective_slug}",
+                detail={
+                    "outcome": "already_exists",
+                    "product_slug": body.product_slug,
+                    "effective_slug": effective_slug,
+                },
+            )
             return PipelineRunResponse(
                 run_id=f"existing-{effective_slug}",
                 pipeline="audience_persona",
@@ -178,6 +190,18 @@ async def start_audience_persona(
         )
     )
     task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="audience_persona",
+        company_slug=slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "force_rerun": body.force_rerun,
+            "effective_slug": effective_slug,
+        },
+    )
 
     return PipelineRunResponse(
         run_id=task.task_id,
@@ -223,7 +247,7 @@ def get_audience_persona_status(
 
 
 @router.post("/{run_id}/approve/briefs")
-def approve_briefs(
+async def approve_briefs(
     run_id: str,
     body: PersonaBriefApprovalRequest,
     http_request: Request,
@@ -254,7 +278,26 @@ def approve_briefs(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="audience_persona",
+            stage="persona_brief_review",
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="audience_persona",
+        stage="persona_brief_review",
+        decision=body.batch_decision,
+        company_slug=user_company_slug,
+        detail={"brief_count": len(body.brief_reviews), "added_count": len(body.added_briefs)},
+    )
 
     return ApprovalResponseAP(
         status="accepted",
@@ -267,7 +310,7 @@ def approve_briefs(
 
 
 @router.post("/{run_id}/approve/profiles")
-def approve_profiles(
+async def approve_profiles(
     run_id: str,
     body: PersonaProfileApprovalRequest,
     http_request: Request,
@@ -296,7 +339,26 @@ def approve_profiles(
             expected_nonce=nonce,
         )
     except ApprovalWindowError as exc:
+        await log_hitl_decision(
+            user_id=_user.id,
+            run_id=run_id,
+            pipeline="audience_persona",
+            stage="persona_profile_review",
+            decision="rejected",
+            company_slug=user_company_slug,
+            detail={"reason": str(exc)},
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=run_id,
+        pipeline="audience_persona",
+        stage="persona_profile_review",
+        decision="profile_review",
+        company_slug=user_company_slug,
+        detail={"profile_count": len(body.profile_reviews)},
+    )
 
     return ApprovalResponseAP(
         status="accepted",
@@ -371,7 +433,7 @@ async def add_persona(
 
 
 @router.post("/{slug}/personas/{persona_id}/approve")
-def standalone_approve_persona(
+async def standalone_approve_persona(
     slug: str,
     persona_id: str,
     body: StandaloneApproveRequest,
@@ -399,6 +461,15 @@ def standalone_approve_persona(
     new_status = "fresh" if body.decision == "approve" else "archived"
     storage.mark_persona_status(persona_id, new_status)
 
+    await log_hitl_decision(
+        user_id=_user.id,
+        run_id=persona_id,
+        pipeline="audience_persona",
+        stage="standalone_persona_approval",
+        decision=body.decision,
+        company_slug=slug,
+    )
+
     return {"persona_id": persona_id, "status": new_status}
 
 
@@ -406,37 +477,16 @@ def standalone_approve_persona(
 
 
 @router.get("/{slug}/personas")
-def list_personas(
+async def list_personas(
     slug: str,
     request: Request,
     _user: UserProfile = Depends(require_auth),
-    artifacts_root: Path = Depends(get_artifacts_root),
+    persona_svc=Depends(get_persona_data_service),
 ) -> PersonaListResponse:
     user_company_slug: Optional[str] = getattr(request.state, "company_slug", None)
     if not user_company_slug or slug != user_company_slug:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    storage = PersonaStorage(artifacts_root, slug)
-    manifest = storage.read_manifest()
-
-    items: List[PersonaListItem] = []
-    for pid, entry in manifest.personas.items():
-        items.append(
-            PersonaListItem(
-                persona_id=entry.persona_id or pid,
-                persona_name=entry.persona_name,
-                tagline=entry.tagline,
-                kind=entry.kind,
-                status=entry.status,
-                current_version=entry.current_version,
-                last_updated=entry.last_updated,
-                created_by=entry.created_by,
-                word_count=entry.word_count,
-            )
-        )
-
-    return PersonaListResponse(
-        slug=slug,
-        personas=items,
-        total=len(items),
-    )
+    personas = await persona_svc.list_personas(slug)
+    items = [PersonaListItem.model_validate(p) for p in personas]
+    return PersonaListResponse(slug=slug, personas=items, total=len(items))

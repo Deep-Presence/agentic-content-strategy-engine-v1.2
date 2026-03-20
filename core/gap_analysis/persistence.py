@@ -100,46 +100,13 @@ async def persist_s1(
     slug: str,
     semantic_units: list,
 ) -> None:
-    """Persist s1 outputs → semantic_units table (with embeddings)."""
-    if not _should_persist(session_factory, run_id, company_id):
-        return
-    assert session_factory is not None and run_id is not None and company_id is not None
-    try:
-        from core.db.models.embeddings import SemanticUnitModel
-        from core.db.repositories.embedding_repo import EmbeddingRepository
+    """Persist s1 outputs — no-op for embeddings (VectorStoreClient writes during S1).
 
-        async with session_factory() as session:
-            # Idempotent: clear previous rows for this run
-            await session.execute(
-                delete(SemanticUnitModel).where(SemanticUnitModel.run_id == run_id)
-            )
-
-            repo = EmbeddingRepository(session)
-            items: list[dict[str, object]] = []
-            for unit in semantic_units:
-                if not unit.embedding:
-                    continue  # skip units without embeddings
-                if len(unit.embedding) != 1536:
-                    continue  # wrong dimension
-                items.append({
-                    "id": _uuid.uuid4(),
-                    "company_id": company_id,
-                    "run_id": run_id,
-                    "unit_id": unit.unit_id,
-                    "url": str(unit.url) if unit.url else None,
-                    "title": unit.title,
-                    "text": unit.text,
-                    "embedding": unit.embedding,
-                    "discovery_source": unit.discovery_source or "website",
-                    "char_count": unit.char_count,
-                    "word_count": unit.word_count,
-                })
-            if items:
-                await repo.bulk_store_embeddings(SemanticUnitModel, items)
-            await session.commit()
-        logger.info("persist_s1: %d semantic units stored for %s", len(items), slug)
-    except Exception:
-        logger.warning("persist_s1 failed for %s, continuing without DB", slug, exc_info=True)
+    Embedding storage is now handled by VectorStoreClient.upsert_embeddings()
+    called directly from s1_embed_assets. This function is retained as a hook
+    for any future non-embedding persistence needs.
+    """
+    logger.info("persist_s1: embeddings handled by VectorStoreClient for %s (%d units)", slug, len(semantic_units))
 
 
 # ── persist_s2: Generated Queries ───────────────────────────────────────
@@ -169,6 +136,7 @@ async def persist_s2(
             repo = GapAnalysisRepository(session)
             items: list[dict[str, object]] = []
             for q in queries:
+                source_ids = getattr(q, "source_topic_ids", None) or []
                 items.append({
                     "id": _uuid.uuid4(),
                     "run_id": run_id,
@@ -178,6 +146,7 @@ async def persist_s2(
                     "query_text": q.query_text,
                     "buyer_stage": getattr(q, "buyer_stage", None),
                     "persona_tag": getattr(q, "persona_tag", None),
+                    "source_topic_ids": source_ids if source_ids else None,
                 })
             if items:
                 await repo.bulk_insert_run_queries(items)
@@ -297,7 +266,10 @@ async def persist_s4(
             for cit in enriched:
                 url_str = str(cit.url)
                 url_hash = _hash_text(url_str)
-                enrichment_id = _uuid.uuid4()
+                # Deterministic UUID from url_hash so reruns produce the same id.
+                # Prevents FK mismatch: upsert on url_hash keeps original id,
+                # and signal rows always reference a valid enrichment_id.
+                enrichment_id = _uuid.uuid5(_uuid.NAMESPACE_URL, url_hash)
 
                 enrichment_rows.append({
                     "id": enrichment_id,
@@ -392,26 +364,26 @@ async def persist_s5(
     queries: list,
     enriched: list,
 ) -> None:
-    """Persist s5 outputs → query_embeddings + paragraph_embeddings."""
+    """Persist s5 outputs → query_embeddings table.
+
+    Citation paragraph embeddings are handled by VectorStoreClient during S5.
+    Query embeddings still need persist_s5 because QueryEmbeddingModel requires
+    run_id (FK to pipeline_runs), which is only available in the pipeline context.
+    """
     if not _should_persist(session_factory, run_id, company_id):
         return
     assert session_factory is not None and run_id is not None
     try:
-        from core.db.models.embeddings import (
-            ParagraphEmbeddingModel,
-            QueryEmbeddingModel,
-        )
+        from core.db.models.embeddings import QueryEmbeddingModel
         from core.db.repositories.embedding_repo import EmbeddingRepository
 
         async with session_factory() as session:
-            # Idempotent
+            # Idempotent: clear previous rows for this run
             await session.execute(
                 delete(QueryEmbeddingModel).where(QueryEmbeddingModel.run_id == run_id)
             )
 
             repo = EmbeddingRepository(session)
-
-            # Query embeddings
             q_items: list[dict[str, object]] = []
             for q in queries:
                 if not q.embedding or len(q.embedding) != 1536:
@@ -425,14 +397,6 @@ async def persist_s5(
                 })
             if q_items:
                 await repo.bulk_store_embeddings(QueryEmbeddingModel, q_items)
-
-            # Paragraph embeddings — from best_paragraphs on enriched citations
-            # Note: paragraph_embeddings are tied to url_enrichment_cache via FK.
-            # Since we may not have url_enrichment_ids, we skip this for now
-            # and store only query embeddings. Paragraph embeddings require
-            # resolved url_enrichment_cache IDs (from persist_s4).
-            # This is a known limitation — paragraph embeddings will be
-            # addressed when we add cross-step ID resolution.
 
             await session.commit()
         logger.info("persist_s5: %d query embeddings stored for %s", len(q_items), slug)
@@ -491,6 +455,7 @@ async def persist_s6(
                 if gap.content_brief:
                     content_brief = gap.content_brief.model_dump(mode="json") if hasattr(gap.content_brief, "model_dump") else gap.content_brief
 
+                source_ids = getattr(gap, "source_topic_ids", None) or []
                 gap_rows.append({
                     "id": gap_id,
                     "run_id": run_id,
@@ -505,6 +470,7 @@ async def persist_s6(
                     "gap": _safe_float(gap.gap),
                     "classification": _classify(gap.interpretation or "no_data"),
                     "content_brief": content_brief,
+                    "source_topic_ids": source_ids if source_ids else None,
                 })
 
                 for rank, ex in enumerate(exemplars[:5], start=1):

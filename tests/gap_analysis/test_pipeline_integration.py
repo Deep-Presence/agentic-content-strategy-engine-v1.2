@@ -656,8 +656,9 @@ class TestEngineMocks:
         for name in ["engine_a", "engine_b"]:
             mock = AsyncMock()
             mock.engine_name = name
+            mock.model = f"{name}-model"
             mock.search = AsyncMock(
-                side_effect=lambda text, qid, eng=name: PlatformResult(
+                side_effect=lambda text, qid, eng=name, *, client=None: PlatformResult(
                     engine=eng,
                     query_id=qid,
                     citations=[],

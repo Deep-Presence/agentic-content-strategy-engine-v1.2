@@ -12,14 +12,14 @@ Layout::
             ...
 
 Atomicity: version files are written first, manifest is updated last.
+All I/O goes through a ``StorageBackend`` so the underlying persistence
+layer (local filesystem, S3, GCS) can be swapped via configuration.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
-import os
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -30,16 +30,26 @@ from core.models.audience_persona import (
     PersonaManifest,
     PersonaProfileEntry,
 )
+from core.storage.backends.base import StorageBackend
+from core.storage.backends.local import LocalStorageBackend
 
 logger = logging.getLogger(__name__)
 
 
 class PersonaStorage:
-    """Read / write / version audience persona artifacts on the filesystem."""
+    """Read / write / version audience persona artifacts via a StorageBackend."""
 
-    def __init__(self, artifacts_root: Path, slug: str) -> None:
-        self._root = Path(artifacts_root) / "audience_personas" / slug
+    def __init__(
+        self,
+        artifacts_root: Path,
+        slug: str,
+        *,
+        backend: Optional[StorageBackend] = None,
+    ) -> None:
+        self._artifacts_root = Path(artifacts_root)
         self._slug = slug
+        self._backend = backend or LocalStorageBackend(self._artifacts_root)
+        self._prefix = f"audience_personas/{slug}/"
 
     # ------------------------------------------------------------------
     # Properties
@@ -47,80 +57,66 @@ class PersonaStorage:
 
     @property
     def base_dir(self) -> Path:
-        return self._root
+        return self._artifacts_root / "audience_personas" / self._slug
 
     @property
     def slug(self) -> str:
         return self._slug
 
     # ------------------------------------------------------------------
+    # Key helpers (return paths relative to backend root)
+    # ------------------------------------------------------------------
+
+    def _manifest_key(self) -> str:
+        return f"{self._prefix}_manifest.json"
+
+    def _brief_key(self, persona_id: str) -> str:
+        return f"{self._prefix}{persona_id}/brief.json"
+
+    def _version_md_key(self, persona_id: str, version: int) -> str:
+        return f"{self._prefix}{persona_id}/v{version}.md"
+
+    def _version_json_key(self, persona_id: str, version: int) -> str:
+        return f"{self._prefix}{persona_id}/v{version}.json"
+
+    # ------------------------------------------------------------------
     # Manifest
     # ------------------------------------------------------------------
 
-    def _manifest_path(self) -> Path:
-        return self._root / "_manifest.json"
-
     def read_manifest(self) -> PersonaManifest:
-        path = self._manifest_path()
-        if not path.exists():
+        raw = self._backend.read(self._manifest_key())
+        if raw is None:
             return PersonaManifest(slug=self._slug)
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             return PersonaManifest.model_validate(data)
         except Exception as exc:
-            logger.warning("Failed to read persona manifest at %s: %s", path, exc)
+            logger.warning(
+                "Failed to read persona manifest for %s: %s", self._slug, exc,
+            )
             return PersonaManifest(slug=self._slug)
 
     def write_manifest(self, manifest: PersonaManifest) -> None:
-        self._root.mkdir(parents=True, exist_ok=True)
-        path = self._manifest_path()
-        fd, tmp_path = tempfile.mkstemp(
-            dir=str(self._root), suffix=".tmp", prefix="_manifest_",
+        self._backend.write(
+            self._manifest_key(), manifest.model_dump_json(indent=2),
         )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(manifest.model_dump_json(indent=2))
-            os.replace(tmp_path, str(path))
-        except BaseException:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
-
-    # ------------------------------------------------------------------
-    # Persona directory helpers
-    # ------------------------------------------------------------------
-
-    def _persona_dir(self, persona_id: str) -> Path:
-        return self._root / persona_id
-
-    def _brief_path(self, persona_id: str) -> Path:
-        return self._persona_dir(persona_id) / "brief.json"
-
-    def _version_md_path(self, persona_id: str, version: int) -> Path:
-        return self._persona_dir(persona_id) / f"v{version}.md"
-
-    def _version_json_path(self, persona_id: str, version: int) -> Path:
-        return self._persona_dir(persona_id) / f"v{version}.json"
 
     # ------------------------------------------------------------------
     # Brief persistence
     # ------------------------------------------------------------------
 
     def write_brief(self, persona_id: str, brief: PersonaBrief) -> None:
-        d = self._persona_dir(persona_id)
-        d.mkdir(parents=True, exist_ok=True)
-        self._brief_path(persona_id).write_text(
-            brief.model_dump_json(indent=2), encoding="utf-8",
+        self._backend.write(
+            self._brief_key(persona_id),
+            brief.model_dump_json(indent=2),
         )
 
     def read_brief(self, persona_id: str) -> Optional[PersonaBrief]:
-        path = self._brief_path(persona_id)
-        if not path.exists():
+        raw = self._backend.read(self._brief_key(persona_id))
+        if raw is None:
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
             return PersonaBrief.model_validate(data)
         except Exception:
             return None
@@ -154,17 +150,16 @@ class PersonaStorage:
         entry = manifest.personas.get(persona_id)
         next_version = (entry.current_version + 1) if entry else 1
 
-        persona_dir = self._persona_dir(persona_id)
-        persona_dir.mkdir(parents=True, exist_ok=True)
+        # Write markdown
+        self._backend.write(
+            self._version_md_key(persona_id, next_version), content_md,
+        )
 
-        md_path = self._version_md_path(persona_id, next_version)
-        md_path.write_text(content_md, encoding="utf-8")
-
+        # Write JSON sidecar (optional)
         if content_json is not None:
-            json_path = self._version_json_path(persona_id, next_version)
-            json_path.write_text(
+            self._backend.write(
+                self._version_json_key(persona_id, next_version),
                 json.dumps(content_json, indent=2, default=str),
-                encoding="utf-8",
             )
 
         sha = hashlib.sha256(content_md.encode("utf-8")).hexdigest()
@@ -207,18 +202,21 @@ class PersonaStorage:
         Returns dict with keys: version, content_md, content_json, word_count, sha256.
         Returns None if the version file doesn't exist.
         """
-        md_path = self._version_md_path(persona_id, version)
-        if not md_path.exists():
+        content_md = self._backend.read(
+            self._version_md_key(persona_id, version),
+        )
+        if content_md is None:
             return None
 
-        content_md = md_path.read_text(encoding="utf-8")
         sha = hashlib.sha256(content_md.encode("utf-8")).hexdigest()
 
         content_json: Optional[Dict[str, Any]] = None
-        json_path = self._version_json_path(persona_id, version)
-        if json_path.exists():
+        raw_json = self._backend.read(
+            self._version_json_key(persona_id, version),
+        )
+        if raw_json is not None:
             try:
-                content_json = json.loads(json_path.read_text(encoding="utf-8"))
+                content_json = json.loads(raw_json)
             except Exception:
                 pass
 
@@ -265,14 +263,22 @@ class PersonaStorage:
         ]
 
     def list_persona_paths(self) -> List[str]:
-        """Return paths to latest .md files for active personas (content engine integration)."""
+        """Return paths to latest .md files for active personas (content engine integration).
+
+        Returns absolute filesystem paths for backward compatibility with
+        content engine and gap analysis pipelines.
+        """
         manifest = self.read_manifest()
         paths: List[str] = []
         for pid, entry in manifest.personas.items():
             if entry.status in ("fresh", "stale") and entry.current_version > 0:
-                md_path = self._version_md_path(pid, entry.current_version)
-                if md_path.exists():
-                    paths.append(str(md_path))
+                rel_key = self._version_md_key(pid, entry.current_version)
+                if self._backend.exists(rel_key):
+                    # Return absolute path for downstream consumers
+                    if isinstance(self._backend, LocalStorageBackend):
+                        paths.append(str(self._backend.root / rel_key))
+                    else:
+                        paths.append(rel_key)
         return paths
 
     # ------------------------------------------------------------------

@@ -63,10 +63,9 @@ from core.db.models.gap_analysis import (
 )
 from core.db.models.pipelines import PipelineRunModel
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-)
+from core.shared_tools.structured_logging import configure_logging
+
+configure_logging()
 logger = logging.getLogger("backfill")
 
 ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts"

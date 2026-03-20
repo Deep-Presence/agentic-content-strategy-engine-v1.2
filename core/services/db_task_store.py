@@ -41,11 +41,11 @@ class DbTaskStore:
     def __init__(
         self,
         session_factory: Callable[..., AsyncSession],
-        max_concurrent: int = 3,
+        max_concurrent: int = 10,
     ) -> None:
         self._tasks: Dict[str, PipelineTask] = {}
         self._session_factory = session_factory
-        self._slug_locks: Dict[str, str] = {}
+        self._slug_locks: Dict[str, str] = {}  # "pipeline:effective_slug" -> task_id
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._approval_queues: Dict[str, asyncio.Queue] = {}
         self._task_handles: Dict[str, asyncio.Task] = {}
@@ -89,12 +89,24 @@ class DbTaskStore:
         pipeline: str,
         company_slug: str,
         product_slug: Optional[str] = None,
+        allow_parallel: bool = False,
     ) -> PipelineTask:
-        """Create a new task, acquire slug lock, write to DB."""
+        """Create a new task, optionally acquire slug lock, write to DB.
+
+        Lock key is ``pipeline:effective_slug`` so different pipeline types
+        can run concurrently for the same company.
+
+        Args:
+            allow_parallel: If True, skip slug lock acquisition. Used for
+                manual content pipeline entries that can run in parallel.
+        """
         effective = (
             f"{company_slug}__{product_slug}" if product_slug else company_slug
         )
-        self.acquire_slug_lock(effective)
+        lock_key = f"{pipeline}:{effective}"
+
+        if not allow_parallel:
+            self.acquire_slug_lock(lock_key)
 
         task_id = str(_uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -108,7 +120,8 @@ class DbTaskStore:
             updated_at=now,
         )
         self._tasks[task_id] = task
-        self._slug_locks[effective] = task_id
+        if not allow_parallel:
+            self._slug_locks[lock_key] = task_id
 
         # Write-through to DB (critical: must persist before returning)
         asyncio.create_task(self._db_create(task))
@@ -126,6 +139,8 @@ class DbTaskStore:
         task = self._tasks[task_id]
         for key, value in kwargs.items():
             if hasattr(task, key):
+                if key == "status" and isinstance(value, str) and not isinstance(value, TaskStatus):
+                    value = TaskStatus(value)
                 setattr(task, key, value)
         task.updated_at = datetime.now(timezone.utc)
 

@@ -66,18 +66,20 @@ def upgrade() -> None:
     # ── pgvector extension ───────────────────────────────────────────────
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
-    # ── Create all enum types ────────────────────────────────────────────
-    user_role_enum.create(op.get_bind(), checkfirst=True)
-    pipeline_type_enum.create(op.get_bind(), checkfirst=True)
-    pipeline_status_enum.create(op.get_bind(), checkfirst=True)
-    stage_status_enum.create(op.get_bind(), checkfirst=True)
-    search_engine_enum.create(op.get_bind(), checkfirst=True)
-    gap_classification_enum.create(op.get_bind(), checkfirst=True)
-    artifact_type_enum.create(op.get_bind(), checkfirst=True)
-    artifact_status_enum.create(op.get_bind(), checkfirst=True)
-    content_piece_status_enum.create(op.get_bind(), checkfirst=True)
-    finding_severity_enum.create(op.get_bind(), checkfirst=True)
-    tracking_status_enum.create(op.get_bind(), checkfirst=True)
+    # ── Create all enum types via raw SQL ─────────────────────────────────
+    # sa.Enum.create_type=False is broken in SQLAlchemy 2.0 — use raw DDL
+    # to avoid double-creation when op.create_table fires enum auto-create.
+    op.execute("CREATE TYPE user_role_enum AS ENUM ('superuser', 'member', 'viewer')")
+    op.execute("CREATE TYPE pipeline_type_enum AS ENUM ('research', 'gap_analysis', 'content', 'content_refresh', 'site_audit', 'topic_discovery')")
+    op.execute("CREATE TYPE pipeline_status_enum AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled')")
+    op.execute("CREATE TYPE stage_status_enum AS ENUM ('pending', 'running', 'completed', 'failed', 'skipped', 'cached')")
+    op.execute("CREATE TYPE search_engine_enum AS ENUM ('openai', 'claude', 'gemini', 'perplexity')")
+    op.execute("CREATE TYPE gap_classification_enum AS ENUM ('large_gap', 'moderate_gap', 'small_gap', 'no_gap', 'already_cited')")
+    op.execute("CREATE TYPE artifact_type_enum AS ENUM ('company_context', 'persona', 'style_guide')")
+    op.execute("CREATE TYPE artifact_status_enum AS ENUM ('draft', 'approved', 'archived')")
+    op.execute("CREATE TYPE content_piece_status_enum AS ENUM ('planned', 'drafting', 'review', 'approved', 'published', 'archived')")
+    op.execute("CREATE TYPE finding_severity_enum AS ENUM ('critical', 'high', 'medium', 'low', 'info')")
+    op.execute("CREATE TYPE tracking_status_enum AS ENUM ('pending', 'completed', 'failed')")
 
     # ── 1. companies ─────────────────────────────────────────────────────
     op.create_table(
@@ -117,8 +119,7 @@ def upgrade() -> None:
         sa.Column("password_hash", sa.String, nullable=False),
         sa.Column("first_name", sa.String, default=""),
         sa.Column("last_name", sa.String, default=""),
-        sa.Column("role", sa.Enum("superuser", "member", "viewer", name="user_role_enum",
-                                  create_type=False), default="member"),
+        sa.Column("role", postgresql.ENUM(name="user_role_enum", create_type=False), default="member"),
         sa.Column("is_active", sa.Boolean, default=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
@@ -133,8 +134,7 @@ def upgrade() -> None:
         sa.Column("company_id", sa.dialects.postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("companies.id"), nullable=False),
         sa.Column("code", sa.String, unique=True, nullable=False),
-        sa.Column("role", sa.Enum("superuser", "member", "viewer", name="user_role_enum",
-                                  create_type=False), default="member"),
+        sa.Column("role", postgresql.ENUM(name="user_role_enum", create_type=False), default="member"),
         sa.Column("created_by", sa.dialects.postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("users.id"), nullable=True),
         sa.Column("redeemed_by", sa.dialects.postgresql.UUID(as_uuid=True),
@@ -163,15 +163,10 @@ def upgrade() -> None:
         sa.Column("product_id", sa.dialects.postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("products.id"), nullable=True),
         sa.Column("effective_slug", sa.String, nullable=False),
-        sa.Column("pipeline_type", sa.Enum(
-            "research", "gap_analysis", "content", "content_refresh",
-            "site_audit", "topic_discovery",
-            name="pipeline_type_enum", create_type=False), nullable=False),
+        sa.Column("pipeline_type", postgresql.ENUM(name="pipeline_type_enum", create_type=False), nullable=False),
         sa.Column("parent_run_id", sa.dialects.postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("pipeline_runs.id"), nullable=True),
-        sa.Column("status", sa.Enum(
-            "pending", "running", "completed", "failed", "cancelled",
-            name="pipeline_status_enum", create_type=False), nullable=False),
+        sa.Column("status", postgresql.ENUM(name="pipeline_status_enum", create_type=False), nullable=False),
         sa.Column("config", postgresql.JSONB, nullable=True),
         sa.Column("summary", postgresql.JSONB, nullable=True),
         sa.Column("stages_executed", postgresql.ARRAY(sa.Text), nullable=True),
@@ -196,9 +191,7 @@ def upgrade() -> None:
         sa.Column("run_id", sa.dialects.postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False),
         sa.Column("stage_name", sa.String, nullable=False),
-        sa.Column("status", sa.Enum(
-            "pending", "running", "completed", "failed", "skipped", "cached",
-            name="stage_status_enum", create_type=False), nullable=True),
+        sa.Column("status", postgresql.ENUM(name="stage_status_enum", create_type=False), nullable=True),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("duration_seconds", sa.Integer, nullable=True),
@@ -214,9 +207,7 @@ def upgrade() -> None:
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("query_text_hash", sa.String, nullable=False),
         sa.Column("query_text", sa.Text, nullable=False),
-        sa.Column("engine", sa.Enum(
-            "openai", "claude", "gemini", "perplexity",
-            name="search_engine_enum", create_type=False), nullable=False),
+        sa.Column("engine", postgresql.ENUM(name="search_engine_enum", create_type=False), nullable=False),
         sa.Column("model_version", sa.String, nullable=True),
         sa.Column("response_text", sa.Text, nullable=True),
         sa.Column("citations", postgresql.JSONB, nullable=False),
@@ -328,9 +319,7 @@ def upgrade() -> None:
                   sa.ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False),
         sa.Column("query_id", sa.String, nullable=False),
         sa.Column("cluster_name", sa.String, nullable=True),
-        sa.Column("engine", sa.Enum(
-            "openai", "claude", "gemini", "perplexity",
-            name="search_engine_enum", create_type=False), nullable=False),
+        sa.Column("engine", postgresql.ENUM(name="search_engine_enum", create_type=False), nullable=False),
         sa.Column("url_enrichment_id", sa.dialects.postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("url_enrichment_cache.id"), nullable=True),
         sa.Column("citation_rank", sa.Integer, nullable=True),
@@ -362,9 +351,7 @@ def upgrade() -> None:
         sa.Column("cluster_name", sa.String, nullable=True),
         sa.Column("title", sa.String, nullable=False),
         sa.Column("content_type", sa.String, nullable=True),
-        sa.Column("status", sa.Enum(
-            "planned", "drafting", "review", "approved", "published", "archived",
-            name="content_piece_status_enum", create_type=False), nullable=True),
+        sa.Column("status", postgresql.ENUM(name="content_piece_status_enum", create_type=False), nullable=True),
         sa.Column("storage_key", sa.String, nullable=True),
         sa.Column("word_count", sa.Integer, default=0),
         sa.Column("citability_score", sa.Float, nullable=True),
@@ -395,9 +382,7 @@ def upgrade() -> None:
         sa.Column("best_company_unit_id", sa.String, nullable=True),
         sa.Column("best_company_unit_text", sa.Text, nullable=True),
         sa.Column("gap", sa.Float, nullable=False),
-        sa.Column("classification", sa.Enum(
-            "large_gap", "moderate_gap", "small_gap", "no_gap", "already_cited",
-            name="gap_classification_enum", create_type=False), nullable=False),
+        sa.Column("classification", postgresql.ENUM(name="gap_classification_enum", create_type=False), nullable=False),
         sa.Column("content_brief", postgresql.JSONB, nullable=True),
         sa.Column("targeted_by_content_id", sa.dialects.postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("content_pieces.id", ondelete="SET NULL"), nullable=True),
@@ -565,13 +550,9 @@ def upgrade() -> None:
         sa.Column("product_id", sa.dialects.postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("products.id"), nullable=True),
         sa.Column("effective_slug", sa.String, nullable=False),
-        sa.Column("artifact_type", sa.Enum(
-            "company_context", "persona", "style_guide",
-            name="artifact_type_enum", create_type=False), nullable=False),
+        sa.Column("artifact_type", postgresql.ENUM(name="artifact_type_enum", create_type=False), nullable=False),
         sa.Column("title", sa.String, nullable=True),
-        sa.Column("status", sa.Enum(
-            "draft", "approved", "archived",
-            name="artifact_status_enum", create_type=False), default="draft"),
+        sa.Column("status", postgresql.ENUM(name="artifact_status_enum", create_type=False), default="draft"),
         sa.Column("version", sa.Integer, default=1),
         sa.Column("storage_key", sa.String, nullable=False),
         sa.Column("content_hash", sa.String, nullable=True),
@@ -591,9 +572,7 @@ def upgrade() -> None:
         sa.Column("company_id", sa.dialects.postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("companies.id"), nullable=False),
         sa.Column("site_domain", sa.String, nullable=False),
-        sa.Column("status", sa.Enum(
-            "pending", "running", "completed", "failed", "cancelled",
-            name="pipeline_status_enum", create_type=False), default="pending"),
+        sa.Column("status", postgresql.ENUM(name="pipeline_status_enum", create_type=False), default="pending"),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("findings_count", sa.Integer, default=0),
@@ -612,9 +591,7 @@ def upgrade() -> None:
                   sa.ForeignKey("site_audits.id", ondelete="CASCADE"), nullable=False),
         sa.Column("page_url", sa.Text, nullable=False),
         sa.Column("finding_type", sa.String, nullable=False),
-        sa.Column("severity", sa.Enum(
-            "critical", "high", "medium", "low", "info",
-            name="finding_severity_enum", create_type=False), nullable=False),
+        sa.Column("severity", postgresql.ENUM(name="finding_severity_enum", create_type=False), nullable=False),
         sa.Column("details", postgresql.JSONB, nullable=True),
         sa.Column("is_resolved", sa.Boolean, default=False),
         sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
@@ -637,9 +614,7 @@ def upgrade() -> None:
                   sa.ForeignKey("products.id"), nullable=True),
         sa.Column("pipeline_run_id", sa.dialects.postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("pipeline_runs.id"), nullable=True),
-        sa.Column("status", sa.Enum(
-            "pending", "running", "completed", "failed", "cancelled",
-            name="pipeline_status_enum", create_type=False), default="pending"),
+        sa.Column("status", postgresql.ENUM(name="pipeline_status_enum", create_type=False), default="pending"),
         sa.Column("discovered_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
@@ -691,9 +666,7 @@ def upgrade() -> None:
         sa.Column("snapshot_date", sa.Date, nullable=False),
         sa.Column("gap_run_id", sa.dialects.postgresql.UUID(as_uuid=True),
                   sa.ForeignKey("pipeline_runs.id"), nullable=True),
-        sa.Column("status", sa.Enum(
-            "pending", "completed", "failed",
-            name="tracking_status_enum", create_type=False), default="pending"),
+        sa.Column("status", postgresql.ENUM(name="tracking_status_enum", create_type=False), default="pending"),
         sa.Column("queries_checked", sa.Integer, default=0),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
@@ -718,9 +691,7 @@ def upgrade() -> None:
         sa.Column("query_text", sa.Text, nullable=False),
         sa.Column("query_id", sa.String, nullable=True),
         sa.Column("cluster_name", sa.String, nullable=True),
-        sa.Column("engine", sa.Enum(
-            "openai", "claude", "gemini", "perplexity",
-            name="search_engine_enum", create_type=False), nullable=False),
+        sa.Column("engine", postgresql.ENUM(name="search_engine_enum", create_type=False), nullable=False),
         sa.Column("company_mentioned", sa.Boolean, nullable=False),
         sa.Column("company_citation_rank", sa.Integer, nullable=True),
         sa.Column("company_url_cited", sa.Text, nullable=True),

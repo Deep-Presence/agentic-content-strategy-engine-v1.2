@@ -71,7 +71,7 @@ class TestProductSlugLockRelease:
     def test_release_product_lock_allows_rerun(self, store: TaskStore) -> None:
         task = store.create_task("gap_analysis", "ramp", product_slug="card")
         store.update_task(task.task_id, status=TaskStatus.COMPLETED)
-        store.release_slug_lock(task.effective_slug)
+        store.release_slug_lock(f"gap_analysis:{task.effective_slug}")
 
         # Should be able to create another task now
         t2 = store.create_task("gap_analysis", "ramp", product_slug="card")
@@ -82,7 +82,7 @@ class TestProductSlugLockRelease:
         t_product = store.create_task("gap_analysis", "ramp", product_slug="card")
 
         # Release product lock
-        store.release_slug_lock(t_product.effective_slug)
+        store.release_slug_lock(f"gap_analysis:{t_product.effective_slug}")
 
         # Company lock still held — new company run should conflict
         with pytest.raises(TaskConflictError):

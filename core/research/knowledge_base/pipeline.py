@@ -47,6 +47,7 @@ from core.research.knowledge_base.graph import (
     run_kb_hitl_checkpoint,
 )
 from core.research.knowledge_base.storage import KBStorage
+from core.shared_tools.structured_logging import scoped_bind
 from core.shared_tools.tracing import create_session, create_span, end_span, flush, log_generation
 
 logger = logging.getLogger(__name__)
@@ -184,36 +185,209 @@ async def _run_single_agent(
     revision_note: Optional[str] = None,
 ) -> KBAgentResult:
     """Run a single agent by doc type with optional revision note."""
-    if doc_type == KBDocType.COMPANY_OVERVIEW:
-        return await run_company_overview_agent(
-            input_data, parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.CUSTOMER_REVIEWS:
-        return await run_customer_reviews_agent(
-            input_data, parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.COMPETITOR_REGISTRY:
-        overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
-        return await run_competitor_scanner_agent(
-            input_data, company_overview_md=overview_md,
-            parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.WEAKNESS_ANALYSIS:
-        overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
-        competitor_md = _get_doc_md(results, KBDocType.COMPETITOR_REGISTRY, storage)
-        return await run_weakness_analyst_agent(
-            input_data, company_overview_md=overview_md,
-            competitor_registry_md=competitor_md,
-            parent_span=parent_span, revision_note=revision_note,
-        )
-    elif doc_type == KBDocType.BRAND_PERCEPTION:
-        upstream_docs = _build_upstream_docs(results, storage)
-        return await run_brand_perception_agent(
-            input_data, upstream_docs=upstream_docs,
-            parent_span=parent_span, revision_note=revision_note,
-        )
-    else:
-        return KBAgentResult(doc_type=doc_type, error=f"Unknown doc type: {doc_type}")
+    with scoped_bind(agent_name=doc_type.value):
+        if doc_type == KBDocType.COMPANY_OVERVIEW:
+            return await run_company_overview_agent(
+                input_data, parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.CUSTOMER_REVIEWS:
+            return await run_customer_reviews_agent(
+                input_data, parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.COMPETITOR_REGISTRY:
+            overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
+            return await run_competitor_scanner_agent(
+                input_data, company_overview_md=overview_md,
+                parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.WEAKNESS_ANALYSIS:
+            overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
+            competitor_md = _get_doc_md(results, KBDocType.COMPETITOR_REGISTRY, storage)
+            return await run_weakness_analyst_agent(
+                input_data, company_overview_md=overview_md,
+                competitor_registry_md=competitor_md,
+                parent_span=parent_span, revision_note=revision_note,
+            )
+        elif doc_type == KBDocType.BRAND_PERCEPTION:
+            upstream_docs = _build_upstream_docs(results, storage)
+            return await run_brand_perception_agent(
+                input_data, upstream_docs=upstream_docs,
+                parent_span=parent_span, revision_note=revision_note,
+            )
+        else:
+            return KBAgentResult(doc_type=doc_type, error=f"Unknown doc type: {doc_type}")
+
+
+# ---------------------------------------------------------------------------
+# Express mode — Eager DAG with event-based coordination
+# ---------------------------------------------------------------------------
+
+
+async def _run_eager_dag(
+    input_data: KnowledgeBaseInput,
+    storage: KBStorage,
+    results: Dict[KBDocType, KBAgentResult],
+    changed_doc_types: List[KBDocType],
+    trace_span: Optional[Any] = None,
+    event_bus: Optional[Any] = None,
+    task_id: Optional[str] = None,
+    task_store: Optional[Any] = None,
+) -> None:
+    """Run all 5 L2 agents with event-based dependency coordination.
+
+    Uses asyncio.Event for DAG signals. Each agent awaits its upstream
+    events before starting. Events fire in finally blocks to prevent
+    deadlocks on upstream failure.
+
+    Timeline (express mode with sonar-pro for cr/cs):
+      T=0:   co (deep, ~3m) + cr (pro, ~30s) start
+      T=0.5: cr done
+      T=3:   co done → cs (pro, ~30s) starts
+      T=3.5: cs done → wa (deep, ~3m) + bp (~1.5m) start
+      T=5:   bp done
+      T=6.5: wa done → all complete
+    """
+    overview_done = asyncio.Event()
+    reviews_done = asyncio.Event()
+    competitor_done = asyncio.Event()
+
+    _emit(event_bus, task_id, "kb_phase_start", {
+        "phase": "eager", "agents": [d.value for d in L2_DOC_TYPES],
+    })
+    _update_task(task_store, task_id, current_step="eager_dag")
+
+    async def _agent_co() -> None:
+        with scoped_bind(agent_name="company_overview"):
+            try:
+                result = await run_company_overview_agent(
+                    input_data, parent_span=trace_span,
+                )
+                results[KBDocType.COMPANY_OVERVIEW] = result
+                if not result.error:
+                    storage.write_version(
+                        KBDocType.COMPANY_OVERVIEW, result.content_md, result.content_json,
+                    )
+                    changed_doc_types.append(KBDocType.COMPANY_OVERVIEW)
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "company_overview",
+                    "word_count": result.word_count,
+                    "has_error": result.error is not None,
+                })
+            except Exception as exc:
+                results[KBDocType.COMPANY_OVERVIEW] = KBAgentResult(
+                    doc_type=KBDocType.COMPANY_OVERVIEW, error=str(exc),
+                )
+            finally:
+                overview_done.set()
+
+    async def _agent_cr() -> None:
+        with scoped_bind(agent_name="customer_reviews"):
+            try:
+                result = await run_customer_reviews_agent(
+                    input_data, parent_span=trace_span,
+                )
+                results[KBDocType.CUSTOMER_REVIEWS] = result
+                if not result.error:
+                    storage.write_version(
+                        KBDocType.CUSTOMER_REVIEWS, result.content_md, result.content_json,
+                    )
+                    changed_doc_types.append(KBDocType.CUSTOMER_REVIEWS)
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "customer_reviews",
+                    "word_count": result.word_count,
+                    "has_error": result.error is not None,
+                })
+            except Exception as exc:
+                results[KBDocType.CUSTOMER_REVIEWS] = KBAgentResult(
+                    doc_type=KBDocType.CUSTOMER_REVIEWS, error=str(exc),
+                )
+            finally:
+                reviews_done.set()
+
+    async def _agent_cs() -> None:
+        with scoped_bind(agent_name="competitor_scanner"):
+            await overview_done.wait()
+            try:
+                overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
+                result = await run_competitor_scanner_agent(
+                    input_data, company_overview_md=overview_md, parent_span=trace_span,
+                )
+                results[KBDocType.COMPETITOR_REGISTRY] = result
+                if not result.error:
+                    storage.write_version(
+                        KBDocType.COMPETITOR_REGISTRY, result.content_md, result.content_json,
+                    )
+                    changed_doc_types.append(KBDocType.COMPETITOR_REGISTRY)
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "competitor_registry",
+                    "word_count": result.word_count,
+                    "has_error": result.error is not None,
+                })
+            except Exception as exc:
+                results[KBDocType.COMPETITOR_REGISTRY] = KBAgentResult(
+                    doc_type=KBDocType.COMPETITOR_REGISTRY, error=str(exc),
+                )
+            finally:
+                competitor_done.set()
+
+    async def _agent_wa() -> None:
+        with scoped_bind(agent_name="weakness_analyst"):
+            await overview_done.wait()
+            await competitor_done.wait()
+            try:
+                overview_md = _get_doc_md(results, KBDocType.COMPANY_OVERVIEW, storage)
+                competitor_md = _get_doc_md(results, KBDocType.COMPETITOR_REGISTRY, storage)
+                result = await run_weakness_analyst_agent(
+                    input_data, company_overview_md=overview_md,
+                    competitor_registry_md=competitor_md, parent_span=trace_span,
+                )
+                results[KBDocType.WEAKNESS_ANALYSIS] = result
+                if not result.error:
+                    storage.write_version(
+                        KBDocType.WEAKNESS_ANALYSIS, result.content_md, result.content_json,
+                    )
+                    changed_doc_types.append(KBDocType.WEAKNESS_ANALYSIS)
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "weakness_analysis",
+                    "word_count": result.word_count,
+                    "has_error": result.error is not None,
+                })
+            except Exception as exc:
+                results[KBDocType.WEAKNESS_ANALYSIS] = KBAgentResult(
+                    doc_type=KBDocType.WEAKNESS_ANALYSIS, error=str(exc),
+                )
+
+    async def _agent_bp() -> None:
+        with scoped_bind(agent_name="brand_perception"):
+            await overview_done.wait()
+            await reviews_done.wait()
+            await competitor_done.wait()
+            try:
+                upstream_docs = _build_upstream_docs(results, storage)
+                result = await run_brand_perception_agent(
+                    input_data, upstream_docs=upstream_docs, parent_span=trace_span,
+                )
+                results[KBDocType.BRAND_PERCEPTION] = result
+                if not result.error:
+                    storage.write_version(
+                        KBDocType.BRAND_PERCEPTION, result.content_md, result.content_json,
+                    )
+                    changed_doc_types.append(KBDocType.BRAND_PERCEPTION)
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "brand_perception",
+                    "word_count": result.word_count,
+                    "has_error": result.error is not None,
+                })
+            except Exception as exc:
+                results[KBDocType.BRAND_PERCEPTION] = KBAgentResult(
+                    doc_type=KBDocType.BRAND_PERCEPTION, error=str(exc),
+                )
+
+    await asyncio.gather(
+        _agent_co(), _agent_cr(), _agent_cs(), _agent_wa(), _agent_bp(),
+    )
+
+    _emit(event_bus, task_id, "kb_phase_complete", {"phase": "eager"})
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +402,9 @@ async def run_knowledge_base_pipeline(
     task_store: Optional[Any] = None,
     event_bus: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
+    session_factory: Optional[Any] = None,
+    run_id: Optional[Any] = None,
+    company_id: Optional[Any] = None,
 ) -> KnowledgeBaseOutput:
     """Run the full Knowledge Base pipeline.
 
@@ -292,7 +469,208 @@ async def run_knowledge_base_pipeline(
             return output
 
         # =================================================================
-        # Full/Refresh mode — DAG execution
+        # Express mode — Eager DAG (full mode only)
+        # =================================================================
+        if input_data.express_mode and mode == "full":
+            auto_approve_cps = auto_approve_cps | {1, 2}
+
+            await _run_eager_dag(
+                input_data, storage, results, changed_doc_types,
+                trace_span, event_bus, task_id, task_store,
+            )
+
+            # Single merged HITL: review all 5 docs (auto-approved)
+            doc_review_graph = build_kb_doc_review_graph()
+            express_doc_types = [dt for dt in L2_DOC_TYPES if dt in results]
+
+            if express_doc_types:
+                hitl_state = {
+                    "doc_summaries": _build_doc_summaries(results, express_doc_types),
+                    "checkpoint": 1,
+                    "auto_approve": True,
+                }
+                hitl_result = await run_kb_hitl_checkpoint(
+                    doc_review_graph, hitl_state,
+                    thread_id=f"kb-hitl-express-{slug}-{uuid.uuid4().hex[:8]}",
+                    task_store=task_store, event_bus=event_bus, task_id=task_id,
+                    stage_name="kb_checkpoint_express",
+                )
+
+                cp_decision = hitl_result.get("decision", "approve")
+                if cp_decision == "reject":
+                    output = KnowledgeBaseOutput(
+                        slug=slug,
+                        company_name=input_data.company_name,
+                        manifest=storage.read_manifest(),
+                        agent_results={dt.value: r for dt, r in results.items()},
+                        knowledge_base_dir=str(storage.base_dir),
+                        total_execution_time_s=time.time() - start_time,
+                    )
+                    _emit(event_bus, task_id, "completed", {"pipeline": "knowledge_base"})
+                    end_span(trace_span, output={"decision": "rejected_express"})
+                    flush()
+                    return output
+
+                if cp_decision == "revise":
+                    revision_notes = hitl_result.get("revision_notes", {})
+                    for doc_type_str, note in revision_notes.items():
+                        try:
+                            dt_rev = KBDocType(doc_type_str)
+                        except ValueError:
+                            continue
+                        if dt_rev not in express_doc_types:
+                            continue
+                        revised = await _run_single_agent(
+                            input_data, dt_rev, storage, results, trace_span,
+                            revision_note=note,
+                        )
+                        results[dt_rev] = revised
+                        if not revised.error:
+                            storage.write_version(
+                                dt_rev, revised.content_md, revised.content_json,
+                            )
+                            if dt_rev not in changed_doc_types:
+                                changed_doc_types.append(dt_rev)
+
+            # Staleness propagation
+            if changed_doc_types:
+                storage.propagate_staleness(changed_doc_types)
+
+            # Synthesis
+            _emit(event_bus, task_id, "kb_phase_start", {
+                "phase": 4, "agents": ["synthesis"],
+            })
+            _update_task(task_store, task_id, current_step="phase_4_synthesis")
+
+            available_docs, missing_docs = _collect_synthesis_inputs(storage)
+
+            with scoped_bind(agent_name="synthesis"):
+                synthesis_result = await run_synthesis_agent(
+                    input_data,
+                    kb_base_dir=storage.base_dir,
+                    available_docs=available_docs,
+                    missing_docs=missing_docs,
+                    parent_span=trace_span,
+                )
+
+                synthesis_md = ""
+                if not synthesis_result.error:
+                    synthesis_md = synthesis_result.content_md
+                    storage.write_synthesis(synthesis_md)
+
+                _emit(event_bus, task_id, "kb_agent_complete", {
+                    "agent": "synthesis", "word_count": synthesis_result.word_count,
+                    "has_error": synthesis_result.error is not None,
+                })
+            _emit(event_bus, task_id, "kb_phase_complete", {"phase": 4})
+
+            # HITL-3: review synthesis (NOT auto-approved unless user set it)
+            if synthesis_md:
+                synthesis_review_graph = build_kb_synthesis_review_graph()
+                hitl3_state = {
+                    "synthesis_preview": synthesis_md[:2000],
+                    "synthesis_word_count": len(synthesis_md.split()),
+                    "checkpoint": 3,
+                    "auto_approve": 3 in auto_approve_cps,
+                }
+                hitl3_result = await run_kb_hitl_checkpoint(
+                    synthesis_review_graph, hitl3_state,
+                    thread_id=f"kb-hitl-3-{slug}-{uuid.uuid4().hex[:8]}",
+                    task_store=task_store, event_bus=event_bus, task_id=task_id,
+                    stage_name="kb_checkpoint_3",
+                )
+
+                cp3_decision = hitl3_result.get("decision", "approve")
+                if cp3_decision == "reject":
+                    output = KnowledgeBaseOutput(
+                        slug=slug,
+                        company_name=input_data.company_name,
+                        manifest=storage.read_manifest(),
+                        agent_results={dt.value: r for dt, r in results.items()},
+                        knowledge_base_dir=str(storage.base_dir),
+                        total_execution_time_s=time.time() - start_time,
+                        changed_docs=[d.value for d in changed_doc_types],
+                    )
+                    _emit(event_bus, task_id, "completed", {"pipeline": "knowledge_base"})
+                    end_span(trace_span, output={"decision": "rejected_cp3"})
+                    flush()
+                    return output
+
+                if cp3_decision == "revise":
+                    revision_note_3 = hitl3_result.get("revision_note", "")
+                    with scoped_bind(agent_name="synthesis"):
+                        synthesis_result = await run_synthesis_agent(
+                            input_data,
+                            kb_base_dir=storage.base_dir,
+                            available_docs=available_docs,
+                            missing_docs=missing_docs,
+                            parent_span=trace_span,
+                            revision_note=revision_note_3,
+                        )
+                        if not synthesis_result.error:
+                            synthesis_md = synthesis_result.content_md
+                            storage.write_synthesis(synthesis_md)
+
+                # Promote approved synthesis
+                if synthesis_md:
+                    storage.promote_synthesis_to_company_context(synthesis_md)
+                    manifest = storage.read_manifest()
+                    manifest.last_full_refresh = datetime.now(timezone.utc)
+                    storage.write_manifest(manifest)
+
+            # DB persistence (fire-and-forget)
+            try:
+                from core.research.persistence import (
+                    persist_kb_doc,
+                    persist_kb_synthesis,
+                    persist_pipeline_run_complete,
+                )
+
+                manifest = storage.read_manifest()
+                for dt_p in changed_doc_types:
+                    r = results.get(dt_p)
+                    if r and not r.error and r.content_md:
+                        entry = manifest.documents.get(dt_p.value) if manifest.documents else None
+                        ver = entry.current_version if entry and entry.current_version > 0 else 1
+                        await persist_kb_doc(
+                            session_factory, run_id, company_id, slug,
+                            dt_p.value, ver, r.content_md,
+                            f"knowledge_base/{slug}/{dt_p.value}/v{ver}.md",
+                        )
+                if synthesis_md:
+                    synth_ver = manifest.synthesis_version or 1
+                    await persist_kb_synthesis(
+                        session_factory, run_id, company_id, slug,
+                        synth_ver, synthesis_md,
+                        f"knowledge_base/{slug}/synthesis/v{synth_ver}.md",
+                    )
+                await persist_pipeline_run_complete(
+                    session_factory, run_id,
+                    {"mode": "express", "docs_changed": len(changed_doc_types)},
+                )
+            except Exception:
+                logger.warning("KB DB persistence failed, continuing", exc_info=True)
+
+            # Build output
+            output = KnowledgeBaseOutput(
+                slug=slug,
+                company_name=input_data.company_name,
+                manifest=storage.read_manifest(),
+                agent_results={dt.value: r for dt, r in results.items()},
+                synthesis_md=synthesis_md,
+                company_profile_path=str(root / "company_context" / f"{slug}.md"),
+                knowledge_base_dir=str(storage.base_dir),
+                total_execution_time_s=time.time() - start_time,
+                changed_docs=[d.value for d in changed_doc_types],
+            )
+
+            _emit(event_bus, task_id, "completed", {"pipeline": "knowledge_base"})
+            end_span(trace_span, output={"mode": "express", "docs": len(results)})
+            flush()
+            return output
+
+        # =================================================================
+        # Full/Refresh mode — Classic DAG execution
         # =================================================================
 
         # Phase 1: company_overview + customer_reviews (parallel)
@@ -527,27 +905,28 @@ async def run_knowledge_base_pipeline(
             }
             use_delta = True
 
-        synthesis_result = await run_synthesis_agent(
-            input_data,
-            kb_base_dir=storage.base_dir,
-            available_docs=available_docs,
-            missing_docs=missing_docs,
-            parent_span=trace_span,
-            delta_mode=use_delta,
-            changed_docs=changed_docs_for_synth,
-            previous_synthesis_path=previous_synthesis_path,
-        )
+        with scoped_bind(agent_name="synthesis"):
+            synthesis_result = await run_synthesis_agent(
+                input_data,
+                kb_base_dir=storage.base_dir,
+                available_docs=available_docs,
+                missing_docs=missing_docs,
+                parent_span=trace_span,
+                delta_mode=use_delta,
+                changed_docs=changed_docs_for_synth,
+                previous_synthesis_path=previous_synthesis_path,
+            )
 
-        synthesis_md = ""
-        if not synthesis_result.error:
-            synthesis_md = synthesis_result.content_md
-            # Write synthesis version to KB storage (versioned draft)
-            storage.write_synthesis(synthesis_md)
+            synthesis_md = ""
+            if not synthesis_result.error:
+                synthesis_md = synthesis_result.content_md
+                # Write synthesis version to KB storage (versioned draft)
+                storage.write_synthesis(synthesis_md)
 
-        _emit(event_bus, task_id, "kb_agent_complete", {
-            "agent": "synthesis", "word_count": synthesis_result.word_count,
-            "has_error": synthesis_result.error is not None,
-        })
+            _emit(event_bus, task_id, "kb_agent_complete", {
+                "agent": "synthesis", "word_count": synthesis_result.word_count,
+                "has_error": synthesis_result.error is not None,
+            })
         _emit(event_bus, task_id, "kb_phase_complete", {"phase": 4})
 
         # ── HITL-3: review synthesis ──
@@ -584,33 +963,64 @@ async def run_knowledge_base_pipeline(
 
             if cp3_decision == "revise":
                 revision_note = hitl3_result.get("revision_note", "")
-                synthesis_result = await run_synthesis_agent(
-                    input_data,
-                    kb_base_dir=storage.base_dir,
-                    available_docs=available_docs,
-                    missing_docs=missing_docs,
-                    parent_span=trace_span,
-                    revision_note=revision_note,
-                    delta_mode=use_delta,
-                    changed_docs=changed_docs_for_synth,
-                    previous_synthesis_path=previous_synthesis_path,
-                )
-                if not synthesis_result.error:
-                    synthesis_md = synthesis_result.content_md
-                    storage.write_synthesis(synthesis_md)
+                with scoped_bind(agent_name="synthesis"):
+                    synthesis_result = await run_synthesis_agent(
+                        input_data,
+                        kb_base_dir=storage.base_dir,
+                        available_docs=available_docs,
+                        missing_docs=missing_docs,
+                        parent_span=trace_span,
+                        revision_note=revision_note,
+                        delta_mode=use_delta,
+                        changed_docs=changed_docs_for_synth,
+                        previous_synthesis_path=previous_synthesis_path,
+                    )
+                    if not synthesis_result.error:
+                        synthesis_md = synthesis_result.content_md
+                        storage.write_synthesis(synthesis_md)
 
             # Promote approved synthesis to company_context
             if synthesis_md:
-                profile_dir = root / "company_context"
-                profile_dir.mkdir(parents=True, exist_ok=True)
-                profile_path = profile_dir / f"{slug}.md"
-                profile_path.write_text(synthesis_md, encoding="utf-8")
+                storage.promote_synthesis_to_company_context(synthesis_md)
 
                 # Update last_full_refresh for full mode
                 if mode == "full":
                     manifest = storage.read_manifest()
                     manifest.last_full_refresh = datetime.now(timezone.utc)
                     storage.write_manifest(manifest)
+
+        # ── DB persistence (fire-and-forget) ──
+        try:
+            from core.research.persistence import (
+                persist_kb_doc,
+                persist_kb_synthesis,
+                persist_pipeline_run_complete,
+            )
+
+            manifest = storage.read_manifest()
+            for dt in changed_doc_types:
+                r = results.get(dt)
+                if r and not r.error and r.content_md:
+                    entry = manifest.documents.get(dt.value) if manifest.documents else None
+                    ver = entry.current_version if entry and entry.current_version > 0 else 1
+                    await persist_kb_doc(
+                        session_factory, run_id, company_id, slug,
+                        dt.value, ver, r.content_md,
+                        f"knowledge_base/{slug}/{dt.value}/v{ver}.md",
+                    )
+            if synthesis_md:
+                synth_ver = manifest.synthesis_version or 1
+                await persist_kb_synthesis(
+                    session_factory, run_id, company_id, slug,
+                    synth_ver, synthesis_md,
+                    f"knowledge_base/{slug}/synthesis/v{synth_ver}.md",
+                )
+            await persist_pipeline_run_complete(
+                session_factory, run_id,
+                {"mode": mode, "docs_changed": len(changed_doc_types)},
+            )
+        except Exception:
+            logger.warning("KB DB persistence failed, continuing", exc_info=True)
 
         # Build output
         output = KnowledgeBaseOutput(

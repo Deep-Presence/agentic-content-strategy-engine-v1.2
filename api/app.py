@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from api.exceptions import (
 )
 from api.auth.middleware import AuthMiddleware
 from api.auth.store import AuthStore
-from api.routers import artifacts, audience_persona, auth, brand_data, companies, content, content_data, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, settings, site_audit as site_audit_router, tasks, topic_discovery, voice_style_guide
+from api.routers import artifacts, audience_persona, auth, brand_data, companies, content, content_data, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, onboarding, research_orchestrator, settings, site_audit as site_audit_router, tasks, topic_discovery, voice_style_guide
 from api.tasks.event_bus import EventBus
 from api.tasks.store import TaskConflictError, TaskNotFoundError, TaskStore
 
@@ -28,6 +29,19 @@ logger = logging.getLogger(__name__)
 middleware_logger = logging.getLogger("api.middleware")
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]  # content-strategy-engine/
+
+
+def _init_structured_logging() -> None:
+    """Configure structured logging once at startup."""
+    from core.config.settings import settings as _s
+    from core.shared_tools.structured_logging import configure_logging
+
+    configure_logging(
+        level=_s.log_level,
+        log_format=_s.log_format,
+        include_caller=_s.log_include_caller,
+        database_echo=_s.database_echo,
+    )
 
 
 async def _init_task_store(app: FastAPI) -> TaskStore:
@@ -65,6 +79,9 @@ async def _init_task_store(app: FastAPI) -> TaskStore:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize shared state on startup, cleanup on shutdown."""
+    # Structured logging — idempotent, safe to call even if run_server.py called first
+    _init_structured_logging()
+
     # Only set defaults if not already overridden (e.g., by tests)
     if not hasattr(app.state, "event_bus") or app.state.event_bus is None:
         app.state.event_bus = EventBus()
@@ -72,6 +89,9 @@ async def lifespan(app: FastAPI):
         app.state.task_store = await _init_task_store(app)
     if not hasattr(app.state, "artifacts_root") or app.state.artifacts_root is None:
         app.state.artifacts_root = _PROJECT_ROOT / "artifacts"
+    if not hasattr(app.state, "storage_backend") or app.state.storage_backend is None:
+        from core.storage.backends import LocalStorageBackend
+        app.state.storage_backend = LocalStorageBackend(app.state.artifacts_root)
     if not hasattr(app.state, "auth_store") or app.state.auth_store is None:
         app.state.auth_store = AuthStore(base_dir=app.state.artifacts_root)
 
@@ -92,6 +112,49 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.debug("DB session factory not available — using JSON services")
 
+    # Layer 7: Initialize audit logging sink
+    from core.audit.logger import set_sink
+    from core.audit.sink import DbAuditSink, NoOpAuditSink
+
+    db_sf = getattr(app.state, "db_session_factory", None)
+    if db_sf:
+        set_sink(DbAuditSink(db_sf))
+        logger.info("Audit sink: DbAuditSink")
+    else:
+        set_sink(NoOpAuditSink())
+
+    # ── Startup DB health checks ───────────────────────────────────────
+    app.state.db_healthy = False
+    app.state.pgvector_available = False
+    db_sf = getattr(app.state, "db_session_factory", None)
+    if db_sf is not None:
+        try:
+            async with db_sf() as session:
+                # 1. Basic connectivity
+                result = await session.execute(
+                    __import__("sqlalchemy").text("SELECT 1")
+                )
+                result.scalar_one()
+                app.state.db_healthy = True
+                logger.info("DB health check: PostgreSQL connected")
+
+                # 2. pgvector extension
+                row = await session.execute(
+                    __import__("sqlalchemy").text(
+                        "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+                    )
+                )
+                ext = row.scalar_one_or_none()
+                if ext:
+                    app.state.pgvector_available = True
+                    logger.info("DB health check: pgvector v%s available", ext)
+                else:
+                    logger.warning("DB health check: pgvector extension NOT installed")
+        except Exception:
+            logger.exception("DB health check failed — DB may be unreachable")
+    else:
+        logger.info("DB health check: skipped (no DATABASE_URL)")
+
     logger.info(
         "API started — task store: %s", type(app.state.task_store).__name__
     )
@@ -102,26 +165,64 @@ async def lifespan(app: FastAPI):
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Logs method, path, status code, and duration for every request.
 
+    Binds structured context (correlation_id, user_id, company_slug) so all
+    downstream log calls automatically include these fields.
+
     SSE endpoints (/events) are excluded: BaseHTTPMiddleware buffers the
     response body before returning, which would break streaming delivery.
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        from core.shared_tools.structured_logging import bind_context, clear_context
+
         # SSE endpoints — pass through without buffering
         if request.url.path.endswith("/events"):
             return await call_next(request)
 
-        start = time.monotonic()
-        response = await call_next(request)
-        duration_ms = (time.monotonic() - start) * 1000
-        middleware_logger.info(
-            "%s %s %d %.1fms",
-            request.method,
-            request.url.path,
-            response.status_code,
-            duration_ms,
+        # Server-generated request ID (always fresh UUID4)
+        request_id = str(uuid.uuid4())
+
+        # Correlation ID: forwarded from upstream, or defaults to request_id
+        raw_corr = request.headers.get("X-Correlation-ID", "")
+        correlation_id = raw_corr[:128] if raw_corr else request_id
+
+        # Bind request-scoped context
+        clear_context()
+        bind_context(
+            request_id=request_id,
+            correlation_id=correlation_id,
+            method=request.method,
+            path=request.url.path,
         )
-        return response
+
+        # Auth middleware runs before us — user_id/company_slug may be set
+        user_id = getattr(request.state, "user_id", None)
+        company_slug = getattr(request.state, "company_slug", None)
+        if user_id:
+            bind_context(user_id=user_id)
+        if company_slug:
+            bind_context(company_slug=company_slug)
+
+        start = time.monotonic()
+        try:
+            response = await call_next(request)
+            duration_ms = round((time.monotonic() - start) * 1000, 1)
+
+            middleware_logger.info(
+                "request_completed",
+                extra={
+                    "status_code": response.status_code,
+                    "duration_ms": duration_ms,
+                },
+            )
+
+            # Propagate IDs to client
+            response.headers["X-Correlation-ID"] = correlation_id
+            response.headers["X-Request-ID"] = request_id
+
+            return response
+        finally:
+            clear_context()
 
 
 def create_app() -> FastAPI:
@@ -170,6 +271,8 @@ def create_app() -> FastAPI:
     app.include_router(audience_persona.router)
     app.include_router(voice_style_guide.router)
     app.include_router(topic_discovery.router)
+    app.include_router(research_orchestrator.router)
+    app.include_router(onboarding.router)
     app.include_router(site_audit_router.router)
     app.include_router(daily_tracker.router)
     app.include_router(tasks.router)

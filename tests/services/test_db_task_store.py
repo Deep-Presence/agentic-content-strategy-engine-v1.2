@@ -112,7 +112,7 @@ class TestDbTaskStoreSlugLocks:
         with pytest.raises(TaskConflictError):
             store.create_task("research", "test-co")
         # Release and retry
-        store.release_slug_lock("test-co")
+        store.release_slug_lock("research:test-co")
         with patch(_PATCH_TARGET, return_value=MagicMock()):
             task2 = store.create_task("research", "test-co")
         assert task2.task_id != task.task_id

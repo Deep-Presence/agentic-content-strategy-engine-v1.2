@@ -5,6 +5,7 @@ from typing import Protocol, runtime_checkable
 
 from api.schemas.content_data import (
     ContentBriefDetailResponse,
+    ContentBriefListItem,
     ContentBriefListResponse,
     StageContentResponse,
 )
@@ -30,3 +31,13 @@ class ContentDataServiceProtocol(Protocol):
     async def get_brief_stage_content(
         self, effective_slug: str, brief_id: str, stage: str,
     ) -> StageContentResponse: ...
+
+    async def add_brief(
+        self,
+        effective_slug: str,
+        title: str,
+        cluster: str = "",
+        description: str = "",
+        source: str = "manual",
+        gap_query_id: str = "",
+    ) -> ContentBriefListItem: ...

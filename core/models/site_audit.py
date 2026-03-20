@@ -232,6 +232,17 @@ class PageAuditResult(BaseModel):
     has_author: bool = False
     author_name: Optional[str] = None
 
+    # Performance — structural signals
+    html_bytes: Optional[int] = None
+    external_script_count: Optional[int] = None
+    external_css_count: Optional[int] = None
+    blocking_script_count: Optional[int] = None
+    blocking_css_count: Optional[int] = None
+    images_without_lazy: Optional[int] = None
+    images_without_dimensions: Optional[int] = None
+    inline_js_bytes: Optional[int] = None
+    inline_css_bytes: Optional[int] = None
+
     # Structured sub-results
     schema_result: SchemaDetectionResult = Field(default_factory=SchemaDetectionResult, alias="schema")
     aeo: AEOReadinessResult = Field(default_factory=AEOReadinessResult)

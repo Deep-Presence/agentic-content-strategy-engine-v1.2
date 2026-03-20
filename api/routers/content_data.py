@@ -12,7 +12,9 @@ from fastapi import APIRouter, Depends, Query
 from api.auth.dependencies import require_tenant
 from api.dependencies import get_content_data_service
 from api.schemas.content_data import (
+    AddBriefRequest,
     ContentBriefDetailResponse,
+    ContentBriefListItem,
     ContentBriefListResponse,
     StageContentResponse,
 )
@@ -38,6 +40,29 @@ async def list_briefs(
 ) -> ContentBriefListResponse:
     """List all content briefs with inferred statuses and eval scores."""
     return await content_service.get_briefs(_effective(slug, product_slug))
+
+
+@router.post("/briefs", response_model=ContentBriefListItem, status_code=201)
+async def add_brief(
+    slug: str,
+    body: AddBriefRequest,
+    content_service: ContentDataServiceProtocol = Depends(get_content_data_service),
+    product_slug: Optional[str] = Query(None, description="Product slug"),
+    _access=Depends(require_tenant),
+) -> ContentBriefListItem:
+    """Immediately add a topic to the content cycle.
+
+    Creates a brief entry in blueprints.json so it appears in Content Studio
+    right away. The content pipeline can later enrich/generate content for it.
+    """
+    return await content_service.add_brief(
+        effective_slug=_effective(slug, product_slug),
+        title=body.title,
+        cluster=body.cluster,
+        description=body.description,
+        source=body.source,
+        gap_query_id=body.gap_query_id,
+    )
 
 
 @router.get("/briefs/{brief_id}", response_model=ContentBriefDetailResponse)

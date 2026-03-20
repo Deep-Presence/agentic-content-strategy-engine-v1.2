@@ -25,6 +25,12 @@ class PipelineType(str, Enum):
     content_refresh = "content_refresh"
     site_audit = "site_audit"
     topic_discovery = "topic_discovery"
+    topic_expansion = "topic_expansion"
+    knowledge_base = "knowledge_base"
+    audience_persona = "audience_persona"
+    voice_style_guide = "voice_style_guide"
+    onboarding = "onboarding"
+    daily_tracker = "daily_tracker"
 
 
 class PipelineStatus(str, Enum):
@@ -65,12 +71,16 @@ class ArtifactType(str, Enum):
     company_context = "company_context"
     persona = "persona"
     style_guide = "style_guide"
+    knowledge_base = "knowledge_base"
 
 
 class ArtifactStatus(str, Enum):
     draft = "draft"
     approved = "approved"
     archived = "archived"
+    fresh = "fresh"
+    stale = "stale"
+    pending_review = "pending_review"
 
 
 # ── Content ───────────────────────────────────────────────────────────
@@ -81,6 +91,15 @@ class ContentPieceStatus(str, Enum):
     approved = "approved"
     published = "published"
     archived = "archived"
+
+
+class ContentArtifactStage(str, Enum):
+    outline = "outline"
+    draft = "draft"
+    linked = "linked"
+    enriched = "enriched"
+    eval_history = "eval_history"
+    final = "final"
 
 
 # ── Site Audit ────────────────────────────────────────────────────────
@@ -103,6 +122,7 @@ class TrackingStatus(str, Enum):
 class TDStatus(str, Enum):
     draft = "draft"
     hitl_pending = "hitl_pending"
+    discovery_complete = "discovery_complete"
     approved = "approved"
     archived = "archived"
 
@@ -136,3 +156,12 @@ class TopicAssignmentStatus(str, Enum):
     in_gap_analysis = "in_gap_analysis"
     content_produced = "content_produced"
     published = "published"
+
+
+# ── Research Pipelines (KB, AP, VSG) ─────────────────────────────────
+class ResearchRunStatus(str, Enum):
+    draft = "draft"
+    running = "running"
+    hitl_pending = "hitl_pending"
+    completed = "completed"
+    failed = "failed"

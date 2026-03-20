@@ -21,11 +21,14 @@ from core.models.topic_discovery import (
     TopicAssignment,
 )
 from core.topic_discovery.agents import (
+    DeduplicationResult,
+    _build_taxonomy_tree,
     _cosine_similarity,
     _count_frequency_classes,
     _count_frequency_classes_by_round,
     _count_total_round_observations,
     _count_tree_stats,
+    _extract_taxonomy_nodes,
     _parse_hierarchy_nodes,
     _parse_json_response,
     _safe_float,
@@ -33,13 +36,16 @@ from core.topic_discovery.agents import (
     compute_all_coverage_metrics,
     compute_capture_recapture,
     compute_chao1_lower_bound,
+    compute_cluster_based_overlap,
     compute_sample_coverage,
+    compute_semantic_frequency_classes,
     deduplicate_subdomains,
+    deduplicate_subdomains_with_clusters,
     run_hierarchy_construction,
     run_relevance_filtering,
     run_source_a_company_brainstorm,
     run_source_b_persona_brainstorm,
-    run_source_c_competitor_sitemaps,
+    run_source_c_deep_research,
     run_source_d_adversarial,
     run_topic_generation,
 )
@@ -232,6 +238,30 @@ class TestStripCodeFences:
         text = '  ```json\n{"key": "value"}\n```  '
         assert _strip_code_fences(text) == '{"key": "value"}'
 
+    def test_preamble_before_fence(self):
+        """Preamble text before code fence should still extract JSON."""
+        text = 'Here is the JSON:\n```json\n{"key": "value"}\n```'
+        assert _strip_code_fences(text) == '{"key": "value"}'
+
+    def test_bare_json_with_preamble(self):
+        """If no code fences, extract JSON between first { and last }."""
+        text = 'Some preamble\n{"key": "value"}\nmore text'
+        result = _strip_code_fences(text)
+        assert '{"key": "value"}' in result
+        assert "preamble" not in result
+
+    def test_bare_json_array_with_preamble(self):
+        """Extract JSON array between first [ and last ]."""
+        text = 'text [1, 2, 3] more text'
+        result = _strip_code_fences(text)
+        assert "[1, 2, 3]" in result
+        assert "text" not in result.replace("[1, 2, 3]", "").strip()
+
+    def test_no_json_at_all_passthrough(self):
+        """Plain text with no JSON structure passes through unchanged."""
+        text = "just plain text"
+        assert _strip_code_fences(text) == "just plain text"
+
 
 class TestCosineSimilarity:
     def test_identical_vectors(self):
@@ -378,6 +408,115 @@ class TestParseHierarchyNodes:
     def test_non_list_input(self):
         assert _parse_hierarchy_nodes("not a list") == []
 
+    def test_prompt_schema_pillar_keys(self):
+        """Parser should accept the prompt's pillar_name/subdomains/sub_subdomains keys."""
+        data = [
+            {
+                "pillar_name": "Financial Operations",
+                "pillar_description": "Everything finance",
+                "subdomains": [
+                    {
+                        "name": "Expense Management",
+                        "description": "expense desc",
+                        "sources": ["source_a", "source_b"],
+                        "sub_subdomains": [
+                            {"name": "Invoice Processing", "description": "invoice desc"},
+                        ],
+                    },
+                ],
+            },
+        ]
+        nodes = _parse_hierarchy_nodes(data)
+        assert len(nodes) == 1
+        assert nodes[0].name == "Financial Operations"
+        assert nodes[0].description == "Everything finance"
+        # Level 2 children from "subdomains" key
+        assert len(nodes[0].children) == 1
+        assert nodes[0].children[0].name == "Expense Management"
+        # Level 3 children from "sub_subdomains" key
+        assert len(nodes[0].children[0].children) == 1
+        assert nodes[0].children[0].children[0].name == "Invoice Processing"
+
+    def test_legacy_schema_still_works(self):
+        """Backward-compat: name/description/children keys must still parse."""
+        data = [
+            {
+                "name": "Finance",
+                "description": "Financial tools",
+                "children": [
+                    {"name": "Budgeting", "description": "desc"},
+                ],
+            },
+        ]
+        nodes = _parse_hierarchy_nodes(data)
+        assert len(nodes) == 1
+        assert nodes[0].name == "Finance"
+        assert len(nodes[0].children) == 1
+        assert nodes[0].children[0].name == "Budgeting"
+
+    def test_source_provenance_from_sources_list(self):
+        """'sources' list from prompt schema should convert to dict for source_provenance."""
+        data = [{"name": "Topic", "sources": ["source_a", "source_b"]}]
+        nodes = _parse_hierarchy_nodes(data)
+        assert nodes[0].source_provenance == {"source_a": True, "source_b": True}
+
+
+class TestExtractTaxonomyNodes:
+    """Tests for _extract_taxonomy_nodes — top-level key tolerance."""
+
+    def test_hierarchy_key(self):
+        parsed = {"hierarchy": [{"name": "A"}]}
+        result = _extract_taxonomy_nodes(parsed)
+        assert result == [{"name": "A"}]
+
+    def test_taxonomy_key(self):
+        parsed = {"taxonomy": [{"name": "A"}]}
+        result = _extract_taxonomy_nodes(parsed)
+        assert result == [{"name": "A"}]
+
+    def test_hierarchy_preferred_over_taxonomy(self):
+        parsed = {"hierarchy": [{"name": "H"}], "taxonomy": [{"name": "T"}]}
+        result = _extract_taxonomy_nodes(parsed)
+        assert result == [{"name": "H"}]
+
+    def test_none_input(self):
+        assert _extract_taxonomy_nodes(None) is None
+
+    def test_empty_hierarchy(self):
+        assert _extract_taxonomy_nodes({"hierarchy": []}) is None
+
+    def test_no_known_key(self):
+        assert _extract_taxonomy_nodes({"other": [1, 2]}) is None
+
+    def test_bare_list_fallback(self):
+        """If parsed is itself a list, treat it as nodes."""
+        result = _extract_taxonomy_nodes([{"name": "A"}])
+        assert result == [{"name": "A"}]
+
+    def test_empty_list_fallback(self):
+        assert _extract_taxonomy_nodes([]) is None
+
+
+class TestBuildTaxonomyTree:
+    """Tests for _build_taxonomy_tree helper."""
+
+    def test_basic(self):
+        nodes_data = [
+            {"name": "Parent", "description": "p", "children": [
+                {"name": "Child", "description": "c"},
+            ]},
+        ]
+        tree = _build_taxonomy_tree(nodes_data, "test.com")
+        assert tree.domain_name == "test.com"
+        assert tree.total_subdomains == 2
+        assert tree.max_depth == 1
+        assert len(tree.root_nodes) == 1
+
+    def test_empty_nodes(self):
+        tree = _build_taxonomy_tree([], "test.com")
+        assert tree.total_subdomains == 0
+        assert tree.max_depth == 0
+
 
 class TestCountTreeStats:
     def test_basic_stats(self):
@@ -495,44 +634,107 @@ class TestSourceBBrainstorm:
         assert result.error is None
 
 
-class TestSourceCSitemaps:
+class TestSourceCDeepResearch:
     @pytest.mark.asyncio
-    async def test_happy_path(self, mock_litellm):
+    async def test_happy_path(self):
         response_json = json.dumps({
             "subdomains": [
-                {"name": "integration guides", "description": "desc", "confidence": 0.6},
-            ]
+                {
+                    "name": "Expense Management",
+                    "description": "Corporate expense tracking and policy enforcement",
+                    "competitive_density": "high",
+                    "source_type": "established",
+                    "confidence": 0.85,
+                },
+            ],
+            "metadata": {
+                "publishers_identified": ["Ramp Blog"],
+                "top_gaps": ["AI expense categorization"],
+                "emerging_trends": ["Real-time spend controls"],
+            },
         })
-        mock_litellm.acompletion = AsyncMock(
-            return_value=_make_mock_response(response_json)
-        )
-        result = await run_source_c_competitor_sitemaps(
-            "sitemap data", "ramp.com", timeout_s=10.0
-        )
+        with patch(
+            "core.research.tools.perplexity_client"
+        ) as mock_pplx:
+            mock_pplx.research = MagicMock(return_value=response_json)
+            result = await run_source_c_deep_research(
+                "Ramp is a fintech company", "Competitor data", "fintech",
+                timeout_s=10.0,
+            )
         assert result.source == TDSource.source_c
         assert len(result.candidates) == 1
+        assert result.candidates[0].name == "Expense Management"
+        assert result.candidates[0].confidence == 0.85
         assert result.total_rounds == 1
+        assert result.error is None
 
     @pytest.mark.asyncio
-    async def test_empty_sitemap_skips_llm_call(self, mock_litellm):
-        """H5: Empty sitemap data should skip LLM call entirely."""
-        mock_litellm.acompletion = AsyncMock()
-        result = await run_source_c_competitor_sitemaps("", "ramp.com", timeout_s=10.0)
+    async def test_empty_context_skips_api_call(self):
+        """Skip API call when both company_context and competitor_landscape are empty."""
+        with patch(
+            "core.research.tools.perplexity_client"
+        ) as mock_pplx:
+            mock_pplx.research = MagicMock()
+            result = await run_source_c_deep_research(
+                "", "", "fintech", timeout_s=10.0,
+            )
         assert result.source == TDSource.source_c
         assert len(result.candidates) == 0
         assert result.total_rounds == 0
         assert result.error is None
-        mock_litellm.acompletion.assert_not_called()
+        mock_pplx.research.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_whitespace_sitemap_skips_llm_call(self, mock_litellm):
-        """H5: Whitespace-only sitemap data should skip LLM call."""
-        mock_litellm.acompletion = AsyncMock()
-        result = await run_source_c_competitor_sitemaps("  \n  ", "ramp.com", timeout_s=10.0)
+    async def test_whitespace_context_skips_api_call(self):
+        """Whitespace-only context should skip API call."""
+        with patch(
+            "core.research.tools.perplexity_client"
+        ) as mock_pplx:
+            mock_pplx.research = MagicMock()
+            result = await run_source_c_deep_research(
+                "  \n  ", "  ", "fintech", timeout_s=10.0,
+            )
         assert result.source == TDSource.source_c
         assert len(result.candidates) == 0
         assert result.total_rounds == 0
-        mock_litellm.acompletion.assert_not_called()
+        mock_pplx.research.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_citations_stripped_before_json_parse(self):
+        """Perplexity citations section should be stripped before JSON parsing."""
+        response_json = json.dumps({
+            "subdomains": [
+                {"name": "API Security", "description": "desc", "confidence": 0.7},
+            ],
+        })
+        raw_with_citations = (
+            response_json + "\n\nSources:\n[1] https://example.com\n[2] https://other.com"
+        )
+        with patch(
+            "core.research.tools.perplexity_client"
+        ) as mock_pplx:
+            mock_pplx.research = MagicMock(return_value=raw_with_citations)
+            result = await run_source_c_deep_research(
+                "Company context", "", "cybersecurity", timeout_s=10.0,
+            )
+        assert len(result.candidates) == 1
+        assert result.candidates[0].name == "API Security"
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_error(self):
+        """Timeout should be handled gracefully."""
+        with patch(
+            "core.research.tools.perplexity_client"
+        ) as mock_pplx:
+            mock_pplx.research = MagicMock(
+                side_effect=asyncio.TimeoutError()
+            )
+            result = await run_source_c_deep_research(
+                "Company context", "", "fintech", timeout_s=0.001,
+            )
+        assert result.source == TDSource.source_c
+        assert result.error is not None
+        assert len(result.candidates) == 0
 
 
 class TestSourceDAdversarial:
@@ -591,9 +793,43 @@ class TestDeduplication:
         assert result == []
 
 
+class TestRunCompletionResponseFormat:
+    """Verify _run_completion passes response_format to litellm."""
+
+    @pytest.mark.asyncio
+    async def test_response_format_passed_through(self, mock_litellm):
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response('{"ok": true}')
+        )
+        from core.topic_discovery.agents import _run_completion
+        await _run_completion(
+            model="test-model",
+            messages=[{"role": "user", "content": "hi"}],
+            response_format={"type": "json_object"},
+            timeout_s=10.0,
+        )
+        call_kwargs = mock_litellm.acompletion.call_args.kwargs
+        assert call_kwargs.get("response_format") == {"type": "json_object"}
+
+    @pytest.mark.asyncio
+    async def test_response_format_omitted_when_none(self, mock_litellm):
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response('{"ok": true}')
+        )
+        from core.topic_discovery.agents import _run_completion
+        await _run_completion(
+            model="test-model",
+            messages=[{"role": "user", "content": "hi"}],
+            timeout_s=10.0,
+        )
+        call_kwargs = mock_litellm.acompletion.call_args.kwargs
+        assert "response_format" not in call_kwargs
+
+
 class TestHierarchyConstruction:
     @pytest.mark.asyncio
-    async def test_happy_path(self, mock_litellm):
+    async def test_happy_path_legacy_keys(self, mock_litellm):
+        """Legacy 'taxonomy'/'name'/'children' keys still produce a valid tree."""
         response_json = json.dumps({
             "taxonomy": [
                 {
@@ -617,6 +853,84 @@ class TestHierarchyConstruction:
         assert tree.max_depth == 1
         assert len(tree.root_nodes) == 1
         assert len(tree.root_nodes[0].children) == 2
+
+    @pytest.mark.asyncio
+    async def test_happy_path_prompt_schema(self, mock_litellm):
+        """Prompt's 'hierarchy'/'pillar_name'/'subdomains' keys produce a valid tree."""
+        response_json = json.dumps({
+            "hierarchy": [
+                {
+                    "pillar_name": "Finance",
+                    "pillar_description": "Financial tools",
+                    "subdomains": [
+                        {"name": "Expense Management", "description": "desc"},
+                        {"name": "Budgeting", "description": "desc"},
+                    ],
+                },
+            ],
+            "merge_log": [],
+            "orphans": [],
+            "metadata": {},
+        })
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response(response_json)
+        )
+        tree = await run_hierarchy_construction(
+            ["Expense Management", "Budgeting"], "fintech", timeout_s=10.0
+        )
+        assert tree.domain_name == "fintech"
+        assert tree.total_subdomains == 3
+        assert tree.max_depth == 1
+        assert len(tree.root_nodes) == 1
+        assert tree.root_nodes[0].name == "Finance"
+        assert len(tree.root_nodes[0].children) == 2
+
+    @pytest.mark.asyncio
+    async def test_uses_response_format_json_object(self, mock_litellm):
+        """Hierarchy construction should request JSON mode from the LLM."""
+        response_json = json.dumps({"hierarchy": [{"pillar_name": "A", "pillar_description": "d"}]})
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response(response_json)
+        )
+        await run_hierarchy_construction(["A"], "test.com", timeout_s=10.0)
+        first_call_kwargs = mock_litellm.acompletion.call_args_list[0].kwargs
+        assert first_call_kwargs.get("response_format") == {"type": "json_object"}
+
+    @pytest.mark.asyncio
+    async def test_retry_on_first_failure(self, mock_litellm):
+        """First attempt fails parsing → retry with repair prompt → succeeds."""
+        good_json = json.dumps({"hierarchy": [{"pillar_name": "A", "pillar_description": "d"}]})
+        mock_litellm.acompletion = AsyncMock(side_effect=[
+            _make_mock_response("NOT JSON"),       # first attempt fails
+            _make_mock_response(good_json),         # retry succeeds
+        ])
+        tree = await run_hierarchy_construction(["A"], "test.com", timeout_s=10.0)
+        assert tree.total_subdomains == 1
+        assert mock_litellm.acompletion.call_count == 2
+        # Retry should include the failed response as assistant message
+        retry_messages = mock_litellm.acompletion.call_args_list[1].kwargs["messages"]
+        assert any("NOT JSON" in str(m.get("content", "")) for m in retry_messages)
+
+    @pytest.mark.asyncio
+    async def test_both_attempts_fail_raises_runtime_error(self, mock_litellm):
+        """Both attempts return garbage → RuntimeError raised."""
+        mock_litellm.acompletion = AsyncMock(side_effect=[
+            _make_mock_response("GARBAGE 1"),
+            _make_mock_response("GARBAGE 2"),
+        ])
+        with pytest.raises(RuntimeError, match="Hierarchy construction failed"):
+            await run_hierarchy_construction(["A"], "test.com", timeout_s=10.0)
+
+    @pytest.mark.asyncio
+    async def test_first_attempt_succeeds_no_retry(self, mock_litellm):
+        """Valid JSON on first attempt → no retry, single LLM call."""
+        response_json = json.dumps({"hierarchy": [{"pillar_name": "A", "pillar_description": "d"}]})
+        mock_litellm.acompletion = AsyncMock(
+            return_value=_make_mock_response(response_json)
+        )
+        tree = await run_hierarchy_construction(["A"], "test.com", timeout_s=10.0)
+        assert tree.total_subdomains == 1
+        assert mock_litellm.acompletion.call_count == 1
 
 
 class TestRelevanceFiltering:
@@ -683,8 +997,8 @@ class TestPromptBuilderRevisionNote:
         assert "more fintech" in prompt
 
     def test_source_c_revision_note(self):
-        from core.topic_discovery.prompts.source_c_sitemap import build_source_c_user_prompt
-        prompt = build_source_c_user_prompt("sitemap data", "ramp.com", revision_note="missing security")
+        from core.topic_discovery.prompts.source_c_deep_research import build_source_c_user_prompt
+        prompt = build_source_c_user_prompt("company ctx", "competitors", "fintech", revision_note="missing security")
         assert "## Reviewer Feedback" in prompt
         assert "missing security" in prompt
 
@@ -933,17 +1247,16 @@ class TestM2MalformedJsonRecovery:
         assert result.candidates[0].name == "SOC2"
 
     @pytest.mark.asyncio
-    async def test_hierarchy_malformed_json_returns_empty_tree(self, mock_litellm):
-        """Hierarchy construction with garbage JSON → empty tree."""
-        mock_litellm.acompletion = AsyncMock(
-            return_value=_make_mock_response("NOT JSON")
-        )
-        tree = await run_hierarchy_construction(
-            ["sub1", "sub2"], "fintech", timeout_s=10.0
-        )
-        assert tree.domain_name == "fintech"
-        assert tree.total_subdomains == 0
-        assert len(tree.root_nodes) == 0
+    async def test_hierarchy_malformed_json_raises_after_retry(self, mock_litellm):
+        """Hierarchy construction with garbage JSON on both attempts → RuntimeError."""
+        mock_litellm.acompletion = AsyncMock(side_effect=[
+            _make_mock_response("NOT JSON"),  # first attempt
+            _make_mock_response("STILL NOT JSON"),  # retry
+        ])
+        with pytest.raises(RuntimeError, match="Hierarchy construction failed"):
+            await run_hierarchy_construction(
+                ["sub1", "sub2"], "fintech", timeout_s=10.0
+            )
 
     @pytest.mark.asyncio
     async def test_relevance_malformed_json_returns_empty(self, mock_litellm):
@@ -966,3 +1279,475 @@ class TestM2MalformedJsonRecovery:
             "sub1", "tofu", "informational", "CFO", "context", timeout_s=10.0
         )
         assert result == []
+
+
+# ── Part B: Semantic Coverage Statistics ──────────────────────────────
+
+
+def _embed_vec(value: float) -> List[float]:
+    """Create a simple 3-dim embedding vector for testing."""
+    return [value, 1.0 - value, 0.5]
+
+
+class TestSemanticFrequencyClasses:
+    """Tests for compute_semantic_frequency_classes — embedding-based round overlap."""
+
+    def test_identical_embeddings_different_rounds_are_doubletons(self):
+        """Two candidates with identical embeddings in rounds 1 and 2 → doubleton."""
+        candidates = [
+            SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="B", source=TDSource.source_a, round_number=2),
+        ]
+        # Identical embeddings → cosine sim = 1.0
+        embeddings = [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+        s, d = compute_semantic_frequency_classes(candidates, embeddings, similarity_threshold=0.70)
+        assert s == 0
+        assert d == 1
+
+    def test_similar_embeddings_above_threshold_are_doubletons(self):
+        """Two candidates with cosine sim > threshold in different rounds → doubleton."""
+        candidates = [
+            SubdomainCandidate(name="Expense Management", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="Expense Tracking", source=TDSource.source_a, round_number=2),
+        ]
+        # Cosine sim of [0.9, 0.1, 0.0] and [0.85, 0.15, 0.0] ≈ 0.9997 > 0.70
+        embeddings = [[0.9, 0.1, 0.0], [0.85, 0.15, 0.0]]
+        s, d = compute_semantic_frequency_classes(candidates, embeddings, similarity_threshold=0.70)
+        assert s == 0
+        assert d == 1
+
+    def test_dissimilar_embeddings_are_singletons(self):
+        """Two candidates with low cosine sim in different rounds → singletons."""
+        candidates = [
+            SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="B", source=TDSource.source_a, round_number=2),
+        ]
+        # Orthogonal → cosine sim = 0.0
+        embeddings = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+        s, d = compute_semantic_frequency_classes(candidates, embeddings, similarity_threshold=0.70)
+        assert s == 2
+        assert d == 0
+
+    def test_three_rounds_same_concept(self):
+        """Same concept in 3 rounds → neither singleton nor doubleton (appears in 3 rounds)."""
+        candidates = [
+            SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="B", source=TDSource.source_a, round_number=2),
+            SubdomainCandidate(name="C", source=TDSource.source_a, round_number=3),
+        ]
+        # All identical embeddings
+        embeddings = [[1.0, 0.0, 0.0]] * 3
+        s, d = compute_semantic_frequency_classes(candidates, embeddings, similarity_threshold=0.70)
+        assert s == 0
+        assert d == 0  # in 3 rounds, not a doubleton
+
+    def test_single_round_all_singletons(self):
+        """All candidates in round 1 only → all singletons."""
+        candidates = [
+            SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="B", source=TDSource.source_a, round_number=1),
+        ]
+        embeddings = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+        s, d = compute_semantic_frequency_classes(candidates, embeddings, similarity_threshold=0.70)
+        assert s == 2
+        assert d == 0
+
+    def test_same_round_similar_not_counted(self):
+        """Similar candidates in the SAME round don't create a doubleton."""
+        candidates = [
+            SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="B", source=TDSource.source_a, round_number=1),
+        ]
+        # Identical embeddings but same round
+        embeddings = [[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+        s, d = compute_semantic_frequency_classes(candidates, embeddings, similarity_threshold=0.70)
+        # Same round: merged into one component spanning 1 round → singleton
+        assert d == 0
+
+    def test_empty_candidates(self):
+        s, d = compute_semantic_frequency_classes([], [], similarity_threshold=0.70)
+        assert s == 0
+        assert d == 0
+
+    def test_threshold_sensitivity(self):
+        """Same data, different thresholds → different results."""
+        candidates = [
+            SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="B", source=TDSource.source_a, round_number=2),
+        ]
+        # Cosine sim ≈ 0.75
+        embeddings = [[0.9, 0.4, 0.0], [0.6, 0.8, 0.0]]
+        from core.topic_discovery.agents import _cosine_similarity
+        sim = _cosine_similarity(embeddings[0], embeddings[1])
+        # With threshold below sim → doubleton
+        s1, d1 = compute_semantic_frequency_classes(candidates, embeddings, similarity_threshold=sim - 0.05)
+        assert d1 == 1
+        # With threshold above sim → singletons
+        s2, d2 = compute_semantic_frequency_classes(candidates, embeddings, similarity_threshold=sim + 0.05)
+        assert d2 == 0
+        assert s2 == 2
+
+
+class TestClusterBasedOverlap:
+    """Tests for compute_cluster_based_overlap — between-source overlap from dedup clusters."""
+
+    def test_two_sources_one_shared_cluster(self):
+        """Cluster contains candidates from source_a and source_b → 1 overlap."""
+        clusters = [[0, 1], [2]]  # cluster 0 has indices 0+1, cluster 1 has index 2
+        source_of = [TDSource.source_a, TDSource.source_b, TDSource.source_a]
+        result = compute_cluster_based_overlap(clusters, source_of)
+        assert result["source_a_source_b"] == 1
+
+    def test_no_shared_clusters(self):
+        """Each cluster has candidates from only one source → empty overlap."""
+        clusters = [[0], [1]]
+        source_of = [TDSource.source_a, TDSource.source_b]
+        result = compute_cluster_based_overlap(clusters, source_of)
+        assert len(result) == 0
+
+    def test_three_sources_multiple_overlaps(self):
+        """Clusters spanning 3 sources → all 3 pairs have counts."""
+        # Cluster 0: source_a + source_b, Cluster 1: source_b + source_d
+        clusters = [[0, 1], [2, 3]]
+        source_of = [TDSource.source_a, TDSource.source_b, TDSource.source_b, TDSource.source_d]
+        result = compute_cluster_based_overlap(clusters, source_of)
+        assert result.get("source_a_source_b", 0) == 1
+        assert result.get("source_b_source_d", 0) == 1
+        assert result.get("source_a_source_d", 0) == 0  # no shared cluster
+
+    def test_multiple_clusters_same_pair(self):
+        """3 clusters each containing source_a + source_b → overlap = 3."""
+        clusters = [[0, 1], [2, 3], [4, 5]]
+        source_of = [
+            TDSource.source_a, TDSource.source_b,
+            TDSource.source_a, TDSource.source_b,
+            TDSource.source_a, TDSource.source_b,
+        ]
+        result = compute_cluster_based_overlap(clusters, source_of)
+        assert result["source_a_source_b"] == 3
+
+
+class TestDeduplicateSubdomainsWithClusters:
+    """Tests for deduplicate_subdomains_with_clusters."""
+
+    @pytest.mark.asyncio
+    async def test_clusters_track_merged_indices(self):
+        """Two similar candidates → one cluster with both indices."""
+        candidates = [
+            SubdomainCandidate(name="expense management", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="expense tracking", source=TDSource.source_b, round_number=1),
+            SubdomainCandidate(name="corporate cards", source=TDSource.source_a, round_number=1),
+        ]
+
+        def mock_embed(texts):
+            vectors = []
+            for t in texts:
+                if "expense" in t.lower():
+                    vectors.append([0.9, 0.1, 0.0])
+                else:
+                    vectors.append([0.1, 0.9, 0.0])
+            return vectors
+
+        with patch("core.shared_tools.embedding_client.embed_texts", side_effect=mock_embed):
+            result = await deduplicate_subdomains_with_clusters(candidates, threshold=0.5)
+
+        assert isinstance(result, DeduplicationResult)
+        assert len(result.kept) == 2
+        assert len(result.embeddings) == 3
+        assert len(result.source_of) == 3
+        # One cluster should contain indices 0 and 1 (both "expense" variants)
+        merged_cluster = [c for c in result.clusters if len(c) > 1]
+        assert len(merged_cluster) == 1
+        assert set(merged_cluster[0]) == {0, 1}
+
+    @pytest.mark.asyncio
+    async def test_source_of_populated(self):
+        candidates = [
+            SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="B", source=TDSource.source_b, round_number=1),
+        ]
+
+        def mock_embed(texts):
+            return [[1.0, 0.0], [0.0, 1.0]]
+
+        with patch("core.shared_tools.embedding_client.embed_texts", side_effect=mock_embed):
+            result = await deduplicate_subdomains_with_clusters(candidates, threshold=0.85)
+
+        assert result.source_of == [TDSource.source_a, TDSource.source_b]
+
+    @pytest.mark.asyncio
+    async def test_backward_compat_wrapper(self):
+        """Old deduplicate_subdomains still returns List[SubdomainCandidate]."""
+        candidates = [
+            SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1),
+            SubdomainCandidate(name="B", source=TDSource.source_b, round_number=1),
+        ]
+
+        def mock_embed(texts):
+            return [[1.0, 0.0], [0.0, 1.0]]
+
+        with patch("core.shared_tools.embedding_client.embed_texts", side_effect=mock_embed):
+            result = await deduplicate_subdomains(candidates, threshold=0.85)
+
+        assert isinstance(result, list)
+        assert all(isinstance(c, SubdomainCandidate) for c in result)
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_empty_candidates(self):
+        result = await deduplicate_subdomains_with_clusters([])
+        assert result.kept == []
+        assert result.clusters == []
+        assert result.embeddings == []
+        assert result.source_of == []
+
+
+class TestComputeAllCoverageMetricsWithClusters:
+    """Tests for compute_all_coverage_metrics with dedup_result (new path)."""
+
+    def test_without_dedup_result_backward_compat(self):
+        """Without dedup_result → uses legacy exact-name path."""
+        sr_a = SourceResult(
+            source=TDSource.source_a,
+            candidates=[SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1)],
+            total_rounds=1, singletons=1, doubletons=0,
+            chao1_estimate=1.0, source_sample_coverage=0.0,
+        )
+        result = compute_all_coverage_metrics([sr_a])
+        assert result.cluster_based_overlap is False
+
+    def test_with_dedup_result_uses_cluster_overlap(self):
+        """With dedup_result → cluster-based overlap instead of exact name matching."""
+        sr_a = SourceResult(
+            source=TDSource.source_a,
+            candidates=[
+                SubdomainCandidate(name="expense mgmt", source=TDSource.source_a, round_number=1),
+            ],
+            total_rounds=1, singletons=1, doubletons=0,
+            chao1_estimate=1.0, source_sample_coverage=0.0,
+        )
+        sr_b = SourceResult(
+            source=TDSource.source_b,
+            candidates=[
+                SubdomainCandidate(name="expense tracking", source=TDSource.source_b, round_number=1),
+            ],
+            total_rounds=1, singletons=1, doubletons=0,
+            chao1_estimate=1.0, source_sample_coverage=0.0,
+        )
+        # Dedup merged "expense mgmt" and "expense tracking" into same cluster
+        dedup = DeduplicationResult(
+            kept=[SubdomainCandidate(name="expense mgmt", source=TDSource.source_a, round_number=1)],
+            clusters=[[0, 1]],  # indices 0 (src_a) and 1 (src_b) merged
+            embeddings=[[0.9, 0.1, 0.0], [0.85, 0.15, 0.0]],
+            source_of=[TDSource.source_a, TDSource.source_b],
+        )
+        result = compute_all_coverage_metrics([sr_a, sr_b], dedup_result=dedup)
+        assert result.cluster_based_overlap is True
+        # With cluster overlap = 1, pairwise should now be populated
+        assert len(result.pairwise_estimates) >= 1
+
+    def test_with_dedup_result_uses_semantic_frequency(self):
+        """With dedup_result → per-source coverage uses semantic singletons/doubletons."""
+        sr_a = SourceResult(
+            source=TDSource.source_a,
+            candidates=[
+                SubdomainCandidate(name="expense mgmt", source=TDSource.source_a, round_number=1),
+                SubdomainCandidate(name="expense tracking", source=TDSource.source_a, round_number=2),
+            ],
+            total_rounds=2, singletons=2, doubletons=0,
+            chao1_estimate=3.0, source_sample_coverage=0.0,
+        )
+        # Embeddings are very similar → semantic doubleton
+        dedup = DeduplicationResult(
+            kept=[SubdomainCandidate(name="expense mgmt", source=TDSource.source_a, round_number=1)],
+            clusters=[[0, 1]],
+            embeddings=[[0.9, 0.1, 0.0], [0.85, 0.15, 0.0]],
+            source_of=[TDSource.source_a, TDSource.source_a],
+        )
+        result = compute_all_coverage_metrics(
+            [sr_a], dedup_result=dedup, semantic_sim_threshold=0.70,
+        )
+        psc = result.per_source_coverage.get("source_a")
+        assert psc is not None
+        assert psc.semantic_doubletons >= 1
+        assert psc.semantic_sim_threshold == 0.70
+
+    def test_cluster_based_overlap_flag_set(self):
+        """cluster_based_overlap flag should be True when dedup_result provided."""
+        sr_a = SourceResult(
+            source=TDSource.source_a,
+            candidates=[SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1)],
+            total_rounds=1, singletons=1, doubletons=0,
+            chao1_estimate=1.0, source_sample_coverage=0.0,
+        )
+        dedup = DeduplicationResult(
+            kept=[SubdomainCandidate(name="A", source=TDSource.source_a, round_number=1)],
+            clusters=[[0]],
+            embeddings=[[1.0, 0.0, 0.0]],
+            source_of=[TDSource.source_a],
+        )
+        result = compute_all_coverage_metrics([sr_a], dedup_result=dedup)
+        assert result.cluster_based_overlap is True
+
+
+# ── Phase 3: Persona Metadata Tests ──────────────────────────────────────
+
+
+class TestResolvePersonaIds:
+    """Tests for _resolve_persona_ids helper."""
+
+    def test_exact_match(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        name_to_id = {"David Chen": "david", "Marcus Lee": "marcus"}
+        result = _resolve_persona_ids(["David Chen"], name_to_id)
+        assert result == ["david"]
+
+    def test_case_insensitive_match(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        name_to_id = {"David Chen": "david"}
+        result = _resolve_persona_ids(["david chen"], name_to_id)
+        assert result == ["david"]
+
+    def test_substring_match(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        name_to_id = {"David Chen — First-time Founder": "david"}
+        result = _resolve_persona_ids(["David Chen"], name_to_id)
+        assert result == ["david"]
+
+    def test_empty_input(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        assert _resolve_persona_ids([], {"a": "b"}) == []
+        assert _resolve_persona_ids(["x"], {}) == []
+
+    def test_deduplication(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        name_to_id = {"David": "david"}
+        result = _resolve_persona_ids(["David", "david", "DAVID"], name_to_id)
+        assert result == ["david"]
+
+    def test_non_string_ignored(self):
+        from core.topic_discovery.agents import _resolve_persona_ids
+
+        name_to_id = {"David": "david"}
+        result = _resolve_persona_ids([None, "", 123, "David"], name_to_id)  # type: ignore[list-item]
+        assert result == ["david"]
+
+
+class TestSourceBPersonaCapture:
+    """Tests for persona metadata captured in Source B agent."""
+
+    @pytest.mark.asyncio
+    async def test_source_b_captures_persona_ids(self):
+        """Source B should populate persona_ids on SubdomainCandidate."""
+        llm_response = json.dumps({
+            "subdomains": [
+                {
+                    "name": "Cap Table Accuracy",
+                    "description": "Ensuring cap table data is correct",
+                    "source_personas": ["David Chen"],
+                    "pain_points_addressed": ["inaccurate cap tables", "equity confusion"],
+                    "confidence": 0.8,
+                }
+            ],
+            "metadata": {"round_number": 1, "subdomains_generated": 1},
+        })
+
+        with patch("core.topic_discovery.agents._run_completion") as mock_comp:
+            mock_comp.return_value = (None, llm_response)
+            result = await run_source_b_persona_brainstorm(
+                "persona profiles text",
+                "company context",
+                max_rounds=1,
+                persona_name_to_id={"David Chen": "david"},
+            )
+        assert len(result.candidates) == 1
+        c = result.candidates[0]
+        assert c.persona_ids == ["david"]
+        assert "inaccurate cap tables" in c.pain_points
+        assert "equity confusion" in c.pain_points
+
+    @pytest.mark.asyncio
+    async def test_source_b_without_persona_mapping(self):
+        """Without persona_name_to_id, persona_ids should be empty."""
+        llm_response = json.dumps({
+            "subdomains": [
+                {
+                    "name": "Test Topic",
+                    "description": "desc",
+                    "source_personas": ["SomeName"],
+                    "confidence": 0.5,
+                }
+            ],
+            "metadata": {"round_number": 1, "subdomains_generated": 1},
+        })
+
+        with patch("core.topic_discovery.agents._run_completion") as mock_comp:
+            mock_comp.return_value = (None, llm_response)
+            result = await run_source_b_persona_brainstorm(
+                "profiles", "context", max_rounds=1,
+            )
+        assert len(result.candidates) == 1
+        assert result.candidates[0].persona_ids == []
+
+
+class TestDedupMergesPersonaIds:
+    """Tests for persona_id merging through dedup clusters."""
+
+    @pytest.mark.asyncio
+    async def test_dedup_merges_persona_ids(self):
+        """When two candidates merge, their persona_ids are combined."""
+        from core.topic_discovery.agents import deduplicate_subdomains_with_clusters
+
+        c1 = SubdomainCandidate(
+            name="expense mgmt",
+            source=TDSource.source_b,
+            persona_ids=["david"],
+            pain_points=["slow reports"],
+        )
+        c2 = SubdomainCandidate(
+            name="expense management",
+            source=TDSource.source_b,
+            persona_ids=["marcus"],
+            pain_points=["audit failures"],
+        )
+
+        with patch("core.shared_tools.embedding_client.embed_texts") as mock_embed:
+            # Very similar embeddings → will merge
+            mock_embed.return_value = [[0.9, 0.1, 0.0], [0.88, 0.12, 0.0]]
+            result = await deduplicate_subdomains_with_clusters(
+                [c1, c2], threshold=0.85,
+            )
+
+        assert len(result.kept) == 1
+        kept = result.kept[0]
+        assert sorted(kept.persona_ids) == ["david", "marcus"]
+        assert "slow reports" in kept.pain_points
+        assert "audit failures" in kept.pain_points
+
+    @pytest.mark.asyncio
+    async def test_dedup_no_merge_preserves_persona_ids(self):
+        """Dissimilar candidates keep their own persona_ids."""
+        from core.topic_discovery.agents import deduplicate_subdomains_with_clusters
+
+        c1 = SubdomainCandidate(
+            name="billing", source=TDSource.source_b, persona_ids=["david"],
+        )
+        c2 = SubdomainCandidate(
+            name="devops", source=TDSource.source_b, persona_ids=["marcus"],
+        )
+
+        with patch("core.shared_tools.embedding_client.embed_texts") as mock_embed:
+            # Very different embeddings → no merge
+            mock_embed.return_value = [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+            result = await deduplicate_subdomains_with_clusters(
+                [c1, c2], threshold=0.85,
+            )
+
+        assert len(result.kept) == 2
+        assert result.kept[0].persona_ids == ["david"]
+        assert result.kept[1].persona_ids == ["marcus"]

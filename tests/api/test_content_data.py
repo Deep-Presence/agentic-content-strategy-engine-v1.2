@@ -135,6 +135,7 @@ def _setup_content_dir(
     run_metadata: Optional[Dict[str, Any]] = None,
     brief_stages: Optional[Dict[str, Dict[str, str]]] = None,
     eval_histories: Optional[Dict[str, Dict[str, Any]]] = None,
+    pipeline_state: Optional[Dict[str, str]] = None,
 ) -> Path:
     """Create content/{slug}/ directory structure with optional files.
 
@@ -142,15 +143,21 @@ def _setup_content_dir(
         brief_stages: {brief_id: {stage_filename: content}} e.g.
             {"brief-0": {"draft.md": "# Draft content", "outline.json": '{"sections": []}'}}
         eval_histories: {brief_id: eval_data_dict}
+        pipeline_state: {brief_id: phase_string} for pipeline_state.json
     """
     content_dir = artifacts_root / "content" / slug
     content_dir.mkdir(parents=True, exist_ok=True)
 
     if briefs_data is not None:
-        (content_dir / "briefs.json").write_text(json.dumps(briefs_data))
+        # Write as blueprints.json (v1.3 format: flat list of briefs)
+        briefs_list = briefs_data.get("briefs", [])
+        (content_dir / "blueprints.json").write_text(json.dumps(briefs_list))
 
     if run_metadata is not None:
-        (content_dir / "run_metadata.json").write_text(json.dumps(run_metadata))
+        (content_dir / "run_metadata_v13.json").write_text(json.dumps(run_metadata))
+
+    if pipeline_state is not None:
+        (content_dir / "pipeline_state.json").write_text(json.dumps(pipeline_state))
 
     if brief_stages:
         for brief_id, stages in brief_stages.items():
@@ -331,7 +338,7 @@ class TestBriefList:
             brief_stages={"brief-0": {"draft.md": "# Draft"}},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
-        assert resp.json()["briefs"][0]["status"] == "approved"
+        assert resp.json()["briefs"][0]["status"] == "completed"
 
     def test_list_briefs_timestamps_are_strings(
         self, client: TestClient, artifacts_root: Path
@@ -361,6 +368,123 @@ class TestBriefList:
         _setup_content_dir(artifacts_root, briefs_data={"briefs": []})
         resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["total"] == 0
+
+    # ── Pipeline State (Phase 0) Tests ──────────────────────────────
+
+    def test_list_briefs_status_from_pipeline_state(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """pipeline_state.json overrides file-based inference (Phase 0 > Phase 2)."""
+        _setup_content_dir(
+            artifacts_root,
+            briefs_data=_make_briefs_json(2),
+            pipeline_state={"brief-0": "approved", "brief-1": "in_progress"},
+            brief_stages={"brief-0": {"draft.md": "# Draft"}},  # would be "drafting" without pipeline_state
+        )
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
+        briefs = {b["id"]: b["status"] for b in resp.json()["briefs"]}
+        assert briefs["brief-0"] == "approved"
+        assert briefs["brief-1"] == "in_progress"
+
+    def test_list_briefs_pipeline_state_overrides_pieces(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """pipeline_state.json (Phase 0) has higher priority than pieces (Phase 1)."""
+        _setup_content_dir(
+            artifacts_root,
+            briefs_data=_make_briefs_json(1),
+            run_metadata=_make_run_metadata(pieces=[
+                {"brief_id": "brief-0", "status": "approved"},
+            ]),
+            pipeline_state={"brief-0": "review"},
+        )
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
+        assert resp.json()["briefs"][0]["status"] == "review"
+
+    def test_list_briefs_pipeline_state_partial(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """Briefs not in pipeline_state fall through to Phase 1/2."""
+        _setup_content_dir(
+            artifacts_root,
+            briefs_data=_make_briefs_json(2),
+            pipeline_state={"brief-0": "in_progress"},
+            # brief-1 not in pipeline_state → falls through to "suggested"
+        )
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
+        briefs = {b["id"]: b["status"] for b in resp.json()["briefs"]}
+        assert briefs["brief-0"] == "in_progress"
+        assert briefs["brief-1"] == "suggested"
+
+    def test_list_briefs_pipeline_state_completed(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """pipeline_state 'completed' status is returned correctly."""
+        _setup_content_dir(
+            artifacts_root,
+            briefs_data=_make_briefs_json(1),
+            pipeline_state={"brief-0": "completed"},
+        )
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
+        assert resp.json()["briefs"][0]["status"] == "completed"
+
+    def test_list_briefs_no_pipeline_state_file(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """Without pipeline_state.json, status inference works via Phase 1/2."""
+        _setup_content_dir(
+            artifacts_root,
+            briefs_data=_make_briefs_json(1),
+            brief_stages={"brief-0": {"outline.json": '{"sections": []}'}},
+        )
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
+        assert resp.json()["briefs"][0]["status"] == "outlining"
+
+    # ── Namespaced Metadata (Manual Mode) Tests ─────────────────────
+
+    def test_list_briefs_namespaced_metadata_pieces(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """Pieces from run_metadata_v13_{brief}.json are loaded."""
+        content_dir = _setup_content_dir(
+            artifacts_root,
+            briefs_data=_make_briefs_json(2),
+        )
+        # Write namespaced metadata (manual mode parallel run)
+        namespaced = {
+            "pieces": [{"brief_id": "brief-0", "status": "approved"}],
+            "run_metadata": {"session_id": "sess-manual"},
+        }
+        (content_dir / "run_metadata_v13_brief-0.json").write_text(
+            json.dumps(namespaced)
+        )
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
+        briefs = {b["id"]: b["status"] for b in resp.json()["briefs"]}
+        assert briefs["brief-0"] == "completed"  # approved piece → completed
+        assert briefs["brief-1"] == "suggested"  # no piece → suggested
+
+    def test_list_briefs_standard_metadata_takes_priority(
+        self, client: TestClient, artifacts_root: Path,
+    ):
+        """Standard file pieces take priority over namespaced file pieces."""
+        content_dir = _setup_content_dir(
+            artifacts_root,
+            briefs_data=_make_briefs_json(1),
+            run_metadata=_make_run_metadata(pieces=[
+                {"brief_id": "brief-0", "status": "rejected"},
+            ]),
+        )
+        # Namespaced file also has brief-0 — should be deduped
+        namespaced = {
+            "pieces": [{"brief_id": "brief-0", "status": "approved"}],
+            "run_metadata": {},
+        }
+        (content_dir / "run_metadata_v13_brief-0.json").write_text(
+            json.dumps(namespaced)
+        )
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
+        # Standard file has "rejected" → takes priority
+        assert resp.json()["briefs"][0]["status"] == "rejected"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -748,7 +872,7 @@ class TestStatusInference:
             brief_stages={"brief-0": {"outline.json": '{"sections": []}'}},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
-        assert resp.json()["briefs"][0]["status"] == "research"
+        assert resp.json()["briefs"][0]["status"] == "outlining"
 
     def test_status_drafting(self, client: TestClient, artifacts_root: Path):
         """draft.md exists → drafting."""
@@ -770,15 +894,31 @@ class TestStatusInference:
         resp = client.get("/api/v1/companies/test-co/content/briefs")
         assert resp.json()["briefs"][0]["status"] == "enriching"
 
-    def test_status_formatting(self, client: TestClient, artifacts_root: Path):
-        """formatted.md exists → formatting."""
+    def test_status_formatting_removed_v13(self, client: TestClient, artifacts_root: Path):
+        """M3-fix: formatted.md is a v1.0-only stage — no longer inferred as 'formatting'.
+
+        v1.3 pipeline skips the Formatter stage. A brief with only formatted.md
+        (legacy artifact) falls through to 'suggested' since no v1.3 stage
+        files are present.
+        """
         _setup_content_dir(
             artifacts_root,
             briefs_data=_make_briefs_json(1),
             brief_stages={"brief-0": {"formatted.md": "# Formatted"}},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
-        assert resp.json()["briefs"][0]["status"] == "formatting"
+        assert resp.json()["briefs"][0]["status"] == "suggested"
+
+    def test_status_enriched_to_evaluating(self, client: TestClient, artifacts_root: Path):
+        """M3-fix: enriched.md + eval_history.json → evaluating (not stuck at formatting)."""
+        _setup_content_dir(
+            artifacts_root,
+            briefs_data=_make_briefs_json(1),
+            brief_stages={"brief-0": {"enriched.md": "# Enriched"}},
+            eval_histories={"brief-0": _make_eval_history(cycles=1, final_passed=False)},
+        )
+        resp = client.get("/api/v1/companies/test-co/content/briefs")
+        assert resp.json()["briefs"][0]["status"] == "evaluating"
 
     def test_status_evaluating(self, client: TestClient, artifacts_root: Path):
         """eval_history.json exists but final_passed=False → evaluating."""
@@ -808,10 +948,10 @@ class TestStatusInference:
             brief_stages={"brief-0": {"final.md": "# Final"}},
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
-        assert resp.json()["briefs"][0]["status"] == "published"
+        assert resp.json()["briefs"][0]["status"] == "completed"
 
     def test_status_piece_approved(self, client: TestClient, artifacts_root: Path):
-        """Piece status 'approved' → approved (distinct from published)."""
+        """Piece status 'approved' → completed (Published column, not Brief)."""
         _setup_content_dir(
             artifacts_root,
             briefs_data=_make_briefs_json(1),
@@ -820,10 +960,10 @@ class TestStatusInference:
             ]),
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
-        assert resp.json()["briefs"][0]["status"] == "approved"
+        assert resp.json()["briefs"][0]["status"] == "completed"
 
-    def test_status_piece_edited_published(self, client: TestClient, artifacts_root: Path):
-        """Piece status 'edited' → published."""
+    def test_status_piece_edited_completed(self, client: TestClient, artifacts_root: Path):
+        """Piece status 'edited' → completed (Published column)."""
         _setup_content_dir(
             artifacts_root,
             briefs_data=_make_briefs_json(1),
@@ -832,7 +972,7 @@ class TestStatusInference:
             ]),
         )
         resp = client.get("/api/v1/companies/test-co/content/briefs")
-        assert resp.json()["briefs"][0]["status"] == "published"
+        assert resp.json()["briefs"][0]["status"] == "completed"
 
     def test_status_piece_rejected(self, client: TestClient, artifacts_root: Path):
         """Piece status 'rejected' → rejected."""

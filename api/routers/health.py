@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from core.config.settings import settings
 
@@ -17,8 +17,14 @@ _REQUIRED_KEYS = [
 
 
 @router.get("/health")
-async def health() -> Dict[str, str]:
-    return {"status": "ok"}
+async def health(request: Request) -> Dict[str, Any]:
+    db_healthy = getattr(request.app.state, "db_healthy", False)
+    pgvector = getattr(request.app.state, "pgvector_available", False)
+    return {
+        "status": "ok",
+        "database": "connected" if db_healthy else "unavailable",
+        "pgvector": "available" if pgvector else "unavailable",
+    }
 
 
 @router.get("/readiness")

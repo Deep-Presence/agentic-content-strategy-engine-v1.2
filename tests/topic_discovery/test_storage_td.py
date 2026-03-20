@@ -286,16 +286,22 @@ class TestProperties:
 
 
 class TestAtomicWrite:
+    """Atomicity is now handled by the StorageBackend (LocalStorageBackend).
+
+    These tests verify the same semantics via backend write operations.
+    """
+
     def test_creates_parent_directories(self, storage, tmp_path):
+        """Writing to a nested path creates parent directories automatically."""
+        storage._backend.write("a/b/c/file.json", '{"ok": true}')
         deep_path = tmp_path / "a" / "b" / "c" / "file.json"
-        storage._atomic_write(deep_path, '{"ok": true}')
         assert deep_path.exists()
         assert json.loads(deep_path.read_text()) == {"ok": True}
 
     def test_overwrites_existing_file(self, storage, tmp_path):
+        storage._backend.write("file.json", '{"v": 1}')
+        storage._backend.write("file.json", '{"v": 2}')
         path = tmp_path / "file.json"
-        storage._atomic_write(path, '{"v": 1}')
-        storage._atomic_write(path, '{"v": 2}')
         assert json.loads(path.read_text()) == {"v": 2}
 
 
