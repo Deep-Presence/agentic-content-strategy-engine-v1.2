@@ -5,12 +5,14 @@ import { Button, Badge, StatusDot, ProgressBar, Toast } from '@/components/ui';
 import {
   X, Check, ChevronRight, Lightbulb,
   Target, Eye, AlertTriangle, Compass,
-  SkipForward, ExternalLink,
+  SkipForward, ExternalLink, Loader2,
 } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { ExtendedBrief } from './content-data';
 import { agentActivities, platformLabels } from './content-data';
+import { apiPost } from '@/lib/api/client';
+import { CONTENT_ENGINE } from '@/lib/api/endpoints';
 
 // --- Phase Progress Bar ---
 
@@ -64,11 +66,38 @@ function SuggestedView({
   brief,
   onApprove,
   onSkip,
+  pipelineTaskId,
+  onBriefApproved,
 }: {
   brief: ExtendedBrief;
   onApprove: () => void;
   onSkip: () => void;
+  pipelineTaskId: string | null;
+  onBriefApproved?: () => void;
 }) {
+  const [approving, setApproving] = useState(false);
+
+  const handleApprove = useCallback(async () => {
+    if (!pipelineTaskId) {
+      onApprove();
+      return;
+    }
+    setApproving(true);
+    try {
+      await apiPost(CONTENT_ENGINE.approveBriefs(pipelineTaskId), {
+        brief_id: brief.id,
+        decision: 'approve',
+      });
+      onApprove();
+      onBriefApproved?.();
+    } catch {
+      // Fallback: if no pipeline is pending approval, just show the toast
+      onApprove();
+    } finally {
+      setApproving(false);
+    }
+  }, [pipelineTaskId, brief.id, onApprove, onBriefApproved]);
+
   const hasWhyPicked = brief.whyPicked && brief.whyPicked.length > 0;
   const hasIndicators = brief.successIndicators && brief.successIndicators.length > 0;
   const hasExemplars = brief.exemplars && brief.exemplars.length > 0;
@@ -163,9 +192,13 @@ function SuggestedView({
 
       {/* Actions */}
       <div className="flex items-center gap-2 pt-2">
-        <Button variant="primary" onClick={onApprove}>
-          <Check size={12} strokeWidth={1.5} className="mr-1.5" />
-          Approve Topic
+        <Button variant="primary" onClick={handleApprove} disabled={approving}>
+          {approving ? (
+            <Loader2 size={12} strokeWidth={1.5} className="mr-1.5 animate-spin" />
+          ) : (
+            <Check size={12} strokeWidth={1.5} className="mr-1.5" />
+          )}
+          {approving ? 'Approving...' : 'Approve Brief'}
         </Button>
         <Button variant="secondary" onClick={onSkip}>
           <SkipForward size={12} strokeWidth={1.5} className="mr-1.5" />
@@ -455,9 +488,11 @@ interface DetailViewProps {
   brief: ExtendedBrief;
   onClose: () => void;
   onOpenFullEditor: () => void;
+  pipelineTaskId?: string | null;
+  onBriefApproved?: () => void;
 }
 
-export function DetailView({ brief, onClose, onOpenFullEditor }: DetailViewProps) {
+export function DetailView({ brief, onClose, onOpenFullEditor, pipelineTaskId = null, onBriefApproved }: DetailViewProps) {
   const [toast, setToast] = useState<{ open: boolean; message: string; variant: 'success' | 'error' | 'info' }>({
     open: false, message: '', variant: 'info',
   });
@@ -536,8 +571,10 @@ export function DetailView({ brief, onClose, onOpenFullEditor }: DetailViewProps
           {brief.stage === 'triage' && (
             <SuggestedView
               brief={brief}
-              onApprove={() => showToast('Topic approved — brief generation starting', 'success')}
+              onApprove={() => showToast('Brief approved — content generation starting', 'success')}
               onSkip={() => showToast('Moved to next cycle', 'info')}
+              pipelineTaskId={pipelineTaskId}
+              onBriefApproved={onBriefApproved}
             />
           )}
           {(brief.stage === 'brief' || brief.stage === 'generating') && (

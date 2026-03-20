@@ -158,19 +158,25 @@ def _infer_brief_status(
     brief_id: str,
     pieces: List[Dict[str, Any]],
     content_dir: Path,
+    pipeline_state: Optional[Dict[str, str]] = None,
 ) -> str:
-    """Infer brief status from run_metadata pieces (authoritative) or stage files.
+    """Infer brief status from pipeline state, run_metadata pieces, or stage files.
 
-    Phase 1: Check run_metadata.json pieces array (post-HITL authoritative).
+    Phase 0: Check pipeline_state.json (in-progress authoritative, during pipeline execution).
+    Phase 1: Check run_metadata_v13.json pieces array (post-HITL authoritative).
     Phase 2: File-based inference (during/after pipeline execution).
     """
+    # Phase 0: pipeline_state.json (highest priority during pipeline execution)
+    if pipeline_state and brief_id in pipeline_state:
+        return pipeline_state[brief_id]
+
     # Phase 1: Check pieces (post-HITL authoritative)
     for piece in pieces:
         if piece.get("brief_id") == brief_id:
             status = piece.get("status", "")
             return {
-                "approved": "approved",
-                "edited": "published",
+                "approved": "completed",  # HITL-3 approved → Published column
+                "edited": "completed",    # Human-edited → Published column
                 "rejected": "rejected",
                 "pending": "review",
             }.get(status, "review")
@@ -234,6 +240,43 @@ def _get_available_stages(brief_dir: Path) -> List[str]:
     return stages
 
 
+# ── Metadata loading ────────────────────────────────────────────────
+
+
+def _load_all_pieces(content_root: Path) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Load pieces from standard + namespaced run_metadata_v13 files.
+
+    Manual-mode parallel runs write ``run_metadata_v13_{brief_id}.json`` instead
+    of the standard ``run_metadata_v13.json``.  This function merges pieces from
+    all such files, deduplicating by ``brief_id``.
+
+    Returns ``(merged_pieces, session_id)``.
+    Standard file takes priority for ``session_id``.
+    """
+    # Standard file
+    run_meta = _load_json_cached(content_root, "run_metadata_v13.json")
+    pieces: List[Dict[str, Any]] = list((run_meta or {}).get("pieces", []))
+    session_id: Optional[str] = (run_meta or {}).get("run_metadata", {}).get("session_id")
+
+    # Collect brief_ids already in standard pieces to avoid duplicates
+    seen_brief_ids = {p.get("brief_id") for p in pieces}
+
+    # Namespaced files (manual parallel runs)
+    for meta_path in sorted(content_root.glob("run_metadata_v13_*.json")):
+        data = _load_json_cached(content_root, meta_path.name)
+        if not data:
+            continue
+        for p in data.get("pieces", []):
+            bid = p.get("brief_id")
+            if bid and bid not in seen_brief_ids:
+                pieces.append(p)
+                seen_brief_ids.add(bid)
+        if not session_id:
+            session_id = (data.get("run_metadata") or {}).get("session_id")
+
+    return pieces, session_id
+
+
 # ── Public API ───────────────────────────────────────────────────────
 
 
@@ -285,10 +328,11 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
     # Load gap analysis data for sidebar enrichment
     analysis_json = load_analysis_json(artifacts_root, slug)
 
-    # Load run_metadata for pieces + session_id
-    run_meta = _load_json_cached(content_root, "run_metadata.json")
-    pieces = (run_meta or {}).get("pieces", [])
-    session_id = (run_meta or {}).get("run_metadata", {}).get("session_id")
+    # Load run_metadata for pieces + session_id (standard + namespaced files)
+    pieces, session_id = _load_all_pieces(content_root)
+
+    # Load pipeline_state.json for in-progress statuses (Phase 0, highest priority)
+    pipeline_state = _load_json_cached(content_root, "pipeline_state.json") or {}
 
     # Use mtime of the source artifact as created_at
     for _fname in ("blueprints.json", "planner_selections.json"):
@@ -305,7 +349,7 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
         brief_dir = content_root / "content" / brief_id
 
         # Status
-        status = _infer_brief_status(brief_id, pieces, content_root)
+        status = _infer_brief_status(brief_id, pieces, content_root, pipeline_state=pipeline_state)
 
         # Content type
         content_type = _map_content_format(brief.get("content_format", "long_blog"))
@@ -459,12 +503,14 @@ def get_brief_detail(
     if brief is None:
         raise HTTPException(404, f"Brief '{brief_id}' not found for company '{slug}'")
 
-    # Run metadata pieces
-    run_meta = _load_json_cached(content_root, "run_metadata.json")
-    pieces = (run_meta or {}).get("pieces", [])
+    # Run metadata pieces (standard + namespaced files)
+    pieces, _session_id = _load_all_pieces(content_root)
+
+    # Pipeline state for in-progress statuses
+    pipeline_state = _load_json_cached(content_root, "pipeline_state.json") or {}
 
     # Status
-    status = _infer_brief_status(brief_id, pieces, content_root)
+    status = _infer_brief_status(brief_id, pieces, content_root, pipeline_state=pipeline_state)
 
     # Content type
     content_type = _map_content_format(brief.get("content_format", "long_blog"))

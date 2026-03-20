@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button, Skeleton } from '@/components/ui';
 import { Plus, LayoutGrid, List, ChevronDown } from 'lucide-react';
@@ -24,10 +24,25 @@ export default function ContentStudioPage() {
   const pipelineTaskId = searchParams.get('pipeline_task') ?? null;
   const stream = useTaskStream(pipelineTaskId);
 
-  // Force refetch when pipeline completes
+  // Force refetch on pipeline completion and stage transitions (Kanban sync)
+  const lastEventCount = useRef(0);
+  // Reset counter when task ID changes (new pipeline run resets stream.events)
+  useEffect(() => { lastEventCount.current = 0; }, [pipelineTaskId]);
   useEffect(() => {
-    if (stream.status === 'completed') refetch();
-  }, [stream.status, refetch]);
+    if (stream.status === 'completed') {
+      refetch();
+      return;
+    }
+    // Refetch when stage transitions occur so Kanban columns update
+    if (stream.events.length > lastEventCount.current) {
+      const newEvents = stream.events.slice(lastEventCount.current);
+      lastEventCount.current = stream.events.length;
+      const hasStageChange = newEvents.some(
+        (e) => e.type === 'stage_started' || e.type === 'stage_complete' || e.type === 'pipeline_complete'
+      );
+      if (hasStageChange) refetch();
+    }
+  }, [stream.status, stream.events.length, refetch]);
 
   // Transform API briefs to ExtendedBrief for the kanban board
   const apiBriefs = useMemo<ExtendedBrief[]>(() => {
@@ -182,6 +197,8 @@ export default function ContentStudioPage() {
           brief={detailBrief}
           onClose={() => setDetailBriefId(null)}
           onOpenFullEditor={handleOpenFullEditor}
+          pipelineTaskId={pipelineTaskId}
+          onBriefApproved={refetch}
         />
       )}
 

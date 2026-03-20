@@ -295,6 +295,26 @@ async def _mark_pipeline_run_failed(
         logger.warning("Failed to mark PipelineRunModel as failed", exc_info=True)
 
 
+def _cleanup_stale_pipeline_state(
+    artifacts_root: Optional[Path], effective_slug: str,
+) -> None:
+    """Best-effort removal of pipeline_state.json on failure/cancel.
+
+    On error paths we cannot determine which brief IDs belong to this run
+    (pieces may be empty), so we remove the whole file. This is acceptable
+    because parallel runs are manual-mode only (no HITL-1/2 state to
+    preserve), and file-based inference (Phase 2) still works correctly.
+    """
+    if not artifacts_root:
+        return
+    state_path = artifacts_root / "content" / effective_slug / "pipeline_state.json"
+    if state_path.is_file():
+        try:
+            state_path.unlink()
+        except OSError:
+            pass
+
+
 async def run_gap_pipeline_task(
     task_id: str,
     request: Any,
@@ -721,11 +741,13 @@ async def run_content_v13_pipeline_task(
 
     except asyncio.CancelledError:
         logger.info("Content v1.3 pipeline cancelled: task_id=%s", task_id)
+        _cleanup_stale_pipeline_state(artifacts_root, effective)
     except Exception as exc:
         logger.exception("Content v1.3 pipeline failed: %s", exc)
         task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+        _cleanup_stale_pipeline_state(artifacts_root, effective)
     finally:
         if not is_parallel:
             task_store.release_slug_lock(f"content_v13:{effective}")

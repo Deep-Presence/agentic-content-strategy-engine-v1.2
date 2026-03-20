@@ -131,13 +131,13 @@ class Settings(BaseSettings):
 
     # --- Content Engine v1.3 — LiteLLM model identifiers ---
     # Provider-prefixed strings for LiteLLM routing
-    content_engine_v13_planner_model: str = "anthropic/claude-sonnet-4-6"
-    content_engine_v13_brief_builder_model: str = "anthropic/claude-sonnet-4-6"
-    content_engine_v13_worker_model: str = "anthropic/claude-sonnet-4-6"
-    content_engine_v13_formatter_model: str = "anthropic/claude-haiku-4-5-20251001"
-    content_engine_v13_style_judge_model: str = "anthropic/claude-haiku-4-5-20251001"
-    content_engine_v13_factual_judge_model: str = "anthropic/claude-sonnet-4-6"
-    content_engine_v13_eeat_judge_model: str = "anthropic/claude-sonnet-4-6"
+    content_engine_v13_planner_model: str =  "gemini/gemini-2.0-flash"  # "anthropic/claude-sonnet-4-6"
+    content_engine_v13_brief_builder_model: str = "gemini/gemini-2.0-flash"  # "anthropic/claude-sonnet-4-6"
+    content_engine_v13_worker_model: str =  "gemini/gemini-2.0-flash"  # "anthropic/claude-sonnet-4-6"
+    content_engine_v13_formatter_model: str = "gemini/gemini-2.0-flash" # "anthropic/claude-haiku-4-5-20251001"
+    content_engine_v13_style_judge_model: str =  "gemini/gemini-2.0-flash" # "anthropic/claude-haiku-4-5-20251001"
+    content_engine_v13_factual_judge_model: str =  "gemini/gemini-2.0-flash" # "anthropic/claude-sonnet-4-6"
+    content_engine_v13_eeat_judge_model: str = "gemini/gemini-2.0-flash" # "anthropic/claude-sonnet-4-6"
     content_engine_v13_fact_enricher_model: str = "perplexity/sonar-pro"
     content_engine_v13_linker_model: str = "perplexity/sonar-pro"
 

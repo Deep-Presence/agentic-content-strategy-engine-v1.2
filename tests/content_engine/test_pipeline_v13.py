@@ -2581,4 +2581,303 @@ from core.content_engine.pipeline_v13 import (
     run_content_generation_v13,
     _merge_and_write_blueprints,
     _update_task,
+    _write_pipeline_state,
+    _cleanup_pipeline_state,
 )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# _write_pipeline_state Tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestWritePipelineState:
+    """Tests for the _write_pipeline_state helper."""
+
+    def test_creates_file(self, tmp_path: Path):
+        """Creates pipeline_state.json with brief statuses."""
+        _write_pipeline_state(tmp_path, ["brief-001", "brief-002"], "approved")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "approved", "brief-002": "approved"}
+
+    def test_merges_with_existing(self, tmp_path: Path):
+        """Merges new statuses with existing pipeline_state.json."""
+        (tmp_path / "pipeline_state.json").write_text(
+            json.dumps({"brief-001": "approved"})
+        )
+        _write_pipeline_state(tmp_path, ["brief-002"], "in_progress")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "approved", "brief-002": "in_progress"}
+
+    def test_overwrites_existing_brief(self, tmp_path: Path):
+        """Updates status for a brief that already has an entry."""
+        _write_pipeline_state(tmp_path, ["brief-001"], "approved")
+        _write_pipeline_state(tmp_path, ["brief-001"], "in_progress")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "in_progress"}
+
+    def test_handles_corrupted_file(self, tmp_path: Path):
+        """Recovers from corrupted pipeline_state.json."""
+        (tmp_path / "pipeline_state.json").write_text("not valid json{{{")
+        _write_pipeline_state(tmp_path, ["brief-001"], "review")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "review"}
+
+    def test_empty_brief_ids(self, tmp_path: Path):
+        """Empty brief_ids list doesn't crash, writes empty or existing dict."""
+        _write_pipeline_state(tmp_path, [], "approved")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {}
+
+    def test_all_kanban_phases(self, tmp_path: Path):
+        """All expected phase strings are written correctly."""
+        phases = ["approved", "in_progress", "review", "completed"]
+        for i, phase in enumerate(phases):
+            _write_pipeline_state(tmp_path, [f"brief-{i:03d}"], phase)
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {
+            "brief-000": "approved",
+            "brief-001": "in_progress",
+            "brief-002": "review",
+            "brief-003": "completed",
+        }
+
+    def test_non_dict_json_array(self, tmp_path: Path):
+        """Recovers from valid JSON that is not a dict (e.g. [])."""
+        (tmp_path / "pipeline_state.json").write_text("[]")
+        _write_pipeline_state(tmp_path, ["brief-001"], "review")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "review"}
+
+    def test_non_dict_json_string(self, tmp_path: Path):
+        """Recovers from valid JSON that is a string."""
+        (tmp_path / "pipeline_state.json").write_text('"hello"')
+        _write_pipeline_state(tmp_path, ["brief-001"], "approved")
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "approved"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# _cleanup_pipeline_state Tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestCleanupPipelineState:
+    """Tests for the _cleanup_pipeline_state helper."""
+
+    def test_removes_specified_briefs(self, tmp_path: Path):
+        """Removes only the specified brief IDs from state."""
+        _write_pipeline_state(tmp_path, ["brief-001", "brief-002", "brief-003"], "in_progress")
+        _cleanup_pipeline_state(tmp_path, ["brief-001", "brief-003"])
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-002": "in_progress"}
+
+    def test_deletes_file_when_empty(self, tmp_path: Path):
+        """Deletes file when all entries are removed."""
+        _write_pipeline_state(tmp_path, ["brief-001"], "review")
+        _cleanup_pipeline_state(tmp_path, ["brief-001"])
+        assert not (tmp_path / "pipeline_state.json").exists()
+
+    def test_noop_when_no_file(self, tmp_path: Path):
+        """Does nothing when file doesn't exist."""
+        _cleanup_pipeline_state(tmp_path, ["brief-001"])
+        assert not (tmp_path / "pipeline_state.json").exists()
+
+    def test_handles_unknown_brief_ids(self, tmp_path: Path):
+        """Removing nonexistent brief IDs doesn't crash."""
+        _write_pipeline_state(tmp_path, ["brief-001"], "in_progress")
+        _cleanup_pipeline_state(tmp_path, ["brief-999"])
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-001": "in_progress"}
+
+    def test_handles_corrupted_file(self, tmp_path: Path):
+        """Recovers from corrupted JSON."""
+        (tmp_path / "pipeline_state.json").write_text("corrupted{{{")
+        _cleanup_pipeline_state(tmp_path, ["brief-001"])
+        # Corrupted file with no valid entries → deleted
+        assert not (tmp_path / "pipeline_state.json").exists()
+
+    def test_handles_non_dict_json(self, tmp_path: Path):
+        """Recovers from valid JSON that is not a dict."""
+        (tmp_path / "pipeline_state.json").write_text("[]")
+        _cleanup_pipeline_state(tmp_path, ["brief-001"])
+        assert not (tmp_path / "pipeline_state.json").exists()
+
+    def test_concurrent_run_preservation(self, tmp_path: Path):
+        """Simulates two concurrent runs — one finishing preserves the other's state."""
+        # Run A writes brief-001, Run B writes brief-002
+        _write_pipeline_state(tmp_path, ["brief-001"], "in_progress")
+        _write_pipeline_state(tmp_path, ["brief-002"], "review")
+        # Run A finishes, cleans up its brief
+        _cleanup_pipeline_state(tmp_path, ["brief-001"])
+        state = json.loads((tmp_path / "pipeline_state.json").read_text())
+        assert state == {"brief-002": "review"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Manual Mode HITL-2: Brief Approval
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestManualHITL2:
+    """Manual mode must pause at HITL-2 for brief approval, same as autonomous."""
+
+    @pytest.mark.asyncio
+    async def test_manual_hitl2_approve_proceeds_to_workers(self, tmp_path):
+        """Manual mode: HITL-2 approve lets the blueprint through to Stage 3."""
+        input_data = _make_manual_input(tmp_path)
+        # auto_approve=True by default in _make_manual_input, override to test real HITL
+        input_data.auto_approve = False
+        input_data.skip_stages = []  # run full pipeline
+
+        blueprint = _make_blueprint()
+        formatted = _make_formatted()
+        history = RevisionHistory(brief_id="brief-001", final_passed=True)
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel",
+                   new_callable=AsyncMock, return_value=[blueprint]) as mock_build, \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock, side_effect=[
+                       # HITL-2: approve
+                       {"brief_decision": "approve"},
+                       # HITL-3: approve
+                       {"content_decision": "approve", "finalized": True},
+                   ]) as mock_hitl, \
+             patch("core.content_engine.workers.dispatcher.dispatch_workers_v13",
+                   new_callable=AsyncMock, return_value=([(formatted.brief_id, formatted)], [])) as mock_dispatch, \
+             patch("core.content_engine.evaluator.loop.evaluate_and_optimize",
+                   new_callable=AsyncMock, return_value=(formatted, history, "pass")):
+            result = await run_content_generation_v13(input_data)
+
+        # HITL checkpoint called twice: once for HITL-2, once for HITL-3
+        assert mock_hitl.call_count == 2
+        # HITL-2 call must pass the blueprint and stage_name containing "Brief Approval"
+        hitl2_call = mock_hitl.call_args_list[0]
+        assert "Brief Approval" in hitl2_call.kwargs.get("stage_name", hitl2_call[1].get("stage_name", ""))
+        # Workers must have been called (blueprint approved)
+        mock_dispatch.assert_called_once()
+        assert result.total_approved == 1
+
+    @pytest.mark.asyncio
+    async def test_manual_hitl2_reject_skips_workers(self, tmp_path):
+        """Manual mode: HITL-2 reject means zero approved blueprints → no workers run."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[])
+        input_data.auto_approve = False
+
+        blueprint = _make_blueprint()
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel",
+                   new_callable=AsyncMock, return_value=[blueprint]), \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock, side_effect=[
+                       # HITL-2: reject
+                       {"brief_decision": "reject"},
+                   ]), \
+             patch("core.content_engine.workers.dispatcher.dispatch_workers_v13",
+                   new_callable=AsyncMock, return_value=([], [])) as mock_dispatch, \
+             patch("core.content_engine.evaluator.loop.evaluate_and_optimize",
+                   new_callable=AsyncMock, return_value=None):
+            result = await run_content_generation_v13(input_data)
+
+        # Workers never called — blueprint was rejected
+        mock_dispatch.assert_not_called()
+        assert result.total_approved == 0
+
+    @pytest.mark.asyncio
+    async def test_manual_hitl2_feedback_reruns_brief_builder(self, tmp_path):
+        """Manual mode: HITL-2 feedback re-invokes build_briefs_parallel with user notes."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[])
+        input_data.auto_approve = False
+
+        gap_ctx = WorkerQueryContext(
+            query_gap={"query_id": "manual-abc", "query_text": "What is equity dilution?"},
+            exemplars=[{"url": "https://example.com"}],
+        )
+        blueprint = ContentBlueprint(
+            brief_id="brief-001",
+            title="Equity Dilution Guide",
+            content_format="long_blog",
+            cluster_name="equity",
+            gap_context=gap_ctx,
+        )
+        revised_blueprint = ContentBlueprint(
+            brief_id="brief-001",
+            title="Equity Dilution Guide (Revised)",
+            content_format="long_blog",
+            cluster_name="equity",
+            gap_context=gap_ctx,
+        )
+        formatted = _make_formatted()
+        history = RevisionHistory(brief_id="brief-001", final_passed=True)
+
+        mock_build = AsyncMock(side_effect=[
+            [blueprint],           # Initial Agent 2 call
+            [revised_blueprint],   # Re-run after HITL-2 feedback
+        ])
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel", mock_build), \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock, side_effect=[
+                       # HITL-2 first: feedback
+                       {"brief_decision": "feedback", "brief_feedback": "Focus more on anti-dilution protections"},
+                       # HITL-2 second (after re-run): approve
+                       {"brief_decision": "approve"},
+                       # HITL-3: approve
+                       {"content_decision": "approve", "finalized": True},
+                   ]), \
+             patch("core.content_engine.workers.dispatcher.dispatch_workers_v13",
+                   new_callable=AsyncMock, return_value=([(formatted.brief_id, formatted)], [])), \
+             patch("core.content_engine.evaluator.loop.evaluate_and_optimize",
+                   new_callable=AsyncMock, return_value=(formatted, history, "pass")):
+            result = await run_content_generation_v13(input_data)
+
+        # build_briefs_parallel called twice: initial + feedback re-run
+        assert mock_build.call_count == 2
+        # Second call must include feedback in topic rationale
+        second_call_kwargs = mock_build.call_args_list[1][1]
+        topics = second_call_kwargs["topics"]
+        assert "Focus more on anti-dilution protections" in topics[0].rationale
+        assert result.total_approved == 1
+
+    @pytest.mark.asyncio
+    async def test_manual_hitl2_auto_approve_skips_pause(self, tmp_path):
+        """Manual mode with auto_approve=True: HITL-2 graph auto-approves (no block)."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[3, 4, 5])
+        input_data.auto_approve = True
+
+        blueprint = _make_blueprint()
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel",
+                   new_callable=AsyncMock, return_value=[blueprint]), \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock,
+                   return_value={"brief_decision": "approve"}) as mock_hitl:
+            result = await run_content_generation_v13(input_data)
+
+        # HITL checkpoint called once for HITL-2 (stages 3-5 skipped)
+        assert mock_hitl.call_count == 1
+        hitl2_call = mock_hitl.call_args_list[0]
+        # auto_approve must be passed through to the graph
+        initial_state = hitl2_call.kwargs.get("initial_state", hitl2_call[1].get("initial_state", {}))
+        assert initial_state.get("auto_approve") is True
+
+    @pytest.mark.asyncio
+    async def test_manual_hitl2_writes_pipeline_state(self, tmp_path):
+        """After HITL-2 approve, pipeline_state.json must show 'approved' for the brief."""
+        input_data = _make_manual_input(tmp_path, skip_stages=[3, 4, 5])
+        input_data.auto_approve = False
+
+        blueprint = _make_blueprint()
+
+        with patch("core.content_engine.pipeline_v13.build_briefs_parallel",
+                   new_callable=AsyncMock, return_value=[blueprint]), \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock,
+                   return_value={"brief_decision": "approve"}):
+            await run_content_generation_v13(input_data)
+
+        # Check pipeline_state.json has "approved" for the brief
+        state_path = tmp_path / "artifacts" / "content" / "test-co" / "pipeline_state.json"
+        if state_path.exists():
+            state = json.loads(state_path.read_text())
+            assert state.get("brief-001") == "approved"

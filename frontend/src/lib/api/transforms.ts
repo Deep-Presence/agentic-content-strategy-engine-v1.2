@@ -138,7 +138,7 @@ const STATUS_TO_STAGE: Record<string, ContentBrief['stage']> = {
   review: 'review',
   pending_review: 'review',
   completed: 'approved',
-  published: 'published',
+  published: 'approved',
   rejected: 'triage',
 };
 
