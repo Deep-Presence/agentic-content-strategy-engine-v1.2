@@ -54,3 +54,4 @@ RESTRUCTURING_ANALYSIS.md
 .langgraph_api/
 .pytest_cache/
 .dist/
+node_modules
