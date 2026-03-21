@@ -342,7 +342,7 @@ class TestPreflightCheck:
         (ctx_dir / "test-co.md").write_text(long_content, encoding="utf-8")
 
         company_md, _, _, _ = await _preflight_check(tmp_path, "test-co", "test-co")
-        assert len(company_md) == 15_000
+        assert len(company_md) == 20_000
 
     @pytest.mark.asyncio
     async def test_effective_slug_fallback(self, tmp_path: Path):

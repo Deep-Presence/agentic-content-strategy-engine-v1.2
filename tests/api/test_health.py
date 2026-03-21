@@ -11,7 +11,7 @@ class TestHealth:
     def test_health_returns_ok(self, client: TestClient) -> None:
         resp = client.get("/health")
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        assert resp.json() == {"status": "ok", "database": "unavailable", "pgvector": "unavailable"}
 
     def test_readiness_with_all_keys(self, client: TestClient) -> None:
         with patch("api.routers.health.settings") as mock_settings:

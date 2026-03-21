@@ -15,7 +15,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
-from api.tasks.runner import _get_interrupt_value, _has_interrupt
+from core.content_engine.graph_v13 import _get_interrupt_value, _has_interrupt
 
 
 # ── Helper: minimal graph mimicking approval gate pattern ────────────

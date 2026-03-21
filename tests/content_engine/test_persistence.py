@@ -204,6 +204,7 @@ class TestPersistContentPieces:
         # and the ContentRepository constructor.
         factory2, session2 = _make_session_factory()
         mock_repo2 = MagicMock()
+        mock_repo2.get_by_slug_and_brief_id = AsyncMock(return_value=None)
         mock_repo2.create_piece = AsyncMock()
 
         # We need to patch where the names are *looked up* at import time.
@@ -223,7 +224,6 @@ class TestPersistContentPieces:
 
         # Session entered and committed
         factory2.assert_called_once()
-        session2.execute.assert_called_once()  # DELETE statement
         session2.commit.assert_called_once()
         # Repo create_piece called once
         mock_repo2.create_piece.assert_called_once()
@@ -245,6 +245,7 @@ class TestPersistContentPieces:
             _make_piece(title="Article C", status_value="rejected"),
         ]
         mock_repo = MagicMock()
+        mock_repo.get_by_slug_and_brief_id = AsyncMock(return_value=None)
         mock_repo.create_piece = AsyncMock()
 
         import core.db.repositories.content_repo as repo_mod
@@ -267,6 +268,7 @@ class TestPersistContentPieces:
         factory, session = _make_session_factory()
         piece = _make_piece(final_markdown="one two three four five")
         mock_repo = MagicMock()
+        mock_repo.get_by_slug_and_brief_id = AsyncMock(return_value=None)
         mock_repo.create_piece = AsyncMock()
 
         import core.db.repositories.content_repo as repo_mod
@@ -289,6 +291,7 @@ class TestPersistContentPieces:
         factory, session = _make_session_factory()
         piece = _make_piece(final_markdown=None)
         mock_repo = MagicMock()
+        mock_repo.get_by_slug_and_brief_id = AsyncMock(return_value=None)
         mock_repo.create_piece = AsyncMock()
 
         import core.db.repositories.content_repo as repo_mod
@@ -313,6 +316,7 @@ class TestPersistContentPieces:
         eval_mock.model_dump.return_value = {"score": 0.9, "dimensions": []}
         piece = _make_piece(eval_summary=eval_mock)
         mock_repo = MagicMock()
+        mock_repo.get_by_slug_and_brief_id = AsyncMock(return_value=None)
         mock_repo.create_piece = AsyncMock()
 
         import core.db.repositories.content_repo as repo_mod
@@ -336,6 +340,7 @@ class TestPersistContentPieces:
         factory, session = _make_session_factory()
         piece = _make_piece(eval_summary=None)
         mock_repo = MagicMock()
+        mock_repo.get_by_slug_and_brief_id = AsyncMock(return_value=None)
         mock_repo.create_piece = AsyncMock()
 
         import core.db.repositories.content_repo as repo_mod

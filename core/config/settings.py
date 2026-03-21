@@ -7,6 +7,7 @@ Import `settings` and use `settings.perplexity_api_key`, etc. instead of load_do
 from pathlib import Path
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # core/config/settings.py -> parents[0]=config, parents[1]=core, parents[2]=content-strategy-engine
@@ -156,7 +157,7 @@ class Settings(BaseSettings):
     research_kb_project: str = "research-kb"
     # Per-agent Perplexity model overrides (KB pipeline)
     research_kb_company_overview_model: str = "sonar-deep-research"
-    research_kb_customer_reviews_model: str = "sonar-pro"
+    research_kb_customer_reviews_model: str = "sonar-deep-research"
     research_kb_competitor_scanner_model: str = "sonar-deep-research"
     research_kb_weakness_analyst_model: str = "sonar-deep-research"
     # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
@@ -178,7 +179,7 @@ class Settings(BaseSettings):
     # --- Topic Discovery Pipeline ---
     topic_discovery_brainstorm_model: str = "anthropic/claude-sonnet-4-6"
     topic_discovery_dedup_model: str = "anthropic/claude-haiku-4-5-20251001"
-    topic_discovery_max_expansion_rounds: int = 2
+    topic_discovery_max_expansion_rounds: int = 4
     topic_discovery_dedup_threshold: float = 0.85
     topic_discovery_max_concurrent_sources: int = 4
     topic_discovery_source_timeout_s: float = 120.0
@@ -195,7 +196,7 @@ class Settings(BaseSettings):
     topic_discovery_max_subdomains_to_expand: int = 10
     # Source C: Perplexity deep research for competitive content landscape
     topic_discovery_source_c_model: str = "sonar-deep-research"
-    topic_discovery_source_c_timeout_s: float = 500.0
+    topic_discovery_source_c_timeout_s: float = 900.0
     # Unified S2 model (hierarchy + scoring + persona affinity)
     topic_discovery_unified_s2_model: str = "anthropic/claude-sonnet-4-6"
 
@@ -230,6 +231,15 @@ class Settings(BaseSettings):
     site_audit_concurrency: int = 30  # Concurrent page-analysis requests
     site_audit_request_timeout: float = 15.0  # Per-request HTTP timeout (seconds)
     site_audit_max_redirects: int = 5  # Max redirect hops before marking broken
+
+    @model_validator(mode="after")
+    def _normalize_database_url(self) -> "Settings":
+        """Railway provides DATABASE_URL as postgresql:// — normalize to asyncpg."""
+        if self.database_url and "+asyncpg" not in self.database_url:
+            self.database_url = self.database_url.replace(
+                "postgresql://", "postgresql+asyncpg://", 1
+            )
+        return self
 
     @property
     def database_url_sync(self) -> str | None:

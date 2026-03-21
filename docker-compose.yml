@@ -1,0 +1,99 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: dp-postgres
+    environment:
+      POSTGRES_USER: deep_presence
+      POSTGRES_PASSWORD: dp_local_password
+      POSTGRES_DB: deep_presence
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deep_presence"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  db-staging:
+    image: pgvector/pgvector:pg17
+    container_name: dp-postgres-staging
+    environment:
+      POSTGRES_USER: deep_presence_staging
+      POSTGRES_PASSWORD: dp_staging_password
+      POSTGRES_DB: deep_presence_staging
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata_staging:/var/lib/postgresql/data
+    profiles:
+      - staging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deep_presence_staging"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dp-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.local
+    environment:
+      DATABASE_URL: postgresql+asyncpg://deep_presence:dp_local_password@db:5432/deep_presence
+      LOG_FORMAT: console
+      LOG_LEVEL: DEBUG
+    volumes:
+      - ./core:/app/core
+      - ./api:/app/api
+      - ./scripts:/app/scripts
+      - ./artifacts:/app/artifacts
+    command: >
+      python -m uvicorn api.app:create_app --factory
+      --host 0.0.0.0 --port 8000 --reload
+      --reload-dir /app/core --reload-dir /app/api
+    depends_on:
+      db:
+        condition: service_healthy
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dp-migrate
+    env_file:
+      - .env.local
+    environment:
+      DATABASE_URL: postgresql+asyncpg://deep_presence:dp_local_password@db:5432/deep_presence
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - migrate
+
+  frontend:
+    image: node:20-slim
+    container_name: dp-frontend
+    working_dir: /app
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ""
+      BACKEND_INTERNAL_URL: http://backend:8000
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: sh -c "npm install && npm run dev"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  pgdata_staging:
+  frontend_node_modules:

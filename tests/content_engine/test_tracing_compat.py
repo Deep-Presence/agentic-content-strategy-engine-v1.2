@@ -60,7 +60,7 @@ class TestCreateSpanCompat:
         from core.content_engine.tracing_v13 import create_span
 
         parent = MagicMock()
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True):
             create_span(parent, "test", input={"key": "val"})
         parent.create_child.assert_called_once()
         call_kwargs = parent.create_child.call_args
@@ -71,7 +71,7 @@ class TestCreateSpanCompat:
         from core.content_engine.tracing_v13 import create_span
 
         parent = MagicMock()
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True):
             create_span(parent, "test", input_data={"a": 1}, input={"b": 2})
         call_kwargs = parent.create_child.call_args
         assert call_kwargs.kwargs["inputs"] == {"a": 1}
@@ -81,7 +81,7 @@ class TestCreateSpanCompat:
         from core.content_engine.tracing_v13 import create_span
 
         parent = MagicMock()
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True):
             # Should not raise TypeError
             create_span(parent, "test", parent_span=MagicMock())
         parent.create_child.assert_called_once()
@@ -98,8 +98,8 @@ class TestCreateTraceCompat:
     def test_input_kwarg_alias(self):
         from core.content_engine.tracing_v13 import create_trace
 
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True), \
-             patch("core.content_engine.tracing_v13.RunTree") as MockRT:
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True), \
+             patch("core.shared_tools.tracing.RunTree") as MockRT:
             mock_rt = MagicMock()
             MockRT.return_value = mock_rt
             create_trace("sid", "name", input={"x": 1})
@@ -109,8 +109,8 @@ class TestCreateTraceCompat:
     def test_user_id_kwarg_absorbed(self):
         from core.content_engine.tracing_v13 import create_trace
 
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True), \
-             patch("core.content_engine.tracing_v13.RunTree") as MockRT:
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True), \
+             patch("core.shared_tools.tracing.RunTree") as MockRT:
             MockRT.return_value = MagicMock()
             # Should not raise TypeError
             create_trace("sid", "name", user_id="test-user")
@@ -176,7 +176,7 @@ class TestLogGenerationCompat:
         from core.content_engine.tracing_v13 import log_generation
 
         fallback_parent = MagicMock()
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True):
             log_generation(
                 None, "gen", "model-x",
                 input_text="hi", output_text="bye",
@@ -189,7 +189,7 @@ class TestLogGenerationCompat:
 
         parent = MagicMock()
         other = MagicMock()
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True):
             log_generation(
                 parent, "gen", "model-x",
                 parent_span=other,
@@ -201,7 +201,7 @@ class TestLogGenerationCompat:
         from core.content_engine.tracing_v13 import log_generation
 
         parent = MagicMock()
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True):
             log_generation(
                 parent, "gen", "model-x",
                 model_parameters={"temperature": 0.7},
@@ -214,7 +214,7 @@ class TestLogGenerationCompat:
         from core.content_engine.tracing_v13 import log_generation
 
         parent = MagicMock()
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True):
             # Should not raise
             log_generation(
                 parent, "gen", "model-x",
@@ -238,8 +238,8 @@ class TestLogScoreCompat:
         parent = MagicMock()
         parent.id = "run-123"
         mock_client = MagicMock()
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True), \
-             patch("core.content_engine.tracing_v13._get_client", return_value=mock_client):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True), \
+             patch("core.shared_tools.tracing._get_client", return_value=mock_client):
             log_score(parent, "decision", "approved")
             mock_client.create_feedback.assert_called_once()
             call_kwargs = mock_client.create_feedback.call_args.kwargs
@@ -253,8 +253,8 @@ class TestLogScoreCompat:
         parent = MagicMock()
         parent.id = "run-123"
         mock_client = MagicMock()
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True), \
-             patch("core.content_engine.tracing_v13._get_client", return_value=mock_client):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True), \
+             patch("core.shared_tools.tracing._get_client", return_value=mock_client):
             log_score(parent, "passed", True)
             call_kwargs = mock_client.create_feedback.call_args.kwargs
             assert call_kwargs["score"] == 1.0
@@ -265,8 +265,8 @@ class TestLogScoreCompat:
         parent = MagicMock()
         parent.id = "run-123"
         mock_client = MagicMock()
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True), \
-             patch("core.content_engine.tracing_v13._get_client", return_value=mock_client):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True), \
+             patch("core.shared_tools.tracing._get_client", return_value=mock_client):
             log_score(parent, "passed", False)
             call_kwargs = mock_client.create_feedback.call_args.kwargs
             assert call_kwargs["score"] == 0.0
@@ -276,8 +276,8 @@ class TestLogScoreCompat:
 
         parent = MagicMock()
         parent.id = "run-123"
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True), \
-             patch("core.content_engine.tracing_v13._get_client", return_value=MagicMock()):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True), \
+             patch("core.shared_tools.tracing._get_client", return_value=MagicMock()):
             # Should not raise TypeError
             log_score(parent, "score", 0.85, metadata={"extra": True})
 
@@ -287,8 +287,8 @@ class TestLogScoreCompat:
         parent = MagicMock()
         parent.id = "run-123"
         mock_client = MagicMock()
-        with patch("core.content_engine.tracing_v13._is_enabled", return_value=True), \
-             patch("core.content_engine.tracing_v13._get_client", return_value=mock_client):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=True), \
+             patch("core.shared_tools.tracing._get_client", return_value=mock_client):
             log_score(parent, "decision", "approved", comment="reviewer note")
             call_kwargs = mock_client.create_feedback.call_args.kwargs
             assert "reviewer note" in call_kwargs["comment"]
