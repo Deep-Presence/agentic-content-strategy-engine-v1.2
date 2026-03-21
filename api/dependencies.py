@@ -4,7 +4,9 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+import redis.asyncio as aioredis
 
 from fastapi import HTTPException, Request
 
@@ -57,6 +59,11 @@ def get_storage_backend(request: Request):
 
 def get_auth_store(request: Request) -> AuthStore:
     return request.app.state.auth_store
+
+
+def get_redis(request: Request) -> Optional[aioredis.Redis]:
+    """Return the Redis client from app state, or None if unavailable."""
+    return getattr(request.app.state, "redis", None)
 
 
 # ── Session-managed helpers ─────────────────────────────────────────

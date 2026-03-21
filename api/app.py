@@ -112,6 +112,30 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.debug("DB session factory not available — using JSON services")
 
+    # ── Redis initialization ───────────────────────────────────────────
+    app.state.redis = None
+    app.state.redis_healthy = False
+    try:
+        from core.redis import get_redis_or_none, redis_ping
+
+        redis_client = get_redis_or_none()
+        if redis_client is not None:
+            healthy = await redis_ping()
+            if healthy:
+                app.state.redis = redis_client
+                app.state.redis_healthy = True
+                logger.info("Redis health check: connected")
+            else:
+                logger.warning(
+                    "Redis health check: PING failed — Redis unavailable"
+                )
+        else:
+            logger.info("Redis health check: skipped (no REDIS_URL)")
+    except Exception:
+        logger.exception(
+            "Redis initialization failed — continuing without Redis"
+        )
+
     # Layer 7: Initialize audit logging sink
     from core.audit.logger import set_sink
     from core.audit.sink import DbAuditSink, NoOpAuditSink
@@ -159,6 +183,11 @@ async def lifespan(app: FastAPI):
         "API started — task store: %s", type(app.state.task_store).__name__
     )
     yield
+
+    # Shutdown
+    from core.redis import close_redis
+
+    await close_redis()
     logger.info("API shutting down")
 
 

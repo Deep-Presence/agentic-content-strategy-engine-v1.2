@@ -55,6 +55,9 @@ psycopg2-binary>=2.9
 alembic>=1.13
 pgvector>=0.3
 
+# Redis caching / pub-sub layer
+redis[hiredis]>=5.2.0
+
 # CPS model — PyTorch inference (CPU-only)
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch
