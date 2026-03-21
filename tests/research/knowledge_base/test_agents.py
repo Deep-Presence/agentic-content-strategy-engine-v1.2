@@ -671,18 +671,22 @@ class TestBuildModel:
     def test_colon_format(self) -> None:
         from core.research.knowledge_base.agents import _build_model
 
-        with patch("core.research.knowledge_base.agents.init_chat_model") as mock_init:
+        with patch("core.research.knowledge_base.agents.init_chat_model") as mock_init, \
+             patch("core.research.knowledge_base.agents.settings") as mock_settings:
+            mock_settings.anthropic_api_key = "test-key"
             mock_init.return_value = MagicMock()
             _build_model("anthropic:claude-opus-4-6")
-            mock_init.assert_called_once_with("claude-opus-4-6", model_provider="anthropic")
+            mock_init.assert_called_once_with("claude-opus-4-6", model_provider="anthropic", api_key="test-key")
 
     def test_slash_format(self) -> None:
         from core.research.knowledge_base.agents import _build_model
 
-        with patch("core.research.knowledge_base.agents.init_chat_model") as mock_init:
+        with patch("core.research.knowledge_base.agents.init_chat_model") as mock_init, \
+             patch("core.research.knowledge_base.agents.settings") as mock_settings:
+            mock_settings.anthropic_api_key = "test-key"
             mock_init.return_value = MagicMock()
             _build_model("anthropic/claude-opus-4-6")
-            mock_init.assert_called_once_with("claude-opus-4-6", model_provider="anthropic")
+            mock_init.assert_called_once_with("claude-opus-4-6", model_provider="anthropic", api_key="test-key")
 
     def test_bare_model(self) -> None:
         from core.research.knowledge_base.agents import _build_model

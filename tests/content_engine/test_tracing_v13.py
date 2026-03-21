@@ -38,7 +38,7 @@ class TestCreatePipelineTrace:
         monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
         from core.content_engine.tracing_v13 import create_pipeline_trace
 
-        with patch("core.content_engine.tracing_v13._langsmith_available", False):
+        with patch("core.shared_tools.tracing._langsmith_available", False):
             result = create_pipeline_trace("session-1", "test-co")
 
         assert result is None
@@ -47,7 +47,7 @@ class TestCreatePipelineTrace:
         monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
         from core.content_engine.tracing_v13 import create_pipeline_trace
 
-        with patch("core.content_engine.tracing_v13._langsmith_available", True):
+        with patch("core.shared_tools.tracing._is_enabled", return_value=False):
             result = create_pipeline_trace("session-1", "test-co")
 
         assert result is None
@@ -67,7 +67,7 @@ class TestCreateSpan:
         from core.content_engine.tracing_v13 import create_span
 
         parent = MagicMock()
-        with patch("core.content_engine.tracing_v13._langsmith_available", False):
+        with patch("core.shared_tools.tracing._langsmith_available", False):
             result = create_span(parent, "test-span")
 
         assert result is None

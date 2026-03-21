@@ -170,7 +170,7 @@ class TestAllProtocolConformance:
     def test_db_kb_is_protocol(self):
         from core.services.db_kb_data import DbKBDataService
         from core.services.kb_data import KBDataServiceProtocol
-        svc = DbKBDataService(MagicMock(), MagicMock(), Path("/tmp"))
+        svc = DbKBDataService(MagicMock(), MagicMock(), MagicMock(), MagicMock(), Path("/tmp"))
         assert isinstance(svc, KBDataServiceProtocol)
 
     def test_json_persona_is_protocol(self):
@@ -181,7 +181,7 @@ class TestAllProtocolConformance:
     def test_db_persona_is_protocol(self):
         from core.services.db_persona_data import DbPersonaDataService
         from core.services.persona_data import PersonaDataServiceProtocol
-        svc = DbPersonaDataService(MagicMock(), MagicMock(), Path("/tmp"))
+        svc = DbPersonaDataService(MagicMock(), MagicMock(), MagicMock(), Path("/tmp"))
         assert isinstance(svc, PersonaDataServiceProtocol)
 
     def test_json_vsg_is_protocol(self):
@@ -192,7 +192,7 @@ class TestAllProtocolConformance:
     def test_db_vsg_is_protocol(self):
         from core.services.db_vsg_data import DbVSGDataService
         from core.services.vsg_data import VSGDataServiceProtocol
-        svc = DbVSGDataService(MagicMock(), MagicMock(), Path("/tmp"))
+        svc = DbVSGDataService(MagicMock(), MagicMock(), MagicMock(), MagicMock(), Path("/tmp"))
         assert isinstance(svc, VSGDataServiceProtocol)
 
     def test_json_td_is_protocol(self):

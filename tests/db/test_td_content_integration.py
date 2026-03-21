@@ -215,6 +215,7 @@ class TestPersistContentPiecesTopicAssignment:
         piece = _make_piece(topic_assignment_id=ta_id)
 
         mock_repo = MagicMock()
+        mock_repo.get_by_slug_and_brief_id = AsyncMock(return_value=None)
         mock_repo.create_piece = AsyncMock()
 
         import core.db.repositories.content_repo as repo_mod
@@ -239,6 +240,7 @@ class TestPersistContentPiecesTopicAssignment:
         piece = _make_piece(topic_assignment_id=None)
 
         mock_repo = MagicMock()
+        mock_repo.get_by_slug_and_brief_id = AsyncMock(return_value=None)
         mock_repo.create_piece = AsyncMock()
 
         import core.db.repositories.content_repo as repo_mod
@@ -263,6 +265,7 @@ class TestPersistContentPiecesTopicAssignment:
         piece = _make_piece(topic_assignment_id="not-a-uuid")
 
         mock_repo = MagicMock()
+        mock_repo.get_by_slug_and_brief_id = AsyncMock(return_value=None)
         mock_repo.create_piece = AsyncMock()
 
         import core.db.repositories.content_repo as repo_mod

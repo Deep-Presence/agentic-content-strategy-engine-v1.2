@@ -446,42 +446,57 @@ class TestDIWiring:
         assert get_args(ret)[0] is AuthServiceProtocol
 
     def test_get_site_audit_data_service_annotation_is_protocol(self):
-        """get_site_audit_data_service return annotation is SiteAuditDataServiceProtocol."""
-        from typing import get_type_hints
+        """get_site_audit_data_service return annotation yields SiteAuditDataServiceProtocol."""
+        from collections.abc import AsyncGenerator
+        from typing import get_args, get_origin, get_type_hints
 
         from api.dependencies import get_site_audit_data_service
 
         hints = get_type_hints(get_site_audit_data_service)
-        assert hints["return"] is SiteAuditDataServiceProtocol
+        ret = hints["return"]
+        assert get_origin(ret) is AsyncGenerator
+        assert get_args(ret)[0] is SiteAuditDataServiceProtocol
 
     def test_get_kb_data_service_annotation_is_protocol(self):
-        from typing import get_type_hints
+        from collections.abc import AsyncGenerator
+        from typing import get_args, get_origin, get_type_hints
 
         from api.dependencies import get_kb_data_service
 
         hints = get_type_hints(get_kb_data_service)
-        assert hints["return"] is KBDataServiceProtocol
+        ret = hints["return"]
+        assert get_origin(ret) is AsyncGenerator
+        assert get_args(ret)[0] is KBDataServiceProtocol
 
     def test_get_persona_data_service_annotation_is_protocol(self):
-        from typing import get_type_hints
+        from collections.abc import AsyncGenerator
+        from typing import get_args, get_origin, get_type_hints
 
         from api.dependencies import get_persona_data_service
 
         hints = get_type_hints(get_persona_data_service)
-        assert hints["return"] is PersonaDataServiceProtocol
+        ret = hints["return"]
+        assert get_origin(ret) is AsyncGenerator
+        assert get_args(ret)[0] is PersonaDataServiceProtocol
 
     def test_get_vsg_data_service_annotation_is_protocol(self):
-        from typing import get_type_hints
+        from collections.abc import AsyncGenerator
+        from typing import get_args, get_origin, get_type_hints
 
         from api.dependencies import get_vsg_data_service
 
         hints = get_type_hints(get_vsg_data_service)
-        assert hints["return"] is VSGDataServiceProtocol
+        ret = hints["return"]
+        assert get_origin(ret) is AsyncGenerator
+        assert get_args(ret)[0] is VSGDataServiceProtocol
 
     def test_get_td_data_service_annotation_is_protocol(self):
-        from typing import get_type_hints
+        from collections.abc import AsyncGenerator
+        from typing import get_args, get_origin, get_type_hints
 
         from api.dependencies import get_td_data_service
 
         hints = get_type_hints(get_td_data_service)
-        assert hints["return"] is TopicDiscoveryDataServiceProtocol
+        ret = hints["return"]
+        assert get_origin(ret) is AsyncGenerator
+        assert get_args(ret)[0] is TopicDiscoveryDataServiceProtocol

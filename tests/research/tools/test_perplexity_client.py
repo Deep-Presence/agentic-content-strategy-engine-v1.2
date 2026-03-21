@@ -27,7 +27,7 @@ class TestClient:
             # We patch at module level after import
             with patch.dict("sys.modules", {"perplexity": MagicMock(Perplexity=mock_cls)}):
                 result = perplexity_client._client()
-                mock_cls.assert_called_once_with(api_key="test-key-123")
+                mock_cls.assert_called_once_with(api_key="test-key-123", timeout=300.0)
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +154,8 @@ class TestSearch:
                 search_depth="advanced",
                 include_raw_content=False,
                 include_answer=True,
+                timeout_s=300.0,
+                model=None,
             )
             assert result == "result"
 
@@ -166,4 +168,6 @@ class TestSearch:
                 search_depth="basic",
                 include_raw_content=False,
                 include_answer=True,
+                timeout_s=300.0,
+                model=None,
             )

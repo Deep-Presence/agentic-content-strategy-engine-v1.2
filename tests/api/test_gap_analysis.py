@@ -23,21 +23,29 @@ MINIMAL_PAYLOAD = {
 
 @pytest.fixture
 def mock_gap_pipeline():
-    """Mock run_gap_analysis to return instantly."""
-    from core.models.gap_analysis import GapReport
-
-    mock_report = GapReport(
-        report_md="# Test Report",
-        report_json={"executive_summary": "test"},
-        generation_spec_md="# Spec",
-        generation_spec_json={},
-        visualization_paths=[],
-    )
+    """Mock run_gap_pipeline_task to complete instantly."""
     with patch(
-        "api.tasks.runner.run_gap_analysis",
+        "api.routers.gap_analysis.run_gap_pipeline_task",
         new_callable=AsyncMock,
-        return_value=mock_report,
     ) as mock_fn:
+
+        async def _complete_task(task_id, **kwargs):
+            task_store = kwargs["task_store"]
+            event_bus = kwargs["event_bus"]
+            request = kwargs["request"]
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "gap_analysis"})
+            task_store.update_task(
+                task_id,
+                status=TaskStatus.COMPLETED,
+                result={
+                    "produced_artifacts": [
+                        {"type": "gap_analysis", "slug": task_store.get_task(task_id).effective_slug},
+                    ],
+                },
+            )
+            event_bus.publish(task_id, "completed", {"pipeline": "gap_analysis"})
+
+        mock_fn.side_effect = _complete_task
         yield mock_fn
 
 
@@ -87,10 +95,11 @@ class TestStartGapAnalysis:
             json={**MINIMAL_PAYLOAD, "skip_steps": [1, 2]},
         )
         assert resp.status_code == 202
-        time.sleep(0.2)
         call_kwargs = mock_gap_pipeline.call_args
         assert call_kwargs is not None
-        assert call_kwargs.kwargs.get("skip_steps") == [1, 2]
+        request_obj = call_kwargs.kwargs.get("request")
+        assert request_obj is not None
+        assert request_obj.skip_steps == [1, 2]
 
     def test_concurrent_company_and_product_ok(
         self, client: TestClient, mock_gap_pipeline
@@ -229,10 +238,22 @@ class TestGetGapAnalysisStatus:
         assert data["status"] == "running"
         assert data["company_slug"] == "test-co"
 
-    def test_completed_status(self, client: TestClient, mock_gap_pipeline) -> None:
+    def test_completed_status(
+        self, client: TestClient, task_store: TaskStore, mock_gap_pipeline
+    ) -> None:
         resp = client.post("/api/v1/gap-analysis/start", json=MINIMAL_PAYLOAD)
         run_id = resp.json()["run_id"]
-        time.sleep(0.3)
+
+        # Simulate background task completion by updating task store directly
+        task_store.update_task(
+            run_id,
+            status=TaskStatus.COMPLETED,
+            result={
+                "produced_artifacts": [
+                    {"type": "gap_analysis", "slug": "test-co"},
+                ],
+            },
+        )
 
         status_resp = client.get(f"/api/v1/gap-analysis/{run_id}/status")
         assert status_resp.status_code == 200
@@ -244,11 +265,16 @@ class TestGetGapAnalysisStatus:
             {"type": "gap_analysis", "slug": "test-co"},
         ]
 
-    def test_failed_status(self, client: TestClient, mock_gap_pipeline) -> None:
-        mock_gap_pipeline.side_effect = RuntimeError("Pipeline failed")
+    def test_failed_status(
+        self, client: TestClient, task_store: TaskStore, mock_gap_pipeline
+    ) -> None:
         resp = client.post("/api/v1/gap-analysis/start", json=MINIMAL_PAYLOAD)
         run_id = resp.json()["run_id"]
-        time.sleep(0.3)
+
+        # Simulate background task failure by updating task store directly
+        task_store.update_task(
+            run_id, status=TaskStatus.FAILED, error="Pipeline failed"
+        )
 
         status_resp = client.get(f"/api/v1/gap-analysis/{run_id}/status")
         assert status_resp.status_code == 200
