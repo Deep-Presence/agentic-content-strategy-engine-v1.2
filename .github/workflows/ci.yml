@@ -25,7 +25,6 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_dp
-      TEST_DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_dp
       OPENAI_API_KEY: test-key
       ANTHROPIC_API_KEY: test-key
       PERPLEXITY_API_KEY: test-key
