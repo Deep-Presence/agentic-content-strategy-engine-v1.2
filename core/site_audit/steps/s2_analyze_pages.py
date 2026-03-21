@@ -93,7 +93,11 @@ def _extract_title(soup: BeautifulSoup) -> tuple[str, int]:
     title_tag = soup.find("title")
     if title_tag is None:
         return "", 0
-    text = " ".join(title_tag.get_text(separator=" ", strip=True).split())
+    # Python 3.12.13+ treats <title> as RAWTEXT (CDATA_CONTENT_ELEMENTS),
+    # so nested tags like <span> become literal text instead of parsed elements.
+    # Strip any residual HTML tags to handle both parser behaviours.
+    raw = title_tag.get_text(separator=" ", strip=True)
+    text = " ".join(re.sub(r"<[^>]+>", "", raw).split())
     return text, len(text)
 
 
