@@ -54,5 +54,5 @@ STOPSIGNAL SIGTERM
 # Railway sets PORT dynamically; local docker-compose falls back to 8000.
 CMD python -m uvicorn api.app:create_app --factory \
     --host 0.0.0.0 --port ${PORT:-8000} \
-    --log-config /dev/null \
+    --no-access-log \
     --timeout-graceful-shutdown 30
