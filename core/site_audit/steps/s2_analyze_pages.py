@@ -90,10 +90,10 @@ def _extract_title(soup: BeautifulSoup) -> tuple[str, int]:
     Returns:
         Tuple of (title_text, length).  Both are empty/0 if absent.
     """
-    title_tag = soup.title
+    title_tag = soup.find("title")
     if title_tag is None:
         return "", 0
-    text = title_tag.get_text(" ", strip=True)
+    text = " ".join(title_tag.get_text(separator=" ", strip=True).split())
     return text, len(text)
 
 
