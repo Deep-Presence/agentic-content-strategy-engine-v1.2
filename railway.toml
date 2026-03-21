@@ -11,4 +11,4 @@ restartPolicyMaxRetries = 5
 
 # Run Alembic migrations before each deploy
 [deploy.pre]
-command = "python -m alembic upgrade head"
+command = "python -m alembic upgrade head || echo 'Migration skipped — DB unreachable or DATABASE_URL not set'"

@@ -42,8 +42,10 @@ USER appuser
 
 EXPOSE 8000
 
+# Railway uses its own healthcheckPath (railway.toml), not Docker HEALTHCHECK.
+# Docker HEALTHCHECK is only used for local docker-compose.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
 STOPSIGNAL SIGTERM
 
