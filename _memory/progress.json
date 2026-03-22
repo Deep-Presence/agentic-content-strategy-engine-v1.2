@@ -1,9 +1,9 @@
 {
-  "current_sprint": "structured-logging-layer2-v18",
-  "last_updated": "2026-03-15",
-  "test_count": 2773,
+  "current_sprint": "redis-integration-session-4",
+  "last_updated": "2026-03-22",
+  "test_count": 2120,
   "completed_sprints_summary": {
-    "total_tasks_completed": 37,
+    "total_tasks_completed": 40,
     "sprints": [
       {"sprint": "v3-async", "date": "2026-02-15", "summary": "Async pipeline conversion (12 tasks), Playwright CF bypass, content engine v1.0"},
       {"sprint": "v3-signals", "date": "2026-02-18", "summary": "Structural Signal Overhaul — S4 dual-soup, ~45 signals, GapContentBrief, 3-tier output"},
@@ -20,267 +20,101 @@
       {"sprint": "content-engine-v13", "date": "2026-03-02", "summary": "v1.3 pipeline (6 stages, LiteLLM, E-E-A-T, 3 HITL, linker agent, 10-phase refactor), LangSmith migration"},
       {"sprint": "knowledge-base-v1-v5", "date": "2026-03-06", "summary": "KB phases 1-5: 17 models, KBStorage, 6 agents, DAG orchestrator, 3 HITL, API router, staleness tracking, delta synthesis. 260 KB tests"},
       {"sprint": "audience-persona-v6-a-c", "date": "2026-03-06", "summary": "AP phases A-C: 9 Pydantic models, PersonaStorage, 2 agents (suggester + generator), 2 HITL graphs, prompts. 187 AP tests"},
-      {"sprint": "research-orchestrator-v13", "date": "2026-03-11", "summary": "Research Orchestrator — KB→AP→VSG sequential DAG. 7 phases + Codex audit (8 findings, 5 fixed). 67 tests (50 core + 17 API). Skip logic, HITL pass-through, auto-approve, error propagation."},
-      {"sprint": "td-content-integration-v1.2.0", "date": "2026-03-15", "summary": "TD→GA→CE integration — 8-phase plan. Topic-scoped GA (cluster mapping, S2 topic queries, cross-topic dedup), CE TOPIC_DISCOVERY mode, orchestrator, DB persistence (migration 0011), API layer (2 endpoints, task runner). ~44 new tests."},
-      {"sprint": "daily-tracker-db-persistence-v15", "date": "2026-03-15", "summary": "Daily Tracker DB persistence — 6-phase plan. Persistence layer (5 functions), task runner, router refactor (async + DB queries), PG ENUM migration 0014, DB integration tests. Codex-reviewed (7 findings addressed). 392 DT tests, 8 skipped."},
-      {"sprint": "pgvector-migration-v16", "date": "2026-03-15", "summary": "ChromaDB→pgvector migration — 8-phase plan. VectorStoreClient (469 lines), 2 Alembic migrations (0016+0017), EmbeddingRepository extensions, consumer migration (GA+AP+CPS), full ChromaDB removal, data migration script. Codex-reviewed (11 findings addressed). 429 GA tests passing."},
-      {"sprint": "structured-logging-v17", "date": "2026-03-15", "summary": "Structured Logging Foundation (Layer 1) — structlog with stdlib bridge. Central config (core/shared_tools/structured_logging.py), 3 Settings fields, middleware rewrite (correlation IDs, context propagation), 14 runner functions, 5 scripts, 2 print eliminations. Codex-reviewed (6 findings incorporated). 22 new tests."},
-      {"sprint": "structured-logging-layer2-v18", "date": "2026-03-15", "summary": "Structured Logging Layer 2 — Correlation & Context Propagation. 8 phases: get_context_value+scoped_bind, X-Request-ID+middleware hardening, LangSmith trace linkage, SSE context binding (PB-83), auth failure logging (PB-84), per-step/per-agent binding (PB-85), run_id binding in runners, async context propagation tests. Codex-reviewed. 48 new tests. 3 backlog items resolved."}
+      {"sprint": "research-orchestrator-v13", "date": "2026-03-11", "summary": "Research Orchestrator — KB→AP→VSG sequential DAG. 67 tests."},
+      {"sprint": "td-content-integration-v1.2.0", "date": "2026-03-15", "summary": "TD→GA→CE integration — 8-phase plan. ~44 new tests."},
+      {"sprint": "daily-tracker-db-persistence-v15", "date": "2026-03-15", "summary": "Daily Tracker DB persistence — 6-phase plan. 392 DT tests."},
+      {"sprint": "pgvector-migration-v16", "date": "2026-03-15", "summary": "ChromaDB→pgvector migration — 8-phase plan. 429 GA tests."},
+      {"sprint": "structured-logging-v17", "date": "2026-03-15", "summary": "Structured Logging Foundation (Layer 1). 22 new tests."},
+      {"sprint": "structured-logging-layer2-v18", "date": "2026-03-15", "summary": "Structured Logging Layer 2 — Correlation & Context. 48 new tests."},
+      {"sprint": "redis-session-0", "date": "2026-03-22", "summary": "Redis Infrastructure Foundation — core/redis.py (async+sync lazy singletons), settings, health check, DI. 13 tests."},
+      {"sprint": "redis-session-1", "date": "2026-03-22", "summary": "RedisEventBus — Redis Streams SSE, atomic Lua INCR+XADD, EventBusProtocol, thread-safe mirror with eviction. 37 tests."},
+      {"sprint": "redis-session-2", "date": "2026-03-22", "summary": "Pipeline State (Redis Hashes) + Distributed Locks. state_redis.py (8 helpers), async writes, task-scoped cleanup, SET NX EX + Lua compare-delete, fail-closed, orphan cleanup, lock TTL refresh. 36 tests."},
+      {"sprint": "redis-session-3", "date": "2026-03-22", "summary": "HITL RedisSaver — replace MemorySaver with RedisSaver across 12 graph builders. Shared core/checkpointer.py factory (singleton, thread-safe, graceful fallback). 1 Codex finding resolved (race condition). 7 tests."},
+      {"sprint": "redis-session-4", "date": "2026-03-22", "summary": "Redis Approval Queues — BRPOP/LPUSH in DbTaskStore. Nonce in Redis, SET NX duplicate flag, asyncio.to_thread BRPOP. Graceful fallback. 13 tests."}
     ]
   },
   "completed": [
     {
-      "id": "T-structured-logging-layer2",
-      "task": "Structured Logging Layer 2 — Correlation & Context Propagation. 8 phases: (1) get_context_value + scoped_bind helpers, (2) X-Request-ID + middleware hardening (try/finally, correlation_id sanitization), (3) LangSmith trace linkage (langsmith_trace_id auto-bind), (4) SSE context binding (PB-83), (5) Auth failure logging (PB-84), (6) Per-step/per-agent context binding across 6 pipelines (PB-85), (7) run_id binding in 14 runner functions, (8) Async context propagation integration tests. Codex-reviewed (6 findings incorporated, 2 rejected).",
-      "sprint": "structured-logging-layer2-v18",
+      "id": "T-redis-session-4",
+      "task": "Redis Session 4 — Approval Queues. Replace asyncio.Queue with Redis LPUSH/BRPOP in DbTaskStore. Redis-first nonce validation (GET), duplicate prevention (SET NX), payload delivery (LPUSH/BRPOP via asyncio.to_thread). Nonce write/clear in update_task. Graceful fallback to asyncio.Queue when Redis unavailable.",
+      "sprint": "redis-integration-session-4",
       "status": "done",
-      "completed_at": "2026-03-15",
-      "tests_added": 48,
+      "completed_at": "2026-03-22",
+      "tests_added": 13,
       "files_created": [
-        "tests/shared_tools/test_tracing_context.py",
-        "tests/api/test_events_context.py",
-        "tests/api/test_auth_failure_logging.py",
-        "tests/api/test_context_propagation.py",
-        "tests/test_step_context_binding.py"
+        "tests/services/test_approval_queue_redis.py"
       ],
       "files_modified": [
-        "core/shared_tools/structured_logging.py",
-        "core/shared_tools/tracing.py",
-        "api/app.py",
-        "api/routers/events.py",
-        "api/auth/middleware.py",
-        "api/tasks/runner.py",
-        "core/gap_analysis/pipeline.py",
-        "core/research/knowledge_base/pipeline.py",
-        "core/research/audience_persona/pipeline.py",
-        "core/research/voice_style_guide/pipeline.py",
-        "core/content_engine/pipeline_v13.py",
-        "core/site_audit/pipeline.py",
-        "tests/shared_tools/test_structured_logging.py",
-        "tests/api/test_middleware.py"
+        "core/services/db_task_store.py",
+        "CLAUDE.md"
       ]
     },
     {
-      "id": "T-structured-logging",
-      "task": "Structured Logging Foundation (Layer 1) — structlog with stdlib bridge, JSON/console modes, correlation IDs, context propagation via contextvars. Phase A: dependency, settings, central module, app/script init, basicConfig replacement, print elimination, 17 tests. Phase B: middleware rewrite (correlation_id, user_id, company_slug binding), 14 runner functions (task_id, pipeline_name binding), 5 middleware tests. Codex-reviewed (6 findings incorporated, 2 rejected with reasoning, 3 deferred).",
-      "sprint": "structured-logging-v17",
+      "id": "T-redis-session-3",
+      "task": "Redis Session 3 — HITL RedisSaver. Shared core/checkpointer.py factory (lazy singleton with double-checked locking, graceful MemorySaver fallback). Replaced 5 duplicated _resolve_checkpointer() across graph modules (11 graph builders). Updated v1.0 pipeline to use get_checkpointer(). Config toggle: redis_checkpointer=True. 1 Codex finding (thread-safety race) resolved.",
+      "sprint": "redis-integration-session-3",
       "status": "done",
-      "completed_at": "2026-03-15",
-      "tests_added": 22,
+      "completed_at": "2026-03-22",
+      "tests_added": 7,
       "files_created": [
-        "core/shared_tools/structured_logging.py",
-        "tests/shared_tools/test_structured_logging.py"
+        "core/checkpointer.py",
+        "tests/core/test_checkpointer.py"
       ],
       "files_modified": [
-        "pyproject.toml",
-        "core/config/settings.py",
-        "api/app.py",
-        "api/tasks/runner.py",
-        "scripts/run_server.py",
-        "scripts/run_kb.py",
-        "scripts/run_topic_discovery.py",
-        "scripts/run_td_rescore.py",
-        "scripts/backfill_gap_data.py",
-        "scripts/migrate_chroma_to_pgvector.py",
-        "core/research/prompts/persona_suggester.py",
-        "core/reddit_hil/cli.py",
-        "tests/api/test_middleware.py"
-      ]
-    },
-    {
-      "id": "T-pgvector-migration",
-      "task": "ChromaDB→pgvector Migration — 8-phase plan: (1) VectorStoreClient + module-level API, (2) DB migration 0016 (persona_embeddings, company_slug columns, nullable FKs, backfill), (3) EmbeddingRepository extensions (7 new methods), (4) Gap analysis consumer migration (S1, S5, pipeline, persistence), (5) Audience persona import migration, (6) CPS model config + migration 0017, (7) Full ChromaDB removal (3 files deleted, deps removed), (8) Data migration script.",
-      "sprint": "pgvector-migration-v16",
-      "status": "done",
-      "completed_at": "2026-03-15",
-      "tests_added": 493,
-      "tests_deleted": 198,
-      "files_created": [
-        "core/shared_tools/vector_store.py",
-        "core/db/migrations/versions/0016_pgvector_migration.py",
-        "core/db/migrations/versions/0017_cps_training_tables.py",
-        "tests/shared_tools/test_vector_store.py",
-        "scripts/migrate_chroma_to_pgvector.py"
-      ],
-      "files_deleted": [
-        "core/shared_tools/chroma_client.py",
-        "core/shared_tools/async_chroma_client.py",
-        "tests/shared_tools/test_async_chroma_client.py"
-      ],
-      "files_modified": [
-        "core/config/settings.py",
-        "core/cps_model/config.py",
-        "core/db/models/embeddings.py",
-        "core/db/repositories/embedding_repo.py",
-        "core/gap_analysis/persistence.py",
-        "core/gap_analysis/pipeline.py",
-        "core/gap_analysis/steps/s1_embed_assets.py",
-        "core/gap_analysis/steps/s5_embed_content.py",
-        "core/research/audience_persona/pipeline.py",
-        "scripts/run_gap_step.py",
-        "tests/conftest.py",
-        "tests/gap_analysis/steps/test_s1_embed_assets.py",
-        "tests/gap_analysis/test_persistence.py",
         "requirements.txt",
-        "pyproject.toml"
+        "core/config/settings.py",
+        "core/content_engine/graph_v13.py",
+        "core/content_engine/pipeline.py",
+        "core/research/knowledge_base/graph.py",
+        "core/research/audience_persona/graph.py",
+        "core/research/voice_style_guide/graph.py",
+        "core/topic_discovery/graph.py",
+        "tests/topic_discovery/test_graph_td.py",
+        "CLAUDE.md"
       ]
     },
     {
-      "id": "T-daily-tracker-db-persistence",
-      "task": "Daily Tracker DB Persistence & Production Readiness — 6-phase plan: (1) Infrastructure wiring (ORM exports, PipelineType enum, migration 0014), (2) Persistence layer (5 functions: _should_persist, write_run_artifact, create_daily_run_record, persist_daily_run_result, mark_daily_run_failed), (3) Task runner (run_daily_tracker_task with SSE + slug lock + safety net), (4) Router refactor (POST /runs async, GET /runs DB query, GET /runs/{run_id} tenant-isolated), (5) DB integration tests (8 tests), (6) Analytics verification + docs update.",
-      "sprint": "daily-tracker-db-persistence-v15",
+      "id": "T-redis-sessions-0-1-2",
+      "task": "Redis Integration Sessions 0-2 — Foundation, EventBus (Streams), Pipeline State (Hashes), Distributed Locks. Session 0: core/redis.py (async+sync), settings, health, DI. Session 1: RedisEventBus (atomic Lua INCR+XADD+EXPIRE, EventBusProtocol, mirror eviction). Session 2: state_redis.py (8 helpers), async pipeline state writes with lock TTL refresh, task-scoped stale cleanup, DbTaskStore distributed locks (SET NX EX, Lua compare-delete, fail-closed, orphan cleanup on startup), reader changes in content_data_service + db_content_data. 8 Codex findings resolved.",
+      "sprint": "redis-integration-sessions-0-2",
       "status": "done",
-      "completed_at": "2026-03-15",
-      "tests_added": 41,
-      "test_total_daily_tracker": 392,
+      "completed_at": "2026-03-22",
+      "tests_added": 86,
       "files_created": [
-        "core/daily_tracker/persistence.py",
-        "core/db/migrations/versions/0014_daily_tracker_enum.py",
-        "tests/daily_tracker/test_persistence.py",
-        "tests/daily_tracker/test_infra_wiring.py",
-        "tests/api/test_daily_tracker_runner.py",
-        "tests/db/test_daily_tracker_persistence.py"
+        "core/redis.py",
+        "api/tasks/redis_event_bus.py",
+        "core/content_engine/state_redis.py",
+        "tests/core/test_redis_client.py",
+        "tests/api/test_redis_event_bus.py",
+        "tests/content_engine/test_state_redis.py",
+        "tests/services/test_distributed_locks.py"
       ],
       "files_modified": [
-        "core/db/models/__init__.py",
-        "core/db/enums.py",
-        "api/tasks/models.py",
+        "api/app.py",
+        "api/dependencies.py",
+        "api/routers/events.py",
+        "api/services/content_data_service.py",
+        "api/tasks/event_bus.py",
         "api/tasks/runner.py",
-        "api/routers/daily_tracker.py",
-        "tests/daily_tracker/test_api_endpoints.py",
-        "docs/API_DOCUMENTATION.md"
-      ]
-    },
-    {
-      "id": "T-td-content-integration",
-      "task": "TD→GA→CE Integration — 8-phase plan: (1) Models + cluster mapping, (2) Topic-scoped S2 queries, (3) S6+S8 modifications, (4) Scoped GA pipeline, (5) CE TD mode + context router, (6) Orchestrator, (7) DB models + migration 0011 + persistence, (8) API endpoints + schemas + task runner.",
-      "sprint": "td-content-integration-v1.2.0",
-      "status": "done",
-      "completed_at": "2026-03-15",
-      "tests_added": 44,
-      "files_created": [
-        "core/gap_analysis/topic_cluster_map.py",
-        "core/orchestration/td_content_orchestrator.py",
-        "core/db/migrations/versions/0011_td_content_integration.py",
-        "tests/gap_analysis/test_topic_cluster_map.py",
-        "tests/gap_analysis/test_s2_topic_queries.py",
-        "tests/content_engine/test_td_mode.py",
-        "tests/orchestration/test_td_content_orchestrator.py",
-        "tests/db/test_td_content_integration.py",
-        "tests/api/test_content_v13_from_topics.py"
-      ],
-      "files_modified": [
-        "core/models/gap_analysis.py",
-        "core/models/content_generation_v13.py",
-        "core/models/content_generation.py",
-        "core/gap_analysis/steps/s2_generate_queries.py",
-        "core/gap_analysis/steps/s6_analyze.py",
-        "core/gap_analysis/steps/s8_generate_report.py",
-        "core/gap_analysis/pipeline.py",
-        "core/content_engine/context_router.py",
+        "api/tasks/store.py",
+        "core/config/settings.py",
+        "core/content_engine/evaluator/loop.py",
         "core/content_engine/pipeline_v13.py",
-        "core/content_engine/persistence.py",
-        "core/gap_analysis/persistence.py",
-        "core/topic_discovery/persistence.py",
-        "core/db/models/content.py",
-        "core/db/models/gap_analysis.py",
-        "core/db/repositories/content_repo.py",
-        "api/schemas/content_v13.py",
-        "api/tasks/models.py",
-        "api/tasks/runner.py",
-        "api/routers/content_v13.py"
+        "core/content_engine/state_helpers.py",
+        "core/content_engine/workers/dispatcher.py",
+        "core/services/db_content_data.py",
+        "core/services/db_task_store.py",
+        "core/services/task_store.py",
+        "CLAUDE.md"
       ]
-    },
-    {
-      "id": "T-research-orchestrator",
-      "task": "Research Orchestrator — KB→AP→VSG sequential DAG: Pydantic models, core orchestrator (skip logic, HITL pass-through, auto-approve distribution, error propagation), runner wrapper, API schema + router, app wiring. Codex audit: 5 fixes (tenant isolation on status, product_slug validation, failed status mapping, max_authors constraint, skip_fresh wiring). 2 deferred (VSG ap_manifest_version, process-local concurrency).",
-      "sprint": "research-orchestrator-v13",
-      "status": "done",
-      "completed_at": "2026-03-11",
-      "tests_added": 67,
-      "files_created": [
-        "core/models/research_orchestrator.py",
-        "core/research/orchestrator.py",
-        "api/schemas/research_orchestrator.py",
-        "api/routers/research_orchestrator.py",
-        "tests/research/test_orchestrator.py",
-        "tests/api/test_research_orchestrator.py"
-      ],
-      "files_modified": [
-        "api/tasks/runner.py",
-        "api/tasks/models.py",
-        "api/app.py"
-      ]
-    },
-    {
-      "id": "T-site-audit-db-persistence",
-      "task": "Site Audit DB Persistence — Phases 1-8",
-      "sprint": "site-audit-db-persistence-v12",
-      "status": "done",
-      "completed_at": "2026-03-10",
-      "tests_added": 62,
-      "test_total_site_audit": 899
-    },
-    {
-      "id": "T-ap-phase-d",
-      "task": "Audience Persona Phase D — Pipeline Orchestrator",
-      "sprint": "audience-persona-v6-phase-d",
-      "status": "done",
-      "completed_at": "2026-03-06",
-      "tests_added": 45,
-      "test_total_ap": 232
-    },
-    {
-      "id": "T-kb-phase5",
-      "task": "Knowledge Base Phase 5 — Synthesis & Living Document",
-      "sprint": "knowledge-base-v5",
-      "status": "done",
-      "completed_at": "2026-03-06",
-      "tests_added": 50,
-      "test_total_kb": 260
-    },
-    {
-      "id": "T-kb-phase4",
-      "task": "Knowledge Base Phase 4 — API Router + Schemas",
-      "sprint": "knowledge-base-v4",
-      "status": "done",
-      "completed_at": "2026-03-05",
-      "tests_added": 35
-    },
-    {
-      "id": "T-langsmith-migration",
-      "task": "LangSmith migration — Langfuse eliminated",
-      "sprint": "langsmith-migration",
-      "status": "done",
-      "completed_at": "2026-03-02",
-      "tests_added": 38
     }
   ],
-  "in_progress": [
-  ],
+  "in_progress": [],
   "pending": [
     {
       "id": "T-async-13",
       "task": "Test Playwright fallback on carta.com (run step 1)",
       "sprint": "v3-async",
-      "status": "pending"
-    },
-    {
-      "id": "T-api-cleanup-4",
-      "task": "Add runner-level tests for produced_artifacts in research and content runners",
-      "sprint": "api-v1",
-      "status": "pending"
-    },
-    {
-      "id": "T-sso-followup-1",
-      "task": "Add max(1, concurrency) guard in s4_enrich_citations",
-      "sprint": "v3-signals",
-      "status": "pending"
-    },
-    {
-      "id": "T-sso-followup-2",
-      "task": "Add try/except around _cosine_similarity for dimension mismatch in s6_analyze",
-      "sprint": "v3-signals",
       "status": "pending"
     }
   ],

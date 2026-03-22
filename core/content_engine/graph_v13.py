@@ -21,21 +21,14 @@ from typing import Any, Dict, List, Optional
 from typing_extensions import TypedDict
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
+from core.checkpointer import get_checkpointer
 from core.shared_tools.task_status import TaskStatus
 from core.content_engine.tracing_v13 import create_span, end_span, get_current_span
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_checkpointer(checkpointer: Any) -> BaseCheckpointSaver:
-    """Return checkpointer if valid, otherwise default to MemorySaver."""
-    if isinstance(checkpointer, BaseCheckpointSaver):
-        return checkpointer
-    return MemorySaver()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -167,7 +160,7 @@ def build_topic_approval_graph(
         },
     )
 
-    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
+    return graph.compile(checkpointer=get_checkpointer(checkpointer))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -260,7 +253,7 @@ def build_brief_approval_graph(
         },
     )
 
-    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
+    return graph.compile(checkpointer=get_checkpointer(checkpointer))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -405,7 +398,7 @@ def build_content_review_graph(
     graph.add_edge("apply_edits", END)  # Pipeline handles revision + re-presentation externally
     graph.add_edge("finalize", END)
 
-    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
+    return graph.compile(checkpointer=get_checkpointer(checkpointer))
 
 
 # ═══════════════════════════════════════════════════════════════════════

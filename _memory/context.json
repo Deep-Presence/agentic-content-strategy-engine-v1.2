@@ -1,7 +1,7 @@
 {
-  "sprint": "structured-logging-layer2-v18",
-  "sprint_goal": "Structured Logging Layer 2 — Correlation & Context Propagation. X-Request-ID middleware, LangSmith trace linkage, SSE context binding (PB-83), auth failure logging (PB-84), per-step/per-agent context binding (PB-85), run_id binding, async context propagation tests.",
-  "sprint_status": "COMPLETE — 8 phases, 4 new test files, 12 modified files. 48 new tests. Codex-reviewed (6 findings incorporated). 3 backlog items resolved (PB-83, PB-84, PB-85). Zero regressions.",
+  "sprint": "redis-integration-session-4",
+  "sprint_goal": "Redis Session 4 — Approval Queues. Replace asyncio.Queue with Redis LPUSH/BRPOP in DbTaskStore for cross-worker HITL approval delivery.",
+  "sprint_status": "COMPLETE — Sessions 3-4 done + PB-39 fixed. 20 new tests + PB-39 root cause resolved (StateGraph(dict) → TypedDict). Multi-worker HITL ready.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -12,38 +12,38 @@
     "Default-deny middleware — all routes protected unless explicitly whitelisted",
     "core/ cannot import from api/ — shared code goes in core/shared_tools/",
     "DB layer is opt-in via DATABASE_URL — repos flush only, DI session generator owns commit/rollback",
-    "AuthServiceProtocol is the contract — all routers use get_auth_service dependency",
-    "LangSmith is sole tracing backend — Langfuse fully removed",
-    "Hub prompts opt-in via langsmith_use_hub=False — local Python prompts authoritative by default"
+    "Redis is opt-in via REDIS_URL — all features have config toggles + graceful fallback",
+    "Async Redis for hot paths (pipeline writes), sync Redis for locks + sync readers",
+    "Distributed locks are fail-closed when Redis is configured (no split-brain fallback)"
   ],
-  "active_branches": ["feat/deployment-prep-sprints"],
+  "active_branches": ["feat/redis-integration"],
   "environment_notes": [
     "Python 3.12", "async-first", "VS Code + Claude Code extension",
-    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, structlog >=24.1"
+    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, structlog >=24.1, redis[hiredis] >=5.2.0"
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/shared_tools/structured_logging.py (MODIFIED — added get_context_value + scoped_bind)",
-    "core/shared_tools/tracing.py (MODIFIED — langsmith_trace_id binding)",
-    "api/app.py (MODIFIED — X-Request-ID, try/finally, correlation ID sanitization)",
-    "api/routers/events.py (MODIFIED — SSE context binding)",
-    "api/auth/middleware.py (MODIFIED — auth failure structured logging)",
-    "api/tasks/runner.py (MODIFIED — run_id binding in all 14 runner functions)",
-    "6 pipeline files (MODIFIED — scoped_bind for step_name/agent_name)"
+    "core/redis.py (async + sync lazy singletons)",
+    "api/tasks/redis_event_bus.py (RedisEventBus — Streams + Lua)",
+    "core/content_engine/state_redis.py (8 Redis state helpers)",
+    "core/content_engine/state_helpers.py (async wrappers + lock TTL refresh)",
+    "core/services/db_task_store.py (distributed locks + orphan cleanup)",
+    "api/app.py (Redis init, EventBus selection, DbTaskStore wiring)",
+    "api/tasks/runner.py (async+sync Redis threading, stale cleanup)",
+    "CLAUDE.md (Redis key schema, config toggles)",
+    "core/checkpointer.py (shared RedisSaver factory, singleton, thread-safe)"
   ],
-  "test_count": 2773,
-  "phases_completed_count": 50,
+  "test_count": 2120,
+  "phases_completed_count": 55,
   "recent_phases": [
-    "structured-logging-layer2 v18 — 8 phases (48 new tests, 3 backlog items resolved)",
-    "structured-logging v17 — Phase A (foundation) + Phase B (context propagation) + Codex audit (22 new tests)",
-    "pgvector-migration v16 — 8 phases + Codex audit (493 new tests, 198 deleted)",
-    "daily-tracker-db-persistence v15 — 6 phases + Codex audit (392 DT tests, 41 new)",
-    "td-content-integration v1.2.0 — 8 phases (44 new tests)"
+    "redis-session-4 — Approval Queues (BRPOP/LPUSH), nonce in Redis, duplicate flag (13 new tests)",
+    "redis-session-3 — HITL RedisSaver, shared checkpointer factory, 1 Codex finding resolved (7 new tests)",
+    "redis-session-2 — 9 phases + 8 Codex findings resolved (36 new tests)",
+    "redis-session-1 — RedisEventBus + 8 Codex findings resolved (37 new tests)",
+    "redis-session-0 — Foundation (13 new tests)"
   ],
   "phases_remaining": [
-    "audience-persona Phase E — API Router + Runner (~30 tests)",
-    "audience-persona Phase F — Integration (~20 tests)",
-    "knowledge-base Phase 6 — Integration (wire to gap analysis, Daily Tracker, frontend)"
+    "Redis Session 5 — Distributed Semaphore"
   ],
   "deferred_issues_location": ".claude/sprints/pending/backlog.md"
 }

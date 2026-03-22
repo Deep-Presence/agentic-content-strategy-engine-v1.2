@@ -1,7 +1,7 @@
-"""Stage 4: HITL Review — LangGraph state machine.
+"""Stage 4: HITL Review — LangGraph state machine (v1.0).
 
-Same pattern as core/research/graphs/company_research.py:
-StateGraph(dict) with interrupt() for human approval.
+Uses TypedDict state schema to prevent __interrupt__ channel bleed-through
+with langgraph-checkpoint >=4.0.
 
 Graph:
   present_content → approval_gate (interrupt) → route
@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from typing_extensions import TypedDict
+
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
@@ -31,6 +33,27 @@ from core.models.content_generation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── State schema ────────────────────────────────────────────────────
+
+
+class ContentReviewState(TypedDict, total=False):
+    """State for the v1.0 content review HITL graph."""
+
+    content: Any  # FormattedContent
+    brief: Any  # ContentBrief
+    history: Any  # RevisionHistory
+    auto_approve: bool
+    artifact_dir: Any  # Path
+    eval_summary: dict
+    presented_at: int
+    approval_decision: str
+    editor_notes: str
+    editor_notes_applied: bool
+    human_notes: str
+    artifact_path: str
+    finalized: bool
 
 
 # ── Graph node functions ────────────────────────────────────────────
@@ -133,7 +156,7 @@ def _get_decision(state: Dict[str, Any]) -> str:
 
 def build_content_review_graph(checkpointer=None):
     """Build and compile the LangGraph HITL review state machine."""
-    graph = StateGraph(dict)
+    graph = StateGraph(ContentReviewState)
     graph.add_node("present_content", _present_content)
     graph.add_node("approval_gate", _approval_gate)
     graph.add_node("route", _route)

@@ -227,6 +227,7 @@ class Settings(BaseSettings):
     redis_health_check_interval: int = 30  # seconds
     redis_event_bus: bool = False  # Use RedisEventBus instead of in-memory EventBus
     redis_pipeline_state: bool = False  # Use Redis Hashes for pipeline_state + distributed slug locks
+    redis_checkpointer: bool = True  # Use RedisSaver for LangGraph HITL checkpoints
 
     # --- Auth ---
     invite_ttl_days: int = 7  # Invite codes expire after 7 days

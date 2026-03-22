@@ -11,6 +11,7 @@ or PG LISTEN/NOTIFY (future work).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid as _uuid
 from datetime import datetime, timezone
@@ -171,6 +172,30 @@ end
                 if key == "status" and isinstance(value, str) and not isinstance(value, TaskStatus):
                     value = TaskStatus(value)
                 setattr(task, key, value)
+
+        # Store/clear approval nonce in Redis for cross-worker validation
+        if self._redis_sync is not None and "approval_payload" in kwargs:
+            ap = kwargs["approval_payload"]
+            nonce_key = f"approval:nonce:{task_id}"
+            flag_key = f"approval:flag:{task_id}"
+            if ap is not None:
+                nonce = ap.get("checkpoint_nonce")
+                if nonce:
+                    try:
+                        self._redis_sync.set(nonce_key, nonce, ex=86400)
+                    except Exception:
+                        logger.warning(
+                            "Redis: failed to write nonce for %s", task_id, exc_info=True
+                        )
+            else:
+                # Clearing approval_payload — remove nonce + flag for next checkpoint
+                try:
+                    self._redis_sync.delete(nonce_key, flag_key)
+                except Exception:
+                    logger.warning(
+                        "Redis: failed to clear nonce/flag for %s", task_id, exc_info=True
+                    )
+
         task.updated_at = datetime.now(timezone.utc)
 
         # Determine if this is a critical update (status change) or progress
@@ -324,6 +349,9 @@ end
     async def wait_for_approval(
         self, task_id: str, timeout: float = 86400
     ) -> Dict[str, Any]:
+        if self._redis_sync is not None:
+            return await self._wait_for_approval_redis(task_id, timeout)
+        # Fallback: existing asyncio.Queue logic
         if task_id not in self._approval_queues:
             self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
         try:
@@ -343,6 +371,62 @@ end
         self._approval_queues.pop(task_id, None)
         return data
 
+    async def _wait_for_approval_redis(
+        self, task_id: str, timeout: float
+    ) -> Dict[str, Any]:
+        """Block on Redis BRPOP until approval arrives or timeout expires."""
+        key = f"approval:{task_id}"
+        flag_key = f"approval:flag:{task_id}"
+        nonce_key = f"approval:nonce:{task_id}"
+
+        try:
+            result = await asyncio.to_thread(
+                self._redis_sync.brpop, key, timeout=max(1, int(timeout))
+            )
+        except Exception:
+            logger.exception(
+                "Redis BRPOP failed for task %s — falling back to reject", task_id
+            )
+            result = None
+
+        if result is None:
+            logger.warning(
+                "Approval timed out after %.0fs for task %s — auto-rejecting",
+                timeout,
+                task_id,
+            )
+            data: Dict[str, Any] = {
+                "decision": "reject",
+                "revision_note": f"Approval timed out after {int(timeout)}s",
+            }
+        else:
+            _, raw = result
+            try:
+                data = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                logger.exception(
+                    "Malformed approval payload for task %s — auto-rejecting", task_id
+                )
+                data = {
+                    "decision": "reject",
+                    "revision_note": "Malformed approval payload",
+                }
+
+        # Cleanup all approval keys
+        try:
+            self._redis_sync.delete(key, flag_key, nonce_key)
+        except Exception:
+            logger.warning(
+                "Redis: failed to cleanup approval keys for %s",
+                task_id,
+                exc_info=True,
+            )
+
+        # Also clean local queue if it exists (hybrid safety)
+        self._approval_queues.pop(task_id, None)
+
+        return data
+
     def submit_approval(
         self,
         task_id: str,
@@ -357,13 +441,48 @@ end
 
         task = self._tasks[task_id]
 
-        # Atomic nonce validation — prevents TOCTOU and replay
+        # Nonce validation — Redis-first if available
         if expected_nonce is not None:
-            current_nonce = (task.approval_payload or {}).get("checkpoint_nonce")
+            if self._redis_sync is not None:
+                try:
+                    current_nonce = self._redis_sync.get(
+                        f"approval:nonce:{task_id}"
+                    )
+                except Exception:
+                    logger.warning(
+                        "Redis nonce read failed for %s — falling back to local",
+                        task_id,
+                        exc_info=True,
+                    )
+                    current_nonce = (task.approval_payload or {}).get(
+                        "checkpoint_nonce"
+                    )
+            else:
+                current_nonce = (task.approval_payload or {}).get(
+                    "checkpoint_nonce"
+                )
             if current_nonce != expected_nonce:
                 raise ApprovalWindowError(
                     f"Stale or replayed approval: nonce mismatch "
                     f"(expected {expected_nonce}, current {current_nonce})"
+                )
+
+        # Duplicate submission check — Redis flag (atomic SET NX)
+        if self._redis_sync is not None:
+            flag_key = f"approval:flag:{task_id}"
+            try:
+                was_set = self._redis_sync.set(flag_key, "1", nx=True, ex=86400)
+                if not was_set:
+                    raise ApprovalWindowError(
+                        f"Approval already submitted for task {task_id}"
+                    )
+            except ApprovalWindowError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Redis flag check failed for %s — proceeding",
+                    task_id,
+                    exc_info=True,
                 )
 
         resolved_stage = (
@@ -391,14 +510,28 @@ end
 
         # Queue the full approval data if provided, else generic payload
         payload = approval_data if approval_data is not None else {"decision": decision, "revision_note": revision_note}
-        if task_id not in self._approval_queues:
-            self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
-        try:
-            self._approval_queues[task_id].put_nowait(payload)
-        except asyncio.QueueFull:
-            raise ApprovalWindowError(
-                f"Approval already submitted for task {task_id} — queue full"
-            )
+
+        if self._redis_sync is not None:
+            try:
+                key = f"approval:{task_id}"
+                self._redis_sync.lpush(key, json.dumps(payload))
+                self._redis_sync.expire(key, 86400)
+            except Exception:
+                logger.exception("Redis LPUSH failed for task %s", task_id)
+                # Clear the flag so the user can retry
+                try:
+                    self._redis_sync.delete(f"approval:flag:{task_id}")
+                except Exception:
+                    pass
+        else:
+            if task_id not in self._approval_queues:
+                self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
+            try:
+                self._approval_queues[task_id].put_nowait(payload)
+            except asyncio.QueueFull:
+                raise ApprovalWindowError(
+                    f"Approval already submitted for task {task_id} — queue full"
+                )
 
     # ── DB write-through helpers ──────────────────────────────────────
 

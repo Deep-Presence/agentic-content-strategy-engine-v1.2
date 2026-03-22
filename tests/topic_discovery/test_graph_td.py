@@ -29,7 +29,6 @@ from core.topic_discovery.graph import (
     _process_taxonomy_edits,
     _remove_node,
     _rename_node,
-    _resolve_checkpointer,
     _set_depths,
     build_td_matrix_review_graph,
     build_td_taxonomy_review_graph,
@@ -152,24 +151,12 @@ def _make_matrix(assignment_count: int = 3) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Helpers — _resolve_checkpointer, _has_interrupt, _get_interrupt_value
+# Helpers — _has_interrupt, _get_interrupt_value
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestHelpers:
     """Unit tests for helper functions."""
-
-    def test_resolve_checkpointer_with_valid(self):
-        from langgraph.checkpoint.memory import MemorySaver
-
-        cp = MemorySaver()
-        assert _resolve_checkpointer(cp) is cp
-
-    def test_resolve_checkpointer_with_none(self):
-        from langgraph.checkpoint.memory import MemorySaver
-
-        result = _resolve_checkpointer(None)
-        assert isinstance(result, MemorySaver)
 
     def test_has_interrupt_true(self):
         assert _has_interrupt({"__interrupt__": [{"value": {}}]}) is True

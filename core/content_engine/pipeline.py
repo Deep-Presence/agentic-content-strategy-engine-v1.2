@@ -167,8 +167,9 @@ async def _run_content_review_hitl(
     """
     import asyncio
 
-    from langgraph.checkpoint.memory import MemorySaver
     from langgraph.types import Command
+
+    from core.checkpointer import get_checkpointer
 
     from core.content_engine.graph import build_content_review_graph
 
@@ -188,7 +189,7 @@ async def _run_content_review_hitl(
         history = history_map.get(content.brief_id, RevisionHistory(brief_id=content.brief_id))
 
         # Each brief gets its own checkpointer and graph instance
-        checkpointer = MemorySaver()
+        checkpointer = get_checkpointer()
         graph = build_content_review_graph(checkpointer=checkpointer)
         thread_id = f"{task_id}-content-review-{content.brief_id}"
         config = {"configurable": {"thread_id": thread_id}}

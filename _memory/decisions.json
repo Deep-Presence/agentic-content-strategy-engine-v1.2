@@ -1,14 +1,32 @@
 [
   {
+    "id": "D-REDIS-1",
+    "timestamp": "2026-03-22",
+    "task": "Redis Integration Sessions 0-2 \u2014 Architecture Decisions",
+    "approach": "Dual Redis clients (async for hot paths, sync for locks/reads). Config toggles per feature (REDIS_EVENT_BUS, REDIS_PIPELINE_STATE). Graceful fallback to file/in-memory when Redis unavailable. Atomic Lua scripts for EventBus (INCR+XADD) and lock release (compare-and-delete). Fail-closed distributed locks when Redis is configured.",
+    "rationale": "Async client prevents event loop blocking in pipeline hot paths (6-8 state writes per run). Sync client acceptable for sub-ms lock ops and to_thread readers. Config toggles allow incremental rollout. Lua scripts guarantee atomicity without multi-step race conditions. Fail-closed prevents split-brain in multi-worker.",
+    "alternatives_rejected": [
+      "Sync Redis everywhere \u2014 would block event loop on state writes",
+      "Fail-open locks \u2014 split-brain risk in multi-worker deployment",
+      "Redis stream IDs for event sequencing \u2014 breaks Last-Event-ID int contract",
+      "Full hash DELETE on stale cleanup \u2014 clobbers parallel manual runs",
+      "No stale lock detection \u2014 accept false 409s until TTL",
+      "Per-process INCR counters \u2014 out-of-order writes across workers"
+    ],
+    "outcome": "86 new tests, 8 Codex findings resolved, zero regressions. 4 Redis keys in schema.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-L2-1",
     "timestamp": "2026-03-15",
-    "task": "Structured Logging Layer 2 — Correlation & Context Propagation",
+    "task": "Structured Logging Layer 2 \u2014 Correlation & Context Propagation",
     "approach": "8-phase plan: (1) get_context_value + scoped_bind helpers, (2) X-Request-ID + middleware hardening, (3) LangSmith trace linkage, (4) SSE context binding, (5) Auth failure logging, (6) Per-step/per-agent binding, (7) run_id in runners, (8) async propagation tests",
-    "rationale": "Completes structured logging story — every log line traceable from HTTP request through pipeline step through LangSmith trace. X-Request-ID separate from X-Correlation-ID for proper distributed tracing. scoped_bind context manager prevents context leaks across sequential pipeline steps.",
+    "rationale": "Completes structured logging story \u2014 every log line traceable from HTTP request through pipeline step through LangSmith trace. X-Request-ID separate from X-Correlation-ID for proper distributed tracing. scoped_bind context manager prevents context leaks across sequential pipeline steps.",
     "alternatives_rejected": [
-      "Explicit ContextVar objects alongside structlog — dual source of truth with no benefit",
-      "Pure ASGI middleware for request-id — too big a refactor for marginal gain",
-      "Bind trace_id at each callsite instead of in tracing.py — not DRY, 14+ changes"
+      "Explicit ContextVar objects alongside structlog \u2014 dual source of truth with no benefit",
+      "Pure ASGI middleware for request-id \u2014 too big a refactor for marginal gain",
+      "Bind trace_id at each callsite instead of in tracing.py \u2014 not DRY, 14+ changes"
     ],
     "outcome": "48 new tests, zero regressions. 3 backlog items resolved (PB-83, PB-84, PB-85). All 6 pipelines enriched with step/agent context.",
     "reversible": true,
@@ -349,40 +367,40 @@
   {
     "id": "D-DT-INT-1",
     "timestamp": "2026-02-28",
-    "task": "Daily Tracker Integration — Orchestrator (Mediator), FastAPI router, DI wiring",
-    "approach": "Mediator pattern orchestrator coordinates prompt library, platform runner, and mention detector — no direct module-to-module communication. Stateless orchestrator returns DailyRunResult (no DB dependency). API router provides 16 endpoints (8 prompt CRUD, 3 run management, 5 analytics) with auth/tenant isolation. DI layer in api/dependencies.py provides 3 factory functions (get_prompt_library_service, get_analytics_service, get_daily_tracker_orchestrator) with app.state override pattern for test injection. _DbResponseDataProvider adapter bridges DB repos to AnalyticsService's ResponseDataProvider protocol.",
-    "rationale": "Mediator pattern keeps modules decoupled — adding new modules (e.g., notification service) requires changes only in the orchestrator. Stateless orchestrator enables pure-mock testing (no DB setup needed). DI factory functions follow existing app.state override pattern (consistent with other routers). _DbResponseDataProvider adapter keeps analytics engine decoupled from storage — it can work with any data provider implementing the protocol. All 503 responses on missing DB ensure clear failure mode vs silent degradation.",
+    "task": "Daily Tracker Integration \u2014 Orchestrator (Mediator), FastAPI router, DI wiring",
+    "approach": "Mediator pattern orchestrator coordinates prompt library, platform runner, and mention detector \u2014 no direct module-to-module communication. Stateless orchestrator returns DailyRunResult (no DB dependency). API router provides 16 endpoints (8 prompt CRUD, 3 run management, 5 analytics) with auth/tenant isolation. DI layer in api/dependencies.py provides 3 factory functions (get_prompt_library_service, get_analytics_service, get_daily_tracker_orchestrator) with app.state override pattern for test injection. _DbResponseDataProvider adapter bridges DB repos to AnalyticsService's ResponseDataProvider protocol.",
+    "rationale": "Mediator pattern keeps modules decoupled \u2014 adding new modules (e.g., notification service) requires changes only in the orchestrator. Stateless orchestrator enables pure-mock testing (no DB setup needed). DI factory functions follow existing app.state override pattern (consistent with other routers). _DbResponseDataProvider adapter keeps analytics engine decoupled from storage \u2014 it can work with any data provider implementing the protocol. All 503 responses on missing DB ensure clear failure mode vs silent degradation.",
     "alternatives_rejected": [
       "Direct module-to-module calls (tight coupling, harder to test, harder to extend)",
       "Orchestrator owns DB persistence (mixes orchestration with storage, harder to test)",
       "Inline analytics computation in router (violates SRP, duplicates calculation logic)",
       "Single monolithic DI function for all services (harder to override individually in tests)"
     ],
-    "outcome": "66 new tests (20 orchestrator + 46 API). All passing. 16 endpoints operational with auth enforcement. Mediator pattern verified — orchestrator only depends on 3 protocol interfaces.",
+    "outcome": "66 new tests (20 orchestrator + 46 API). All passing. 16 endpoints operational with auth enforcement. Mediator pattern verified \u2014 orchestrator only depends on 3 protocol interfaces.",
     "reversible": true,
     "approved_by": "team-lead"
   },
   {
     "id": "D-CE-V13-1",
     "timestamp": "2026-03-02",
-    "task": "Content Engine Pipeline v1.3 — two-phase context loading, LiteLLM, dual feedback loops, E-E-A-T",
-    "approach": "6-stage pipeline running alongside v1.0: (1) scorecard extraction (~11K tokens) for planner triage, (2) full context per-topic for Brief Builder, (3) workers accept ContentBlueprint (subclass of ContentBrief), (4) 5-dimension evaluator with dual feedback (section-level vs major-change), (5) 3 HITL checkpoints via LangGraph interrupt(). LiteLLM wraps all LLM calls (workers, judges, agents). v1.0 preserved as-is. Workers modified in-place (swap SDK call → llm_call), shared between both pipelines. _ensure_litellm_model() auto-prefixes model strings for backward compat.",
-    "rationale": "Full gap analysis output (80-120K tokens) created context explosion for the v1.0 planner. Two-phase loading reduces planner context to ~11K tokens. ContentBlueprint extends ContentBrief so all existing workers accept it transparently (zero type hint changes). LiteLLM provides model abstraction for benchmarking + easy provider switches. Dual feedback loops prevent expensive re-briefs from automated evaluator false positives — major direction change only from HITL-3 human rejection or semantic score < 0.5. E-E-A-T adds content quality signal missing from v1.0's 4-dimension evaluation.",
+    "task": "Content Engine Pipeline v1.3 \u2014 two-phase context loading, LiteLLM, dual feedback loops, E-E-A-T",
+    "approach": "6-stage pipeline running alongside v1.0: (1) scorecard extraction (~11K tokens) for planner triage, (2) full context per-topic for Brief Builder, (3) workers accept ContentBlueprint (subclass of ContentBrief), (4) 5-dimension evaluator with dual feedback (section-level vs major-change), (5) 3 HITL checkpoints via LangGraph interrupt(). LiteLLM wraps all LLM calls (workers, judges, agents). v1.0 preserved as-is. Workers modified in-place (swap SDK call \u2192 llm_call), shared between both pipelines. _ensure_litellm_model() auto-prefixes model strings for backward compat.",
+    "rationale": "Full gap analysis output (80-120K tokens) created context explosion for the v1.0 planner. Two-phase loading reduces planner context to ~11K tokens. ContentBlueprint extends ContentBrief so all existing workers accept it transparently (zero type hint changes). LiteLLM provides model abstraction for benchmarking + easy provider switches. Dual feedback loops prevent expensive re-briefs from automated evaluator false positives \u2014 major direction change only from HITL-3 human rejection or semantic score < 0.5. E-E-A-T adds content quality signal missing from v1.0's 4-dimension evaluation.",
     "alternatives_rejected": [
       "Separate v1.3 worker copies (90% code duplication, maintenance nightmare)",
       "Replace v1.0 pipeline entirely (breaks existing content runs, no fallback)",
       "LangChain for LLM abstraction (inconsistent with gap analysis, hides control)",
-      "Runtime prompt pulls from LangSmith Hub (adds availability dependency — prompts stay in Python files)",
+      "Runtime prompt pulls from LangSmith Hub (adds availability dependency \u2014 prompts stay in Python files)",
       "Major direction change from automated evaluator (too expensive, false positive risk)"
     ],
     "outcome": "Phases A-D1-D2 complete. 14 new files created, 9 files modified. 211 content+research tests passing. v1.0 pipeline fully preserved. Workers shared between both pipelines via LiteLLM.",
     "reversible": true,
     "approved_by": "Aryan",
     "key_design_points": [
-      "ContentBlueprint extends ContentBrief — transparent to all workers",
-      "_ensure_litellm_model() auto-prefixes: claude-* → anthropic/, sonar* → perplexity/, gpt-* → openai/, gemini-* → google/",
-      "classify_feedback() returns pass/section_level/major_change — section_level is default loop",
-      "Targeted revision maps (v1.3): structural/style/eeat/semantic→drafter+fact_checker, factual→fact_checker only",
+      "ContentBlueprint extends ContentBrief \u2014 transparent to all workers",
+      "_ensure_litellm_model() auto-prefixes: claude-* \u2192 anthropic/, sonar* \u2192 perplexity/, gpt-* \u2192 openai/, gemini-* \u2192 google/",
+      "classify_feedback() returns pass/section_level/major_change \u2014 section_level is default loop",
+      "Targeted revision maps (v1.3): structural/style/eeat/semantic\u2192drafter+fact_checker, factual\u2192fact_checker only",
       "use_eeat=False and use_targeted_revision=False defaults preserve v1.0 behavior",
       "Three composed LangGraph sub-graphs with interrupt() at each HITL gate",
       "LangSmith tracing automatic via litellm.success_callback = ['langsmith']"
@@ -391,29 +409,29 @@
   {
     "id": "D-CE-V13-2",
     "timestamp": "2026-03-02",
-    "task": "Content Engine v1.3 D3 — Defer full lightweight gap analysis for manual mode to PB-45",
+    "task": "Content Engine v1.3 D3 \u2014 Defer full lightweight gap analysis for manual mode to PB-45",
     "approach": "Keep the current inline approach: pipeline_v13.py lines 363-404 construct a WorkerQueryContext directly from the user's manual_prompt without running gap analysis stages s3-s6. The inline context provides topic, intent, and a minimal exemplar structure sufficient for Brief Builder to produce a valid ContentBlueprint.",
-    "rationale": "Full s3-s6 reuse adds 2-5 min latency for manual mode (search 4 platforms + enrich + embed + analyze). It also requires s1 output (SemanticUnit list) as prerequisite, which doesn't exist for manual-mode users who haven't run gap analysis. The current inline WorkerQueryContext is sufficient for v0 — Brief Builder can produce useful blueprints from just a topic string + intent.",
+    "rationale": "Full s3-s6 reuse adds 2-5 min latency for manual mode (search 4 platforms + enrich + embed + analyze). It also requires s1 output (SemanticUnit list) as prerequisite, which doesn't exist for manual-mode users who haven't run gap analysis. The current inline WorkerQueryContext is sufficient for v0 \u2014 Brief Builder can produce useful blueprints from just a topic string + intent.",
     "alternatives_rejected": [
       "Run full s3-s6 for manual mode (2-5 min latency, requires s1 prerequisite that may not exist)",
       "Run s3 only (still 30-60s for 4 platform searches, and without s4-s6 the citations lack quality scoring)",
       "Cache previous gap analysis results per topic (complex cache invalidation, stale data risk)"
     ],
-    "outcome": "D3 deferred to PB-45 in backlog. Current inline approach works for v0. Zero code change — just deferral comment added at pipeline_v13.py line 399.",
+    "outcome": "D3 deferred to PB-45 in backlog. Current inline approach works for v0. Zero code change \u2014 just deferral comment added at pipeline_v13.py line 399.",
     "reversible": true,
     "approved_by": "Aryan"
   },
   {
     "id": "D-CE-V13-3",
     "timestamp": "2026-03-02",
-    "task": "Content Engine v1.3 Pipeline Refactor — Phases 4-10 (25-point gap closure)",
-    "approach": "10-phase implementation closing 25 gaps between v1.3 current state and target flow. Key changes: (1) Forward 5 brief builder fields (gap_reasoning, tone_voice_description, target_persona, buyer_stage, intent_stage) through outliner→drafter. (2) Rewrite fact checker from 'enrich' to 'verify-only'. (3) New Linker agent (Perplexity sonar-pro) resolving [INTERNAL-LINK], [EXTERNAL-LINK], [STAT:] placeholders. (4) New v1.3 dispatcher chain: Outliner→Drafter→Linker→Fact Checker (no formatter). (5) Evaluator routing: drafter+fact_checker (no formatter/enricher cascade). (6) evaluate_and_optimize returns 3-tuple with FeedbackRoute. (7) HITL-3 edit→drafter+fact_checker→re-present (max 2 edits). (8) HITL-3 reject→re-brief→re-dispatch→re-evaluate→re-present (max 2 re-briefs). (9) Evaluator major_change signal→automatic re-brief before HITL-3.",
+    "task": "Content Engine v1.3 Pipeline Refactor \u2014 Phases 4-10 (25-point gap closure)",
+    "approach": "10-phase implementation closing 25 gaps between v1.3 current state and target flow. Key changes: (1) Forward 5 brief builder fields (gap_reasoning, tone_voice_description, target_persona, buyer_stage, intent_stage) through outliner\u2192drafter. (2) Rewrite fact checker from 'enrich' to 'verify-only'. (3) New Linker agent (Perplexity sonar-pro) resolving [INTERNAL-LINK], [EXTERNAL-LINK], [STAT:] placeholders. (4) New v1.3 dispatcher chain: Outliner\u2192Drafter\u2192Linker\u2192Fact Checker (no formatter). (5) Evaluator routing: drafter+fact_checker (no formatter/enricher cascade). (6) evaluate_and_optimize returns 3-tuple with FeedbackRoute. (7) HITL-3 edit\u2192drafter+fact_checker\u2192re-present (max 2 edits). (8) HITL-3 reject\u2192re-brief\u2192re-dispatch\u2192re-evaluate\u2192re-present (max 2 re-briefs). (9) Evaluator major_change signal\u2192automatic re-brief before HITL-3.",
     "rationale": "Closes all 25 gaps from the comprehensive audit. Repurposes rationale field (no new field), uses s1 discovery pages only for linker internal links, keeps factual judge as secondary quality gate alongside upstream fact checker. v1.0 path preserved unchanged in evaluator loop.",
     "alternatives_rejected": [
-      "Remove factual judge entirely (keep as quality gate — if pass rate exceeds 95% after fact checker, reconsider later)",
-      "Full v1.0 revision chain in evaluator targeted revision (unnecessary — formatter removed from v1.3 chain)"
+      "Remove factual judge entirely (keep as quality gate \u2014 if pass rate exceeds 95% after fact checker, reconsider later)",
+      "Full v1.0 revision chain in evaluator targeted revision (unnecessary \u2014 formatter removed from v1.3 chain)"
     ],
-    "outcome": "343 content engine tests passing (338→343, +5 HITL-3 tests). 19 pipeline_v13 tests (14→19). New files: linker_prompts.py, linker.py, test_linker.py. Modified: loop.py, pipeline_v13.py, drafter_prompts.py, drafter.py, outliner_prompts.py, outliner.py, enricher_prompts.py, dispatcher.py, settings.py, test_evaluator_v13.py, test_evaluator.py, test_pipeline_v13.py.",
+    "outcome": "343 content engine tests passing (338\u2192343, +5 HITL-3 tests). 19 pipeline_v13 tests (14\u219219). New files: linker_prompts.py, linker.py, test_linker.py. Modified: loop.py, pipeline_v13.py, drafter_prompts.py, drafter.py, outliner_prompts.py, outliner.py, enricher_prompts.py, dispatcher.py, settings.py, test_evaluator_v13.py, test_evaluator.py, test_pipeline_v13.py.",
     "reversible": true,
     "approved_by": "Aryan",
     "factual_judge_decision": "Keep factual judge as secondary quality gate. Fact checker corrects upstream, factual judge scores downstream. If factual judge pass rate exceeds 95% after fact checker, consider removing in future sprint."
@@ -422,17 +440,17 @@
     "id": "D-LANGSMITH-1",
     "timestamp": "2026-03-02",
     "task": "Eliminate Langfuse, unify all tracing on LangSmith",
-    "approach": "Extend tracing_v13.py with backward-compat kwargs shim (absorbs old Langfuse kwargs: input=, parent_span=, level=, status_message=, model_parameters=, user_id=, metadata= on end_span, tags= on update_trace_output). Pure import swaps across 14 files — zero callsite changes needed. contextvars for LangGraph span propagation (avoids MemorySaver msgpack crash). Prompt registry with Hub pull + local fallback (opt-in via langsmith_use_hub setting). langgraph.json for LangGraph Studio.",
-    "rationale": "Split-brain tracing (14 Langfuse files, 6 LangSmith files, 1 untraced file) caused incomplete observability. LangSmith provides Trace→Playground→Re-run workflow. Backward-compat shim avoids touching 57 callsites. contextvars solves Codex-confirmed MemorySaver serialization crash.",
+    "approach": "Extend tracing_v13.py with backward-compat kwargs shim (absorbs old Langfuse kwargs: input=, parent_span=, level=, status_message=, model_parameters=, user_id=, metadata= on end_span, tags= on update_trace_output). Pure import swaps across 14 files \u2014 zero callsite changes needed. contextvars for LangGraph span propagation (avoids MemorySaver msgpack crash). Prompt registry with Hub pull + local fallback (opt-in via langsmith_use_hub setting). langgraph.json for LangGraph Studio.",
+    "rationale": "Split-brain tracing (14 Langfuse files, 6 LangSmith files, 1 untraced file) caused incomplete observability. LangSmith provides Trace\u2192Playground\u2192Re-run workflow. Backward-compat shim avoids touching 57 callsites. contextvars solves Codex-confirmed MemorySaver serialization crash.",
     "alternatives_rejected": [
       "Refactor all 57 callsites to new signatures (risky, touches too many files)",
       "Keep Langfuse alongside LangSmith (split-brain persists)",
-      "Put RunTree in LangGraph state (crashes MemorySaver — confirmed by Codex)"
+      "Put RunTree in LangGraph state (crashes MemorySaver \u2014 confirmed by Codex)"
     ],
     "outcome": "437 content engine tests passing. Zero Langfuse imports in core/api/tests. 38 new tests. tracing.py deleted, langfuse removed from requirements.",
     "reversible": true,
     "approved_by": "Aryan",
-    "codex_review": "v1 plan REJECTED with 6 critical findings. All 6 incorporated into v2: C1 (signature mismatch→kwargs shim), C2 (hidden import at pipeline.py:175), C3 (cleanup order→Phase 5 last), C4 (langgraph.json→only graph_v13.py), C5 (RunTree in state→contextvars), C6 (pull_prompt→pull_prompt_commit)"
+    "codex_review": "v1 plan REJECTED with 6 critical findings. All 6 incorporated into v2: C1 (signature mismatch\u2192kwargs shim), C2 (hidden import at pipeline.py:175), C3 (cleanup order\u2192Phase 5 last), C4 (langgraph.json\u2192only graph_v13.py), C5 (RunTree in state\u2192contextvars), C6 (pull_prompt\u2192pull_prompt_commit)"
   },
   {
     "id": "D-SA-P3-1",
@@ -440,7 +458,10 @@
     "task": "Question-heading classification without trailing ?",
     "approach": "Classify wh-word headings (how/what/why/when/where/who/which) as questions even without trailing ?, with >= 4 words guard. Auxiliary verbs (is/can/does/etc.) still require ?.",
     "rationale": "AI engines DO extract 'How to...' headings as Q&A. Guard prevents false positives on fragment headings like 'How' or 'What Now'.",
-    "alternatives_rejected": ["Require ? for all headings (under-reports AEO)", "No word-count guard (false positives on fragments)"],
+    "alternatives_rejected": [
+      "Require ? for all headings (under-reports AEO)",
+      "No word-count guard (false positives on fragments)"
+    ],
     "outcome": "10 new tests passing. AEO scores more accurate for well-structured content.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -451,7 +472,10 @@
     "task": "Quick-answer word range expansion 15-150",
     "approach": "Expand from hardcoded 30-70 to configurable 15-150 via AuditConfig fields (aeo_quick_answer_min_words, aeo_quick_answer_max_words). Search bounded by heading elements.",
     "rationale": "FAQ answers often 15-30 words, detailed answers 70-150. Current range missed both. Heading boundary prevents matching unrelated paragraphs.",
-    "alternatives_rejected": ["Keep 30-70 (misses valid content)", "Unbounded search (matches wrong sections)"],
+    "alternatives_rejected": [
+      "Keep 30-70 (misses valid content)",
+      "Unbounded search (matches wrong sections)"
+    ],
     "outcome": "10 new tests passing. Config fields allow reverting to any range.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -462,7 +486,10 @@
     "task": "Missing date finding for article pages only",
     "approach": "Generate low-severity missing_date_metadata finding only when page_type == 'article'. Non-article pages unaffected.",
     "rationale": "AI models deprioritize undated articles. Homepage/product/pricing pages don't need date metadata.",
-    "alternatives_rejected": ["Flag all page types (over-penalizes non-articles per Codex F-3)", "No finding at all (misses real issue)"],
+    "alternatives_rejected": [
+      "Flag all page types (over-penalizes non-articles per Codex F-3)",
+      "No finding at all (misses real issue)"
+    ],
     "outcome": "5 new tests passing. Article freshness accuracy improved.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -472,8 +499,11 @@
     "timestamp": "2026-03-04",
     "task": "Crawl-delay parse+report only, no enforcement",
     "approach": "Parse Crawl-delay from robots.txt, cap at 300s, report as findings (info >10s, medium >30s). Rate-limiting enforcement deferred.",
-    "rationale": "Enforcement requires shared domain-level rate limiter (asyncio.Lock + timestamp) — separate feature. Parse+report provides immediate value.",
-    "alternatives_rejected": ["Full enforcement (too complex for P3 fix)", "No findings, just data field (less actionable)"],
+    "rationale": "Enforcement requires shared domain-level rate limiter (asyncio.Lock + timestamp) \u2014 separate feature. Parse+report provides immediate value.",
+    "alternatives_rejected": [
+      "Full enforcement (too complex for P3 fix)",
+      "No findings, just data field (less actionable)"
+    ],
     "outcome": "12 new tests passing. Clients see if robots.txt throttles AI bots.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -484,7 +514,10 @@
     "task": "Split canonical URL from request URL for dedup",
     "approach": "New canonical_url() for dedup (sorts params, strips www, removes default ports, normalizes percent-encoding). normalize_url() unchanged for HTTP requests.",
     "rationale": "Sorting query params in request URL breaks signed URLs and param-order-sensitive endpoints (Codex F-4).",
-    "alternatives_rejected": ["Sort params in normalize_url (breaks signed URLs)", "No param sorting (poor dedup)"],
+    "alternatives_rejected": [
+      "Sort params in normalize_url (breaks signed URLs)",
+      "No param sorting (poor dedup)"
+    ],
     "outcome": "8 new tests passing. Better dedup without breaking fetches.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -492,10 +525,13 @@
   {
     "id": "D-KB-P2-1",
     "timestamp": "2026-03-05",
-    "task": "Agent creation API — langgraph.prebuilt.create_react_agent vs langchain.agents.create_agent",
+    "task": "Agent creation API \u2014 langgraph.prebuilt.create_react_agent vs langchain.agents.create_agent",
     "approach": "Use langgraph.prebuilt.create_react_agent with prompt= parameter. Returns CompiledStateGraph.",
     "rationale": "langchain.agents.create_agent exists but returns a different type (not CompiledStateGraph). The langgraph.prebuilt import is deprecated but stable and returns the expected type. Migration to new API requires test updates (type assertions).",
-    "alternatives_rejected": ["langchain.agents.create_agent (different return type, breaks test assertions)", "Raw LangGraph StateGraph builder (over-engineering for a simple tool-calling agent)"],
+    "alternatives_rejected": [
+      "langchain.agents.create_agent (different return type, breaks test assertions)",
+      "Raw LangGraph StateGraph builder (over-engineering for a simple tool-calling agent)"
+    ],
     "outcome": "Synthesis agent builds and runs correctly. Deprecation warning is cosmetic.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -503,10 +539,14 @@
   {
     "id": "D-KB-P2-2",
     "timestamp": "2026-03-05",
-    "task": "Brand Perception agent — Anthropic web_search tool type and pause_turn handling",
+    "task": "Brand Perception agent \u2014 Anthropic web_search tool type and pause_turn handling",
     "approach": "web_search_20250305 server-side tool with _MAX_PAUSE_TURNS=5 iteration guard. api_key passed explicitly from settings.",
     "rationale": "web_search_20250305 matches existing usage in core/gap_analysis/engines/claude.py:109. Unbounded pause_turn loop was a CRITICAL review finding (C-1). Explicit api_key matches planner.py:122 convention (C-2).",
-    "alternatives_rejected": ["web_search_20260209 (doesn't exist)", "No pause_turn limit (infinite loop risk)", "Rely on ANTHROPIC_API_KEY env var (breaks in .env.local-only envs)"],
+    "alternatives_rejected": [
+      "web_search_20260209 (doesn't exist)",
+      "No pause_turn limit (infinite loop risk)",
+      "Rely on ANTHROPIC_API_KEY env var (breaks in .env.local-only envs)"
+    ],
     "outcome": "Both C-1 and C-2 fixed. 32 agent tests passing including pause_turn limit test.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -517,7 +557,10 @@
     "task": "Model string format for init_chat_model",
     "approach": "Colon separator (anthropic:claude-opus-4-6). _build_model helper handles colon, slash, and bare formats.",
     "rationale": "CX-1 from master plan: slash format fails provider inference in init_chat_model. Colon is the standard LangChain convention.",
-    "alternatives_rejected": ["Slash format anthropic/claude-opus-4-6 (fails provider inference)", "Bare model name (requires provider auto-detection)"],
+    "alternatives_rejected": [
+      "Slash format anthropic/claude-opus-4-6 (fails provider inference)",
+      "Bare model name (requires provider auto-detection)"
+    ],
     "outcome": "Settings use colon format. _build_model handles all 3 formats for flexibility.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -525,10 +568,13 @@
   {
     "id": "D-KB-P3-1",
     "timestamp": "2026-03-05",
-    "task": "KB orchestrator pattern — pipeline-with-inline-HITL vs monolithic LangGraph",
+    "task": "KB orchestrator pattern \u2014 pipeline-with-inline-HITL vs monolithic LangGraph",
     "approach": "Pipeline function owns execution flow. LangGraph mini-graphs only for HITL pause/resume (interrupt/Command). asyncio.gather for parallel agents.",
     "rationale": "DAG phases involve asyncio.gather for parallel agents within phases, which is trivial in async Python but complex in LangGraph topology. Each HITL checkpoint needs different approval payloads. Mode handling (full/refresh/single) is conditional logic that belongs in the pipeline. Same pattern as pipeline_v13.py.",
-    "alternatives_rejected": ["Monolithic LangGraph StateGraph (complex topology for parallel phases, hard to handle 3 modes)", "Pure async pipeline with no LangGraph (lose interrupt/resume for HITL)"],
+    "alternatives_rejected": [
+      "Monolithic LangGraph StateGraph (complex topology for parallel phases, hard to handle 3 modes)",
+      "Pure async pipeline with no LangGraph (lose interrupt/resume for HITL)"
+    ],
     "outcome": "pipeline.py owns 4-phase DAG + 3 modes. graph.py provides 2 HITL sub-graphs (doc review shared for CP1/CP2, synthesis for CP3). run_kb_hitl_checkpoint helper mirrors graph_v13 pattern.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -536,10 +582,13 @@
   {
     "id": "D-KB-P3-2",
     "timestamp": "2026-03-05",
-    "task": "Revision note injection — re-run agents with feedback vs re-run from scratch",
+    "task": "Revision note injection \u2014 re-run agents with feedback vs re-run from scratch",
     "approach": "Inject revision_note as '## Reviewer Feedback' section appended to user prompt. All 6 prompt builders + agents got backward-compatible Optional[str] param.",
-    "rationale": "Re-running from scratch wastes API calls and time. Reviewer feedback is specific and targeted — appending it to the prompt lets the agent address it in context of its full research. Backward-compatible (default None).",
-    "alternatives_rejected": ["Re-run agent from scratch (wasteful, loses context)", "Store revision notes in state and pass to synthesis only (loses per-doc specificity)"],
+    "rationale": "Re-running from scratch wastes API calls and time. Reviewer feedback is specific and targeted \u2014 appending it to the prompt lets the agent address it in context of its full research. Backward-compatible (default None).",
+    "alternatives_rejected": [
+      "Re-run agent from scratch (wasteful, loses context)",
+      "Store revision notes in state and pass to synthesis only (loses per-doc specificity)"
+    ],
     "outcome": "All 6 prompt builders append '## Reviewer Feedback' when revision_note is provided. Pipeline re-runs only the docs that received revise feedback. 9 tests cover injection + passthrough.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -547,10 +596,12 @@
   {
     "id": "D-KB-P3-3",
     "timestamp": "2026-03-05",
-    "task": "HITL helper — self-contained in KB module vs extracted shared utility",
+    "task": "HITL helper \u2014 self-contained in KB module vs extracted shared utility",
     "approach": "Keep run_kb_hitl_checkpoint in core/research/knowledge_base/graph.py. Do not extract to shared utility yet.",
     "rationale": "KB and content engine HITL have different state schemas, interrupt payloads, and approval semantics. Extracting a shared utility prematurely would create coupling. Can extract later when patterns stabilize.",
-    "alternatives_rejected": ["Extract to core/shared_tools/hitl.py (premature abstraction — KB and content engine differ enough)"],
+    "alternatives_rejected": [
+      "Extract to core/shared_tools/hitl.py (premature abstraction \u2014 KB and content engine differ enough)"
+    ],
     "outcome": "KB HITL helper is self-contained. Mirrors graph_v13 pattern but is independent. Tested with 22 graph tests.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -561,7 +612,9 @@
     "task": "Self-citation handling in avg_citation_similarity",
     "approach": "Keep company self-citations IN the avg_citation_similarity calculation. Add separate fields (company_cited, company_cited_platforms) as explicit signals for the content engine.",
     "rationale": "avg_citation_similarity measures 'how well do cited pages align with the query.' The company being cited is a valid data point. Excluding it would break existing metric interpretation. Separate fields give the content engine explicit signal to adjust strategy (optimize vs create new).",
-    "alternatives_rejected": ["Exclude self-citations from avg_citation_similarity (breaks metric semantics, loses valid data point)"],
+    "alternatives_rejected": [
+      "Exclude self-citations from avg_citation_similarity (breaks metric semantics, loses valid data point)"
+    ],
     "outcome": "company_cited + company_cited_platforms fields on QueryGap. Strategic Planner and Brief Builder prompts updated to handle cited vs uncited strategies.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -571,8 +624,10 @@
     "timestamp": "2026-03-07",
     "task": "Company structural analysis: per-page model vs per-chunk signals",
     "approach": "Create separate CompanyPageAnalysis model (per-page) rather than adding StructuralSignals to SemanticUnit (per-chunk).",
-    "rationale": "SemanticUnit is per-chunk (10-20 per page). Duplicating 45-field StructuralSignals across all chunks wastes storage and is semantically wrong — structural signals describe a page, not a chunk. CompanyPageAnalysis is URL-keyed and stored once per page.",
-    "alternatives_rejected": ["Add structural_signals to SemanticUnit (wastes storage, semantically incorrect — signals are page-level not chunk-level)"],
+    "rationale": "SemanticUnit is per-chunk (10-20 per page). Duplicating 45-field StructuralSignals across all chunks wastes storage and is semantically wrong \u2014 structural signals describe a page, not a chunk. CompanyPageAnalysis is URL-keyed and stored once per page.",
+    "alternatives_rejected": [
+      "Add structural_signals to SemanticUnit (wastes storage, semantically incorrect \u2014 signals are page-level not chunk-level)"
+    ],
     "outcome": "CompanyPageAnalysis model in gap_analysis.py. s1 computes signals per page via s4's compute_structural_signals(). Saved to company_page_analysis.json. s6 attaches to QueryGap via URL lookup.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -580,10 +635,12 @@
   {
     "id": "D-GCE-3",
     "timestamp": "2026-03-07",
-    "task": "Self-citation flagging timing — before or after s4 dedup",
+    "task": "Self-citation flagging timing \u2014 before or after s4 dedup",
     "approach": "Flag company citations on PlatformResult BEFORE s4 enrichment, and build company_citation_map BEFORE s4 dedup.",
     "rationale": "s4 dedup collapses multi-engine citations into a single EnrichedCitation. If flagging happens after dedup, we lose which engines cited the company. _flag_company_citations runs in pipeline.py after s3, _build_company_citation_map also runs before s4.",
-    "alternatives_rejected": ["Flag after s4 dedup (loses multi-engine information)"],
+    "alternatives_rejected": [
+      "Flag after s4 dedup (loses multi-engine information)"
+    ],
     "outcome": "_flag_company_citations() and _build_company_citation_map() in pipeline.py, called between s3 and s4. is_company_citation carried through s4 dedup into EnrichedCitation.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -593,7 +650,7 @@
     "timestamp": "2026-03-15",
     "task": "Replace ChromaDB with pgvector as primary vector store",
     "approach": "8-phase migration: VectorStoreClient with drop-in API, 2 Alembic migrations, EmbeddingRepository extensions, consumer migration, full ChromaDB removal, data migration script.",
-    "rationale": "ChromaDB is local SQLite-backed, single-process — not production-ready. pgvector infrastructure already existed (3 tables + HNSW indexes + EmbeddingRepository). Migration makes pgvector PRIMARY and ONLY store, requires DATABASE_URL.",
+    "rationale": "ChromaDB is local SQLite-backed, single-process \u2014 not production-ready. pgvector infrastructure already existed (3 tables + HNSW indexes + EmbeddingRepository). Migration makes pgvector PRIMARY and ONLY store, requires DATABASE_URL.",
     "alternatives_rejected": [
       "In-memory fallback without DATABASE_URL (undermines production readiness)",
       "Keep ChromaDB alongside pgvector (dual-write complexity, maintenance burden)"
@@ -606,9 +663,12 @@
     "id": "D-pgvector-2",
     "timestamp": "2026-03-15",
     "task": "Consolidate persist_s1/s5 with VectorStoreClient",
-    "approach": "persist_s1 → logging-only no-op (VectorStoreClient writes during S1 execution). persist_s5 → query embeddings only (needs run_id FK not available in VectorStoreClient). Citation paragraph embeddings handled by VectorStoreClient during S5.",
+    "approach": "persist_s1 \u2192 logging-only no-op (VectorStoreClient writes during S1 execution). persist_s5 \u2192 query embeddings only (needs run_id FK not available in VectorStoreClient). Citation paragraph embeddings handled by VectorStoreClient during S5.",
     "rationale": "Single write path eliminates double-writes. Query embeddings require run_id FK (pipeline_runs table) which is only available in pipeline context, not in VectorStoreClient.",
-    "alternatives_rejected": ["Full no-op for persist_s5 (loses query embedding persistence)", "Pass run_id through VectorStoreClient (coupling pipeline concerns into vector store)"],
+    "alternatives_rejected": [
+      "Full no-op for persist_s5 (loses query embedding persistence)",
+      "Pass run_id through VectorStoreClient (coupling pipeline concerns into vector store)"
+    ],
     "outcome": "Clean separation: VectorStoreClient handles embeddings, persist_s5 handles query embeddings with run_id FK.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -618,8 +678,11 @@
     "timestamp": "2026-03-15",
     "task": "Deterministic enrichment IDs for S4 FK integrity",
     "approach": "Replace uuid4() with uuid5(NAMESPACE_URL, url_hash) in persist_s4 for enrichment IDs.",
-    "rationale": "uuid4() generates new IDs on every rerun, breaking FK references from paragraph_embeddings.url_enrichment_id. uuid5 is deterministic — same URL always produces same enrichment ID.",
-    "alternatives_rejected": ["Query existing enrichment IDs before insert (extra DB round-trip)", "Remove FK constraint (loses referential integrity)"],
+    "rationale": "uuid4() generates new IDs on every rerun, breaking FK references from paragraph_embeddings.url_enrichment_id. uuid5 is deterministic \u2014 same URL always produces same enrichment ID.",
+    "alternatives_rejected": [
+      "Query existing enrichment IDs before insert (extra DB round-trip)",
+      "Remove FK constraint (loses referential integrity)"
+    ],
     "outcome": "Deterministic IDs prevent FK mismatch on reruns. Pre-existing bug fixed during migration.",
     "reversible": true,
     "approved_by": "Aryan"
@@ -627,7 +690,7 @@
   {
     "id": "D-LOG-1",
     "timestamp": "2026-03-15",
-    "task": "Structured logging library choice — structlog vs python-json-logger",
+    "task": "Structured logging library choice \u2014 structlog vs python-json-logger",
     "approach": "structlog with stdlib ProcessorFormatter bridge. Single configure_logging() call at app startup. JSON renderer for prod, ConsoleRenderer for dev. Context propagation via structlog.contextvars.",
     "rationale": "structlog's contextvars integration natively propagates bound fields (correlation_id, company_slug) into every log record. stdlib bridge means zero changes to 115 existing logging.getLogger() call sites. Dev/prod renderer switching built-in. Codebase already uses contextvars for LangSmith tracing.",
     "alternatives_rejected": [
