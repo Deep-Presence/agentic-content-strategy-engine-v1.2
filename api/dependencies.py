@@ -11,7 +11,7 @@ import redis.asyncio as aioredis
 from fastapi import HTTPException, Request
 
 from api.auth.store import AuthStore
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from core.auth.json_service import JsonAuthService
 from core.auth.service import AuthServiceProtocol
 from core.services.brand_data import BrandDataServiceProtocol
@@ -44,7 +44,7 @@ def get_task_store(request: Request) -> TaskStoreProtocol:
     return request.app.state.task_store
 
 
-def get_event_bus(request: Request) -> EventBus:
+def get_event_bus(request: Request) -> EventBusProtocol:
     return request.app.state.event_bus
 
 

@@ -4,7 +4,19 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class EventBusProtocol(Protocol):
+    """Structural type for event bus implementations (EventBus, RedisEventBus)."""
+
+    def publish(self, task_id: str, event_type: str, data: Dict[str, Any]) -> None: ...
+    def get_history(self, task_id: str) -> List[Dict[str, Any]]: ...
+    def is_terminal(self, task_id: str) -> bool: ...
+    async def stream(
+        self, task_id: str, last_event_id: Optional[int] = None
+    ) -> AsyncGenerator[str, None]: ...
 
 
 class EventBus:

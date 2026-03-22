@@ -37,6 +37,36 @@ _CACHE_MAX_ENTRIES = 10
 _CACHE_LOCK = threading.Lock()  # C6: protects compound check-evict-insert
 
 
+def _load_pipeline_state(content_root: Path, slug: str) -> Dict[str, Any]:
+    """Load pipeline state from Redis (preferred) or file (fallback).
+
+    When ``redis_pipeline_state`` is enabled and Redis is healthy, reads
+    from the ``pipeline_state:{slug}`` Redis Hash. If Redis returns an
+    empty dict, also consults the file (handles migration window where
+    old runs wrote to file before Redis was enabled). Falls back to file
+    entirely on Redis error or when disabled.
+    """
+    from core.config.settings import settings
+
+    if settings.redis_pipeline_state and settings.redis_url:
+        try:
+            from core.redis import get_sync_redis_or_none
+            from core.content_engine.state_redis import read_pipeline_state_redis
+
+            rc = get_sync_redis_or_none()
+            if rc is not None:
+                result = read_pipeline_state_redis(rc, slug)
+                if result:
+                    return result
+                # Redis empty — check file too (migration window)
+        except Exception:
+            logger.warning(
+                "Redis pipeline state read failed — falling back to file",
+                exc_info=True,
+            )
+    return _load_json_cached(content_root, "pipeline_state.json") or {}
+
+
 def _load_json_cached(base_dir: Path, filename: str) -> Optional[Any]:
     """Load and parse a JSON file with mtime-based cache invalidation."""
     file_path = base_dir / filename
@@ -333,8 +363,8 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
     # Load run_metadata for pieces + session_id (standard + namespaced files)
     pieces, session_id = _load_all_pieces(content_root)
 
-    # Load pipeline_state.json for in-progress statuses (Phase 0, highest priority)
-    pipeline_state = _load_json_cached(content_root, "pipeline_state.json") or {}
+    # Load pipeline state — Redis first (when configured), file fallback
+    pipeline_state = _load_pipeline_state(content_root, slug)
     # Extract brief_id → task_id mapping for frontend HITL approval calls
     task_id_map: Dict[str, str] = {}
     raw_task_ids = pipeline_state.get("__task_ids__")
@@ -514,8 +544,8 @@ def get_brief_detail(
     # Run metadata pieces (standard + namespaced files)
     pieces, _session_id = _load_all_pieces(content_root)
 
-    # Pipeline state for in-progress statuses
-    pipeline_state = _load_json_cached(content_root, "pipeline_state.json") or {}
+    # Pipeline state — Redis first, file fallback
+    pipeline_state = _load_pipeline_state(content_root, slug)
 
     # Status
     status = _infer_brief_status(brief_id, pieces, content_root, pipeline_state=pipeline_state)

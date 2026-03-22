@@ -38,10 +38,20 @@ class DbTaskStore:
     - Process-local state (semaphore, queues, handles, slug locks) stays in-memory.
     """
 
+    # Lua script: ownership-safe lock release (compare-and-delete)
+    _RELEASE_LOCK_LUA = """\
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+else
+    return 0
+end
+"""
+
     def __init__(
         self,
         session_factory: Callable[..., AsyncSession],
         max_concurrent: int = 10,
+        redis_client: Optional[Any] = None,
     ) -> None:
         self._tasks: Dict[str, PipelineTask] = {}
         self._session_factory = session_factory
@@ -49,6 +59,13 @@ class DbTaskStore:
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._approval_queues: Dict[str, asyncio.Queue] = {}
         self._task_handles: Dict[str, asyncio.Task] = {}
+        # Redis for distributed slug locks (sync client, sub-ms ops)
+        self._redis_sync = redis_client
+        self._release_script = (
+            redis_client.register_script(self._RELEASE_LOCK_LUA)
+            if redis_client is not None
+            else None
+        )
 
     @property
     def semaphore(self) -> asyncio.Semaphore:
@@ -75,10 +92,20 @@ class DbTaskStore:
 
             await session.commit()
 
+        # Clean up orphaned Redis locks from crashed workers
+        orphan_locks_cleaned = 0
+        if self._redis_sync is not None:
+            try:
+                orphan_locks_cleaned = self._cleanup_orphan_locks()
+            except Exception:
+                logger.warning("Failed to clean orphan Redis locks", exc_info=True)
+
         logger.info(
-            "DbTaskStore recovered: %d tasks loaded, %d orphans marked failed_restart",
+            "DbTaskStore recovered: %d tasks loaded, %d orphans marked failed_restart, "
+            "%d orphan Redis locks cleaned",
             len(self._tasks),
             orphan_count,
+            orphan_locks_cleaned,
         )
         return orphan_count
 
@@ -105,10 +132,12 @@ class DbTaskStore:
         )
         lock_key = f"{pipeline}:{effective}"
 
-        if not allow_parallel:
-            self.acquire_slug_lock(lock_key)
-
+        # Generate task_id BEFORE acquiring lock (needed as lock value for Redis)
         task_id = str(_uuid.uuid4())
+
+        if not allow_parallel:
+            self.acquire_slug_lock(lock_key, task_id=task_id)
+
         now = datetime.now(timezone.utc)
         task = PipelineTask(
             task_id=task_id,
@@ -173,7 +202,34 @@ class DbTaskStore:
 
     # ── Slug Locks ────────────────────────────────────────────────────
 
-    def acquire_slug_lock(self, slug: str) -> None:
+    def acquire_slug_lock(self, slug: str, task_id: Optional[str] = None) -> None:
+        """Acquire a per-slug lock. Redis when configured, in-memory otherwise.
+
+        When Redis is configured (``redis_client`` provided), uses
+        ``SET NX EX 7200`` for distributed locking. **Fail-closed**: Redis
+        errors raise ``TaskConflictError`` rather than falling back to
+        in-memory (prevents split-brain in multi-worker deployments).
+
+        When Redis is NOT configured (``redis_client=None``), uses the
+        existing in-memory ``_slug_locks`` dict.
+        """
+        if self._redis_sync is not None and task_id:
+            try:
+                return self._acquire_redis_lock(slug, task_id)
+            except TaskConflictError:
+                raise
+            except Exception:
+                # Fail-closed: Redis is configured but unavailable — refuse to start
+                logger.error(
+                    "Redis lock acquire failed — refusing to start pipeline "
+                    "(fail-closed to prevent split-brain)",
+                    exc_info=True,
+                )
+                raise TaskConflictError(
+                    f"Cannot acquire lock for '{slug}': Redis is unavailable. "
+                    f"Retry when Redis is back online."
+                )
+        # In-memory fallback (only when redis_client is None)
         if slug in self._slug_locks:
             existing_id = self._slug_locks[slug]
             if existing_id in self._tasks:
@@ -185,8 +241,68 @@ class DbTaskStore:
                     )
             del self._slug_locks[slug]
 
+    def _cleanup_orphan_locks(self) -> int:
+        """Remove Redis lock keys whose holder task is terminal or unknown.
+
+        Called during startup recovery. SCAN for all ``lock:*`` keys, check
+        each holder's status in ``_tasks``. If the holder is not active
+        (RUNNING/PENDING_APPROVAL), delete the lock.
+        """
+        cleaned = 0
+        cursor = 0
+        while True:
+            cursor, keys = self._redis_sync.scan(cursor, match="lock:*", count=100)
+            for key in keys:
+                holder = self._redis_sync.get(key)
+                if holder is None:
+                    continue  # Key expired between SCAN and GET
+                task = self._tasks.get(holder)
+                if task is None or task.status not in (
+                    TaskStatus.RUNNING,
+                    TaskStatus.PENDING_APPROVAL,
+                ):
+                    self._redis_sync.delete(key)
+                    cleaned += 1
+                    logger.info("Cleaned orphan Redis lock: %s (holder=%s)", key, holder)
+            if cursor == 0:
+                break
+        return cleaned
+
+    @staticmethod
+    def _lock_key(slug: str) -> str:
+        """Build validated Redis key for distributed lock."""
+        if len(slug) > 256:
+            raise ValueError(f"Slug too long for Redis lock key: {len(slug)}")
+        return f"lock:{slug}"
+
+    def _acquire_redis_lock(self, slug: str, task_id: str) -> None:
+        """Acquire distributed lock via Redis SET NX EX.
+
+        No stale detection — simply try to acquire. The 2h TTL handles
+        dead workers. If the lock is held, raise TaskConflictError.
+        """
+        key = self._lock_key(slug)
+        acquired = self._redis_sync.set(key, task_id, nx=True, ex=7200)
+        if not acquired:
+            raise TaskConflictError(
+                f"A pipeline is already running for '{slug}'"
+            )
+
     def release_slug_lock(self, slug: str) -> None:
-        self._slug_locks.pop(slug, None)
+        """Release a per-slug lock. Ownership-safe Redis delete + in-memory."""
+        task_id = self._slug_locks.pop(slug, None)
+        if self._redis_sync is not None and self._release_script is not None and task_id:
+            try:
+                self._release_script(
+                    keys=[self._lock_key(slug)],
+                    args=[task_id],
+                )
+            except Exception:
+                logger.warning(
+                    "Redis lock release failed for %s — TTL will expire",
+                    slug,
+                    exc_info=True,
+                )
 
     # ── Task Handle Tracking ──────────────────────────────────────────
 

@@ -225,6 +225,8 @@ class Settings(BaseSettings):
     redis_socket_connect_timeout: float = 2.0
     redis_retry_on_timeout: bool = True
     redis_health_check_interval: int = 30  # seconds
+    redis_event_bus: bool = False  # Use RedisEventBus instead of in-memory EventBus
+    redis_pipeline_state: bool = False  # Use Redis Hashes for pipeline_state + distributed slug locks
 
     # --- Auth ---
     invite_ttl_days: int = 7  # Invite codes expire after 7 days

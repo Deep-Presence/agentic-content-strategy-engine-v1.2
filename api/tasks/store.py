@@ -155,7 +155,7 @@ class TaskStore:
 
     # ── Slug Locks ────────────────────────────────────────────────────
 
-    def acquire_slug_lock(self, slug: str) -> None:
+    def acquire_slug_lock(self, slug: str, task_id: Optional[str] = None) -> None:
         """Acquire a per-slug lock. Raises TaskConflictError if already locked."""
         if slug in self._slug_locks:
             existing_id = self._slug_locks[slug]

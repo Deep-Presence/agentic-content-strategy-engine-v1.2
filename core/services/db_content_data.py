@@ -101,19 +101,33 @@ class DbContentDataService:
             load_analysis_json, self._artifacts_root, base_slug,
         )
 
-        # Load pipeline_state.json for in-progress status overlay (Phase 0,
-        # highest priority during pipeline execution). The pipeline writes
-        # fine-grained statuses here that the DB doesn't have yet.
+        # Load pipeline state — Redis first (when configured), file fallback
         content_root = self._artifacts_root / "content" / effective_slug
         pipeline_state: Dict[str, Any] = {}
-        ps_path = content_root / "pipeline_state.json"
-        if ps_path.is_file():
+        from core.config.settings import settings as _cfg
+
+        if _cfg.redis_pipeline_state and _cfg.redis_url:
             try:
-                raw_ps = json.loads(ps_path.read_text(encoding="utf-8"))
-                if isinstance(raw_ps, dict):
-                    pipeline_state = raw_ps
-            except (json.JSONDecodeError, OSError):
-                pass
+                from core.redis import get_redis_or_none
+                from core.content_engine.state_redis import read_pipeline_state_redis_async
+
+                rc = get_redis_or_none()
+                if rc is not None:
+                    pipeline_state = await read_pipeline_state_redis_async(rc, effective_slug)
+            except Exception:
+                logger.warning(
+                    "Redis pipeline state read failed — falling back to file",
+                    exc_info=True,
+                )
+        if not pipeline_state:
+            ps_path = content_root / "pipeline_state.json"
+            if ps_path.is_file():
+                try:
+                    raw_ps = json.loads(ps_path.read_text(encoding="utf-8"))
+                    if isinstance(raw_ps, dict):
+                        pipeline_state = raw_ps
+                except (json.JSONDecodeError, OSError):
+                    pass
         # Extract brief_id → task_id mapping for frontend HITL approval calls
         task_id_map: Dict[str, str] = {}
         raw_task_ids = pipeline_state.get("__task_ids__")

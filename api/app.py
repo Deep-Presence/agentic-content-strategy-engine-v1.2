@@ -1,6 +1,7 @@
 """FastAPI application factory."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -54,9 +55,21 @@ async def _init_task_store(app: FastAPI) -> TaskStore:
             from core.services.db_task_store import DbTaskStore
 
             session_factory = get_session_factory()
+
+            # Sync Redis for distributed slug locks
+            redis_sync = None
+            if settings.redis_pipeline_state and getattr(app.state, "redis_healthy", False):
+                try:
+                    from core.redis import get_sync_redis_or_none
+
+                    redis_sync = get_sync_redis_or_none()
+                except Exception:
+                    logger.warning("Sync Redis unavailable — locks will be in-memory")
+
             db_store = DbTaskStore(
                 session_factory=session_factory,
                 max_concurrent=api_settings.max_concurrent_pipelines,
+                redis_client=redis_sync,
             )
             orphan_count = await db_store.recover_from_db()
             logger.info(
@@ -82,9 +95,54 @@ async def lifespan(app: FastAPI):
     # Structured logging — idempotent, safe to call even if run_server.py called first
     _init_structured_logging()
 
-    # Only set defaults if not already overridden (e.g., by tests)
+    # ── Redis initialization (before EventBus — needed for selection) ──
+    app.state.redis = None
+    app.state.redis_healthy = False
+    try:
+        from core.redis import get_redis_or_none, redis_ping
+
+        redis_client = get_redis_or_none()
+        if redis_client is not None:
+            healthy = await redis_ping()
+            if healthy:
+                app.state.redis = redis_client
+                app.state.redis_healthy = True
+                logger.info("Redis health check: connected")
+            else:
+                logger.warning(
+                    "Redis health check: PING failed — Redis unavailable"
+                )
+        else:
+            logger.info("Redis health check: skipped (no REDIS_URL)")
+    except Exception:
+        logger.exception(
+            "Redis initialization failed — continuing without Redis"
+        )
+
+    # ── EventBus selection (Redis Streams or in-memory) ────────────────
     if not hasattr(app.state, "event_bus") or app.state.event_bus is None:
-        app.state.event_bus = EventBus()
+        from core.config.settings import settings as _cfg
+
+        redis_client = getattr(app.state, "redis", None)
+        use_redis_bus = (
+            redis_client is not None
+            and getattr(app.state, "redis_healthy", False)
+            and _cfg.redis_event_bus
+        )
+        if use_redis_bus:
+            from api.tasks.redis_event_bus import RedisEventBus
+
+            app.state.event_bus = RedisEventBus(
+                redis=redis_client,
+                max_history=200,
+                loop=asyncio.get_running_loop(),
+            )
+            logger.info("Using RedisEventBus (Redis Streams)")
+        else:
+            app.state.event_bus = EventBus()
+            logger.info("Using in-memory EventBus")
+
+    # Only set defaults if not already overridden (e.g., by tests)
     if not hasattr(app.state, "task_store") or app.state.task_store is None:
         app.state.task_store = await _init_task_store(app)
     if not hasattr(app.state, "artifacts_root") or app.state.artifacts_root is None:
@@ -111,30 +169,6 @@ async def lifespan(app: FastAPI):
                 logger.info("DB session factory exposed on app.state")
         except Exception:
             logger.debug("DB session factory not available — using JSON services")
-
-    # ── Redis initialization ───────────────────────────────────────────
-    app.state.redis = None
-    app.state.redis_healthy = False
-    try:
-        from core.redis import get_redis_or_none, redis_ping
-
-        redis_client = get_redis_or_none()
-        if redis_client is not None:
-            healthy = await redis_ping()
-            if healthy:
-                app.state.redis = redis_client
-                app.state.redis_healthy = True
-                logger.info("Redis health check: connected")
-            else:
-                logger.warning(
-                    "Redis health check: PING failed — Redis unavailable"
-                )
-        else:
-            logger.info("Redis health check: skipped (no REDIS_URL)")
-    except Exception:
-        logger.exception(
-            "Redis initialization failed — continuing without Redis"
-        )
 
     # Layer 7: Initialize audit logging sink
     from core.audit.logger import set_sink

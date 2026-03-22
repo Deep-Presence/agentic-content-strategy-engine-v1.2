@@ -7,14 +7,16 @@ from unittest.mock import patch, AsyncMock, MagicMock
 
 @pytest.fixture(autouse=True)
 def _reset_redis_module():
-    """Reset module-level singleton between tests."""
+    """Reset module-level singletons between tests."""
     import core.redis as redis_mod
 
     redis_mod._client = None
     redis_mod._pool = None
+    redis_mod._sync_client = None
     yield
     redis_mod._client = None
     redis_mod._pool = None
+    redis_mod._sync_client = None
 
 
 class TestGetRedis:
@@ -135,3 +137,55 @@ class TestRedactUrl:
 
         url = "redis://localhost:6379/0"
         assert _redact_url(url) == url
+
+
+class TestGetSyncRedis:
+    def test_raises_without_url(self) -> None:
+        """get_sync_redis() raises RuntimeError when REDIS_URL not set."""
+        with patch("core.redis.settings") as mock_settings:
+            mock_settings.redis_url = None
+            from core.redis import get_sync_redis
+
+            with pytest.raises(RuntimeError, match="REDIS_URL is not set"):
+                get_sync_redis()
+
+    def test_creates_sync_client_with_url(self) -> None:
+        """get_sync_redis() creates a sync redis.Redis client."""
+        with patch("core.redis.settings") as mock_settings:
+            mock_settings.redis_url = "redis://localhost:6379/0"
+
+            mock_client = MagicMock()
+            with patch(
+                "core.redis._sync_redis.from_url",
+                return_value=mock_client,
+            ):
+                from core.redis import get_sync_redis
+
+                client = get_sync_redis()
+                assert client is mock_client
+
+    def test_returns_singleton(self) -> None:
+        """get_sync_redis() returns the same instance on subsequent calls."""
+        with patch("core.redis.settings") as mock_settings:
+            mock_settings.redis_url = "redis://localhost:6379/0"
+
+            mock_client = MagicMock()
+            with patch(
+                "core.redis._sync_redis.from_url",
+                return_value=mock_client,
+            ):
+                from core.redis import get_sync_redis
+
+                first = get_sync_redis()
+                second = get_sync_redis()
+                assert first is second
+
+
+class TestGetSyncRedisOrNone:
+    def test_returns_none_without_url(self) -> None:
+        """get_sync_redis_or_none() returns None gracefully."""
+        with patch("core.redis.settings") as mock_settings:
+            mock_settings.redis_url = None
+            from core.redis import get_sync_redis_or_none
+
+            assert get_sync_redis_or_none() is None

@@ -41,8 +41,10 @@ from core.content_engine.graph_v13 import (
 from core.content_engine.llm_client import configure_litellm_callbacks
 from core.content_engine.state_helpers import (
     _cleanup_pipeline_state,
+    _cleanup_pipeline_state_async,
     _emit,
     _write_pipeline_state,
+    _write_pipeline_state_async,
 )
 from core.content_engine.persistence import (
     persist_content_pieces,
@@ -405,6 +407,8 @@ async def _rebrief_and_rerun(
     parent_span: Optional[object] = None,
     event_bus: Any = None,
     task_id: Optional[str] = None,
+    redis_client: Optional[Any] = None,
+    slug: Optional[str] = None,
 ) -> Optional[tuple]:
     """Re-brief a piece via Agent 2 and re-run the full worker+evaluator chain.
 
@@ -483,6 +487,8 @@ async def _rebrief_and_rerun(
             parent_span=parent_span,
             event_bus=event_bus,
             task_id=task_id,
+            redis_client=redis_client,
+            effective_slug=slug,
         )
 
         if not formatted_list:
@@ -507,6 +513,8 @@ async def _rebrief_and_rerun(
             use_targeted_revision=True,
             event_bus=event_bus,
             task_id=task_id,
+            redis_client=redis_client,
+            effective_slug=slug,
         )
 
         return (final_content, history, feedback_route)
@@ -535,6 +543,7 @@ async def _finalize_pipeline(
     task_store: Optional[Any],
     task_id: Optional[str],
     event_bus: Optional[Any],
+    redis_client: Optional[Any] = None,
 ) -> None:
     """Single finalization path — all pipeline exits MUST call this.
 
@@ -559,7 +568,7 @@ async def _finalize_pipeline(
 
     # Clean up this run's brief IDs from pipeline_state.json.
     # Per-brief removal is concurrency-safe: parallel manual runs retain their entries.
-    _cleanup_pipeline_state(artifact_dir, [p.brief_id for p in pieces])
+    await _cleanup_pipeline_state_async(artifact_dir, [p.brief_id for p in pieces], redis_client=redis_client, effective_slug=slug)
 
     # 2-3. Persist to DB
     await persist_content_pieces(
@@ -619,6 +628,7 @@ async def run_content_generation_v13(
     session_factory: Optional[async_sessionmaker] = None,
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
+    redis_client: Optional[Any] = None,
 ) -> ContentGenerationOutput:
     """Run the v1.3 content generation pipeline.
 
@@ -687,6 +697,7 @@ async def run_content_generation_v13(
             session_factory=session_factory,
             run_id=run_id,
             company_id=company_id,
+            redis_client=redis_client,
         )
     except Exception as exc:
         error_msg = str(exc)[:500]
@@ -712,6 +723,7 @@ async def _run_pipeline_stages(
     session_factory: Optional[Any] = None,
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
+    redis_client: Optional[Any] = None,
 ) -> ContentGenerationOutput:
     """Internal stage execution — called by run_content_generation_v13 inside try/except."""
 
@@ -853,6 +865,7 @@ async def _run_pipeline_stages(
                     task_store=task_store,
                     task_id=task_id,
                     event_bus=event_bus,
+                    redis_client=redis_client,
                 )
                 return output
 
@@ -884,6 +897,8 @@ async def _run_pipeline_stages(
                 [f"brief-{r + 1:03d}" for r in approved_ranks],
                 "approved",
                 task_id=task_id,
+                redis_client=redis_client,
+                effective_slug=slug,
             )
 
         else:
@@ -938,6 +953,8 @@ async def _run_pipeline_stages(
                 [bp.brief_id for bp in blueprints],
                 "brief_review",
                 task_id=task_id,
+                redis_client=redis_client,
+                effective_slug=slug,
             )
 
             # HITL Checkpoint 2: Brief Approval (per blueprint) with feedback loop
@@ -970,7 +987,7 @@ async def _run_pipeline_stages(
                         if feedback:
                             bp.user_feedback = feedback
                         approved_blueprints.append(bp)
-                        _write_pipeline_state(artifact_dir, [bp.brief_id], "approved", task_id=task_id)
+                        await _write_pipeline_state_async(artifact_dir, [bp.brief_id], "approved", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                         brief_decision_log.append({
                             "brief_id": bp.brief_id,
                             "decision": "approve",
@@ -1189,7 +1206,7 @@ async def _run_pipeline_stages(
             _manual_brief_id = f"brief-{_next_idx:03d}"
 
         # Mark brief as "briefing" for Kanban sync — Brief Builder is about to run
-        _write_pipeline_state(artifact_dir, [_manual_brief_id], "briefing", task_id=task_id)
+        await _write_pipeline_state_async(artifact_dir, [_manual_brief_id], "briefing", task_id=task_id, redis_client=redis_client, effective_slug=slug)
 
         blueprints = await build_briefs_parallel(
             contexts=worker_contexts,
@@ -1207,7 +1224,7 @@ async def _run_pipeline_stages(
         _merge_and_write_blueprints(blueprints_path, blueprints)
 
         # Write "brief_review" state — brief is built, pending HITL-2 review
-        _write_pipeline_state(artifact_dir, [bp.brief_id for bp in blueprints], "brief_review", task_id=task_id)
+        await _write_pipeline_state_async(artifact_dir, [bp.brief_id for bp in blueprints], "brief_review", task_id=task_id, redis_client=redis_client, effective_slug=slug)
 
         # HITL Checkpoint 2: Brief Approval (per blueprint) with feedback loop
         # Same as autonomous mode — user reviews the generated blueprint before
@@ -1241,7 +1258,7 @@ async def _run_pipeline_stages(
                     if feedback:
                         bp.user_feedback = feedback
                     approved_blueprints.append(bp)
-                    _write_pipeline_state(artifact_dir, [bp.brief_id], "approved", task_id=task_id)
+                    await _write_pipeline_state_async(artifact_dir, [bp.brief_id], "approved", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                     brief_decision_log.append({
                         "brief_id": bp.brief_id,
                         "decision": "approve",
@@ -1517,6 +1534,8 @@ async def _run_pipeline_stages(
                 piece_id_map=piece_id_map,
                 event_bus=event_bus,
                 task_id=task_id,
+                redis_client=redis_client,
+                effective_slug=slug,
             )
 
             # H2 FIX: Surface worker failures as rejected pieces + SSE events
@@ -1565,7 +1584,7 @@ async def _run_pipeline_stages(
                     )
                     continue
                 # Mark brief as "evaluating" for Kanban sync
-                _write_pipeline_state(artifact_dir, [brief_id], "evaluating", task_id=task_id)
+                await _write_pipeline_state_async(artifact_dir, [brief_id], "evaluating", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                 _emit(event_bus, task_id, "worker_progress", {
                     "brief_id": brief_id, "step": "evaluating",
                 })
@@ -1584,6 +1603,8 @@ async def _run_pipeline_stages(
                     use_targeted_revision=True,
                     event_bus=event_bus,
                     task_id=task_id,
+                    redis_client=redis_client,
+                    effective_slug=slug,
                 )
                 evaluated.append((brief_id, final_content, history, feedback_route))
 
@@ -1596,6 +1617,8 @@ async def _run_pipeline_stages(
                 [bid for bid, _, _, _ in evaluated],
                 "review",
                 task_id=task_id,
+                redis_client=redis_client,
+                effective_slug=slug,
             )
         else:
             evaluated = [
@@ -1656,6 +1679,8 @@ async def _run_pipeline_stages(
                         parent_span=stage5_span,
                         event_bus=event_bus,
                         task_id=task_id,
+                        redis_client=redis_client,
+                        slug=slug,
                     )
                     if rebriefed:
                         final_content, history, feedback_route = rebriefed
@@ -1738,14 +1763,14 @@ async def _run_pipeline_stages(
                                 topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                             )
                         )
-                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "completed", task_id=task_id)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "completed", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                         piece_resolved = True
 
                     elif content_decision == "edit" and edit_count < _MAX_EDIT_ATTEMPTS:
                         # Edit → drafter revision with human notes → fact checker → re-present
                         edit_count += 1
                         # Mark as revising for Kanban sync (tile moves back to Generating)
-                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "revising", task_id=task_id)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "revising", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                         _emit(event_bus, task_id, "worker_progress", {
                             "brief_id": final_content.brief_id, "step": "revising",
                             "edit_attempt": edit_count,
@@ -1784,6 +1809,8 @@ async def _run_pipeline_stages(
                                 use_targeted_revision=True,
                                 event_bus=event_bus,
                                 task_id=task_id,
+                                redis_client=redis_client,
+                                effective_slug=slug,
                             )
                         # Loop back to re-present at HITL-3
 
@@ -1796,7 +1823,7 @@ async def _run_pipeline_stages(
                         # Reject + rethink → re-brief with user comment → re-run full chain
                         rebrief_count += 1
                         # Mark as "briefing" for Kanban sync (tile moves back to Brief column)
-                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "briefing", task_id=task_id)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "briefing", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                         _emit(event_bus, task_id, "worker_progress", {
                             "brief_id": final_content.brief_id, "step": "briefing",
                             "rebrief_attempt": rebrief_count,
@@ -1821,6 +1848,8 @@ async def _run_pipeline_stages(
                             parent_span=stage5_span,
                             event_bus=event_bus,
                             task_id=task_id,
+                            redis_client=redis_client,
+                            slug=slug,
                         )
                         if rebriefed:
                             final_content, history, feedback_route = rebriefed
@@ -1843,7 +1872,7 @@ async def _run_pipeline_stages(
 
                     else:
                         # Exhausted edit/rebrief attempts or explicit reject — permanent rejection
-                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "rejected", task_id=task_id)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "rejected", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                         _emit(event_bus, task_id, "brief_rejected", {
                             "brief_id": final_content.brief_id,
                         })
@@ -1937,6 +1966,7 @@ async def _run_pipeline_stages(
         task_store=task_store,
         task_id=task_id,
         event_bus=event_bus,
+        redis_client=redis_client,
     )
 
     return output

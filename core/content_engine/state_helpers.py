@@ -31,8 +31,10 @@ def _write_pipeline_state(
     phase: str,
     *,
     task_id: Optional[str] = None,
+    redis_client: Optional[Any] = None,
+    effective_slug: Optional[str] = None,
 ) -> None:
-    """Write per-brief status to pipeline_state.json.
+    """Write per-brief status to pipeline_state.json (or Redis Hash).
 
     This file is the highest-priority status source during pipeline execution.
     It is read by content_data_service._infer_brief_status() as Phase 0
@@ -44,7 +46,26 @@ def _write_pipeline_state(
     When *task_id* is provided, the mapping brief_id → task_id is stored under
     the reserved ``__task_ids__`` key so the frontend can discover the pipeline
     run_id for HITL approval calls.
+
+    When *redis_client* and *effective_slug* are provided, writes to Redis Hash
+    first. Falls back to file on Redis failure.
     """
+    # Try Redis first (when configured)
+    if redis_client is not None and effective_slug:
+        try:
+            from core.content_engine.state_redis import write_pipeline_state_redis
+
+            write_pipeline_state_redis(
+                redis_client, effective_slug, brief_ids, phase, task_id=task_id
+            )
+            return
+        except Exception:
+            logger.warning(
+                "Redis pipeline state write failed — falling back to file",
+                exc_info=True,
+            )
+
+    # File-based fallback (existing code)
     state_path = artifact_dir / "pipeline_state.json"
     existing: Dict[str, Any] = {}
     if state_path.is_file():
@@ -69,13 +90,37 @@ def _write_pipeline_state(
     state_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
 
-def _cleanup_pipeline_state(artifact_dir: Path, brief_ids: List[str]) -> None:
-    """Remove specific brief IDs from pipeline_state.json.
+def _cleanup_pipeline_state(
+    artifact_dir: Path,
+    brief_ids: List[str],
+    *,
+    redis_client: Optional[Any] = None,
+    effective_slug: Optional[str] = None,
+) -> None:
+    """Remove specific brief IDs from pipeline_state.json (or Redis Hash).
 
     Only deletes the file if no entries remain — concurrency-safe for parallel
     manual runs where another run may still have in-flight state.
     Also cleans up corresponding ``__task_ids__`` entries.
+
+    When *redis_client* and *effective_slug* are provided, cleans up in Redis
+    first. Falls back to file on Redis failure. On error paths, cleans BOTH
+    Redis and file to prevent stale data resurrection.
     """
+    # Try Redis cleanup (when configured)
+    if redis_client is not None and effective_slug:
+        try:
+            from core.content_engine.state_redis import cleanup_pipeline_state_redis
+
+            cleanup_pipeline_state_redis(redis_client, effective_slug, brief_ids)
+            # Also clean file to prevent stale data if Redis reads fail later
+        except Exception:
+            logger.warning(
+                "Redis pipeline state cleanup failed — falling back to file",
+                exc_info=True,
+            )
+
+    # File-based cleanup (always runs as safety net)
     state_path = artifact_dir / "pipeline_state.json"
     if not state_path.is_file():
         return
@@ -102,3 +147,72 @@ def _cleanup_pipeline_state(artifact_dir: Path, brief_ids: List[str]) -> None:
             state_path.unlink()
         except OSError:
             pass
+
+
+# ── Async wrappers (use async Redis, avoid blocking event loop) ──
+
+_LOCK_TTL = 7200  # 2 hours — must match db_task_store.py
+
+
+async def _write_pipeline_state_async(
+    artifact_dir: Path,
+    brief_ids: List[str],
+    phase: str,
+    *,
+    task_id: Optional[str] = None,
+    redis_client: Optional[Any] = None,
+    effective_slug: Optional[str] = None,
+) -> None:
+    """Async write: tries async Redis first, falls back to sync file write.
+
+    Also refreshes the associated lock TTL on successful Redis write,
+    preventing lock expiry during long HITL waits.
+    """
+    if redis_client is not None and effective_slug:
+        try:
+            from core.content_engine.state_redis import write_pipeline_state_redis_async
+
+            await write_pipeline_state_redis_async(
+                redis_client, effective_slug, brief_ids, phase, task_id=task_id
+            )
+            # Refresh associated lock TTL (prevents expiry during HITL waits)
+            try:
+                await redis_client.expire(
+                    f"lock:content_v13:{effective_slug}", _LOCK_TTL
+                )
+            except Exception:
+                pass  # Best-effort refresh
+            return
+        except Exception:
+            logger.warning(
+                "Redis pipeline state write failed — falling back to file",
+                exc_info=True,
+            )
+
+    # File-based fallback (sync — only runs when Redis fails)
+    _write_pipeline_state(artifact_dir, brief_ids, phase, task_id=task_id)
+
+
+async def _cleanup_pipeline_state_async(
+    artifact_dir: Path,
+    brief_ids: List[str],
+    *,
+    redis_client: Optional[Any] = None,
+    effective_slug: Optional[str] = None,
+) -> None:
+    """Async cleanup: tries async Redis first, always cleans file too."""
+    if redis_client is not None and effective_slug:
+        try:
+            from core.content_engine.state_redis import cleanup_pipeline_state_redis_async
+
+            await cleanup_pipeline_state_redis_async(
+                redis_client, effective_slug, brief_ids
+            )
+        except Exception:
+            logger.warning(
+                "Redis pipeline state cleanup failed — falling back to file",
+                exc_info=True,
+            )
+
+    # File-based cleanup (always runs as safety net)
+    _cleanup_pipeline_state(artifact_dir, brief_ids)

@@ -1,7 +1,11 @@
-"""Lazy async Redis client -- singleton connection pool.
+"""Lazy Redis clients -- async and sync singletons.
 
-The client is created on first call to ``get_redis()``, not at import time.
-This avoids breaking CLI scripts and tests that don't set REDIS_URL.
+Clients are created on first call (not at import time) to avoid
+breaking CLI scripts and tests that don't set REDIS_URL.
+
+Async client: ``get_redis()`` — for EventBus, stream reads, pipeline state.
+Sync client: ``get_sync_redis()`` — for distributed locks, sync readers
+(sub-millisecond blocking operations where async bridging is unnecessary).
 
 Follows the same pattern as core/db/engine.py for PostgreSQL.
 """
@@ -12,6 +16,7 @@ import threading
 from typing import Optional
 from urllib.parse import urlparse, urlunparse
 
+import redis as _sync_redis
 import redis.asyncio as aioredis
 
 from core.config.settings import settings
@@ -21,6 +26,10 @@ logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 _pool: Optional[aioredis.ConnectionPool] = None
 _client: Optional[aioredis.Redis] = None
+
+# Sync client (for locks, sync state reads)
+_sync_lock = threading.RLock()
+_sync_client: Optional[_sync_redis.Redis] = None
 
 
 def _redact_url(url: str) -> str:
@@ -82,18 +91,60 @@ def get_redis_or_none() -> Optional[aioredis.Redis]:
         return None
 
 
+def get_sync_redis() -> _sync_redis.Redis:
+    """Return the shared sync Redis client (created lazily, thread-safe).
+
+    Used for sub-millisecond blocking operations (distributed locks,
+    sync pipeline state reads). Raises RuntimeError if REDIS_URL not set.
+    """
+    global _sync_client
+    if _sync_client is not None:
+        return _sync_client
+    with _sync_lock:
+        if _sync_client is not None:
+            return _sync_client
+        if not settings.redis_url:
+            raise RuntimeError(
+                "REDIS_URL is not set. "
+                "Set it in .env.local or as an environment variable."
+            )
+        _sync_client = _sync_redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_timeout=2.0,
+            socket_connect_timeout=2.0,
+        )
+        logger.info("Sync Redis client initialized: %s", _redact_url(settings.redis_url))
+    return _sync_client
+
+
+def get_sync_redis_or_none() -> Optional[_sync_redis.Redis]:
+    """Return the sync Redis client if REDIS_URL is configured, else None."""
+    if not settings.redis_url:
+        return None
+    try:
+        return get_sync_redis()
+    except RuntimeError:
+        return None
+
+
 async def close_redis() -> None:
-    """Close the connection pool. Call during app shutdown."""
-    global _pool, _client
+    """Close all Redis clients. Call during app shutdown."""
+    global _pool, _client, _sync_client
     with _lock:
         client = _client
         pool = _pool
         _client = None
         _pool = None
+    with _sync_lock:
+        sync = _sync_client
+        _sync_client = None
     if client is not None:
         await client.aclose()
     if pool is not None:
         await pool.aclose()
+    if sync is not None:
+        sync.close()
     logger.info("Redis connection pool closed")
 
 

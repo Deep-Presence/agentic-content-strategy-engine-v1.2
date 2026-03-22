@@ -296,15 +296,32 @@ async def _mark_pipeline_run_failed(
 
 
 def _cleanup_stale_pipeline_state(
-    artifacts_root: Optional[Path], effective_slug: str,
+    artifacts_root: Optional[Path],
+    effective_slug: str,
+    *,
+    redis_client: Optional[Any] = None,
+    task_id: Optional[str] = None,
 ) -> None:
-    """Best-effort removal of pipeline_state.json on failure/cancel.
+    """Best-effort removal of pipeline state on failure/cancel.
 
-    On error paths we cannot determine which brief IDs belong to this run
-    (pieces may be empty), so we remove the whole file. This is acceptable
-    because parallel runs are manual-mode only (no HITL-1/2 state to
-    preserve), and file-based inference (Phase 2) still works correctly.
+    **Redis (task-scoped):** Only removes briefs belonging to ``task_id``
+    via ``__tid:`` field matching. This prevents clobbering other parallel
+    manual runs sharing the same slug.
+
+    **File:** Still does full file deletion (legacy behavior — parallel manual
+    runs don't reliably write separate state files). File cleanup is kept as
+    safety net for stale data prevention.
     """
+    # Redis cleanup (task-scoped — only removes this run's briefs)
+    if redis_client is not None:
+        try:
+            from core.content_engine.state_redis import cleanup_stale_pipeline_state_redis
+
+            cleanup_stale_pipeline_state_redis(redis_client, effective_slug, task_id=task_id)
+        except Exception:
+            logger.warning("Redis stale state cleanup failed", exc_info=True)
+
+    # File cleanup (always — dual cleanup for safety)
     if not artifacts_root:
         return
     state_path = artifacts_root / "content" / effective_slug / "pipeline_state.json"
@@ -707,6 +724,20 @@ async def run_content_v13_pipeline_task(
         )
 
     bind_context(task_id=task_id, pipeline_name="content_v13", company_slug=company_slug, run_id=str(run_id) if run_id else None)
+
+    # Obtain async Redis client for pipeline state writes (non-blocking)
+    # + sync Redis client for error-path cleanup (sync file ops anyway)
+    _redis_async = None
+    _redis_sync = None
+    try:
+        from core.config.settings import settings as _cfg
+        if _cfg.redis_pipeline_state and _cfg.redis_url:
+            from core.redis import get_redis_or_none, get_sync_redis_or_none
+            _redis_async = get_redis_or_none()
+            _redis_sync = get_sync_redis_or_none()
+    except Exception:
+        pass
+
     try:
         async with task_store.semaphore:
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "content_v13"})
@@ -719,6 +750,7 @@ async def run_content_v13_pipeline_task(
                 session_factory=session_factory,
                 run_id=run_id,
                 company_id=company_id,
+                redis_client=_redis_async,
             )
 
             result = {
@@ -741,13 +773,13 @@ async def run_content_v13_pipeline_task(
 
     except asyncio.CancelledError:
         logger.info("Content v1.3 pipeline cancelled: task_id=%s", task_id)
-        _cleanup_stale_pipeline_state(artifacts_root, effective)
+        _cleanup_stale_pipeline_state(artifacts_root, effective, redis_client=_redis_sync, task_id=task_id)
     except Exception as exc:
         logger.exception("Content v1.3 pipeline failed: %s", exc)
         task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
-        _cleanup_stale_pipeline_state(artifacts_root, effective)
+        _cleanup_stale_pipeline_state(artifacts_root, effective, redis_client=_redis_sync, task_id=task_id)
     finally:
         if not is_parallel:
             task_store.release_slug_lock(f"content_v13:{effective}")
