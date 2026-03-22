@@ -306,6 +306,11 @@ async def run_brand_perception_agent(
             ),
             timeout=timeout_s,
         )
+        bp_model = settings.research_kb_brand_perception_model
+        log_generation(
+            span, "brand-perception/turn-0", bp_model,
+            user_prompt[:2000], _extract_text_with_citations(response)[:2000],
+        )
 
         # Handle pause_turn loop — Claude hit server-side iteration limit.
         # Cap at _MAX_PAUSE_TURNS to prevent unbounded loops / runaway cost.
@@ -330,17 +335,14 @@ async def run_brand_perception_agent(
                 ),
                 timeout=timeout_s,
             )
+            log_generation(
+                span, f"brand-perception/turn-{pause_turns}", bp_model,
+                "(continuation)", _extract_text_with_citations(response)[:2000],
+            )
 
         is_partial = pause_turns >= _MAX_PAUSE_TURNS
 
         result_md = _extract_text_with_citations(response)
-        log_generation(
-            span,
-            "brand-perception",
-            settings.research_kb_brand_perception_model,
-            user_prompt[:2000],
-            result_md[:2000],
-        )
         end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
         return KBAgentResult(
             doc_type=KBDocType.BRAND_PERCEPTION,
@@ -487,8 +489,14 @@ async def run_synthesis_agent(
                 revision_note=revision_note,
             )
 
+        # Propagate tracing span as LangChain callback so all internal
+        # LLM calls within the react agent are logged to LangSmith.
+        invoke_config: Dict[str, Any] = {}
+        if span is not None:
+            invoke_config["callbacks"] = [span]
+
         result = await asyncio.wait_for(
-            agent.ainvoke({"messages": [("user", user_prompt)]}),
+            agent.ainvoke({"messages": [("user", user_prompt)]}, invoke_config),
             timeout=timeout_s,
         )
 
@@ -523,6 +531,7 @@ async def run_synthesis_agent(
             execution_time_s=time.time() - start,
         )
     except Exception as exc:
+        logger.error("Synthesis agent error: %s", exc, exc_info=True)
         end_span(span, error=str(exc))
         return KBAgentResult(
             doc_type=KBDocType.SYNTHESIS,
