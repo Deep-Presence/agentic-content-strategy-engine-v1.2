@@ -197,16 +197,18 @@ def _setup_gap_dir(
 
 
 @pytest.fixture(autouse=True)
-def _clear_caches():
-    """Clear module-level caches before each test."""
-    import api.services.content_data_service as cds
-    import api.services.gap_data_service as gds
-
-    cds._CACHE.clear()
-    gds._CACHE.clear()
+def _no_redis_cache(monkeypatch):
+    """Disable Redis cache so tests use direct file reads."""
+    monkeypatch.setattr(
+        "api.services.content_data_service.get_sync_redis_or_none", lambda: None
+    )
+    monkeypatch.setattr(
+        "api.services.gap_data_service.get_sync_redis_or_none", lambda: None
+    )
+    monkeypatch.setattr(
+        "core.services.gap_context_helper.get_sync_redis_or_none", lambda: None
+    )
     yield
-    cds._CACHE.clear()
-    gds._CACHE.clear()
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -14,7 +14,6 @@ import json
 import logging
 import math
 import re
-import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -22,12 +21,10 @@ from fastapi import HTTPException
 
 _logger = logging.getLogger(__name__)
 
-# Module-level FIFO cache: key -> (mtime, data).
-# Max 10 entries; oldest evicted when full.
-# Protected by _CACHE_LOCK for thread safety (asyncio.to_thread callers).
-_CACHE: dict[str, tuple[float, Any]] = {}
-_CACHE_MAX = 10
-_CACHE_LOCK = threading.Lock()
+# ── Caching (Redis-backed, Session 6) ────────────────────────────────
+
+from core.cache import cache_get, cache_set
+from core.redis import get_sync_redis_or_none
 
 # Slug validation: bare slug OR effective slug (slug__product-slug)
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
@@ -47,35 +44,28 @@ def _validate_slug(slug: str) -> None:
         )
 
 
-def _evict_if_full() -> None:
-    """Remove the oldest cache entry when the cache is full.
-
-    Caller MUST hold ``_CACHE_LOCK``.
-    """
-    if len(_CACHE) >= _CACHE_MAX:
-        oldest_key = next(iter(_CACHE))
-        del _CACHE[oldest_key]
-
-
 def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
-    """Load and cache audit_result.json from *audit_dir*.
+    """Load audit_result.json — Redis cache first, file fallback.
 
+    Derives slug and audit_id from the directory path for cache key.
     Returns an empty dict when the file is missing or unparseable.
-    Uses mtime-based cache invalidation.  All ``_CACHE`` access is
-    protected by ``_CACHE_LOCK`` for thread safety under
-    ``asyncio.to_thread()``.
     """
-    result_file = audit_dir / "audit_result.json"
-    cache_key = str(result_file)
+    redis = get_sync_redis_or_none()
 
+    # Derive slug and audit_id from path: .../site_audit/{slug}/{audit_id}/
+    audit_id = audit_dir.name
+    slug = audit_dir.parent.name
+
+    if redis is not None and slug and audit_id:
+        cache_key = f"cache:audit:{slug}:{audit_id}"
+        cached = cache_get(redis, cache_key)
+        if cached is not None:
+            return cached
+
+    # File read (fallback or cache miss)
+    result_file = audit_dir / "audit_result.json"
     if not result_file.exists():
         return {}
-
-    mtime = result_file.stat().st_mtime
-    with _CACHE_LOCK:
-        cached = _CACHE.get(cache_key)
-        if cached is not None and cached[0] == mtime:
-            return cached[1]
 
     try:
         data = json.loads(result_file.read_text(encoding="utf-8"))
@@ -83,9 +73,10 @@ def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
         _logger.warning("Failed to parse %s: %s", result_file, exc)
         return {}
 
-    with _CACHE_LOCK:
-        _evict_if_full()
-        _CACHE[cache_key] = (mtime, data)
+    # Populate cache
+    if redis is not None and slug and audit_id:
+        cache_set(redis, cache_key, data, ttl=600)
+
     return data
 
 

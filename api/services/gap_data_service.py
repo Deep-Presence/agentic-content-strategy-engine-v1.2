@@ -9,7 +9,6 @@ import json
 import logging
 import math
 import re
-import threading
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -46,43 +45,35 @@ from api.schemas.gap_data import (
 
 logger = logging.getLogger(__name__)
 
-# ── Caching ──────────────────────────────────────────────────────────
+# ── Caching (Redis-backed, Session 6) ────────────────────────────────
 
-_CACHE: Dict[Tuple[str, str], Tuple[int, Any]] = {}
-_CACHE_MAX_ENTRIES = 10
-_CACHE_LOCK = threading.Lock()  # C6: protects compound check-evict-insert
+from core.cache import cache_get, cache_set
+from core.redis import get_sync_redis_or_none
 
 
 def _load_json_cached(
     artifacts_root: Path, slug: str, filename: str
 ) -> Optional[Any]:
-    """Load and parse a JSON file with mtime-based cache invalidation."""
+    """Load a gap analysis JSON file — Redis cache first, file fallback."""
+    redis = get_sync_redis_or_none()
+
+    if redis is not None:
+        cache_key = f"cache:gap:{slug}:{filename}"
+        cached = cache_get(redis, cache_key)
+        if cached is not None:
+            return cached
+
+    # File read (fallback or cache miss)
     file_path = artifacts_root / "gap_analysis" / slug / filename
-
-    # CX-9: guard stat() — eliminates TOCTOU between is_file() and stat()
-    try:
-        mtime_ns = file_path.stat().st_mtime_ns
-    except (FileNotFoundError, OSError):
-        return None
-
-    cache_key = (slug, filename)
-
-    cached = _CACHE.get(cache_key)
-    if cached is not None and cached[0] == mtime_ns:
-        return cached[1]
-
     try:
         data = json.loads(file_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Failed to parse %s: %s", file_path, exc)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
 
-    # C6: lock protects the compound check-evict-insert against concurrent writes
-    with _CACHE_LOCK:
-        if len(_CACHE) >= _CACHE_MAX_ENTRIES and cache_key not in _CACHE:
-            oldest_key = next(iter(_CACHE))
-            del _CACHE[oldest_key]
-        _CACHE[cache_key] = (mtime_ns, data)
+    # Populate cache
+    if redis is not None:
+        cache_set(redis, cache_key, data, ttl=300)
+
     return data
 
 

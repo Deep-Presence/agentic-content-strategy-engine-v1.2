@@ -31,10 +31,10 @@ from api.tasks.store import TaskStore
 
 logger = logging.getLogger(__name__)
 
-# ── Caching ──────────────────────────────────────────────────────────
+# ── Caching (Redis-backed, Session 6) ────────────────────────────────
 
-_CACHE: Dict[Tuple[str, str], Tuple[int, Any]] = {}
-_CACHE_MAX_ENTRIES = 10
+from core.cache import cache_get, cache_set
+from core.redis import get_sync_redis_or_none
 
 # ── Validation ───────────────────────────────────────────────────────
 
@@ -236,18 +236,32 @@ def _detect_personas(
 def get_research_artifacts(
     artifacts_root: Path, slug: str
 ) -> ResearchArtifactsResponse:
-    """Build research artifacts response with content and status."""
+    """Build research artifacts response — Redis cache first, compute fallback."""
     _validate_slug(slug)
+
+    redis = get_sync_redis_or_none()
+    if redis is not None:
+        cached = cache_get(redis, f"cache:brand:{slug}:artifacts")
+        if cached is not None:
+            try:
+                return ResearchArtifactsResponse.model_validate(cached)
+            except Exception:
+                logger.debug("Corrupted brand cache for %s — recomputing", slug)
 
     company_context = _detect_artifact(artifacts_root, "company_context", slug)
     style_guide = _detect_artifact(artifacts_root, "style_guides", slug)
     personas = _detect_personas(artifacts_root, slug)
 
-    return ResearchArtifactsResponse(
+    result = ResearchArtifactsResponse(
         company_context=company_context,
         personas=personas,
         style_guide=style_guide,
     )
+
+    if redis is not None:
+        cache_set(redis, f"cache:brand:{slug}:artifacts", result.model_dump(mode="json"), ttl=300)
+
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════════

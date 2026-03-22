@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -30,11 +29,10 @@ from core.services.gap_context_helper import extract_gap_context, load_analysis_
 
 logger = logging.getLogger(__name__)
 
-# ── Caching ──────────────────────────────────────────────────────────
+# ── Caching (Redis-backed, Session 6) ────────────────────────────────
 
-_CACHE: Dict[Tuple[str, str], Tuple[int, Any]] = {}
-_CACHE_MAX_ENTRIES = 10
-_CACHE_LOCK = threading.Lock()  # C6: protects compound check-evict-insert
+from core.cache import cache_delete, cache_get, cache_set
+from core.redis import get_sync_redis_or_none
 
 
 def _load_pipeline_state(content_root: Path, slug: str) -> Dict[str, Any]:
@@ -50,7 +48,6 @@ def _load_pipeline_state(content_root: Path, slug: str) -> Dict[str, Any]:
 
     if settings.redis_pipeline_state and settings.redis_url:
         try:
-            from core.redis import get_sync_redis_or_none
             from core.content_engine.state_redis import read_pipeline_state_redis
 
             rc = get_sync_redis_or_none()
@@ -64,37 +61,35 @@ def _load_pipeline_state(content_root: Path, slug: str) -> Dict[str, Any]:
                 "Redis pipeline state read failed — falling back to file",
                 exc_info=True,
             )
-    return _load_json_cached(content_root, "pipeline_state.json") or {}
+    return _load_json_cached(content_root, "pipeline_state.json", slug=slug) or {}
 
 
-def _load_json_cached(base_dir: Path, filename: str) -> Optional[Any]:
-    """Load and parse a JSON file with mtime-based cache invalidation."""
+def _load_json_cached(
+    base_dir: Path, filename: str, *, slug: str = "", brief_id: str = ""
+) -> Optional[Any]:
+    """Load a content JSON file — Redis cache first, file fallback."""
+    redis = get_sync_redis_or_none()
+
+    if redis is not None and slug:
+        if brief_id:
+            cache_key = f"cache:content:{slug}:brief:{brief_id}:{filename}"
+        else:
+            cache_key = f"cache:content:{slug}:{filename}"
+        cached = cache_get(redis, cache_key)
+        if cached is not None:
+            return cached
+
+    # File read (fallback or cache miss)
     file_path = base_dir / filename
-
-    # CX-9: guard stat() — eliminates TOCTOU between is_file() and stat()
-    try:
-        mtime_ns = file_path.stat().st_mtime_ns
-    except (FileNotFoundError, OSError):
-        return None
-
-    cache_key = (str(base_dir), filename)
-
-    cached = _CACHE.get(cache_key)
-    if cached is not None and cached[0] == mtime_ns:
-        return cached[1]
-
     try:
         data = json.loads(file_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Failed to parse %s: %s", file_path, exc)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
 
-    # C6: lock protects the compound check-evict-insert against concurrent writes
-    with _CACHE_LOCK:
-        if len(_CACHE) >= _CACHE_MAX_ENTRIES and cache_key not in _CACHE:
-            oldest_key = next(iter(_CACHE))
-            del _CACHE[oldest_key]
-        _CACHE[cache_key] = (mtime_ns, data)
+    # Populate cache
+    if redis is not None and slug:
+        cache_set(redis, cache_key, data, ttl=120)
+
     return data
 
 
@@ -275,7 +270,7 @@ def _get_available_stages(brief_dir: Path) -> List[str]:
 # ── Metadata loading ────────────────────────────────────────────────
 
 
-def _load_all_pieces(content_root: Path) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+def _load_all_pieces(content_root: Path, slug: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """Load pieces from standard + namespaced run_metadata_v13 files.
 
     Manual-mode parallel runs write ``run_metadata_v13_{brief_id}.json`` instead
@@ -286,7 +281,7 @@ def _load_all_pieces(content_root: Path) -> Tuple[List[Dict[str, Any]], Optional
     Standard file takes priority for ``session_id``.
     """
     # Standard file
-    run_meta = _load_json_cached(content_root, "run_metadata_v13.json")
+    run_meta = _load_json_cached(content_root, "run_metadata_v13.json", slug=slug)
     pieces: List[Dict[str, Any]] = list((run_meta or {}).get("pieces", []))
     session_id: Optional[str] = (run_meta or {}).get("run_metadata", {}).get("session_id")
 
@@ -295,7 +290,7 @@ def _load_all_pieces(content_root: Path) -> Tuple[List[Dict[str, Any]], Optional
 
     # Namespaced files (manual parallel runs)
     for meta_path in sorted(content_root.glob("run_metadata_v13_*.json")):
-        data = _load_json_cached(content_root, meta_path.name)
+        data = _load_json_cached(content_root, meta_path.name, slug=slug)
         if not data:
             continue
         for p in data.get("pieces", []):
@@ -327,12 +322,12 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
     # ContentBlueprint extends ContentBrief, so the same fields are present.
     briefs_data: Optional[Dict[str, Any]] = None
 
-    blueprints_raw = _load_json_cached(content_root, "blueprints.json")
+    blueprints_raw = _load_json_cached(content_root, "blueprints.json", slug=slug)
     if blueprints_raw and isinstance(blueprints_raw, list) and blueprints_raw:
         briefs_data = {"briefs": blueprints_raw}
     else:
         # Strategic planner in progress — surface topics as early-stage briefs
-        planner_data = _load_json_cached(content_root, "planner_selections.json")
+        planner_data = _load_json_cached(content_root, "planner_selections.json", slug=slug)
         if planner_data and isinstance(planner_data, dict):
             selections = planner_data.get("selections", [])
             if selections:
@@ -361,7 +356,7 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
     analysis_json = load_analysis_json(artifacts_root, slug)
 
     # Load run_metadata for pieces + session_id (standard + namespaced files)
-    pieces, session_id = _load_all_pieces(content_root)
+    pieces, session_id = _load_all_pieces(content_root, slug)
 
     # Load pipeline state — Redis first (when configured), file fallback
     pipeline_state = _load_pipeline_state(content_root, slug)
@@ -397,7 +392,7 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
 
         # Citability score from eval_history
         eval_data = _load_json_cached(
-            brief_dir, "eval_history.json"
+            brief_dir, "eval_history.json", slug=slug, brief_id=brief_id
         ) if brief_dir.is_dir() else None
         citability = _compute_citability_score(eval_data)
 
@@ -487,8 +482,9 @@ def add_brief(
     bp_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
     # Invalidate cache for this file
-    cache_key = (str(content_root), "blueprints.json")
-    _CACHE.pop(cache_key, None)
+    redis = get_sync_redis_or_none()
+    if redis is not None:
+        cache_delete(redis, f"cache:content:{slug}:blueprints.json")
 
     return ContentBriefListItem(
         id=brief_id,
@@ -512,11 +508,11 @@ def get_brief_detail(
 
     # Load briefs from v1.3 artifacts
     briefs_list: List[Dict[str, Any]] = []
-    blueprints_raw = _load_json_cached(content_root, "blueprints.json")
+    blueprints_raw = _load_json_cached(content_root, "blueprints.json", slug=slug)
     if blueprints_raw and isinstance(blueprints_raw, list):
         briefs_list = blueprints_raw
     else:
-        planner_data = _load_json_cached(content_root, "planner_selections.json")
+        planner_data = _load_json_cached(content_root, "planner_selections.json", slug=slug)
         if planner_data and isinstance(planner_data, dict):
             selections = planner_data.get("selections", [])
             briefs_list = [
@@ -542,7 +538,7 @@ def get_brief_detail(
         raise HTTPException(404, f"Brief '{brief_id}' not found for company '{slug}'")
 
     # Run metadata pieces (standard + namespaced files)
-    pieces, _session_id = _load_all_pieces(content_root)
+    pieces, _session_id = _load_all_pieces(content_root, slug)
 
     # Pipeline state — Redis first, file fallback
     pipeline_state = _load_pipeline_state(content_root, slug)
@@ -565,7 +561,7 @@ def get_brief_detail(
 
     # Eval history
     brief_dir = content_root / "content" / brief_id
-    eval_data = _load_json_cached(brief_dir, "eval_history.json") if brief_dir.is_dir() else None
+    eval_data = _load_json_cached(brief_dir, "eval_history.json", slug=slug, brief_id=brief_id) if brief_dir.is_dir() else None
     eval_history: List[EvalCycle] = []
     final_passed = False
     if eval_data:

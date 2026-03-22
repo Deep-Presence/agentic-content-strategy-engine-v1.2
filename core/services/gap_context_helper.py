@@ -11,46 +11,40 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from api.schemas.content_data import GapContextSummary
 
 logger = logging.getLogger(__name__)
 
-# ── Caching ──────────────────────────────────────────────────────────
+# ── Caching (Redis-backed, Session 6) ────────────────────────────────
 
-_GAP_CACHE: Dict[str, Tuple[int, Any]] = {}
-_GAP_CACHE_LOCK = threading.Lock()
+from core.cache import cache_get, cache_set
+from core.redis import get_sync_redis_or_none
 
 
 def load_analysis_json(artifacts_root: Path, slug: str) -> Optional[Dict[str, Any]]:
-    """Load and cache analysis.json for a company slug.
+    """Load analysis.json for a company slug — Redis cache first, file fallback."""
+    redis = get_sync_redis_or_none()
 
-    Uses mtime-based cache invalidation. Returns None if file doesn't exist.
-    """
-    gap_dir = artifacts_root / "gap_analysis" / slug
-    file_path = gap_dir / "analysis.json"
+    if redis is not None:
+        cache_key = f"cache:gap_ctx:{slug}"
+        cached = cache_get(redis, cache_key)
+        if cached is not None:
+            return cached
 
-    try:
-        mtime_ns = file_path.stat().st_mtime_ns
-    except (FileNotFoundError, OSError):
-        return None
-
-    cache_key = str(file_path)
-    cached = _GAP_CACHE.get(cache_key)
-    if cached is not None and cached[0] == mtime_ns:
-        return cached[1]
-
+    # File read (fallback or cache miss)
+    file_path = artifacts_root / "gap_analysis" / slug / "analysis.json"
     try:
         data = json.loads(file_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Failed to parse %s: %s", file_path, exc)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
 
-    with _GAP_CACHE_LOCK:
-        _GAP_CACHE[cache_key] = (mtime_ns, data)
+    # Populate cache
+    if redis is not None:
+        cache_set(redis, cache_key, data, ttl=300)
+
     return data
 
 

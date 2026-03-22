@@ -91,21 +91,12 @@ def _create_task(
 
 
 @pytest.fixture(autouse=True)
-def _clear_caches():
-    """Clear module-level caches between tests."""
-    try:
-        from api.services import brand_data_service
-
-        brand_data_service._CACHE.clear()
-    except (ImportError, AttributeError):
-        pass
+def _no_redis_cache(monkeypatch):
+    """Disable Redis cache so tests use direct file reads."""
+    monkeypatch.setattr(
+        "api.services.brand_data_service.get_sync_redis_or_none", lambda: None
+    )
     yield
-    try:
-        from api.services import brand_data_service
-
-        brand_data_service._CACHE.clear()
-    except (ImportError, AttributeError):
-        pass
 
 
 # ══════════════════════════════════════════════════════════════════════

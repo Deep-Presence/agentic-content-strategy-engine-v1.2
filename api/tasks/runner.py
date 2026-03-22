@@ -18,6 +18,8 @@ from core.gap_analysis.pipeline import run_gap_analysis
 from core.auth.utils.domain import derive_slug
 from core.models.gap_analysis import GapAnalysisInput
 from core.shared_tools.structured_logging import bind_context, clear_context
+from core.cache import cache_delete, cache_delete_pattern
+from core.redis import get_sync_redis_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -448,6 +450,13 @@ async def run_gap_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:gap:{scope.effective_slug}:*")
+                cache_delete(_rc, f"cache:gap_ctx:{scope.effective_slug}")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"gap_analysis:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -598,6 +607,12 @@ async def run_site_audit_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:audit:{scope.effective_slug}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"site_audit:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -676,6 +691,12 @@ async def run_content_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:content:{effective}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"content:{effective}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -732,9 +753,9 @@ async def run_content_v13_pipeline_task(
     try:
         from core.config.settings import settings as _cfg
         if _cfg.redis_pipeline_state and _cfg.redis_url:
-            from core.redis import get_redis_or_none, get_sync_redis_or_none
+            from core.redis import get_redis_or_none
             _redis_async = get_redis_or_none()
-            _redis_sync = get_sync_redis_or_none()
+            _redis_sync = get_sync_redis_or_none()  # module-level import
     except Exception:
         pass
 
@@ -781,6 +802,12 @@ async def run_content_v13_pipeline_task(
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
         _cleanup_stale_pipeline_state(artifacts_root, effective, redis_client=_redis_sync, task_id=task_id)
     finally:
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:content:{effective}:*")
+        except Exception:
+            pass
         if not is_parallel:
             task_store.release_slug_lock(f"content_v13:{effective}")
         task_store.remove_task_handle(task_id)
@@ -884,6 +911,12 @@ async def run_kb_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:brand:{scope.effective_slug}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"knowledge_base:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -975,6 +1008,12 @@ async def run_audience_persona_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:brand:{scope.effective_slug}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"audience_persona:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1150,6 +1189,12 @@ async def run_voice_style_guide_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:brand:{scope.effective_slug}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"voice_style_guide:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1302,6 +1347,12 @@ async def run_research_orchestrator_task(
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
         _eff = scope.effective_slug if scope else company_slug
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:brand:{_eff}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"research_orchestrator:{_eff}")
         task_store.remove_task_handle(task_id)
         clear_context()

@@ -570,6 +570,14 @@ async def _finalize_pipeline(
     # Per-brief removal is concurrency-safe: parallel manual runs retain their entries.
     await _cleanup_pipeline_state_async(artifact_dir, [p.brief_id for p in pieces], redis_client=redis_client, effective_slug=slug)
 
+    # Invalidate content cache so next dashboard request gets fresh data
+    from core.cache import cache_delete_pattern
+    from core.redis import get_sync_redis_or_none
+
+    _cache_redis = get_sync_redis_or_none()
+    if _cache_redis:
+        cache_delete_pattern(_cache_redis, f"cache:content:{slug}:*")
+
     # 2-3. Persist to DB
     await persist_content_pieces(
         session_factory=session_factory,
