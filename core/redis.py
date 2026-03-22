@@ -112,7 +112,7 @@ def get_sync_redis() -> _sync_redis.Redis:
             settings.redis_url,
             decode_responses=True,
             socket_timeout=settings.redis_socket_timeout,
-            socket_connect_timeout=2.0,
+            socket_connect_timeout=settings.redis_socket_connect_timeout,
         )
         logger.info("Sync Redis client initialized: %s", _redact_url(settings.redis_url))
     return _sync_client

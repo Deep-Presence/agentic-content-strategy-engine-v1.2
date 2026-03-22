@@ -150,19 +150,27 @@ class TestGetSyncRedis:
                 get_sync_redis()
 
     def test_creates_sync_client_with_url(self) -> None:
-        """get_sync_redis() creates a sync redis.Redis client."""
+        """get_sync_redis() creates a sync redis.Redis client with settings."""
         with patch("core.redis.settings") as mock_settings:
             mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_socket_timeout = 5.0
+            mock_settings.redis_socket_connect_timeout = 2.0
 
             mock_client = MagicMock()
             with patch(
                 "core.redis._sync_redis.from_url",
                 return_value=mock_client,
-            ):
+            ) as mock_from_url:
                 from core.redis import get_sync_redis
 
                 client = get_sync_redis()
                 assert client is mock_client
+                mock_from_url.assert_called_once_with(
+                    "redis://localhost:6379/0",
+                    decode_responses=True,
+                    socket_timeout=5.0,
+                    socket_connect_timeout=2.0,
+                )
 
     def test_returns_singleton(self) -> None:
         """get_sync_redis() returns the same instance on subsequent calls."""
