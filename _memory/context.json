@@ -1,7 +1,7 @@
 {
-  "sprint": "redis-integration-session-4",
-  "sprint_goal": "Redis Session 4 — Approval Queues. Replace asyncio.Queue with Redis LPUSH/BRPOP in DbTaskStore for cross-worker HITL approval delivery.",
-  "sprint_status": "COMPLETE — Sessions 3-4 done + PB-39 fixed. 20 new tests + PB-39 root cause resolved (StateGraph(dict) → TypedDict). Multi-worker HITL ready.",
+  "sprint": "redis-integration-session-5",
+  "sprint_goal": "Redis Session 5 — Distributed Semaphore. Replace per-worker asyncio.Semaphore with Redis Sorted Set for global pipeline concurrency limit across all workers.",
+  "sprint_status": "COMPLETE — Session 5 done. Atomic Lua acquire, pipeline_semaphore() protocol method, 14 runner call sites updated, 11 new tests. All Redis sessions (0-5) complete.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -31,19 +31,18 @@
     "api/app.py (Redis init, EventBus selection, DbTaskStore wiring)",
     "api/tasks/runner.py (async+sync Redis threading, stale cleanup)",
     "CLAUDE.md (Redis key schema, config toggles)",
-    "core/checkpointer.py (shared RedisSaver factory, singleton, thread-safe)"
+    "core/checkpointer.py (shared RedisSaver factory, singleton, thread-safe)",
+    "core/redis_semaphore.py (distributed semaphore — atomic Lua, Sorted Set)"
   ],
-  "test_count": 2120,
-  "phases_completed_count": 55,
+  "test_count": 2131,
+  "phases_completed_count": 56,
   "recent_phases": [
+    "redis-session-5 — Distributed Semaphore, atomic Lua acquire, pipeline_semaphore(), 14 runners (11 new tests)",
     "redis-session-4 — Approval Queues (BRPOP/LPUSH), nonce in Redis, duplicate flag (13 new tests)",
     "redis-session-3 — HITL RedisSaver, shared checkpointer factory, 1 Codex finding resolved (7 new tests)",
     "redis-session-2 — 9 phases + 8 Codex findings resolved (36 new tests)",
-    "redis-session-1 — RedisEventBus + 8 Codex findings resolved (37 new tests)",
-    "redis-session-0 — Foundation (13 new tests)"
+    "redis-session-1 — RedisEventBus + 8 Codex findings resolved (37 new tests)"
   ],
-  "phases_remaining": [
-    "Redis Session 5 — Distributed Semaphore"
-  ],
+  "phases_remaining": [],
   "deferred_issues_location": ".claude/sprints/pending/backlog.md"
 }

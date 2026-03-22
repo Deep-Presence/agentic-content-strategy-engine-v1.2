@@ -1,5 +1,22 @@
 [
   {
+    "id": "D-REDIS-SEM-5",
+    "timestamp": "2026-03-22",
+    "task": "Redis Session 5 — Distributed Semaphore Design Decisions",
+    "approach": "Atomic Lua script for acquire (ZREMRANGEBYSCORE+ZCARD+ZADD in single call). Sorted Set with timestamp scores for self-healing. pipeline_semaphore(task_id) method (Option B from spec — explicit task_id, not context magic). 2h holder TTL without heartbeat. 1s polling interval without pub/sub wake-up.",
+    "rationale": "Codex review confirmed P0 race condition in spec's non-atomic acquire — Lua script prevents two workers both seeing capacity and both ZADD. Option B is explicit (task_id at each call site) vs Option C's contextvars magic. 2h TTL acceptable: pipelines run minutes-to-hours, max 3 concurrent, heartbeat adds complexity for marginal benefit. 1s polling irrelevant vs pipeline duration (minutes).",
+    "alternatives_rejected": [
+      "Non-atomic acquire (separate ZREMRANGEBYSCORE/ZCARD/ZADD) — race condition under contention",
+      "Short lease + heartbeat renew — over-engineering for max 3 pipelines running minutes-to-hours",
+      "Pub/Sub wake-up on release — adds failure modes (missed messages) for no practical gain",
+      "Fencing tokens — semaphore gates starts not shared mutable state, unnecessary",
+      "Option C (contextvars for task_id) — too magical, implicit coupling"
+    ],
+    "outcome": "11 new tests, 14 runner call sites updated, 1 Codex P0 finding resolved, zero regressions. 9th Redis key in schema.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-REDIS-1",
     "timestamp": "2026-03-22",
     "task": "Redis Integration Sessions 0-2 \u2014 Architecture Decisions",

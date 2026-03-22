@@ -361,7 +361,7 @@ async def run_gap_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="gap_analysis", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "gap_analysis"})
 
             # Research artifacts: fallback chain (product-specific → company-level)
@@ -504,7 +504,7 @@ async def run_site_audit_task(
         if run_id:
             bind_context(run_id=str(run_id))
 
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "site_audit"})
 
             try:
@@ -633,7 +633,7 @@ async def run_content_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="content", company_slug=company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "content"})
 
             output = await run_content_generation(
@@ -739,7 +739,7 @@ async def run_content_v13_pipeline_task(
         pass
 
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "content_v13"})
 
             output = await run_content_generation_v13(
@@ -821,7 +821,7 @@ async def run_kb_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="knowledge_base", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = KnowledgeBaseInput(
                 company_name=request.company_name,
                 domain=getattr(request, "domain", None),
@@ -922,7 +922,7 @@ async def run_audience_persona_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="audience_persona", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = AudiencePersonaInput(
                 company_name=request.company_name,
                 domain=getattr(request, "domain", None),
@@ -996,7 +996,7 @@ async def run_single_persona_generator_task(
 
     bind_context(task_id=task_id, pipeline_name="audience_persona", company_slug=slug)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             root = Path(artifacts_root) if artifacts_root else Path("artifacts")
             storage = PersonaStorage(root, slug)
             brief = storage.read_brief(persona_id)
@@ -1095,7 +1095,7 @@ async def run_voice_style_guide_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="voice_style_guide", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = VoiceStyleGuideInput(
                 company_name=request.company_name,
                 domain=getattr(request, "domain", None),
@@ -1198,7 +1198,7 @@ async def run_research_orchestrator_task(
         if run_id:
             bind_context(run_id=str(run_id))
 
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             # Build auto-approve config
             auto_approve_raw = getattr(request, "auto_approve", None)
             auto_approve_dict = {}
@@ -1340,7 +1340,7 @@ async def run_topic_discovery_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="topic_discovery", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = TopicDiscoveryInput(
                 company_name=request.company_name,
                 domain=getattr(request, "domain", None),
@@ -1429,7 +1429,7 @@ async def run_topic_expansion_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="topic_expansion", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = TopicExpansionInput(
                 company_name=request.company_name,
                 domain=getattr(request, "domain", None),
@@ -1526,7 +1526,7 @@ async def run_td_content_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="td_content", company_slug=company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "td_content"})
 
             output = await run_td_to_content_pipeline(
@@ -1619,7 +1619,7 @@ async def run_onboarding_task(
         if run_id:
             bind_context(run_id=str(run_id))
 
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = OnboardingInput(
                 company_name=company_name,
                 domain=company_domain,
@@ -1768,7 +1768,7 @@ async def run_daily_tracker_task(
                 "Daily tracker requires DATABASE_URL for prompt storage"
             )
 
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "daily_tracker"})
 
             from core.db.repositories.daily_tracker_repo import TrackedPromptRepository

@@ -238,8 +238,8 @@ class TestTaskStoreProtocol:
 
     def test_task_store_protocol_methods(self):
         expected = {
-            "semaphore", "create_task", "get_task", "update_task",
-            "list_tasks", "acquire_slug_lock", "release_slug_lock",
+            "semaphore", "pipeline_semaphore", "create_task", "get_task",
+            "update_task", "list_tasks", "acquire_slug_lock", "release_slug_lock",
             "register_task_handle", "cancel_task_handle", "remove_task_handle",
             "wait_for_approval", "submit_approval",
         }
@@ -256,8 +256,8 @@ class TestTaskStoreProtocol:
 
     def test_db_task_store_protocol_methods(self):
         expected = {
-            "semaphore", "create_task", "get_task", "update_task",
-            "list_tasks", "acquire_slug_lock", "release_slug_lock",
+            "semaphore", "pipeline_semaphore", "create_task", "get_task",
+            "update_task", "list_tasks", "acquire_slug_lock", "release_slug_lock",
             "register_task_handle", "cancel_task_handle", "remove_task_handle",
             "wait_for_approval", "submit_approval",
         }

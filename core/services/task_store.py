@@ -24,6 +24,8 @@ class TaskStoreProtocol(Protocol):
     @property
     def semaphore(self) -> asyncio.Semaphore: ...
 
+    def pipeline_semaphore(self, task_id: str): ...  # Returns async context manager
+
     # ── CRUD ──────────────────────────────────────────────────────
 
     def create_task(

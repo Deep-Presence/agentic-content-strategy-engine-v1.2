@@ -72,6 +72,13 @@ class TaskStore:
     def semaphore(self) -> asyncio.Semaphore:
         return self._semaphore
 
+    def pipeline_semaphore(self, task_id: str):
+        """Return async context manager for pipeline concurrency.
+
+        JSON TaskStore has no Redis — always returns local asyncio.Semaphore.
+        """
+        return self._semaphore
+
     # ── CRUD ──────────────────────────────────────────────────────────
 
     def create_task(

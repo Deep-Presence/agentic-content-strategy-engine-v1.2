@@ -1,7 +1,7 @@
 {
-  "current_sprint": "redis-integration-session-4",
+  "current_sprint": "redis-integration-session-5",
   "last_updated": "2026-03-22",
-  "test_count": 2120,
+  "test_count": 2131,
   "completed_sprints_summary": {
     "total_tasks_completed": 40,
     "sprints": [
@@ -30,10 +30,31 @@
       {"sprint": "redis-session-1", "date": "2026-03-22", "summary": "RedisEventBus — Redis Streams SSE, atomic Lua INCR+XADD, EventBusProtocol, thread-safe mirror with eviction. 37 tests."},
       {"sprint": "redis-session-2", "date": "2026-03-22", "summary": "Pipeline State (Redis Hashes) + Distributed Locks. state_redis.py (8 helpers), async writes, task-scoped cleanup, SET NX EX + Lua compare-delete, fail-closed, orphan cleanup, lock TTL refresh. 36 tests."},
       {"sprint": "redis-session-3", "date": "2026-03-22", "summary": "HITL RedisSaver — replace MemorySaver with RedisSaver across 12 graph builders. Shared core/checkpointer.py factory (singleton, thread-safe, graceful fallback). 1 Codex finding resolved (race condition). 7 tests."},
-      {"sprint": "redis-session-4", "date": "2026-03-22", "summary": "Redis Approval Queues — BRPOP/LPUSH in DbTaskStore. Nonce in Redis, SET NX duplicate flag, asyncio.to_thread BRPOP. Graceful fallback. 13 tests."}
+      {"sprint": "redis-session-4", "date": "2026-03-22", "summary": "Redis Approval Queues — BRPOP/LPUSH in DbTaskStore. Nonce in Redis, SET NX duplicate flag, asyncio.to_thread BRPOP. Graceful fallback. 13 tests."},
+      {"sprint": "redis-session-5", "date": "2026-03-22", "summary": "Redis Distributed Semaphore — atomic Lua acquire (Sorted Set), pipeline_semaphore(task_id) protocol method, 14 runner call sites updated, self-healing 2h TTL. 11 tests."}
     ]
   },
   "completed": [
+    {
+      "id": "T-redis-session-5",
+      "task": "Redis Session 5 — Distributed Semaphore. Replace per-worker asyncio.Semaphore with Redis Sorted Set semaphore. Atomic Lua acquire script (ZREMRANGEBYSCORE+ZCARD+ZADD). pipeline_semaphore(task_id) method on TaskStoreProtocol/DbTaskStore/TaskStore. 14 runner call sites updated. Self-healing 2h member TTL. Graceful fallback to asyncio.Semaphore without Redis.",
+      "sprint": "redis-integration-session-5",
+      "status": "done",
+      "completed_at": "2026-03-22",
+      "tests_added": 11,
+      "files_created": [
+        "core/redis_semaphore.py",
+        "tests/services/test_redis_semaphore.py"
+      ],
+      "files_modified": [
+        "core/services/task_store.py",
+        "core/services/db_task_store.py",
+        "api/tasks/store.py",
+        "api/tasks/runner.py",
+        "tests/services/test_protocol_conformance.py",
+        "CLAUDE.md"
+      ]
+    },
     {
       "id": "T-redis-session-4",
       "task": "Redis Session 4 — Approval Queues. Replace asyncio.Queue with Redis LPUSH/BRPOP in DbTaskStore. Redis-first nonce validation (GET), duplicate prevention (SET NX), payload delivery (LPUSH/BRPOP via asyncio.to_thread). Nonce write/clear in update_task. Graceful fallback to asyncio.Queue when Redis unavailable.",

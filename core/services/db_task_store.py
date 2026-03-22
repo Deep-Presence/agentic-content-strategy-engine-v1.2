@@ -60,6 +60,7 @@ end
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._approval_queues: Dict[str, asyncio.Queue] = {}
         self._task_handles: Dict[str, asyncio.Task] = {}
+        self._max_concurrent = max_concurrent
         # Redis for distributed slug locks (sync client, sub-ms ops)
         self._redis_sync = redis_client
         self._release_script = (
@@ -67,9 +68,28 @@ end
             if redis_client is not None
             else None
         )
+        # Redis distributed semaphore (global pipeline concurrency)
+        self._redis_semaphore = None
+        if redis_client is not None:
+            from core.redis_semaphore import RedisSemaphore
+            self._redis_semaphore = RedisSemaphore(
+                redis_sync=redis_client,
+                name="pipelines",
+                max_concurrent=max_concurrent,
+            )
 
     @property
     def semaphore(self) -> asyncio.Semaphore:
+        return self._semaphore
+
+    def pipeline_semaphore(self, task_id: str):
+        """Return an async context manager for the pipeline concurrency semaphore.
+
+        With Redis: returns RedisSemaphore context (distributed, atomic).
+        Without Redis: returns asyncio.Semaphore (process-local fallback).
+        """
+        if self._redis_semaphore is not None:
+            return self._redis_semaphore.acquire_context(task_id)
         return self._semaphore
 
     # ── Startup recovery ──────────────────────────────────────────────
