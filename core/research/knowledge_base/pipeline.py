@@ -48,7 +48,7 @@ from core.research.knowledge_base.graph import (
 )
 from core.research.knowledge_base.storage import KBStorage
 from core.shared_tools.structured_logging import scoped_bind
-from core.shared_tools.tracing import create_session, create_span, end_span, flush, log_generation
+from core.shared_tools.tracing import create_session, create_span, create_trace, end_span, flush, log_generation
 
 logger = logging.getLogger(__name__)
 
@@ -420,8 +420,8 @@ async def run_knowledge_base_pipeline(
     changed_doc_types: List[KBDocType] = []
 
     # Tracing
-    trace_session = create_session(slug)
-    trace_span = create_span(None, f"kb-pipeline/{slug}", input_data={
+    session_id = create_session(slug)
+    trace_span = create_trace(session_id, f"kb-pipeline/{slug}", input_data={
         "mode": mode, "target_docs": [d.value for d in target_docs],
     })
 
@@ -489,6 +489,9 @@ async def run_knowledge_base_pipeline(
                     "checkpoint": 1,
                     "auto_approve": True,
                 }
+                hitl_express_span = create_span(trace_span, "hitl/express", input_data={
+                    "checkpoint": 1, "docs": [dt.value for dt in express_doc_types],
+                })
                 hitl_result = await run_kb_hitl_checkpoint(
                     doc_review_graph, hitl_state,
                     thread_id=f"kb-hitl-express-{slug}-{uuid.uuid4().hex[:8]}",
@@ -497,6 +500,7 @@ async def run_knowledge_base_pipeline(
                 )
 
                 cp_decision = hitl_result.get("decision", "approve")
+                end_span(hitl_express_span, output={"decision": cp_decision})
                 if cp_decision == "reject":
                     output = KnowledgeBaseOutput(
                         slug=slug,
@@ -557,6 +561,11 @@ async def run_knowledge_base_pipeline(
                 if not synthesis_result.error:
                     synthesis_md = synthesis_result.content_md
                     storage.write_synthesis(synthesis_md)
+                else:
+                    logger.error(
+                        "KB synthesis failed for %s: %s",
+                        slug, synthesis_result.error,
+                    )
 
                 _emit(event_bus, task_id, "kb_agent_complete", {
                     "agent": "synthesis", "word_count": synthesis_result.word_count,
@@ -573,6 +582,9 @@ async def run_knowledge_base_pipeline(
                     "checkpoint": 3,
                     "auto_approve": 3 in auto_approve_cps,
                 }
+                hitl3_express_span = create_span(trace_span, "hitl/express-cp3", input_data={
+                    "checkpoint": 3, "synthesis_word_count": len(synthesis_md.split()),
+                })
                 hitl3_result = await run_kb_hitl_checkpoint(
                     synthesis_review_graph, hitl3_state,
                     thread_id=f"kb-hitl-3-{slug}-{uuid.uuid4().hex[:8]}",
@@ -581,6 +593,7 @@ async def run_knowledge_base_pipeline(
                 )
 
                 cp3_decision = hitl3_result.get("decision", "approve")
+                end_span(hitl3_express_span, output={"decision": cp3_decision})
                 if cp3_decision == "reject":
                     output = KnowledgeBaseOutput(
                         slug=slug,
@@ -741,6 +754,9 @@ async def run_knowledge_base_pipeline(
                 "checkpoint": 1,
                 "auto_approve": 1 in auto_approve_cps,
             }
+            hitl1_span = create_span(trace_span, "hitl/checkpoint-1", input_data={
+                "checkpoint": 1, "docs": [dt.value for dt in cp1_doc_types],
+            })
             hitl1_result = await run_kb_hitl_checkpoint(
                 doc_review_graph, hitl1_state,
                 thread_id=f"kb-hitl-1-{slug}-{uuid.uuid4().hex[:8]}",
@@ -750,6 +766,7 @@ async def run_knowledge_base_pipeline(
 
             # Handle HITL-1 decision
             cp1_decision = hitl1_result.get("decision", "approve")
+            end_span(hitl1_span, output={"decision": cp1_decision})
             if cp1_decision == "reject":
                 output = KnowledgeBaseOutput(
                     slug=slug,
@@ -838,6 +855,9 @@ async def run_knowledge_base_pipeline(
                 "checkpoint": 2,
                 "auto_approve": 2 in auto_approve_cps,
             }
+            hitl2_span = create_span(trace_span, "hitl/checkpoint-2", input_data={
+                "checkpoint": 2, "docs": [dt.value for dt in cp2_doc_types],
+            })
             hitl2_result = await run_kb_hitl_checkpoint(
                 doc_review_graph, hitl2_state,
                 thread_id=f"kb-hitl-2-{slug}-{uuid.uuid4().hex[:8]}",
@@ -846,6 +866,7 @@ async def run_knowledge_base_pipeline(
             )
 
             cp2_decision = hitl2_result.get("decision", "approve")
+            end_span(hitl2_span, output={"decision": cp2_decision})
             if cp2_decision == "reject":
                 output = KnowledgeBaseOutput(
                     slug=slug,
@@ -922,6 +943,11 @@ async def run_knowledge_base_pipeline(
                 synthesis_md = synthesis_result.content_md
                 # Write synthesis version to KB storage (versioned draft)
                 storage.write_synthesis(synthesis_md)
+            else:
+                logger.error(
+                    "KB synthesis failed for %s: %s",
+                    slug, synthesis_result.error,
+                )
 
             _emit(event_bus, task_id, "kb_agent_complete", {
                 "agent": "synthesis", "word_count": synthesis_result.word_count,
@@ -938,6 +964,9 @@ async def run_knowledge_base_pipeline(
                 "checkpoint": 3,
                 "auto_approve": 3 in auto_approve_cps,
             }
+            hitl3_span = create_span(trace_span, "hitl/checkpoint-3", input_data={
+                "checkpoint": 3, "synthesis_word_count": len(synthesis_md.split()),
+            })
             hitl3_result = await run_kb_hitl_checkpoint(
                 synthesis_review_graph, hitl3_state,
                 thread_id=f"kb-hitl-3-{slug}-{uuid.uuid4().hex[:8]}",
@@ -946,6 +975,7 @@ async def run_knowledge_base_pipeline(
             )
 
             cp3_decision = hitl3_result.get("decision", "approve")
+            end_span(hitl3_span, output={"decision": cp3_decision})
             if cp3_decision == "reject":
                 output = KnowledgeBaseOutput(
                     slug=slug,
