@@ -26,6 +26,10 @@ WORKDIR /app
 # Python packages from builder
 COPY --from=builder /install /usr/local
 
+# Install Playwright Chromium browser binaries + system deps
+# --with-deps installs required shared libraries (libnss3, libatk, etc.)
+RUN playwright install chromium --with-deps
+
 # Application code
 COPY core/ ./core/
 COPY api/ ./api/
