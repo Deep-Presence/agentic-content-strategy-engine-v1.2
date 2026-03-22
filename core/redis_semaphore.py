@@ -86,6 +86,19 @@ class RedisSemaphore:
         self._redis.zremrangebyscore(self._key, "-inf", now - self._ttl)
         return self._redis.zcard(self._key)
 
+    def force_clear(self) -> int:
+        """Remove ALL semaphore entries. For startup recovery (single-process).
+
+        In a single-process deployment, any entries from a previous process
+        are guaranteed stale (the previous process is dead). Returns the
+        number of entries removed.
+        """
+        count = self._redis.zcard(self._key)
+        if count:
+            self._redis.delete(self._key)
+            logger.info("Semaphore '%s': force-cleared %d stale entries", self._key, count)
+        return count
+
 
 class _SemaphoreContext:
     """Async context manager for RedisSemaphore — replaces ``async with semaphore:``."""

@@ -123,7 +123,7 @@ def _topic_approval_gate(state: Dict[str, Any]) -> Dict[str, Any]:
 
 def _topic_route(state: Dict[str, Any]) -> str:
     """Route based on topic approval decision."""
-    decision = state.get("topic_decision", "approve")
+    decision = state.get("topic_decision", "reject")
     if decision == "approve" or decision == "modify":
         return "approved"
     elif decision == "retry":
@@ -214,7 +214,7 @@ def _brief_approval_gate(state: Dict[str, Any]) -> Dict[str, Any]:
 
 def _brief_route(state: Dict[str, Any]) -> str:
     """Route based on brief approval decision."""
-    decision = state.get("brief_decision", "approve")
+    decision = state.get("brief_decision", "reject")
     if decision == "approve":
         return "approved"
     elif decision == "feedback":
@@ -493,6 +493,16 @@ async def run_hitl_checkpoint(
             # C1 FIX: Use queue return value directly — it is the FIFO-ordered
             # source of truth. Do NOT re-read from task_store.get_task().approval_payload.
             approval = await task_store.wait_for_approval(task_id)
+
+            # Normalize generic "decision" key to stage-specific keys so that
+            # BRPOP timeout fallback {"decision": "reject"} propagates correctly
+            # to the graph's routing functions (_topic_route, _brief_route,
+            # _content_route) which read stage-specific keys.  setdefault()
+            # preserves keys already set by normal frontend approvals.
+            if "decision" in approval:
+                _generic = approval["decision"]
+                for _stage_key in ("content_decision", "topic_decision", "brief_decision"):
+                    approval.setdefault(_stage_key, _generic)
 
             # H1 FIX: Reset status to RUNNING and clear approval_payload
             # (matches research pipeline pattern in runner.py:481)

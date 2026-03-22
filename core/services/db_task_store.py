@@ -115,18 +115,27 @@ end
 
         # Clean up orphaned Redis locks from crashed workers
         orphan_locks_cleaned = 0
+        semaphore_cleared = 0
         if self._redis_sync is not None:
             try:
                 orphan_locks_cleaned = self._cleanup_orphan_locks()
             except Exception:
                 logger.warning("Failed to clean orphan Redis locks", exc_info=True)
+            # Clear stale semaphore entries — in single-process mode, all
+            # previous entries are from a dead process and guaranteed stale.
+            if self._redis_semaphore is not None:
+                try:
+                    semaphore_cleared = self._redis_semaphore.force_clear()
+                except Exception:
+                    logger.warning("Failed to clear stale semaphore entries", exc_info=True)
 
         logger.info(
             "DbTaskStore recovered: %d tasks loaded, %d orphans marked failed_restart, "
-            "%d orphan Redis locks cleaned",
+            "%d orphan Redis locks cleaned, %d stale semaphore entries cleared",
             len(self._tasks),
             orphan_count,
             orphan_locks_cleaned,
+            semaphore_cleared,
         )
         return orphan_count
 
@@ -394,22 +403,78 @@ end
     async def _wait_for_approval_redis(
         self, task_id: str, timeout: float
     ) -> Dict[str, Any]:
-        """Block on Redis BRPOP until approval arrives or timeout expires."""
+        """Poll Redis BRPOP in short intervals until approval arrives or timeout expires.
+
+        Uses 1s BRPOP intervals to stay within the sync client's socket_timeout
+        and to remain cancellable via asyncio.
+
+        On persistent Redis failure (10 consecutive errors), falls back to an
+        asyncio.Queue so the frontend can still deliver approvals via the
+        in-memory path rather than silently auto-rejecting.
+        """
         key = f"approval:{task_id}"
         flag_key = f"approval:flag:{task_id}"
         nonce_key = f"approval:nonce:{task_id}"
 
-        try:
-            result = await asyncio.to_thread(
-                self._redis_sync.brpop, key, timeout=max(1, int(timeout))
-            )
-        except Exception:
-            logger.exception(
-                "Redis BRPOP failed for task %s — falling back to reject", task_id
-            )
-            result = None
+        import time
 
-        if result is None:
+        _MAX_CONSECUTIVE_ERRORS = 10
+        deadline = time.monotonic() + timeout
+        result = None
+        consecutive_errors = 0
+        redis_gave_up = False
+        while time.monotonic() < deadline:
+            try:
+                result = await asyncio.to_thread(
+                    self._redis_sync.brpop, key, timeout=1
+                )
+                consecutive_errors = 0  # reset on success (incl. None = no item)
+                if result is not None:
+                    break
+            except Exception:
+                consecutive_errors += 1
+                if consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
+                    logger.exception(
+                        "Redis BRPOP failed %d times for task %s — falling back to Queue",
+                        consecutive_errors,
+                        task_id,
+                    )
+                    redis_gave_up = True
+                    break
+                backoff = min(2 ** (consecutive_errors - 1), 10)
+                logger.warning(
+                    "Redis BRPOP transient error for task %s (attempt %d) — retrying in %.0fs",
+                    task_id,
+                    consecutive_errors,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+
+        if redis_gave_up:
+            # Fall back to asyncio.Queue — frontend submit_approval() also
+            # pushes to the in-memory queue as a hybrid safety net.
+            logger.info(
+                "BRPOP fallback: waiting on asyncio.Queue for task %s", task_id
+            )
+            if task_id not in self._approval_queues:
+                self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
+            remaining = max(1.0, deadline - time.monotonic())
+            try:
+                data = await asyncio.wait_for(
+                    self._approval_queues[task_id].get(), timeout=remaining
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Approval timed out after %.0fs for task %s — auto-rejecting",
+                    timeout,
+                    task_id,
+                )
+                data = {
+                    "decision": "reject",
+                    "revision_note": f"Approval timed out after {int(timeout)}s",
+                }
+            self._approval_queues.pop(task_id, None)
+        elif result is None:
             logger.warning(
                 "Approval timed out after %.0fs for task %s — auto-rejecting",
                 timeout,

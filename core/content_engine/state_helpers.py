@@ -47,10 +47,10 @@ def _write_pipeline_state(
     the reserved ``__task_ids__`` key so the frontend can discover the pipeline
     run_id for HITL approval calls.
 
-    When *redis_client* and *effective_slug* are provided, writes to Redis Hash
-    first. Falls back to file on Redis failure.
+    When *redis_client* and *effective_slug* are provided, writes to both
+    Redis Hash AND file for fallback resilience.
     """
-    # Try Redis first (when configured)
+    # Try Redis (when configured) — best-effort, does NOT skip file write
     if redis_client is not None and effective_slug:
         try:
             from core.content_engine.state_redis import write_pipeline_state_redis
@@ -58,14 +58,13 @@ def _write_pipeline_state(
             write_pipeline_state_redis(
                 redis_client, effective_slug, brief_ids, phase, task_id=task_id
             )
-            return
         except Exception:
             logger.warning(
-                "Redis pipeline state write failed — falling back to file",
+                "Redis pipeline state write failed — file write still proceeds",
                 exc_info=True,
             )
 
-    # File-based fallback (existing code)
+    # File write (ALWAYS runs — ensures fallback is never stale)
     state_path = artifact_dir / "pipeline_state.json"
     existing: Dict[str, Any] = {}
     if state_path.is_file():
@@ -163,7 +162,7 @@ async def _write_pipeline_state_async(
     redis_client: Optional[Any] = None,
     effective_slug: Optional[str] = None,
 ) -> None:
-    """Async write: tries async Redis first, falls back to sync file write.
+    """Async write: writes to both async Redis AND sync file for resilience.
 
     Also refreshes the associated lock TTL on successful Redis write,
     preventing lock expiry during long HITL waits.
@@ -182,14 +181,13 @@ async def _write_pipeline_state_async(
                 )
             except Exception:
                 pass  # Best-effort refresh
-            return
         except Exception:
             logger.warning(
-                "Redis pipeline state write failed — falling back to file",
+                "Redis pipeline state write failed — file write still proceeds",
                 exc_info=True,
             )
 
-    # File-based fallback (sync — only runs when Redis fails)
+    # File write (ALWAYS runs — ensures fallback is never stale)
     _write_pipeline_state(artifact_dir, brief_ids, phase, task_id=task_id)
 
 

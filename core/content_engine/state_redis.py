@@ -58,6 +58,15 @@ def write_pipeline_state_redis(
     Validates phase against ``BriefPipelineStatus`` (warns but does not
     fail on unknown values, matching file-based behavior).
     """
+    # Guard: detect async client passed by mistake (causes silent coroutine leak)
+    import redis.asyncio as _aioredis
+
+    if isinstance(redis_sync, _aioredis.Redis):
+        raise TypeError(
+            "write_pipeline_state_redis requires a sync Redis client, "
+            "got async. Use write_pipeline_state_redis_async instead."
+        )
+
     if phase not in _VALID_PHASES:
         logger.warning("write_pipeline_state_redis called with unknown phase %r", phase)
 

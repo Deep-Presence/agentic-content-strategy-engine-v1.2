@@ -326,10 +326,10 @@ class TestReadFallback:
 
 
 class TestWritePipelineStateIntegration:
-    def test_uses_redis_when_client_and_slug_provided(
+    def test_uses_redis_and_writes_file(
         self, tmp_path: Path, mock_sync_redis: MagicMock
     ) -> None:
-        """Calls write_pipeline_state_redis, does NOT write file."""
+        """Calls write_pipeline_state_redis AND writes file (dual-write)."""
         from core.content_engine.state_helpers import _write_pipeline_state
 
         _write_pipeline_state(
@@ -341,8 +341,8 @@ class TestWritePipelineStateIntegration:
 
         # Redis pipeline was used
         mock_sync_redis.pipeline.assert_called_once()
-        # File was NOT written
-        assert not (tmp_path / "pipeline_state.json").exists()
+        # File ALSO written (dual-write for fallback resilience)
+        assert (tmp_path / "pipeline_state.json").exists()
 
     def test_falls_back_to_file_when_redis_raises(
         self, tmp_path: Path, mock_sync_redis: MagicMock

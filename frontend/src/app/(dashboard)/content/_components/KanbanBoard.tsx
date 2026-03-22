@@ -59,6 +59,7 @@ function ContentCard({
           suggested: 'Awaiting approval',
           briefing: 'Generating brief',
           brief_review: 'Approve brief',
+          pending_brief_approval: 'Approve brief',
           approved: 'Brief approved',
           outlining: 'Outlining',
           drafting: 'Drafting',
@@ -67,10 +68,11 @@ function ContentCard({
           evaluating: 'Evaluating',
           revising: 'Revising',
           review: 'Final review',
+          pending_content_approval: 'Approve content',
           completed: 'Published',
           published: 'Published',
         };
-        const isHitl = ['suggested', 'brief_review', 'review'].includes(brief.status);
+        const isHitl = ['suggested', 'brief_review', 'pending_brief_approval', 'review', 'pending_content_approval'].includes(brief.status);
         const isDone = ['completed', 'published'].includes(brief.status);
         const label = badgeText[brief.status];
         if (!label) return null;

@@ -35,7 +35,7 @@ _PIECE_STATUS_MAP = {
     "planned": "suggested",
     "drafting": "drafting",
     "review": "review",
-    "approved": "approved",
+    "approved": "completed",  # HITL-3 approved → Approved/Published column
     "published": "published",
     "archived": "published",
 }

@@ -566,19 +566,9 @@ async def _finalize_pipeline(
         meta_path = artifact_dir / "run_metadata_v13.json"
     meta_path.write_text(output.model_dump_json(indent=2), encoding="utf-8")
 
-    # Clean up this run's brief IDs from pipeline_state.json.
-    # Per-brief removal is concurrency-safe: parallel manual runs retain their entries.
-    await _cleanup_pipeline_state_async(artifact_dir, [p.brief_id for p in pieces], redis_client=redis_client, effective_slug=slug)
-
-    # Invalidate content cache so next dashboard request gets fresh data
-    from core.cache import cache_delete_pattern
-    from core.redis import get_sync_redis_or_none
-
-    _cache_redis = get_sync_redis_or_none()
-    if _cache_redis:
-        cache_delete_pattern(_cache_redis, f"cache:content:{slug}:*")
-
-    # 2-3. Persist to DB
+    # 2-3. Persist to DB BEFORE pipeline_state cleanup.
+    # This eliminates the window where neither pipeline_state nor DB has the
+    # brief's status (which causes a Triage flash in the frontend).
     await persist_content_pieces(
         session_factory=session_factory,
         run_id=run_id,
@@ -595,6 +585,19 @@ async def _finalize_pipeline(
         total_approved=sum(1 for p in pieces if p.status == ContentStatus.APPROVED),
         total_rejected=sum(1 for p in pieces if p.status == ContentStatus.REJECTED),
     )
+
+    # Clean up this run's brief IDs from pipeline_state.json.
+    # Per-brief removal is concurrency-safe: parallel manual runs retain their entries.
+    # Runs AFTER DB persist so the DB fallback is ready before pipeline_state is removed.
+    await _cleanup_pipeline_state_async(artifact_dir, [p.brief_id for p in pieces], redis_client=redis_client, effective_slug=slug)
+
+    # Invalidate content cache so next dashboard request gets fresh data
+    from core.cache import cache_delete_pattern
+    from core.redis import get_sync_redis_or_none
+
+    _cache_redis = get_sync_redis_or_none()
+    if _cache_redis:
+        cache_delete_pattern(_cache_redis, f"cache:content:{slug}:*")
 
     # 4. Update trace and flush
     # update_trace_output ends the trace internally — no end_span needed
@@ -900,7 +903,7 @@ async def _run_pipeline_stages(
             )
 
             # Mark approved topics as "approved" for Kanban sync
-            _write_pipeline_state(
+            await _write_pipeline_state_async(
                 artifact_dir,
                 [f"brief-{r + 1:03d}" for r in approved_ranks],
                 "approved",
@@ -956,7 +959,7 @@ async def _run_pipeline_stages(
 
             # Mark blueprints as "brief_review" pending HITL-2
             # (Uses actual brief_ids from build_briefs_parallel, not predicted IDs)
-            _write_pipeline_state(
+            await _write_pipeline_state_async(
                 artifact_dir,
                 [bp.brief_id for bp in blueprints],
                 "brief_review",
@@ -974,6 +977,14 @@ async def _run_pipeline_stages(
                 brief_feedback_count = 0
 
                 while True:
+                    # Write pending state before HITL graph so polling sees it
+                    await _write_pipeline_state_async(
+                        artifact_dir, [bp.brief_id],
+                        "pending_brief_approval",
+                        task_id=task_id,
+                        redis_client=redis_client,
+                        effective_slug=slug,
+                    )
                     set_current_span(stage2_span)
                     brief_graph = build_brief_approval_graph()
                     brief_state = await run_hitl_checkpoint(
@@ -1245,6 +1256,14 @@ async def _run_pipeline_stages(
             brief_feedback_count = 0
 
             while True:
+                # Write pending state before HITL graph so polling sees it
+                await _write_pipeline_state_async(
+                    artifact_dir, [bp.brief_id],
+                    "pending_brief_approval",
+                    task_id=task_id,
+                    redis_client=redis_client,
+                    effective_slug=slug,
+                )
                 set_current_span(pipeline_trace)
                 brief_graph = build_brief_approval_graph()
                 brief_state = await run_hitl_checkpoint(
@@ -1620,7 +1639,7 @@ async def _run_pipeline_stages(
             _emit(event_bus, task_id, "stage_complete", {"stage": 4, "evaluated": len(evaluated)})
 
             # Mark evaluated briefs as "review" for Kanban sync (HITL-3 pending)
-            _write_pipeline_state(
+            await _write_pipeline_state_async(
                 artifact_dir,
                 [bid for bid, _, _, _ in evaluated],
                 "review",
@@ -1715,6 +1734,15 @@ async def _run_pipeline_stages(
                         eval_summary["cps"] = cps_data
 
                     # HITL Checkpoint 3: Final Content Review
+                    # Write pending state BEFORE graph starts so polling also
+                    # discovers the HITL state (not just SSE events).
+                    await _write_pipeline_state_async(
+                        artifact_dir, [final_content.brief_id],
+                        "pending_content_approval",
+                        task_id=task_id,
+                        redis_client=redis_client,
+                        effective_slug=slug,
+                    )
                     set_current_span(stage5_span)
                     review_graph = build_content_review_graph()
                     review_state = await run_hitl_checkpoint(

@@ -938,7 +938,7 @@ export function DetailView({ brief, onClose, onOpenFullEditor, onBriefApproved }
               onBriefApproved={onBriefApproved}
             />
           )}
-          {brief.stage === 'brief' && (brief.status === 'brief_review' || brief.status === 'approved') && (
+          {brief.stage === 'brief' && (brief.status === 'brief_review' || brief.status === 'approved' || brief.status === 'pending_brief_approval') && (
             <BriefApprovalView
               brief={brief}
               onApprove={() => showToast('Brief approved — workers starting', 'success')}
@@ -948,7 +948,7 @@ export function DetailView({ brief, onClose, onOpenFullEditor, onBriefApproved }
               onError={(msg) => showToast(msg, 'error')}
             />
           )}
-          {((brief.stage === 'brief' && brief.status !== 'brief_review' && brief.status !== 'approved') || brief.stage === 'generating') && (
+          {((brief.stage === 'brief' && brief.status !== 'brief_review' && brief.status !== 'approved' && brief.status !== 'pending_brief_approval') || brief.stage === 'generating') && (
             <InProgressView brief={brief} />
           )}
           {brief.stage === 'review' && (
