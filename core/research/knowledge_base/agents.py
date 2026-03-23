@@ -489,11 +489,29 @@ async def run_synthesis_agent(
                 revision_note=revision_note,
             )
 
-        # Propagate tracing span as LangChain callback so all internal
-        # LLM calls within the react agent are logged to LangSmith.
+        # Propagate tracing into the react agent so internal LLM calls
+        # appear as children of this span in LangSmith.  We use
+        # LangChainTracer (a proper BaseCallbackHandler) rather than
+        # passing the RunTree directly — RunTree lacks the `run_inline`
+        # attribute that langchain-core's callback manager requires.
         invoke_config: Dict[str, Any] = {}
         if span is not None:
-            invoke_config["callbacks"] = [span]
+            try:
+                import os
+
+                from langchain_core.tracers.langchain import LangChainTracer
+
+                tracer = LangChainTracer(
+                    project_name=os.environ.get(
+                        "LANGCHAIN_PROJECT",
+                        os.environ.get("LANGSMITH_PROJECT"),
+                    ),
+                    parent_run_id=str(span.id),
+                )
+                invoke_config["callbacks"] = [tracer]
+            except Exception:
+                # Tracing is best-effort; never block synthesis.
+                pass
 
         result = await asyncio.wait_for(
             agent.ainvoke({"messages": [("user", user_prompt)]}, invoke_config),
