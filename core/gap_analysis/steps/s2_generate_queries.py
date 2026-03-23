@@ -29,10 +29,8 @@ logger = logging.getLogger(__name__)
 
 _CONTENT_ENGINE_ROOT = Path(__file__).resolve().parents[3]  # content-strategy-engine/
 _DEFAULT_TAXONOMY_PATH = (
-    _CONTENT_ENGINE_ROOT.parent.parent  # Deep_Presence/
-    / "research"
-    / "Citation_Signal_Predictor"
-    / "cps_model"
+    Path(__file__).resolve().parent.parent  # core/gap_analysis/
+    / "data"
     / "b2b_queries_180.json"
 )
 
