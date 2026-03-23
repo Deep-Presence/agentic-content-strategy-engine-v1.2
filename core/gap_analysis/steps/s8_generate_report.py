@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -17,6 +19,9 @@ from core.models.gap_analysis import (
     QueryGap,
 )
 from core.config.settings import settings
+from core.shared_tools.tracing import log_generation
+
+logger = logging.getLogger(__name__)
 
 
 async def _call_openai(prompt: str, model: str) -> str:
@@ -355,6 +360,8 @@ async def generate_gap_report(
     queries: List[GeneratedQuery],
     citations: List[EnrichedCitation],
     model: Optional[str] = None,
+    *,
+    trace_span: Optional[Any] = None,
 ) -> GapReport:
     model_name = model or settings.gap_analysis_report_model
 
@@ -365,11 +372,17 @@ async def generate_gap_report(
     # Phase B: LLM generates executive summary + recommendations
     llm_prompt = _build_llm_summary_prompt(analysis)
     try:
+        t0 = time.monotonic()
         llm_response = await _call_openai(llm_prompt, model_name)
         llm_payload = _extract_json(llm_response)
         executive_summary = llm_payload.get("executive_summary", "")
         recommendations = llm_payload.get("recommendations", [])
-    except Exception:
+        elapsed = time.monotonic() - t0
+        logger.info("S8 LLM summary: model=%s, elapsed=%.1fs, recommendations=%d", model_name, elapsed, len(recommendations))
+        if trace_span:
+            log_generation(trace_span, "s8-executive-summary", model_name, llm_prompt[:500], llm_response[:500], usage=None)
+    except Exception as exc:
+        logger.warning("S8 LLM summary generation failed: %s", exc)
         executive_summary = ""
         recommendations = []
 
@@ -409,6 +422,13 @@ async def generate_gap_report(
     spec_json = {
         "cluster_specs": [s.model_dump(mode="json") for s in analysis.cluster_specs],
     }
+
+    logger.info(
+        "S8 report complete: %d gaps, %d clusters, %d recommendations",
+        len(analysis.gaps),
+        len(analysis.cluster_specs),
+        len(recommendations),
+    )
 
     return GapReport(
         report_md=final_report_md,

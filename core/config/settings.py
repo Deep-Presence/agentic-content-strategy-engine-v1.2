@@ -155,6 +155,7 @@ class Settings(BaseSettings):
     langsmith_project: str = "content-engine"
     langsmith_use_hub: bool = False
     langsmith_hub_tag: str = "production"
+    gap_analysis_langsmith_project: str = "gap-analysis"
 
     # --- Research Knowledge Base ---
     research_kb_project: str = "research-kb"

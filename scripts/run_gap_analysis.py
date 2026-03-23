@@ -21,6 +21,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]  # content-strategy-engine/
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from core.shared_tools.structured_logging import configure_logging
+
+configure_logging()
+
 from core.gap_analysis.pipeline import run_gap_analysis
 from core.models.gap_analysis import GapAnalysisInput
 

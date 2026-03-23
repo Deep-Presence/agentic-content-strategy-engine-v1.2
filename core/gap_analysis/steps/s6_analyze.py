@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+import time
 from collections import Counter, defaultdict
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 from scipy.stats import ttest_ind
 
 from core.models.gap_analysis import (
@@ -150,6 +154,9 @@ def compute_gap_analysis(
     company_citation_map: Optional[Dict[str, List[str]]] = None,
     page_analysis_lookup: Optional[Dict[str, CompanyPageAnalysis]] = None,
 ) -> AnalysisResult:
+    s6_t0 = time.monotonic()
+    logger.info("S6 starting: %d queries, %d company units, %d enriched citations", len(queries), len(company_units), len(enriched))
+
     query_lookup = {q.query_id: q for q in queries}
     cluster_lookup = _cluster_map(queries)
 
@@ -277,6 +284,16 @@ def compute_gap_analysis(
         citation_sims_all.extend(sims)
         company_sims_all.append(best_company)
 
+    interp_counts = Counter(g.interpretation for g in gaps)
+    logger.info(
+        "S6 gaps: %d total — significant_gap=%d, gap_to_close=%d, roughly_equal=%d, company_wins=%d",
+        len(gaps),
+        interp_counts.get("significant_gap", 0),
+        interp_counts.get("gap_to_close", 0),
+        interp_counts.get("roughly_equal", 0),
+        interp_counts.get("company_wins", 0),
+    )
+
     proximity_stats = {
         "citation_similarity_mean": float(np.mean(citation_sims_all)) if citation_sims_all else 0.0,
         "citation_similarity_median": float(np.median(citation_sims_all)) if citation_sims_all else 0.0,
@@ -318,6 +335,11 @@ def compute_gap_analysis(
             )
         )
 
+    if spa_results:
+        spa = spa_results[0]
+        effect_size = spa.mean_citation_similarity - spa.mean_company_similarity
+        logger.info("S6 SPA: t_stat=%.3f, p_value=%.4f, effect_size=%.4f", spa.t_stat, spa.p_value, effect_size)
+
     centroids: List[CentroidResult] = []
     for cluster, cluster_queries in _group_by_cluster(queries).items():
         query_embeddings = [q.embedding for q in cluster_queries if q.embedding]
@@ -337,13 +359,18 @@ def compute_gap_analysis(
             )
         )
 
+    logger.info("S6 centroids: %d clusters computed", len(centroids))
+
     citation_patterns = _citation_patterns(enriched)
     cluster_specs = _compute_cluster_specs(enriched, queries, gaps)
+    logger.info("S6 cluster specs: %d clusters", len(cluster_specs))
     decision_metrics = {
         "total_queries": len(queries),
         "total_citations": len(enriched),
         "avg_gap": float(np.mean([g.gap or 0.0 for g in gaps])) if gaps else 0.0,
     }
+
+    logger.info("S6 complete: %.1fs total", time.monotonic() - s6_t0)
 
     return AnalysisResult(
         proximity_stats=proximity_stats,
@@ -513,8 +540,8 @@ def _compute_cluster_specs(
                 tfidf = TfidfVectorizer(max_features=20, stop_words="english")
                 tfidf.fit_transform(all_docs)
                 exemplar_themes = list(tfidf.get_feature_names_out()[:10])
-        except Exception:
-            pass  # Empty vocab or other TF-IDF failure — acceptable
+        except Exception as exc:
+            logger.debug("TF-IDF theme extraction failed for cluster: %s", exc)
 
         specs.append(
             ClusterContentSpec(
