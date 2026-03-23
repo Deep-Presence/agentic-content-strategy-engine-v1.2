@@ -16,10 +16,12 @@ from starlette.types import ASGIApp
 from api.config import api_settings
 from api.exceptions import (
     PipelineError,
+    approval_delivery_error_handler,
     pipeline_error_handler,
     task_conflict_handler,
     task_not_found_handler,
 )
+from api.tasks.store import ApprovalDeliveryError
 from api.auth.middleware import AuthMiddleware
 from api.auth.store import AuthStore
 from api.routers import artifacts, audience_persona, auth, brand_data, companies, content, content_data, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, onboarding, research_orchestrator, settings, site_audit as site_audit_router, tasks, topic_discovery, voice_style_guide
@@ -314,6 +316,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(TaskNotFoundError, task_not_found_handler)
     app.add_exception_handler(TaskConflictError, task_conflict_handler)
     app.add_exception_handler(PipelineError, pipeline_error_handler)
+    app.add_exception_handler(ApprovalDeliveryError, approval_delivery_error_handler)
 
     # Routers
     app.include_router(health.router)

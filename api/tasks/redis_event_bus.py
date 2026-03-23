@@ -21,7 +21,7 @@ import json
 import logging
 import threading
 from collections import deque
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 import redis.asyncio as aioredis
 
@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 _TERMINAL_TYPES = {"completed", "failed", "cancelled"}
 _STREAM_TTL = 86400  # 24 hours
 _MAX_MIRROR_TASKS = 1000  # Max task entries in in-memory mirror
+_TERMINAL_RETRY_BACKOFFS = [0.5, 1.0, 2.0]  # Retry backoffs for terminal events
 
 # Lua script: atomic INCR + XADD + 2x EXPIRE in single Redis round trip.
 # Eliminates out-of-order writes when concurrent coroutines publish to the
@@ -145,20 +146,44 @@ class RedisEventBus:
         event_type: str,
         data: Dict[str, Any],
     ) -> None:
-        """Atomic Redis write via Lua: INCR → XADD → 2× EXPIRE."""
+        """Atomic Redis write via Lua: INCR → XADD → 2× EXPIRE.
+
+        Terminal events (completed/failed/cancelled) are retried up to 3 times
+        with exponential backoff. Non-terminal events are fire-and-forget.
+        """
         counter_key = f"sse:counter:{task_id}"
         stream_key = f"sse:{task_id}"
-        try:
-            await self._publish_script(
-                keys=[counter_key, stream_key],
-                args=[event_type, json.dumps(data), self._max_history],
-            )
-        except Exception:
-            logger.warning(
-                "Redis publish failed for task %s",
-                task_id,
-                exc_info=True,
-            )
+        is_terminal = event_type in _TERMINAL_TYPES
+        max_attempts = 1 + len(_TERMINAL_RETRY_BACKOFFS) if is_terminal else 1
+
+        for attempt in range(max_attempts):
+            try:
+                await self._publish_script(
+                    keys=[counter_key, stream_key],
+                    args=[event_type, json.dumps(data), self._max_history],
+                )
+                return  # Success
+            except Exception:
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        "Redis publish attempt %d/%d failed for task %s (terminal=%s) — retrying",
+                        attempt + 1,
+                        max_attempts,
+                        task_id,
+                        is_terminal,
+                        exc_info=True,
+                    )
+                    await asyncio.sleep(_TERMINAL_RETRY_BACKOFFS[attempt])
+                else:
+                    level = logging.ERROR if is_terminal else logging.WARNING
+                    logger.log(
+                        level,
+                        "Redis publish failed for task %s event=%s (attempts=%d)",
+                        task_id,
+                        event_type,
+                        max_attempts,
+                        exc_info=True,
+                    )
 
     # ── eviction (called under self._lock) ─────────────────────────
 
@@ -187,6 +212,7 @@ class RedisEventBus:
         self,
         task_id: str,
         last_event_id: Optional[int] = None,
+        task_status_fn: Optional[Callable[[str], Optional[str]]] = None,
     ) -> AsyncGenerator[str, None]:
         """Async generator yielding SSE-formatted event strings.
 
@@ -194,19 +220,26 @@ class RedisEventBus:
         Phase 2: Live tail via XREAD with 15s heartbeat keepalive.
         Terminates after emitting a terminal event (completed/failed/cancelled).
 
+        If ``task_status_fn`` is provided, every 2 consecutive heartbeats
+        (~30s) the task's DB status is polled. If terminal, a synthesized
+        SSE event is yielded — this covers the case where Redis lost the
+        terminal event but the pipeline already updated the DB.
+
         Redis errors are caught and logged — the SSE connection closes
         gracefully so the client can reconnect with Last-Event-ID.
         """
         key = f"sse:{task_id}"
         cutoff = last_event_id or 0
+        max_seen_seq = cutoff  # Track highest seq for synthesized event IDs (CX-4)
 
         try:
             # Phase 1: Replay from Redis Stream history.
             # XRANGE full-scan bounded by MAXLEN ~200 (sub-millisecond).
-            # No way to map monotonic seq → Redis stream ID without reading.
             entries = await self._redis.xrange(key, min="-", max="+")
             for stream_id, fields in entries:
                 seq = int(fields.get("seq", "0"))
+                if seq > max_seen_seq:
+                    max_seen_seq = seq
                 if seq > cutoff:
                     yield _format_sse_from_fields(seq, fields)
                     if fields.get("type") in _TERMINAL_TYPES:
@@ -214,18 +247,50 @@ class RedisEventBus:
 
             # Phase 2: Live tail via XREAD (block=15s for heartbeat)
             last_stream_id = entries[-1][0] if entries else "0"
+            consecutive_heartbeats = 0
             while True:
                 results = await self._redis.xread(
                     {key: last_stream_id}, block=15000, count=10
                 )
                 if not results:
                     # 15s timeout — send SSE comment as keepalive
+                    consecutive_heartbeats += 1
                     yield ": heartbeat\n\n"
+                    # Every 2 heartbeats (~30s), check task DB status
+                    if task_status_fn is not None and consecutive_heartbeats >= 2:
+                        consecutive_heartbeats = 0
+                        try:
+                            db_status = task_status_fn(task_id)
+                        except Exception:
+                            logger.warning(
+                                "task_status_fn error for %s", task_id, exc_info=True
+                            )
+                            db_status = None
+                        if db_status in _TERMINAL_TYPES:
+                            synth_seq = max_seen_seq + 1
+                            synth = _format_sse_from_fields(
+                                synth_seq,
+                                {
+                                    "seq": str(synth_seq),
+                                    "type": db_status,
+                                    "data": json.dumps({"source": "db_fallback"}),
+                                },
+                            )
+                            logger.info(
+                                "Synthesized terminal event for task %s (status=%s) from DB fallback",
+                                task_id,
+                                db_status,
+                            )
+                            yield synth
+                            return
                     continue
+                consecutive_heartbeats = 0
                 for _, messages in results:
                     for stream_id, fields in messages:
                         last_stream_id = stream_id
                         seq = int(fields.get("seq", "0"))
+                        if seq > max_seen_seq:
+                            max_seen_seq = seq
                         if seq > cutoff:
                             yield _format_sse_from_fields(seq, fields)
                             if fields.get("type") in _TERMINAL_TYPES:
@@ -235,6 +300,29 @@ class RedisEventBus:
                 "Redis stream error for task %s — closing SSE connection",
                 task_id,
             )
+            # Before closing, check if task already completed in DB (CX-2)
+            if task_status_fn is not None:
+                try:
+                    db_status = task_status_fn(task_id)
+                except Exception:
+                    db_status = None
+                if db_status in _TERMINAL_TYPES:
+                    synth_seq = max_seen_seq + 1
+                    synth = _format_sse_from_fields(
+                        synth_seq,
+                        {
+                            "seq": str(synth_seq),
+                            "type": db_status,
+                            "data": json.dumps({"source": "db_fallback"}),
+                        },
+                    )
+                    logger.info(
+                        "Synthesized terminal event for task %s (status=%s) from exception-path DB fallback",
+                        task_id,
+                        db_status,
+                    )
+                    yield synth
+                    return
             # Generator ends — SSE connection closes, client can reconnect
 
     # ── get_history / is_terminal (thread-safe mirror reads) ───────

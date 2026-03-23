@@ -12,9 +12,9 @@ import asyncio
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from api.tasks.models import PipelineTask
-from api.tasks.store import ApprovalWindowError, TaskConflictError, TaskNotFoundError  # noqa: F401
+from api.tasks.store import ApprovalDeliveryError, ApprovalWindowError, TaskConflictError, TaskNotFoundError  # noqa: F401
 
-__all__ = ["TaskStoreProtocol", "TaskNotFoundError", "TaskConflictError", "ApprovalWindowError"]
+__all__ = ["TaskStoreProtocol", "TaskNotFoundError", "TaskConflictError", "ApprovalWindowError", "ApprovalDeliveryError"]
 
 
 @runtime_checkable

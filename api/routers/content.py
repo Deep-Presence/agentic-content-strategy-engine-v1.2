@@ -19,7 +19,7 @@ from api.schemas.common import (
 from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
 from api.tasks.runner import _derive_slug, _resolve_scope_async, run_content_pipeline_task
-from core.services.task_store import TaskStoreProtocol
+from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 from core.models.content_generation import ContentGenerationInput
 from core.models.organization import UserProfile
 
@@ -142,12 +142,16 @@ async def approve_content(
     stage = (task.approval_payload or {}).get("stage", "content_review")
     if body.brief_id:
         stage = f"{stage}:{body.brief_id}"
-    task_store.submit_approval(
-        run_id,
-        decision=body.decision,
-        revision_note=body.editor_notes,
-        stage=stage,
-    )
+    try:
+        task_store.submit_approval(
+            run_id,
+            decision=body.decision,
+            revision_note=body.editor_notes,
+            stage=stage,
+        )
+    except ApprovalWindowError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    # ApprovalDeliveryError is handled by global exception handler → 503
 
     return ContentApprovalResponse(
         run_id=run_id,

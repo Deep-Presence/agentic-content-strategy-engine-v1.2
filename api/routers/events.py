@@ -58,9 +58,25 @@ async def stream_events(
         except ValueError:
             pass  # Ignore malformed Last-Event-ID, replay all
 
+    def _get_task_status(tid: str) -> str | None:
+        """Return task status from in-memory store, mapping DB-only terminal states."""
+        try:
+            t = task_store.get_task(tid)
+            status = t.status.value
+            # failed_restart is terminal in DB but not an SSE event type (CX-5)
+            if status == "failed_restart":
+                return "failed"
+            return status
+        except Exception:
+            return None
+
     async def _stream_with_cleanup() -> AsyncIterator[str]:
         try:
-            async for event in event_bus.stream(task_id, last_event_id=last_event_id):
+            async for event in event_bus.stream(
+                task_id,
+                last_event_id=last_event_id,
+                task_status_fn=_get_task_status,
+            ):
                 yield event
         finally:
             clear_context()

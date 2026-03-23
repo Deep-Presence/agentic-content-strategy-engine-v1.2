@@ -34,6 +34,18 @@ end
 return 0
 """
 
+# Atomic renewal: update score only if member exists.
+# Returns 1 if updated, 0 if member not found.
+# Using Lua instead of ZADD XX because redis-py's zadd(xx=True)
+# returns count of *added* members (always 0 with XX), not *updated*.
+_RENEW_LUA = """\
+if redis.call("ZSCORE", KEYS[1], ARGV[1]) then
+    redis.call("ZADD", KEYS[1], ARGV[2], ARGV[1])
+    return 1
+end
+return 0
+"""
+
 
 class RedisSemaphore:
     """Distributed semaphore backed by a Redis Sorted Set."""
@@ -50,6 +62,7 @@ class RedisSemaphore:
         self._max = max_concurrent
         self._ttl = holder_ttl
         self._acquire_script = redis_sync.register_script(_ACQUIRE_LUA)
+        self._renew_script = redis_sync.register_script(_RENEW_LUA)
 
     def try_acquire(self, holder_id: str) -> bool:
         """Try to acquire a slot atomically. Returns True if acquired.
@@ -61,6 +74,20 @@ class RedisSemaphore:
         result = self._acquire_script(
             keys=[self._key],
             args=[self._max, self._ttl, holder_id, now],
+        )
+        return bool(result)
+
+    def renew(self, holder_id: str) -> bool:
+        """Refresh holder's timestamp in the sorted set.
+
+        Atomic Lua: ZSCORE check + ZADD. Only updates if member exists,
+        never re-adds a legitimately expired slot.
+        Returns True if member existed and was updated.
+        """
+        now = time.time()
+        result = self._renew_script(
+            keys=[self._key],
+            args=[holder_id, now],
         )
         return bool(result)
 

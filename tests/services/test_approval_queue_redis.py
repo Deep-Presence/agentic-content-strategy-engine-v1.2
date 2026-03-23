@@ -117,8 +117,9 @@ class TestWaitForApprovalRedis:
         result = await store_with_redis.wait_for_approval("task-001")
 
         assert result == payload
+        # Polling loop uses 1s BRPOP intervals (not full timeout)
         mock_sync_redis.brpop.assert_called_once_with(
-            "approval:task-001", timeout=86400
+            "approval:task-001", timeout=1
         )
 
     @pytest.mark.asyncio
@@ -433,3 +434,103 @@ class TestApprovalFullCycle:
         )
         r2 = await store_with_redis.wait_for_approval("task-001")
         assert r2["decision"] == "approve"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 14-19: LPUSH failure handling (Issue 1a)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestSubmitApprovalLpushFailure:
+    """Tests for submit_approval behaviour when Redis LPUSH fails."""
+
+    @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
+    def test_lpush_failure_raises_approval_delivery_error(
+        self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
+    ) -> None:
+        """LPUSH raises → ApprovalDeliveryError raised, flag cleared for retry."""
+        from api.tasks.store import ApprovalDeliveryError
+
+        _seed_task(store_with_redis, "task-001")
+        mock_sync_redis.lpush.side_effect = ConnectionError("Redis down")
+
+        with pytest.raises(ApprovalDeliveryError, match="task-001"):
+            store_with_redis.submit_approval("task-001", decision="approve")
+
+        # Flag should be cleared so user can retry
+        mock_sync_redis.delete.assert_called_once_with("approval:flag:task-001")
+
+    @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
+    def test_lpush_failure_does_not_record_approval_history(
+        self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
+    ) -> None:
+        """Failed LPUSH should NOT create a phantom approval history entry."""
+        from api.tasks.store import ApprovalDeliveryError
+
+        task = _seed_task(store_with_redis, "task-001")
+        mock_sync_redis.lpush.side_effect = ConnectionError("Redis down")
+
+        with pytest.raises(ApprovalDeliveryError):
+            store_with_redis.submit_approval("task-001", decision="approve")
+
+        assert len(task.approval_history) == 0
+
+    @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
+    def test_expire_failure_after_lpush_success_still_succeeds(
+        self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
+    ) -> None:
+        """LPUSH succeeds, EXPIRE fails → should NOT raise (CX-1)."""
+        task = _seed_task(store_with_redis, "task-001")
+        mock_sync_redis.lpush.return_value = 1  # success
+        mock_sync_redis.expire.side_effect = ConnectionError("Redis flaky")
+
+        # Should not raise — EXPIRE failure is non-fatal
+        store_with_redis.submit_approval("task-001", decision="approve")
+
+        # Approval history SHOULD be recorded (delivery succeeded)
+        assert len(task.approval_history) == 1
+        assert task.approval_history[0].decision == "approve"
+
+    @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
+    def test_lpush_failure_clears_flag_even_when_delete_fails(
+        self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
+    ) -> None:
+        """Both LPUSH and DELETE fail → ApprovalDeliveryError still raised."""
+        from api.tasks.store import ApprovalDeliveryError
+
+        _seed_task(store_with_redis, "task-001")
+        mock_sync_redis.lpush.side_effect = ConnectionError("Redis down")
+        mock_sync_redis.delete.side_effect = ConnectionError("Redis still down")
+
+        with pytest.raises(ApprovalDeliveryError):
+            store_with_redis.submit_approval("task-001", decision="approve")
+
+    @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
+    def test_successful_submit_pushes_to_local_queue_hybrid(
+        self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
+    ) -> None:
+        """After LPUSH success, payload also pushed to local asyncio.Queue (CX-3)."""
+        _seed_task(store_with_redis, "task-001")
+        mock_sync_redis.lpush.return_value = 1
+
+        store_with_redis.submit_approval("task-001", decision="approve")
+
+        # Local queue should have the payload as hybrid safety net
+        assert "task-001" in store_with_redis._approval_queues
+        assert not store_with_redis._approval_queues["task-001"].empty()
+
+    @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
+    def test_successful_lpush_records_approval_history(
+        self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
+    ) -> None:
+        """Successful LPUSH records exactly one approval history entry."""
+        task = _seed_task(store_with_redis, "task-001")
+        mock_sync_redis.lpush.return_value = 1
+
+        store_with_redis.submit_approval(
+            "task-001", decision="approve", stage="topic_approval"
+        )
+
+        assert len(task.approval_history) == 1
+        assert task.approval_history[0].decision == "approve"
+        assert task.approval_history[0].stage == "topic_approval"

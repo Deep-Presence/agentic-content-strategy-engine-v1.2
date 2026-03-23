@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.tasks.models import ApprovalRecord, PipelineTask
 from core.shared_tools.task_status import TaskStatus
-from core.services.task_store import ApprovalWindowError, TaskConflictError, TaskNotFoundError
+from core.services.task_store import ApprovalDeliveryError, ApprovalWindowError, TaskConflictError, TaskNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,19 @@ else
 end
 """
 
+    # Lua script: ownership-safe lock TTL renewal (compare-and-expire)
+    # Atomic: prevents race where lock expires between GET and EXPIRE.
+    _RENEW_LOCK_LUA = """\
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("EXPIRE", KEYS[1], ARGV[2])
+else
+    return 0
+end
+"""
+
+    # Heartbeat interval: renew leases every ~60 BRPOP iterations (~60s)
+    _LEASE_RENEWAL_INTERVAL = 60
+
     def __init__(
         self,
         session_factory: Callable[..., AsyncSession],
@@ -65,6 +78,11 @@ end
         self._redis_sync = redis_client
         self._release_script = (
             redis_client.register_script(self._RELEASE_LOCK_LUA)
+            if redis_client is not None
+            else None
+        )
+        self._renew_lock_script = (
+            redis_client.register_script(self._RENEW_LOCK_LUA)
             if redis_client is not None
             else None
         )
@@ -423,7 +441,21 @@ end
         result = None
         consecutive_errors = 0
         redis_gave_up = False
+        iterations_since_heartbeat = 0
         while time.monotonic() < deadline:
+            # Periodic lease renewal (~every 60s)
+            iterations_since_heartbeat += 1
+            if iterations_since_heartbeat >= self._LEASE_RENEWAL_INTERVAL:
+                iterations_since_heartbeat = 0
+                try:
+                    await asyncio.to_thread(self._renew_leases, task_id)
+                except Exception:
+                    logger.warning(
+                        "Heartbeat: renewal call failed for %s",
+                        task_id,
+                        exc_info=True,
+                    )
+
             try:
                 result = await asyncio.to_thread(
                     self._redis_sync.brpop, key, timeout=1
@@ -512,6 +544,56 @@ end
 
         return data
 
+    def _renew_leases(self, task_id: str) -> None:
+        """Renew TTL on slug lock and semaphore during HITL wait.
+
+        Called every ~60s from the BRPOP polling loop. All operations are
+        best-effort: failures are logged but never abort the wait.
+        """
+        task = self._tasks.get(task_id)
+        if task is None or self._redis_sync is None:
+            return
+
+        effective = task.effective_slug or task.company_slug
+
+        # 1. Slug lock — atomic compare-and-expire (skip if allow_parallel / no lock)
+        lock_slug = f"{task.pipeline}:{effective}"
+        if lock_slug in self._slug_locks and self._renew_lock_script is not None:
+            lock_key = self._lock_key(lock_slug)
+            try:
+                renewed = self._renew_lock_script(
+                    keys=[lock_key],
+                    args=[task_id, 7200],
+                )
+                if renewed:
+                    logger.debug("Heartbeat: renewed lock %s", lock_key)
+                else:
+                    logger.warning(
+                        "Heartbeat: lock ownership lost %s (task=%s)",
+                        lock_key, task_id,
+                    )
+            except Exception:
+                logger.warning(
+                    "Heartbeat: lock renewal failed %s", lock_key, exc_info=True
+                )
+
+        # 2. Semaphore — atomic Lua renewal (ZSCORE + ZADD)
+        if self._redis_semaphore is not None:
+            try:
+                renewed = self._redis_semaphore.renew(task_id)
+                if renewed:
+                    logger.debug("Heartbeat: renewed semaphore for %s", task_id)
+                else:
+                    logger.warning(
+                        "Heartbeat: semaphore slot missing for %s", task_id
+                    )
+            except Exception:
+                logger.warning(
+                    "Heartbeat: semaphore renewal failed %s",
+                    task_id,
+                    exc_info=True,
+                )
+
     def submit_approval(
         self,
         task_id: str,
@@ -570,6 +652,50 @@ end
                     exc_info=True,
                 )
 
+        # Construct payload BEFORE delivery attempt
+        payload = approval_data if approval_data is not None else {"decision": decision, "revision_note": revision_note}
+
+        # ── Deliver payload (must succeed before recording history) ──
+        if self._redis_sync is not None:
+            key = f"approval:{task_id}"
+            try:
+                self._redis_sync.lpush(key, json.dumps(payload))
+            except Exception:
+                logger.exception(
+                    "Redis LPUSH failed for task %s — clearing flag for retry",
+                    task_id,
+                )
+                try:
+                    self._redis_sync.delete(f"approval:flag:{task_id}")
+                except Exception:
+                    pass
+                raise ApprovalDeliveryError(task_id)
+            # LPUSH succeeded — EXPIRE is best-effort (non-fatal)
+            try:
+                self._redis_sync.expire(key, 86400)
+            except Exception:
+                logger.warning(
+                    "Redis EXPIRE failed for approval:%s (non-fatal)", task_id
+                )
+            # Hybrid safety net: also push to local queue so BRPOP→Queue
+            # fallback path can still receive the payload (CX-3).
+            if task_id not in self._approval_queues:
+                self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
+            try:
+                self._approval_queues[task_id].put_nowait(payload)
+            except asyncio.QueueFull:
+                pass  # BRPOP path will handle it
+        else:
+            if task_id not in self._approval_queues:
+                self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
+            try:
+                self._approval_queues[task_id].put_nowait(payload)
+            except asyncio.QueueFull:
+                raise ApprovalWindowError(
+                    f"Approval already submitted for task {task_id} — queue full"
+                )
+
+        # ── Record approval history (only after successful delivery) ──
         resolved_stage = (
             stage
             or (task.approval_payload or {}).get("stage")
@@ -592,31 +718,6 @@ end
                 approval_history=[r.model_dump(mode="json") for r in task.approval_history],
             )
         )
-
-        # Queue the full approval data if provided, else generic payload
-        payload = approval_data if approval_data is not None else {"decision": decision, "revision_note": revision_note}
-
-        if self._redis_sync is not None:
-            try:
-                key = f"approval:{task_id}"
-                self._redis_sync.lpush(key, json.dumps(payload))
-                self._redis_sync.expire(key, 86400)
-            except Exception:
-                logger.exception("Redis LPUSH failed for task %s", task_id)
-                # Clear the flag so the user can retry
-                try:
-                    self._redis_sync.delete(f"approval:flag:{task_id}")
-                except Exception:
-                    pass
-        else:
-            if task_id not in self._approval_queues:
-                self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
-            try:
-                self._approval_queues[task_id].put_nowait(payload)
-            except asyncio.QueueFull:
-                raise ApprovalWindowError(
-                    f"Approval already submitted for task {task_id} — queue full"
-                )
 
     # ── DB write-through helpers ──────────────────────────────────────
 

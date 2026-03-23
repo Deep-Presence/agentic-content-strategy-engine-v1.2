@@ -42,6 +42,20 @@ class ApprovalWindowError(Exception):
         super().__init__(message)
 
 
+class ApprovalDeliveryError(Exception):
+    """Raised when the approval payload could not be delivered to the pipeline.
+
+    The duplicate flag has been cleared so the caller can retry.
+    Maps to HTTP 503 (Service Unavailable) at the router layer.
+    """
+
+    def __init__(self, task_id: str) -> None:
+        self.task_id = task_id
+        super().__init__(
+            f"Approval delivery failed for task {task_id} — please retry"
+        )
+
+
 class TaskStore:
     """In-memory + JSON-file-backed task persistence.
 

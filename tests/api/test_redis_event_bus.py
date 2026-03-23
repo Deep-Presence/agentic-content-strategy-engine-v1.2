@@ -677,3 +677,231 @@ class TestStartupToggle:
                 mock_app.state.event_bus = EventBus()
 
         assert isinstance(mock_app.state.event_bus, EventBus)
+
+
+# ── Terminal event retry tests (Issue 1b) ─────────────────────────
+
+
+class TestTerminalEventRetry:
+    """Tests for _apublish retry logic on terminal events."""
+
+    @pytest.mark.asyncio
+    async def test_terminal_event_retries_on_failure(
+        self, mock_redis: AsyncMock
+    ) -> None:
+        """Terminal event retries up to 3 times on failure, succeeds on 3rd."""
+        call_count = 0
+
+        async def fail_twice_then_succeed(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                raise ConnectionError("Redis down")
+            return call_count
+
+        mock_script = AsyncMock(side_effect=fail_twice_then_succeed)
+        mock_redis.register_script = MagicMock(return_value=mock_script)
+
+        loop = asyncio.get_running_loop()
+        bus = RedisEventBus(redis=mock_redis, max_history=200, loop=loop)
+
+        with patch("api.tasks.redis_event_bus.asyncio.sleep", new_callable=AsyncMock):
+            await bus._apublish("task-1", "completed", {})
+
+        assert call_count == 3  # 2 failures + 1 success
+
+    @pytest.mark.asyncio
+    async def test_terminal_event_exhausts_retries(
+        self, mock_redis: AsyncMock
+    ) -> None:
+        """Terminal event fails all 4 attempts → ERROR logged, no crash."""
+        mock_script = AsyncMock(side_effect=ConnectionError("Redis down"))
+        mock_redis.register_script = MagicMock(return_value=mock_script)
+
+        loop = asyncio.get_running_loop()
+        bus = RedisEventBus(redis=mock_redis, max_history=200, loop=loop)
+
+        with patch("api.tasks.redis_event_bus.asyncio.sleep", new_callable=AsyncMock):
+            await bus._apublish("task-1", "completed", {})
+
+        assert mock_script.await_count == 4  # 1 initial + 3 retries
+
+    @pytest.mark.asyncio
+    async def test_non_terminal_event_no_retry(
+        self, mock_redis: AsyncMock
+    ) -> None:
+        """Non-terminal event fails once → no retry, just warning."""
+        mock_script = AsyncMock(side_effect=ConnectionError("Redis down"))
+        mock_redis.register_script = MagicMock(return_value=mock_script)
+
+        loop = asyncio.get_running_loop()
+        bus = RedisEventBus(redis=mock_redis, max_history=200, loop=loop)
+
+        await bus._apublish("task-1", "progress", {"pct": 50})
+
+        assert mock_script.await_count == 1  # No retry
+
+    @pytest.mark.asyncio
+    async def test_terminal_retry_backoff_values(
+        self, mock_redis: AsyncMock
+    ) -> None:
+        """Terminal retries use correct backoff: 0.5s, 1.0s, 2.0s."""
+        mock_script = AsyncMock(side_effect=ConnectionError("Redis down"))
+        mock_redis.register_script = MagicMock(return_value=mock_script)
+
+        loop = asyncio.get_running_loop()
+        bus = RedisEventBus(redis=mock_redis, max_history=200, loop=loop)
+
+        with patch("api.tasks.redis_event_bus.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            await bus._apublish("task-1", "failed", {"error": "boom"})
+
+        assert mock_sleep.await_count == 3
+        sleep_args = [call.args[0] for call in mock_sleep.await_args_list]
+        assert sleep_args == [0.5, 1.0, 2.0]
+
+
+# ── Stream DB fallback tests (Issue 1b) ──────────────────────────
+
+
+class TestStreamDbFallback:
+    """Tests for task_status_fn DB fallback in stream()."""
+
+    @pytest.mark.asyncio
+    async def test_stream_synthesizes_terminal_from_db_status(
+        self, redis_bus: RedisEventBus, mock_redis: AsyncMock
+    ) -> None:
+        """After 2 heartbeats, task_status_fn returns 'completed' → synthesized event."""
+        mock_redis.xrange.return_value = [
+            ("1-0", {"seq": "1", "type": "started", "data": "{}"}),
+        ]
+        mock_redis.xread.side_effect = [None, None, None]
+
+        status_fn = MagicMock(return_value="completed")
+
+        events = []
+        async for chunk in redis_bus.stream("task-1", task_status_fn=status_fn):
+            events.append(chunk)
+            if len(events) > 10:
+                break
+
+        assert any("event: started" in e for e in events)
+        assert any("event: completed" in e for e in events)
+        synth = [e for e in events if "event: completed" in e][0]
+        assert "db_fallback" in synth
+
+    @pytest.mark.asyncio
+    async def test_stream_synthesizes_terminal_on_redis_exception(
+        self, redis_bus: RedisEventBus, mock_redis: AsyncMock
+    ) -> None:
+        """Redis dies mid-XREAD → fallback checks DB before closing (CX-2)."""
+        mock_redis.xrange.return_value = [
+            ("1-0", {"seq": "5", "type": "started", "data": "{}"}),
+        ]
+        mock_redis.xread.side_effect = ConnectionError("Redis died")
+
+        status_fn = MagicMock(return_value="completed")
+
+        events = []
+        async for chunk in redis_bus.stream("task-1", task_status_fn=status_fn):
+            events.append(chunk)
+
+        assert any("event: started" in e for e in events)
+        assert any("event: completed" in e for e in events)
+
+    @pytest.mark.asyncio
+    async def test_stream_synth_id_uses_max_seen_seq(
+        self, redis_bus: RedisEventBus, mock_redis: AsyncMock
+    ) -> None:
+        """Synthesized event id > max seen seq from replay (CX-4)."""
+        mock_redis.xrange.return_value = [
+            ("1-0", {"seq": "120", "type": "started", "data": "{}"}),
+        ]
+        mock_redis.xread.side_effect = [None, None, None]
+
+        status_fn = MagicMock(return_value="failed")
+
+        events = []
+        async for chunk in redis_bus.stream("task-1", task_status_fn=status_fn):
+            events.append(chunk)
+            if len(events) > 10:
+                break
+
+        synth = [e for e in events if "event: failed" in e]
+        assert len(synth) == 1
+        assert "id: 121" in synth[0]
+
+    @pytest.mark.asyncio
+    async def test_stream_no_fallback_without_status_fn(
+        self, redis_bus: RedisEventBus, mock_redis: AsyncMock
+    ) -> None:
+        """Without task_status_fn, stream just sends heartbeats (no synthesis)."""
+        mock_redis.xrange.return_value = []
+        mock_redis.xread.side_effect = [
+            None,
+            None,
+            [("sse:task-1", [("3-0", {"seq": "1", "type": "completed", "data": "{}"})])],
+        ]
+
+        events = []
+        async for chunk in redis_bus.stream("task-1", task_status_fn=None):
+            events.append(chunk)
+
+        assert events[0] == ": heartbeat\n\n"
+        assert events[1] == ": heartbeat\n\n"
+        assert "event: completed" in events[2]
+
+    @pytest.mark.asyncio
+    async def test_stream_fallback_tolerates_status_fn_error(
+        self, redis_bus: RedisEventBus, mock_redis: AsyncMock
+    ) -> None:
+        """task_status_fn raises → stream continues with heartbeats."""
+        mock_redis.xrange.return_value = []
+        mock_redis.xread.side_effect = [
+            None, None, None,
+            [("sse:task-1", [("1-0", {"seq": "1", "type": "completed", "data": "{}"})])],
+        ]
+
+        def broken_fn(tid):
+            raise RuntimeError("DB down")
+
+        events = []
+        async for chunk in redis_bus.stream("task-1", task_status_fn=broken_fn):
+            events.append(chunk)
+
+        heartbeats = [e for e in events if "heartbeat" in e]
+        assert len(heartbeats) >= 2
+        assert any("event: completed" in e for e in events)
+
+    @pytest.mark.asyncio
+    async def test_stream_fallback_ignores_non_terminal_status(
+        self, redis_bus: RedisEventBus, mock_redis: AsyncMock
+    ) -> None:
+        """task_status_fn returns 'running' → no synthesis, stream continues."""
+        mock_redis.xrange.return_value = []
+        mock_redis.xread.side_effect = [
+            None, None, None,
+            [("sse:task-1", [("1-0", {"seq": "1", "type": "completed", "data": "{}"})])],
+        ]
+
+        status_fn = MagicMock(return_value="running")
+
+        events = []
+        async for chunk in redis_bus.stream("task-1", task_status_fn=status_fn):
+            events.append(chunk)
+
+        heartbeats = [e for e in events if "heartbeat" in e]
+        assert len(heartbeats) >= 2
+        assert any("event: completed" in e for e in events)
+
+    @pytest.mark.asyncio
+    async def test_in_memory_eventbus_accepts_task_status_fn(self) -> None:
+        """EventBus.stream() accepts task_status_fn kwarg without error."""
+        bus = EventBus()
+        bus.publish("task-1", "completed", {})
+
+        events = []
+        async for chunk in bus.stream("task-1", task_status_fn=lambda t: None):
+            events.append(chunk)
+
+        assert len(events) == 1
+        assert "event: completed" in events[0]

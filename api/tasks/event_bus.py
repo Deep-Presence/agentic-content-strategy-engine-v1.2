@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
-from typing import Any, AsyncGenerator, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -15,7 +15,8 @@ class EventBusProtocol(Protocol):
     def get_history(self, task_id: str) -> List[Dict[str, Any]]: ...
     def is_terminal(self, task_id: str) -> bool: ...
     async def stream(
-        self, task_id: str, last_event_id: Optional[int] = None
+        self, task_id: str, last_event_id: Optional[int] = None,
+        task_status_fn: Optional[Callable[[str], Optional[str]]] = None,
     ) -> AsyncGenerator[str, None]: ...
 
 
@@ -84,11 +85,14 @@ class EventBus:
         self,
         task_id: str,
         last_event_id: Optional[int] = None,
+        task_status_fn: Optional[Callable[[str], Optional[str]]] = None,
     ) -> AsyncGenerator[str, None]:
         """Async generator yielding SSE-formatted event strings.
 
         If last_event_id is provided, replays missed events before streaming live.
         Terminates after emitting a terminal event (completed/failed/cancelled).
+        ``task_status_fn`` is accepted for protocol compatibility but unused
+        (in-memory EventBus delivers events reliably within a single process).
         """
         _TERMINAL_TYPES = {"completed", "failed", "cancelled"}
 
