@@ -18,25 +18,21 @@ from typing import Any, Dict, List, Optional
 from typing_extensions import TypedDict
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
+from core.checkpointer import get_checkpointer
+
 from core.shared_tools.task_status import TaskStatus
+from core.shared_tools.tracing import (
+    create_span,
+    end_span,
+    get_current_span,
+    log_score,
+    set_current_span,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Checkpointer helper
-# ---------------------------------------------------------------------------
-
-
-def _resolve_checkpointer(checkpointer: Any) -> BaseCheckpointSaver:
-    """Return checkpointer if valid, otherwise default to MemorySaver."""
-    if isinstance(checkpointer, BaseCheckpointSaver):
-        return checkpointer
-    return MemorySaver()
 
 
 # ---------------------------------------------------------------------------
@@ -239,10 +235,17 @@ def _taxonomy_gate(state: Dict[str, Any]) -> Dict[str, Any]:
 
     Auto-approve returns taxonomy as-is. Manual mode fires interrupt.
     """
+    parent = get_current_span()
+    span = create_span(parent, "td-taxonomy-gate", input_data={
+        "auto_approve": state.get("auto_approve", False),
+    })
+
     taxonomy = state.get("taxonomy", {})
     coverage = state.get("coverage_metrics", {})
 
     if state.get("auto_approve"):
+        log_score(span, "decision", "approve")
+        end_span(span, output={"decision": "approve", "auto": True})
         return {
             **state,
             "batch_decision": "approve",
@@ -270,6 +273,11 @@ def _taxonomy_gate(state: Dict[str, Any]) -> Dict[str, Any]:
         taxonomy = _process_taxonomy_edits(copy.deepcopy(taxonomy), user_edits)
 
     approved_taxonomy = taxonomy if decision in ("approve", "modify") else {}
+
+    log_score(span, "decision", decision)
+    end_span(span, output={
+        "decision": decision, "edits_count": len(user_edits),
+    })
 
     return {
         **state,
@@ -311,7 +319,7 @@ def build_td_taxonomy_review_graph(
         },
     )
 
-    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
+    return graph.compile(checkpointer=get_checkpointer(checkpointer))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -391,9 +399,16 @@ def _process_matrix_edits(
 
 def _matrix_gate(state: Dict[str, Any]) -> Dict[str, Any]:
     """Pause for human matrix review via interrupt()."""
+    parent = get_current_span()
+    span = create_span(parent, "td-matrix-gate", input_data={
+        "auto_approve": state.get("auto_approve", False),
+    })
+
     matrix = state.get("matrix", {})
 
     if state.get("auto_approve"):
+        log_score(span, "decision", "approve")
+        end_span(span, output={"decision": "approve", "auto": True})
         return {
             **state,
             "batch_decision": "approve",
@@ -419,6 +434,11 @@ def _matrix_gate(state: Dict[str, Any]) -> Dict[str, Any]:
         matrix = _process_matrix_edits(copy.deepcopy(matrix), user_edits)
 
     approved_matrix = matrix if decision in ("approve", "modify") else {}
+
+    log_score(span, "decision", decision)
+    end_span(span, output={
+        "decision": decision, "edits_count": len(user_edits),
+    })
 
     return {
         **state,
@@ -455,7 +475,7 @@ def build_td_matrix_review_graph(
         },
     )
 
-    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
+    return graph.compile(checkpointer=get_checkpointer(checkpointer))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -597,7 +617,7 @@ def build_td_subdomain_selection_graph(
         },
     )
 
-    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
+    return graph.compile(checkpointer=get_checkpointer(checkpointer))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -613,11 +633,15 @@ async def run_td_hitl_checkpoint(
     event_bus: Optional[Any] = None,
     task_id: Optional[str] = None,
     stage_name: str = "td_hitl",
+    parent_span: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Run a TD HITL checkpoint graph, handling interrupt/resume.
 
     Mirrors run_kb_hitl_checkpoint() from knowledge_base/graph.py.
     """
+    # Propagate span to graph nodes via contextvar
+    set_current_span(parent_span)
+
     config = {"configurable": {"thread_id": thread_id}}
 
     result = await asyncio.to_thread(graph.invoke, initial_state, config)
@@ -659,8 +683,11 @@ async def run_td_hitl_checkpoint(
             )
 
         # Wait for human decision (async)
+        wait_start = time.time()
         if task_store and task_id:
             approval = await task_store.wait_for_approval(task_id)
+            log_score(parent_span, "wait_duration_s", time.time() - wait_start,
+                      comment=stage_name)
 
             # Reset status to RUNNING and clear approval_payload
             task_store.update_task(

@@ -55,3 +55,6 @@ RESTRUCTURING_ANALYSIS.md
 .pytest_cache/
 .dist/
 node_modules
+
+
+run_logs/

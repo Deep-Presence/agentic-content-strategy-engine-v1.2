@@ -53,9 +53,12 @@ from core.research.audience_persona.storage import PersonaStorage
 from core.research.utils import load_persona_profiles, read_company_context
 from core.shared_tools.tracing import (
     create_session,
+    create_span,
     create_trace,
     end_span,
     flush,
+    log_score,
+    set_current_span,
 )
 from core.topic_discovery.agents import (
     compute_all_coverage_metrics,
@@ -294,7 +297,7 @@ async def run_topic_discovery_pipeline(
     session_id = create_session(slug)
     trace_span = create_trace(session_id, f"td-pipeline/{slug}", input_data={
         "company": input_data.company_name, "domain": input_data.domain,
-    })
+    }, tags=["topic-discovery", "pipeline-a"])
 
     # SSE: pipeline start
     _emit(event_bus, task_id, "pipeline_start", {"pipeline": "topic_discovery"})
@@ -304,6 +307,7 @@ async def run_topic_discovery_pipeline(
         # =============================================================
         # Phase 0: Preflight — Load Context + Personas
         # =============================================================
+        preflight_span = create_span(trace_span, "td-preflight")
         _emit(event_bus, task_id, "td_phase_start", {"phase": 0, "stage": "preflight"})
 
         # Load company context
@@ -356,6 +360,10 @@ async def run_topic_discovery_pipeline(
         persona_name_to_id = _build_persona_name_to_id(persona_entries)
 
         _emit(event_bus, task_id, "td_phase_complete", {"phase": 0})
+        end_span(preflight_span, output={
+            "personas_loaded": len(persona_mds),
+            "has_company_context": bool(company_md),
+        })
 
         # ── DB: Create/update TopicDiscoveryModel ──
         discovery_id = None
@@ -378,6 +386,9 @@ async def run_topic_discovery_pipeline(
         user_feedback = ""
 
         while True:
+            s1_span = create_span(trace_span, "td-s1-sources", input_data={
+                "retry": taxonomy_retry_count,
+            })
             _emit(event_bus, task_id, "td_phase_start", {
                 "phase": 1, "stage": "s1_multi_source",
                 "retry": taxonomy_retry_count,
@@ -388,19 +399,20 @@ async def run_topic_discovery_pipeline(
             _revision = user_feedback or None
             source_a_task = run_source_a_company_brainstorm(
                 company_md, max_rounds=max_rounds, timeout_s=timeout_s,
-                revision_note=_revision,
+                revision_note=_revision, parent_span=s1_span,
             )
             source_b_task = run_source_b_persona_brainstorm(
                 persona_summaries, company_md, max_rounds=max_rounds, timeout_s=timeout_s,
                 revision_note=_revision,
                 persona_name_to_id=persona_name_to_id,
+                parent_span=s1_span,
             )
 
             # Source C: deep research competitive content landscape
             source_c_task = run_source_c_deep_research(
                 company_md, competitor_landscape, domain,
                 timeout_s=settings.topic_discovery_source_c_timeout_s,
-                revision_note=_revision,
+                revision_note=_revision, parent_span=s1_span,
             )
 
             results_abc = await asyncio.gather(
@@ -437,7 +449,7 @@ async def run_topic_discovery_pipeline(
 
             source_d_result = await run_source_d_adversarial(
                 company_md, existing_names, max_rounds=max_rounds, timeout_s=timeout_s,
-                revision_note=_revision,
+                revision_note=_revision, parent_span=s1_span,
             )
             source_results.append(source_d_result)
             if source_d_result.error:
@@ -465,10 +477,15 @@ async def run_topic_discovery_pipeline(
                 logger.warning("TD persist_td_source_results failed, continuing", exc_info=True)
 
             _emit(event_bus, task_id, "td_phase_complete", {"phase": 1})
+            end_span(s1_span, output={
+                "sources_completed": len(source_results),
+                "total_candidates": sum(len(sr.candidates) for sr in source_results),
+            })
 
             # =============================================================
             # Phase 2 (S2): Exhaustiveness Evaluation & Merge
             # =============================================================
+            s2_span = create_span(trace_span, "td-s2-merge")
             _emit(event_bus, task_id, "td_phase_start", {
                 "phase": 2, "stage": "s2_merge",
             })
@@ -493,7 +510,7 @@ async def run_topic_discovery_pipeline(
 
             # Deduplicate via embeddings (with cluster metadata for coverage)
             dedup_result = await deduplicate_subdomains_with_clusters(
-                all_candidates, threshold=dedup_threshold,
+                all_candidates, threshold=dedup_threshold, parent_span=s2_span,
             )
             deduped = dedup_result.kept
             logger.info(
@@ -507,6 +524,14 @@ async def run_topic_discovery_pipeline(
             )
             await asyncio.to_thread(storage.write_coverage, coverage)
 
+            # Log coverage metrics
+            coverage_span = create_span(s2_span, "td-s2-coverage")
+            log_score(coverage_span, "aggregate_coverage", coverage.aggregate_sample_coverage)
+            log_score(coverage_span, "chao1_lower_bound", coverage.chao1_lower_bound)
+            end_span(coverage_span, output={
+                "aggregate_coverage": coverage.aggregate_sample_coverage,
+            })
+
             # Unified S2: hierarchy + priority scoring + persona affinity
             deduped_names = [c.name for c in deduped if c.name]
             persona_profiles_for_s2: List[Tuple[str, str]] = []
@@ -518,6 +543,7 @@ async def run_topic_discovery_pipeline(
                 company_context=company_md,
                 persona_profiles=persona_profiles_for_s2,
                 timeout_s=600.0,
+                parent_span=s2_span,
             )
 
             # Enrich taxonomy with coverage data
@@ -533,10 +559,15 @@ async def run_topic_discovery_pipeline(
                 "total_subdomains": taxonomy.total_subdomains,
                 "coverage_score": coverage.aggregate_sample_coverage,
             })
+            end_span(s2_span, output={"total_subdomains": taxonomy.total_subdomains})
 
             # =============================================================
             # HITL-1: Taxonomy Approval
             # =============================================================
+            hitl1_span = create_span(trace_span, "td-hitl-1", input_data={
+                "auto_approve": 1 in auto_approve_cps,
+            })
+            set_current_span(hitl1_span)
             _emit(event_bus, task_id, "td_phase_start", {
                 "phase": "hitl_1", "stage": "taxonomy_review",
             })
@@ -555,9 +586,14 @@ async def run_topic_discovery_pipeline(
                 thread_id=f"td-hitl-1-{slug}-{uuid.uuid4().hex[:8]}",
                 task_store=task_store, event_bus=event_bus, task_id=task_id,
                 stage_name="td_taxonomy_review",
+                parent_span=hitl1_span,
             )
 
             decision = hitl1_result.get("batch_decision", "approve")
+            log_score(hitl1_span, "decision", decision)
+            end_span(hitl1_span, output={
+                "decision": decision, "retry_count": taxonomy_retry_count,
+            })
 
             if decision == "retry":
                 taxonomy_retry_count += 1
@@ -612,6 +648,7 @@ async def run_topic_discovery_pipeline(
         # taxonomy nodes from the unified S2 call.  We only add a lightweight
         # source_confidence adjustment and produce the ScoredSubdomainList +
         # PersonaAffinityIndex artifacts for Pipeline B compatibility.
+        scoring_span = create_span(trace_span, "td-scoring")
         _emit(event_bus, task_id, "td_phase_start", {
             "phase": "2.5", "stage": "score_blending",
         })
@@ -682,10 +719,14 @@ async def run_topic_discovery_pipeline(
             "total_scored": scored_subdomains.total_scored,
             "total_personas": persona_affinity.total_personas,
         })
+        end_span(scoring_span, output={
+            "total_scored": scored_subdomains.total_scored,
+        })
 
         # =============================================================
         # Finalize: Discovery Complete
         # =============================================================
+        finalize_span = create_span(trace_span, "td-finalize")
         _emit(event_bus, task_id, "td_phase_start", {"phase": "finalize", "stage": "discovery_finalize"})
         _update_task(task_store, task_id, current_step="finalize_discovery")
 
@@ -759,6 +800,7 @@ async def run_topic_discovery_pipeline(
 
         _emit(event_bus, task_id, "completed", {"pipeline": "topic_discovery"})
         _emit(event_bus, task_id, "td_phase_complete", {"phase": "finalize"})
+        end_span(finalize_span, output={"taxonomy_version": tax_version})
         end_span(trace_span, output={
             "total_subdomains": taxonomy.total_subdomains,
             "coverage_score": coverage.aggregate_sample_coverage,
@@ -826,14 +868,16 @@ async def run_topic_expansion_pipeline(
     session_id = create_session(f"td-expansion-{effective_slug}")
     trace_span = create_trace(
         session_id,
-        "topic_expansion_pipeline",
-        input={"effective_slug": effective_slug, "subdomain_ids": input_data.subdomain_ids},
+        f"td-expansion/{effective_slug}",
+        input_data={"effective_slug": effective_slug, "subdomain_ids": input_data.subdomain_ids},
+        tags=["topic-discovery", "expansion"],
     )
 
     try:
         # =============================================================
         # Preflight: Load Pipeline A artifacts
         # =============================================================
+        exp_preflight_span = create_span(trace_span, "td-exp-preflight")
         _emit(event_bus, task_id, "td_phase_start", {"phase": "preflight", "stage": "expansion_preflight"})
         _update_task(task_store, task_id, current_step="expansion_preflight")
 
@@ -907,10 +951,16 @@ async def run_topic_expansion_pipeline(
             "phase": "preflight",
             "subdomains_selected": len(selected_subdomain_ids),
         })
+        end_span(exp_preflight_span, output={
+            "subdomains_selected": len(selected_subdomain_ids),
+        })
 
         # =============================================================
         # Phase 3 (S3): On-Demand Expansion
         # =============================================================
+        s3_span = create_span(trace_span, "td-s3-expansion", input_data={
+            "subdomains": len(selected_subdomain_ids),
+        })
         _emit(event_bus, task_id, "td_phase_start", {
             "phase": 3, "stage": "s3_expansion",
         })
@@ -963,6 +1013,7 @@ async def run_topic_expansion_pipeline(
                     company_context=company_md,
                     persona_context=expansion_persona_ctx,
                     timeout_s=settings.topic_discovery_expansion_timeout_s,
+                    parent_span=s3_span,
                 )
             for a in assignments:
                 a.subdomain_id = sd_id
@@ -1042,10 +1093,19 @@ async def run_topic_expansion_pipeline(
             "subdomains_expanded": len(expanded_ids),
             "subdomains_failed": len(failed_ids),
         })
+        log_score(s3_span, "total_expanded", float(len(expanded_ids)))
+        log_score(s3_span, "total_assignments", float(len(all_assignments)))
+        end_span(s3_span, output={
+            "expanded": len(expanded_ids), "assignments": len(all_assignments),
+        })
 
         # =============================================================
         # HITL-2: Matrix Approval
         # =============================================================
+        hitl2_span = create_span(trace_span, "td-hitl-2", input_data={
+            "auto_approve": 2 in auto_approve_cps,
+        })
+        set_current_span(hitl2_span)
         _emit(event_bus, task_id, "td_phase_start", {
             "phase": "hitl_2", "stage": "matrix_review",
         })
@@ -1063,9 +1123,12 @@ async def run_topic_expansion_pipeline(
             thread_id=f"td-hitl-2-{slug}-{uuid.uuid4().hex[:8]}",
             task_store=task_store, event_bus=event_bus, task_id=task_id,
             stage_name="td_matrix_review",
+            parent_span=hitl2_span,
         )
 
         mat_decision = hitl2_result.get("batch_decision", "approve")
+        log_score(hitl2_span, "decision", mat_decision)
+        end_span(hitl2_span, output={"decision": mat_decision})
         approved_mat_raw = hitl2_result.get("approved_matrix", {})
         if approved_mat_raw:
             matrix = TopicAssignmentMatrix.model_validate(approved_mat_raw)
@@ -1100,6 +1163,7 @@ async def run_topic_expansion_pipeline(
         # =============================================================
         # Finalize
         # =============================================================
+        exp_finalize_span = create_span(trace_span, "td-exp-finalize")
         _emit(event_bus, task_id, "td_phase_start", {"phase": "finalize", "stage": "expansion_finalize"})
         _update_task(task_store, task_id, current_step="finalize_expansion")
 
@@ -1135,6 +1199,7 @@ async def run_topic_expansion_pipeline(
 
         _emit(event_bus, task_id, "completed", {"pipeline": "topic_expansion"})
         _emit(event_bus, task_id, "td_phase_complete", {"phase": "finalize"})
+        end_span(exp_finalize_span, output={"matrix_version": mat_version})
         end_span(trace_span, output={
             "subdomains_expanded": len(expanded_ids),
             "total_assignments": len(all_assignments),

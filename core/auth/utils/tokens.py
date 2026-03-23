@@ -66,12 +66,13 @@ def create_stream_token(
     secret_key: str,
     user_id: str,
     company_slug: str,
-    expires_minutes: int = 5,
+    expires_minutes: int = 60,
 ) -> str:
-    """Create a short-lived stream token for SSE EventSource clients.
+    """Create a stream token for SSE EventSource clients.
 
-    Includes ``stream_only: true`` so the middleware prevents reuse on
-    non-SSE endpoints (Codex C4).
+    Default TTL is 60 minutes to accommodate long-running pipelines
+    (onboarding can exceed 30 minutes).  Includes ``stream_only: true``
+    so the middleware prevents reuse on non-SSE endpoints (Codex C4).
     """
     payload: Dict[str, object] = {
         "user_id": user_id,
