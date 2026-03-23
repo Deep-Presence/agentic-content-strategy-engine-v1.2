@@ -766,12 +766,10 @@ class TestTaxonomyRetryExhaustion:
 class TestL1DeadCodeRemoval:
     """L1: Verify unused imports/dead code were removed from pipeline.py."""
 
-    def test_no_create_span_import(self):
-        import inspect
+    def test_create_span_is_used(self):
+        """create_span is imported and used for LangSmith phase-level tracing."""
         import core.topic_discovery.pipeline as mod
-        source = inspect.getsource(mod)
-        # create_span should NOT appear as an import
-        assert "create_span" not in source
+        assert hasattr(mod, "create_span")
 
     def test_no_emit_async_function(self):
         import core.topic_discovery.pipeline as mod
