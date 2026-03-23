@@ -512,7 +512,7 @@ async def run_author_research(
     company_context_md: str,
     persona_summaries: str,
     parent_span: Optional[Any] = None,
-    timeout_s: float = 300.0,
+    timeout_s: float = 900.0,
 ) -> AuthorResearchResult:
     """Deep-research an author's writing style via Perplexity sonar-deep-research.
 

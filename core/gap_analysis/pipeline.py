@@ -23,7 +23,15 @@ from core.shared_tools.vector_store import (
     async_get_all_embeddings,
 )
 
+from core.config.settings import settings as _settings
+
 logger = logging.getLogger(__name__)
+
+
+def _ga_dbg(msg: str) -> None:
+    """Emit a microscopic debug log when GA_DEBUG=true."""
+    if _settings.gap_analysis_debug:
+        logger.info("[ga-debug] %s", msg)
 
 
 # ── Self-citation helpers ──────────────────────────────────────────
@@ -231,10 +239,14 @@ async def run_gap_analysis(
     # Auto-resolve persona paths before query generation (depends on neither S1 nor S2)
     _resolve_persona_paths(input_data, slug)
 
-    # ── S1 + S2: run in parallel when neither is skipped ──────────────
+    # ── Branch A: S1 (crawl + embed company assets) ─────────────────
+    # ── Branch B: S2 → S3 → S4 → S5 (query → search → enrich → embed)
+    # Both branches run in parallel. S6 is the merge point.
+
     async def _run_s1() -> tuple[List[SemanticUnit], float]:
         with scoped_bind(step_name="s1_embed_company_assets"):
             t = time.monotonic()
+            _ga_dbg(f"S1 started: embed_company_assets (skip={1 in skip_steps})")
             logger.info("Step 1 started: embed_company_assets")
             if 1 in skip_steps:
                 units = _load_json_list(
@@ -257,37 +269,126 @@ async def run_gap_analysis(
                             "No pgvector collection found for '%s' and JSON has no embeddings. "
                             "S6/S7 may produce degraded results.", slug,
                         )
+                _ga_dbg(f"S1 loaded {len(units)} cached units")
             else:
                 units = await embed_company_assets(input_data)
+                _ga_dbg(f"S1 produced {len(units)} units")
             elapsed = time.monotonic() - t
+            _ga_dbg(f"S1 DONE in {elapsed:.1f}s ({len(units)} units)")
             logger.info("Step 1 completed: embed_company_assets (%.1fs)", elapsed)
+            await persist_s1(session_factory, run_id, company_id, slug, units)
+            _cli_step(1, elapsed, skipped=1 in skip_steps)
             return units, elapsed
 
-    async def _run_s2() -> tuple[List[GeneratedQuery], float]:
+    async def _run_s2_to_s5() -> tuple:
+        """Run the query → search → enrich → embed chain (no S1 dependency)."""
+
+        # ── S2: generate queries ──
+        _ga_dbg(f"S2 started: generate_queries (skip={2 in skip_steps})")
         with scoped_bind(step_name="s2_generate_queries"):
-            t = time.monotonic()
+            s2_start = time.monotonic()
             logger.info("Step 2 started: generate_queries")
             if 2 in skip_steps:
-                qs = _load_json_list(artifact_dir / "queries.json", GeneratedQuery)
+                queries = _load_json_list(artifact_dir / "queries.json", GeneratedQuery)
             else:
-                qs = await generate_queries(input_data)
+                queries = await generate_queries(input_data)
                 (artifact_dir / "queries.json").write_text(
-                    json.dumps([q.model_dump(mode="json") for q in qs], indent=2, default=str),
+                    json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
                     encoding="utf-8",
                 )
-            elapsed = time.monotonic() - t
-            logger.info("Step 2 completed: generate_queries (%.1fs)", elapsed)
-            return qs, elapsed
+            s2_elapsed = time.monotonic() - s2_start
+            _ga_dbg(f"S2 DONE in {s2_elapsed:.1f}s ({len(queries)} queries)")
+            logger.info("Step 2 completed: generate_queries (%.1fs)", s2_elapsed)
+            await persist_s2(session_factory, run_id, company_id, slug, queries)
+            _cli_step(2, s2_elapsed, skipped=2 in skip_steps)
 
-    (company_units, s1_elapsed), (queries, s2_elapsed) = await asyncio.gather(
-        _run_s1(), _run_s2(),
+        # ── S3: search platforms ──
+        _ga_dbg("S3 starting: search_platforms")
+        with scoped_bind(step_name="s3_search_platforms"):
+            s3_start = time.monotonic()
+            logger.info("Step 3 started: search_platforms")
+            if 3 in skip_steps:
+                platform_results: List[PlatformResult] = []
+                for name in input_data.platforms:
+                    path = artifact_dir / "platform_results" / f"{name}_results.jsonl"
+                    if not path.exists():
+                        continue
+                    items = [
+                        PlatformResult(**json.loads(line))
+                        for line in path.read_text(encoding="utf-8").splitlines()
+                        if line.strip()
+                    ]
+                    platform_results.extend(items)
+            else:
+                platform_results = await search_platforms(queries, input_data.platforms)
+                save_platform_results(platform_results, artifact_dir / "platform_results")
+            logger.info("Step 3 completed: search_platforms (%.1fs)", time.monotonic() - s3_start)
+
+            _flag_company_citations(platform_results, input_data.domain)
+            company_citation_map = _build_company_citation_map(platform_results)
+            if company_citation_map:
+                logger.info(
+                    "Self-citation detection: company cited for %d queries across platforms",
+                    len(company_citation_map),
+                )
+
+            s3_elapsed = time.monotonic() - s3_start
+            await persist_s3(session_factory, run_id, company_id, slug, platform_results, queries)
+            _cli_step(3, s3_elapsed, skipped=3 in skip_steps)
+
+        # ── S4: enrich citations ──
+        _ga_dbg("S4 starting: enrich_citations")
+        with scoped_bind(step_name="s4_enrich_citations"):
+            s4_start = time.monotonic()
+            logger.info("Step 4 started: enrich_citations")
+            if 4 in skip_steps:
+                enriched = _load_json_list(
+                    artifact_dir / "enriched_citations.json", EnrichedCitation
+                )
+            else:
+                query_lookup = {q.query_id: q for q in queries}
+                enriched = await enrich_citations(platform_results, query_lookup=query_lookup)
+                save_enriched_citations(enriched, artifact_dir / "enriched_citations.json")
+            s4_elapsed = time.monotonic() - s4_start
+            logger.info("Step 4 completed: enrich_citations (%.1fs)", s4_elapsed)
+            await persist_s4(session_factory, run_id, company_id, slug, enriched)
+            _cli_step(4, s4_elapsed, skipped=4 in skip_steps)
+
+        # ── S5: embed content ──
+        _ga_dbg("S5 starting: embed_content")
+        with scoped_bind(step_name="s5_embed_content"):
+            s5_start = time.monotonic()
+            logger.info("Step 5 started: embed_content")
+            if 5 in skip_steps:
+                queries = _load_json_list(
+                    artifact_dir / "embeddings" / "queries_with_embeddings.json",
+                    GeneratedQuery,
+                )
+                enriched = _load_json_list(
+                    artifact_dir / "embeddings" / "citations_with_embeddings.json",
+                    EnrichedCitation,
+                )
+            else:
+                queries, enriched = await embed_all(queries, enriched, company_slug=slug)
+                save_embeddings(queries, enriched, artifact_dir / "embeddings")
+            s5_elapsed = time.monotonic() - s5_start
+            logger.info("Step 5 completed: embed_content (%.1fs)", s5_elapsed)
+            await persist_s5(session_factory, run_id, company_id, slug, queries, enriched)
+            _cli_step(5, s5_elapsed, skipped=5 in skip_steps)
+
+        return queries, enriched, company_citation_map
+
+    # ── Run both branches in parallel, merge at S6 ──────────────────
+    _ga_dbg("Starting parallel branches: S1 || S2→S3→S4→S5")
+    (company_units, s1_elapsed), (queries, enriched, company_citation_map) = (
+        await asyncio.gather(_run_s1(), _run_s2_to_s5())
+    )
+    _ga_dbg(
+        f"Both branches complete — S1: {len(company_units)} units in {s1_elapsed:.1f}s, "
+        f"S2→S5: {len(queries)} queries, {len(enriched)} enriched"
     )
 
-    # Post-gather persistence + CLI output
-    await persist_s1(session_factory, run_id, company_id, slug, company_units)
-    await persist_s2(session_factory, run_id, company_id, slug, queries)
-
-    # Load company page analysis (produced by s1 alongside embeddings)
+    # Load company page analysis (produced by S1 alongside embeddings)
     page_analysis_path = artifact_dir / "company_page_analysis.json"
     page_analysis_lookup: Dict[str, CompanyPageAnalysis] = {}
     if page_analysis_path.exists():
@@ -302,79 +403,8 @@ async def run_gap_analysis(
         except Exception:
             logger.warning("Failed to load company_page_analysis.json, skipping")
 
-    _cli_step(1, s1_elapsed, skipped=1 in skip_steps)
-    _cli_step(2, s2_elapsed, skipped=2 in skip_steps)
-
-    # Step 3: search platforms
-    with scoped_bind(step_name="s3_search_platforms"):
-        step_start = time.monotonic()
-        logger.info("Step 3 started: search_platforms")
-        if 3 in skip_steps:
-            platform_results = []
-            for name in input_data.platforms:
-                path = artifact_dir / "platform_results" / f"{name}_results.jsonl"
-                if not path.exists():
-                    continue
-                items = [
-                    PlatformResult(**json.loads(line))
-                    for line in path.read_text(encoding="utf-8").splitlines()
-                    if line.strip()
-                ]
-                platform_results.extend(items)
-        else:
-            platform_results = await search_platforms(queries, input_data.platforms)
-            save_platform_results(platform_results, artifact_dir / "platform_results")
-        logger.info("Step 3 completed: search_platforms (%.1fs)", time.monotonic() - step_start)
-
-        # Flag company self-citations and build citation map (before s4 dedup)
-        _flag_company_citations(platform_results, input_data.domain)
-        company_citation_map = _build_company_citation_map(platform_results)
-        if company_citation_map:
-            logger.info(
-                "Self-citation detection: company cited for %d queries across platforms",
-                len(company_citation_map),
-            )
-
-        await persist_s3(session_factory, run_id, company_id, slug, platform_results, queries)
-        _cli_step(3, time.monotonic() - step_start, skipped=3 in skip_steps)
-
-    # Step 4: enrich citations
-    with scoped_bind(step_name="s4_enrich_citations"):
-        step_start = time.monotonic()
-        logger.info("Step 4 started: enrich_citations")
-        if 4 in skip_steps:
-            enriched = _load_json_list(
-                artifact_dir / "enriched_citations.json", EnrichedCitation
-            )
-        else:
-            query_lookup = {q.query_id: q for q in queries}
-            enriched = await enrich_citations(platform_results, query_lookup=query_lookup)
-            save_enriched_citations(enriched, artifact_dir / "enriched_citations.json")
-        logger.info("Step 4 completed: enrich_citations (%.1fs)", time.monotonic() - step_start)
-        await persist_s4(session_factory, run_id, company_id, slug, enriched)
-        _cli_step(4, time.monotonic() - step_start, skipped=4 in skip_steps)
-
-    # Step 5: embed content
-    with scoped_bind(step_name="s5_embed_content"):
-        step_start = time.monotonic()
-        logger.info("Step 5 started: embed_content")
-        if 5 in skip_steps:
-            queries = _load_json_list(
-                artifact_dir / "embeddings" / "queries_with_embeddings.json",
-                GeneratedQuery,
-            )
-            enriched = _load_json_list(
-                artifact_dir / "embeddings" / "citations_with_embeddings.json",
-                EnrichedCitation,
-            )
-        else:
-            queries, enriched = await embed_all(queries, enriched, company_slug=slug)
-            save_embeddings(queries, enriched, artifact_dir / "embeddings")
-        logger.info("Step 5 completed: embed_content (%.1fs)", time.monotonic() - step_start)
-        await persist_s5(session_factory, run_id, company_id, slug, queries, enriched)
-        _cli_step(5, time.monotonic() - step_start, skipped=5 in skip_steps)
-
     # Step 6: analyze
+    _ga_dbg("S6 starting: compute_gap_analysis")
     with scoped_bind(step_name="s6_compute_gap_analysis"):
         step_start = time.monotonic()
         logger.info("Step 6 started: compute_gap_analysis")
@@ -398,6 +428,7 @@ async def run_gap_analysis(
         _cli_step(6, time.monotonic() - step_start, skipped=6 in skip_steps)
 
     # Step 7: visualize
+    _ga_dbg("S7 starting: generate_visualizations")
     with scoped_bind(step_name="s7_generate_visualizations"):
         step_start = time.monotonic()
         logger.info("Step 7 started: generate_visualizations")
@@ -419,6 +450,7 @@ async def run_gap_analysis(
         _cli_step(7, time.monotonic() - step_start, skipped=7 in skip_steps)
 
     # Step 8: report
+    _ga_dbg("S8 starting: generate_gap_report")
     with scoped_bind(step_name="s8_generate_gap_report"):
         step_start = time.monotonic()
         logger.info("Step 8 started: generate_gap_report")
