@@ -24,6 +24,7 @@ from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.research_orchestrator import ResearchOrchestratorStartRequest
 from api.tasks.event_bus import EventBus
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_research_orchestrator_task
 from core.audit import log_pipeline_launch
 from core.auth.utils.domain import derive_slug
@@ -63,8 +64,8 @@ async def start_research_orchestrator(
         )
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
-    task = task_store.create_task(
-        "research_orchestrator", slug, product_slug=body.product_slug,
+    task = await create_task_durable(
+        task_store, "research_orchestrator", slug, product_slug=body.product_slug,
     )
 
     handle = asyncio.create_task(

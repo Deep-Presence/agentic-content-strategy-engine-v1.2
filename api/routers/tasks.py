@@ -113,6 +113,7 @@ async def cancel_task(
     task_store.cancel_task_handle(task_id)
 
     task_store.update_task(task_id, status=TaskStatus.CANCELLED)
+    await task_store.flush_terminal(task_id)
     # Use pipeline:effective_slug for correct lock release
     effective = task.effective_slug or task.company_slug
     task_store.release_slug_lock(f"{task.pipeline}:{effective}")

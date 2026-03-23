@@ -327,9 +327,10 @@ async def trigger_daily_run(
     """
     company_slug = _get_company_id(request)
 
+    from api.routers._helpers import create_task_durable
     from api.tasks.runner import run_daily_tracker_task
 
-    task = task_store.create_task("daily_tracker", company_slug)
+    task = await create_task_durable(task_store, "daily_tracker", company_slug)
 
     handle = asyncio.create_task(
         run_daily_tracker_task(

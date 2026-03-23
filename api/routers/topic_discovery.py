@@ -27,6 +27,7 @@ from api.schemas.topic_discovery import (
 )
 from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask, TaskStatus
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_topic_discovery_pipeline_task, run_topic_expansion_pipeline_task
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
@@ -145,7 +146,7 @@ async def start_topic_discovery(
                 message=message or "",
             )
 
-    task = task_store.create_task("topic_discovery", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "topic_discovery", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_topic_discovery_pipeline_task(
@@ -568,7 +569,7 @@ async def start_topic_expansion(
             detail="Topic discovery has not been completed yet. Run Pipeline A first.",
         )
 
-    task = task_store.create_task("topic_expansion", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "topic_expansion", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_topic_expansion_pipeline_task(

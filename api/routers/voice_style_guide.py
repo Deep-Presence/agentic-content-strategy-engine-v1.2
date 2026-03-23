@@ -20,6 +20,7 @@ from api.schemas.voice_style_guide import (
 )
 from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask, TaskStatus
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_voice_style_guide_pipeline_task
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
@@ -135,7 +136,7 @@ async def start_voice_style_guide(
                 message=message or "",
             )
 
-    task = task_store.create_task("voice_style_guide", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "voice_style_guide", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_voice_style_guide_pipeline_task(

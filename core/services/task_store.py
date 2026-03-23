@@ -77,3 +77,17 @@ class TaskStoreProtocol(Protocol):
         approval_data: Optional[Dict[str, Any]] = None,
         expected_nonce: Optional[str] = None,
     ) -> None: ...
+
+    # ── Durability (Session 3) ─────────────────────────────────────
+
+    async def ensure_created(self, task_id: str) -> None:
+        """Await DB persistence of a recently created task. No-op for non-DB stores."""
+        ...
+
+    async def flush_terminal(self, task_id: str) -> None:
+        """Await DB persistence of terminal status update. No-op for non-DB stores."""
+        ...
+
+    async def drain_pending(self) -> None:
+        """Await all pending DB writes. Called during graceful shutdown."""
+        ...

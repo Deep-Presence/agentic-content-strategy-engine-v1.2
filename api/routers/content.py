@@ -18,6 +18,7 @@ from api.schemas.common import (
 )
 from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import _derive_slug, _resolve_scope_async, run_content_pipeline_task
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 from core.models.content_generation import ContentGenerationInput
@@ -62,7 +63,7 @@ async def start_content(
         product_name=scope.product_name,
         product_description=scope.product_description,
     )
-    task = task_store.create_task("content", company_slug, product_slug=product_slug)
+    task = await create_task_durable(task_store, "content", company_slug, product_slug=product_slug)
 
     handle = asyncio.create_task(
         run_content_pipeline_task(

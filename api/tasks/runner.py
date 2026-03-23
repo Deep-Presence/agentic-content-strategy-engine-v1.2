@@ -450,6 +450,7 @@ async def run_gap_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         try:
             _rc = get_sync_redis_or_none()
             if _rc:
@@ -607,6 +608,7 @@ async def run_site_audit_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         try:
             _rc = get_sync_redis_or_none()
             if _rc:
@@ -691,6 +693,7 @@ async def run_content_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         try:
             _rc = get_sync_redis_or_none()
             if _rc:
@@ -802,6 +805,7 @@ async def run_content_v13_pipeline_task(
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
         _cleanup_stale_pipeline_state(artifacts_root, effective, redis_client=_redis_sync, task_id=task_id)
     finally:
+        await task_store.flush_terminal(task_id)
         try:
             _rc = get_sync_redis_or_none()
             if _rc:
@@ -911,6 +915,7 @@ async def run_kb_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         try:
             _rc = get_sync_redis_or_none()
             if _rc:
@@ -1008,6 +1013,7 @@ async def run_audience_persona_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         try:
             _rc = get_sync_redis_or_none()
             if _rc:
@@ -1096,6 +1102,7 @@ async def run_single_persona_generator_task(
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"audience_persona:{slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1189,6 +1196,7 @@ async def run_voice_style_guide_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         try:
             _rc = get_sync_redis_or_none()
             if _rc:
@@ -1346,6 +1354,7 @@ async def run_research_orchestrator_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         _eff = scope.effective_slug if scope else company_slug
         try:
             _rc = get_sync_redis_or_none()
@@ -1448,6 +1457,7 @@ async def run_topic_discovery_pipeline_task(
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"topic_discovery:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1532,6 +1542,7 @@ async def run_topic_expansion_pipeline_task(
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"topic_expansion:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1625,6 +1636,7 @@ async def run_td_content_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"td_content:{effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1754,6 +1766,7 @@ async def run_onboarding_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"onboarding:{company_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1925,6 +1938,7 @@ async def run_daily_tracker_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, pipeline_run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"daily_tracker:{company_slug}")
         task_store.remove_task_handle(task_id)
         # Safety net: ensure daily_runs row doesn't stay in 'running' state

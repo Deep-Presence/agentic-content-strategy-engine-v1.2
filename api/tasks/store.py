@@ -328,6 +328,17 @@ class TaskStore:
                 f"Approval already submitted for task {task_id} — queue full"
             )
 
+    # ── Durability (Session 3) — no-ops for JSON store ──────────────
+
+    async def ensure_created(self, task_id: str) -> None:
+        """No-op — JSON persistence is synchronous."""
+
+    async def flush_terminal(self, task_id: str) -> None:
+        """No-op — JSON persistence is synchronous."""
+
+    async def drain_pending(self) -> None:
+        """No-op — JSON persistence is synchronous."""
+
     # ── Persistence ───────────────────────────────────────────────────
 
     def _persist(self, task: PipelineTask) -> None:

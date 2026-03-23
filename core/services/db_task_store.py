@@ -4,15 +4,21 @@ Satisfies TaskStoreProtocol. Uses a session_factory (not request-scoped)
 for per-operation sessions. Process-local state (semaphore, queues, handles,
 slug locks) stays in-memory only.
 
-Single-instance durability scope: SSE streaming, asyncio queues, and task
-handles are process-local. Horizontal scaling would require Redis pub/sub
-or PG LISTEN/NOTIFY (future work).
+Durability guarantees (Session 3):
+- ``create_task()`` + ``ensure_created()`` — DB INSERT awaited before
+  returning task_id to client. Process crash after create → task survives.
+- Terminal ``update_task()`` + ``flush_terminal()`` — DB UPDATE awaited
+  before runner cleanup. Process crash after terminal → correct status in DB.
+- ``drain_pending()`` — graceful shutdown drains all pending writes.
+- ``recover_from_db()`` — scoped to this worker's tasks (worker_id).
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import os
+import socket
 import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
@@ -24,6 +30,11 @@ from core.shared_tools.task_status import TaskStatus
 from core.services.task_store import ApprovalDeliveryError, ApprovalWindowError, TaskConflictError, TaskNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def _generate_worker_id() -> str:
+    """Unique per-process worker ID: hostname:pid."""
+    return f"{socket.gethostname()}:{os.getpid()}"
 
 
 class DbTaskStore:
@@ -66,6 +77,7 @@ end
         session_factory: Callable[..., AsyncSession],
         max_concurrent: int = 10,
         redis_client: Optional[Any] = None,
+        worker_id: Optional[str] = None,
     ) -> None:
         self._tasks: Dict[str, PipelineTask] = {}
         self._session_factory = session_factory
@@ -74,6 +86,10 @@ end
         self._approval_queues: Dict[str, asyncio.Queue] = {}
         self._task_handles: Dict[str, asyncio.Task] = {}
         self._max_concurrent = max_concurrent
+        self._worker_id = worker_id or _generate_worker_id()
+        # Pending DB writes for durability (Session 3 — Fix 1d)
+        self._pending_creates: Dict[str, asyncio.Task] = {}
+        self._pending_terminals: Dict[str, asyncio.Task] = {}
         # Redis for distributed slug locks (sync client, sub-ms ops)
         self._redis_sync = redis_client
         self._release_script = (
@@ -113,17 +129,24 @@ end
     # ── Startup recovery ──────────────────────────────────────────────
 
     async def recover_from_db(self) -> int:
-        """Load non-terminal tasks and mark orphans as failed_restart.
+        """Load non-terminal tasks and mark THIS worker's orphans as failed_restart.
 
-        Called once at app startup. Returns the number of orphans recovered.
+        Called once at app startup. Instance-aware: only marks tasks belonging
+        to this worker_id (+ legacy NULL worker_id rows) as failed. Other
+        workers' running tasks are left untouched.
+
+        Returns the number of orphans recovered.
         """
         from core.db.repositories.task_repo import TaskRepository
 
         async with self._session_factory() as session:
             repo = TaskRepository(session)
-            orphan_count = await repo.mark_orphans_failed()
+            orphan_count, orphan_task_ids = await repo.mark_worker_orphans_failed(
+                self._worker_id
+            )
 
-            # Load all tasks into memory cache
+            # Load all tasks into memory cache (not just this worker's —
+            # needed for cross-worker lock status checks)
             all_tasks = await repo.list_tasks()
             for row in all_tasks:
                 task = self._row_to_pipeline_task(row)
@@ -131,7 +154,7 @@ end
 
             await session.commit()
 
-        # Clean up orphaned Redis locks from crashed workers
+        # Clean up orphaned Redis locks (checks task status in _tasks)
         orphan_locks_cleaned = 0
         semaphore_cleared = 0
         if self._redis_sync is not None:
@@ -139,23 +162,48 @@ end
                 orphan_locks_cleaned = self._cleanup_orphan_locks()
             except Exception:
                 logger.warning("Failed to clean orphan Redis locks", exc_info=True)
-            # Clear stale semaphore entries — in single-process mode, all
-            # previous entries are from a dead process and guaranteed stale.
-            if self._redis_semaphore is not None:
+            # Scoped semaphore cleanup: only remove THIS worker's orphaned
+            # task_ids (replaces blanket force_clear for multi-worker safety)
+            if self._redis_semaphore is not None and orphan_task_ids:
                 try:
-                    semaphore_cleared = self._redis_semaphore.force_clear()
+                    semaphore_cleared = self._cleanup_semaphore_entries(
+                        orphan_task_ids
+                    )
                 except Exception:
-                    logger.warning("Failed to clear stale semaphore entries", exc_info=True)
+                    logger.warning(
+                        "Failed to clear stale semaphore entries", exc_info=True
+                    )
 
         logger.info(
-            "DbTaskStore recovered: %d tasks loaded, %d orphans marked failed_restart, "
-            "%d orphan Redis locks cleaned, %d stale semaphore entries cleared",
+            "DbTaskStore[%s] recovered: %d tasks loaded, %d orphans marked "
+            "failed_restart, %d orphan Redis locks cleaned, "
+            "%d stale semaphore entries cleared",
+            self._worker_id,
             len(self._tasks),
             orphan_count,
             orphan_locks_cleaned,
             semaphore_cleared,
         )
         return orphan_count
+
+    def _cleanup_semaphore_entries(self, task_ids: list[str]) -> int:
+        """Remove specific task_ids from the pipeline semaphore.
+
+        Used during startup recovery to clean only THIS worker's orphaned
+        slots, leaving other workers' legitimate entries intact.
+        """
+        if not task_ids:
+            return 0
+        cleaned = 0
+        for tid in task_ids:
+            try:
+                self._redis_semaphore.release(tid)
+                cleaned += 1
+            except Exception:
+                logger.warning(
+                    "Failed to release semaphore for %s", tid, exc_info=True
+                )
+        return cleaned
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
@@ -200,9 +248,35 @@ end
         if not allow_parallel:
             self._slug_locks[lock_key] = task_id
 
-        # Write-through to DB (critical: must persist before returning)
-        asyncio.create_task(self._db_create(task))
+        # Schedule DB INSERT — caller MUST await ensure_created() before
+        # returning task_id to client (durability guarantee).
+        self._pending_creates[task_id] = asyncio.create_task(self._db_create(task))
         return task
+
+    async def ensure_created(self, task_id: str) -> None:
+        """Await the DB INSERT for a recently created task.
+
+        Called by routers immediately after ``create_task()`` to guarantee the
+        task_id returned to the client survives a process restart.
+        Raises if the DB write failed — caller should roll back via
+        ``rollback_create()``.
+        """
+        pending = self._pending_creates.pop(task_id, None)
+        if pending is not None:
+            await pending  # Re-raises if _db_create failed
+
+    def rollback_create(self, task_id: str) -> None:
+        """Undo an in-memory create when DB persistence fails.
+
+        Removes the task from memory and releases the slug lock so the
+        pipeline slot is not permanently consumed.
+        """
+        task = self._tasks.pop(task_id, None)
+        if task:
+            effective = task.effective_slug or task.company_slug
+            lock_key = f"{task.pipeline}:{effective}"
+            self.release_slug_lock(lock_key)
+        self._pending_creates.pop(task_id, None)
 
     def get_task(self, task_id: str) -> PipelineTask:
         if task_id not in self._tasks:
@@ -245,14 +319,50 @@ end
 
         task.updated_at = datetime.now(timezone.utc)
 
-        # Determine if this is a critical update (status change) or progress
-        is_status_change = "status" in kwargs
-        if is_status_change:
-            asyncio.create_task(self._db_update(task_id, **kwargs))
-        else:
-            # Fire-and-forget for non-critical updates (progress_pct, current_step)
-            asyncio.create_task(self._db_update(task_id, **kwargs))
+        # Schedule DB write. Terminal status changes are tracked so runners
+        # can await them via flush_terminal() before cleanup.
+        status_val = kwargs.get("status")
+        is_terminal = isinstance(status_val, TaskStatus) and status_val in (
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+            TaskStatus.FAILED_RESTART,
+        )
+
+        db_task = asyncio.create_task(self._db_update(task_id, **kwargs))
+        if is_terminal:
+            self._pending_terminals[task_id] = db_task
         return task
+
+    async def flush_terminal(self, task_id: str) -> None:
+        """Await DB persistence of a terminal status change.
+
+        Called by runners in their finally blocks to guarantee the terminal
+        status persists before the asyncio.Task completes. Swallows exceptions
+        (best-effort) so cleanup continues even if DB is down.
+        """
+        pending = self._pending_terminals.pop(task_id, None)
+        if pending is not None:
+            try:
+                await pending
+            except Exception:
+                logger.exception(
+                    "DbTaskStore: terminal flush failed for %s — "
+                    "task may show as running after restart",
+                    task_id,
+                )
+
+    async def drain_pending(self) -> None:
+        """Await all pending DB writes. Called during graceful shutdown."""
+        tasks = list(self._pending_creates.values()) + list(self._pending_terminals.values())
+        if tasks:
+            logger.info("Draining %d pending DB writes...", len(tasks))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.warning("Pending write failed during drain: %s", r)
+        self._pending_creates.clear()
+        self._pending_terminals.clear()
 
     def list_tasks(
         self,
@@ -722,25 +832,27 @@ end
     # ── DB write-through helpers ──────────────────────────────────────
 
     async def _db_create(self, task: PipelineTask) -> None:
-        """Insert a new task row into DB."""
+        """Insert a new task row into DB.
+
+        Exceptions propagate to ``ensure_created()`` — the caller decides
+        whether to abort (HTTP 503) or proceed.
+        """
         from core.db.repositories.task_repo import TaskRepository
 
-        try:
-            async with self._session_factory() as session:
-                repo = TaskRepository(session)
-                await repo.create_task(
-                    task_id=task.task_id,
-                    pipeline=task.pipeline,
-                    status=task.status.value,
-                    company_slug=task.company_slug,
-                    product_slug=task.product_slug,
-                    effective_slug=task.effective_slug,
-                    current_step=task.current_step,
-                    progress_pct=task.progress_pct,
-                )
-                await session.commit()
-        except Exception:
-            logger.exception("DbTaskStore: failed to persist create for %s", task.task_id)
+        async with self._session_factory() as session:
+            repo = TaskRepository(session)
+            await repo.create_task(
+                task_id=task.task_id,
+                pipeline=task.pipeline,
+                status=task.status.value,
+                company_slug=task.company_slug,
+                product_slug=task.product_slug,
+                effective_slug=task.effective_slug,
+                current_step=task.current_step,
+                progress_pct=task.progress_pct,
+                worker_id=self._worker_id,
+            )
+            await session.commit()
 
     async def _db_update(self, task_id: str, **kwargs: Any) -> None:
         """Update a task row in DB."""

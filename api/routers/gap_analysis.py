@@ -15,6 +15,7 @@ from core.auth.utils.domain import derive_slug
 from api.schemas.common import GapAnalysisStartRequest, PipelineRunResponse, TaskResponse
 from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_gap_pipeline_task
 from core.services.task_store import TaskStoreProtocol
 from core.audit import log_pipeline_launch
@@ -97,7 +98,7 @@ async def start_gap_analysis(
             message="Artifacts already exist. Pass force_rerun=true to re-run.",
         )
 
-    task = task_store.create_task("gap_analysis", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "gap_analysis", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_gap_pipeline_task(

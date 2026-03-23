@@ -26,6 +26,7 @@ from api.schemas.audience_persona import (
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask, TaskStatus
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_audience_persona_pipeline_task, run_single_persona_generator_task
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
@@ -177,7 +178,7 @@ async def start_audience_persona(
                 message=message or "",
             )
 
-    task = task_store.create_task("audience_persona", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "audience_persona", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_audience_persona_pipeline_task(
@@ -409,7 +410,7 @@ async def add_persona(
     storage.write_brief(persona_id, brief)
 
     # Managed task lifecycle
-    task = task_store.create_task("audience_persona", slug)
+    task = await create_task_durable(task_store, "audience_persona", slug)
 
     handle = asyncio.create_task(
         run_single_persona_generator_task(

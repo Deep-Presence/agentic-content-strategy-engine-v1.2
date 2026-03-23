@@ -37,6 +37,7 @@ from api.tasks.runner import (
     run_content_v13_pipeline_task,
     run_td_content_pipeline_task,
 )
+from api.routers._helpers import create_task_durable
 from core.auth.service import AuthServiceProtocol
 from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation_v13 import ContentGenerationInputV13, EntryMode
@@ -157,7 +158,8 @@ async def start_content_v13(
     # Manual mode can run in parallel (each brief is namespaced by brief_id).
     # Autonomous and topic_discovery modes need exclusive artifact directory access.
     is_manual = input_data.entry_mode == EntryMode.MANUAL
-    task = task_store.create_task(
+    task = await create_task_durable(
+        task_store,
         pipeline="content_v13",
         company_slug=company_slug,
         product_slug=body.product_slug,
@@ -461,7 +463,8 @@ async def start_from_topics(
         raise HTTPException(status_code=400, detail="Invalid effective_slug format")
 
     # Create task
-    task = task_store.create_task(
+    task = await create_task_durable(
+        task_store,
         pipeline="td_content",
         company_slug=company_slug,
         product_slug=body.product_slug,

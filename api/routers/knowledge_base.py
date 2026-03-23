@@ -24,6 +24,7 @@ from api.schemas.common import (
 )
 from api.tasks.event_bus import EventBus
 from api.tasks.models import PipelineTask, TaskStatus
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_kb_pipeline_task
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
@@ -128,7 +129,7 @@ async def start_knowledge_base(
             ),
         )
 
-    task = task_store.create_task("knowledge_base", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "knowledge_base", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_kb_pipeline_task(
@@ -227,7 +228,7 @@ async def refresh_stale_knowledge_base(
     # Topological sort stale docs using DAG
     sorted_stale = _topological_sort_stale(stale_types)
 
-    task = task_store.create_task("knowledge_base", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "knowledge_base", slug, product_slug=body.product_slug)
 
     # Build a KnowledgeBaseStartRequest-compatible body for the runner
     from api.schemas.common import KnowledgeBaseStartRequest as KBStartReq

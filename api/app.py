@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import socket
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -47,6 +49,10 @@ def _init_structured_logging() -> None:
     )
 
 
+def _generate_worker_id() -> str:
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
 async def _init_task_store(app: FastAPI) -> TaskStore:
     """Try DbTaskStore when DATABASE_URL is set, fall back to JSON TaskStore."""
     from core.config.settings import settings
@@ -72,6 +78,7 @@ async def _init_task_store(app: FastAPI) -> TaskStore:
                 session_factory=session_factory,
                 max_concurrent=api_settings.max_concurrent_pipelines,
                 redis_client=redis_sync,
+                worker_id=_generate_worker_id(),
             )
             orphan_count = await db_store.recover_from_db()
             logger.info(
@@ -221,6 +228,11 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    # Drain pending DB writes before shutdown
+    task_store = getattr(app.state, "task_store", None)
+    if task_store is not None and hasattr(task_store, "drain_pending"):
+        await task_store.drain_pending()
+
     from core.redis import close_redis
 
     await close_redis()
