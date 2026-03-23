@@ -131,9 +131,9 @@ async def create_stream_token(
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     _user: UserProfile = Depends(require_auth),
 ) -> dict:
-    """Create a short-lived stream token for SSE EventSource clients.
+    """Create a stream token for SSE EventSource clients.
 
-    Returns a 5-minute token that can only be used for SSE endpoints.
+    Returns a 60-minute token that can only be used for SSE endpoints.
     Frontend calls this before opening EventSource, passes the token
     as ``?stream_token=xxx`` query param (Codex C4).
     """
@@ -146,4 +146,4 @@ async def create_stream_token(
 
     user_id = getattr(request.state, "user_id", None)
     token = auth_service.create_stream_token(user_id, company_slug)
-    return {"stream_token": token, "expires_in": 300}
+    return {"stream_token": token, "expires_in": 3600}
