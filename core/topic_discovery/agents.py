@@ -536,7 +536,7 @@ async def run_source_c_deep_research(
     domain: str,
     *,
     model: Optional[str] = None,
-    timeout_s: float = 500.0,
+    timeout_s: float = 900.0,
     revision_note: Optional[str] = None,
     parent_span: Optional[Any] = None,
 ) -> SourceResult:
