@@ -1,0 +1,1623 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "created_at": "2026-01-28",
+    "total_queries": 180,
+    "total_clusters": 9,
+    "queries_per_cluster": 20,
+    "companies": ["Ramp", "Webflow", "Carta", "Apollo", "Clueso"],
+    "buyer_stages": ["Awareness", "Consideration", "Evaluation", "Decision"]
+  },
+  "clusters": [
+    {
+      "cluster_id": "C1",
+      "cluster_name": "Mechanism",
+      "intent": "How does X work?",
+      "citation_behavior": "Cites explainers, product documentation, educational content, how-it-works articles",
+      "buyer_stage": "Consideration"
+    },
+    {
+      "cluster_id": "C2",
+      "cluster_name": "Boundary",
+      "intent": "What are limits/risks?",
+      "citation_behavior": "Cites authority sources, expert opinions, compliance guides, risk assessments, disclaimers",
+      "buyer_stage": "Evaluation"
+    },
+    {
+      "cluster_id": "C3",
+      "cluster_name": "Category Comparison",
+      "intent": "How does X compare to category Y?",
+      "citation_behavior": "Cites comparison articles, product reviews, analyst reports, X vs Y content",
+      "buyer_stage": "Evaluation"
+    },
+    {
+      "cluster_id": "C4",
+      "cluster_name": "Decision Criteria",
+      "intent": "How to choose / What to look for?",
+      "citation_behavior": "Cites buyer guides, evaluation frameworks, criteria checklists, how to choose content",
+      "buyer_stage": "Decision"
+    },
+    {
+      "cluster_id": "C5",
+      "cluster_name": "Definition",
+      "intent": "What is X?",
+      "citation_behavior": "Cites encyclopedic sources, glossaries, educational primers, foundational explainers",
+      "buyer_stage": "Awareness"
+    },
+    {
+      "cluster_id": "C6",
+      "cluster_name": "Problem/Awareness",
+      "intent": "How can I solve problem?",
+      "citation_behavior": "Cites educational guides, problem-solution articles, ultimate guides, industry best practices",
+      "buyer_stage": "Awareness"
+    },
+    {
+      "cluster_id": "C7",
+      "cluster_name": "Best-of/Consideration",
+      "intent": "Best X for Y",
+      "citation_behavior": "Cites listicles, comparison roundups, Top 10 articles, G2/Capterra-style reviews, buyer guides",
+      "buyer_stage": "Consideration"
+    },
+    {
+      "cluster_id": "C8",
+      "cluster_name": "Branded Evaluation",
+      "intent": "X vs Y vs Z",
+      "citation_behavior": "Cites head-to-head comparisons, G2/Capterra reviews, alternatives to X articles, competitive analysis",
+      "buyer_stage": "Evaluation"
+    },
+    {
+      "cluster_id": "C9",
+      "cluster_name": "Feature Verification",
+      "intent": "Does X have Y?",
+      "citation_behavior": "Cites product pages, feature documentation, help centers, integration directories, specific product reviews",
+      "buyer_stage": "Decision"
+    }
+  ],
+  "companies": [
+    {
+      "company": "Ramp",
+      "Mechanism": [
+        {
+          "query_id": "C1-01",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Ramp",
+          "query_text": "How does corporate expense management software automate the finance workflow?"
+        },
+        {
+          "query_id": "C1-02",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Ramp",
+          "query_text": "How do virtual corporate cards work for controlling employee spending?"
+        },
+        {
+          "query_id": "C1-03",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Ramp",
+          "query_text": "How does automated receipt matching work in expense management?"
+        },
+        {
+          "query_id": "C1-04",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Ramp",
+          "query_text": "How does accounts payable automation process invoices without manual entry?"
+        }
+      ],
+      "Boundary": [
+        {
+          "query_id": "C2-01",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "What are the limitations of corporate cards for high-growth startups scaling internationally?"
+        },
+        {
+          "query_id": "C2-02",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "What compliance requirements apply to corporate expense management and reporting?"
+        },
+        {
+          "query_id": "C2-03",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "What are the risks of not having proper spend controls on corporate cards?"
+        },
+        {
+          "query_id": "C2-04",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "What security considerations matter when choosing expense management software?"
+        }
+      ],
+      "Category_Comparison": [
+        {
+          "query_id": "C3-01",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "How does modern spend management software compare to traditional expense reporting?"
+        },
+        {
+          "query_id": "C3-02",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "What's the difference between corporate charge cards and corporate credit cards?"
+        },
+        {
+          "query_id": "C3-03",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "How do fintech corporate cards compare to traditional bank business cards?"
+        },
+        {
+          "query_id": "C3-04",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "How does integrated AP automation compare to standalone accounts payable software?"
+        }
+      ],
+      "Decision_Criteria": [
+        {
+          "query_id": "C4-01",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Ramp",
+          "query_text": "What factors should startups consider when choosing a corporate card provider?"
+        },
+        {
+          "query_id": "C4-02",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Ramp",
+          "query_text": "When should a company switch from basic expense tracking to spend management software?"
+        },
+        {
+          "query_id": "C4-03",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Ramp",
+          "query_text": "What features are essential in expense management software for scaling companies?"
+        },
+        {
+          "query_id": "C4-04",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Ramp",
+          "query_text": "How should finance teams evaluate corporate card and AP automation vendors?"
+        }
+      ],
+      "Definition": [
+        {
+          "query_id": "C5-01",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Ramp",
+          "query_text": "What is spend management and why does it matter for growing companies?"
+        },
+        {
+          "query_id": "C5-02",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Ramp",
+          "query_text": "What does accounts payable automation mean in modern finance operations?"
+        },
+        {
+          "query_id": "C5-03",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Ramp",
+          "query_text": "What is a corporate card program and how does it benefit businesses?"
+        },
+        {
+          "query_id": "C5-04",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Ramp",
+          "query_text": "What does real-time expense visibility mean for finance teams?"
+        }
+      ],
+      "Problem/Awareness": [
+        {
+          "query_id": "C6-01",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Ramp",
+          "query_text": "How can I reduce the time my team spends on expense reports?"
+        },
+        {
+          "query_id": "C6-02",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Ramp",
+          "query_text": "How can I get better visibility into company spending in real-time?"
+        },
+        {
+          "query_id": "C6-03",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Ramp",
+          "query_text": "How can I eliminate manual receipt chasing for employee expenses?"
+        },
+        {
+          "query_id": "C6-04",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Ramp",
+          "query_text": "How can I control employee spending without slowing down approvals?"
+        }
+      ],
+      "Best-of/Consideration": [
+        {
+          "query_id": "C7-01",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Ramp",
+          "query_text": "Best expense management software for startups in 2025"
+        },
+        {
+          "query_id": "C7-02",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Ramp",
+          "query_text": "Best corporate cards for fast-growing companies"
+        },
+        {
+          "query_id": "C7-03",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Ramp",
+          "query_text": "Best AP automation tools for finance teams"
+        },
+        {
+          "query_id": "C7-04",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Ramp",
+          "query_text": "Best spend management platforms for remote-first companies"
+        }
+      ],
+      "Branded_Evaluation": [
+        {
+          "query_id": "C8-01",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "Ramp vs Brex vs Divvy comparison"
+        },
+        {
+          "query_id": "C8-02",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "Ramp vs Airbase for spend management"
+        },
+        {
+          "query_id": "C8-03",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "Ramp alternatives for corporate cards"
+        },
+        {
+          "query_id": "C8-04",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Ramp",
+          "query_text": "Ramp vs Expensify vs Concur for expense management"
+        }
+      ],
+      "Feature_Verification": [
+        {
+          "query_id": "C9-01",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Ramp",
+          "query_text": "Does Ramp integrate with QuickBooks and NetSuite?"
+        },
+        {
+          "query_id": "C9-02",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Ramp",
+          "query_text": "Does Ramp offer virtual cards for employee spending?"
+        },
+        {
+          "query_id": "C9-03",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Ramp",
+          "query_text": "Does Ramp require a personal guarantee for corporate cards?"
+        },
+        {
+          "query_id": "C9-04",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Ramp",
+          "query_text": "Can Ramp automate receipt matching with AI?"
+        }
+      ]
+    },
+    {
+      "company": "Webflow",
+      "Mechanism": [
+        {
+          "query_id": "C1-05",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Webflow",
+          "query_text": "How does a no-code website builder translate visual designs into production code?"
+        },
+        {
+          "query_id": "C1-06",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Webflow",
+          "query_text": "How does a visual CMS work for marketing teams without developer support?"
+        },
+        {
+          "query_id": "C1-07",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Webflow",
+          "query_text": "How do responsive breakpoints work in visual website design?"
+        },
+        {
+          "query_id": "C1-08",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Webflow",
+          "query_text": "How does website personalization work for enterprise marketing teams?"
+        }
+      ],
+      "Boundary": [
+        {
+          "query_id": "C2-05",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "When is a no-code website builder not sufficient for enterprise requirements?"
+        },
+        {
+          "query_id": "C2-06",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "What are the SEO limitations of visual website builders compared to custom code?"
+        },
+        {
+          "query_id": "C2-07",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "What scalability constraints should teams consider with no-code platforms?"
+        },
+        {
+          "query_id": "C2-08",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "What accessibility compliance issues can arise with no-code website builders?"
+        }
+      ],
+      "Category_Comparison": [
+        {
+          "query_id": "C3-05",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "How do no-code website builders compare to custom web development?"
+        },
+        {
+          "query_id": "C3-06",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "What's the difference between template-based builders and visual development platforms?"
+        },
+        {
+          "query_id": "C3-07",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "How does visual CMS compare to headless CMS for marketing teams?"
+        },
+        {
+          "query_id": "C3-08",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "How do enterprise website platforms compare to traditional CMS solutions?"
+        }
+      ],
+      "Decision_Criteria": [
+        {
+          "query_id": "C4-05",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Webflow",
+          "query_text": "What criteria matter most when selecting a website builder for B2B SaaS?"
+        },
+        {
+          "query_id": "C4-06",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Webflow",
+          "query_text": "When should a marketing team move from WordPress to a visual website platform?"
+        },
+        {
+          "query_id": "C4-07",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Webflow",
+          "query_text": "What features should enterprises prioritize in a website management platform?"
+        },
+        {
+          "query_id": "C4-08",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Webflow",
+          "query_text": "How should agencies evaluate no-code platforms for client website projects?"
+        }
+      ],
+      "Definition": [
+        {
+          "query_id": "C5-05",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Webflow",
+          "query_text": "What is visual web development and why is it transforming website creation?"
+        },
+        {
+          "query_id": "C5-06",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Webflow",
+          "query_text": "What does responsive design mean in modern website building?"
+        },
+        {
+          "query_id": "C5-07",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Webflow",
+          "query_text": "What is a visual CMS and why do marketing teams need it?"
+        },
+        {
+          "query_id": "C5-08",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Webflow",
+          "query_text": "What does no-code development mean for enterprise web teams?"
+        }
+      ],
+      "Problem/Awareness": [
+        {
+          "query_id": "C6-05",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Webflow",
+          "query_text": "How can I build a professional website without learning to code?"
+        },
+        {
+          "query_id": "C6-06",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Webflow",
+          "query_text": "How can I let my marketing team update the website without developers?"
+        },
+        {
+          "query_id": "C6-07",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Webflow",
+          "query_text": "How can I launch landing pages faster for marketing campaigns?"
+        },
+        {
+          "query_id": "C6-08",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Webflow",
+          "query_text": "How can I redesign my company website without a costly agency?"
+        }
+      ],
+      "Best-of/Consideration": [
+        {
+          "query_id": "C7-05",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Webflow",
+          "query_text": "Best no-code website builders for B2B SaaS companies"
+        },
+        {
+          "query_id": "C7-06",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Webflow",
+          "query_text": "Best visual website platforms for marketing teams"
+        },
+        {
+          "query_id": "C7-07",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Webflow",
+          "query_text": "Best landing page builders for conversion optimization"
+        },
+        {
+          "query_id": "C7-08",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Webflow",
+          "query_text": "Best enterprise website management tools for design teams"
+        }
+      ],
+      "Branded_Evaluation": [
+        {
+          "query_id": "C8-05",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "Webflow vs Squarespace vs Wix for business websites"
+        },
+        {
+          "query_id": "C8-06",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "Webflow vs Framer for marketing sites"
+        },
+        {
+          "query_id": "C8-07",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "Webflow alternatives for no-code development"
+        },
+        {
+          "query_id": "C8-08",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Webflow",
+          "query_text": "Webflow vs WordPress vs Contentful for enterprise CMS"
+        }
+      ],
+      "Feature_Verification": [
+        {
+          "query_id": "C9-05",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Webflow",
+          "query_text": "Does Webflow support custom code and JavaScript?"
+        },
+        {
+          "query_id": "C9-06",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Webflow",
+          "query_text": "Does Webflow have built-in SEO tools?"
+        },
+        {
+          "query_id": "C9-07",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Webflow",
+          "query_text": "Can Webflow handle e-commerce and online stores?"
+        },
+        {
+          "query_id": "C9-08",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Webflow",
+          "query_text": "Does Webflow offer enterprise-level security and SSO?"
+        }
+      ]
+    },
+    {
+      "company": "Carta",
+      "Mechanism": [
+        {
+          "query_id": "C1-09",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Carta",
+          "query_text": "How does cap table software track equity ownership across funding rounds?"
+        },
+        {
+          "query_id": "C1-10",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Carta",
+          "query_text": "How does 409A valuation software calculate fair market value for startups?"
+        },
+        {
+          "query_id": "C1-11",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Carta",
+          "query_text": "How does equity vesting work in startup compensation plans?"
+        },
+        {
+          "query_id": "C1-12",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Carta",
+          "query_text": "How does waterfall modeling work for equity distribution scenarios?"
+        }
+      ],
+      "Boundary": [
+        {
+          "query_id": "C2-09",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "What are the legal requirements for cap table management and equity documentation?"
+        },
+        {
+          "query_id": "C2-10",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "What are the risks of managing startup equity on spreadsheets instead of dedicated software?"
+        },
+        {
+          "query_id": "C2-11",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "What compliance issues can arise from improper 409A valuations?"
+        },
+        {
+          "query_id": "C2-12",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "What fiduciary responsibilities apply to cap table administration?"
+        }
+      ],
+      "Category_Comparison": [
+        {
+          "query_id": "C3-09",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "How does dedicated cap table software compare to spreadsheet-based equity tracking?"
+        },
+        {
+          "query_id": "C3-10",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "What's the difference between cap table management and equity compensation platforms?"
+        },
+        {
+          "query_id": "C3-11",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "How do different 409A valuation providers compare in methodology and pricing?"
+        },
+        {
+          "query_id": "C3-12",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "How does integrated equity management compare to using separate cap table and valuation tools?"
+        }
+      ],
+      "Decision_Criteria": [
+        {
+          "query_id": "C4-09",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Carta",
+          "query_text": "What should founders look for when choosing cap table management software?"
+        },
+        {
+          "query_id": "C4-10",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Carta",
+          "query_text": "When should a startup transition from spreadsheets to dedicated equity management?"
+        },
+        {
+          "query_id": "C4-11",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Carta",
+          "query_text": "What criteria matter when selecting a 409A valuation provider?"
+        },
+        {
+          "query_id": "C4-12",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Carta",
+          "query_text": "How should companies evaluate equity management platforms before Series A?"
+        }
+      ],
+      "Definition": [
+        {
+          "query_id": "C5-09",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Carta",
+          "query_text": "What is equity management and why do startups need dedicated software?"
+        },
+        {
+          "query_id": "C5-10",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Carta",
+          "query_text": "What does dilution mean in the context of startup cap tables?"
+        },
+        {
+          "query_id": "C5-11",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Carta",
+          "query_text": "What is a 409A valuation and why is it required for startups?"
+        },
+        {
+          "query_id": "C5-12",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Carta",
+          "query_text": "What does vesting schedule mean in startup equity compensation?"
+        }
+      ],
+      "Problem/Awareness": [
+        {
+          "query_id": "C6-09",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Carta",
+          "query_text": "How can I keep track of who owns what equity in my startup?"
+        },
+        {
+          "query_id": "C6-10",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Carta",
+          "query_text": "How can I manage stock options for my employees without spreadsheets?"
+        },
+        {
+          "query_id": "C6-11",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Carta",
+          "query_text": "How can I get a 409A valuation done quickly and affordably?"
+        },
+        {
+          "query_id": "C6-12",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Carta",
+          "query_text": "How can I model different funding scenarios and their impact on ownership?"
+        }
+      ],
+      "Best-of/Consideration": [
+        {
+          "query_id": "C7-09",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Carta",
+          "query_text": "Best cap table management software for seed-stage startups"
+        },
+        {
+          "query_id": "C7-10",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Carta",
+          "query_text": "Best equity management platforms for venture-backed companies"
+        },
+        {
+          "query_id": "C7-11",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Carta",
+          "query_text": "Best 409A valuation providers for early-stage startups"
+        },
+        {
+          "query_id": "C7-12",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Carta",
+          "query_text": "Best tools for managing employee stock options"
+        }
+      ],
+      "Branded_Evaluation": [
+        {
+          "query_id": "C8-09",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "Carta vs Pulley vs AngelList for cap table management"
+        },
+        {
+          "query_id": "C8-10",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "Carta vs Shareworks for equity administration"
+        },
+        {
+          "query_id": "C8-11",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "Carta alternatives for startup equity management"
+        },
+        {
+          "query_id": "C8-12",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Carta",
+          "query_text": "Carta vs Ledgy vs LTSE Equity comparison"
+        }
+      ],
+      "Feature_Verification": [
+        {
+          "query_id": "C9-09",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Carta",
+          "query_text": "Does Carta handle international employees and global equity?"
+        },
+        {
+          "query_id": "C9-10",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Carta",
+          "query_text": "Does Carta provide audit-ready 409A valuations?"
+        },
+        {
+          "query_id": "C9-11",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Carta",
+          "query_text": "Can Carta model waterfall scenarios for exits?"
+        },
+        {
+          "query_id": "C9-12",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Carta",
+          "query_text": "Does Carta integrate with HRIS and payroll systems?"
+        }
+      ]
+    },
+    {
+      "company": "Apollo",
+      "Mechanism": [
+        {
+          "query_id": "C1-13",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Apollo",
+          "query_text": "How does sales intelligence software identify high-intent prospects?"
+        },
+        {
+          "query_id": "C1-14",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Apollo",
+          "query_text": "How does automated email sequencing work in B2B outbound sales?"
+        },
+        {
+          "query_id": "C1-15",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Apollo",
+          "query_text": "How does buyer intent data work to prioritize sales outreach?"
+        },
+        {
+          "query_id": "C1-16",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Apollo",
+          "query_text": "How does contact enrichment work in B2B prospecting platforms?"
+        }
+      ],
+      "Boundary": [
+        {
+          "query_id": "C2-13",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "What are the data accuracy limitations of B2B contact databases?"
+        },
+        {
+          "query_id": "C2-14",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "What compliance requirements apply to automated sales outreach and email sequences?"
+        },
+        {
+          "query_id": "C2-15",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "What are the limitations of automated prospecting for complex enterprise sales cycles?"
+        },
+        {
+          "query_id": "C2-16",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "What privacy regulations affect B2B sales intelligence and contact data?"
+        }
+      ],
+      "Category_Comparison": [
+        {
+          "query_id": "C3-13",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "How does sales intelligence software compare to manual LinkedIn prospecting?"
+        },
+        {
+          "query_id": "C3-14",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "What's the difference between sales intelligence and sales engagement platforms?"
+        },
+        {
+          "query_id": "C3-15",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "How do B2B data providers compare in contact accuracy and coverage?"
+        },
+        {
+          "query_id": "C3-16",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "How does AI-powered prospecting compare to traditional lead generation methods?"
+        }
+      ],
+      "Decision_Criteria": [
+        {
+          "query_id": "C4-13",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Apollo",
+          "query_text": "What features are essential in a sales prospecting and intelligence platform?"
+        },
+        {
+          "query_id": "C4-14",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Apollo",
+          "query_text": "When should a sales team invest in dedicated sales intelligence software?"
+        },
+        {
+          "query_id": "C4-15",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Apollo",
+          "query_text": "What should SDR managers look for when choosing a prospecting tool?"
+        },
+        {
+          "query_id": "C4-16",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Apollo",
+          "query_text": "How should B2B companies evaluate lead generation and enrichment vendors?"
+        }
+      ],
+      "Definition": [
+        {
+          "query_id": "C5-13",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Apollo",
+          "query_text": "What is sales intelligence and why is it critical for B2B growth?"
+        },
+        {
+          "query_id": "C5-14",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Apollo",
+          "query_text": "What does buyer intent data mean in B2B prospecting?"
+        },
+        {
+          "query_id": "C5-15",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Apollo",
+          "query_text": "What is an ideal customer profile and why does it matter for sales?"
+        },
+        {
+          "query_id": "C5-16",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Apollo",
+          "query_text": "What does contact enrichment mean in sales data management?"
+        }
+      ],
+      "Problem/Awareness": [
+        {
+          "query_id": "C6-13",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Apollo",
+          "query_text": "How can I find more qualified leads for my B2B sales team?"
+        },
+        {
+          "query_id": "C6-14",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Apollo",
+          "query_text": "How can I scale outbound prospecting without hiring more SDRs?"
+        },
+        {
+          "query_id": "C6-15",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Apollo",
+          "query_text": "How can I get accurate contact information for decision makers?"
+        },
+        {
+          "query_id": "C6-16",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Apollo",
+          "query_text": "How can I personalize cold outreach at scale?"
+        }
+      ],
+      "Best-of/Consideration": [
+        {
+          "query_id": "C7-13",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Apollo",
+          "query_text": "Best sales intelligence tools for B2B prospecting"
+        },
+        {
+          "query_id": "C7-14",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Apollo",
+          "query_text": "Best lead generation platforms for outbound sales teams"
+        },
+        {
+          "query_id": "C7-15",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Apollo",
+          "query_text": "Best contact enrichment tools for sales data"
+        },
+        {
+          "query_id": "C7-16",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Apollo",
+          "query_text": "Best email sequencing tools for SDRs"
+        }
+      ],
+      "Branded_Evaluation": [
+        {
+          "query_id": "C8-13",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "Apollo vs ZoomInfo vs Lusha for sales intelligence"
+        },
+        {
+          "query_id": "C8-14",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "Apollo.io vs Outreach vs Salesloft for sales engagement"
+        },
+        {
+          "query_id": "C8-15",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "Apollo alternatives for B2B prospecting"
+        },
+        {
+          "query_id": "C8-16",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Apollo",
+          "query_text": "Apollo vs Cognism vs Seamless.ai comparison"
+        }
+      ],
+      "Feature_Verification": [
+        {
+          "query_id": "C9-13",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Apollo",
+          "query_text": "Does Apollo.io have verified mobile phone numbers?"
+        },
+        {
+          "query_id": "C9-14",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Apollo",
+          "query_text": "Does Apollo integrate with Salesforce and HubSpot?"
+        },
+        {
+          "query_id": "C9-15",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Apollo",
+          "query_text": "Can Apollo.io automate multi-channel sequences?"
+        },
+        {
+          "query_id": "C9-16",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Apollo",
+          "query_text": "Does Apollo provide buyer intent signals?"
+        }
+      ]
+    },
+    {
+      "company": "Clueso",
+      "Mechanism": [
+        {
+          "query_id": "C1-17",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Clueso",
+          "query_text": "How does AI transform screen recordings into professional product videos?"
+        },
+        {
+          "query_id": "C1-18",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Clueso",
+          "query_text": "How does AI voiceover generation work for product documentation?"
+        },
+        {
+          "query_id": "C1-19",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Clueso",
+          "query_text": "How does automated documentation generation work from screen recordings?"
+        },
+        {
+          "query_id": "C1-20",
+          "cluster_id": "C1",
+          "cluster_name": "Mechanism",
+          "buyer_stage": "Consideration",
+          "company": "Clueso",
+          "query_text": "How does AI video translation work for multilingual product content?"
+        }
+      ],
+      "Boundary": [
+        {
+          "query_id": "C2-17",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "When should companies use professional video production instead of AI-generated videos?"
+        },
+        {
+          "query_id": "C2-18",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "What are the quality limitations of AI voiceover for customer-facing content?"
+        },
+        {
+          "query_id": "C2-19",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "What accuracy considerations apply to AI-generated product documentation?"
+        },
+        {
+          "query_id": "C2-20",
+          "cluster_id": "C2",
+          "cluster_name": "Boundary",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "What are the branding risks of using AI-generated content for product education?"
+        }
+      ],
+      "Category_Comparison": [
+        {
+          "query_id": "C3-17",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "How does AI video creation compare to traditional video editing workflows?"
+        },
+        {
+          "query_id": "C3-18",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "What's the difference between screen recording tools and product documentation platforms?"
+        },
+        {
+          "query_id": "C3-19",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "How do AI documentation generators compare to manual knowledge base creation?"
+        },
+        {
+          "query_id": "C3-20",
+          "cluster_id": "C3",
+          "cluster_name": "Category_Comparison",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "How does AI-powered video production compare to hiring video production agencies?"
+        }
+      ],
+      "Decision_Criteria": [
+        {
+          "query_id": "C4-17",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Clueso",
+          "query_text": "What should product teams consider when choosing documentation video software?"
+        },
+        {
+          "query_id": "C4-18",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Clueso",
+          "query_text": "When should a SaaS company invest in AI-powered product video creation?"
+        },
+        {
+          "query_id": "C4-19",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Clueso",
+          "query_text": "What features matter most in product documentation and tutorial software?"
+        },
+        {
+          "query_id": "C4-20",
+          "cluster_id": "C4",
+          "cluster_name": "Decision_Criteria",
+          "buyer_stage": "Decision",
+          "company": "Clueso",
+          "query_text": "How should customer success teams evaluate video documentation tools?"
+        }
+      ],
+      "Definition": [
+        {
+          "query_id": "C5-17",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Clueso",
+          "query_text": "What is product documentation and why does it impact customer success?"
+        },
+        {
+          "query_id": "C5-18",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Clueso",
+          "query_text": "What does AI-powered video creation mean for product teams?"
+        },
+        {
+          "query_id": "C5-19",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Clueso",
+          "query_text": "What is a product walkthrough and why is it important for onboarding?"
+        },
+        {
+          "query_id": "C5-20",
+          "cluster_id": "C5",
+          "cluster_name": "Definition",
+          "buyer_stage": "Awareness",
+          "company": "Clueso",
+          "query_text": "What does knowledge base mean in customer education strategy?"
+        }
+      ],
+      "Problem/Awareness": [
+        {
+          "query_id": "C6-17",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Clueso",
+          "query_text": "How can I create product demo videos without a video production team?"
+        },
+        {
+          "query_id": "C6-18",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Clueso",
+          "query_text": "How can I keep product documentation updated as features change?"
+        },
+        {
+          "query_id": "C6-19",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Clueso",
+          "query_text": "How can I onboard new customers faster with self-serve tutorials?"
+        },
+        {
+          "query_id": "C6-20",
+          "cluster_id": "C6",
+          "cluster_name": "Problem/Awareness",
+          "buyer_stage": "Awareness",
+          "company": "Clueso",
+          "query_text": "How can I create training videos for my product in multiple languages?"
+        }
+      ],
+      "Best-of/Consideration": [
+        {
+          "query_id": "C7-17",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Clueso",
+          "query_text": "Best AI tools for creating product documentation"
+        },
+        {
+          "query_id": "C7-18",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Clueso",
+          "query_text": "Best screen recording software for product tutorials"
+        },
+        {
+          "query_id": "C7-19",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Clueso",
+          "query_text": "Best video creation tools for customer onboarding"
+        },
+        {
+          "query_id": "C7-20",
+          "cluster_id": "C7",
+          "cluster_name": "Best-of/Consideration",
+          "buyer_stage": "Consideration",
+          "company": "Clueso",
+          "query_text": "Best knowledge base software for SaaS companies"
+        }
+      ],
+      "Branded_Evaluation": [
+        {
+          "query_id": "C8-17",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "Clueso vs Loom vs Scribe for product documentation"
+        },
+        {
+          "query_id": "C8-18",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "Clueso vs Tango vs Guidde for tutorial creation"
+        },
+        {
+          "query_id": "C8-19",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "Clueso alternatives for AI video generation"
+        },
+        {
+          "query_id": "C8-20",
+          "cluster_id": "C8",
+          "cluster_name": "Branded_Evaluation",
+          "buyer_stage": "Evaluation",
+          "company": "Clueso",
+          "query_text": "Clueso vs Synthesia vs HeyGen for AI videos"
+        }
+      ],
+      "Feature_Verification": [
+        {
+          "query_id": "C9-17",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Clueso",
+          "query_text": "Does Clueso support automatic translation for videos?"
+        },
+        {
+          "query_id": "C9-18",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Clueso",
+          "query_text": "Can Clueso generate written documentation from screen recordings?"
+        },
+        {
+          "query_id": "C9-19",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Clueso",
+          "query_text": "Does Clueso integrate with Notion and Confluence?"
+        },
+        {
+          "query_id": "C9-20",
+          "cluster_id": "C9",
+          "cluster_name": "Feature_Verification",
+          "buyer_stage": "Decision",
+          "company": "Clueso",
+          "query_text": "Does Clueso offer AI voiceover in multiple languages?"
+        }
+      ]
+    }
+  ]
+}
