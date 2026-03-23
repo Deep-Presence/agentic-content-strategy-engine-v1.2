@@ -736,6 +736,39 @@ async def test_persist_s6_handles_exception():
         await persist_s6(factory, RUN_ID, COMPANY_ID, SLUG, _make_analysis_result())
 
 
+@pytest.mark.asyncio
+async def test_persist_s6_no_run_id_on_exemplar_model():
+    """Regression: QueryExemplarModel has no run_id column.
+
+    The idempotent-delete loop must NOT reference QueryExemplarModel.run_id.
+    Exemplars are cascade-deleted via their FK to query_gaps (ondelete=CASCADE).
+    This was the root cause of persist_s6 silently failing and leaving the DB
+    empty while JSON artifacts existed — see persist_s6 bug 2026-03-23.
+    """
+    from core.db.models.gap_analysis import QueryExemplarModel as RealExemplarModel
+
+    # Verify the real model class truly lacks run_id
+    assert not hasattr(RealExemplarModel, "run_id"), (
+        "QueryExemplarModel should NOT have a run_id column — "
+        "it links to query_gaps via query_gap_id FK"
+    )
+
+    # Now run persist_s6 with real ORM models (not mocked) for the delete loop,
+    # but mock the session.execute and repo to avoid needing a real DB.
+    factory = _make_session_factory()
+    analysis = _make_analysis_result()
+
+    with patch(_GAP_REPO) as MockRepo:
+        mock_repo = AsyncMock()
+        MockRepo.return_value = mock_repo
+
+        # Should NOT raise AttributeError on QueryExemplarModel.run_id
+        await persist_s6(factory, RUN_ID, COMPANY_ID, SLUG, analysis)
+
+        # Verify data was actually inserted (not short-circuited by error)
+        mock_repo.bulk_insert_query_gaps.assert_awaited_once()
+
+
 # ── persist_s7 tests ─────────────────────────────────────────────────────
 
 

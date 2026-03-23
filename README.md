@@ -211,11 +211,39 @@ content-strategy-engine/
 pytest tests/ -v
 
 # Specific module
-pytest tests/core/site_audit/ -v
+pytest tests/content_engine/ -v
+pytest tests/integration/ -v
 
 # With coverage
 pytest tests/ --cov=core --cov-report=term-missing
 ```
+
+### Smoke Tests (Deployment Validation)
+
+Smoke tests run against a **live deployed instance** to catch issues that unit tests miss: environment config, auth flow, SSE streaming, network connectivity. They live in `tests/smoke/` and are auto-skipped unless `SMOKE_TEST_URL` is set.
+
+```bash
+# Against local dev server
+SMOKE_TEST_URL=http://localhost:8000 pytest tests/smoke/ -v
+
+# Against staging/production
+SMOKE_TEST_URL=https://api.staging.example.com pytest tests/smoke/ -v
+
+# With authentication (enables login + protected endpoint tests)
+SMOKE_TEST_URL=https://api.staging.example.com \
+  SMOKE_TEST_EMAIL=test@example.com \
+  SMOKE_TEST_PASSWORD=your-password \
+  pytest tests/smoke/ -v
+```
+
+**What smoke tests verify:**
+- `/health` and `/readiness` return 200 with expected shape
+- Unauthenticated requests to protected endpoints get 401
+- Login flow returns a valid access token
+- Authenticated task list returns 200
+- SSE event stream endpoint responds correctly
+
+**When to run:** after every deployment, before tagging a release, or when debugging deployment-specific issues that unit tests don't catch.
 
 ### Database setup (optional)
 
