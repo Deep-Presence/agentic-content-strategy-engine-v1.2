@@ -42,7 +42,7 @@ from typing import Any, Dict, List, Optional
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config.settings import settings
@@ -150,16 +150,38 @@ async def _backfill_slug(
     }
 
     # ── Check if run already exists ──────────────────────────────
-    existing = await session.execute(
+    existing_result = await session.execute(
         select(PipelineRunModel).where(
             PipelineRunModel.effective_slug == slug,
             PipelineRunModel.pipeline_type == PipelineType.gap_analysis,
             PipelineRunModel.status == PipelineStatus.completed,
-        ).limit(1)
+        ).order_by(PipelineRunModel.completed_at.desc()).limit(1)
     )
-    if existing.scalars().first() is not None:
-        logger.info("Run already exists for slug '%s', skipping", slug)
-        return counts
+    existing_run: Optional[PipelineRunModel] = existing_result.scalars().first()
+
+    # If run exists, check if it has actual data (query_gaps rows).
+    # A persist_s6 bug (QueryExemplarModel.run_id AttributeError) could
+    # leave a completed run with zero query_gaps — detect and repair.
+    reuse_run_id: Optional[uuid.UUID] = None
+    if existing_run is not None:
+        gap_count_result = await session.execute(
+            select(func.count()).select_from(QueryGapModel).where(
+                QueryGapModel.run_id == existing_run.id,
+            )
+        )
+        gap_count = int(gap_count_result.scalar_one())
+        if gap_count > 0:
+            logger.info(
+                "Run already exists for slug '%s' with %d gaps, skipping",
+                slug, gap_count,
+            )
+            return counts
+        # Run exists but has no data — reuse it and repopulate
+        logger.info(
+            "Run exists for slug '%s' but has 0 query_gaps — repopulating",
+            slug,
+        )
+        reuse_run_id = existing_run.id
 
     if dry_run:
         logger.info("[DRY-RUN] Would insert data for slug '%s'", slug)
@@ -175,10 +197,10 @@ async def _backfill_slug(
 
         citations = _load_json(slug_dir / "enriched_citations.json")
         counts["run_citations"] = len(citations) if isinstance(citations, list) else 0
-        counts["pipeline_runs"] = 1
+        counts["pipeline_runs"] = 0 if reuse_run_id else 1
         return counts
 
-    # ── Create pipeline run ──────────────────────────────────────
+    # ── Create pipeline run (or reuse existing empty one) ────────
     now = datetime.now(tz=timezone.utc)
     decision_metrics = analysis.get("decision_metrics", {})
     spa_results_raw = analysis.get("spa_results", [])
@@ -193,24 +215,43 @@ async def _backfill_slug(
         first_spa = spa_results_raw[0]
         summary["spa_score"] = _safe_float(first_spa.get("t_stat"))
 
-    run_id = uuid.uuid4()
-    run = PipelineRunModel(
-        id=run_id,
-        company_id=uuid.uuid4(),  # placeholder — no company in filesystem mode
-        effective_slug=slug,
-        pipeline_type=PipelineType.gap_analysis,
-        status=PipelineStatus.completed,
-        summary=summary,
-        stages_executed=[
-            "s1_embed_assets", "s2_generate_queries", "s3_search_platforms",
-            "s4_enrich_citations", "s5_embed_content", "s6_analyze",
-            "s7_visualize", "s8_generate_report",
-        ],
-        started_at=now,
-        completed_at=now,
-    )
-    session.add(run)
-    counts["pipeline_runs"] = 1
+    if reuse_run_id is not None:
+        # Reuse existing empty run — just populate its data tables.
+        # Clean any stale partial data first (idempotent).
+        run_id = reuse_run_id
+        for model_cls in (QueryGapModel, ClusterSpecModel, SpaResultModel, CentroidResultModel):
+            await session.execute(
+                select(func.count()).select_from(model_cls).where(
+                    model_cls.run_id == run_id,  # type: ignore[attr-defined]
+                )
+            )
+            await session.execute(
+                delete(model_cls).where(model_cls.run_id == run_id)  # type: ignore[attr-defined]
+            )
+        # Update summary on the existing run
+        run_model = await session.get(PipelineRunModel, run_id)
+        if run_model is not None:
+            run_model.summary = summary
+        logger.info("Reusing existing run %s for slug '%s'", run_id, slug)
+    else:
+        run_id = uuid.uuid4()
+        run = PipelineRunModel(
+            id=run_id,
+            company_id=uuid.uuid4(),  # placeholder — no company in filesystem mode
+            effective_slug=slug,
+            pipeline_type=PipelineType.gap_analysis,
+            status=PipelineStatus.completed,
+            summary=summary,
+            stages_executed=[
+                "s1_embed_assets", "s2_generate_queries", "s3_search_platforms",
+                "s4_enrich_citations", "s5_embed_content", "s6_analyze",
+                "s7_visualize", "s8_generate_report",
+            ],
+            started_at=now,
+            completed_at=now,
+        )
+        session.add(run)
+        counts["pipeline_runs"] = 1
 
     # ── Query Gaps ───────────────────────────────────────────────
     gaps_raw: List[Dict[str, Any]] = analysis.get("gaps", [])
