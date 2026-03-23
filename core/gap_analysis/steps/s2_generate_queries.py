@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,6 +23,7 @@ from core.gap_analysis.topic_cluster_map import (
     is_excluded_combo,
 )
 from core.shared_tools.async_embedding_client import async_embed_texts
+from core.shared_tools.tracing import log_generation
 
 logger = logging.getLogger(__name__)
 
@@ -426,6 +428,8 @@ async def _validate_coverage(
     company_context: str,
     persona_context: str,
     model: str,
+    *,
+    trace_span: Optional[Any] = None,
 ) -> List[GeneratedQuery]:
     """Ensure balanced cluster distribution; generate fill-ins for underrepresented clusters."""
     if not queries or not clusters:
@@ -494,7 +498,12 @@ Context:
 {persona_context[:1000]}"""
 
     try:
+        t0 = time.monotonic()
         response_text = await _call_openai(fill_prompt, model)
+        elapsed = time.monotonic() - t0
+        logger.info("S2 fill-in LLM call: model=%s, elapsed=%.1fs", model, elapsed)
+        if trace_span:
+            log_generation(trace_span, "s2-fill-in-generation", model, fill_prompt[:500], response_text[:500], usage=None)
         payload = _extract_json(response_text)
         raw_fill = payload.get("queries", [])
         start_idx = len(queries) + 1
@@ -524,6 +533,8 @@ async def generate_queries(
     input_data: GapAnalysisInput,
     taxonomy_path: Optional[Path] = None,
     model: Optional[str] = None,
+    *,
+    trace_span: Optional[Any] = None,
 ) -> List[GeneratedQuery]:
     clusters = _load_taxonomy(taxonomy_path)
     company_context = _read_text(input_data.company_context_path)
@@ -552,7 +563,12 @@ async def generate_queries(
         product_context=product_context,
     )
 
+    t0 = time.monotonic()
     response_text = await _call_openai(prompt, model_name)
+    elapsed = time.monotonic() - t0
+    logger.info("S2 seed LLM call: model=%s, elapsed=%.1fs", model_name, elapsed)
+    if trace_span:
+        log_generation(trace_span, "s2-seed-generation", model_name, prompt[:500], response_text[:500], usage=None)
     payload = _extract_json(response_text)
     raw_queries = payload.get("queries", [])
 
@@ -582,6 +598,7 @@ async def generate_queries(
         company_context=company_context,
         persona_context=persona_context,
         model=model_name,
+        trace_span=trace_span,
     )
 
     # Re-assign sequential query IDs
@@ -811,6 +828,8 @@ async def generate_queries_from_topics(
     product_slug: Optional[str] = None,
     product_description: Optional[str] = None,
     model: Optional[str] = None,
+    *,
+    trace_span: Optional[Any] = None,
 ) -> List[GeneratedQuery]:
     """Generate queries from approved TopicAssignments (TD → GA bridge).
 
@@ -873,7 +892,15 @@ async def generate_queries_from_topics(
         )
 
         try:
+            t0 = time.monotonic()
             response_text = await _call_openai(prompt, model_name)
+            elapsed = time.monotonic() - t0
+            logger.info(
+                "S2 topic-scoped LLM call: model=%s, topic='%s', elapsed=%.1fs",
+                model_name, topic.topic_text[:50], elapsed,
+            )
+            if trace_span:
+                log_generation(trace_span, "s2-topic-scoped-generation", model_name, prompt[:500], response_text[:500], usage=None)
             payload = _extract_json(response_text)
             raw_queries = payload.get("queries", [])
 

@@ -129,12 +129,16 @@ class _CircuitBreaker:
     def is_open(self) -> bool:
         return self._open
 
-    def record_failure(self) -> None:
+    def record_failure(self) -> bool:
+        """Record a failure. Returns True if the breaker just opened."""
         self._consecutive_failures += 1
         if self._consecutive_failures >= self._threshold:
             if not self._open:
                 self.tripped_count = 1
+                self._open = True
+                return True
             self._open = True
+        return False
 
     def record_success(self) -> None:
         self._consecutive_failures = 0
@@ -261,7 +265,12 @@ async def _run_engine_batch(
         is_error = (result.response_text or "").startswith("ERROR:")
         if is_error:
             errors += 1
-            cb.record_failure()
+            just_opened = cb.record_failure()
+            if just_opened:
+                logger.warning(
+                    "[%s] circuit breaker OPENED after consecutive failures — skipping remaining queries",
+                    engine.engine_name,
+                )
         else:
             total_citations += len(result.citations)
             cb.record_success()
@@ -328,6 +337,8 @@ async def search_platforms(
     queries: List[GeneratedQuery],
     platform_names: List[str],
     concurrency: int = 6,
+    *,
+    trace_span: Optional[Any] = None,
 ) -> List[PlatformResult]:
     """Search all platforms with per-engine concurrency pools.
 

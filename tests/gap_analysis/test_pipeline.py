@@ -453,7 +453,7 @@ class TestS1S2Parallelism:
             s1_end = time.monotonic()
             return mock_units
 
-        async def _slow_s2(input_data):
+        async def _slow_s2(input_data, **kwargs):
             nonlocal s2_start, s2_end
             s2_start = time.monotonic()
             await asyncio.sleep(0.2)

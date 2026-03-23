@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 import plotly.express as px
 import plotly.graph_objects as go
 import umap
@@ -682,6 +686,7 @@ def generate_visualizations(
     analysis: AnalysisResult,
     output_dir: Path,
 ) -> Dict[str, str]:
+    s7_t0 = time.monotonic()
     _ensure_dir(output_dir)
     paths: Dict[str, Path] = {
         # Existing Plotly (HTML)
@@ -698,12 +703,28 @@ def generate_visualizations(
         "similarity_distribution": output_dir / "similarity_distribution.html",
     }
 
+    succeeded = 0
+    failed = 0
+    failed_keys: list[str] = []
+
+    def _safe_plot(path_key: str, fn, *args, **kwargs):
+        nonlocal succeeded, failed
+        try:
+            t0 = time.monotonic()
+            fn(*args, **kwargs)
+            succeeded += 1
+            logger.debug("S7 %s: %.1fs", path_key, time.monotonic() - t0)
+        except Exception as exc:
+            failed += 1
+            failed_keys.append(path_key)
+            logger.warning("S7 %s FAILED: %s", path_key, exc)
+
     # Existing plots (use their own internal UMAP/collection)
-    plot_embedding_space(queries, citations, company_units, paths["embedding_space"])
-    plot_gap_heatmap(analysis, paths["gap_heatmap"])
-    plot_gap_distribution(analysis, paths["gap_distribution"])
-    plot_citation_treemap(analysis, paths["citation_treemap"])
-    plot_cluster_radar(analysis, paths["cluster_radar"])
+    _safe_plot("embedding_space", plot_embedding_space, queries, citations, company_units, paths["embedding_space"])
+    _safe_plot("gap_heatmap", plot_gap_heatmap, analysis, paths["gap_heatmap"])
+    _safe_plot("gap_distribution", plot_gap_distribution, analysis, paths["gap_distribution"])
+    _safe_plot("citation_treemap", plot_citation_treemap, analysis, paths["citation_treemap"])
+    _safe_plot("cluster_radar", plot_cluster_radar, analysis, paths["cluster_radar"])
 
     # Compute typed embeddings ONCE, reduce ONCE per method, reuse everywhere
     embeddings_arr, meta_list = _collect_typed_embeddings(queries, citations, company_units)
@@ -712,18 +733,25 @@ def generate_visualizations(
         tsne_coords = _reduce_embeddings(embeddings_arr, "tsne")
 
         # HTML plots from pre-computed coords
-        _plot_typed_from_coords(umap_coords, meta_list, paths["umap_space"], "umap")
-        _plot_typed_from_coords(tsne_coords, meta_list, paths["tsne_space"], "tsne")
-        _plot_clustered_from_coords(umap_coords, meta_list, paths["umap_clustered"], "umap")
-        _plot_clustered_from_coords(tsne_coords, meta_list, paths["tsne_clustered"], "tsne")
+        _safe_plot("umap_typed", _plot_typed_from_coords, umap_coords, meta_list, paths["umap_space"], "umap")
+        _safe_plot("tsne_typed", _plot_typed_from_coords, tsne_coords, meta_list, paths["tsne_space"], "tsne")
+        _safe_plot("umap_clustered", _plot_clustered_from_coords, umap_coords, meta_list, paths["umap_clustered"], "umap")
+        _safe_plot("tsne_clustered", _plot_clustered_from_coords, tsne_coords, meta_list, paths["tsne_clustered"], "tsne")
 
         # JSON projections for frontend scatter (same coords — no drift)
-        _save_embedding_projections(umap_coords, meta_list, output_dir, "umap")
-        _save_embedding_projections(tsne_coords, meta_list, output_dir, "tsne")
+        _safe_plot("umap_projections", _save_embedding_projections, umap_coords, meta_list, output_dir, "umap")
+        _safe_plot("tsne_projections", _save_embedding_projections, tsne_coords, meta_list, output_dir, "tsne")
         paths["umap_projections_json"] = output_dir / "embedding_projections_umap.json"
         paths["tsne_projections_json"] = output_dir / "embedding_projections_tsne.json"
 
     # Similarity histogram (uses its own proximity pair computation)
-    plot_similarity_histogram(queries, citations, paths["similarity_distribution"])
+    _safe_plot("similarity_histogram", plot_similarity_histogram, queries, citations, paths["similarity_distribution"])
+
+    total_plots = succeeded + failed
+    logger.info("S7 complete: %d/%d visualizations succeeded, %d failed, %.1fs", succeeded, total_plots, failed, time.monotonic() - s7_t0)
+
+    # Remove paths for failed plots so downstream doesn't reference missing files
+    for fk in failed_keys:
+        paths.pop(fk, None)
 
     return {k: str(v) for k, v in paths.items()}

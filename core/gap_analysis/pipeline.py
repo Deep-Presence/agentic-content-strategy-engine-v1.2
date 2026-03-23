@@ -24,6 +24,14 @@ from core.shared_tools.vector_store import (
 )
 
 from core.config.settings import settings as _settings
+from core.shared_tools.tracing import (
+    create_session,
+    create_span,
+    create_trace,
+    end_span,
+    flush as flush_traces,
+    update_trace_output,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -216,12 +224,35 @@ async def run_gap_analysis(
     session_factory: Optional[async_sessionmaker] = None,
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
+    trace_parent: Optional[object] = None,
 ) -> GapReport:
     skip_steps = skip_steps or []
     slug = _company_slug(input_data)
     artifact_dir = _artifact_dir(slug)
     pipeline_start = time.monotonic()
     skipped_count = len([s for s in range(1, 9) if s in skip_steps])
+
+    # ── LangSmith tracing: create root trace or child span ────────────
+    session_id = create_session(slug)
+    if trace_parent is not None:
+        trace = create_span(trace_parent, f"gap-analysis/{slug}", input_data={
+            "company_slug": slug,
+            "platforms": input_data.platforms,
+            "max_queries": input_data.max_queries,
+            "skip_steps": skip_steps,
+        })
+    else:
+        trace = create_trace(
+            session_id,
+            f"gap-analysis/{slug}",
+            input_data={
+                "company_slug": slug,
+                "platforms": input_data.platforms,
+                "max_queries": input_data.max_queries,
+                "skip_steps": skip_steps,
+            },
+            project_name=_settings.gap_analysis_langsmith_project,
+        )
 
     # Fast/demo mode: cap queries and use only fastest engines
     if input_data.fast_mode:
@@ -244,244 +275,329 @@ async def run_gap_analysis(
     # Both branches run in parallel. S6 is the merge point.
 
     async def _run_s1() -> tuple[List[SemanticUnit], float]:
-        with scoped_bind(step_name="s1_embed_company_assets"):
-            t = time.monotonic()
-            _ga_dbg(f"S1 started: embed_company_assets (skip={1 in skip_steps})")
-            logger.info("Step 1 started: embed_company_assets")
-            if 1 in skip_steps:
-                units = _load_json_list(
-                    artifact_dir / "company_embeddings.json", SemanticUnit
-                )
-                if not any(u.embedding for u in units):
-                    if await async_collection_exists(slug):
-                        embedding_map = await async_get_all_embeddings(slug)
-                        hydrated = 0
-                        for unit in units:
-                            if unit.unit_id in embedding_map:
-                                unit.embedding = embedding_map[unit.unit_id]
-                                hydrated += 1
-                        logger.info(
-                            "Hydrated %d/%d unit embeddings from pgvector.",
-                            hydrated, len(units),
-                        )
-                    else:
-                        logger.warning(
-                            "No pgvector collection found for '%s' and JSON has no embeddings. "
-                            "S6/S7 may produce degraded results.", slug,
-                        )
-                _ga_dbg(f"S1 loaded {len(units)} cached units")
-            else:
-                units = await embed_company_assets(input_data)
-                _ga_dbg(f"S1 produced {len(units)} units")
-            elapsed = time.monotonic() - t
-            _ga_dbg(f"S1 DONE in {elapsed:.1f}s ({len(units)} units)")
-            logger.info("Step 1 completed: embed_company_assets (%.1fs)", elapsed)
-            await persist_s1(session_factory, run_id, company_id, slug, units)
-            _cli_step(1, elapsed, skipped=1 in skip_steps)
-            return units, elapsed
+        s1_span = create_span(trace, "ga-s1-embed-assets", input_data={"skip": 1 in skip_steps})
+        try:
+            with scoped_bind(step_name="s1_embed_company_assets"):
+                t = time.monotonic()
+                _ga_dbg(f"S1 started: embed_company_assets (skip={1 in skip_steps})")
+                logger.info("Step 1 started: embed_company_assets")
+                if 1 in skip_steps:
+                    units = _load_json_list(
+                        artifact_dir / "company_embeddings.json", SemanticUnit
+                    )
+                    if not any(u.embedding for u in units):
+                        if await async_collection_exists(slug):
+                            embedding_map = await async_get_all_embeddings(slug)
+                            hydrated = 0
+                            for unit in units:
+                                if unit.unit_id in embedding_map:
+                                    unit.embedding = embedding_map[unit.unit_id]
+                                    hydrated += 1
+                            logger.info(
+                                "Hydrated %d/%d unit embeddings from pgvector.",
+                                hydrated, len(units),
+                            )
+                        else:
+                            logger.warning(
+                                "No pgvector collection found for '%s' and JSON has no embeddings. "
+                                "S6/S7 may produce degraded results.", slug,
+                            )
+                    _ga_dbg(f"S1 loaded {len(units)} cached units")
+                else:
+                    units = await embed_company_assets(input_data)
+                    _ga_dbg(f"S1 produced {len(units)} units")
+                elapsed = time.monotonic() - t
+                _ga_dbg(f"S1 DONE in {elapsed:.1f}s ({len(units)} units)")
+                logger.info("Step 1 completed: embed_company_assets (%.1fs)", elapsed)
+                await persist_s1(session_factory, run_id, company_id, slug, units)
+                _cli_step(1, elapsed, skipped=1 in skip_steps)
+                end_span(s1_span, output={"unit_count": len(units), "elapsed_s": round(elapsed, 1)})
+                return units, elapsed
+        except BaseException as exc:
+            end_span(s1_span, error=str(exc))
+            raise
 
     async def _run_s2_to_s5() -> tuple:
         """Run the query → search → enrich → embed chain (no S1 dependency)."""
 
         # ── S2: generate queries ──
         _ga_dbg(f"S2 started: generate_queries (skip={2 in skip_steps})")
-        with scoped_bind(step_name="s2_generate_queries"):
-            s2_start = time.monotonic()
-            logger.info("Step 2 started: generate_queries")
-            if 2 in skip_steps:
-                queries = _load_json_list(artifact_dir / "queries.json", GeneratedQuery)
-            else:
-                queries = await generate_queries(input_data)
-                (artifact_dir / "queries.json").write_text(
-                    json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
-                    encoding="utf-8",
-                )
-            s2_elapsed = time.monotonic() - s2_start
-            _ga_dbg(f"S2 DONE in {s2_elapsed:.1f}s ({len(queries)} queries)")
-            logger.info("Step 2 completed: generate_queries (%.1fs)", s2_elapsed)
-            await persist_s2(session_factory, run_id, company_id, slug, queries)
-            _cli_step(2, s2_elapsed, skipped=2 in skip_steps)
+        s2_span = create_span(trace, "ga-s2-generate-queries", input_data={"skip": 2 in skip_steps})
+        try:
+            with scoped_bind(step_name="s2_generate_queries"):
+                s2_start = time.monotonic()
+                logger.info("Step 2 started: generate_queries")
+                if 2 in skip_steps:
+                    queries = _load_json_list(artifact_dir / "queries.json", GeneratedQuery)
+                else:
+                    queries = await generate_queries(input_data, trace_span=s2_span)
+                    (artifact_dir / "queries.json").write_text(
+                        json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
+                        encoding="utf-8",
+                    )
+                s2_elapsed = time.monotonic() - s2_start
+                _ga_dbg(f"S2 DONE in {s2_elapsed:.1f}s ({len(queries)} queries)")
+                logger.info("Step 2 completed: generate_queries (%.1fs)", s2_elapsed)
+                await persist_s2(session_factory, run_id, company_id, slug, queries)
+                _cli_step(2, s2_elapsed, skipped=2 in skip_steps)
+                end_span(s2_span, output={"query_count": len(queries), "elapsed_s": round(s2_elapsed, 1)})
+        except BaseException as exc:
+            end_span(s2_span, error=str(exc))
+            raise
 
         # ── S3: search platforms ──
         _ga_dbg("S3 starting: search_platforms")
-        with scoped_bind(step_name="s3_search_platforms"):
-            s3_start = time.monotonic()
-            logger.info("Step 3 started: search_platforms")
-            if 3 in skip_steps:
-                platform_results: List[PlatformResult] = []
-                for name in input_data.platforms:
-                    path = artifact_dir / "platform_results" / f"{name}_results.jsonl"
-                    if not path.exists():
-                        continue
-                    items = [
-                        PlatformResult(**json.loads(line))
-                        for line in path.read_text(encoding="utf-8").splitlines()
-                        if line.strip()
-                    ]
-                    platform_results.extend(items)
-            else:
-                platform_results = await search_platforms(queries, input_data.platforms)
-                save_platform_results(platform_results, artifact_dir / "platform_results")
-            logger.info("Step 3 completed: search_platforms (%.1fs)", time.monotonic() - s3_start)
+        s3_span = create_span(trace, "ga-s3-search-platforms", input_data={
+            "skip": 3 in skip_steps,
+            "query_count": len(queries),
+            "platforms": input_data.platforms,
+        })
+        try:
+            with scoped_bind(step_name="s3_search_platforms"):
+                s3_start = time.monotonic()
+                logger.info("Step 3 started: search_platforms")
+                if 3 in skip_steps:
+                    platform_results: List[PlatformResult] = []
+                    for name in input_data.platforms:
+                        path = artifact_dir / "platform_results" / f"{name}_results.jsonl"
+                        if not path.exists():
+                            continue
+                        items = [
+                            PlatformResult(**json.loads(line))
+                            for line in path.read_text(encoding="utf-8").splitlines()
+                            if line.strip()
+                        ]
+                        platform_results.extend(items)
+                else:
+                    platform_results = await search_platforms(queries, input_data.platforms, trace_span=s3_span)
+                    save_platform_results(platform_results, artifact_dir / "platform_results")
+                logger.info("Step 3 completed: search_platforms (%.1fs)", time.monotonic() - s3_start)
 
-            _flag_company_citations(platform_results, input_data.domain)
-            company_citation_map = _build_company_citation_map(platform_results)
-            if company_citation_map:
-                logger.info(
-                    "Self-citation detection: company cited for %d queries across platforms",
-                    len(company_citation_map),
-                )
+                _flag_company_citations(platform_results, input_data.domain)
+                company_citation_map = _build_company_citation_map(platform_results)
+                if company_citation_map:
+                    logger.info(
+                        "Self-citation detection: company cited for %d queries across platforms",
+                        len(company_citation_map),
+                    )
 
-            s3_elapsed = time.monotonic() - s3_start
-            await persist_s3(session_factory, run_id, company_id, slug, platform_results, queries)
-            _cli_step(3, s3_elapsed, skipped=3 in skip_steps)
+                s3_elapsed = time.monotonic() - s3_start
+                await persist_s3(session_factory, run_id, company_id, slug, platform_results, queries)
+                _cli_step(3, s3_elapsed, skipped=3 in skip_steps)
+                end_span(s3_span, output={
+                    "result_count": len(platform_results),
+                    "citation_count": sum(len(r.citations) for r in platform_results),
+                    "elapsed_s": round(s3_elapsed, 1),
+                })
+        except BaseException as exc:
+            end_span(s3_span, error=str(exc))
+            raise
 
         # ── S4: enrich citations ──
         _ga_dbg("S4 starting: enrich_citations")
-        with scoped_bind(step_name="s4_enrich_citations"):
-            s4_start = time.monotonic()
-            logger.info("Step 4 started: enrich_citations")
-            if 4 in skip_steps:
-                enriched = _load_json_list(
-                    artifact_dir / "enriched_citations.json", EnrichedCitation
-                )
-            else:
-                query_lookup = {q.query_id: q for q in queries}
-                enriched = await enrich_citations(platform_results, query_lookup=query_lookup)
-                save_enriched_citations(enriched, artifact_dir / "enriched_citations.json")
-            s4_elapsed = time.monotonic() - s4_start
-            logger.info("Step 4 completed: enrich_citations (%.1fs)", s4_elapsed)
-            await persist_s4(session_factory, run_id, company_id, slug, enriched)
-            _cli_step(4, s4_elapsed, skipped=4 in skip_steps)
+        s4_span = create_span(trace, "ga-s4-enrich-citations", input_data={"skip": 4 in skip_steps})
+        try:
+            with scoped_bind(step_name="s4_enrich_citations"):
+                s4_start = time.monotonic()
+                logger.info("Step 4 started: enrich_citations")
+                if 4 in skip_steps:
+                    enriched = _load_json_list(
+                        artifact_dir / "enriched_citations.json", EnrichedCitation
+                    )
+                else:
+                    query_lookup = {q.query_id: q for q in queries}
+                    enriched = await enrich_citations(platform_results, query_lookup=query_lookup)
+                    save_enriched_citations(enriched, artifact_dir / "enriched_citations.json")
+                s4_elapsed = time.monotonic() - s4_start
+                logger.info("Step 4 completed: enrich_citations (%.1fs)", s4_elapsed)
+                await persist_s4(session_factory, run_id, company_id, slug, enriched)
+                _cli_step(4, s4_elapsed, skipped=4 in skip_steps)
+                end_span(s4_span, output={"enriched_count": len(enriched), "elapsed_s": round(s4_elapsed, 1)})
+        except BaseException as exc:
+            end_span(s4_span, error=str(exc))
+            raise
 
         # ── S5: embed content ──
         _ga_dbg("S5 starting: embed_content")
-        with scoped_bind(step_name="s5_embed_content"):
-            s5_start = time.monotonic()
-            logger.info("Step 5 started: embed_content")
-            if 5 in skip_steps:
-                queries = _load_json_list(
-                    artifact_dir / "embeddings" / "queries_with_embeddings.json",
-                    GeneratedQuery,
-                )
-                enriched = _load_json_list(
-                    artifact_dir / "embeddings" / "citations_with_embeddings.json",
-                    EnrichedCitation,
-                )
-            else:
-                queries, enriched = await embed_all(queries, enriched, company_slug=slug)
-                save_embeddings(queries, enriched, artifact_dir / "embeddings")
-            s5_elapsed = time.monotonic() - s5_start
-            logger.info("Step 5 completed: embed_content (%.1fs)", s5_elapsed)
-            await persist_s5(session_factory, run_id, company_id, slug, queries, enriched)
-            _cli_step(5, s5_elapsed, skipped=5 in skip_steps)
+        s5_span = create_span(trace, "ga-s5-embed-content", input_data={"skip": 5 in skip_steps})
+        try:
+            with scoped_bind(step_name="s5_embed_content"):
+                s5_start = time.monotonic()
+                logger.info("Step 5 started: embed_content")
+                if 5 in skip_steps:
+                    queries = _load_json_list(
+                        artifact_dir / "embeddings" / "queries_with_embeddings.json",
+                        GeneratedQuery,
+                    )
+                    enriched = _load_json_list(
+                        artifact_dir / "embeddings" / "citations_with_embeddings.json",
+                        EnrichedCitation,
+                    )
+                else:
+                    queries, enriched = await embed_all(queries, enriched, company_slug=slug)
+                    save_embeddings(queries, enriched, artifact_dir / "embeddings")
+                s5_elapsed = time.monotonic() - s5_start
+                logger.info("Step 5 completed: embed_content (%.1fs)", s5_elapsed)
+                await persist_s5(session_factory, run_id, company_id, slug, queries, enriched)
+                _cli_step(5, s5_elapsed, skipped=5 in skip_steps)
+                end_span(s5_span, output={
+                    "query_count": len(queries),
+                    "enriched_count": len(enriched),
+                    "elapsed_s": round(s5_elapsed, 1),
+                })
+        except BaseException as exc:
+            end_span(s5_span, error=str(exc))
+            raise
 
         return queries, enriched, company_citation_map
 
     # ── Run both branches in parallel, merge at S6 ──────────────────
-    _ga_dbg("Starting parallel branches: S1 || S2→S3→S4→S5")
-    (company_units, s1_elapsed), (queries, enriched, company_citation_map) = (
-        await asyncio.gather(_run_s1(), _run_s2_to_s5())
-    )
-    _ga_dbg(
-        f"Both branches complete — S1: {len(company_units)} units in {s1_elapsed:.1f}s, "
-        f"S2→S5: {len(queries)} queries, {len(enriched)} enriched"
-    )
+    try:
+        _ga_dbg("Starting parallel branches: S1 || S2→S3→S4→S5")
+        (company_units, s1_elapsed), (queries, enriched, company_citation_map) = (
+            await asyncio.gather(_run_s1(), _run_s2_to_s5())
+        )
+        _ga_dbg(
+            f"Both branches complete — S1: {len(company_units)} units in {s1_elapsed:.1f}s, "
+            f"S2→S5: {len(queries)} queries, {len(enriched)} enriched"
+        )
 
-    # Load company page analysis (produced by S1 alongside embeddings)
-    page_analysis_path = artifact_dir / "company_page_analysis.json"
-    page_analysis_lookup: Dict[str, CompanyPageAnalysis] = {}
-    if page_analysis_path.exists():
-        try:
-            raw = json.loads(page_analysis_path.read_text(encoding="utf-8"))
-            for item in raw:
-                pa = CompanyPageAnalysis(**item)
-                page_analysis_lookup[pa.url] = pa
-            logger.info(
-                "Loaded company page analysis: %d pages", len(page_analysis_lookup)
-            )
-        except Exception:
-            logger.warning("Failed to load company_page_analysis.json, skipping")
-
-    # Step 6: analyze
-    _ga_dbg("S6 starting: compute_gap_analysis")
-    with scoped_bind(step_name="s6_compute_gap_analysis"):
-        step_start = time.monotonic()
-        logger.info("Step 6 started: compute_gap_analysis")
-        if 6 in skip_steps:
-            analysis = AnalysisResult(
-                **json.loads((artifact_dir / "analysis.json").read_text(encoding="utf-8"))
-            )
-        else:
-            analysis = compute_gap_analysis(
-                queries,
-                company_units,
-                enriched,
-                company_citation_map=company_citation_map,
-                page_analysis_lookup=page_analysis_lookup or None,
-            )
-            (artifact_dir / "analysis.json").write_text(
-                json.dumps(analysis.model_dump(mode="json"), indent=2, default=str), encoding="utf-8"
-            )
-        logger.info("Step 6 completed: compute_gap_analysis (%.1fs)", time.monotonic() - step_start)
-        await persist_s6(session_factory, run_id, company_id, slug, analysis)
-        _cli_step(6, time.monotonic() - step_start, skipped=6 in skip_steps)
-
-    # Step 7: visualize
-    _ga_dbg("S7 starting: generate_visualizations")
-    with scoped_bind(step_name="s7_generate_visualizations"):
-        step_start = time.monotonic()
-        logger.info("Step 7 started: generate_visualizations")
-        if 7 in skip_steps:
-            visualization_paths = json.loads(
-                (artifact_dir / "visualizations" / "visualization_paths.json").read_text(
-                    encoding="utf-8"
+        # Load company page analysis (produced by S1 alongside embeddings)
+        page_analysis_path = artifact_dir / "company_page_analysis.json"
+        page_analysis_lookup: Dict[str, CompanyPageAnalysis] = {}
+        if page_analysis_path.exists():
+            try:
+                raw = json.loads(page_analysis_path.read_text(encoding="utf-8"))
+                for item in raw:
+                    pa = CompanyPageAnalysis(**item)
+                    page_analysis_lookup[pa.url] = pa
+                logger.info(
+                    "Loaded company page analysis: %d pages", len(page_analysis_lookup)
                 )
-            )
-        else:
-            visualization_paths = generate_visualizations(
-                queries, enriched, company_units, analysis, artifact_dir / "visualizations"
-            )
-            (artifact_dir / "visualizations" / "visualization_paths.json").write_text(
-                json.dumps(visualization_paths, indent=2), encoding="utf-8"
-            )
-        logger.info("Step 7 completed: generate_visualizations (%.1fs)", time.monotonic() - step_start)
-        await persist_s7(session_factory, run_id, company_id, slug, visualization_paths)
-        _cli_step(7, time.monotonic() - step_start, skipped=7 in skip_steps)
+            except Exception:
+                logger.warning("Failed to load company_page_analysis.json, skipping")
 
-    # Step 8: report
-    _ga_dbg("S8 starting: generate_gap_report")
-    with scoped_bind(step_name="s8_generate_gap_report"):
-        step_start = time.monotonic()
-        logger.info("Step 8 started: generate_gap_report")
-        if 8 in skip_steps:
-            report = GapReport(
-                report_md=(artifact_dir / "gap_report.md").read_text(encoding="utf-8"),
-                report_json=json.loads(
-                    (artifact_dir / "gap_report.json").read_text(encoding="utf-8")
-                ),
-                generation_spec_md=(artifact_dir / "generation_spec.md").read_text(
-                    encoding="utf-8"
-                ),
-                generation_spec_json=json.loads(
-                    (artifact_dir / "generation_spec.json").read_text(encoding="utf-8")
-                ),
-                visualization_paths=list(visualization_paths.values())
-                if isinstance(visualization_paths, dict)
-                else visualization_paths,
-            )
-        else:
-            report = await generate_gap_report(analysis, queries, enriched)
-            report.visualization_paths = list(visualization_paths.values())
-            save_report(report, artifact_dir, analysis=analysis)
-        logger.info("Step 8 completed: generate_gap_report (%.1fs)", time.monotonic() - step_start)
-        await persist_s8(session_factory, run_id, company_id, slug, report, analysis)
-        _cli_step(8, time.monotonic() - step_start, skipped=8 in skip_steps)
+        # Step 6: analyze
+        _ga_dbg("S6 starting: compute_gap_analysis")
+        s6_span = create_span(trace, "ga-s6-analyze", input_data={"skip": 6 in skip_steps})
+        try:
+            with scoped_bind(step_name="s6_compute_gap_analysis"):
+                step_start = time.monotonic()
+                logger.info("Step 6 started: compute_gap_analysis")
+                if 6 in skip_steps:
+                    analysis = AnalysisResult(
+                        **json.loads((artifact_dir / "analysis.json").read_text(encoding="utf-8"))
+                    )
+                else:
+                    analysis = compute_gap_analysis(
+                        queries,
+                        company_units,
+                        enriched,
+                        company_citation_map=company_citation_map,
+                        page_analysis_lookup=page_analysis_lookup or None,
+                    )
+                    (artifact_dir / "analysis.json").write_text(
+                        json.dumps(analysis.model_dump(mode="json"), indent=2, default=str), encoding="utf-8"
+                    )
+                s6_elapsed = time.monotonic() - step_start
+                logger.info("Step 6 completed: compute_gap_analysis (%.1fs)", s6_elapsed)
+                await persist_s6(session_factory, run_id, company_id, slug, analysis)
+                _cli_step(6, s6_elapsed, skipped=6 in skip_steps)
+                end_span(s6_span, output={
+                    "gap_count": len(analysis.gaps),
+                    "cluster_count": len(analysis.cluster_specs),
+                    "elapsed_s": round(s6_elapsed, 1),
+                })
+        except BaseException as exc:
+            end_span(s6_span, error=str(exc))
+            raise
 
-    total = time.monotonic() - pipeline_start
-    logger.info("Pipeline completed: all steps finished (%.1fs total)", total)
-    _cli_footer(total, skipped_count)
-    return report
+        # Step 7: visualize
+        _ga_dbg("S7 starting: generate_visualizations")
+        s7_span = create_span(trace, "ga-s7-visualize", input_data={"skip": 7 in skip_steps})
+        try:
+            with scoped_bind(step_name="s7_generate_visualizations"):
+                step_start = time.monotonic()
+                logger.info("Step 7 started: generate_visualizations")
+                if 7 in skip_steps:
+                    visualization_paths = json.loads(
+                        (artifact_dir / "visualizations" / "visualization_paths.json").read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                else:
+                    visualization_paths = generate_visualizations(
+                        queries, enriched, company_units, analysis, artifact_dir / "visualizations"
+                    )
+                    (artifact_dir / "visualizations" / "visualization_paths.json").write_text(
+                        json.dumps(visualization_paths, indent=2), encoding="utf-8"
+                    )
+                s7_elapsed = time.monotonic() - step_start
+                logger.info("Step 7 completed: generate_visualizations (%.1fs)", s7_elapsed)
+                await persist_s7(session_factory, run_id, company_id, slug, visualization_paths)
+                _cli_step(7, s7_elapsed, skipped=7 in skip_steps)
+                end_span(s7_span, output={
+                    "viz_count": len(visualization_paths) if isinstance(visualization_paths, dict) else 0,
+                    "elapsed_s": round(s7_elapsed, 1),
+                })
+        except BaseException as exc:
+            end_span(s7_span, error=str(exc))
+            raise
+
+        # Step 8: report
+        _ga_dbg("S8 starting: generate_gap_report")
+        s8_span = create_span(trace, "ga-s8-report", input_data={"skip": 8 in skip_steps})
+        try:
+            with scoped_bind(step_name="s8_generate_gap_report"):
+                step_start = time.monotonic()
+                logger.info("Step 8 started: generate_gap_report")
+                if 8 in skip_steps:
+                    report = GapReport(
+                        report_md=(artifact_dir / "gap_report.md").read_text(encoding="utf-8"),
+                        report_json=json.loads(
+                            (artifact_dir / "gap_report.json").read_text(encoding="utf-8")
+                        ),
+                        generation_spec_md=(artifact_dir / "generation_spec.md").read_text(
+                            encoding="utf-8"
+                        ),
+                        generation_spec_json=json.loads(
+                            (artifact_dir / "generation_spec.json").read_text(encoding="utf-8")
+                        ),
+                        visualization_paths=list(visualization_paths.values())
+                        if isinstance(visualization_paths, dict)
+                        else visualization_paths,
+                    )
+                else:
+                    report = await generate_gap_report(analysis, queries, enriched, trace_span=s8_span)
+                    report.visualization_paths = list(visualization_paths.values())
+                    save_report(report, artifact_dir, analysis=analysis)
+                s8_elapsed = time.monotonic() - step_start
+                logger.info("Step 8 completed: generate_gap_report (%.1fs)", s8_elapsed)
+                await persist_s8(session_factory, run_id, company_id, slug, report, analysis)
+                _cli_step(8, s8_elapsed, skipped=8 in skip_steps)
+                end_span(s8_span, output={"elapsed_s": round(s8_elapsed, 1)})
+        except BaseException as exc:
+            end_span(s8_span, error=str(exc))
+            raise
+
+        total = time.monotonic() - pipeline_start
+        logger.info("Pipeline completed: all steps finished (%.1fs total)", total)
+        _cli_footer(total, skipped_count)
+        update_trace_output(trace, output={
+            "total_queries": len(queries),
+            "total_enriched": len(enriched),
+            "total_gaps": len(analysis.gaps),
+            "total_time_s": round(total, 1),
+            "status": "completed",
+        })
+        return report
+    except BaseException as exc:
+        total = time.monotonic() - pipeline_start
+        logger.error("Pipeline FAILED after %.1fs: %s", total, exc)
+        end_span(trace, error=str(exc))
+        raise
+    finally:
+        flush_traces()
 
 
 # ── Topic-Scoped Gap Analysis (TD Integration) ──────────────────────

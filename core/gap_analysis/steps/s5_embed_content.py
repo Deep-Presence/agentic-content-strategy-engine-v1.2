@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -156,10 +157,12 @@ def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
 async def embed_queries(
     queries: List[GeneratedQuery],
 ) -> List[GeneratedQuery]:
+    t0 = time.monotonic()
     texts = [q.query_text for q in queries]
     embeddings = await async_embed_texts(texts)
     for q, emb in zip(queries, embeddings):
         q.embedding = emb
+    logger.info("S5 query embedding: %d queries in %.1fs", len(queries), time.monotonic() - t0)
     return queries
 
 
@@ -369,6 +372,7 @@ async def embed_all(
     company_slug: Optional[str] = None,
     top_k: int = 3,
 ) -> Tuple[List[GeneratedQuery], List[EnrichedCitation]]:
+    t0 = time.monotonic()
     query_lookup = {q.query_id: q for q in queries}
     q_result, c_result = await asyncio.gather(
         embed_queries(queries),
@@ -379,4 +383,5 @@ async def embed_all(
             top_k=top_k,
         ),
     )
+    logger.info("S5 embed_all complete: %.1fs total", time.monotonic() - t0)
     return q_result, c_result
