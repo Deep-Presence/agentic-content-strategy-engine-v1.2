@@ -501,7 +501,9 @@ Context:
         elapsed = time.monotonic() - t0
         logger.info("S2 fill-in LLM call: model=%s, elapsed=%.1fs", model, elapsed)
         if trace_span:
-            log_generation(trace_span, "s2-fill-in-generation", model, fill_prompt[:500], response_text[:500], usage=None)
+            log_generation(trace_span, "s2-fill-in-generation", model, fill_prompt[:500], response_text[:500], usage=None,
+                           metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_fillin", "provider": "openai", "model": model,
+                                     "company_slug": getattr(input_data, "company_slug", "") or ""})
         payload = _extract_json(response_text)
         raw_fill = payload.get("queries", [])
         start_idx = len(queries) + 1
@@ -566,7 +568,9 @@ async def generate_queries(
     elapsed = time.monotonic() - t0
     logger.info("S2 seed LLM call: model=%s, elapsed=%.1fs", model_name, elapsed)
     if trace_span:
-        log_generation(trace_span, "s2-seed-generation", model_name, prompt[:500], response_text[:500], usage=None)
+        log_generation(trace_span, "s2-seed-generation", model_name, prompt[:500], response_text[:500], usage=None,
+                       metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_seed", "provider": "openai", "model": model_name,
+                                 "company_slug": getattr(input_data, "company_slug", "") or ""})
     payload = _extract_json(response_text)
     raw_queries = payload.get("queries", [])
 
@@ -828,6 +832,7 @@ async def generate_queries_from_topics(
     model: Optional[str] = None,
     *,
     trace_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> List[GeneratedQuery]:
     """Generate queries from approved TopicAssignments (TD → GA bridge).
 
@@ -898,7 +903,9 @@ async def generate_queries_from_topics(
                 model_name, topic.topic_text[:50], elapsed,
             )
             if trace_span:
-                log_generation(trace_span, "s2-topic-scoped-generation", model_name, prompt[:500], response_text[:500], usage=None)
+                log_generation(trace_span, "s2-topic-scoped-generation", model_name, prompt[:500], response_text[:500], usage=None,
+                               metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_topic", "provider": "openai", "model": model_name,
+                                         "company_slug": company_slug})
             payload = _extract_json(response_text)
             raw_queries = payload.get("queries", [])
 

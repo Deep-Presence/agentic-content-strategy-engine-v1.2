@@ -568,7 +568,7 @@ async def run_gap_analysis(
                         else visualization_paths,
                     )
                 else:
-                    report = await generate_gap_report(analysis, queries, enriched, trace_span=s8_span)
+                    report = await generate_gap_report(analysis, queries, enriched, trace_span=s8_span, company_slug=slug)
                     report.visualization_paths = list(visualization_paths.values())
                     save_report(report, artifact_dir, analysis=analysis)
                 s8_elapsed = time.monotonic() - step_start
@@ -686,6 +686,7 @@ async def run_topic_scoped_gap_analysis(
             product_name=base_input.product_name,
             product_slug=base_input.product_slug,
             product_description=base_input.product_description,
+            company_slug=slug,
         )
         (scoped_dir / "queries.json").write_text(
             json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
@@ -755,7 +756,7 @@ async def run_topic_scoped_gap_analysis(
     # ── S8: Report + per-topic aggregation ──
     with scoped_bind(step_name="s8_generate_gap_report"):
         s8_start = time.monotonic()
-        report = await generate_gap_report(analysis, queries, enriched)
+        report = await generate_gap_report(analysis, queries, enriched, company_slug=slug)
         save_report(report, scoped_dir, analysis=analysis)
 
         # Per-topic aggregation (sets analysis.topic_query_map as side effect)

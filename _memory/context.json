@@ -1,7 +1,7 @@
 {
-  "sprint": "structured-logging-layer2-v18",
-  "sprint_goal": "Structured Logging Layer 2 — Correlation & Context Propagation. X-Request-ID middleware, LangSmith trace linkage, SSE context binding (PB-83), auth failure logging (PB-84), per-step/per-agent context binding (PB-85), run_id binding, async context propagation tests.",
-  "sprint_status": "COMPLETE — 8 phases, 4 new test files, 12 modified files. 48 new tests. Codex-reviewed (6 findings incorporated). 3 backlog items resolved (PB-83, PB-84, PB-85). Zero regressions.",
+  "sprint": "r2-blob-storage-phase0-v19",
+  "sprint_goal": "R2 Blob Storage Migration Phase 0 — Infrastructure Layer. Create R2StorageBackend, factory switching, binary method support, settings, app startup wiring. After Phase 0, all pipeline writes via StorageBackend auto-write to R2 in production with zero pipeline code changes.",
+  "sprint_status": "COMPLETE — 8 steps, 4 new files, 9 modified files. 84 new tests. Codex-reviewed (GPT-5.3-Codex: 9 findings, 5 fixed). Zero regressions on 790 existing research tests.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -16,34 +16,36 @@
     "LangSmith is sole tracing backend — Langfuse fully removed",
     "Hub prompts opt-in via langsmith_use_hub=False — local Python prompts authoritative by default"
   ],
-  "active_branches": ["feat/deployment-prep-sprints"],
+  "active_branches": ["feat/front-back"],
   "environment_notes": [
     "Python 3.12", "async-first", "VS Code + Claude Code extension",
     "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, structlog >=24.1"
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/shared_tools/structured_logging.py (MODIFIED — added get_context_value + scoped_bind)",
-    "core/shared_tools/tracing.py (MODIFIED — langsmith_trace_id binding)",
-    "api/app.py (MODIFIED — X-Request-ID, try/finally, correlation ID sanitization)",
-    "api/routers/events.py (MODIFIED — SSE context binding)",
-    "api/auth/middleware.py (MODIFIED — auth failure structured logging)",
-    "api/tasks/runner.py (MODIFIED — run_id binding in all 14 runner functions)",
-    "6 pipeline files (MODIFIED — scoped_bind for step_name/agent_name)"
+    "core/storage/backends/r2.py (CREATED — R2StorageBackend, 8 methods, paginated list_dir, path traversal, exists prefix fallback)",
+    "core/storage/backends/base.py (MODIFIED — added read_bytes/write_bytes abstract methods)",
+    "core/storage/backends/local.py (MODIFIED — binary read/write with atomic writes)",
+    "core/storage/__init__.py (MODIFIED — factory switching STORAGE_BACKEND=local|r2, lazy R2 import)",
+    "core/config/settings.py (MODIFIED — 6 R2 settings fields + effective_r2_endpoint_url property)",
+    "api/app.py (MODIFIED — startup uses get_storage_backend() factory)"
   ],
-  "test_count": 2773,
-  "phases_completed_count": 50,
+  "test_count": 2857,
+  "phases_completed_count": 51,
   "recent_phases": [
+    "r2-blob-storage-phase0 v19 — 8 steps + Codex audit (84 new tests, zero regressions)",
     "structured-logging-layer2 v18 — 8 phases (48 new tests, 3 backlog items resolved)",
     "structured-logging v17 — Phase A (foundation) + Phase B (context propagation) + Codex audit (22 new tests)",
     "pgvector-migration v16 — 8 phases + Codex audit (493 new tests, 198 deleted)",
-    "daily-tracker-db-persistence v15 — 6 phases + Codex audit (392 DT tests, 41 new)",
-    "td-content-integration v1.2.0 — 8 phases (44 new tests)"
+    "daily-tracker-db-persistence v15 — 6 phases + Codex audit (392 DT tests, 41 new)"
   ],
   "phases_remaining": [
-    "audience-persona Phase E — API Router + Runner (~30 tests)",
-    "audience-persona Phase F — Integration (~20 tests)",
-    "knowledge-base Phase 6 — Integration (wire to gap analysis, Daily Tracker, frontend)"
+    "R2 Phase 1 — Gap Analysis retrofit (49 bypasses, 7 step files + 3 service/router files)",
+    "R2 Phase 2 — Content Engine v1.3 retrofit (23 bypasses)",
+    "R2 Phase 3 — Site Audit retrofit (24 bypasses)",
+    "R2 Phase 4 — AP/VSG cross-pipeline callers (15 bypasses)",
+    "R2 Phase 5 — Cache invalidation (mtime→TTL)",
+    "R2 Phases 6-8 — Binary upload, DB fallback removal, cleanup"
   ],
   "deferred_issues_location": ".claude/sprints/pending/backlog.md"
 }

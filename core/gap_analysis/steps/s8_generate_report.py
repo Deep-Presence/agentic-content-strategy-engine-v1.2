@@ -362,6 +362,7 @@ async def generate_gap_report(
     model: Optional[str] = None,
     *,
     trace_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> GapReport:
     model_name = model or settings.gap_analysis_report_model
 
@@ -380,7 +381,9 @@ async def generate_gap_report(
         elapsed = time.monotonic() - t0
         logger.info("S8 LLM summary: model=%s, elapsed=%.1fs, recommendations=%d", model_name, elapsed, len(recommendations))
         if trace_span:
-            log_generation(trace_span, "s8-executive-summary", model_name, llm_prompt[:500], llm_response[:500], usage=None)
+            log_generation(trace_span, "s8-executive-summary", model_name, llm_prompt[:500], llm_response[:500], usage=None,
+                           metadata={"pipeline": "gap_analysis", "pipeline_step": "s8_report", "provider": "openai", "model": model_name,
+                                     "company_slug": company_slug})
     except Exception as exc:
         logger.warning("S8 LLM summary generation failed: %s", exc)
         executive_summary = ""

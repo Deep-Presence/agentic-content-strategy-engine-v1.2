@@ -14,7 +14,7 @@ from core.content_engine.prompts.outliner_prompts import (
     OUTLINER_SYSTEM_PROMPT,
     build_outliner_user_prompt,
 )
-from core.content_engine.tracing_v13 import create_span, end_span, log_generation
+from core.content_engine.tracing_v13 import create_span, end_span, extract_provider, log_generation
 from core.content_engine.utils import safe_parse, truncate_to_token_limit
 from core.models.content_generation import ContentBrief, ContentOutline
 
@@ -26,6 +26,7 @@ async def generate_outline(
     company_context_md: str,
     *,
     trace: Optional[object] = None,
+    company_slug: str = "",
 ) -> ContentOutline:
     """Generate a structured outline from a content brief.
 
@@ -78,7 +79,15 @@ async def generate_outline(
             system=OUTLINER_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=4096,
-            metadata={"agent": "outliner", "brief_id": brief.brief_id},
+            metadata={
+                "agent": "outliner",
+                "brief_id": brief.brief_id,
+                "pipeline": "content_engine",
+                "pipeline_step": "outliner",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            },
         )
 
         raw_text = response.content

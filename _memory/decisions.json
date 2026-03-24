@@ -1,5 +1,20 @@
 [
   {
+    "id": "D-R2-1",
+    "timestamp": "2026-03-24",
+    "task": "R2 Blob Storage Phase 0 — Infrastructure Layer",
+    "approach": "8-step plan: (1) R2 settings fields (Pydantic BaseSettings, env-var driven), (2) read_bytes/write_bytes on ABC (abstract, not concrete), (3) LocalStorageBackend binary methods (atomic tempfile+replace), (4) R2StorageBackend (boto3 sync, _client injection for tests, paginated list_dir, path traversal validation, exists() prefix fallback), (5) Factory switching with per-field validation, (6) App startup via factory, (7) Lazy exports (__getattr__), (8) .env.example + boto3 dep",
+    "rationale": "Phase 0 creates the infrastructure layer so all 5 pipeline storage classes (KB, Persona, VSG, TD, artifact_writer) automatically write to R2 when STORAGE_BACKEND=r2 with zero pipeline code changes. Sync boto3 chosen because ABC is synchronous (call sites wrap in asyncio.to_thread). Lazy imports ensure boto3 not loaded in dev (STORAGE_BACKEND=local). Path traversal validation added for defense-in-depth despite API-layer tenant isolation.",
+    "alternatives_rejected": [
+      "aiobotocore (async) — ABC is synchronous, would require ABC redesign across all consumers",
+      "moto for testing — heavy dependency (~50MB), unittest.mock with _client injection is cleaner",
+      "Concrete default methods on ABC for binary — only 2 backends, both must handle binary, abstract forces correctness",
+      "Single all() check for factory validation — can't identify which field is missing, per-field checks give actionable errors"
+    ],
+    "codex_review": "GPT-5.3-Codex found 9 issues (4 HIGH, 3 MEDIUM, 2 LOW). Fixed: exists() error masking (was catching ALL ClientError), list_dir missing _validate_path, exists() contract mismatch (added prefix fallback), delete error propagation. Accepted: TOCTOU race in delete (S3 limitation), root listing edge case (no callers use empty prefix).",
+    "reversible": true
+  },
+  {
     "id": "D-L2-1",
     "timestamp": "2026-03-15",
     "task": "Structured Logging Layer 2 — Correlation & Context Propagation",

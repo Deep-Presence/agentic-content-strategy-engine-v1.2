@@ -41,6 +41,16 @@ class StorageBackend(ABC):
         ...
 
     @abstractmethod
+    def read_bytes(self, path: str) -> Optional[bytes]:
+        """Read binary artifact content. Returns None if not found."""
+        ...
+
+    @abstractmethod
+    def write_bytes(self, path: str, content: bytes) -> str:
+        """Write binary artifact content. Returns the resolved path."""
+        ...
+
+    @abstractmethod
     def mkdir(self, path: str) -> None:
         """Ensure a directory (prefix) exists. No-op for object stores."""
         ...

@@ -400,12 +400,14 @@ async def run_topic_discovery_pipeline(
             source_a_task = run_source_a_company_brainstorm(
                 company_md, max_rounds=max_rounds, timeout_s=timeout_s,
                 revision_note=_revision, parent_span=s1_span,
+                company_slug=company_slug,
             )
             source_b_task = run_source_b_persona_brainstorm(
                 persona_summaries, company_md, max_rounds=max_rounds, timeout_s=timeout_s,
                 revision_note=_revision,
                 persona_name_to_id=persona_name_to_id,
                 parent_span=s1_span,
+                company_slug=company_slug,
             )
 
             # Source C: deep research competitive content landscape
@@ -413,6 +415,7 @@ async def run_topic_discovery_pipeline(
                 company_md, competitor_landscape, domain,
                 timeout_s=settings.topic_discovery_source_c_timeout_s,
                 revision_note=_revision, parent_span=s1_span,
+                company_slug=company_slug,
             )
 
             results_abc = await asyncio.gather(
@@ -450,6 +453,7 @@ async def run_topic_discovery_pipeline(
             source_d_result = await run_source_d_adversarial(
                 company_md, existing_names, max_rounds=max_rounds, timeout_s=timeout_s,
                 revision_note=_revision, parent_span=s1_span,
+                company_slug=company_slug,
             )
             source_results.append(source_d_result)
             if source_d_result.error:
@@ -544,6 +548,7 @@ async def run_topic_discovery_pipeline(
                 persona_profiles=persona_profiles_for_s2,
                 timeout_s=600.0,
                 parent_span=s2_span,
+                company_slug=company_slug,
             )
 
             # Enrich taxonomy with coverage data
@@ -1014,6 +1019,7 @@ async def run_topic_expansion_pipeline(
                     persona_context=expansion_persona_ctx,
                     timeout_s=settings.topic_discovery_expansion_timeout_s,
                     parent_span=s3_span,
+                    company_slug=company_slug,
                 )
             for a in assignments:
                 a.subdomain_id = sd_id

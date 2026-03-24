@@ -18,7 +18,7 @@ from core.content_engine.prompts.eeat_judge_prompts import (
     EEAT_JUDGE_SYSTEM_PROMPT,
     build_eeat_judge_user_prompt,
 )
-from core.content_engine.tracing_v13 import create_span, end_span, log_generation, log_score
+from core.content_engine.tracing_v13 import create_span, end_span, extract_provider, log_generation, log_score
 from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation import ContentBrief, DimensionResult, FormattedContent
 
@@ -31,6 +31,7 @@ async def evaluate_eeat(
     company_context_md: str = "",
     *,
     trace: Optional[Any] = None,
+    company_slug: str = "",
 ) -> DimensionResult:
     """Evaluate E-E-A-T signals in content using LLM-as-judge.
 
@@ -76,7 +77,15 @@ async def evaluate_eeat(
             user=user_prompt,
             max_tokens=2048,
             temperature=0.0,
-            metadata={"agent": "eeat_judge", "brief_id": content.brief_id},
+            metadata={
+                "agent": "eeat_judge",
+                "brief_id": content.brief_id,
+                "pipeline": "content_engine",
+                "pipeline_step": "eeat_judge",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            },
         )
 
         # Parse JSON response

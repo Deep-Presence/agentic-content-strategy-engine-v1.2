@@ -23,7 +23,13 @@ except ImportError:
     litellm = None  # type: ignore[assignment]
 
 from core.config.settings import settings
-from core.shared_tools.tracing import create_span, end_span, log_generation, log_score
+from core.shared_tools.tracing import (
+    create_span,
+    end_span,
+    extract_provider,
+    log_generation,
+    log_score,
+)
 from core.models.topic_discovery import (
     BuyerStage,
     CaptureRecaptureResult,
@@ -158,6 +164,7 @@ async def _run_completion(
     max_tokens: int = 16384,
     timeout_s: float = 120.0,
     response_format: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, str]:
     """Run LiteLLM completion with pause_turn handling."""
     convo = list(messages)
@@ -173,6 +180,8 @@ async def _run_completion(
     }
     if response_format is not None:
         completion_kwargs["response_format"] = response_format
+    if metadata is not None:
+        completion_kwargs["metadata"] = metadata
 
     for turn in range(_MAX_PAUSE_TURNS + 1):
         # Update messages in kwargs for pause_turn continuations
@@ -305,6 +314,7 @@ async def run_source_a_company_brainstorm(
     timeout_s: float = 120.0,
     revision_note: Optional[str] = None,
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> SourceResult:
     """Source A: Company-perspective subdomain brainstorm (iterative expansion)."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -329,12 +339,21 @@ async def run_source_a_company_brainstorm(
                     ),
                 },
             ]
+            _meta_a = {
+                "pipeline": "topic_discovery",
+                "pipeline_step": "source_a",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            }
             response, raw_text = await _run_completion(
-                model=model, messages=messages, timeout_s=timeout_s
+                model=model, messages=messages, timeout_s=timeout_s,
+                metadata=_meta_a,
             )
             log_generation(
                 span, f"round-{round_num}", model,
                 messages[-1]["content"][:2000], raw_text[:2000],
+                metadata=_meta_a,
                 usage=_extract_usage(response),
             )
             parsed = _parse_json_response(raw_text)
@@ -432,6 +451,7 @@ async def run_source_b_persona_brainstorm(
     revision_note: Optional[str] = None,
     persona_name_to_id: Optional[Dict[str, str]] = None,
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> SourceResult:
     """Source B: Audience-perspective subdomain brainstorm (iterative expansion)."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -457,12 +477,21 @@ async def run_source_b_persona_brainstorm(
                     ),
                 },
             ]
+            _meta_b = {
+                "pipeline": "topic_discovery",
+                "pipeline_step": "source_b",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            }
             response, raw_text = await _run_completion(
-                model=model, messages=messages, timeout_s=timeout_s
+                model=model, messages=messages, timeout_s=timeout_s,
+                metadata=_meta_b,
             )
             log_generation(
                 span, f"round-{round_num}", model,
                 messages[-1]["content"][:2000], raw_text[:2000],
+                metadata=_meta_b,
                 usage=_extract_usage(response),
             )
             parsed = _parse_json_response(raw_text)
@@ -539,6 +568,7 @@ async def run_source_c_deep_research(
     timeout_s: float = 900.0,
     revision_note: Optional[str] = None,
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> SourceResult:
     """Source C: Deep research competitive content landscape via Perplexity."""
     from core.research.tools import perplexity_client
@@ -575,7 +605,15 @@ async def run_source_c_deep_research(
             timeout=timeout_s,
         )
         # Manual log_generation — Perplexity bypasses LiteLLM callbacks
-        log_generation(span, "deep-research", model, full_prompt[:2000], raw_text[:2000])
+        _meta_c = {
+            "pipeline": "topic_discovery",
+            "pipeline_step": "source_c",
+            "provider": "perplexity",
+            "model": model,
+            "company_slug": company_slug,
+        }
+        log_generation(span, "deep-research", model, full_prompt[:2000], raw_text[:2000],
+                       metadata=_meta_c)
 
         # Strip Perplexity citations section before JSON parsing
         if "\n\nSources:\n" in raw_text:
@@ -654,6 +692,7 @@ async def run_source_d_adversarial(
     timeout_s: float = 120.0,
     revision_note: Optional[str] = None,
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> SourceResult:
     """Source D: Adversarial diversity pass using specialist lenses."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -693,12 +732,21 @@ async def run_source_d_adversarial(
                     ),
                 },
             ]
+            _meta_d = {
+                "pipeline": "topic_discovery",
+                "pipeline_step": "source_d",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            }
             response, raw_text = await _run_completion(
-                model=model, messages=messages, timeout_s=timeout_s
+                model=model, messages=messages, timeout_s=timeout_s,
+                metadata=_meta_d,
             )
             log_generation(
                 span, f"lens-{round_num}-{lens[:20]}", model,
                 messages[-1]["content"][:2000], raw_text[:2000],
+                metadata=_meta_d,
                 usage=_extract_usage(response),
             )
             parsed = _parse_json_response(raw_text)
@@ -862,6 +910,7 @@ async def run_hierarchy_construction(
     *,
     model: Optional[str] = None,
     timeout_s: float = 480.0,
+    company_slug: str = "",
 ) -> TaxonomyTree:
     """Organize flat subdomains into a hierarchical taxonomy tree via LLM.
 
@@ -877,12 +926,21 @@ async def run_hierarchy_construction(
         {"role": "user", "content": user_prompt},
     ]
 
+    _meta_hier = {
+        "pipeline": "topic_discovery",
+        "pipeline_step": "hierarchy_construction",
+        "provider": extract_provider(model),
+        "model": model,
+        "company_slug": company_slug,
+    }
+
     # Attempt 1
     _, raw_text = await _run_completion(
         model=model,
         messages=messages,
         timeout_s=timeout_s,
         response_format={"type": "json_object"},
+        metadata=_meta_hier,
     )
     parsed = _parse_json_response(raw_text)
     nodes = _extract_taxonomy_nodes(parsed)
@@ -912,6 +970,7 @@ async def run_hierarchy_construction(
         messages=retry_messages,
         timeout_s=timeout_s,
         response_format={"type": "json_object"},
+        metadata=_meta_hier,
     )
     retry_parsed = _parse_json_response(retry_text)
     retry_nodes = _extract_taxonomy_nodes(retry_parsed)
@@ -938,6 +997,7 @@ async def run_unified_hierarchy_and_scoring(
     model: Optional[str] = None,
     timeout_s: float = 600.0,
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> TaxonomyTree:
     """Unified S2: build hierarchy + score subdomains + persona affinity.
 
@@ -980,6 +1040,14 @@ async def run_unified_hierarchy_and_scoring(
         {"role": "user", "content": user_prompt},
     ]
 
+    _meta_us2 = {
+        "pipeline": "topic_discovery",
+        "pipeline_step": "unified_s2",
+        "provider": extract_provider(model),
+        "model": model,
+        "company_slug": company_slug,
+    }
+
     # Attempt 1 — larger max_tokens for scoring + persona affinity output
     response, raw_text = await _run_completion(
         model=model,
@@ -987,10 +1055,12 @@ async def run_unified_hierarchy_and_scoring(
         timeout_s=timeout_s,
         max_tokens=32768,
         response_format={"type": "json_object"},
+        metadata=_meta_us2,
     )
     log_generation(
         span, "hierarchy-scoring", model,
         user_prompt[:2000], raw_text[:2000],
+        metadata=_meta_us2,
         usage=_extract_usage(response),
     )
     parsed = _parse_json_response(raw_text)
@@ -1033,10 +1103,12 @@ async def run_unified_hierarchy_and_scoring(
         timeout_s=timeout_s,
         max_tokens=32768,
         response_format={"type": "json_object"},
+        metadata=_meta_us2,
     )
     log_generation(
         span, "hierarchy-scoring-retry", model,
         repair_prompt[:2000], retry_text[:2000],
+        metadata=_meta_us2,
         usage=_extract_usage(retry_response),
     )
     retry_parsed = _parse_json_response(retry_text)
@@ -1245,6 +1317,7 @@ async def run_relevance_filtering(
     model: Optional[str] = None,
     timeout_s: float = 120.0,
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> List[Dict[str, Any]]:
     """Classify dimension combinations as relevant/marginal/irrelevant."""
     model = model or settings.topic_discovery_dedup_model
@@ -1261,12 +1334,21 @@ async def run_relevance_filtering(
             ),
         },
     ]
+    _meta_rf = {
+        "pipeline": "topic_discovery",
+        "pipeline_step": "relevance_filter",
+        "provider": extract_provider(model),
+        "model": model,
+        "company_slug": company_slug,
+    }
     response, raw_text = await _run_completion(
-        model=model, messages=messages, temperature=0.3, timeout_s=timeout_s
+        model=model, messages=messages, temperature=0.3, timeout_s=timeout_s,
+        metadata=_meta_rf,
     )
     log_generation(
         span, "relevance-filter", model,
         messages[-1]["content"][:2000], raw_text[:2000],
+        metadata=_meta_rf,
         usage=_extract_usage(response),
     )
     parsed = _parse_json_response(raw_text)
@@ -1291,6 +1373,7 @@ async def run_topic_generation(
     model: Optional[str] = None,
     timeout_s: float = 120.0,
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> List[TopicAssignment]:
     """Generate 2-5 topic assignments for a relevant dimension cell."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -1308,12 +1391,21 @@ async def run_topic_generation(
             ),
         },
     ]
+    _meta_tg = {
+        "pipeline": "topic_discovery",
+        "pipeline_step": "topic_generation",
+        "provider": extract_provider(model),
+        "model": model,
+        "company_slug": company_slug,
+    }
     response, raw_text = await _run_completion(
-        model=model, messages=messages, timeout_s=timeout_s
+        model=model, messages=messages, timeout_s=timeout_s,
+        metadata=_meta_tg,
     )
     log_generation(
         span, "topic-gen", model,
         messages[-1]["content"][:2000], raw_text[:2000],
+        metadata=_meta_tg,
         usage=_extract_usage(response),
     )
     parsed = _parse_json_response(raw_text)
@@ -1357,6 +1449,7 @@ async def run_subdomain_expansion(
     model: Optional[str] = None,
     timeout_s: float = 180.0,
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> List[TopicAssignment]:
     """Expand a single subdomain into topic assignments in ONE LLM call.
 
@@ -1403,12 +1496,21 @@ async def run_subdomain_expansion(
             ),
         },
     ]
+    _meta_exp = {
+        "pipeline": "topic_discovery",
+        "pipeline_step": "subdomain_expansion",
+        "provider": extract_provider(model),
+        "model": model,
+        "company_slug": company_slug,
+    }
     response, raw_text = await _run_completion(
-        model=model, messages=messages, timeout_s=timeout_s
+        model=model, messages=messages, timeout_s=timeout_s,
+        metadata=_meta_exp,
     )
     log_generation(
         span, "expansion", model,
         messages[-1]["content"][:2000], raw_text[:2000],
+        metadata=_meta_exp,
         usage=_extract_usage(response),
     )
     parsed = _parse_json_response(raw_text)

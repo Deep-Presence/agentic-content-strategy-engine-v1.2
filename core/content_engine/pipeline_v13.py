@@ -332,6 +332,7 @@ async def _apply_human_edits(
     company_context_md: str,
     company_name: str,
     domain: str,
+    company_slug: str = "",
 ) -> Optional[FormattedContent]:
     """Apply human edits by routing to drafter + fact checker.
 
@@ -362,6 +363,7 @@ async def _apply_human_edits(
             feedback=f"[HUMAN REVIEW]\n{editor_notes}",
             style_guide_md=style_guide_md,
             company_context_md=company_context_md,
+            company_slug=company_slug,
         )
 
         # Re-run fact checker on revised content
@@ -376,6 +378,7 @@ async def _apply_human_edits(
             brief=blueprint,
             company_name=company_name,
             domain=domain,
+            company_slug=company_slug,
         )
 
         # Compute structural counts inline
@@ -424,6 +427,8 @@ async def _rebrief_and_rerun(
         Tuple of (FormattedContent, RevisionHistory, FeedbackRoute), or None on failure.
     """
     try:
+        _slug = getattr(input_data, "company_slug", "") or ""
+
         # Extract worker contexts from the blueprint's gap_context.
         # gap_context is a WorkerQueryContext Pydantic model — use attribute access,
         # NOT .get() or isinstance(dict) which is always False on a Pydantic model.
@@ -460,6 +465,7 @@ async def _rebrief_and_rerun(
             max_concurrent=1,
             parent_span=parent_span,
             brief_id_overrides=[rebrief_id],
+            company_slug=_slug,
         )
 
         if not new_blueprints:
@@ -757,6 +763,7 @@ async def _run_pipeline_stages(
                 scorecard=scorecard,
                 max_topics=input_data.max_topics,
                 parent_span=stage1_span,
+                company_slug=slug,
             )
 
             # Save planner output
@@ -804,6 +811,7 @@ async def _run_pipeline_stages(
                     max_topics=input_data.max_topics,
                     parent_span=stage1_span,
                     user_feedback=topic_feedback,
+                    company_slug=slug,
                 )
                 planner_path.write_text(planner_output.model_dump_json(indent=2), encoding="utf-8")
 
@@ -925,6 +933,7 @@ async def _run_pipeline_stages(
                 style_guide_md=style_guide_md,
                 max_concurrent=input_data.max_concurrent_workers,
                 parent_span=stage2_span,
+                company_slug=slug,
             )
 
             # Save blueprints (C1-fix: merge to preserve manually-added entries)
@@ -1006,6 +1015,7 @@ async def _run_pipeline_stages(
                                 max_concurrent=1,
                                 parent_span=stage2_span,
                                 brief_id_overrides=[bp.brief_id],
+                                company_slug=slug,
                             )
                             if revised:
                                 bp = revised[0]
@@ -1200,6 +1210,7 @@ async def _run_pipeline_stages(
             max_concurrent=1,
             parent_span=pipeline_trace,
             brief_id_overrides=[_manual_brief_id],
+            company_slug=slug,
         )
 
         # Save blueprints before HITL-2 (C1-fix: merge to preserve existing entries)
@@ -1275,6 +1286,7 @@ async def _run_pipeline_stages(
                             max_concurrent=1,
                             parent_span=pipeline_trace,
                             brief_id_overrides=[bp.brief_id],
+                            company_slug=slug,
                         )
                         if revised:
                             bp = revised[0]
@@ -1375,6 +1387,7 @@ async def _run_pipeline_stages(
                 style_guide_md=style_guide_md,
                 max_concurrent=input_data.max_concurrent_workers,
                 parent_span=pipeline_trace,
+                company_slug=slug,
             )
 
             if input_data.auto_approve:
@@ -1765,6 +1778,7 @@ async def _run_pipeline_stages(
                             company_context_md=company_context_md,
                             company_name=input_data.company_name,
                             domain=input_data.domain,
+                            company_slug=slug,
                         )
                         if revised:
                             final_content = revised

@@ -14,7 +14,7 @@ from core.content_engine.prompts.factual_judge_prompts import (
     FACTUAL_JUDGE_SYSTEM_PROMPT,
     build_factual_judge_user_prompt,
 )
-from core.content_engine.tracing_v13 import create_span, end_span, log_generation, log_score
+from core.content_engine.tracing_v13 import create_span, end_span, extract_provider, log_generation, log_score
 from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation import ContentBrief, DimensionResult, FormattedContent
 
@@ -28,6 +28,7 @@ async def evaluate_factual(
     domain: str,
     *,
     trace: Optional[object] = None,
+    company_slug: str = "",
 ) -> DimensionResult:
     """Evaluate content factual accuracy using LLM-as-judge.
 
@@ -71,7 +72,15 @@ async def evaluate_factual(
             system=FACTUAL_JUDGE_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=2048,
-            metadata={"agent": "factual_judge", "brief_id": content.brief_id},
+            metadata={
+                "agent": "factual_judge",
+                "brief_id": content.brief_id,
+                "pipeline": "content_engine",
+                "pipeline_step": "factual_judge",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            },
             max_retries=2,
         )
 

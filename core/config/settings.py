@@ -229,6 +229,16 @@ class Settings(BaseSettings):
     platform_cache_ttl_days: int = 7  # Re-search platforms after 7 days
     url_enrichment_cache_ttl_days: int = 14  # Re-scrape URLs after 14 days
 
+    # --- Storage Backend ---
+    storage_backend: Literal["local", "r2"] = "local"
+
+    # --- Cloudflare R2 (S3-compatible) ---
+    r2_account_id: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket_name: str | None = None
+    r2_endpoint_url: str | None = None  # Auto-derived from account_id if None
+
     # --- Site Audit (Pipeline 0) ---
     site_audit_max_pages: int = 200  # Default max pages to crawl
     site_audit_max_depth: int = 4  # Default BFS crawl depth
@@ -253,6 +263,15 @@ class Settings(BaseSettings):
         return self.database_url.replace("+asyncpg", "").replace(
             "asyncpg://", "postgresql://"
         )
+
+    @property
+    def effective_r2_endpoint_url(self) -> str | None:
+        """R2_ENDPOINT_URL if set, else derive from R2_ACCOUNT_ID."""
+        if self.r2_endpoint_url:
+            return self.r2_endpoint_url
+        if self.r2_account_id:
+            return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
+        return None
 
     @property
     def effective_supabase_url(self) -> str | None:

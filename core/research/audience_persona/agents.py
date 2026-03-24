@@ -226,6 +226,13 @@ async def run_persona_suggester(
         log_generation(
             span, "persona-suggester", settings.audience_persona_suggester_model,
             user_prompt[:2000], raw_text[:2000],
+            metadata={
+                "pipeline": "audience_persona",
+                "pipeline_step": "persona_suggester",
+                "provider": "google",
+                "model": settings.audience_persona_suggester_model,
+                "company_slug": input_data.company_slug or "",
+            },
         )
 
         # Parse JSON with tolerant extraction
@@ -344,6 +351,13 @@ async def run_persona_profile_generator(
             span, f"persona-generator-{brief.persona_name}",
             settings.audience_persona_generator_model,
             full_prompt[:2000], result_md[:2000] if result_md else "",
+            metadata={
+                "pipeline": "audience_persona",
+                "pipeline_step": "persona_generator",
+                "provider": "perplexity",
+                "model": settings.audience_persona_generator_model,
+                "company_slug": input_data.company_slug or "",
+            },
         )
         end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
 

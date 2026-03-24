@@ -20,7 +20,7 @@ from core.content_engine.prompts.linker_prompts import (
     LINKER_SYSTEM_PROMPT,
     build_linker_user_prompt,
 )
-from core.content_engine.tracing_v13 import create_span, end_span, log_generation
+from core.content_engine.tracing_v13 import create_span, end_span, extract_provider, log_generation
 from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation import ContentBrief, ContentDraft, LinkedDraft
 
@@ -35,6 +35,7 @@ async def link_content(
     site_pages: list[str] | None = None,
     *,
     trace: Optional[object] = None,
+    company_slug: str = "",
 ) -> LinkedDraft:
     """Resolve link placeholders in a draft using Perplexity sonar-pro.
 
@@ -97,7 +98,15 @@ async def link_content(
             system=LINKER_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=8192,
-            metadata={"agent": "linker", "brief_id": brief.brief_id},
+            metadata={
+                "agent": "linker",
+                "brief_id": brief.brief_id,
+                "pipeline": "content_engine",
+                "pipeline_step": "linker",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            },
             max_retries=2,
             base_delay=3.0,
         )
