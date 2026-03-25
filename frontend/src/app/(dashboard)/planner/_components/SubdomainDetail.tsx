@@ -9,7 +9,6 @@ import {
   PERSONA_MAP,
   PERSONA_IDS,
   getAssignments,
-  getScoring,
   getSourceCount,
   companyName,
 } from './topic-data';
@@ -31,7 +30,6 @@ function ConfidenceColor(confidence: number): string {
 
 export function SubdomainDetail({ subdomain, category, onViewAssignments }: SubdomainDetailProps) {
   const assignments = getAssignments(subdomain.id);
-  const scoring = getScoring(subdomain.id);
   const sourceCount = getSourceCount(subdomain.source_provenance);
   const factors = subdomain.priority_factors;
 
@@ -47,7 +45,7 @@ export function SubdomainDetail({ subdomain, category, onViewAssignments }: Subd
   const subChildren = subdomain.children ?? [];
 
   // Build "Why We Recommend" bullets from real data
-  const whyBullets = buildWhyBullets(subdomain, scoring);
+  const whyBullets = buildWhyBullets(subdomain);
 
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -292,7 +290,7 @@ function ScoreBar({
 
 // ─── Why Bullets Builder ─────────────────────────────────
 
-function buildWhyBullets(sub: SubdomainNode, scoring: ReturnType<typeof getScoring>): string[] {
+function buildWhyBullets(sub: SubdomainNode): string[] {
   const bullets: string[] = [];
   const factors = sub.priority_factors;
 

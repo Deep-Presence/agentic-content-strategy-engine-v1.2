@@ -1,6 +1,6 @@
 import type { EmbeddingPoint } from '@/types';
-import tsneData from '../../data/artifacts/gap_analysis/lovable/visualizations/embedding_projections_tsne.json';
-import umapData from '../../data/artifacts/gap_analysis/lovable/visualizations/embedding_projections_umap.json';
+import tsneData from '@/../data/result-draft/artifacts/gap_analysis/lovable/visualizations/embedding_projections_tsne.json';
+import umapData from '@/../data/result-draft/artifacts/gap_analysis/lovable/visualizations/embedding_projections_umap.json';
 
 interface RawEmbeddingData {
   method: string;

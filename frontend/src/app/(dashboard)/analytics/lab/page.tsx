@@ -8,7 +8,7 @@ import { SpaceOverview } from './_components/SpaceOverview';
 import { ClusterDeepDive } from './_components/ClusterDeepDive';
 import { QueryMicroscope } from './_components/QueryMicroscope';
 import { Simulation } from './_components/Simulation';
-import genSpecRaw from '../../../../../data/artifacts/gap_analysis/lovable/generation_spec.json';
+import genSpecRaw from '@/../data/result-draft/artifacts/gap_analysis/lovable/generation_spec.json';
 
 const TABS = [
   { id: 'overview', label: 'Space Overview', closable: false },
@@ -40,8 +40,8 @@ export default function EmbeddingLabPage() {
     let cancelled = false;
     async function loadData() {
       const [tsne, umap] = await Promise.all([
-        import('../../../../../data/artifacts/gap_analysis/lovable/visualizations/embedding_projections_tsne.json'),
-        import('../../../../../data/artifacts/gap_analysis/lovable/visualizations/embedding_projections_umap.json'),
+        import('@/../data/result-draft/artifacts/gap_analysis/lovable/visualizations/embedding_projections_tsne.json'),
+        import('@/../data/result-draft/artifacts/gap_analysis/lovable/visualizations/embedding_projections_umap.json'),
       ]);
 
       if (cancelled) return;

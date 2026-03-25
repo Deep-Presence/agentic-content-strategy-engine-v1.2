@@ -1,9 +1,9 @@
 // Data layer for Topic Discovery — loads real pipeline artifacts
-import taxonomyRaw from '../../../../../result-draft/artifacts/topic_discovery/lovable/taxonomy/v2.json';
-import matrixRaw from '../../../../../result-draft/artifacts/topic_discovery/lovable/matrix/v2.json';
-import coverageRaw from '../../../../../result-draft/artifacts/topic_discovery/lovable/raw/coverage_v1.json';
-import scoringRaw from '../../../../../result-draft/artifacts/topic_discovery/lovable/scoring/v1.json';
-import personaAffinityRaw from '../../../../../result-draft/artifacts/topic_discovery/lovable/persona_affinity/v1.json';
+import taxonomyRaw from '@/../data/result-draft/artifacts/topic_discovery/lovable/taxonomy/v2.json';
+import matrixRaw from '@/../data/result-draft/artifacts/topic_discovery/lovable/matrix/v2.json';
+import coverageRaw from '@/../data/result-draft/artifacts/topic_discovery/lovable/raw/coverage_v1.json';
+import scoringRaw from '@/../data/result-draft/artifacts/topic_discovery/lovable/scoring/v1.json';
+import personaAffinityRaw from '@/../data/result-draft/artifacts/topic_discovery/lovable/persona_affinity/v1.json';
 
 // ─── Types ───────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 import type { ContentBrief, Platform } from '@/types';
-import briefsData from '@/../data/artifacts/content/carta/briefs.json';
-import outline001 from '@/../data/artifacts/content/carta/content/brief-001/outline.json';
-import outline002 from '@/../data/artifacts/content/carta/content/brief-002/outline.json';
+import briefsData from '@/../data/result-draft/artifacts/content/carta/briefs.json';
+import outline001 from '@/../data/result-draft/artifacts/content/carta/content/brief-001/outline.json';
+import outline002 from '@/../data/result-draft/artifacts/content/carta/content/brief-002/outline.json';
 
 const realBriefs = briefsData.briefs;
 

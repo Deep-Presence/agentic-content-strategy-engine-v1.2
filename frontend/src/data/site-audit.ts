@@ -1,5 +1,5 @@
 import type { SiteAudit, AuditDimension, AuditFinding } from '@/types';
-import rawData from '../../data/artifacts/site_audit/lovable/039d53f8-cf4c-43c7-bae9-614ddd2cb472/audit_result.json';
+import rawData from '@/../data/result-draft/artifacts/site_audit/lovable/039d53f8-cf4c-43c7-bae9-614ddd2cb472/audit_result.json';
 
 interface RawAudit {
   audit_id: string;

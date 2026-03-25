@@ -1,5 +1,5 @@
 import type { ContentBrief, ContentPiece, Platform } from '@/types';
-import rawBriefsFile from '../../data/artifacts/content/carta/briefs.json';
+import rawBriefsFile from '@/../data/result-draft/artifacts/content/carta/briefs.json';
 import fs from 'fs';
 import path from 'path';
 
@@ -47,7 +47,7 @@ export function getContentBriefs(): ContentBrief[] {
 }
 
 export function getContentPieces(briefId: string): ContentPiece[] {
-  const basePath = path.join(process.cwd(), `data/artifacts/content/carta/content/${briefId}`);
+  const basePath = path.join(process.cwd(), `data/result-draft/artifacts/content/carta/content/${briefId}`);
   const pieces: ContentPiece[] = [];
   const stages = ['outline', 'draft', 'enriched', 'final', 'formatted'] as const;
 

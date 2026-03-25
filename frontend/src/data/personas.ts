@@ -27,7 +27,7 @@ function parsePersonaMd(markdown: string, name: string, client: string, version:
 }
 
 export function getPersonas(): Persona[] {
-  const basePath = path.join(process.cwd(), 'data/artifacts/audience_personas');
+  const basePath = path.join(process.cwd(), 'data/result-draft/artifacts/audience_personas');
   const personas: Persona[] = [];
 
   try {

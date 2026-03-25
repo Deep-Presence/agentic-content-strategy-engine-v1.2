@@ -1,5 +1,5 @@
 import type { GapReport, Query, Cluster, Platform } from '@/types';
-import rawData from '../../data/artifacts/gap_analysis/lovable/gap_report.json';
+import rawData from '@/../data/result-draft/artifacts/gap_analysis/lovable/gap_report.json';
 
 interface RawStructuralSignals {
   word_count?: number;

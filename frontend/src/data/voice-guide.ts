@@ -69,7 +69,7 @@ function parseWorkedExamples(content: string): { title: string; before: string; 
 }
 
 export function getVoiceGuide(): VoiceGuide | null {
-  const mdPath = path.join(process.cwd(), 'data/artifacts/voice_style_guide/lovable/guide/v1.md');
+  const mdPath = path.join(process.cwd(), 'data/result-draft/artifacts/voice_style_guide/lovable/guide/v1.md');
 
   try {
     const content = fs.readFileSync(mdPath, 'utf-8');
@@ -95,7 +95,7 @@ export function getVoiceGuide(): VoiceGuide | null {
 }
 
 export function getVoiceGuideMarkdown(): string {
-  const mdPath = path.join(process.cwd(), 'data/artifacts/voice_style_guide/lovable/guide/v1.md');
+  const mdPath = path.join(process.cwd(), 'data/result-draft/artifacts/voice_style_guide/lovable/guide/v1.md');
   try {
     return fs.readFileSync(mdPath, 'utf-8');
   } catch {

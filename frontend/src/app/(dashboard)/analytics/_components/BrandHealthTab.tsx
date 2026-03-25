@@ -10,7 +10,7 @@ import {
   PolarRadiusAxis,
   Radar,
 } from 'recharts';
-import rawAudit from '../../../../../data/artifacts/site_audit/lovable/039d53f8-cf4c-43c7-bae9-614ddd2cb472/audit_result.json';
+import rawAudit from '@/../data/result-draft/artifacts/site_audit/lovable/039d53f8-cf4c-43c7-bae9-614ddd2cb472/audit_result.json';
 
 interface RawAuditData {
   overall_score: number;

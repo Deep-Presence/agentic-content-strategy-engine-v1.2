@@ -10,7 +10,6 @@ import {
   categories,
   getCategoryStats,
   getAssignments,
-  getSourceCount,
   getSortScore,
 } from './topic-data';
 
@@ -151,7 +150,6 @@ export function TaxonomyTree({
                 children.map((sub) => {
                   const isSelected = sub.id === selectedSubdomainId;
                   const assignments = getAssignments(sub.id);
-                  const sourceCount = getSourceCount(sub.source_provenance);
                   const score = getSortScore(sub, sortDimension);
 
                   return (

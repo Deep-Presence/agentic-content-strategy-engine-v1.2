@@ -9,8 +9,8 @@ import { ScoringPanel } from './ScoringPanel';
 import { AgentActivitySidebar } from './AgentActivitySidebar';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import brief001Content from '@/../data/artifacts/content/carta/content/brief-001/formatted.md';
-import brief002Content from '@/../data/artifacts/content/carta/content/brief-002/formatted.md';
+import brief001Content from '@/../data/result-draft/artifacts/content/carta/content/brief-001/formatted.md';
+import brief002Content from '@/../data/result-draft/artifacts/content/carta/content/brief-002/formatted.md';
 
 const contentMap: Record<string, string> = {
   'brief-001': brief001Content,

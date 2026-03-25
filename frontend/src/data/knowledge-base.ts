@@ -11,7 +11,7 @@ const KB_TYPES: Record<string, KBDocument['type']> = {
 };
 
 export function getKnowledgeBase(): KBDocument[] {
-  const basePath = path.join(process.cwd(), 'data/artifacts/knowledge_base/lovable');
+  const basePath = path.join(process.cwd(), 'data/result-draft/artifacts/knowledge_base/lovable');
   const docs: KBDocument[] = [];
 
   try {

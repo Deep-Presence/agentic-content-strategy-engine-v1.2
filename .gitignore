@@ -37,3 +37,6 @@ next-env.d.ts
 
 frontend/.next
 node_modules/
+
+# pipeline artifacts data (local copy)
+/data/result-draft/
