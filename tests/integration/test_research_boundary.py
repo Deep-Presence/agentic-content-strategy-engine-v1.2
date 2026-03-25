@@ -12,10 +12,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from api.services.brand_data_service import get_research_artifacts
+from api.services.brand_data_service import _CACHE, get_research_artifacts
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    """Clear TTL cache before each test."""
+    _CACHE.clear()
+    yield
+    _CACHE.clear()
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -99,13 +107,24 @@ class TestStyleGuide:
 class TestPersonas:
     """Test reading audience persona artifacts (new + legacy paths)."""
 
-    def test_legacy_persona_detected(self, tmp_path: Path):
-        """Legacy path: artifacts/personas/{slug}__persona-{id}.md"""
+    def test_manifest_persona_detected(self, tmp_path: Path):
+        """Manifest-based path: audience_personas/{slug}/_manifest.json + {pid}/v1.md"""
+        import json as _json
+
         slug = "test-co"
-        _write_text(
-            tmp_path / "personas" / f"{slug}__persona-001.md",
-            "# VP of Marketing\n\nSenior decision maker.",
-        )
+        base = tmp_path / "audience_personas" / slug
+        (base / "persona-001").mkdir(parents=True)
+        (base / "persona-001" / "v1.md").write_text("# VP of Marketing\n\nSenior decision maker.")
+        manifest = {"slug": slug, "personas": {
+            "persona-001": {
+                "persona_name": "VP of Marketing",
+                "kind": "icp",
+                "status": "fresh",
+                "current_version": 1,
+                "last_updated": "2026-03-24T00:00:00+00:00",
+            }
+        }}
+        (base / "_manifest.json").write_text(_json.dumps(manifest))
 
         result = get_research_artifacts(tmp_path, slug)
 

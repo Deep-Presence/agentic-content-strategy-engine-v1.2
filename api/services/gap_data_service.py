@@ -1,7 +1,7 @@
 """Service layer for gap analysis data endpoints.
 
-Reads pre-computed pipeline artifacts from disk, reshapes them to match
-the frontend TypeScript types, and caches parsed JSON for performance.
+Reads pre-computed pipeline artifacts via StorageBackend, reshapes them
+to match the frontend TypeScript types, and caches parsed JSON with TTL.
 """
 from __future__ import annotations
 
@@ -10,9 +10,12 @@ import logging
 import math
 import re
 import threading
+import time
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
+
+from core.storage.backends.base import StorageBackend
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -48,33 +51,31 @@ logger = logging.getLogger(__name__)
 
 # ── Caching ──────────────────────────────────────────────────────────
 
-_CACHE: Dict[Tuple[str, str], Tuple[int, Any]] = {}
+_CACHE: Dict[Tuple[str, str], Tuple[float, Any]] = {}
 _CACHE_MAX_ENTRIES = 10
+_CACHE_TTL_S = 300  # 5 minutes — GA artifacts are write-once-read-many
 _CACHE_LOCK = threading.Lock()  # C6: protects compound check-evict-insert
 
 
 def _load_json_cached(
-    artifacts_root: Path, slug: str, filename: str
+    storage: StorageBackend, slug: str, filename: str
 ) -> Optional[Any]:
-    """Load and parse a JSON file with mtime-based cache invalidation."""
-    file_path = artifacts_root / "gap_analysis" / slug / filename
-
-    # CX-9: guard stat() — eliminates TOCTOU between is_file() and stat()
-    try:
-        mtime_ns = file_path.stat().st_mtime_ns
-    except (FileNotFoundError, OSError):
-        return None
-
+    """Load and parse a JSON file via StorageBackend with TTL cache."""
     cache_key = (slug, filename)
+    now = time.monotonic()
 
     cached = _CACHE.get(cache_key)
-    if cached is not None and cached[0] == mtime_ns:
+    if cached is not None and (now - cached[0]) < _CACHE_TTL_S:
         return cached[1]
 
+    content = storage.read(f"gap_analysis/{slug}/{filename}")
+    if content is None:
+        return None
+
     try:
-        data = json.loads(file_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Failed to parse %s: %s", file_path, exc)
+        data = json.loads(content)
+    except json.JSONDecodeError as exc:
+        logger.warning("Failed to parse gap_analysis/%s/%s: %s", slug, filename, exc)
         return None
 
     # C6: lock protects the compound check-evict-insert against concurrent writes
@@ -82,7 +83,7 @@ def _load_json_cached(
         if len(_CACHE) >= _CACHE_MAX_ENTRIES and cache_key not in _CACHE:
             oldest_key = next(iter(_CACHE))
             del _CACHE[oldest_key]
-        _CACHE[cache_key] = (mtime_ns, data)
+        _CACHE[cache_key] = (now, data)
     return data
 
 
@@ -92,36 +93,43 @@ def _load_json_cached(
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
 
 
-def _validate_slug_dir(artifacts_root: Path, slug: str) -> Path:
-    """Validate slug format and return the gap_analysis/{slug}/ directory.
+def _validate_slug(storage: StorageBackend, slug: str) -> None:
+    """Validate slug format and check that gap artifacts exist.
 
-    Raises HTTPException 400 for invalid slug format, 404 if directory missing.
+    Raises HTTPException 400 for invalid slug format, 404 if no artifacts found.
+    Accepts either sentinel files OR any file under the gap_analysis/{slug}/ prefix.
     """
     if not _SLUG_PATTERN.match(slug):
         raise HTTPException(status_code=400, detail="Invalid slug format")
-    slug_dir = artifacts_root / "gap_analysis" / slug
-    if not slug_dir.is_dir():
-        raise HTTPException(
-            status_code=404,
-            detail=f"No gap analysis data found for '{slug}'",
-        )
-    return slug_dir
+    # Check sentinel files first (fast path)
+    if (
+        storage.exists(f"gap_analysis/{slug}/gap_analysis_complete.json")
+        or storage.exists(f"gap_analysis/{slug}/analysis.json")
+    ):
+        return
+    # Fallback: check if directory or any artifact exists under the prefix
+    if storage.exists(f"gap_analysis/{slug}") or storage.list_dir(f"gap_analysis/{slug}"):
+        return
+    raise HTTPException(
+        status_code=404,
+        detail=f"No gap analysis data found for '{slug}'",
+    )
 
 
 # ── File loading with fallback ───────────────────────────────────────
 
 
-def _load_analysis_data(artifacts_root: Path, slug: str) -> Dict[str, Any]:
+def _load_analysis_data(storage: StorageBackend, slug: str) -> Dict[str, Any]:
     """Load gap analysis data with fallback chain.
 
     1. gap_analysis_complete.json (has analysis + report + cluster_specs)
     2. analysis.json (raw AnalysisResult)
     """
-    complete = _load_json_cached(artifacts_root, slug, "gap_analysis_complete.json")
+    complete = _load_json_cached(storage, slug, "gap_analysis_complete.json")
     if complete is not None:
         return complete
 
-    analysis = _load_json_cached(artifacts_root, slug, "analysis.json")
+    analysis = _load_json_cached(storage, slug, "analysis.json")
     if analysis is not None:
         # Wrap in the same shape as gap_analysis_complete.json
         return {"analysis": analysis, "report": {}, "cluster_specs": analysis.get("cluster_specs", [])}
@@ -129,23 +137,23 @@ def _load_analysis_data(artifacts_root: Path, slug: str) -> Dict[str, Any]:
     return {"analysis": {}, "report": {}, "cluster_specs": []}
 
 
-def _load_report_data(artifacts_root: Path, slug: str) -> Dict[str, Any]:
+def _load_report_data(storage: StorageBackend, slug: str) -> Dict[str, Any]:
     """Load report data (executive summary, recommendations, etc.)."""
-    report = _load_json_cached(artifacts_root, slug, "gap_report.json")
+    report = _load_json_cached(storage, slug, "gap_report.json")
     if report is not None:
         return report
 
     # Fall back to gap_analysis_complete.json report section
-    complete = _load_json_cached(artifacts_root, slug, "gap_analysis_complete.json")
+    complete = _load_json_cached(storage, slug, "gap_analysis_complete.json")
     if complete is not None:
         return complete.get("report", {})
 
     return {}
 
 
-def _load_enriched(artifacts_root: Path, slug: str) -> List[Dict[str, Any]]:
+def _load_enriched(storage: StorageBackend, slug: str) -> List[Dict[str, Any]]:
     """Load enriched_citations.json (may be large ~20MB, cached)."""
-    data = _load_json_cached(artifacts_root, slug, "enriched_citations.json")
+    data = _load_json_cached(storage, slug, "enriched_citations.json")
     return data if isinstance(data, list) else []
 
 
@@ -576,12 +584,12 @@ def _compute_citation_exclusivity(
 # ── Endpoint 2.1: Summary ───────────────────────────────────────────
 
 
-def get_summary(artifacts_root: Path, slug: str) -> GapSummaryResponse:
+def get_summary(storage: StorageBackend, slug: str) -> GapSummaryResponse:
     """Build the executive overview response."""
-    _validate_slug_dir(artifacts_root, slug)
+    _validate_slug(storage, slug)
 
-    data = _load_analysis_data(artifacts_root, slug)
-    report = _load_report_data(artifacts_root, slug)
+    data = _load_analysis_data(storage, slug)
+    report = _load_report_data(storage, slug)
     analysis = data.get("analysis", {})
 
     # SPA score — find the "all" cluster result
@@ -682,7 +690,7 @@ def get_summary(artifacts_root: Path, slug: str) -> GapSummaryResponse:
 
 
 def get_queries(
-    artifacts_root: Path,
+    storage: StorageBackend,
     slug: str,
     *,
     cluster: Optional[str] = None,
@@ -694,15 +702,15 @@ def get_queries(
     page_size: int = 15,
 ) -> QueryListResponse:
     """Build paginated, filterable query list."""
-    _validate_slug_dir(artifacts_root, slug)
+    _validate_slug(storage, slug)
 
-    data = _load_analysis_data(artifacts_root, slug)
-    report = _load_report_data(artifacts_root, slug)
+    data = _load_analysis_data(storage, slug)
+    report = _load_report_data(storage, slug)
     analysis = data.get("analysis", {})
     gaps = report.get("gaps", analysis.get("gaps", []))
 
     # Build platform index from enriched citations
-    enriched = _load_enriched(artifacts_root, slug)
+    enriched = _load_enriched(storage, slug)
     platform_index = _build_platform_index(enriched)
 
     # Transform gaps into QueryRow objects
@@ -839,11 +847,11 @@ def get_queries(
 # ── Endpoint 2.3: Clusters ──────────────────────────────────────────
 
 
-def get_clusters(artifacts_root: Path, slug: str) -> ClusterListResponse:
+def get_clusters(storage: StorageBackend, slug: str) -> ClusterListResponse:
     """Build cluster specifications response."""
-    _validate_slug_dir(artifacts_root, slug)
+    _validate_slug(storage, slug)
 
-    data = _load_analysis_data(artifacts_root, slug)
+    data = _load_analysis_data(storage, slug)
     analysis = data.get("analysis", {})
     cluster_specs = data.get("cluster_specs", analysis.get("cluster_specs", []))
     centroids = analysis.get("centroids", [])
@@ -888,16 +896,16 @@ def get_clusters(artifacts_root: Path, slug: str) -> ClusterListResponse:
 # ── Endpoint 2.4: Signals ───────────────────────────────────────────
 
 
-def get_signals(artifacts_root: Path, slug: str) -> SignalAveragesResponse:
+def get_signals(storage: StorageBackend, slug: str) -> SignalAveragesResponse:
     """Build structural signal averages, correlations, and cluster patterns."""
-    _validate_slug_dir(artifacts_root, slug)
+    _validate_slug(storage, slug)
 
-    enriched = _load_enriched(artifacts_root, slug)
-    data = _load_analysis_data(artifacts_root, slug)
+    enriched = _load_enriched(storage, slug)
+    data = _load_analysis_data(storage, slug)
     analysis = data.get("analysis", {})
     cluster_specs = data.get("cluster_specs", analysis.get("cluster_specs", []))
 
-    company_pages_raw = _load_json_cached(artifacts_root, slug, "company_page_analysis.json")
+    company_pages_raw = _load_json_cached(storage, slug, "company_page_analysis.json")
     company_pages = company_pages_raw if isinstance(company_pages_raw, list) else None
 
     signals = _compute_signal_averages(enriched, company_pages=company_pages)
@@ -916,11 +924,11 @@ def get_signals(artifacts_root: Path, slug: str) -> SignalAveragesResponse:
 # ── Endpoint 2.5: Platforms ─────────────────────────────────────────
 
 
-def get_platforms(artifacts_root: Path, slug: str) -> PlatformListResponse:
+def get_platforms(storage: StorageBackend, slug: str) -> PlatformListResponse:
     """Build per-platform citation breakdown with agreement and exclusivity."""
-    _validate_slug_dir(artifacts_root, slug)
+    _validate_slug(storage, slug)
 
-    enriched = _load_enriched(artifacts_root, slug)
+    enriched = _load_enriched(storage, slug)
 
     # Group by engine
     engine_data: Dict[str, Dict[str, Any]] = defaultdict(
@@ -993,12 +1001,12 @@ def get_platforms(artifacts_root: Path, slug: str) -> PlatformListResponse:
 # ── Endpoint 2.6: Heatmap ───────────────────────────────────────────
 
 
-def get_heatmap(artifacts_root: Path, slug: str) -> HeatmapResponse:
+def get_heatmap(storage: StorageBackend, slug: str) -> HeatmapResponse:
     """Build gap score heatmap grouped by cluster."""
-    _validate_slug_dir(artifacts_root, slug)
+    _validate_slug(storage, slug)
 
-    data = _load_analysis_data(artifacts_root, slug)
-    report = _load_report_data(artifacts_root, slug)
+    data = _load_analysis_data(storage, slug)
+    report = _load_report_data(storage, slug)
     analysis = data.get("analysis", {})
     gaps = report.get("gaps", analysis.get("gaps", []))
 
@@ -1058,13 +1066,13 @@ def get_heatmap(artifacts_root: Path, slug: str) -> HeatmapResponse:
 
 
 def get_embedding_projection(
-    artifacts_root: Path, slug: str, method: Literal["umap", "tsne"] = "umap",
+    storage: StorageBackend, slug: str, method: Literal["umap", "tsne"] = "umap",
 ) -> EmbeddingProjectionResponse:
     """Load pre-computed 2D embedding projection from s7 JSON output."""
-    _validate_slug_dir(artifacts_root, slug)
+    _validate_slug(storage, slug)
 
     filename = f"visualizations/embedding_projections_{method}.json"
-    data = _load_json_cached(artifacts_root, slug, filename)
+    data = _load_json_cached(storage, slug, filename)
     if data is None:
         raise HTTPException(
             status_code=404,

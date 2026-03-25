@@ -63,12 +63,27 @@ def _resolve_virtual_path(vpath: str) -> Path:
     return (_CONTENT_ENGINE_ROOT / p.lstrip("/")).resolve()
 
 
-def _read_text(vpath: Optional[str], max_chars: int = 200_000) -> str:
+def _read_text(
+    vpath: Optional[str],
+    max_chars: int = 200_000,
+    *,
+    storage: Optional[Any] = None,
+) -> str:
     if not vpath:
         return ""
+    # C2-fix: try StorageBackend first (R2 or any non-local backend)
+    if storage is not None:
+        content = storage.read(vpath)
+        if content is not None:
+            return content[:max_chars]
+        # H3-fix: non-local backends must NOT fall back to local filesystem
+        from core.storage.backends.local import LocalStorageBackend
+        if not isinstance(storage, LocalStorageBackend):
+            return ""
+    # Filesystem fallback (local dev or absolute paths from LocalStorageBackend)
     p = _resolve_virtual_path(vpath)
     if not p.exists():
-        return f"ERROR: path not found: {vpath}"
+        return ""
     return p.read_text(encoding="utf-8")[:max_chars]
 
 
@@ -535,11 +550,12 @@ async def generate_queries(
     model: Optional[str] = None,
     *,
     trace_span: Optional[Any] = None,
+    storage: Optional[Any] = None,
 ) -> List[GeneratedQuery]:
     clusters = _load_taxonomy(taxonomy_path)
-    company_context = _read_text(input_data.company_context_path)
+    company_context = _read_text(input_data.company_context_path, storage=storage)
     persona_context = "\n\n".join(
-        _read_text(p) for p in input_data.persona_paths if p
+        _read_text(p, storage=storage) for p in input_data.persona_paths if p
     )
     model_name = model or settings.gap_analysis_query_gen_model
 
@@ -833,6 +849,7 @@ async def generate_queries_from_topics(
     *,
     trace_span: Optional[Any] = None,
     company_slug: str = "",
+    storage: Optional[Any] = None,
 ) -> List[GeneratedQuery]:
     """Generate queries from approved TopicAssignments (TD → GA bridge).
 
@@ -848,9 +865,9 @@ async def generate_queries_from_topics(
     if not topics:
         return []
 
-    company_context = _read_text(company_context_path)
+    company_context = _read_text(company_context_path, storage=storage)
     persona_context = "\n\n".join(
-        _read_text(p) for p in (persona_paths or []) if p
+        _read_text(p, storage=storage) for p in (persona_paths or []) if p
     )
     model_name = model or settings.gap_analysis_query_gen_model
 

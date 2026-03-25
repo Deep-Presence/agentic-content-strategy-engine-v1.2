@@ -15,6 +15,7 @@ import logging
 import math
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -22,11 +23,12 @@ from fastapi import HTTPException
 
 _logger = logging.getLogger(__name__)
 
-# Module-level FIFO cache: key -> (mtime, data).
+# Module-level FIFO cache: key -> (monotonic_ts, data).
 # Max 10 entries; oldest evicted when full.
 # Protected by _CACHE_LOCK for thread safety (asyncio.to_thread callers).
 _CACHE: dict[str, tuple[float, Any]] = {}
 _CACHE_MAX = 10
+_CACHE_TTL_S = 600  # 10 minutes — audit data is write-once
 _CACHE_LOCK = threading.Lock()
 
 # Slug validation: bare slug OR effective slug (slug__product-slug)
@@ -61,7 +63,7 @@ def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
     """Load and cache audit_result.json from *audit_dir*.
 
     Returns an empty dict when the file is missing or unparseable.
-    Uses mtime-based cache invalidation.  All ``_CACHE`` access is
+    Uses TTL-based cache invalidation.  All ``_CACHE`` access is
     protected by ``_CACHE_LOCK`` for thread safety under
     ``asyncio.to_thread()``.
     """
@@ -71,10 +73,10 @@ def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
     if not result_file.exists():
         return {}
 
-    mtime = result_file.stat().st_mtime
+    now = time.monotonic()
     with _CACHE_LOCK:
         cached = _CACHE.get(cache_key)
-        if cached is not None and cached[0] == mtime:
+        if cached is not None and (now - cached[0]) < _CACHE_TTL_S:
             return cached[1]
 
     try:
@@ -85,7 +87,7 @@ def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
 
     with _CACHE_LOCK:
         _evict_if_full()
-        _CACHE[cache_key] = (mtime, data)
+        _CACHE[cache_key] = (now, data)
     return data
 
 

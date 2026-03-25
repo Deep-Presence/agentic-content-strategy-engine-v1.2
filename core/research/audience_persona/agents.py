@@ -118,7 +118,7 @@ def _validate_briefs(
 
 
 async def _load_knowledge_docs(
-    artifacts_root: Path,
+    storage: "StorageBackend",
     effective_slug: str,
     company_slug: str,
     max_chars: int = 50_000,
@@ -127,39 +127,38 @@ async def _load_knowledge_docs(
 
     Follows effective_slug → company_slug fallback chain.
     Returns empty string if no docs uploaded.
-    """
-    from core.shared_tools.knowledge_doc_metadata import load_metadata, slug_dir
-    from core.shared_tools.text_extraction import extract_text
 
-    docs = load_metadata(artifacts_root, effective_slug)
+    Phase 6 (R2 migration): reads via StorageBackend instead of filesystem.
+    """
+    from core.shared_tools.knowledge_doc_metadata import doc_storage_key, load_metadata
+    from core.shared_tools.text_extraction import extract_text_from_bytes
+
+    docs = load_metadata(effective_slug, storage=storage)
     used_slug = effective_slug
     if not docs and effective_slug != company_slug:
-        docs = load_metadata(artifacts_root, company_slug)
+        docs = load_metadata(company_slug, storage=storage)
         used_slug = company_slug
     if not docs:
         return ""
 
-    doc_dir = slug_dir(artifacts_root, used_slug)
     parts: List[str] = []
-    total_len = 0
 
     for doc in docs:
-        file_path = (doc_dir / doc.stored_filename).resolve()
-        if not file_path.is_relative_to(doc_dir.resolve()):
-            logger.warning("Skipping file outside doc dir: %s", file_path)
-            continue
-        if not file_path.exists():
+        key = doc_storage_key(used_slug, doc.stored_filename)
+        file_bytes = storage.read_bytes(key)
+        if file_bytes is None:
             continue
         try:
-            text = await asyncio.to_thread(extract_text, file_path)
+            from pathlib import Path as _Path
+            suffix = _Path(doc.stored_filename).suffix.lower()
+            text = extract_text_from_bytes(file_bytes, suffix)
         except Exception:
-            logger.warning("Failed to extract text from %s", file_path)
+            logger.warning("Failed to extract text from %s", key)
             continue
         if not text:
             continue
         section = f"### {doc.filename}\n\n{text}"
         parts.append(section)
-        total_len += len(section)
 
     result = "\n\n".join(parts)
     if len(result) > max_chars:

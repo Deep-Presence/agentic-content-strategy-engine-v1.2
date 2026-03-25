@@ -118,7 +118,7 @@ class TestUploadDocument:
     ) -> None:
         """PDF upload stores the file (extraction tested separately)."""
         # Create a minimal valid-ish PDF (just check upload works)
-        with patch("api.services.knowledge_doc_service.extract_text", return_value="extracted text"):
+        with patch("api.services.knowledge_doc_service.extract_text_from_bytes", return_value="extracted text"):
             resp = client.post(
                 f"/api/v1/companies/{test_company.slug}/knowledge-docs",
                 files=_make_file(b"%PDF-1.4 fake pdf", "report.pdf", "application/pdf"),

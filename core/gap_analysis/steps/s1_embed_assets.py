@@ -34,6 +34,7 @@ from bs4 import BeautifulSoup
 
 from core.config.settings import settings
 from core.gap_analysis.steps.s4_enrich_citations import compute_structural_signals
+from core.storage.backends.base import StorageBackend
 from core.models.gap_analysis import (
     CompanyPageAnalysis,
     DiscoveredPage,
@@ -48,8 +49,9 @@ from core.shared_tools.vector_store import (
     async_upsert_embeddings,
 )
 from core.shared_tools.async_embedding_client import async_embed_texts
-from core.shared_tools.knowledge_doc_metadata import mark_documents_embedded
+from core.shared_tools.knowledge_doc_metadata import doc_storage_key, mark_documents_embedded
 from core.shared_tools.text_extraction import extract_text as _extract_text_from_file
+from core.shared_tools.text_extraction import extract_text_from_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -102,12 +104,6 @@ _SKIP_EXTENSIONS = {
 # ===========================================================================
 # Utility Functions
 # ===========================================================================
-
-
-def _ensure_output_dir(company_slug: str) -> Path:
-    path = _CONTENT_ENGINE_ROOT / "artifacts" / "gap_analysis" / company_slug
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def _normalize_url(url: str) -> str:
@@ -1137,28 +1133,27 @@ async def crawl_company_assets(
 
 
 def _load_knowledge_doc_units(
-    knowledge_doc_dir: str,
+    effective_slug: str,
+    storage: StorageBackend,
     start_counter: int = 0,
 ) -> List[SemanticUnit]:
-    """Load knowledge documents from a directory, extract text, chunk into SemanticUnits.
+    """Load knowledge documents via StorageBackend, extract text, chunk into SemanticUnits.
 
-    Reads _metadata.json to discover docs, uses the knowledge_doc_service
-    extract_text helper for PDF/DOCX support.
+    Reads _metadata.json from StorageBackend to discover docs, fetches each
+    document's bytes via ``storage.read_bytes()``, and uses
+    ``extract_text_from_bytes()`` for PDF/DOCX/MD/TXT extraction.
     """
-    doc_dir = Path(knowledge_doc_dir)
-    if not doc_dir.is_dir():
-        logger.info("[knowledge_docs] Directory not found: %s", doc_dir)
-        return []
+    from core.shared_tools.knowledge_doc_metadata import _metadata_key
 
-    metadata_path = doc_dir / "_metadata.json"
-    if not metadata_path.exists():
-        logger.info("[knowledge_docs] No _metadata.json in %s", doc_dir)
+    metadata_content = storage.read(_metadata_key(effective_slug))
+    if metadata_content is None:
+        logger.info("[knowledge_docs] No metadata for slug=%s", effective_slug)
         return []
 
     try:
-        raw = json.loads(metadata_path.read_text(encoding="utf-8"))
+        raw = json.loads(metadata_content)
     except Exception:
-        logger.warning("[knowledge_docs] Failed to parse _metadata.json in %s", doc_dir)
+        logger.warning("[knowledge_docs] Failed to parse _metadata.json for slug=%s", effective_slug)
         return []
 
     units: List[SemanticUnit] = []
@@ -1167,18 +1162,26 @@ def _load_knowledge_doc_units(
     for entry in raw:
         stored_filename = entry.get("stored_filename", "")
         original_filename = entry.get("filename", stored_filename)
-        file_path = doc_dir / stored_filename
+        key = doc_storage_key(effective_slug, stored_filename)
 
-        if not file_path.exists():
-            logger.warning("[knowledge_docs] File missing: %s", file_path)
+        file_bytes = storage.read_bytes(key)
+        if file_bytes is None:
+            logger.warning("[knowledge_docs] File missing: %s", key)
             continue
 
-        # Extract text using shared utility
-        text = _extract_text_from_file(file_path)
-        if not text and file_path.suffix.lower() not in (".md", ".txt", ".pdf", ".docx"):
+        # Extract text using shared utility (from bytes, no filesystem needed)
+        suffix = Path(stored_filename).suffix.lower()
+        text = extract_text_from_bytes(file_bytes, suffix)
+        if not text and suffix not in (".md", ".txt", ".pdf", ".docx"):
             continue
 
         if not text.strip():
+            if suffix in (".md", ".txt", ".pdf", ".docx"):
+                logger.warning(
+                    "[knowledge_docs] Empty text after extraction: filename=%s suffix=%s — skipping",
+                    original_filename,
+                    suffix,
+                )
             continue
 
         # Split into paragraphs and chunk using the same strategy as site content
@@ -1203,9 +1206,9 @@ def _load_knowledge_doc_units(
             )
 
     logger.info(
-        "[knowledge_docs] Loaded %d semantic units from %s",
+        "[knowledge_docs] Loaded %d semantic units for slug=%s",
         len(units),
-        doc_dir,
+        effective_slug,
     )
     return units
 
@@ -1219,16 +1222,25 @@ def _load_knowledge_doc_units(
 # ===========================================================================
 
 
-async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUnit]:
+async def embed_company_assets(
+    input_data: GapAnalysisInput,
+    storage: Optional[StorageBackend] = None,
+    prefix: str = "",
+) -> List[SemanticUnit]:
     """Crawl, chunk, embed, and store company assets (async).
 
     Uses multi-phase discovery (sitemap + RSS + BFS) and stores
     embeddings in pgvector. JSON artifacts are lightweight (IDs only).
     """
+    if storage is None:
+        from core.storage import get_storage_backend
+        storage = get_storage_backend()
+
     company_slug = input_data.company_slug or re.sub(
         r"[^a-z0-9]+", "-", input_data.company_name.lower()
     ).strip("-")
-    out_dir = _ensure_output_dir(company_slug)
+    if not prefix:
+        prefix = f"gap_analysis/{company_slug}"
     max_pages = input_data.max_crawl_pages or settings.gap_analysis_max_crawl_pages
     max_depth = input_data.max_crawl_depth or settings.gap_analysis_max_crawl_depth
 
@@ -1245,26 +1257,25 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
     _ga_dbg(f"discover_site_tree complete: {discovery_result.total_pages_discovered} discovered, {len(pages_with_html)} with HTML")
 
     # Save site-tree discovery artifacts
-    discovery_dir = out_dir / "site_discovery"
-    discovery_dir.mkdir(parents=True, exist_ok=True)
+    storage.mkdir(f"{prefix}/site_discovery")
 
-    (discovery_dir / "discovered_pages.json").write_text(
+    storage.write(
+        f"{prefix}/site_discovery/discovered_pages.json",
         json.dumps(
             [p.model_dump(mode="json") for p in discovery_result.pages],
             indent=2,
             default=str,
         ),
-        encoding="utf-8",
     )
 
     if discovery_result.site_tree:
-        (discovery_dir / "site_tree.json").write_text(
+        storage.write(
+            f"{prefix}/site_discovery/site_tree.json",
             json.dumps(
                 discovery_result.site_tree.model_dump(mode="json"),
                 indent=2,
                 default=str,
             ),
-            encoding="utf-8",
         )
 
     summary = {
@@ -1279,17 +1290,16 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
         "errors": discovery_result.errors,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    (discovery_dir / "discovery_summary.json").write_text(
+    storage.write(
+        f"{prefix}/site_discovery/discovery_summary.json",
         json.dumps(summary, indent=2, default=str),
-        encoding="utf-8",
     )
 
     logger.info(
         "[embed_company_assets] Site discovery complete: "
-        "%d URLs discovered, %d pages crawled. Artifacts saved to %s",
+        "%d URLs discovered, %d pages crawled.",
         discovery_result.total_pages_discovered,
         len(pages_with_html),
-        discovery_dir,
     )
 
     # --- Build semantic units ---
@@ -1322,14 +1332,13 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
             )
 
     # Save company page analysis artifact
-    analysis_path = out_dir / "company_page_analysis.json"
-    analysis_path.write_text(
+    storage.write(
+        f"{prefix}/company_page_analysis.json",
         json.dumps(
             [pa.model_dump(mode="json") for pa in page_analyses],
             indent=2,
             default=str,
         ),
-        encoding="utf-8",
     )
     logger.info(
         "[embed_company_assets] Structural analysis complete: %d/%d pages analyzed",
@@ -1338,9 +1347,11 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
     )
 
     # --- Load knowledge documents (if any) ---
-    if input_data.knowledge_doc_dir:
+    kdoc_slug = getattr(input_data, "knowledge_doc_slug", None)
+    if kdoc_slug:
         kdoc_units = _load_knowledge_doc_units(
-            input_data.knowledge_doc_dir,
+            kdoc_slug,
+            storage,
             start_counter=len(units),
         )
         if kdoc_units:
@@ -1378,15 +1389,16 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
     )
 
     # --- Save lightweight JSON (embedding_id only, no raw vectors) ---
-    output_path = out_dir / "company_embeddings.json"
     payload = [u.model_dump(mode="json", exclude={"embedding"}) for u in units]
-    output_path.write_text(
-        json.dumps(payload, indent=2, default=str), encoding="utf-8"
+    storage.write(
+        f"{prefix}/company_embeddings.json",
+        json.dumps(payload, indent=2, default=str),
     )
 
     # --- Mark knowledge docs as embedded ---
-    if input_data.knowledge_doc_dir:
-        mark_documents_embedded(input_data.knowledge_doc_dir)
+    # H6-fix: run blocking lock + I/O off the event loop
+    if kdoc_slug:
+        await asyncio.to_thread(mark_documents_embedded, kdoc_slug, storage=storage)
 
     logger.info(
         "[embed_company_assets] S1 complete: %d pages crawled, %d semantic units, "

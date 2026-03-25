@@ -1,9 +1,8 @@
-"""Service layer for content data endpoints (Phase 3).
+"""Service layer for content data endpoints (Phase 3 + Phase 5 R2 migration).
 
-Reads content pipeline v1.3 artifacts from disk (blueprints.json,
-planner_selections.json, run_metadata.json, per-brief stage files),
-reshapes them to match the frontend TypeScript types, and infers brief
-statuses from artifacts + run metadata.
+Reads content pipeline v1.3 artifacts via StorageBackend (R2 or local),
+reshapes them to match the frontend TypeScript types, and caches parsed
+JSON with TTL-based invalidation.
 """
 from __future__ import annotations
 
@@ -11,7 +10,7 @@ import json
 import logging
 import re
 import threading
-from datetime import datetime, timezone
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -27,45 +26,87 @@ from api.schemas.content_data import (
     StageContentResponse,
 )
 from core.services.gap_context_helper import extract_gap_context, load_analysis_json
+from core.storage.backends.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
 # ── Caching ──────────────────────────────────────────────────────────
 
-_CACHE: Dict[Tuple[str, str], Tuple[int, Any]] = {}
+_CACHE: Dict[str, Tuple[float, Any]] = {}
 _CACHE_MAX_ENTRIES = 10
 _CACHE_LOCK = threading.Lock()  # C6: protects compound check-evict-insert
 
+# Split TTLs by artifact write pattern (Codex C5)
+_TTL_BY_FILE: Dict[str, int] = {
+    "blueprints.json": 60,
+    "planner_selections.json": 60,
+    "run_metadata_v13.json": 120,
+    "eval_history.json": 120,
+}
+_DEFAULT_CACHE_TTL_S = 120
 
-def _load_json_cached(base_dir: Path, filename: str) -> Optional[Any]:
-    """Load and parse a JSON file with mtime-based cache invalidation."""
-    file_path = base_dir / filename
 
-    # CX-9: guard stat() — eliminates TOCTOU between is_file() and stat()
-    try:
-        mtime_ns = file_path.stat().st_mtime_ns
-    except (FileNotFoundError, OSError):
-        return None
+def _load_json_cached(
+    storage: StorageBackend, key: str,
+) -> Optional[Any]:
+    """Load and parse a JSON artifact via StorageBackend with TTL cache.
 
-    cache_key = (str(base_dir), filename)
+    *key* is the full storage path, e.g. ``content/test-co/blueprints.json``.
+    """
+    now = time.monotonic()
 
-    cached = _CACHE.get(cache_key)
-    if cached is not None and cached[0] == mtime_ns:
+    # Determine TTL from filename suffix
+    fname = key.rsplit("/", 1)[-1] if "/" in key else key
+    ttl = _TTL_BY_FILE.get(fname, _DEFAULT_CACHE_TTL_S)
+
+    cached = _CACHE.get(key)
+    if cached is not None and (now - cached[0]) < ttl:
         return cached[1]
 
+    content = storage.read(key)
+    if content is None:
+        return None
+
     try:
-        data = json.loads(file_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Failed to parse %s: %s", file_path, exc)
+        data = json.loads(content)
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("Failed to parse %s: %s", key, exc)
         return None
 
     # C6: lock protects the compound check-evict-insert against concurrent writes
     with _CACHE_LOCK:
-        if len(_CACHE) >= _CACHE_MAX_ENTRIES and cache_key not in _CACHE:
+        if len(_CACHE) >= _CACHE_MAX_ENTRIES and key not in _CACHE:
             oldest_key = next(iter(_CACHE))
             del _CACHE[oldest_key]
-        _CACHE[cache_key] = (mtime_ns, data)
+        _CACHE[key] = (now, data)
     return data
+
+
+def _load_pipeline_state(artifacts_root: Path, slug: str) -> Dict[str, Any]:
+    """Load pipeline_state.json from local filesystem (NOT StorageBackend).
+
+    pipeline_state.json is ephemeral, sub-second writes during pipeline
+    execution.  It is NOT an R2 artifact — earmarked for Redis migration.
+    Returns empty dict if missing.
+    """
+    state_path = artifacts_root / "content" / slug / "pipeline_state.json"
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+
+
+# ── Storage resolution ───────────────────────────────────────────────
+
+
+def _resolve_storage(
+    artifacts_root: Path, storage: Optional[StorageBackend],
+) -> StorageBackend:
+    """Return the given StorageBackend or create a LocalStorageBackend."""
+    if storage is not None:
+        return storage
+    from core.storage.backends.local import LocalStorageBackend
+    return LocalStorageBackend(artifacts_root)
 
 
 # ── Validation ───────────────────────────────────────────────────────
@@ -98,18 +139,6 @@ def _validate_brief_id(brief_id: str) -> None:
         raise HTTPException(400, f"Invalid brief_id format: '{brief_id}'")
 
 
-def _content_dir(artifacts_root: Path, slug: str) -> Path:
-    return artifacts_root / "content" / slug
-
-
-def _require_content_dir(artifacts_root: Path, slug: str) -> Path:
-    _validate_slug(slug)
-    d = _content_dir(artifacts_root, slug)
-    if not d.is_dir():
-        raise HTTPException(404, f"No content artifacts for company '{slug}'")
-    return d
-
-
 # ── Mapping helpers ──────────────────────────────────────────────────
 
 _FORMAT_TO_TYPE = {
@@ -130,34 +159,14 @@ def _map_content_format(format_str: str) -> str:
     return result
 
 
-def _mtime_iso(path: Path) -> str:
-    """Get file modification time as ISO string."""
-    try:
-        ts = path.stat().st_mtime
-        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
-    except (OSError, ValueError):
-        return ""
-
-
-def _latest_stage_mtime(brief_dir: Path) -> str:
-    """Get the latest mtime among stage files in a brief directory."""
-    latest = 0.0
-    for fname, _ in _STAGE_FILES.values():
-        fp = brief_dir / fname
-        if fp.is_file():
-            latest = max(latest, fp.stat().st_mtime)
-    if latest > 0:
-        return datetime.fromtimestamp(latest, tz=timezone.utc).isoformat()
-    return ""
-
-
 # ── Status inference ─────────────────────────────────────────────────
 
 
 def _infer_brief_status(
     brief_id: str,
     pieces: List[Dict[str, Any]],
-    content_dir: Path,
+    storage: StorageBackend,
+    slug: str,
     pipeline_state: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Infer brief status from pipeline state, run_metadata pieces, or stage files.
@@ -184,25 +193,27 @@ def _infer_brief_status(
                 "pending": "review",
             }.get(status, "review")
 
-    # Phase 2: File-based inference
-    brief_dir = content_dir / "content" / brief_id
-    if (brief_dir / "final.md").exists():
+    # Phase 2: Storage-based inference
+    prefix = f"content/{slug}/content/{brief_id}"
+    if storage.exists(f"{prefix}/final.md"):
         return "completed"
-    if (brief_dir / "eval_history.json").exists():
+    if storage.exists(f"{prefix}/eval_history.json"):
         try:
-            eh = json.loads((brief_dir / "eval_history.json").read_text())
-            if eh.get("final_passed", False):
-                return "review"
-        except (json.JSONDecodeError, KeyError, OSError):
+            raw = storage.read(f"{prefix}/eval_history.json")
+            if raw:
+                eh = json.loads(raw)
+                if eh.get("final_passed", False):
+                    return "review"
+        except (json.JSONDecodeError, KeyError):
             pass
         return "evaluating"
-    if (brief_dir / "fact_checked.md").exists() or (brief_dir / "enriched.md").exists():
+    if storage.exists(f"{prefix}/fact_checked.md") or storage.exists(f"{prefix}/enriched.md"):
         return "enriching"
-    if (brief_dir / "linked.md").exists():
+    if storage.exists(f"{prefix}/linked.md"):
         return "linking"
-    if (brief_dir / "draft.md").exists():
+    if storage.exists(f"{prefix}/draft.md"):
         return "drafting"
-    if (brief_dir / "outline.json").exists():
+    if storage.exists(f"{prefix}/outline.json"):
         return "outlining"
     return "suggested"
 
@@ -213,7 +224,7 @@ def _infer_brief_status(
 def _compute_citability_score(eval_data: Optional[Dict[str, Any]]) -> Optional[float]:
     """Derive 0-100 citability score from eval history.
 
-    Uses max overall_score across all cycles, × 100, clamped to [0, 100].
+    Uses max overall_score across all cycles, x 100, clamped to [0, 100].
     """
     if not eval_data:
         return None
@@ -233,11 +244,14 @@ def _compute_citability_score(eval_data: Optional[Dict[str, Any]]) -> Optional[f
 # ── Available stages ─────────────────────────────────────────────────
 
 
-def _get_available_stages(brief_dir: Path) -> List[str]:
-    """Return list of stages that have files on disk."""
+def _get_available_stages(
+    storage: StorageBackend, slug: str, brief_id: str,
+) -> List[str]:
+    """Return list of stages that have files in storage."""
     stages = []
+    prefix = f"content/{slug}/content/{brief_id}"
     for stage, (fname, _) in _STAGE_FILES.items():
-        if (brief_dir / fname).is_file():
+        if storage.exists(f"{prefix}/{fname}"):
             stages.append(stage)
     return stages
 
@@ -245,7 +259,9 @@ def _get_available_stages(brief_dir: Path) -> List[str]:
 # ── Metadata loading ────────────────────────────────────────────────
 
 
-def _load_all_pieces(content_root: Path) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+def _load_all_pieces(
+    storage: StorageBackend, slug: str,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """Load pieces from standard + namespaced run_metadata_v13 files.
 
     Manual-mode parallel runs write ``run_metadata_v13_{brief_id}.json`` instead
@@ -255,26 +271,35 @@ def _load_all_pieces(content_root: Path) -> Tuple[List[Dict[str, Any]], Optional
     Returns ``(merged_pieces, session_id)``.
     Standard file takes priority for ``session_id``.
     """
+    content_prefix = f"content/{slug}"
+
     # Standard file
-    run_meta = _load_json_cached(content_root, "run_metadata_v13.json")
+    run_meta = _load_json_cached(storage, f"{content_prefix}/run_metadata_v13.json")
     pieces: List[Dict[str, Any]] = list((run_meta or {}).get("pieces", []))
     session_id: Optional[str] = (run_meta or {}).get("run_metadata", {}).get("session_id")
 
     # Collect brief_ids already in standard pieces to avoid duplicates
     seen_brief_ids = {p.get("brief_id") for p in pieces}
 
-    # Namespaced files (manual parallel runs)
-    for meta_path in sorted(content_root.glob("run_metadata_v13_*.json")):
-        data = _load_json_cached(content_root, meta_path.name)
-        if not data:
-            continue
-        for p in data.get("pieces", []):
-            bid = p.get("brief_id")
-            if bid and bid not in seen_brief_ids:
-                pieces.append(p)
-                seen_brief_ids.add(bid)
-        if not session_id:
-            session_id = (data.get("run_metadata") or {}).get("session_id")
+    # Namespaced files (manual parallel runs) via StorageBackend.list_dir
+    try:
+        children = storage.list_dir(content_prefix)
+    except Exception:
+        children = []
+
+    for child in sorted(children):
+        fname = child.rsplit("/", 1)[-1] if "/" in child else child
+        if fname.startswith("run_metadata_v13_") and fname.endswith(".json"):
+            data = _load_json_cached(storage, f"{content_prefix}/{fname}")
+            if not data:
+                continue
+            for p in data.get("pieces", []):
+                bid = p.get("brief_id")
+                if bid and bid not in seen_brief_ids:
+                    pieces.append(p)
+                    seen_brief_ids.add(bid)
+            if not session_id:
+                session_id = (data.get("run_metadata") or {}).get("session_id")
 
     return pieces, session_id
 
@@ -282,14 +307,23 @@ def _load_all_pieces(content_root: Path) -> Tuple[List[Dict[str, Any]], Optional
 # ── Public API ───────────────────────────────────────────────────────
 
 
-def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
+def get_briefs(
+    artifacts_root: Path, slug: str,
+    *, storage: Optional[StorageBackend] = None,
+) -> ContentBriefListResponse:
     """List all content briefs with inferred statuses.
 
     Returns 200 with empty list if content dir doesn't exist (W2).
     """
     _validate_slug(slug)
-    content_root = _content_dir(artifacts_root, slug)
-    if not content_root.is_dir():
+    sb = _resolve_storage(artifacts_root, storage)
+    content_prefix = f"content/{slug}"
+
+    # Check if any content artifacts exist
+    if not (
+        sb.exists(f"{content_prefix}/blueprints.json")
+        or sb.exists(f"{content_prefix}/planner_selections.json")
+    ):
         return ContentBriefListResponse(briefs=[], total=0)
 
     # v1.3 pipeline outputs: blueprints.json (after brief builder) or
@@ -297,12 +331,12 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
     # ContentBlueprint extends ContentBrief, so the same fields are present.
     briefs_data: Optional[Dict[str, Any]] = None
 
-    blueprints_raw = _load_json_cached(content_root, "blueprints.json")
+    blueprints_raw = _load_json_cached(sb, f"{content_prefix}/blueprints.json")
     if blueprints_raw and isinstance(blueprints_raw, list) and blueprints_raw:
         briefs_data = {"briefs": blueprints_raw}
     else:
         # Strategic planner in progress — surface topics as early-stage briefs
-        planner_data = _load_json_cached(content_root, "planner_selections.json")
+        planner_data = _load_json_cached(sb, f"{content_prefix}/planner_selections.json")
         if planner_data and isinstance(planner_data, dict):
             selections = planner_data.get("selections", [])
             if selections:
@@ -328,35 +362,31 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
         return ContentBriefListResponse(briefs=[], total=0)
 
     # Load gap analysis data for sidebar enrichment
-    analysis_json = load_analysis_json(artifacts_root, slug)
+    analysis_json = load_analysis_json(sb, slug)
 
     # Load run_metadata for pieces + session_id (standard + namespaced files)
-    pieces, session_id = _load_all_pieces(content_root)
+    pieces, session_id = _load_all_pieces(sb, slug)
 
-    # Load pipeline_state.json for in-progress statuses (Phase 0, highest priority)
-    pipeline_state = _load_json_cached(content_root, "pipeline_state.json") or {}
+    # Load pipeline_state.json (stays on local filesystem, not R2)
+    pipeline_state = _load_pipeline_state(artifacts_root, slug)
     # Extract brief_id → task_id mapping for frontend HITL approval calls
     task_id_map: Dict[str, str] = {}
     raw_task_ids = pipeline_state.get("__task_ids__")
     if isinstance(raw_task_ids, dict):
         task_id_map = raw_task_ids
 
-    # Use mtime of the source artifact as created_at
-    for _fname in ("blueprints.json", "planner_selections.json"):
-        _src = content_root / _fname
-        if _src.is_file():
-            created_at = _mtime_iso(_src)
-            break
-    else:
-        created_at = ""
+    # created_at from blueprint entry if available, else empty
+    created_at = ""
+    if briefs_list:
+        created_at = briefs_list[0].get("_created_at", "")
 
     items: List[ContentBriefListItem] = []
     for brief in briefs_list:
         brief_id = brief.get("brief_id", "")
-        brief_dir = content_root / "content" / brief_id
+        brief_prefix = f"{content_prefix}/content/{brief_id}"
 
         # Status
-        status = _infer_brief_status(brief_id, pieces, content_root, pipeline_state=pipeline_state)
+        status = _infer_brief_status(brief_id, pieces, sb, slug, pipeline_state=pipeline_state)
 
         # Content type
         content_type = _map_content_format(brief.get("content_format", "long_blog"))
@@ -366,19 +396,16 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
         target_wc = wc_range[1] if isinstance(wc_range, (list, tuple)) and len(wc_range) >= 2 else 0
 
         # Citability score from eval_history
-        eval_data = _load_json_cached(
-            brief_dir, "eval_history.json"
-        ) if brief_dir.is_dir() else None
+        eval_data = _load_json_cached(sb, f"{brief_prefix}/eval_history.json")
         citability = _compute_citability_score(eval_data)
-
-        # Updated at (latest stage file mtime)
-        updated_at = _latest_stage_mtime(brief_dir) if brief_dir.is_dir() else created_at
 
         # Gap context for sidebar
         gap_ctx = extract_gap_context(
             brief, analysis_json,
             gap_query_id=brief.get("_gap_query_id", ""),
         )
+
+        brief_created = brief.get("_created_at", created_at)
 
         items.append(ContentBriefListItem(
             id=brief_id,
@@ -390,8 +417,8 @@ def get_briefs(artifacts_root: Path, slug: str) -> ContentBriefListResponse:
             citability_score=citability,
             cycle_id=session_id,
             task_id=task_id_map.get(brief_id),
-            created_at=created_at,
-            updated_at=updated_at or created_at,
+            created_at=brief_created,
+            updated_at=brief_created,
             gap_context=gap_ctx,
         ))
 
@@ -406,25 +433,31 @@ def add_brief(
     description: str = "",
     source: str = "manual",
     gap_query_id: str = "",
+    *,
+    storage: Optional[StorageBackend] = None,
 ) -> ContentBriefListItem:
-    """Immediately create a brief entry on disk so it appears in Content Studio.
+    """Immediately create a brief entry so it appears in Content Studio.
 
     Appends to blueprints.json (or creates it). The brief starts with
     status "suggested" and can later be enriched by the content pipeline.
     """
     _validate_slug(slug)
-    content_root = _content_dir(artifacts_root, slug)
-    content_root.mkdir(parents=True, exist_ok=True)
+    sb = _resolve_storage(artifacts_root, storage)
+    content_prefix = f"content/{slug}"
+    bp_key = f"{content_prefix}/blueprints.json"
+
+    # Ensure content directory exists
+    sb.mkdir(content_prefix)
 
     # Load existing blueprints or start fresh
-    bp_path = content_root / "blueprints.json"
     existing: List[Dict[str, Any]] = []
-    if bp_path.is_file():
+    raw_content = sb.read(bp_key)
+    if raw_content is not None:
         try:
-            raw = json.loads(bp_path.read_text(encoding="utf-8"))
+            raw = json.loads(raw_content)
             if isinstance(raw, list):
                 existing = raw
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, ValueError):
             pass
 
     # Determine next brief_id
@@ -434,6 +467,7 @@ def add_brief(
         idx += 1
     brief_id = f"brief-{idx:03d}"
 
+    from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
 
     # Create minimal blueprint entry
@@ -454,11 +488,11 @@ def add_brief(
     }
 
     existing.append(new_entry)
-    bp_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    sb.write(bp_key, json.dumps(existing, indent=2))
 
-    # Invalidate cache for this file
-    cache_key = (str(content_root), "blueprints.json")
-    _CACHE.pop(cache_key, None)
+    # Invalidate cache for this file (Codex C3: use lock)
+    with _CACHE_LOCK:
+        _CACHE.pop(bp_key, None)
 
     return ContentBriefListItem(
         id=brief_id,
@@ -473,20 +507,29 @@ def add_brief(
 
 
 def get_brief_detail(
-    artifacts_root: Path, slug: str, brief_id: str
+    artifacts_root: Path, slug: str, brief_id: str,
+    *, storage: Optional[StorageBackend] = None,
 ) -> ContentBriefDetailResponse:
     """Get full detail for a single content brief."""
     _validate_slug(slug)
     _validate_brief_id(brief_id)
-    content_root = _require_content_dir(artifacts_root, slug)
+    sb = _resolve_storage(artifacts_root, storage)
+    content_prefix = f"content/{slug}"
+
+    # Check content artifacts exist
+    if not (
+        sb.exists(f"{content_prefix}/blueprints.json")
+        or sb.exists(f"{content_prefix}/planner_selections.json")
+    ):
+        raise HTTPException(404, f"No content artifacts for company '{slug}'")
 
     # Load briefs from v1.3 artifacts
     briefs_list: List[Dict[str, Any]] = []
-    blueprints_raw = _load_json_cached(content_root, "blueprints.json")
+    blueprints_raw = _load_json_cached(sb, f"{content_prefix}/blueprints.json")
     if blueprints_raw and isinstance(blueprints_raw, list):
         briefs_list = blueprints_raw
     else:
-        planner_data = _load_json_cached(content_root, "planner_selections.json")
+        planner_data = _load_json_cached(sb, f"{content_prefix}/planner_selections.json")
         if planner_data and isinstance(planner_data, dict):
             selections = planner_data.get("selections", [])
             briefs_list = [
@@ -512,13 +555,13 @@ def get_brief_detail(
         raise HTTPException(404, f"Brief '{brief_id}' not found for company '{slug}'")
 
     # Run metadata pieces (standard + namespaced files)
-    pieces, _session_id = _load_all_pieces(content_root)
+    pieces, _session_id = _load_all_pieces(sb, slug)
 
-    # Pipeline state for in-progress statuses
-    pipeline_state = _load_json_cached(content_root, "pipeline_state.json") or {}
+    # Pipeline state for in-progress statuses (stays on local filesystem)
+    pipeline_state = _load_pipeline_state(artifacts_root, slug)
 
     # Status
-    status = _infer_brief_status(brief_id, pieces, content_root, pipeline_state=pipeline_state)
+    status = _infer_brief_status(brief_id, pieces, sb, slug, pipeline_state=pipeline_state)
 
     # Content type
     content_type = _map_content_format(brief.get("content_format", "long_blog"))
@@ -534,8 +577,8 @@ def get_brief_detail(
     structural = brief.get("structural_targets", {})
 
     # Eval history
-    brief_dir = content_root / "content" / brief_id
-    eval_data = _load_json_cached(brief_dir, "eval_history.json") if brief_dir.is_dir() else None
+    brief_prefix = f"{content_prefix}/content/{brief_id}"
+    eval_data = _load_json_cached(sb, f"{brief_prefix}/eval_history.json")
     eval_history: List[EvalCycle] = []
     final_passed = False
     if eval_data:
@@ -573,7 +616,7 @@ def get_brief_detail(
     ]
 
     # Available stages
-    available = _get_available_stages(brief_dir) if brief_dir.is_dir() else []
+    available = _get_available_stages(sb, slug, brief_id)
 
     return ContentBriefDetailResponse(
         id=brief_id,
@@ -595,7 +638,8 @@ def get_brief_detail(
 
 
 def get_brief_stage_content(
-    artifacts_root: Path, slug: str, brief_id: str, stage: str
+    artifacts_root: Path, slug: str, brief_id: str, stage: str,
+    *, storage: Optional[StorageBackend] = None,
 ) -> StageContentResponse:
     """Get stage-specific file content for a brief."""
     _validate_slug(slug)
@@ -604,23 +648,27 @@ def get_brief_stage_content(
     if stage not in _VALID_STAGES:
         raise HTTPException(400, f"Invalid stage '{stage}'. Valid: {sorted(_VALID_STAGES)}")
 
-    content_root = _require_content_dir(artifacts_root, slug)
-    brief_dir = content_root / "content" / brief_id
+    sb = _resolve_storage(artifacts_root, storage)
+    content_prefix = f"content/{slug}"
 
-    # Path traversal guard: reject symlinks and ensure resolved path is under content_root
+    # Check content artifacts exist
+    if not (
+        sb.exists(f"{content_prefix}/blueprints.json")
+        or sb.exists(f"{content_prefix}/planner_selections.json")
+    ):
+        raise HTTPException(404, f"No content artifacts for company '{slug}'")
+
+    # Path traversal guard: reject symlinks on local filesystem (defense-in-depth)
+    brief_dir = artifacts_root / "content" / slug / "content" / brief_id
     if brief_dir.is_symlink():
-        raise HTTPException(400, f"Invalid brief_id: '{brief_id}'")
-    resolved = brief_dir.resolve()
-    if not resolved.is_relative_to(content_root.resolve()):
         raise HTTPException(400, f"Invalid brief_id: '{brief_id}'")
 
     filename, mime_type = _STAGE_FILES[stage]
-    file_path = brief_dir / filename
+    key = f"{content_prefix}/content/{brief_id}/{filename}"
 
-    if not file_path.is_file():
+    raw = sb.read(key)
+    if raw is None:
         raise HTTPException(404, f"Stage '{stage}' not found for brief '{brief_id}'")
-
-    raw = file_path.read_text(encoding="utf-8")
 
     # For JSON stages, return parsed dict (W3: avoid double-encoding)
     if mime_type == "application/json":

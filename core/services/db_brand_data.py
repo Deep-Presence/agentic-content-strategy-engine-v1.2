@@ -1,7 +1,7 @@
 """DbBrandDataService — Postgres-backed implementation of BrandDataServiceProtocol.
 
 Reads run history from pipeline_runs table via PipelineRepository.
-Research artifacts remain filesystem-backed (markdown files are the source of truth).
+Research artifacts read via StorageBackend (R2 in prod, local in dev).
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def _slug_to_company_name(slug: str) -> str:
 class DbBrandDataService:
     """Postgres-backed brand data service.
 
-    - ``get_research_artifacts`` delegates to filesystem (markdown source of truth)
+    - ``get_research_artifacts`` reads via StorageBackend (R2 in prod, local in dev)
     - ``get_run_history`` reads from pipeline_runs table
     """
 
@@ -79,20 +79,26 @@ class DbBrandDataService:
         self,
         pipeline_repo: PipelineRepository,
         artifacts_root: Path,
+        *,
+        backend: Optional["StorageBackend"] = None,
     ) -> None:
+        from core.storage.backends import LocalStorageBackend
+
         self._pipeline_repo = pipeline_repo
         self._artifacts_root = artifacts_root
+        self._backend = backend or LocalStorageBackend(artifacts_root)
 
-    # ── Research Artifacts (filesystem-backed) ───────────────────────
+    # ── Research Artifacts (StorageBackend-backed) ────────────────────
 
     async def get_research_artifacts(
         self, slug: str,
     ) -> ResearchArtifactsResponse:
-        """Delegate to filesystem — markdown files are the source of truth."""
+        """Read research artifacts via StorageBackend."""
         from api.services.brand_data_service import get_research_artifacts
 
         return await asyncio.to_thread(
             get_research_artifacts, self._artifacts_root, slug,
+            backend=self._backend,
         )
 
     # ── Run History (DB-backed) ──────────────────────────────────────

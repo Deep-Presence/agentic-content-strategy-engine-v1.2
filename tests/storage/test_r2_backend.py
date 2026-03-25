@@ -201,6 +201,14 @@ class TestR2Exists:
         with pytest.raises(ClientError):
             backend.exists("forbidden.md")
 
+    def test_exists_prefix_fallback_permission_error_returns_false(
+        self, backend: R2StorageBackend, mock_client: MagicMock
+    ) -> None:
+        """HEAD returns 404, list_objects_v2 raises AccessDenied → returns False."""
+        mock_client.head_object.side_effect = _make_client_error("404")
+        mock_client.list_objects_v2.side_effect = _make_client_error("AccessDenied")
+        assert backend.exists("some/prefix") is False
+
 
 # ---------------------------------------------------------------------------
 # delete
@@ -375,13 +383,12 @@ class TestR2Constructor:
                 access_key_id="key",
                 secret_access_key="secret",
             )
-            mock_boto3.client.assert_called_once_with(
-                "s3",
-                endpoint_url="https://acct.r2.cloudflarestorage.com",
-                aws_access_key_id="key",
-                aws_secret_access_key="secret",
-                region_name="auto",
-            )
+            call_kwargs = mock_boto3.client.call_args[1]
+            assert call_kwargs["endpoint_url"] == "https://acct.r2.cloudflarestorage.com"
+            assert call_kwargs["aws_access_key_id"] == "key"
+            assert call_kwargs["aws_secret_access_key"] == "secret"
+            assert call_kwargs["region_name"] == "auto"
+            assert call_kwargs["config"] is not None
 
     def test_uses_injected_client(self, mock_client: MagicMock) -> None:
         backend = R2StorageBackend(
@@ -392,3 +399,48 @@ class TestR2Constructor:
             _client=mock_client,
         )
         assert backend._client is mock_client
+
+
+# ---------------------------------------------------------------------------
+# H1: Write error logging + retry config
+# ---------------------------------------------------------------------------
+
+
+class TestR2WriteErrorLogging:
+    """H1: write() and write_bytes() log errors and re-raise ClientError."""
+
+    def test_write_logs_and_reraises_client_error(
+        self, backend: R2StorageBackend, mock_client: MagicMock
+    ) -> None:
+        from botocore.exceptions import ClientError
+
+        mock_client.put_object.side_effect = _make_client_error("InternalError")
+        with pytest.raises(ClientError):
+            backend.write("test.md", "content")
+
+    def test_write_bytes_logs_and_reraises_client_error(
+        self, backend: R2StorageBackend, mock_client: MagicMock
+    ) -> None:
+        from botocore.exceptions import ClientError
+
+        mock_client.put_object.side_effect = _make_client_error("InternalError")
+        with pytest.raises(ClientError):
+            backend.write_bytes("test.bin", b"\x00")
+
+
+class TestR2RetryConfig:
+    """H1: Constructor configures botocore standard retry mode."""
+
+    def test_creates_client_with_retry_config(self) -> None:
+        with patch("core.storage.backends.r2.boto3") as mock_boto3:
+            R2StorageBackend(
+                bucket_name="my-bucket",
+                endpoint_url="https://acct.r2.cloudflarestorage.com",
+                access_key_id="key",
+                secret_access_key="secret",
+            )
+            call_kwargs = mock_boto3.client.call_args[1]
+            config = call_kwargs.get("config")
+            assert config is not None
+            assert config.retries["max_attempts"] == 5
+            assert config.retries["mode"] == "standard"

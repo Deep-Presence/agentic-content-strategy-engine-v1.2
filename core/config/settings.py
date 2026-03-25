@@ -232,6 +232,9 @@ class Settings(BaseSettings):
     # --- Storage Backend ---
     storage_backend: Literal["local", "r2"] = "local"
 
+    # --- CMS Integration ---
+    cms_fernet_key: str | None = None  # Fernet symmetric encryption key for CMS credentials
+
     # --- Cloudflare R2 (S3-compatible) ---
     r2_account_id: str | None = None
     r2_access_key_id: str | None = None

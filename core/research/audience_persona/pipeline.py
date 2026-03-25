@@ -211,7 +211,7 @@ async def _preflight_check(
         logger.warning("AP preflight: failed to read KB storage for %s: %s", effective_slug, exc)
 
     # Knowledge docs
-    kdocs_text = await _load_knowledge_docs(root, effective_slug, company_slug)
+    kdocs_text = await _load_knowledge_docs(_backend, effective_slug, company_slug)
 
     return company_md, reviews_md, kdocs_text, kb_synthesis_version
 

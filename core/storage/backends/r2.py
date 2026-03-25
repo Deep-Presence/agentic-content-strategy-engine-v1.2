@@ -12,6 +12,7 @@ import logging
 from typing import Any, Optional
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from core.storage.backends.base import StorageBackend
@@ -41,6 +42,7 @@ class R2StorageBackend(StorageBackend):
             aws_access_key_id=access_key_id,
             aws_secret_access_key=secret_access_key,
             region_name=region_name,
+            config=Config(retries={"max_attempts": 5, "mode": "standard"}),
         )
 
     # ------------------------------------------------------------------
@@ -76,12 +78,16 @@ class R2StorageBackend(StorageBackend):
     def write(self, path: str, content: str) -> str:
         """Write UTF-8 text artifact to R2."""
         self._validate_path(path)
-        self._client.put_object(
-            Bucket=self._bucket_name,
-            Key=path,
-            Body=content.encode("utf-8"),
-            ContentType="text/plain; charset=utf-8",
-        )
+        try:
+            self._client.put_object(
+                Bucket=self._bucket_name,
+                Key=path,
+                Body=content.encode("utf-8"),
+                ContentType="text/plain; charset=utf-8",
+            )
+        except ClientError as exc:
+            logger.error("R2 write failed: key=%s, error=%s", path, exc)
+            raise
         return path
 
     # ------------------------------------------------------------------
@@ -104,12 +110,16 @@ class R2StorageBackend(StorageBackend):
     def write_bytes(self, path: str, content: bytes) -> str:
         """Write raw bytes to R2."""
         self._validate_path(path)
-        self._client.put_object(
-            Bucket=self._bucket_name,
-            Key=path,
-            Body=content,
-            ContentType="application/octet-stream",
-        )
+        try:
+            self._client.put_object(
+                Bucket=self._bucket_name,
+                Key=path,
+                Body=content,
+                ContentType="application/octet-stream",
+            )
+        except ClientError as exc:
+            logger.error("R2 write_bytes failed: key=%s, error=%s", path, exc)
+            raise
         return path
 
     # ------------------------------------------------------------------
@@ -132,13 +142,17 @@ class R2StorageBackend(StorageBackend):
             if not self._is_not_found(exc):
                 raise
         # Fallback: check if it's a prefix with children (directory equivalent)
-        prefix = path.rstrip("/") + "/"
-        response = self._client.list_objects_v2(
-            Bucket=self._bucket_name,
-            Prefix=prefix,
-            MaxKeys=1,
-        )
-        return response.get("KeyCount", 0) > 0
+        try:
+            prefix = path.rstrip("/") + "/"
+            response = self._client.list_objects_v2(
+                Bucket=self._bucket_name,
+                Prefix=prefix,
+                MaxKeys=1,
+            )
+            return response.get("KeyCount", 0) > 0
+        except ClientError:
+            logger.warning("R2 exists() prefix check failed for key=%s", path)
+            return False
 
     def delete(self, path: str) -> bool:
         """Delete a key from R2. Returns True if it existed, False otherwise.

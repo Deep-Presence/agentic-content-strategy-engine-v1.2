@@ -251,36 +251,58 @@ The entire gap analysis pipeline predates StorageBackend. No file in `core/gap_a
 | 112 | READ | `pipeline_state.json` (leave for Redis) |
 | 253 | READ | `blueprints.json` |
 
-### 4D. Site Audit — 24 bypasses (ALL direct, ZERO StorageBackend usage)
+### 4D. Site Audit — ~~24 bypasses~~ **RESOLVED: Migrated to DB-primary (not R2)**
 
-#### `s6_report.py` — 3 bypasses
+> **Decision (2026-03-24):** Site audit data is fully structured (scores,
+> findings, page metrics) with no large text blobs. It runs daily/multiple
+> times per day. PostgreSQL is a better fit than blob storage. The module
+> was migrated to DB-primary storage in sprint `feat/front-back`.
+>
+> **What changed:**
+> - `runner.py` — DB persistence is now the required write path; filesystem
+>   only when `DATABASE_URL` is not set (local dev fallback)
+> - `pipeline.py` — s6_report step skips filesystem writes when
+>   `output_dir=None` (the default for production runner calls)
+> - `site_audit.py` router — guard converted from FS scan to DB query
+>   (`audit_exists_for_slug()` via `SiteAuditDataServiceProtocol`)
+> - `onboarding/orchestrator.py` — added `persist_site_audit_result()` call
+> - `db_site_audit_data.py` — FS fallback methods have deprecation warnings
+> - `json_site_audit_data.py` — retained for no-DB local dev only
+> - New migration `0021` adds `UNIQUE(audit_id, page_index)` on page results
+> - Backfill script: `scripts/backfill_site_audit_db.py`
+>
+> **All 24 bypasses are eliminated from the R2 migration scope.**
+> The remaining FS code in `json_site_audit_data.py` is dev-only fallback
+> and will be removed after backfill verification (Phase 4b, deferred).
 
-| Line(s) | Op | Artifact |
-|---------|-----|---------|
-| 228 | WRITE | `mkdir()` report dir |
-| 233 | WRITE | `report.md` |
-| 239-240 | WRITE | `audit_result.json` |
+~~#### `s6_report.py` — 3 bypasses~~
 
-#### `runner.py` (site audit section) — 2 bypasses
+~~| Line(s) | Op | Artifact |~~
+~~|---------|-----|---------|~~
+~~| 228 | WRITE | `mkdir()` report dir |~~
+~~| 233 | WRITE | `report.md` |~~
+~~| 239-240 | WRITE | `audit_result.json` |~~
 
-| Line(s) | Op | Artifact |
-|---------|-----|---------|
-| 518 | WRITE | `mkdir()` output dir |
-| 519-520 | WRITE | `audit_result.json` |
+~~#### `runner.py` (site audit section) — 2 bypasses~~
 
-#### `site_audit.py` router — 4 bypasses
+~~| Line(s) | Op | Artifact |~~
+~~|---------|-----|---------|~~
+~~| 518 | WRITE | `mkdir()` output dir |~~
+~~| 519-520 | WRITE | `audit_result.json` |~~
 
-| Line(s) | Op | Artifact |
-|---------|-----|---------|
-| 54 | READ | `.exists()` audit dir |
-| 56 | READ | `.iterdir()` subdirs |
-| 60 | READ | `.exists()` `audit_result.json` |
-| 64 | READ | `.read_text()` `audit_result.json` |
+~~#### `site_audit.py` router — 4 bypasses~~
 
-#### `json_site_audit_data.py` — 10 bypasses
+~~| Line(s) | Op | Artifact |~~
+~~|---------|-----|---------|~~
+~~| 54 | READ | `.exists()` audit dir |~~
+~~| 56 | READ | `.iterdir()` subdirs |~~
+~~| 60 | READ | `.exists()` `audit_result.json` |~~
+~~| 64 | READ | `.read_text()` `audit_result.json` |~~
 
-| Line(s) | Op | Artifact |
-|---------|-----|---------|
+~~#### `json_site_audit_data.py` — 10 bypasses~~
+
+~~| Line(s) | Op | Artifact |~~
+~~|---------|-----|---------|~~
 | 71, 217, 364, 380 | READ | `.exists()` checks |
 | 81 | READ | `.read_text()` `audit_result.json` |
 | 222, 366, 384 | READ | `.iterdir()` directory scans |
@@ -342,8 +364,12 @@ These pipelines use their Storage classes internally, but **callers and cross-pi
 |-------|------|---------------|-------------|-------|
 | Gap Data Cache | `gap_data_service.py` | `analysis.json`, `enriched_citations.json`, etc. | mtime-based | Yes |
 | Gap Context Cache | `gap_context_helper.py` | `analysis.json` (duplicate of above!) | mtime-based | Yes |
-| Site Audit Cache | `json_site_audit_data.py` | `audit_result.json` | mtime-based | Yes |
+| ~~Site Audit Cache~~ | ~~`json_site_audit_data.py`~~ | ~~`audit_result.json`~~ | ~~mtime-based~~ | ~~Yes~~ |
 | Brand Data Cache | `brand_data_service.py` | Artifact detection results | mtime-based | **NO lock — race condition** |
+
+> **Site Audit Cache removed (2026-03-24):** Site audit reads from PostgreSQL
+> now. The `json_site_audit_data.py` cache is only used in no-DB local dev
+> and will be removed after backfill verification.
 
 **Problem**: mtime-based invalidation doesn't work with R2. Switch to TTL-based. Also fix the missing `threading.Lock` on `brand_data_service.py`.
 
@@ -353,17 +379,17 @@ These pipelines use their Storage classes internally, but **callers and cross-pi
 |----------|---------------|---------------------|---------|
 | Gap Analysis | ~49 | Zero | Entirely filesystem-direct |
 | Content Engine v1.3 | ~28 | Partial (dispatcher v1.3 has conditional) | Pipeline + services all direct |
-| Site Audit | ~24 | Zero | Entirely filesystem-direct |
+| ~~Site Audit~~ | ~~24~~ → **0** | ~~Zero~~ → **DB-primary** | **Migrated to PostgreSQL (2026-03-24). Not R2.** |
 | AP / VSG / Cross-Pipeline | ~15 | Internal storage classes used, callers bypass | Cross-pipeline reads all direct |
-| **Total** | **~116** | — | — |
+| **Total** | **~~116~~ → ~92** | — | — |
 
 ### 4H. Bypass Pattern Categories
 
 The ~116 bypasses fall into 3 architectural categories:
 
-1. **Pipeline writers** (gap analysis steps, content workers, site audit s6, runner) — construct `Path` objects and call `.write_text()` / `.mkdir()` directly. These are the **producers**.
+1. **Pipeline writers** (gap analysis steps, content workers, runner) — construct `Path` objects and call `.write_text()` / `.mkdir()` directly. These are the **producers**. *(Site audit writers removed — migrated to DB-primary.)*
 
-2. **Service layer readers** (content_data_service, gap_data_service, json_site_audit_data, brand_data_service, gap_context_helper) — construct `Path` objects and call `.read_text()` / `.exists()` / `.iterdir()` directly. These are the **consumers**.
+2. **Service layer readers** (content_data_service, gap_data_service, brand_data_service, gap_context_helper) — construct `Path` objects and call `.read_text()` / `.exists()` / `.iterdir()` directly. These are the **consumers**. *(json_site_audit_data removed — site audit reads from DB now.)*
 
 3. **Router/runner discovery** (resolve_artifacts, completion checks in routers) — use `.exists()` and `.glob()` to detect artifact presence. These are the **discovery layer**.
 
@@ -459,17 +485,11 @@ storage.write(key, json.dumps(data, indent=2))
 - `api/services/content_data_service.py` — 7 bypasses. Replace 6× `.exists()` stage file checks, `blueprints.json` read/write, stage content reads.
 - `core/services/db_content_data.py` — 1 actionable bypass (`blueprints.json` read at line 253). The `pipeline_state.json` read at line 112 stays for Redis.
 
-### Phase 3: Site Audit (1-2 days)
+### ~~Phase 3: Site Audit (1-2 days)~~ — COMPLETE (DB-primary, not R2)
 
-**Goal**: Fix 24 bypasses across 4 files.
-
-**Files to change (writers):**
-- `core/site_audit/s6_report.py` — 3 bypasses. `mkdir()` + `report.md` + `audit_result.json`.
-- `api/tasks/runner.py` (site audit section) — 2 bypasses. `mkdir()` + `audit_result.json`.
-
-**Files to change (readers):**
-- `api/routers/site_audit.py` — 4 bypasses. Replace `.exists()`, `.iterdir()`, `.read_text()` with StorageBackend equivalents.
-- `core/services/json_site_audit_data.py` — 10 bypasses. **Densest single file.** 4× `.exists()`, 1× `.read_text()`, 3× `.iterdir()`. The `.iterdir()` calls need `StorageBackend.list_dir()` → R2 `list_objects_v2` with prefix.
+> **Resolved 2026-03-24.** Site audit was migrated to DB-primary storage
+> instead of R2 blob storage. All 24 bypasses eliminated. See Section 4D
+> for details. This phase is **removed from the R2 migration scope**.
 
 ### Phase 4: AP/VSG Cross-Pipeline Callers (1 day)
 
@@ -542,21 +562,25 @@ if time.monotonic() - cached_at > TTL_SECONDS:
 | Phase 0: R2 + Backend | 0 (infra) | 1 day | Cloudflare account |
 | Phase 1: Gap Analysis retrofit | ~49 | 3-4 days | Phase 0 |
 | Phase 2: Content Engine v1.3 | ~23 | 2-3 days | Phase 0 |
-| Phase 3: Site Audit | ~24 | 1-2 days | Phase 0 |
+| ~~Phase 3: Site Audit~~ | ~~24~~ → **0** | **Done** | **DB-primary (2026-03-24)** |
 | Phase 4: AP/VSG cross-pipeline | ~15 | 1 day | Phase 0 |
-| Phase 5: Cache invalidation | 4 caches | 1 day | Phases 1-4 |
+| Phase 5: Cache invalidation | 3 caches | 1 day | Phases 1-2, 4 |
 | Phase 6: Binary + asset loader | ~2 | 0.5 day | Phase 0 |
-| Phase 7: DB fallback removal | ~3 | 0.5 day | Phases 1-4 |
+| Phase 7: DB fallback removal | ~3 | 0.5 day | Phases 1-2, 4 |
 | Phase 8: Cleanup | 0 | 0.5 day | All above |
-| **Total** | **~116** | **~11-13 days** | |
+| **Total** | **~92** | **~9-11 days** | |
 
 ### Parallelization
 
-Phases 1-4 touch completely different files and can be parallelized:
-- **Person A**: Phase 1 (Gap Analysis) + Phase 3 (Site Audit) = 4-6 days
+Phases 1, 2, and 4 touch completely different files and can be parallelized:
+- **Person A**: Phase 1 (Gap Analysis) = 3-4 days
 - **Person B**: Phase 2 (Content Engine) + Phase 4 (AP/VSG) = 3-4 days
 
-With two people, critical path is **~7-8 days** including Phase 0 and cleanup.
+With two people, critical path is **~5-6 days** including Phase 0 and cleanup.
+
+> **Note:** Site Audit (former Phase 3) is no longer part of this migration.
+> It was migrated to PostgreSQL DB-primary storage on 2026-03-24 — structured
+> data with no large blobs, running daily, better served by SQL than blob storage.
 
 ### Deploy Strategy
 

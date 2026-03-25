@@ -285,147 +285,126 @@ class TestValidateBriefs:
 
 
 class TestLoadKnowledgeDocs:
-    """Knowledge document loading helper."""
+    """Knowledge document loading helper — reads via StorageBackend."""
+
+    @pytest.fixture()
+    def storage(self, tmp_path: Path):
+        from core.storage.backends.local import LocalStorageBackend
+        return LocalStorageBackend(tmp_path)
+
+    def _write_doc(self, storage, slug: str, filename: str, content: str) -> None:
+        storage.write(f"knowledge_docs/{slug}/{filename}", content)
+
+    def _write_meta(self, storage, slug: str, entries: list) -> None:
+        storage.write(
+            f"knowledge_docs/{slug}/_metadata.json",
+            json.dumps([e.model_dump(mode="json") if hasattr(e, "model_dump") else e for e in entries]),
+        )
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_no_docs(self, tmp_path: Path) -> None:
+    async def test_returns_empty_when_no_docs(self, storage) -> None:
         from core.research.audience_persona.agents import _load_knowledge_docs
 
-        result = await _load_knowledge_docs(tmp_path, "test-co", "test-co")
+        result = await _load_knowledge_docs(storage, "test-co", "test-co")
         assert result == ""
 
     @pytest.mark.asyncio
-    async def test_loads_docs_from_effective_slug(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
+    async def test_loads_docs_from_effective_slug(self, storage) -> None:
         from core.models.knowledge_docs import KnowledgeDocument
         from core.research.audience_persona.agents import _load_knowledge_docs
 
-        # Setup: create doc dir and metadata
-        doc_dir = tmp_path / "knowledge_docs" / "test-co"
-        doc_dir.mkdir(parents=True)
-        doc_file = doc_dir / "guide.md"
-        doc_file.write_text("# Product Guide\nOur product helps companies.")
+        self._write_doc(storage, "test-co", "guide.md", "# Product Guide\nOur product helps companies.")
         meta = [KnowledgeDocument(filename="guide.md", stored_filename="guide.md")]
-        (doc_dir / "_metadata.json").write_text(
-            json.dumps([m.model_dump(mode="json") for m in meta])
-        )
+        self._write_meta(storage, "test-co", meta)
 
-        result = await _load_knowledge_docs(tmp_path, "test-co", "test-co")
+        result = await _load_knowledge_docs(storage, "test-co", "test-co")
         assert "### guide.md" in result
         assert "Our product helps companies" in result
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_company_slug(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
+    async def test_falls_back_to_company_slug(self, storage) -> None:
         from core.models.knowledge_docs import KnowledgeDocument
         from core.research.audience_persona.agents import _load_knowledge_docs
 
         # No docs under effective_slug, but company_slug has docs
-        company_dir = tmp_path / "knowledge_docs" / "test-co"
-        company_dir.mkdir(parents=True)
-        doc_file = company_dir / "info.txt"
-        doc_file.write_text("Company info text.")
+        self._write_doc(storage, "test-co", "info.txt", "Company info text.")
         meta = [KnowledgeDocument(filename="info.txt", stored_filename="info.txt")]
-        (company_dir / "_metadata.json").write_text(
-            json.dumps([m.model_dump(mode="json") for m in meta])
-        )
+        self._write_meta(storage, "test-co", meta)
 
-        result = await _load_knowledge_docs(tmp_path, "test-co__product", "test-co")
+        result = await _load_knowledge_docs(storage, "test-co__product", "test-co")
         assert "### info.txt" in result
         assert "Company info text" in result
 
     @pytest.mark.asyncio
-    async def test_formats_doc_headers(self, tmp_path: Path) -> None:
+    async def test_formats_doc_headers(self, storage) -> None:
         from core.models.knowledge_docs import KnowledgeDocument
         from core.research.audience_persona.agents import _load_knowledge_docs
 
-        doc_dir = tmp_path / "knowledge_docs" / "test-co"
-        doc_dir.mkdir(parents=True)
-        (doc_dir / "a.md").write_text("Content A")
-        (doc_dir / "b.md").write_text("Content B")
+        self._write_doc(storage, "test-co", "a.md", "Content A")
+        self._write_doc(storage, "test-co", "b.md", "Content B")
         meta = [
             KnowledgeDocument(filename="a.md", stored_filename="a.md"),
             KnowledgeDocument(filename="b.md", stored_filename="b.md"),
         ]
-        (doc_dir / "_metadata.json").write_text(
-            json.dumps([m.model_dump(mode="json") for m in meta])
-        )
+        self._write_meta(storage, "test-co", meta)
 
-        result = await _load_knowledge_docs(tmp_path, "test-co", "test-co")
+        result = await _load_knowledge_docs(storage, "test-co", "test-co")
         assert "### a.md" in result
         assert "### b.md" in result
 
     @pytest.mark.asyncio
-    async def test_truncates_at_max_chars(self, tmp_path: Path) -> None:
+    async def test_truncates_at_max_chars(self, storage) -> None:
         from core.models.knowledge_docs import KnowledgeDocument
         from core.research.audience_persona.agents import _load_knowledge_docs
 
-        doc_dir = tmp_path / "knowledge_docs" / "test-co"
-        doc_dir.mkdir(parents=True)
         big_content = "x" * 10_000
-        (doc_dir / "big.md").write_text(big_content)
+        self._write_doc(storage, "test-co", "big.md", big_content)
         meta = [KnowledgeDocument(filename="big.md", stored_filename="big.md")]
-        (doc_dir / "_metadata.json").write_text(
-            json.dumps([m.model_dump(mode="json") for m in meta])
-        )
+        self._write_meta(storage, "test-co", meta)
 
-        result = await _load_knowledge_docs(tmp_path, "test-co", "test-co", max_chars=100)
+        result = await _load_knowledge_docs(storage, "test-co", "test-co", max_chars=100)
         assert len(result) <= 100
 
     @pytest.mark.asyncio
-    async def test_handles_extraction_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_handles_extraction_failure(self, storage) -> None:
         from core.models.knowledge_docs import KnowledgeDocument
         from core.research.audience_persona.agents import _load_knowledge_docs
 
-        doc_dir = tmp_path / "knowledge_docs" / "test-co"
-        doc_dir.mkdir(parents=True)
-        (doc_dir / "good.md").write_text("Good content")
-        (doc_dir / "bad.bin").write_text("binary junk")
+        self._write_doc(storage, "test-co", "good.md", "Good content")
+        self._write_doc(storage, "test-co", "bad.bin", "binary junk")
         meta = [
             KnowledgeDocument(filename="good.md", stored_filename="good.md"),
             KnowledgeDocument(filename="bad.bin", stored_filename="bad.bin"),
         ]
-        (doc_dir / "_metadata.json").write_text(
-            json.dumps([m.model_dump(mode="json") for m in meta])
-        )
+        self._write_meta(storage, "test-co", meta)
 
-        # bad.bin returns empty string from extract_text (unsupported type)
-        result = await _load_knowledge_docs(tmp_path, "test-co", "test-co")
+        # bad.bin returns empty string from extract_text_from_bytes (unsupported type)
+        result = await _load_knowledge_docs(storage, "test-co", "test-co")
         assert "Good content" in result
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_both_slugs_empty(self, tmp_path: Path) -> None:
+    async def test_returns_empty_when_both_slugs_empty(self, storage) -> None:
         from core.research.audience_persona.agents import _load_knowledge_docs
 
-        result = await _load_knowledge_docs(tmp_path, "no-such", "also-no-such")
+        result = await _load_knowledge_docs(storage, "no-such", "also-no-such")
         assert result == ""
 
     @pytest.mark.asyncio
-    async def test_path_traversal_blocked(self, tmp_path: Path) -> None:
-        """stored_filename with ../ should be skipped (defense-in-depth)."""
+    async def test_path_traversal_blocked(self, storage) -> None:
+        """stored_filename with ../ should be blocked by StorageBackend validation."""
         from core.models.knowledge_docs import KnowledgeDocument
         from core.research.audience_persona.agents import _load_knowledge_docs
 
-        doc_dir = tmp_path / "knowledge_docs" / "test-co"
-        doc_dir.mkdir(parents=True)
-        # Legitimate file
-        (doc_dir / "legit.md").write_text("Legit content")
-        # Sensitive file outside doc_dir
-        secret = tmp_path / "secret.txt"
-        secret.write_text("TOP SECRET")
-
+        self._write_doc(storage, "test-co", "legit.md", "Legit content")
         meta = [
             KnowledgeDocument(filename="legit.md", stored_filename="legit.md"),
             KnowledgeDocument(filename="secret.txt", stored_filename="../../secret.txt"),
         ]
-        (doc_dir / "_metadata.json").write_text(
-            json.dumps([m.model_dump(mode="json") for m in meta])
-        )
+        self._write_meta(storage, "test-co", meta)
 
-        result = await _load_knowledge_docs(tmp_path, "test-co", "test-co")
+        result = await _load_knowledge_docs(storage, "test-co", "test-co")
         assert "Legit content" in result
+        # Path traversal filename should fail StorageBackend validation or not be found
         assert "TOP SECRET" not in result
 
 
