@@ -11,41 +11,33 @@ import math
 import random
 from typing import Callable, List, TypeVar
 
-import tiktoken
 from openai import AsyncOpenAI, APIError, RateLimitError
 
 from core.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# text-embedding-3-small / text-embedding-3-large accept max 8191 tokens per input
-_MAX_EMBEDDING_TOKENS = 8191
-_TOKENIZER: tiktoken.Encoding | None = None
+# text-embedding-3-small / text-embedding-3-large accept max 8191 tokens per input.
+# Conservative chars-per-token ratio (3.2) avoids depending on tiktoken (Rust ext
+# that adds ~8 min to Docker builds). Actual average is ~4 chars/token for English;
+# 3.2 gives headroom so we never exceed the token limit.
+_MAX_CHARS_PER_CHUNK = int(8191 * 3.2)  # ~26,211 chars
 
 
-def _get_tokenizer() -> tiktoken.Encoding:
-    """Lazy-load the cl100k_base tokenizer (used by text-embedding-3-*)."""
-    global _TOKENIZER
-    if _TOKENIZER is None:
-        _TOKENIZER = tiktoken.get_encoding("cl100k_base")
-    return _TOKENIZER
+def _chunk_text(text: str, max_chars: int = _MAX_CHARS_PER_CHUNK) -> List[str]:
+    """Split text into chunks that each fit within the embedding token limit.
 
-
-def _chunk_text(text: str, max_tokens: int = _MAX_EMBEDDING_TOKENS) -> List[str]:
-    """Split text into chunks that each fit within the token limit."""
-    enc = _get_tokenizer()
-    tokens = enc.encode(text)
-    if len(tokens) <= max_tokens:
+    Uses a conservative character-based estimate (3.2 chars/token) to avoid
+    depending on tiktoken.
+    """
+    if len(text) <= max_chars:
         return [text]
-    num_chunks = math.ceil(len(tokens) / max_tokens)
+    num_chunks = math.ceil(len(text) / max_chars)
     logger.info(
-        "Splitting embedding input (%d tokens) into %d chunks of ≤%d tokens",
-        len(tokens), num_chunks, max_tokens,
+        "Splitting embedding input (%d chars, ~%d tokens) into %d chunks",
+        len(text), len(text) // 4, num_chunks,
     )
-    return [
-        enc.decode(tokens[i : i + max_tokens])
-        for i in range(0, len(tokens), max_tokens)
-    ]
+    return [text[i : i + max_chars] for i in range(0, len(text), max_chars)]
 
 
 def _average_embeddings(embeddings: List[List[float]]) -> List[float]:
