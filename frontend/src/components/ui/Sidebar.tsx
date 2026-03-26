@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
 import {
   Home, BarChart3, FlaskConical, PenSquare, CalendarRange,
-  BookOpen, TrendingUp, Settings, ChevronsLeft, ChevronsRight,
+  BookOpen, TrendingUp, RefreshCw, Settings, ChevronsLeft, ChevronsRight,
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -14,10 +14,11 @@ import { LocusLogo } from './LocusLogo';
 import { WorkspaceSelector } from './WorkspaceSelector';
 
 const navItems = [
-  { label: 'Home', href: '/', icon: Home },
+  { label: 'Home', href: '/', icon: Home, exact: true },
   { label: 'Analytics', href: '/analytics', icon: BarChart3 },
   { label: 'Deep Embedding Lab', href: '/analytics/lab', icon: FlaskConical },
-  { label: 'Content Studio', href: '/content', icon: PenSquare },
+  { label: 'Content Studio', href: '/content', icon: PenSquare, exact: true },
+  { label: 'Synced Content', href: '/content/synced', icon: RefreshCw },
   { label: 'Content Planner', href: '/planner', icon: CalendarRange },
   { label: 'Brand Artifacts', href: '/artifacts', icon: BookOpen },
   { label: 'Attribution', href: '/attribution', icon: TrendingUp },
@@ -89,8 +90,8 @@ export function Sidebar() {
       {/* Nav */}
       <nav className={cn('flex-1 space-y-1', collapsed ? 'px-1' : 'px-2')}>
         {navItems.map((item) => {
-          const isActive = item.href === '/'
-            ? pathname === '/'
+          const isActive = item.exact
+            ? pathname === item.href
             : pathname === item.href || pathname.startsWith(item.href + '/');
           const Icon = item.icon;
           return (

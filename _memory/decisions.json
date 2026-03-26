@@ -1,5 +1,44 @@
 [
   {
+    "id": "D-CMS-FE-1",
+    "timestamp": "2026-03-26",
+    "task": "CMS Frontend Steps 8-9 + Codex Review Fixes F1-F10",
+    "approach": "Frontend: 6 new atomic prop-driven components (CMSConnectForm, CMSConnectedState, CMSSyncedPostsTable, PublishDrawer, StaleContentActions) + useCMS.ts (10 SWR hooks). IntegrationsTab rewritten from static mock. KanbanBoard extended with publish icon + published badge. Home page extended with stale content cards. Backend: published_url/published_at persisted on content_pieces after publish, brief stub created in queue_stale_for_refresh (DB row only, no pipeline). Codex F1-F10: publish state persistence, type safety (removed unsafe casts), inFlightRef race guards, SWR prefix invalidation, credential failure toast, sync retrigger guard, URL crash fix, warning field for partial failures, isSafeUrl XSS prevention, drawer a11y (role=dialog, Escape, focus).",
+    "rationale": "CMS integration closes the value loop: intelligence → content → publish. Frontend follows existing patterns: prop-driven components, SWR hooks at page level, dense UI with brand tokens. Codex review caught 10 real issues (3 HIGH, 6 MEDIUM, 1 LOW) — all fixed before merge. Key decisions: (1) stale-to-triage creates DB tile only (no pipeline run, deferred to separate session), (2) published_url exposed server-side on ContentBriefListItem (persists across reloads), (3) connect→sync auto-chain, (4) role-gated actions (viewers read-only).",
+    "alternatives_rejected": [
+      "Local state overlay for published badge — rejected in favor of server-side persistence (survives page reload)",
+      "Frontend-chained stale-to-triage → content engine start — rejected in favor of backend brief stub (simpler, decoupled)",
+      "Modal for publish — rejected in favor of slide-over drawer (consistent with DetailView pattern)"
+    ],
+    "codex_review": "GPT-5.3-Codex reviewed implementation twice. First review (plan): 12 findings (3 HIGH, 6 MEDIUM, 3 LOW). Second review (code): 10 findings (3 HIGH, 6 MEDIUM, 1 LOW). All resolved.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-R2-2",
+    "timestamp": "2026-03-25",
+    "task": "R2 Blob Storage Phases 1-6 — Full pipeline retrofit",
+    "approach": "Phase 1: Gap Analysis (49 bypasses) — _artifact_dir()→_ga_prefix(), all step files accept StorageBackend+prefix params, pipeline.py skip-resume reads/writes via storage, Plotly fig.to_html()+storage.write(). Phase 2: Content Engine (~8 bypasses) — _load_artifact_text/_load_artifact_json accept optional StorageBackend (storage-first, FS-fallback for absolute paths), content_data_service TTL cache overhaul. Phase 3: Site Audit → DB-primary (PostgreSQL) — not R2. Phase 4: Cross-pipeline (~15 bypasses) — runner resolve_artifacts, brand_data_service, companies/KB/AP/knowledge_docs routers all use StorageBackend via app.state. Phase 5: All mtime caches → TTL-based (gap=5min, content=60-120s, audit=10min, brand=5min). Phase 6: Binary upload path — knowledge_doc_service via write_bytes(), s1+AP agents via read_bytes()+extract_text_from_bytes().",
+    "rationale": "Eliminates ~92 filesystem bypasses so all artifact I/O goes through StorageBackend ABC. In production with STORAGE_BACKEND=r2, all reads/writes go to Cloudflare R2. In dev with STORAGE_BACKEND=local, behavior unchanged. TTL caching replaces mtime because R2 objects have no local st_mtime_ns. Site audit excluded from R2 — structured data with no large blobs, runs daily, better served by SQL queries than blob storage.",
+    "key_rules": [
+      "H3: Non-local backends must NOT fall back to filesystem reads (prevents stale local files in R2 deployments)",
+      "H6: Blocking I/O (lock+storage calls) moved off event loop via asyncio.to_thread()",
+      "pipeline_state.json stays local filesystem (earmarked for Redis, not R2)",
+      "GapAnalysisInput.knowledge_doc_slug backfills from deprecated knowledge_doc_dir via model_validator",
+      "_LOCAL_BACKEND_CACHE in gap_context_helper (max 20) avoids per-call LocalStorageBackend instantiation",
+      "Download endpoints: FileResponse→Response with storage.read_bytes() (no FS path needed)",
+      "R2StorageBackend gains retry config (max_attempts=5, mode=standard) and error logging on writes"
+    ],
+    "alternatives_rejected": [
+      "Site audit to R2 — rejected because structured data (scores, findings, page metrics) is better served by PostgreSQL with proper SQL queries",
+      "Merge gap_context_helper cache into gap_data_service — kept separate for now, different consumers and TTLs",
+      "Full StorageBackend redesign to async — would require ABC redesign across all ~20 consumers, not worth it when asyncio.to_thread() works"
+    ],
+    "files_touched": "55 files (35 modified, 5 new test files, 18 test files updated)",
+    "bypasses_eliminated": 92,
+    "reversible": true
+  },
+  {
     "id": "D-R2-1",
     "timestamp": "2026-03-24",
     "task": "R2 Blob Storage Phase 0 — Infrastructure Layer",
@@ -650,6 +689,60 @@
       "Pure stdlib dictConfig + JSON formatter + ContextVar filter (more code, less battle-tested, reinventing structlog)"
     ],
     "outcome": "22 new tests, 2 new files, 13 modified files. All 1063 API tests passing with zero regressions. Codex-reviewed (6 findings incorporated).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CMS-1",
+    "timestamp": "2026-03-26",
+    "task": "CMS Integration Steps 1-5 — Domain layer, adapter, factory, service, ORM",
+    "approach": "Adapter pattern with CMSAdapterProtocol. WordPress v1 adapter via REST API + Application Passwords. Factory registry for provider switching. CMSService orchestrator (not Protocol→Json→Db pattern) with Fernet credential encryption, StorageBackend artifact reads, markdown→HTML conversion. 3 ORM tables (cms_connections, cms_publish_records, cms_synced_posts) with UUID PKs via UUIDPKMixin. Migration 0021.",
+    "rationale": "Follows existing codebase patterns: enums in core/db/enums.py (lowercase values), modern mapped_column() ORM style, StorageBackend for all artifact reads (R2-compatible), asyncio.to_thread() for sync storage calls. CMS is NOT a data service (Protocol→Json→Db) — it's an external API orchestrator that needs repos + storage + encryption.",
+    "key_decisions": [
+      "D1: Migration 0021 (not 0006 from spec) — latest was 0020",
+      "D2: UUID PKs via UUIDPKMixin (not Integer autoincrement from spec) — consistency",
+      "D3: StorageBackend.read() (not Path.read_text() from spec) — R2 compatible",
+      "D4: Lowercase enum values (not UPPERCASE from spec) — codebase convention",
+      "D5: Enums in core/db/enums.py, re-exported from core/cms/models.py — convention",
+      "D6: CMSPostStatus (not PostStatus) — avoids collision with ContentPieceStatus",
+      "D7: CMSPublishAction typed enum (not String column from spec) — type safety",
+      "D8: cryptography>=42.0 dependency for Fernet — not in spec",
+      "D9: site_url: str (not HttpUrl from spec) — Pydantic v2 HttpUrl breaks string concat",
+      "D10: effective_slug on publish record — needed for storage path resolution",
+      "Publish updates ContentPieceModel.published_at/published_url — cross-links content to CMS"
+    ],
+    "alternatives_rejected": [
+      "Protocol→JsonService→DbService for CMS — rejected because CMS is an external API orchestrator, not a data retrieval service",
+      "Enums in core/cms/models.py only — rejected for consistency with all other DB enums in core/db/enums.py"
+    ],
+    "files_touched": "17 new files, 4 modified (core/db/enums.py, core/db/models/__init__.py, core/config/settings.py, requirements.txt)",
+    "tests_added": 93,
+    "outcome": "93 new tests across 7 test files. Zero regressions on 5620 existing tests. Fully testable backend with no API exposure. Steps 6-7 completed in same sprint.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CMS-2",
+    "timestamp": "2026-03-26",
+    "task": "CMS Integration Steps 6-7 — API router, DI wiring, background sync runner, API tests",
+    "approach": "11 FastAPI endpoints at /api/v1/cms/ (connect, get_connection, disconnect, sync, synced-posts, stale-actions, stale-to-triage, publish, refresh, publish-history, categories). get_cms_service() DI async generator: DB-required (503 if no DATABASE_URL/CMS_FERNET_KEY), no JSON fallback, tests bypass via app.state.cms_service. run_cms_sync_task() creates own session (DI session closed after 202). 9 Pydantic request/response schemas in api/schemas/cms.py. 49 API tests across 11 test classes.",
+    "rationale": "Follows existing codebase patterns exactly: require_auth/require_role deps, _get_company_slug helper, asyncio.create_task+TaskStore for background tasks, exception→HTTP mapping at router level. CMS requires DB because credentials are Fernet-encrypted in Postgres. No JSON fallback — unlike data services, CMS has no filesystem-only mode.",
+    "key_decisions": [
+      "DI raises 503 (not 404) when DATABASE_URL/CMS_FERNET_KEY missing — infrastructure unavailable, not resource not found",
+      "Sync runs as background task with own session — DI session closes after router returns 202",
+      "Categories endpoint (Codex F4) — needed for publish UI category selector dropdown",
+      "Reconnect UPDATEs existing row (Codex F8) — preserves FK refs from publish_records/synced_posts",
+      "Tenant isolation check in queue_stale_for_refresh (Codex F2) — prevents cross-company access"
+    ],
+    "codex_review": {
+      "model": "gpt-5.3-codex",
+      "total_findings": 10,
+      "fixed": ["F2: tenant isolation in queue_stale_for_refresh", "F4: missing GET /categories", "F8: reconnect unique constraint", "F9: additional test cases"],
+      "already_addressed": ["F1: sync as background task", "F3: UUID/str types", "F5: auth/RBAC", "F6: exception mapping", "F7: product_slug/effective_slug", "F10: Pydantic models"]
+    },
+    "files_touched": "3 new files (api/schemas/cms.py, api/routers/cms.py, tests/api/test_cms.py), 5 modified (api/dependencies.py, api/app.py, api/tasks/models.py, api/tasks/runner.py, core/services/cms_service.py)",
+    "tests_added": 49,
+    "outcome": "49 new API tests, 142 total CMS tests. 1258 API suite tests passed, 3 pre-existing failures (not CMS-related). Zero regressions.",
     "reversible": true,
     "approved_by": "Aryan"
   }

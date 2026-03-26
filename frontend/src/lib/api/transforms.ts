@@ -170,5 +170,7 @@ export function toBrief(item: ContentBriefItem): ContentBrief {
     cpsPredict: {} as Record<Platform, number>,
     structuralTargets: { words: item.target_word_count, paragraphs: 0, headers: 0, lists: 0, stats: 0, citations: 0 },
     createdAt: item.created_at,
+    publishedAt: item.published_at ?? undefined,
+    publishedUrl: item.published_url || undefined,
   };
 }

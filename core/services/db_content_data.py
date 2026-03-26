@@ -182,6 +182,12 @@ class DbContentDataService:
                     else (piece.created_at.isoformat() if piece.created_at else "")
                 ),
                 gap_context=gap_ctx,
+                published_url=piece.published_url or "",
+                published_at=(
+                    piece.published_at.isoformat()
+                    if hasattr(piece, "published_at") and piece.published_at
+                    else None
+                ),
             ))
 
         return ContentBriefListResponse(briefs=items, total=len(items))
