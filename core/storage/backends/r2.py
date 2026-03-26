@@ -129,20 +129,24 @@ class R2StorageBackend(StorageBackend):
     def exists(self, path: str) -> bool:
         """Check whether a key or prefix exists in R2.
 
-        First checks for an exact object key via HEAD. If not found, checks
-        whether any objects exist under ``path/`` (directory-like prefix) to
-        match LocalStorageBackend behavior where ``exists()`` returns True
-        for both files and directories.
+        Uses ``list_objects_v2`` instead of ``head_object`` because Cloudflare
+        R2 has known behavioral differences for HEAD requests that cause false
+        negatives.  Checks for an exact key match first, then for a
+        directory-like prefix to match LocalStorageBackend behavior.
         """
         self._validate_path(path)
         try:
-            self._client.head_object(Bucket=self._bucket_name, Key=path)
-            return True
-        except ClientError as exc:
-            if not self._is_not_found(exc):
-                raise
-        # Fallback: check if it's a prefix with children (directory equivalent)
-        try:
+            # Check exact key via list (avoids head_object R2 quirks)
+            response = self._client.list_objects_v2(
+                Bucket=self._bucket_name,
+                Prefix=path,
+                MaxKeys=1,
+            )
+            contents = response.get("Contents", [])
+            if contents and contents[0]["Key"] == path:
+                return True
+
+            # Check as directory prefix (e.g. "gap_analysis/ramp")
             prefix = path.rstrip("/") + "/"
             response = self._client.list_objects_v2(
                 Bucket=self._bucket_name,
@@ -151,7 +155,7 @@ class R2StorageBackend(StorageBackend):
             )
             return response.get("KeyCount", 0) > 0
         except ClientError:
-            logger.warning("R2 exists() prefix check failed for key=%s", path)
+            logger.warning("R2 exists() check failed for key=%s", path)
             return False
 
     def delete(self, path: str) -> bool:
