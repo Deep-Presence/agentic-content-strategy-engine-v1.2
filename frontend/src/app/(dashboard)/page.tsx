@@ -176,14 +176,19 @@ export default function HomePage() {
 
   if (!hasData) {
     return (
-      <EmptyState
-        title="Welcome to Deep Presence"
-        description="Start by analyzing your brand to see how you're cited across AI platforms."
-        action={{
-          label: 'Begin Analysis',
-          onClick: () => router.push('/onboarding'),
-        }}
-      />
+      <div className="max-w-[960px] mx-auto space-y-6">
+        <EmptyState
+          title="Welcome to Deep Presence"
+          description="Start by analyzing your brand to see how you're cited across AI platforms."
+          action={{
+            label: 'Begin Analysis',
+            onClick: () => router.push('/onboarding'),
+          }}
+        />
+
+        {/* Pipeline Re-run — always visible so users can trigger pipelines */}
+        <PipelineRerunCard companyName={companyName} companyDomain={companyDomain} />
+      </div>
     );
   }
 

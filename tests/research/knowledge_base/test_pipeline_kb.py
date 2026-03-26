@@ -91,7 +91,7 @@ def _mock_agents(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _bp(input_data, upstream_docs, **kw):
         return _make_result(KBDocType.BRAND_PERCEPTION, "# Brand Perception\n\nBrand content.")
 
-    async def _synth(input_data, kb_base_dir, available_docs, missing_docs, **kw):
+    async def _synth(input_data, kb_base_dir=None, available_docs=None, missing_docs=None, **kw):
         return _make_result(KBDocType.SYNTHESIS, "# Company Profile\n\nSynthesized profile.")
 
     monkeypatch.setattr(f"{_PIPE}.run_company_overview_agent", _co)
@@ -610,7 +610,7 @@ class TestRunKnowledgeBasePipeline:
 
         synth_called = {"called": False}
 
-        async def _synth_track(input_data, kb_base_dir, available_docs, missing_docs, **kw):
+        async def _synth_track(input_data, kb_base_dir=None, available_docs=None, missing_docs=None, **kw):
             synth_called["called"] = True
             return _make_result(KBDocType.SYNTHESIS)
 
@@ -774,7 +774,7 @@ class TestRunKnowledgeBasePipeline:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """CX-10: When synthesis errors, output has empty synthesis_md."""
-        async def _failing_synth(input_data, kb_base_dir, available_docs, missing_docs, **kw):
+        async def _failing_synth(input_data, kb_base_dir=None, available_docs=None, missing_docs=None, **kw):
             return _make_result(KBDocType.SYNTHESIS, error="LLM error")
 
         monkeypatch.setattr(f"{_PIPE}.run_synthesis_agent", _failing_synth)
@@ -812,7 +812,7 @@ class TestDeltaSynthesisIntegration:
 
         captured_synth: Dict[str, Any] = {}
 
-        async def _track_synth(input_data, kb_base_dir, available_docs, missing_docs, **kw):
+        async def _track_synth(input_data, kb_base_dir=None, available_docs=None, missing_docs=None, **kw):
             captured_synth.update(kw)
             captured_synth["available_docs"] = available_docs
             return _make_result(KBDocType.SYNTHESIS, "# Updated Profile")
@@ -842,7 +842,7 @@ class TestDeltaSynthesisIntegration:
         """Full mode → delta_mode=False."""
         captured_synth: Dict[str, Any] = {}
 
-        async def _track_synth(input_data, kb_base_dir, available_docs, missing_docs, **kw):
+        async def _track_synth(input_data, kb_base_dir=None, available_docs=None, missing_docs=None, **kw):
             captured_synth.update(kw)
             return _make_result(KBDocType.SYNTHESIS, "# Profile")
 
@@ -861,7 +861,7 @@ class TestDeltaSynthesisIntegration:
         """Refresh mode without prior synthesis → delta_mode=False."""
         captured_synth: Dict[str, Any] = {}
 
-        async def _track_synth(input_data, kb_base_dir, available_docs, missing_docs, **kw):
+        async def _track_synth(input_data, kb_base_dir=None, available_docs=None, missing_docs=None, **kw):
             captured_synth.update(kw)
             return _make_result(KBDocType.SYNTHESIS, "# Profile")
 

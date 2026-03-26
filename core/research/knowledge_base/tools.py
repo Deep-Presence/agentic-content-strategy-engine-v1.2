@@ -6,27 +6,31 @@ Agent 5 (Brand Perception) uses Anthropic's native web_search_20250305 server-si
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from pathlib import PurePosixPath
 
 from langchain_core.tools import tool
+
+from core.storage.backends.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
 
-def make_read_file_tool(kb_base_dir: Path):
-    """Create a read_file tool scoped to a specific knowledge base directory.
+def make_read_file_tool(backend: StorageBackend, prefix: str):
+    """Create a read_file tool that reads via a StorageBackend.
 
-    Security: Only files under kb_base_dir can be read. Path traversal
-    is prevented via Path.resolve().is_relative_to().
+    Works identically whether the backend is local filesystem or R2 (cloud).
+
+    Security: Path traversal is prevented by normalising the requested path
+    and checking it doesn't escape the prefix.
 
     Args:
-        kb_base_dir: Root directory of the knowledge base (e.g.,
-            artifacts/knowledge_base/{slug}).
+        backend: StorageBackend instance (local or R2).
+        prefix: Key prefix for the knowledge base slug
+            (e.g. ``knowledge_base/{slug}/``).
 
     Returns:
         A LangChain @tool function.
     """
-    resolved_root = kb_base_dir.resolve()
 
     @tool
     def read_file(file_path: str) -> str:
@@ -36,15 +40,33 @@ def make_read_file_tool(kb_base_dir: Path):
             file_path: Path to read, relative to the knowledge base root.
                 Example: "company_overview/v1.md"
         """
-        target = (resolved_root / file_path).resolve()
-        if not target.is_relative_to(resolved_root):
+        # Security: block absolute paths
+        if file_path.startswith("/"):
             return f"Access denied: path '{file_path}' is outside the knowledge base directory."
-        if not target.exists():
-            return f"File not found: {file_path}"
-        if not target.is_file():
-            return f"Not a file: {file_path}"
+
+        # Security: normalise and block traversal (.. escaping prefix)
+        normalised = PurePosixPath(file_path)
         try:
-            return target.read_text(encoding="utf-8")
+            # Resolve ".." components — if it escapes, parts will start
+            # with ".."
+            resolved_parts = []
+            for part in normalised.parts:
+                if part == "..":
+                    if not resolved_parts:
+                        return f"Access denied: path '{file_path}' is outside the knowledge base directory."
+                    resolved_parts.pop()
+                else:
+                    resolved_parts.append(part)
+            clean_path = "/".join(resolved_parts)
+        except Exception:
+            return f"Access denied: path '{file_path}' is outside the knowledge base directory."
+
+        key = f"{prefix}{clean_path}"
+        try:
+            content = backend.read(key)
+            if content is None:
+                return f"File not found: {file_path}"
+            return content
         except Exception as exc:
             logger.warning("read_file failed for %s: %s", file_path, exc)
             return f"Error reading file: {exc}"

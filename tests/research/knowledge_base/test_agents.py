@@ -430,24 +430,50 @@ class TestBuildSynthesisAgent:
         from langgraph.graph.state import CompiledStateGraph
 
         from core.research.knowledge_base.agents import build_synthesis_agent
+        from core.storage.backends.local import LocalStorageBackend
 
         mock_model = MagicMock()
-        agent = build_synthesis_agent(model=mock_model, kb_base_dir=tmp_path)
+        backend = LocalStorageBackend(tmp_path)
+        agent = build_synthesis_agent(
+            model=mock_model,
+            storage_backend=backend,
+            storage_prefix="knowledge_base/test-co/",
+        )
         assert isinstance(agent, CompiledStateGraph)
 
     def test_includes_read_file_tool(self, tmp_path: Path) -> None:
         from core.research.knowledge_base.agents import build_synthesis_agent
+        from core.storage.backends.local import LocalStorageBackend
 
         mock_model = MagicMock()
-        agent = build_synthesis_agent(model=mock_model, kb_base_dir=tmp_path)
+        backend = LocalStorageBackend(tmp_path)
+        agent = build_synthesis_agent(
+            model=mock_model,
+            storage_backend=backend,
+            storage_prefix="knowledge_base/test-co/",
+        )
         # The agent should have tools configured
         assert agent is not None
 
     def test_custom_model(self, tmp_path: Path) -> None:
         from core.research.knowledge_base.agents import build_synthesis_agent
+        from core.storage.backends.local import LocalStorageBackend
 
         custom_model = MagicMock()
-        agent = build_synthesis_agent(model=custom_model, kb_base_dir=tmp_path)
+        backend = LocalStorageBackend(tmp_path)
+        agent = build_synthesis_agent(
+            model=custom_model,
+            storage_backend=backend,
+            storage_prefix="knowledge_base/test-co/",
+        )
+        assert agent is not None
+
+    def test_backward_compat_kb_base_dir(self, tmp_path: Path) -> None:
+        """Legacy callers passing kb_base_dir still work."""
+        from core.research.knowledge_base.agents import build_synthesis_agent
+
+        mock_model = MagicMock()
+        agent = build_synthesis_agent(model=mock_model, kb_base_dir=tmp_path)
         assert agent is not None
 
 

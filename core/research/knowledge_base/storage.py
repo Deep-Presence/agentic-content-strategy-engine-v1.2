@@ -82,6 +82,16 @@ class KBStorage:
     def slug(self) -> str:
         return self._slug
 
+    @property
+    def backend(self) -> StorageBackend:
+        """The underlying storage backend (local or R2)."""
+        return self._backend
+
+    @property
+    def prefix(self) -> str:
+        """Key prefix for this slug (e.g. ``knowledge_base/{slug}/``)."""
+        return self._prefix
+
     # ------------------------------------------------------------------
     # Key helpers (return paths relative to backend root)
     # ------------------------------------------------------------------
