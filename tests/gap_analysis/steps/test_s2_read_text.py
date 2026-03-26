@@ -75,23 +75,10 @@ class TestReadTextH3NoFilesystemFallback:
         assert result == ""
         assert not resolve_called, "Filesystem fallback should NOT be called for non-local storage"
 
-    def test_local_storage_does_filesystem_fallback(self, monkeypatch: "pytest.MonkeyPatch") -> None:
-        """LocalStorageBackend should still allow filesystem fallback."""
-        import core.gap_analysis.steps.s2_generate_queries as s2_mod
-
+    def test_local_storage_no_filesystem_fallback(self) -> None:
+        """Any storage backend returning None should return empty — no filesystem fallback."""
         local_storage = MagicMock(spec=LocalStorageBackend)
         local_storage.read.return_value = None
 
-        resolve_called = False
-        original_resolve = s2_mod._resolve_virtual_path
-
-        def _tracking_resolve(vpath: str) -> Path:
-            nonlocal resolve_called
-            resolve_called = True
-            return original_resolve(vpath)
-
-        monkeypatch.setattr(s2_mod, "_resolve_virtual_path", _tracking_resolve)
-
         result = _read_text("nonexistent.md", storage=local_storage)
         assert result == ""
-        assert resolve_called, "Filesystem fallback SHOULD be called for LocalStorageBackend"

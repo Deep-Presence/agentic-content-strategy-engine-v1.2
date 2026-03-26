@@ -115,11 +115,10 @@ def resolve_artifacts(
     """Auto-discover approved research artifacts for a company slug.
 
     Only resolves final (approved) artifacts — ignores .draft.md files.
-    When backend is LocalStorageBackend, returns absolute filesystem paths
-    for backward compatibility with downstream consumers.
+    Always returns relative storage keys compatible with any backend.
     """
-    from core.storage.backends.local import LocalStorageBackend
-    _backend = backend or LocalStorageBackend(artifacts_root)
+    from core.storage import get_storage_backend
+    _backend = backend or get_storage_backend(artifacts_root)
 
     resolved: Dict[str, Any] = {
         "company_context_path": None,
@@ -132,13 +131,10 @@ def resolve_artifacts(
     for lookup in candidates:
         key = f"company_context/{lookup}.md"
         if _backend.exists(key):
-            if isinstance(_backend, LocalStorageBackend):
-                resolved["company_context_path"] = str(_backend.root / key)
-            else:
-                resolved["company_context_path"] = key
+            resolved["company_context_path"] = key
             break
 
-    # Personas: via PersonaStorage (no legacy fallback)
+    # Personas: via PersonaStorage
     for lookup in candidates:
         try:
             from core.research.audience_persona.storage import PersonaStorage
@@ -154,10 +150,7 @@ def resolve_artifacts(
     for lookup in candidates:
         key = f"style_guides/{lookup}.md"
         if _backend.exists(key):
-            if isinstance(_backend, LocalStorageBackend):
-                resolved["style_guide_path"] = str(_backend.root / key)
-            else:
-                resolved["style_guide_path"] = key
+            resolved["style_guide_path"] = key
             break
 
     return resolved

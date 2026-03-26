@@ -71,16 +71,13 @@ def _read_text(
 ) -> str:
     if not vpath:
         return ""
-    # C2-fix: try StorageBackend first (R2 or any non-local backend)
+    # Read via storage backend (R2 or local)
     if storage is not None:
         content = storage.read(vpath)
         if content is not None:
             return content[:max_chars]
-        # H3-fix: non-local backends must NOT fall back to local filesystem
-        from core.storage.backends.local import LocalStorageBackend
-        if not isinstance(storage, LocalStorageBackend):
-            return ""
-    # Filesystem fallback (local dev or absolute paths from LocalStorageBackend)
+        return ""
+    # Filesystem fallback only when no storage backend provided
     p = _resolve_virtual_path(vpath)
     if not p.exists():
         return ""

@@ -35,7 +35,6 @@ from core.models.topic_discovery import (
     TopicDiscoveryManifest,
 )
 from core.storage.backends.base import StorageBackend
-from core.storage.backends.local import LocalStorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +58,11 @@ class TopicDiscoveryStorage:
             )
         self._artifacts_root = Path(artifacts_root)
         self._slug = slug
-        self._backend = backend or LocalStorageBackend(
-            self._artifacts_root.resolve(),
-        )
+        if backend is not None:
+            self._backend = backend
+        else:
+            from core.storage import get_storage_backend
+            self._backend = get_storage_backend(self._artifacts_root)
         self._prefix = f"topic_discovery/{slug}/"
 
     # ------------------------------------------------------------------

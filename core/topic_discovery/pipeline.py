@@ -217,13 +217,10 @@ def _load_persona_entries(
     Returns list of tuples for active (fresh/stale) personas.
     """
     from core.research.audience_persona.storage import PersonaStorage
-    from core.storage.backends import LocalStorageBackend
 
     for check_slug in filter(None, [effective_slug, company_slug]):
-        if isinstance(backend, LocalStorageBackend):
-            ps = PersonaStorage(backend.root, check_slug, backend=backend)
-        else:
-            ps = PersonaStorage(Path("/unused"), check_slug, backend=backend)
+        # artifacts_root is only used for base_dir property; backend handles all I/O.
+        ps = PersonaStorage(Path("artifacts"), check_slug, backend=backend)
         manifest = ps.read_manifest()
         if manifest.personas:
             break
