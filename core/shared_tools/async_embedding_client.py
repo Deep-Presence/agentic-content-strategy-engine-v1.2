@@ -7,14 +7,54 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import random
 from typing import Callable, List, TypeVar
 
+import tiktoken
 from openai import AsyncOpenAI, APIError, RateLimitError
 
 from core.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+# text-embedding-3-small / text-embedding-3-large accept max 8191 tokens per input
+_MAX_EMBEDDING_TOKENS = 8191
+_TOKENIZER: tiktoken.Encoding | None = None
+
+
+def _get_tokenizer() -> tiktoken.Encoding:
+    """Lazy-load the cl100k_base tokenizer (used by text-embedding-3-*)."""
+    global _TOKENIZER
+    if _TOKENIZER is None:
+        _TOKENIZER = tiktoken.get_encoding("cl100k_base")
+    return _TOKENIZER
+
+
+def _chunk_text(text: str, max_tokens: int = _MAX_EMBEDDING_TOKENS) -> List[str]:
+    """Split text into chunks that each fit within the token limit."""
+    enc = _get_tokenizer()
+    tokens = enc.encode(text)
+    if len(tokens) <= max_tokens:
+        return [text]
+    num_chunks = math.ceil(len(tokens) / max_tokens)
+    logger.info(
+        "Splitting embedding input (%d tokens) into %d chunks of ≤%d tokens",
+        len(tokens), num_chunks, max_tokens,
+    )
+    return [
+        enc.decode(tokens[i : i + max_tokens])
+        for i in range(0, len(tokens), max_tokens)
+    ]
+
+
+def _average_embeddings(embeddings: List[List[float]]) -> List[float]:
+    """Mean-pool multiple chunk embeddings into a single normalized vector."""
+    dim = len(embeddings[0])
+    avg = [sum(e[d] for e in embeddings) / len(embeddings) for d in range(dim)]
+    # L2-normalize so downstream cosine similarity works correctly
+    norm = math.sqrt(sum(x * x for x in avg)) or 1.0
+    return [x / norm for x in avg]
 
 T = TypeVar("T")
 
@@ -66,8 +106,9 @@ async def async_embed_texts(
 ) -> List[List[float]]:
     """Embed texts using AsyncOpenAI with concurrent batching and retry.
 
-    Dispatches multiple batches concurrently for speed, with a semaphore
-    to cap API pressure. Results are reassembled in input order.
+    Long texts that exceed the model's 8191-token limit are automatically
+    split into chunks, embedded separately, and mean-pooled back into a
+    single normalized vector per original text.
 
     Args:
         texts: Texts to embed.
@@ -96,8 +137,24 @@ async def async_embed_texts(
         else settings.gap_analysis_s5_embed_concurrent_batches
     )
 
+    # --- Pre-process: chunk any texts that exceed the token limit -----------
+    # flat_chunks[i] = (original_text_index, chunk_text)
+    flat_chunks: List[tuple[int, str]] = []
+    chunks_per_text: List[int] = []
+    for idx, text in enumerate(texts):
+        chunks = _chunk_text(text)
+        chunks_per_text.append(len(chunks))
+        for chunk in chunks:
+            flat_chunks.append((idx, chunk))
+
+    all_chunk_texts = [c[1] for c in flat_chunks]
+
+    # --- Embed all chunks ---------------------------------------------------
     async with AsyncOpenAI(api_key=api_key) as client:
-        batches = [texts[i : i + effective_batch_size] for i in range(0, len(texts), effective_batch_size)]
+        batches = [
+            all_chunk_texts[i : i + effective_batch_size]
+            for i in range(0, len(all_chunk_texts), effective_batch_size)
+        ]
         sem = asyncio.Semaphore(effective_concurrency)
 
         async def _embed_batch(
@@ -115,6 +172,19 @@ async def async_embed_texts(
             *[_embed_batch(b, i) for i, b in enumerate(batches)]
         )
 
-        # Sort by batch_idx to maintain input order across concurrent batches
+        # Flatten batch results in original order
         results_sorted = sorted(results, key=lambda x: x[0])
-        return [emb for _, batch_embs in results_sorted for emb in batch_embs]
+        all_chunk_embeddings = [emb for _, batch_embs in results_sorted for emb in batch_embs]
+
+    # --- Post-process: mean-pool chunk embeddings per original text ---------
+    final_embeddings: List[List[float]] = []
+    offset = 0
+    for n_chunks in chunks_per_text:
+        chunk_embs = all_chunk_embeddings[offset : offset + n_chunks]
+        offset += n_chunks
+        if n_chunks == 1:
+            final_embeddings.append(chunk_embs[0])
+        else:
+            final_embeddings.append(_average_embeddings(chunk_embs))
+
+    return final_embeddings

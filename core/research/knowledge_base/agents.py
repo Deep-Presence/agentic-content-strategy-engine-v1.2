@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.storage.backends.base import StorageBackend
+
 import anthropic
 from langchain.chat_models import init_chat_model
 from langgraph.prebuilt import create_react_agent
@@ -397,22 +399,33 @@ async def run_brand_perception_agent(
 
 def build_synthesis_agent(
     model: Optional[Any] = None,
-    kb_base_dir: Optional[Path] = None,
+    *,
+    storage_backend: Optional[StorageBackend] = None,
+    storage_prefix: str = "knowledge_base/",
     checkpointer: Optional[Any] = None,
+    # Deprecated — ignored when storage_backend is provided
+    kb_base_dir: Optional[Path] = None,
 ) -> Any:
     """Build the synthesis agent using langgraph.prebuilt.create_react_agent.
 
     Args:
         model: LangChain chat model (default: built from settings).
-        kb_base_dir: Root directory for the read_file tool.
+        storage_backend: StorageBackend instance for reading KB artifacts.
+        storage_prefix: Key prefix (e.g. ``knowledge_base/{slug}/``).
         checkpointer: Optional LangGraph checkpointer.
+        kb_base_dir: **Deprecated** — kept for backward compat with tests.
 
     Returns:
         CompiledStateGraph ready for .ainvoke().
     """
     if model is None:
         model = _build_model(settings.research_kb_synthesis_model)
-    read_file = make_read_file_tool(kb_base_dir or Path("artifacts/knowledge_base"))
+
+    if storage_backend is None:
+        from core.storage import get_storage_backend
+        storage_backend = get_storage_backend(kb_base_dir or Path("artifacts"))
+
+    read_file = make_read_file_tool(storage_backend, storage_prefix)
     return create_react_agent(
         model,
         [read_file],
@@ -423,21 +436,24 @@ def build_synthesis_agent(
 
 async def run_synthesis_agent(
     input_data: KnowledgeBaseInput,
-    kb_base_dir: Path,
-    available_docs: Dict[str, str],
-    missing_docs: List[str],
+    kb_base_dir: Optional[Path] = None,
+    available_docs: Optional[Dict[str, str]] = None,
+    missing_docs: Optional[List[str]] = None,
     parent_span: Optional[Any] = None,
     timeout_s: float = 600.0,
     revision_note: Optional[str] = None,
     delta_mode: bool = False,
     changed_docs: Optional[Dict[str, str]] = None,
     previous_synthesis_path: Optional[str] = None,
+    *,
+    storage_backend: Optional[StorageBackend] = None,
+    storage_prefix: str = "knowledge_base/",
 ) -> KBAgentResult:
     """Run L2 → L3 synthesis — requires minimum 3 of 5 L2 docs.
 
     Args:
         input_data: Pipeline input with company details.
-        kb_base_dir: Root directory for the read_file tool.
+        kb_base_dir: **Deprecated** — kept for backward compat.
         available_docs: Dict mapping doc_type.value to file path.
         missing_docs: List of doc_type.value strings that are missing.
         parent_span: Optional parent tracing span.
@@ -448,10 +464,14 @@ async def run_synthesis_agent(
             (required when delta_mode=True).
         previous_synthesis_path: Relative path to previous synthesis file
             (required when delta_mode=True).
+        storage_backend: StorageBackend instance for reading KB artifacts.
+        storage_prefix: Key prefix (e.g. ``knowledge_base/{slug}/``).
 
     Returns:
         KBAgentResult with synthesized company profile or error.
     """
+    available_docs = available_docs or {}
+    missing_docs = missing_docs or []
     # Partial failure policy (CX-14): minimum 3/5 L2 docs
     if len(available_docs) < 3:
         return KBAgentResult(
@@ -489,7 +509,13 @@ async def run_synthesis_agent(
             else get_synthesis_system_prompt()
         )
         model = _build_model(settings.research_kb_synthesis_model)
-        read_file = make_read_file_tool(kb_base_dir)
+
+        # Resolve storage backend — prefer explicit, fall back for compat
+        if storage_backend is None:
+            from core.storage import get_storage_backend
+            storage_backend = get_storage_backend(kb_base_dir or Path("artifacts"))
+
+        read_file = make_read_file_tool(storage_backend, storage_prefix)
         agent = create_react_agent(model, [read_file], prompt=system_prompt)
 
         # Build user prompt based on mode
