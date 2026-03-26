@@ -163,3 +163,18 @@ export const SETTINGS = {
   pipelineDefaults: (slug: string) =>
     `/api/v1/companies/${slug}/settings/pipeline-defaults`,
 } as const;
+
+// ── CMS Integration ───────────────────────────────────────────────────
+// Note: CMS endpoints use auth middleware for company context — no slug in paths.
+export const CMS = {
+  connect: '/api/v1/cms/connect',
+  connection: '/api/v1/cms/connection',
+  sync: '/api/v1/cms/sync',
+  syncedPosts: '/api/v1/cms/synced-posts',
+  staleActions: '/api/v1/cms/stale-actions',
+  staleToTriage: '/api/v1/cms/stale-to-triage',
+  publish: '/api/v1/cms/publish',
+  refresh: (cmsPostId: string) => `/api/v1/cms/refresh/${cmsPostId}`,
+  publishHistory: '/api/v1/cms/publish-history',
+  categories: '/api/v1/cms/categories',
+} as const;

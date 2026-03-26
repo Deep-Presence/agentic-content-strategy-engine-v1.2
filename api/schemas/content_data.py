@@ -44,6 +44,8 @@ class ContentBriefListItem(BaseModel):
     created_at: str = ""  # ISO string, from briefs.json mtime
     updated_at: str = ""  # ISO string, from latest stage file mtime
     gap_context: Optional[GapContextSummary] = None
+    published_url: str = ""  # CMS permalink (set by cms_service.publish_brief)
+    published_at: Optional[str] = None  # ISO string, when CMS publish happened
 
 
 class ContentBriefListResponse(BaseModel):

@@ -1,10 +1,11 @@
 {
-  "current_sprint": "r2-blob-storage-phase0-v19",
-  "last_updated": "2026-03-24",
-  "test_count": 2857,
+  "current_sprint": "cms-integration-v21",
+  "last_updated": "2026-03-26",
+  "test_count": 3042,
   "completed_sprints_summary": {
-    "total_tasks_completed": 37,
+    "total_tasks_completed": 42,
     "sprints": [
+      {"sprint": "cms-integration-v21", "date": "2026-03-26", "summary": "CMS Integration Steps 1-9 + Codex F1-F10 fixes. Steps 1-5: Adapter pattern (CMSAdapterProtocol + WordPressAdapter), factory, CMSService, ORM (93 tests). Steps 6-7: API router (11 endpoints), DI, sync runner, 9 schemas, 49 API tests. Steps 8-9: Frontend — 6 new components (CMSConnectForm, CMSConnectedState, CMSSyncedPostsTable, PublishDrawer, StaleContentActions, useCMS.ts with 10 hooks), 6 modified pages (IntegrationsTab, KanbanBoard, content/page, home/page, types.ts, endpoints.ts). Codex-reviewed twice (GPT-5.3-Codex). F1: publish persists to content_pieces. F2: type safety (removed unsafe casts). F3: inFlightRef race guards. F4: SWR prefix invalidation. F5: credential failure toast. F6: sync retrigger guard. F7: URL crash fix. F8: warning field for partial failures. F9: isSafeUrl XSS prevention. F10: drawer a11y. 62 backend + 82 frontend tests. Zero regressions."},
       {"sprint": "v3-async", "date": "2026-02-15", "summary": "Async pipeline conversion (12 tasks), Playwright CF bypass, content engine v1.0"},
       {"sprint": "v3-signals", "date": "2026-02-18", "summary": "Structural Signal Overhaul — S4 dual-soup, ~45 signals, GapContentBrief, 3-tier output"},
       {"sprint": "api-v1", "date": "2026-02-24", "summary": "FastAPI REST API, SSE events, HITL fix, Codex review fixes, approval flow"},
@@ -26,10 +27,203 @@
       {"sprint": "pgvector-migration-v16", "date": "2026-03-15", "summary": "ChromaDB→pgvector migration — 8-phase plan. VectorStoreClient (469 lines), 2 Alembic migrations (0016+0017), EmbeddingRepository extensions, consumer migration (GA+AP+CPS), full ChromaDB removal, data migration script. Codex-reviewed (11 findings addressed). 429 GA tests passing."},
       {"sprint": "structured-logging-v17", "date": "2026-03-15", "summary": "Structured Logging Foundation (Layer 1) — structlog with stdlib bridge. Central config (core/shared_tools/structured_logging.py), 3 Settings fields, middleware rewrite (correlation IDs, context propagation), 14 runner functions, 5 scripts, 2 print eliminations. Codex-reviewed (6 findings incorporated). 22 new tests."},
       {"sprint": "structured-logging-layer2-v18", "date": "2026-03-15", "summary": "Structured Logging Layer 2 — Correlation & Context Propagation. 8 phases: get_context_value+scoped_bind, X-Request-ID+middleware hardening, LangSmith trace linkage, SSE context binding (PB-83), auth failure logging (PB-84), per-step/per-agent binding (PB-85), run_id binding in runners, async context propagation tests. Codex-reviewed. 48 new tests. 3 backlog items resolved."},
-      {"sprint": "r2-blob-storage-phase0-v19", "date": "2026-03-24", "summary": "R2 Blob Storage Phase 0 — Infrastructure Layer. R2StorageBackend (S3-compatible, 8 methods), binary read/write on ABC + Local, factory switching (STORAGE_BACKEND=local|r2), path traversal protection, paginated list_dir, exists() dir-prefix fallback, per-field config validation, lazy boto3 import. Codex-reviewed (GPT-5.3-Codex: 9 findings, 5 fixed). 84 new tests. Zero regressions on 790 existing research tests."}
+      {"sprint": "r2-blob-storage-phase0-v19", "date": "2026-03-24", "summary": "R2 Blob Storage Phase 0 — Infrastructure Layer. R2StorageBackend (S3-compatible, 8 methods), binary read/write on ABC + Local, factory switching (STORAGE_BACKEND=local|r2), path traversal protection, paginated list_dir, exists() dir-prefix fallback, per-field config validation, lazy boto3 import. Codex-reviewed (GPT-5.3-Codex: 9 findings, 5 fixed). 84 new tests. Zero regressions on 790 existing research tests."},
+      {"sprint": "r2-blob-storage-migration-v20", "date": "2026-03-25", "summary": "R2 Blob Storage Phases 1-6. Phase 1: Gap Analysis retrofit — all 49 bypasses replaced with StorageBackend (pipeline.py, s1-s8 steps, gap_data_service, gap_context_helper, gap_analysis router). Phase 2: Content Engine v1.3 — pipeline_v13 _load_artifact_text/_load_artifact_json accept StorageBackend, content_data_service mtime→TTL caching. Phase 3: Site Audit → DB-primary (not R2). Phase 4: AP/VSG cross-pipeline — runner resolve_artifacts, brand_data_service, companies/KB/AP routers, knowledge_doc_service all use StorageBackend. Phase 5: All mtime-based caches replaced with TTL-based (gap=5min, content=60-120s, audit=10min, brand=5min). Phase 6: knowledge_doc_service upload via write_bytes, s1 knowledge doc loading via read_bytes + extract_text_from_bytes. ~92 bypasses eliminated across 55 files, ~715 net lines added. 5 new test files, 18 existing test files updated."}
     ]
   },
   "completed": [
+    {
+      "id": "T-cms-codex-fixes-f1-f10",
+      "task": "CMS Codex Review Fixes F1-F10. F1: publish_brief/refresh_post persist published_url/published_at on ContentPieceModel via content_repo.update(). F2: toBrief() maps published_url/published_at, removed 3 unsafe 'as unknown as' casts in KanbanBoard. F3: inFlightRef guard on all 5 CMS mutation hooks (race-condition prevention). F4: mutatePrefix() helper for SWR key-prefix matching on parameterized cache keys. F5: handleConnect surfaces connected:false error via toast. F6: isSyncActive prop disables sync while SSE stream active. F7: safePathname() try/catch prevents new URL() crash. F8: warning field in queue_stale_for_refresh response + conditional toast. F9: isSafeUrl() helper in utils.ts guards all 4 external href locations. F10: PublishDrawer a11y — role=dialog, aria-modal, Escape handler, auto-focus, type=button.",
+      "sprint": "cms-integration-v21",
+      "status": "done",
+      "completed_at": "2026-03-26",
+      "files_modified": [
+        "core/services/cms_service.py",
+        "api/schemas/cms.py",
+        "api/schemas/content_data.py",
+        "core/services/db_content_data.py",
+        "frontend/src/lib/utils.ts",
+        "frontend/src/lib/api/types.ts",
+        "frontend/src/lib/api/transforms.ts",
+        "frontend/src/lib/hooks/useCMS.ts",
+        "frontend/src/app/(dashboard)/settings/_components/IntegrationsTab.tsx",
+        "frontend/src/app/(dashboard)/settings/_components/CMSConnectedState.tsx",
+        "frontend/src/app/(dashboard)/settings/_components/CMSSyncedPostsTable.tsx",
+        "frontend/src/app/(dashboard)/content/_components/KanbanBoard.tsx",
+        "frontend/src/app/(dashboard)/content/_components/PublishDrawer.tsx",
+        "frontend/src/app/(dashboard)/_components/home/StaleContentActions.tsx",
+        "frontend/src/app/(dashboard)/page.tsx"
+      ]
+    },
+    {
+      "id": "T-cms-frontend-steps-8-9",
+      "task": "CMS Integration Steps 8-9 — Frontend. Step 8 (Settings): CMSConnectForm (credential form), CMSConnectedState (info + sync progress + disconnect), CMSSyncedPostsTable (read-only table), IntegrationsTab rewrite (real CMS flow replacing static mock). Connect→auto-sync chain. Role gating (viewers read-only). Step 9 (Publish + Stale): PublishDrawer (slide-over with slug editor, status toggle, category multi-select), KanbanBoard integration (publish icon on approved cards, published badge), StaleContentActions (stale content cards on Home Dashboard with Refresh Content → triage). Backend additions: published_url/published_at on ContentBriefListItem, brief stub creation in queue_stale_for_refresh. Foundation: 13 CMS TypeScript types, 11 API endpoints, 10 SWR hooks (5 read + 5 mutation).",
+      "sprint": "cms-integration-v21",
+      "status": "done",
+      "completed_at": "2026-03-26",
+      "tests_passing": {"backend_cms": 62, "frontend": 82},
+      "files_created": [
+        "frontend/src/lib/hooks/useCMS.ts",
+        "frontend/src/app/(dashboard)/settings/_components/CMSConnectForm.tsx",
+        "frontend/src/app/(dashboard)/settings/_components/CMSConnectedState.tsx",
+        "frontend/src/app/(dashboard)/settings/_components/CMSSyncedPostsTable.tsx",
+        "frontend/src/app/(dashboard)/content/_components/PublishDrawer.tsx",
+        "frontend/src/app/(dashboard)/_components/home/StaleContentActions.tsx"
+      ],
+      "files_modified": [
+        "frontend/src/lib/api/types.ts",
+        "frontend/src/lib/api/endpoints.ts",
+        "frontend/src/lib/api/transforms.ts",
+        "frontend/src/app/(dashboard)/settings/_components/IntegrationsTab.tsx",
+        "frontend/src/app/(dashboard)/content/page.tsx",
+        "frontend/src/app/(dashboard)/content/_components/KanbanBoard.tsx",
+        "frontend/src/app/(dashboard)/page.tsx",
+        "api/schemas/content_data.py",
+        "core/services/db_content_data.py",
+        "core/services/cms_service.py",
+        "api/dependencies.py"
+      ]
+    },
+    {
+      "id": "T-cms-integration-steps-6-7",
+      "task": "CMS Integration Steps 6-7 — API router + DI wiring + tests. Step 6: api/schemas/cms.py (9 Pydantic models), api/routers/cms.py (11 endpoints: connect, get_connection, disconnect, sync, synced-posts, stale-actions, stale-to-triage, publish, refresh, publish-history, categories), api/dependencies.py (get_cms_service async generator, DB-required, no JSON fallback), api/tasks/runner.py (run_cms_sync_task with own DB session), api/tasks/models.py (+cms_sync to PipelineTask Literal), api/app.py (mount cms.router). Step 7: tests/api/test_cms.py (49 tests across 11 test classes). Codex F2 fix: tenant isolation in queue_stale_for_refresh. Codex F4 fix: added GET /categories endpoint. Codex F8 fix: reconnect uses UPDATE instead of deactivate+insert (preserves FK refs). Also added 3 CMSService methods: list_synced_posts, list_publish_history, list_categories.",
+      "sprint": "cms-integration-v21",
+      "status": "done",
+      "completed_at": "2026-03-26",
+      "tests_added": 49,
+      "files_created": [
+        "api/schemas/cms.py",
+        "api/routers/cms.py",
+        "tests/api/test_cms.py"
+      ],
+      "files_modified": [
+        "api/dependencies.py",
+        "api/app.py",
+        "api/tasks/models.py",
+        "api/tasks/runner.py",
+        "core/services/cms_service.py"
+      ],
+      "key_architectural_decisions": [
+        "CMSService DI: standalone orchestrator, NOT Protocol→Json→Db — requires DB (503 if no DATABASE_URL/CMS_FERNET_KEY)",
+        "Background sync: run_cms_sync_task creates own session (DI session closed after router 202 response)",
+        "Codex F2: queue_stale_for_refresh verifies post.company_slug == company_slug (tenant isolation)",
+        "Codex F4: GET /categories endpoint for publish UI category selector",
+        "Codex F8: connect() UPDATEs existing row in-place instead of deactivate+insert (preserves FK references)",
+        "All IDs are str (UUID) in schemas (D2: UUIDPKMixin), site_url is str (D9: HttpUrl breaks concat)"
+      ]
+    },
+    {
+      "id": "T-cms-integration-steps-1-5",
+      "task": "CMS Integration Steps 1-5 — Domain layer, WordPress adapter, factory, CMS service orchestrator, ORM + migration.",
+      "sprint": "cms-integration-v21",
+      "status": "done",
+      "completed_at": "2026-03-26",
+      "tests_added": 93,
+      "files_created": [
+        "core/cms/__init__.py",
+        "core/cms/exceptions.py",
+        "core/cms/models.py",
+        "core/cms/protocols.py",
+        "core/cms/adapters/__init__.py",
+        "core/cms/adapters/wordpress.py",
+        "core/cms/factory.py",
+        "core/services/cms_service.py",
+        "core/db/models/cms.py",
+        "core/db/repositories/cms_repo.py",
+        "core/db/migrations/versions/0021_cms_integration.py",
+        "tests/cms/__init__.py",
+        "tests/cms/test_exceptions.py",
+        "tests/cms/test_models.py",
+        "tests/cms/test_protocols.py",
+        "tests/cms/test_wordpress_adapter.py",
+        "tests/cms/test_factory.py",
+        "tests/cms/test_cms_enums.py",
+        "tests/services/test_cms_service.py"
+      ],
+      "files_modified": [
+        "core/db/enums.py",
+        "core/db/models/__init__.py",
+        "core/config/settings.py",
+        "requirements.txt"
+      ],
+      "key_architectural_decisions": [
+        "Adapter pattern: CMSAdapterProtocol → concrete adapters (WordPressAdapter v1)",
+        "CMSService is standalone orchestrator, NOT Protocol→Json→Db data service",
+        "Fernet symmetric encryption for CMS credentials (cryptography library)",
+        "StorageBackend.read() via asyncio.to_thread() for artifact reads (R2-compatible)",
+        "markdown library with [tables, fenced_code, toc, attr_list] for MD→HTML",
+        "UUID PKs via UUIDPKMixin (not Integer), modern mapped_column() ORM style",
+        "Enums in core/db/enums.py (lowercase values), re-exported from core/cms/models.py",
+        "content_preview sanitized: HTML tags stripped, first 500 chars only",
+        "Publish updates ContentPieceModel.published_at/published_url (cross-link to CMS)"
+      ]
+    },
+    {
+      "id": "T-r2-blob-storage-phases-1-6",
+      "task": "R2 Blob Storage Phases 1-6 — Full pipeline retrofit + service layer migration + cache overhaul. Phase 1 (Gap Analysis, ~49 bypasses): _artifact_dir→_ga_prefix, all step files (s1-s8) accept StorageBackend+prefix, pipeline.py orchestrator uses storage for all skip-resume reads/writes, Plotly fig.write_html→fig.to_html()+storage.write(), gap_data_service/gap_context_helper/gap_analysis router all migrated. Phase 2 (Content Engine, ~8 bypasses): pipeline_v13 _load_artifact_text/_load_artifact_json accept optional StorageBackend (storage-first, filesystem-fallback for absolute paths), content_data_service overhauled (TTL caching, StorageBackend reads). Phase 3 (Site Audit): changed plan to DB-primary — structured data better served by PostgreSQL. site_audit_repo.exists_for_slug_and_domain() added, db_site_audit_data.audit_exists_for_slug() added. Phase 4 (Cross-pipeline, ~15 bypasses): runner.py resolve_artifacts accepts optional backend, brand_data_service _detect_artifact/_detect_personas use StorageBackend, companies/KB/AP/knowledge_docs routers use app.state.storage_backend, knowledge_doc_service upload/download via StorageBackend. Phase 5 (Cache invalidation): all mtime-based caches replaced with TTL-based (time.monotonic), TTLs: gap=5min, content=60-120s, audit=10min, brand=5min, gap_context=5min. Phase 6 (Binary upload+loader): knowledge_doc_service writes via storage.write_bytes(), s1_embed_assets reads knowledge docs via storage.read_bytes()+extract_text_from_bytes(), AP agents._load_knowledge_docs same pattern. New shared tool: extract_text_from_bytes() in text_extraction.py.",
+      "sprint": "r2-blob-storage-migration-v20",
+      "status": "done",
+      "completed_at": "2026-03-25",
+      "tests_added": 43,
+      "tests_modified": 18,
+      "files_created": [
+        "tests/content_engine/test_load_artifact_storage.py",
+        "tests/core/test_text_extraction.py",
+        "tests/gap_analysis/steps/test_s2_read_text.py",
+        "tests/gap_analysis/test_gap_analysis_model.py",
+        "tests/services/test_gap_context_helper.py"
+      ],
+      "files_modified": [
+        "core/gap_analysis/pipeline.py",
+        "core/gap_analysis/steps/s1_embed_assets.py",
+        "core/gap_analysis/steps/s2_generate_queries.py",
+        "core/gap_analysis/steps/s3_search_platforms.py",
+        "core/gap_analysis/steps/s4_enrich_citations.py",
+        "core/gap_analysis/steps/s5_embed_content.py",
+        "core/gap_analysis/steps/s7_visualize.py",
+        "core/gap_analysis/steps/s8_generate_report.py",
+        "core/models/gap_analysis.py",
+        "core/content_engine/pipeline_v13.py",
+        "core/daily_tracker/prompt_library.py",
+        "core/research/audience_persona/agents.py",
+        "core/research/audience_persona/pipeline.py",
+        "core/shared_tools/knowledge_doc_metadata.py",
+        "core/shared_tools/text_extraction.py",
+        "core/storage/backends/base.py",
+        "core/storage/backends/r2.py",
+        "core/db/repositories/site_audit_repo.py",
+        "core/services/db_gap_data.py",
+        "core/services/db_site_audit_data.py",
+        "core/services/gap_context_helper.py",
+        "core/services/json_brand_data.py",
+        "core/services/json_content_data.py",
+        "core/services/json_gap_data.py",
+        "core/services/json_site_audit_data.py",
+        "api/dependencies.py",
+        "api/routers/audience_persona.py",
+        "api/routers/companies.py",
+        "api/routers/gap_analysis.py",
+        "api/routers/knowledge_base.py",
+        "api/routers/knowledge_docs.py",
+        "api/services/brand_data_service.py",
+        "api/services/content_data_service.py",
+        "api/services/gap_data_service.py",
+        "api/services/knowledge_doc_service.py",
+        "api/tasks/runner.py"
+      ],
+      "key_architectural_decisions": [
+        "TTL-based caching replaces mtime-based everywhere (R2 has no local st_mtime_ns)",
+        "pipeline_state.json stays on local filesystem (earmarked for Redis, NOT R2)",
+        "Non-local backends must NOT fall back to filesystem reads (H3 fix in s2 _read_text)",
+        "Blocking I/O moved off event loop via asyncio.to_thread (H6 fix)",
+        "GapAnalysisInput.knowledge_doc_slug backfills from deprecated knowledge_doc_dir (backward compat)",
+        "Site audit stays DB-primary — structured data, runs daily, PostgreSQL better fit than blob storage",
+        "knowledge_doc download: FileResponse→Response with storage.read_bytes() (no filesystem path needed)",
+        "_LOCAL_BACKEND_CACHE in gap_context_helper (max 20) avoids per-call LocalStorageBackend instantiation",
+        "R2StorageBackend gains retry config (max_attempts=5) and error logging on write"
+      ]
+    },
     {
       "id": "T-r2-blob-storage-phase0",
       "task": "R2 Blob Storage Phase 0 — Infrastructure Layer. 8 steps: (1) R2 settings fields in core/config/settings.py (6 fields + effective_r2_endpoint_url property), (2) read_bytes/write_bytes abstract methods on StorageBackend ABC, (3) LocalStorageBackend binary methods (atomic writes), (4) R2StorageBackend implementation (8 methods, paginated list_dir, path traversal validation, exists() prefix fallback, proper error propagation), (5) Factory switching with per-field validation, (6) App startup wiring via factory, (7) Lazy exports (boto3 not imported unless STORAGE_BACKEND=r2), (8) .env.example + boto3 dependency. Codex-reviewed (GPT-5.3-Codex: exists() error masking, list_dir missing validation, dir-prefix contract mismatch — all fixed).",
