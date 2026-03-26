@@ -115,11 +115,10 @@ def resolve_artifacts(
     """Auto-discover approved research artifacts for a company slug.
 
     Only resolves final (approved) artifacts — ignores .draft.md files.
-    When backend is LocalStorageBackend, returns absolute filesystem paths
-    for backward compatibility with downstream consumers.
+    Always returns relative storage keys compatible with any backend.
     """
-    from core.storage.backends.local import LocalStorageBackend
-    _backend = backend or LocalStorageBackend(artifacts_root)
+    from core.storage import get_storage_backend
+    _backend = backend or get_storage_backend(artifacts_root)
 
     resolved: Dict[str, Any] = {
         "company_context_path": None,
@@ -132,13 +131,10 @@ def resolve_artifacts(
     for lookup in candidates:
         key = f"company_context/{lookup}.md"
         if _backend.exists(key):
-            if isinstance(_backend, LocalStorageBackend):
-                resolved["company_context_path"] = str(_backend.root / key)
-            else:
-                resolved["company_context_path"] = key
+            resolved["company_context_path"] = key
             break
 
-    # Personas: via PersonaStorage (no legacy fallback)
+    # Personas: via PersonaStorage
     for lookup in candidates:
         try:
             from core.research.audience_persona.storage import PersonaStorage
@@ -154,10 +150,7 @@ def resolve_artifacts(
     for lookup in candidates:
         key = f"style_guides/{lookup}.md"
         if _backend.exists(key):
-            if isinstance(_backend, LocalStorageBackend):
-                resolved["style_guide_path"] = str(_backend.root / key)
-            else:
-                resolved["style_guide_path"] = key
+            resolved["style_guide_path"] = key
             break
 
     return resolved
@@ -1839,4 +1832,78 @@ async def run_daily_tracker_task(
         if daily_run_id and session_factory:
             from core.daily_tracker.persistence import mark_daily_run_failed as _mark_dt_failed
             await _mark_dt_failed(session_factory, daily_run_id)
+        clear_context()
+
+
+# ── CMS sync pipeline runner ────────────────────────────────────────
+
+
+async def run_cms_sync_task(
+    task_id: str,
+    company_slug: str,
+    tenant_id: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    session_factory: Any,
+    storage: Any,
+    fernet_key: str,
+) -> None:
+    """Background task wrapper for CMS content sync.
+
+    Creates its own DB session and CMSService instance (the DI session
+    from the router is closed by the time the background task runs).
+    """
+    bind_context(task_id=task_id, pipeline_name="cms_sync", company_slug=company_slug)
+    task_store.update_task(task_id, status=TaskStatus.RUNNING, current_step="sync")
+    event_bus.publish(task_id, "pipeline_start", {"pipeline": "cms_sync"})
+
+    try:
+        async with task_store.pipeline_semaphore(task_id):
+            from core.db.repositories.cms_repo import (
+                CMSConnectionRepository,
+                CMSPublishRecordRepository,
+                CMSSyncedPostRepository,
+            )
+            from core.services.cms_service import CMSService
+
+            session = session_factory()
+            try:
+                svc = CMSService(
+                    connection_repo=CMSConnectionRepository(session),
+                    publish_repo=CMSPublishRecordRepository(session),
+                    synced_post_repo=CMSSyncedPostRepository(session),
+                    storage=storage,
+                    fernet_key=fernet_key,
+                )
+
+                connection = await svc.get_connection(company_slug, tenant_id)
+                if connection is None:
+                    raise RuntimeError("CMS connection not found")
+
+                result = await svc.sync_existing_content(company_slug, connection)
+                await session.commit()
+
+                task_store.update_task(
+                    task_id,
+                    status=TaskStatus.COMPLETED,
+                    result=result,
+                )
+                event_bus.publish(task_id, "completed", {"pipeline": "cms_sync", **result})
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+
+    except asyncio.CancelledError:
+        logger.info("CMS sync task %s cancelled", task_id)
+    except Exception as exc:
+        logger.exception("CMS sync task %s failed: %s", task_id, exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(f"cms_sync:{company_slug}")
+        task_store.remove_task_handle(task_id)
         clear_context()

@@ -242,16 +242,16 @@ class TestGuide:
 class TestPromotion:
     def test_promote_to_style_guides(self, storage: VoiceStyleGuideStorage, tmp_path: Path):
         storage.write_guide("# Final Voice Guide\n\nContent here.")
-        path = storage.promote_to_style_guides(tmp_path)
+        path = storage.promote_to_style_guides()
 
         assert path is not None
-        assert Path(path).exists()
-        assert Path(path).name == "ramp.md"
-        content = Path(path).read_text(encoding="utf-8")
+        assert path == "style_guides/ramp.md"
+        # Verify file written via backend (works for both local and R2)
+        content = (tmp_path / path).read_text(encoding="utf-8")
         assert "Final Voice Guide" in content
 
     def test_promote_no_guide_returns_none(self, storage: VoiceStyleGuideStorage, tmp_path: Path):
-        path = storage.promote_to_style_guides(tmp_path)
+        path = storage.promote_to_style_guides()
         assert path is None
 
     def test_promote_overwrites_existing(self, storage: VoiceStyleGuideStorage, tmp_path: Path):
@@ -261,7 +261,7 @@ class TestPromotion:
         (sg_dir / "ramp.md").write_text("old guide", encoding="utf-8")
 
         storage.write_guide("new guide from VSG pipeline")
-        storage.promote_to_style_guides(tmp_path)
+        storage.promote_to_style_guides()
 
         content = (sg_dir / "ramp.md").read_text(encoding="utf-8")
         assert content == "new guide from VSG pipeline"

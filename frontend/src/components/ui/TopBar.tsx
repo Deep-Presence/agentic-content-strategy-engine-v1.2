@@ -11,6 +11,7 @@ const routeLabels: Record<string, string> = {
   '/analytics': 'Analytics',
   '/analytics/lab': 'Deep Embedding Lab',
   '/content': 'Content Studio',
+  '/content/synced': 'Synced Content',
   '/planner': 'Content Planner',
   '/artifacts': 'Brand Artifacts',
   '/attribution': 'Attribution',

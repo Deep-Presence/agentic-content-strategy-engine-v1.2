@@ -165,3 +165,25 @@ class ResearchRunStatus(str, Enum):
     hitl_pending = "hitl_pending"
     completed = "completed"
     failed = "failed"
+
+
+# ── CMS Integration ──────────────────────────────────────────────────
+class CMSProvider(str, Enum):
+    wordpress = "wordpress"
+    webflow = "webflow"
+    strapi = "strapi"
+    ghost = "ghost"
+    hubspot = "hubspot"
+
+
+class CMSPostStatus(str, Enum):
+    draft = "draft"
+    publish = "publish"
+    pending = "pending"
+    private = "private"
+
+
+class CMSPublishAction(str, Enum):
+    create = "create"
+    update = "update"
+    refresh = "refresh"

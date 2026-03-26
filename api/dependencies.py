@@ -811,3 +811,64 @@ class _DbResponseDataProvider:
                 "citation_rank": row.citation_rank,
             },
         }
+
+
+# ── CMS Service ────────────────────────────────────────────────────────
+
+
+async def get_cms_service(
+    request: Request,
+) -> AsyncGenerator[Any, None]:
+    """Return the CMS service with proper DB session lifecycle.
+
+    CMS requires DB (encrypted credentials in Postgres).
+    No JSON fallback — raises 503 if DATABASE_URL or CMS_FERNET_KEY not set.
+    Tests bypass DI entirely via ``app.state.cms_service`` pre-built override.
+    """
+    # 1. Pre-built override (tests set app.state.cms_service)
+    service = getattr(request.app.state, "cms_service", None)
+    if service is not None:
+        yield service
+        return
+
+    # 2. Require DB
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(
+            status_code=503,
+            detail="CMS requires database — set DATABASE_URL",
+        )
+
+    from core.config.settings import settings
+
+    if not settings.cms_fernet_key:
+        raise HTTPException(
+            status_code=503,
+            detail="CMS requires CMS_FERNET_KEY to be set",
+        )
+
+    session = sf()
+    try:
+        from core.db.repositories.cms_repo import (
+            CMSConnectionRepository,
+            CMSPublishRecordRepository,
+            CMSSyncedPostRepository,
+        )
+        from core.db.repositories.content_repo import ContentRepository
+        from core.services.cms_service import CMSService
+
+        svc = CMSService(
+            connection_repo=CMSConnectionRepository(session),
+            publish_repo=CMSPublishRecordRepository(session),
+            synced_post_repo=CMSSyncedPostRepository(session),
+            storage=get_storage_backend(request),
+            fernet_key=settings.cms_fernet_key,
+            content_repo=ContentRepository(session),
+        )
+        yield svc
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()

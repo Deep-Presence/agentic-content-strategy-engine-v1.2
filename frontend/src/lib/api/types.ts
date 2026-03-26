@@ -301,6 +301,8 @@ export interface ContentBriefItem {
   created_at: string;
   updated_at: string;
   gap_context: GapContextSummary | null;
+  published_url: string;
+  published_at: string | null;
 }
 
 export interface ContentBriefListResponse {
@@ -486,4 +488,122 @@ export interface PipelineDefaultsResponse {
   max_revision_cycles: number | null;
   auto_approve_content: boolean;
   updated_at: string | null;
+}
+
+// ── CMS Integration ──────────────────────────────────────────────────
+
+export interface CMSConnectPayload {
+  provider: string;
+  site_url: string;
+  username: string;
+  api_key: string;
+}
+
+export interface CMSConnectResponse {
+  connected: boolean;
+  site_name: string;
+  site_url: string;
+  cms_version: string;
+  user_display_name: string;
+  error: string | null;
+}
+
+export interface CMSConnectionInfo {
+  provider: string;
+  site_url: string;
+  site_name: string;
+  cms_version: string;
+  user_display_name: string;
+  is_active: boolean;
+  last_sync_at: string | null;
+  sync_post_count: number;
+}
+
+export interface CMSPublishPayload {
+  brief_id: string;
+  effective_slug?: string;
+  product_slug?: string;
+  status: 'draft' | 'publish';
+  slug_override?: string;
+  categories: string[];
+}
+
+export interface CMSRefreshPayload {
+  brief_id: string;
+  effective_slug?: string;
+  product_slug?: string;
+}
+
+export interface CMSStaleToTriagePayload {
+  cms_synced_post_id: string;
+}
+
+export interface CMSPublishResponse {
+  cms_post_id: string;
+  url: string;
+  slug: string;
+  title: string;
+  status: string;
+  word_count: number;
+}
+
+export interface CMSSyncedPostSummary {
+  id: string;
+  cms_post_id: string;
+  title: string;
+  slug: string;
+  url: string;
+  word_count: number;
+  published_at: string | null;
+  modified_at: string | null;
+  is_stale: boolean;
+  staleness_days: number;
+  categories: string[];
+  queued_for_refresh: boolean;
+}
+
+export interface StaleContentAction {
+  cms_synced_post_id: string;
+  cms_post_id: string;
+  title: string;
+  url: string;
+  staleness_days: number;
+  description: string;
+  queued_for_refresh: boolean;
+}
+
+export interface StaleToTriageResponse {
+  brief_id: string;
+  title: string;
+  status: string;
+  warning: string;
+}
+
+export interface CMSCategoryItem {
+  cms_id: string;
+  name: string;
+  slug: string;
+  parent_id: string | null;
+  post_count: number;
+}
+
+export interface CMSPublishHistoryItem {
+  id: string;
+  brief_id: string;
+  effective_slug: string;
+  cms_post_id: string;
+  cms_post_url: string;
+  cms_post_slug: string;
+  action: string;
+  status_at_publish: string;
+  published_at: string | null;
+  title_published: string;
+  word_count: number;
+}
+
+export interface CMSSyncTriggerResponse {
+  run_id: string;
+  pipeline: string;
+  status: string;
+  company_slug: string;
 }

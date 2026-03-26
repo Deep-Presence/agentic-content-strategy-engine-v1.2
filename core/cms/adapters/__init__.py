@@ -1,0 +1,1 @@
+"""CMS adapter implementations."""

@@ -192,9 +192,9 @@ async def run_voice_style_guide_pipeline(
         _emit(event_bus, task_id, "vsg_phase_start", {"phase": 0, "agents": ["preflight"]})
 
         # Load company context
-        from core.storage.backends import LocalStorageBackend
+        from core.storage import get_storage_backend
 
-        _backend = LocalStorageBackend(root)
+        _backend = get_storage_backend(root)
         company_md = read_company_context(_backend, effective_slug, company_slug) or ""
 
         if not company_md.strip():
@@ -443,7 +443,7 @@ async def run_voice_style_guide_pipeline(
 
         # Promote to style_guides/
         style_guide_path = await asyncio.to_thread(
-            storage.promote_to_style_guides, root,
+            storage.promote_to_style_guides,
         ) or ""
 
         # Update manifest

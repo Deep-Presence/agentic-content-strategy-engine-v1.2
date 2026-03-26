@@ -1,15 +1,18 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { EmptyState, Skeleton } from '@/components/ui';
+import { EmptyState, Skeleton, Toast } from '@/components/ui';
 import { ActiveTasks } from './_components/home/ActiveTasks';
 import { HITLReviews } from './_components/home/HITLReviews';
 import { RecentActivity } from './_components/home/RecentActivity';
 import { RecommendedActions } from './_components/home/RecommendedActions';
+import { StaleContentActions } from './_components/home/StaleContentActions';
+import { PipelineRerunCard } from './_components/home/PipelineRerunCard';
 import { useAuthStore } from '@/stores/auth';
 import { useApiQuery } from '@/lib/hooks/useApiQuery';
 import { useGapSummary } from '@/lib/hooks/useGapAnalysis';
+import { useCMSStaleActions, useCMSStaleToTriage } from '@/lib/hooks/useCMS';
 import { GAP_DATA, CONTENT_DATA, SITE_AUDIT, TASKS } from '@/lib/api/endpoints';
 import type { QueryListResponse } from '@/lib/api/types';
 
@@ -64,6 +67,24 @@ export default function HomePage() {
   const { data: tasksData, isLoading: tasksLoading } = useApiQuery<
     { task_id: string }[]
   >(`${TASKS.list}?status=running`);
+
+  // CMS stale content
+  const { data: staleActions } = useCMSStaleActions();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { queueForRefresh, isQueuing, queuingId } = useCMSStaleToTriage();
+  const [queuedIds, setQueuedIds] = useState<Set<string>>(new Set());
+  const [staleToast, setStaleToast] = useState({ open: false, message: '' });
+
+  const handleQueueRefresh = useCallback(async (cmsSyncedPostId: string) => {
+    const result = await queueForRefresh(cmsSyncedPostId);
+    if (result) {
+      setQueuedIds((prev) => new Set(prev).add(cmsSyncedPostId));
+      const msg = result.warning
+        ? `"${result.title}" queued — but triage tile could not be created`
+        : `"${result.title}" queued for refresh — view in Content Studio`;
+      setStaleToast({ open: true, message: msg });
+    }
+  }, [queueForRefresh]);
 
   const loading = gapLoading || briefsLoading || auditsLoading || tasksLoading;
 
@@ -220,6 +241,19 @@ export default function HomePage() {
         />
       )}
 
+      {/* Stale CMS Content */}
+      {staleActions && staleActions.length > 0 && (
+        <StaleContentActions
+          actions={staleActions}
+          onQueueRefresh={handleQueueRefresh}
+          queuingId={queuingId}
+          queuedIds={queuedIds}
+        />
+      )}
+
+      {/* Pipeline Re-run */}
+      <PipelineRerunCard companyName={companyName} companyDomain={companyDomain} />
+
       {/* Two-column layout for tasks + reviews */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <ActiveTasks />
@@ -228,6 +262,13 @@ export default function HomePage() {
 
       {/* Recent Activity */}
       <RecentActivity />
+
+      <Toast
+        open={staleToast.open}
+        onClose={() => setStaleToast({ ...staleToast, open: false })}
+        variant="success"
+        message={staleToast.message}
+      />
     </div>
   );
 }
