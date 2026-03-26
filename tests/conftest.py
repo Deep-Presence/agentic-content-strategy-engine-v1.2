@@ -2,10 +2,16 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Force local storage backend for ALL tests — must run before settings import
+# ---------------------------------------------------------------------------
+os.environ.setdefault("STORAGE_BACKEND", "local")
 
 
 # ---------------------------------------------------------------------------
