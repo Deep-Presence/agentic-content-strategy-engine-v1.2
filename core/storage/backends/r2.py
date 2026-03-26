@@ -177,6 +177,9 @@ class R2StorageBackend(StorageBackend):
         handle buckets with >1000 keys. Combines ``Contents`` keys and
         ``CommonPrefixes`` entries, strips trailing ``/`` from prefixes,
         and returns a sorted list matching LocalStorageBackend behavior.
+
+        Returns an empty list if the prefix does not exist (handles
+        Cloudflare R2's NoSuchKey on ListObjectsV2 for missing prefixes).
         """
         self._validate_path(prefix)
         # Normalize prefix: ensure trailing /
@@ -184,26 +187,31 @@ class R2StorageBackend(StorageBackend):
             prefix = prefix + "/"
 
         entries: list[str] = []
-        paginator = self._client.get_paginator("list_objects_v2")
-        page_iterator = paginator.paginate(
-            Bucket=self._bucket_name,
-            Prefix=prefix,
-            Delimiter="/",
-        )
+        try:
+            paginator = self._client.get_paginator("list_objects_v2")
+            page_iterator = paginator.paginate(
+                Bucket=self._bucket_name,
+                Prefix=prefix,
+                Delimiter="/",
+            )
 
-        for page in page_iterator:
-            # Files at this level
-            for obj in page.get("Contents", []):
-                key = obj["Key"]
-                # Skip directory markers (key == prefix itself)
-                if key == prefix:
-                    continue
-                entries.append(key)
+            for page in page_iterator:
+                # Files at this level
+                for obj in page.get("Contents", []):
+                    key = obj["Key"]
+                    # Skip directory markers (key == prefix itself)
+                    if key == prefix:
+                        continue
+                    entries.append(key)
 
-            # Sub-prefixes (subdirectories)
-            for cp in page.get("CommonPrefixes", []):
-                # Strip trailing / to match LocalStorageBackend behavior
-                entries.append(cp["Prefix"].rstrip("/"))
+                # Sub-prefixes (subdirectories)
+                for cp in page.get("CommonPrefixes", []):
+                    # Strip trailing / to match LocalStorageBackend behavior
+                    entries.append(cp["Prefix"].rstrip("/"))
+        except ClientError as exc:
+            if self._is_not_found(exc):
+                return []
+            raise
 
         return sorted(entries)
 
