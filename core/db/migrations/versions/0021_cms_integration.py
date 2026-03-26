@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import ENUM as PgENUM
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 
 revision: str = "0021"
@@ -66,11 +67,7 @@ def upgrade() -> None:
         sa.Column("company_slug", sa.String, nullable=False),
         sa.Column(
             "provider",
-            sa.Enum(
-                "wordpress", "webflow", "strapi", "ghost", "hubspot",
-                name="cms_provider_enum",
-                create_type=False,
-            ),
+            PgENUM(name="cms_provider_enum", create_type=False),
             nullable=False,
         ),
         sa.Column("site_url", sa.String(512), nullable=False),
@@ -126,20 +123,12 @@ def upgrade() -> None:
         sa.Column("cms_post_slug", sa.String(512), server_default=""),
         sa.Column(
             "action",
-            sa.Enum(
-                "create", "update", "refresh",
-                name="cms_publish_action_enum",
-                create_type=False,
-            ),
+            PgENUM(name="cms_publish_action_enum", create_type=False),
             nullable=False,
         ),
         sa.Column(
             "status_at_publish",
-            sa.Enum(
-                "draft", "publish", "pending", "private",
-                name="cms_post_status_enum",
-                create_type=False,
-            ),
+            PgENUM(name="cms_post_status_enum", create_type=False),
             server_default="draft",
         ),
         sa.Column(
