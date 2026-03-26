@@ -1,7 +1,7 @@
 """Service layer for Brand Brain + Run History endpoints (Phase 4).
 
 Follows the same patterns as gap_data_service.py and content_data_service.py:
-- Module-level mtime-based cache with FIFO eviction
+- Module-level TTL-based cache with FIFO eviction
 - Slug validation via regex
 - Path traversal protection via is_relative_to
 - Service functions return data; routers handle HTTP concerns
@@ -14,6 +14,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from core.storage.backends.base import StorageBackend
 
 from fastapi import HTTPException
 
@@ -67,174 +69,69 @@ def _safe_float(val: Any) -> float:
 # ── File utilities ───────────────────────────────────────────────────
 
 
-def _mtime_iso(path: Path) -> Optional[str]:
-    """Get file mtime as ISO8601 string, or None if file doesn't exist."""
-    try:
-        stat = path.stat()
-        dt = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
-        return dt.isoformat()
-    except (OSError, ValueError):
-        return None
-
-
 # ══════════════════════════════════════════════════════════════════════
 #  ENDPOINT 1: Research Artifacts
 # ══════════════════════════════════════════════════════════════════════
 
 
 def _detect_artifact(
-    artifacts_root: Path, type_name: str, slug: str
+    artifacts_root: Path, type_name: str, slug: str,
+    *, backend: Optional[StorageBackend] = None,
 ) -> ArtifactContent:
     """Detect artifact status and read content.
 
     Checks {slug}.md (approved) first, then {slug}.draft.md (draft).
     Returns ArtifactContent with content, status, updated_at.
     """
-    type_dir = artifacts_root / type_name
-    if not type_dir.is_dir():
-        return ArtifactContent()
-
-    approved_path = type_dir / f"{slug}.md"
-    draft_path = type_dir / f"{slug}.draft.md"
-
-    # Path traversal protection
-    for p in (approved_path, draft_path):
-        if not p.is_relative_to(type_dir):
-            return ArtifactContent()
-
-    if approved_path.is_file():
-        try:
-            content = approved_path.read_text(encoding="utf-8")
-            return ArtifactContent(
-                content=content,
-                status="approved",
-                updated_at=_mtime_iso(approved_path),
-            )
-        except OSError:
-            logger.warning("Failed to read %s", approved_path)
-            return ArtifactContent()
-
-    if draft_path.is_file():
-        try:
-            content = draft_path.read_text(encoding="utf-8")
-            return ArtifactContent(
-                content=content,
-                status="draft",
-                updated_at=_mtime_iso(draft_path),
-            )
-        except OSError:
-            logger.warning("Failed to read %s", draft_path)
-            return ArtifactContent()
-
+    from core.storage.backends.local import LocalStorageBackend
+    _backend = backend or LocalStorageBackend(artifacts_root)
+    content = _backend.read(f"{type_name}/{slug}.md")
+    if content is not None:
+        return ArtifactContent(content=content, status="approved", updated_at=None)
+    content = _backend.read(f"{type_name}/{slug}.draft.md")
+    if content is not None:
+        return ArtifactContent(content=content, status="draft", updated_at=None)
     return ArtifactContent()
 
 
 def _detect_personas(
-    artifacts_root: Path, slug: str
+    artifacts_root: Path, slug: str,
+    *, backend: Optional[StorageBackend] = None,
 ) -> List[PersonaArtifact]:
-    """Find all persona profiles for a slug, read content, detect status.
-
-    Tries the new audience_personas/ storage first (manifest-based, versioned),
-    then falls back to the legacy personas/ directory (flat files).
-    """
-    # --- New audience_personas/ path (primary) ---
+    """Find all persona profiles for a slug, read content, detect status."""
+    from core.storage.backends.local import LocalStorageBackend
+    _backend = backend or LocalStorageBackend(artifacts_root)
     try:
         from core.research.audience_persona.storage import PersonaStorage
-
-        ap_storage = PersonaStorage(artifacts_root, slug)
+        ap_storage = PersonaStorage(artifacts_root, slug, backend=_backend)
         manifest = ap_storage.read_manifest()
-        if manifest.personas:
-            personas: List[PersonaArtifact] = []
-            for pid, entry in manifest.personas.items():
-                if entry.status not in ("fresh", "stale") or entry.current_version == 0:
-                    continue
-                md_path = ap_storage.base_dir / pid / f"v{entry.current_version}.md"
-                if not md_path.exists():
-                    continue
-                try:
-                    content = md_path.read_text(encoding="utf-8")
-                except OSError:
-                    logger.warning("Failed to read persona file %s", md_path)
-                    continue
-                personas.append(
-                    PersonaArtifact(
-                        id=pid,
-                        name=entry.persona_name or pid.replace("-", " ").title(),
-                        type=entry.kind,
-                        content=content,
-                        status="approved",
-                        updated_at=entry.last_updated.isoformat() if entry.last_updated else _mtime_iso(md_path),
-                    )
-                )
-            if personas:
-                return personas
-    except Exception:
-        logger.debug("audience_personas/ lookup failed for %s, trying legacy", slug)
-
-    # --- Legacy personas/ fallback (flat file pattern) ---
-    personas_dir = artifacts_root / "personas"
-    if not personas_dir.is_dir():
-        return []
-
-    prefix = f"{slug}__"
-    approved_files: Dict[str, Path] = {}
-    draft_files: Dict[str, Path] = {}
-
-    for f in sorted(personas_dir.iterdir()):
-        if not f.is_file() or f.name.startswith("."):
-            continue
-        if not f.name.startswith(prefix):
-            continue
-        if not f.is_relative_to(personas_dir):
-            continue
-
-        suffix = f.name[len(prefix):]
-        if not suffix.startswith("persona-"):
-            continue
-
-        if suffix.endswith(".draft.md"):
-            persona_id = suffix[:-len(".draft.md")]
-            draft_files[persona_id] = f
-        elif suffix.endswith(".md"):
-            persona_id = suffix[:-len(".md")]
-            approved_files[persona_id] = f
-
-    all_ids = sorted(set(approved_files.keys()) | set(draft_files.keys()))
-    personas_legacy: List[PersonaArtifact] = []
-
-    for persona_id in all_ids:
-        if persona_id in approved_files:
-            path = approved_files[persona_id]
-            status = "approved"
-        else:
-            path = draft_files[persona_id]
-            status = "draft"
-
-        try:
-            content = path.read_text(encoding="utf-8")
-        except OSError:
-            logger.warning("Failed to read persona file %s", path)
-            continue
-
-        persona_type = "icp" if "icp" in persona_id else "secondary"
-        name = persona_id.replace("-", " ").title()
-
-        personas_legacy.append(
-            PersonaArtifact(
-                id=persona_id,
-                name=name,
-                type=persona_type,
+        if not manifest.personas:
+            return []
+        personas: List[PersonaArtifact] = []
+        for pid, entry in manifest.personas.items():
+            if entry.status not in ("fresh", "stale") or entry.current_version == 0:
+                continue
+            key = f"audience_personas/{slug}/{pid}/v{entry.current_version}.md"
+            content = _backend.read(key)
+            if content is None:
+                continue
+            personas.append(PersonaArtifact(
+                id=pid,
+                name=entry.persona_name or pid.replace("-", " ").title(),
+                type=entry.kind,
                 content=content,
-                status=status,
-                updated_at=_mtime_iso(path),
-            )
-        )
-
-    return personas_legacy
+                status="approved",
+                updated_at=entry.last_updated.isoformat() if entry.last_updated else None,
+            ))
+        return personas
+    except Exception:
+        logger.debug("audience_personas/ lookup failed for %s", slug)
+        return []
 
 
 def get_research_artifacts(
-    artifacts_root: Path, slug: str
+    artifacts_root: Path, slug: str,
+    *, backend: Optional[StorageBackend] = None,
 ) -> ResearchArtifactsResponse:
     """Build research artifacts response — Redis cache first, compute fallback."""
     _validate_slug(slug)
@@ -248,9 +145,9 @@ def get_research_artifacts(
             except Exception:
                 logger.debug("Corrupted brand cache for %s — recomputing", slug)
 
-    company_context = _detect_artifact(artifacts_root, "company_context", slug)
-    style_guide = _detect_artifact(artifacts_root, "style_guides", slug)
-    personas = _detect_personas(artifacts_root, slug)
+    company_context = _detect_artifact(artifacts_root, "company_context", slug, backend=backend)
+    style_guide = _detect_artifact(artifacts_root, "style_guides", slug, backend=backend)
+    personas = _detect_personas(artifacts_root, slug, backend=backend)
 
     result = ResearchArtifactsResponse(
         company_context=company_context,

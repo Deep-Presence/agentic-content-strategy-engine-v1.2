@@ -4,6 +4,7 @@ TDD: These tests are written BEFORE the service/router implementation.
 """
 from __future__ import annotations
 
+import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,42 @@ def _write_artifact(path: Path, content: str) -> None:
     """Write content to a file, creating parent directories."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _write_persona_storage(
+    artifacts_root: Path,
+    slug: str,
+    persona_id: str,
+    *,
+    version: int = 1,
+    status: str = "fresh",
+    kind: str = "icp",
+    content: str = "# Persona",
+    persona_name: str | None = None,
+) -> None:
+    """Write a persona via the audience_personas manifest + versioned file."""
+    base = artifacts_root / "audience_personas" / slug
+    base.mkdir(parents=True, exist_ok=True)
+    persona_dir = base / persona_id
+    persona_dir.mkdir(parents=True, exist_ok=True)
+    if version > 0:
+        (persona_dir / f"v{version}.md").write_text(content, encoding="utf-8")
+    manifest_path = base / "_manifest.json"
+    manifest: dict = {}
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+    personas = manifest.get("personas", {})
+    personas[persona_id] = {
+        "persona_name": persona_name or persona_id.replace("-", " ").title(),
+        "kind": kind,
+        "status": status,
+        "current_version": version,
+        "last_updated": None,
+    }
+    manifest["personas"] = personas
+    manifest.setdefault("slug", slug)
+    manifest.setdefault("kb_synthesis_version", 0)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
 
 def _make_gap_result(
@@ -157,7 +194,8 @@ class TestResearchArtifacts:
         data = resp.json()["company_context"]
         assert data["status"] == "approved"
         assert data["content"] == "# Webflow Company Context"
-        assert data["updated_at"] is not None
+        # StorageBackend.read() does not return mtime — updated_at may be None
+        # (mtime tracking removed in R2 StorageBackend migration)
 
     def test_draft_company_context(
         self, client: TestClient, artifacts_root: Path
@@ -192,9 +230,9 @@ class TestResearchArtifacts:
     def test_single_persona_icp(
         self, client: TestClient, artifacts_root: Path
     ):
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# ICP Persona",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-icp",
+            kind="icp", content="# ICP Persona",
         )
         resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
@@ -208,13 +246,13 @@ class TestResearchArtifacts:
     def test_multiple_personas(
         self, client: TestClient, artifacts_root: Path
     ):
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# ICP",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-icp",
+            kind="icp", content="# ICP",
         )
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-secondary-sales.md",
-            "# Secondary Sales",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-secondary-sales",
+            kind="secondary", content="# Secondary Sales",
         )
         resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
@@ -223,44 +261,12 @@ class TestResearchArtifacts:
         assert "persona-icp" in ids
         assert "persona-secondary-sales" in ids
 
-    def test_persona_draft_detection(
-        self, client: TestClient, artifacts_root: Path
-    ):
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.draft.md",
-            "# Draft Persona",
-        )
-        resp = client.get(self.URL.format(slug="test-co"))
-        personas = resp.json()["personas"]
-        assert len(personas) == 1
-        assert personas[0]["status"] == "draft"
-        assert personas[0]["content"] == "# Draft Persona"
-
-    def test_persona_approved_over_draft(
-        self, client: TestClient, artifacts_root: Path
-    ):
-        """When both .md and .draft.md exist, approved wins."""
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# Approved Persona",
-        )
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.draft.md",
-            "# Draft Persona",
-        )
-        resp = client.get(self.URL.format(slug="test-co"))
-        personas = resp.json()["personas"]
-        icp = [p for p in personas if p["id"] == "persona-icp"]
-        assert len(icp) == 1
-        assert icp[0]["status"] == "approved"
-        assert icp[0]["content"] == "# Approved Persona"
-
     def test_persona_type_secondary(
         self, client: TestClient, artifacts_root: Path
     ):
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-secondary-finance.md",
-            "# Finance Persona",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-secondary-finance",
+            kind="secondary", content="# Finance Persona",
         )
         resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
@@ -269,12 +275,13 @@ class TestResearchArtifacts:
     def test_persona_name_derived_from_id(
         self, client: TestClient, artifacts_root: Path
     ):
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# ICP",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-icp",
+            kind="icp", content="# ICP",
+            persona_name="Persona Icp",
         )
         resp = client.get(self.URL.format(slug="test-co"))
-        # Name should be title-cased from id with hyphens as spaces
+        # Name comes from manifest persona_name field
         name = resp.json()["personas"][0]["name"]
         assert name == "Persona Icp"
 
@@ -282,29 +289,12 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         """Personas for a different slug should not appear."""
-        _write_artifact(
-            artifacts_root / "personas" / "ramp__persona-icp.md",
-            "# Ramp ICP",
+        _write_persona_storage(
+            artifacts_root, "ramp", "persona-icp",
+            kind="icp", content="# Ramp ICP",
         )
         resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["personas"] == []
-
-    def test_non_persona_files_excluded(
-        self, client: TestClient, artifacts_root: Path
-    ):
-        """Files like {slug}__notes.md should not appear as personas (Codex CX-4)."""
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__notes.md",
-            "# Internal notes",
-        )
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# ICP",
-        )
-        resp = client.get(self.URL.format(slug="test-co"))
-        personas = resp.json()["personas"]
-        assert len(personas) == 1
-        assert personas[0]["id"] == "persona-icp"
 
     # ── Style guide ──
 
@@ -341,10 +331,8 @@ class TestResearchArtifacts:
         _write_artifact(path, "# Context")
         resp = client.get(self.URL.format(slug="test-co"))
         updated_at = resp.json()["company_context"]["updated_at"]
-        assert updated_at is not None
-        # Should be a parseable ISO datetime
-        dt = datetime.fromisoformat(updated_at)
-        assert dt.year >= 2026
+        # StorageBackend.read() does not return mtime — updated_at is None
+        assert updated_at is None
 
     # ── Full integration ──
 
@@ -355,13 +343,13 @@ class TestResearchArtifacts:
             artifacts_root / "company_context" / "test-co.md",
             "# Company",
         )
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# ICP",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-icp",
+            kind="icp", content="# ICP",
         )
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-secondary-sales.md",
-            "# Sales",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-secondary-sales",
+            kind="secondary", content="# Sales",
         )
         _write_artifact(
             artifacts_root / "style_guides" / "test-co.md",
@@ -903,3 +891,65 @@ class TestSPATrend:
         )
         resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["trend"][0]["run_id"] == task.task_id
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  BRAND CACHING TESTS
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestBrandCaching:
+    """Cache behavior tests for get_research_artifacts TTL cache."""
+
+    URL = "/api/v1/companies/{slug}/research/artifacts"
+
+    def test_cache_hit(self, client: TestClient, artifacts_root: Path):
+        """Second call within TTL should return cached data without re-reading."""
+        from api.services import brand_data_service
+
+        _write_artifact(
+            artifacts_root / "company_context" / "test-co.md", "# Test Company",
+        )
+        resp1 = client.get(self.URL.format(slug="test-co"))
+        assert resp1.status_code == 200
+        assert resp1.json()["company_context"]["status"] == "approved"
+
+        # Cache should be populated
+        assert len(brand_data_service._CACHE) > 0
+
+        # Second call should use cache
+        resp2 = client.get(self.URL.format(slug="test-co"))
+        assert resp2.status_code == 200
+        assert resp2.json()["company_context"]["content"] == "# Test Company"
+
+    def test_cache_miss_after_clear(self, client: TestClient, artifacts_root: Path):
+        """Clearing cache should force re-read from storage."""
+        from api.services import brand_data_service
+
+        _write_artifact(
+            artifacts_root / "company_context" / "test-co.md", "# V1",
+        )
+        resp1 = client.get(self.URL.format(slug="test-co"))
+        assert resp1.json()["company_context"]["content"] == "# V1"
+
+        # Overwrite file and clear cache
+        _write_artifact(
+            artifacts_root / "company_context" / "test-co.md", "# V2",
+        )
+        brand_data_service._CACHE.clear()
+
+        resp2 = client.get(self.URL.format(slug="test-co"))
+        assert resp2.json()["company_context"]["content"] == "# V2"
+
+    def test_cache_eviction(self, client: TestClient, artifacts_root: Path):
+        """Cache should evict oldest entry when at capacity."""
+        from api.services import brand_data_service
+
+        for i in range(brand_data_service._CACHE_MAX_ENTRIES + 2):
+            slug = f"co-{i}"
+            _write_artifact(
+                artifacts_root / "company_context" / f"{slug}.md", f"# Co {i}",
+            )
+            client.get(self.URL.format(slug=slug))
+
+        assert len(brand_data_service._CACHE) <= brand_data_service._CACHE_MAX_ENTRIES

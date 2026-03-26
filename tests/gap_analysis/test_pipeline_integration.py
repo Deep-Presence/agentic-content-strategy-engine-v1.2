@@ -751,9 +751,6 @@ class TestFullPipelineIntegration:
         (tmp_path / "visualizations").mkdir()
 
         with patch(
-            "core.gap_analysis.pipeline._artifact_dir",
-            return_value=tmp_path,
-        ), patch(
             "core.gap_analysis.pipeline.embed_company_assets",
             new_callable=AsyncMock,
             return_value=semantic_units,
@@ -793,7 +790,8 @@ class TestFullPipelineIntegration:
             "core.gap_analysis.pipeline.save_report",
         ):
             from core.gap_analysis.pipeline import run_gap_analysis
-            report = await run_gap_analysis(gap_input)
+            from core.storage.backends.local import LocalStorageBackend
+            report = await run_gap_analysis(gap_input, storage=LocalStorageBackend(tmp_path))
 
         assert isinstance(report, GapReport)
         assert "Gap Analysis Report" in report.report_md
@@ -810,39 +808,42 @@ class TestFullPipelineIntegration:
         tmp_path,
     ):
         """Pipeline with skip_steps=[1,2,3,4,5] loads from artifacts."""
-        (tmp_path / "visualizations").mkdir()
-        (tmp_path / "embeddings").mkdir()
+        from core.storage.backends.local import LocalStorageBackend
+        storage = LocalStorageBackend(tmp_path)
+        slug = "acme-corp"
+        prefix = f"gap_analysis/{slug}"
 
-        # Write artifact files for steps 1-5
-        (tmp_path / "company_embeddings.json").write_text(
-            json.dumps([u.model_dump(mode="json") for u in semantic_units], default=str)
+        # Write artifact files for steps 1-5 via StorageBackend
+        storage.write(
+            f"{prefix}/company_embeddings.json",
+            json.dumps([u.model_dump(mode="json") for u in semantic_units], default=str),
         )
-        (tmp_path / "queries.json").write_text(
-            json.dumps([q.model_dump(mode="json") for q in generated_queries], default=str)
+        storage.write(
+            f"{prefix}/queries.json",
+            json.dumps([q.model_dump(mode="json") for q in generated_queries], default=str),
         )
 
         # S3 artifacts (JSONL per engine)
-        pr_dir = tmp_path / "platform_results"
-        pr_dir.mkdir()
         for engine_name in ["perplexity", "openai"]:
-            lines = []
-            for pr in [r for r in [
-                PlatformResult(engine=engine_name, query_id="q_1", citations=[]),
-            ]]:
-                lines.append(json.dumps(pr.model_dump(mode="json"), default=str))
-            (pr_dir / f"{engine_name}_results.jsonl").write_text("\n".join(lines))
+            lines = [json.dumps(
+                PlatformResult(engine=engine_name, query_id="q_1", citations=[]).model_dump(mode="json"), default=str,
+            )]
+            storage.write(f"{prefix}/platform_results/{engine_name}_results.jsonl", "\n".join(lines))
 
         # S4 artifacts
-        (tmp_path / "enriched_citations.json").write_text(
-            json.dumps([c.model_dump(mode="json") for c in enriched_citations], default=str)
+        storage.write(
+            f"{prefix}/enriched_citations.json",
+            json.dumps([c.model_dump(mode="json") for c in enriched_citations], default=str),
         )
 
         # S5 artifacts
-        (tmp_path / "embeddings" / "queries_with_embeddings.json").write_text(
-            json.dumps([q.model_dump(mode="json") for q in generated_queries], default=str)
+        storage.write(
+            f"{prefix}/embeddings/queries_with_embeddings.json",
+            json.dumps([q.model_dump(mode="json") for q in generated_queries], default=str),
         )
-        (tmp_path / "embeddings" / "citations_with_embeddings.json").write_text(
-            json.dumps([c.model_dump(mode="json") for c in enriched_citations], default=str)
+        storage.write(
+            f"{prefix}/embeddings/citations_with_embeddings.json",
+            json.dumps([c.model_dump(mode="json") for c in enriched_citations], default=str),
         )
 
         mock_report = GapReport(
@@ -852,9 +853,6 @@ class TestFullPipelineIntegration:
         )
 
         with patch(
-            "core.gap_analysis.pipeline._artifact_dir",
-            return_value=tmp_path,
-        ), patch(
             "core.gap_analysis.pipeline.compute_gap_analysis",
             return_value=analysis_result,
         ), patch(
@@ -869,7 +867,7 @@ class TestFullPipelineIntegration:
         ):
             from core.gap_analysis.pipeline import run_gap_analysis
             report = await run_gap_analysis(
-                gap_input, skip_steps=[1, 2, 3, 4, 5]
+                gap_input, skip_steps=[1, 2, 3, 4, 5], storage=storage,
             )
 
         assert isinstance(report, GapReport)

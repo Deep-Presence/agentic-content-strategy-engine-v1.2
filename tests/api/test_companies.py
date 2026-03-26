@@ -1,6 +1,7 @@
 """Tests for company profile endpoint GET /api/v1/companies/{slug}."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,40 @@ from fastapi.testclient import TestClient
 from api.auth.store import AuthStore
 from api.tasks.models import TaskStatus
 from api.tasks.store import TaskStore
+
+
+def _write_persona_storage(
+    artifacts_root: Path,
+    slug: str,
+    persona_id: str,
+    *,
+    version: int = 1,
+    status: str = "fresh",
+    kind: str = "icp",
+    content: str = "# Persona",
+) -> None:
+    """Write a persona via the audience_personas manifest + versioned file."""
+    base = artifacts_root / "audience_personas" / slug
+    base.mkdir(parents=True, exist_ok=True)
+    persona_dir = base / persona_id
+    persona_dir.mkdir(parents=True, exist_ok=True)
+    (persona_dir / f"v{version}.md").write_text(content, encoding="utf-8")
+    manifest_path = base / "_manifest.json"
+    manifest: dict = {}
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+    personas = manifest.get("personas", {})
+    personas[persona_id] = {
+        "persona_name": persona_id.replace("-", " ").title(),
+        "kind": kind,
+        "status": status,
+        "current_version": version,
+        "last_updated": None,
+    }
+    manifest["personas"] = personas
+    manifest.setdefault("slug", slug)
+    manifest.setdefault("kb_synthesis_version", 0)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
 
 class TestCompanyProfile:
@@ -65,10 +100,8 @@ class TestCompanyProfile:
         cc_dir.mkdir(parents=True)
         (cc_dir / "test-co.md").write_text("approved context")
 
-        # Create persona file
-        p_dir = artifacts_root / "personas"
-        p_dir.mkdir(parents=True)
-        (p_dir / "test-co__persona-icp.md").write_text("persona")
+        # Create persona via PersonaStorage
+        _write_persona_storage(artifacts_root, "test-co", "persona-icp", content="persona")
 
         # Create style guide (draft)
         sg_dir = artifacts_root / "style_guides"
@@ -81,7 +114,7 @@ class TestCompanyProfile:
         rs = data["research_summary"]
         assert rs["company_context"] == "test-co.md"
         assert rs["company_context_status"] == "approved"
-        assert "test-co__persona-icp.md" in rs["personas"]
+        assert "persona-icp.md" in rs["personas"]
         assert rs["style_guide"] == "test-co.draft.md"
         assert rs["style_guide_status"] == "draft"
 
@@ -141,17 +174,16 @@ class TestCompanyProfile:
         assert products[0]["slug"] == "corporate-card"
         assert products[1]["name"] == "Test Travel"
 
-    def test_draft_persona_not_included(
+    def test_inactive_persona_not_included(
         self, client: TestClient, artifacts_root: Path
     ) -> None:
-        """Draft .draft.md persona files should be excluded from research detection."""
-        p_dir = artifacts_root / "personas"
-        p_dir.mkdir(parents=True)
-        (p_dir / "test-co__persona-icp.draft.md").write_text("draft persona")
+        """Personas with status=pending_review and current_version=0 should be excluded."""
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-icp",
+            status="pending_review", version=0, content="",
+        )
 
         resp = client.get("/api/v1/companies/test-co")
         assert resp.status_code == 200
-        # Draft persona is excluded from detection, so has_research stays False
-        # (unless the company exists in auth store, which it does via test_company)
         data = resp.json()
         assert data["has_research"] is False

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,16 +48,15 @@ def _derive_slug(company_name: str) -> str:
     return derive_slug(company_name)
 
 
-def _kb_artifacts_exist(artifacts_root: Path, effective_slug: str) -> bool:
+def _kb_artifacts_exist(
+    artifacts_root: Path,
+    effective_slug: str,
+    backend: Optional[Any] = None,
+) -> bool:
     """Check if a completed KB run exists (manifest with synthesis_version > 0)."""
-    manifest_path = artifacts_root / "knowledge_base" / effective_slug / "_manifest.json"
-    if not manifest_path.exists():
-        return False
-    try:
-        manifest = json.loads(manifest_path.read_text())
-        return manifest.get("synthesis_version", 0) > 0
-    except (json.JSONDecodeError, OSError):
-        return False
+    storage = KBStorage(artifacts_root, effective_slug, backend=backend)
+    manifest = storage.read_manifest()
+    return manifest.synthesis_version > 0
 
 
 def _get_latest_kb_run(
@@ -99,7 +97,8 @@ async def start_knowledge_base(
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
     # Guard: skip if already completed and not force_rerun
-    if not body.force_rerun and _kb_artifacts_exist(artifacts_root, effective_slug):
+    _sb = getattr(http_request.app.state, "storage_backend", None)
+    if not body.force_rerun and _kb_artifacts_exist(artifacts_root, effective_slug, backend=_sb):
         last_task = _get_latest_kb_run(task_store, slug, body.product_slug)
         response.status_code = 200
         await log_pipeline_launch(

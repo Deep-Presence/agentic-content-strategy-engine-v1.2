@@ -292,6 +292,7 @@ async def _run_worker_chain_v13(
     from core.models.content_generation import ContentDraft
 
     async with semaphore:
+        _slug = getattr(input_data, "company_slug", "") or ""
         title_short = brief.title[:60]
         display_title = title_short + ("..." if len(brief.title) > 60 else "")
 
@@ -322,6 +323,7 @@ async def _run_worker_chain_v13(
                 brief=brief,
                 company_context_md=company_context_md,
                 trace=span,
+                company_slug=_slug,
             )
             outline_json = json.dumps(outline.model_dump(mode="json"), indent=2, default=str)
             if storage:
@@ -348,6 +350,7 @@ async def _run_worker_chain_v13(
                 style_guide_md=style_guide_md,
                 company_context_md=company_context_md,
                 trace=span,
+                company_slug=_slug,
             )
             if storage:
                 await persist_stage_artifact(
@@ -371,6 +374,7 @@ async def _run_worker_chain_v13(
                 domain=input_data.domain,
                 site_pages=site_pages,
                 trace=span,
+                company_slug=_slug,
             )
             if storage:
                 await persist_stage_artifact(
@@ -399,6 +403,7 @@ async def _run_worker_chain_v13(
                 company_name=input_data.company_name,
                 domain=input_data.domain,
                 trace=span,
+                company_slug=_slug,
             )
             if storage:
                 await persist_stage_artifact(

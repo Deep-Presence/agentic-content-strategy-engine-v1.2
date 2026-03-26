@@ -1,8 +1,11 @@
-"""Shared LangGraph checkpointer factory.
+"""Shared checkpointer factory for LangGraph HITL sub-graphs.
 
 Returns RedisSaver when Redis is configured, MemorySaver otherwise.
-Replaces six duplicated _resolve_checkpointer() functions across
-graph modules.
+Replaces duplicated _resolve_checkpointer() functions across graph modules.
+
+Config: REDIS_CHECKPOINTER=true + REDIS_URL -> RedisSaver singleton.
+Fallback: MemorySaver (in-process only).
+Override: passing an explicit BaseCheckpointSaver bypasses the factory.
 """
 from __future__ import annotations
 
@@ -57,6 +60,12 @@ def _init_redis_saver() -> Optional[BaseCheckpointSaver]:
 
 def get_checkpointer(override: Any = None) -> BaseCheckpointSaver:
     """Return a LangGraph checkpointer.
+
+    Args:
+        override: If a valid BaseCheckpointSaver, return it directly.
+
+    Returns:
+        BaseCheckpointSaver -- RedisSaver if configured, else MemorySaver.
 
     Priority:
     1. Explicit override (if it's a valid BaseCheckpointSaver)

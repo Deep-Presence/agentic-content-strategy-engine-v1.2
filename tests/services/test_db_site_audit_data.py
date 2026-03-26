@@ -596,6 +596,30 @@ class TestRepoNewMethods:
     """Verify new repo methods are called with correct arguments."""
 
     @pytest.mark.asyncio
+    async def test_audit_exists_for_slug_delegates_to_repo(
+        self, service, audit_repo,
+    ):
+        """audit_exists_for_slug queries by effective_slug directly (no company lookup)."""
+        audit_repo.exists_for_slug_and_domain = AsyncMock(return_value=True)
+
+        result = await service.audit_exists_for_slug("acme__prod", "acme.com")
+
+        assert result is True
+        audit_repo.exists_for_slug_and_domain.assert_awaited_once_with(
+            "acme__prod", "acme.com"
+        )
+
+    @pytest.mark.asyncio
+    async def test_audit_exists_for_slug_returns_false(
+        self, service, audit_repo,
+    ):
+        audit_repo.exists_for_slug_and_domain = AsyncMock(return_value=False)
+
+        result = await service.audit_exists_for_slug("acme", "unknown.com")
+
+        assert result is False
+
+    @pytest.mark.asyncio
     async def test_audit_exists_passes_domain(
         self, service, company_repo, audit_repo, mock_company,
     ):

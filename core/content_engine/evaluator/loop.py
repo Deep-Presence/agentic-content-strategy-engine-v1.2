@@ -127,6 +127,7 @@ async def _run_all_evaluations(
     *,
     trace: Optional[object] = None,
     use_eeat: bool = False,
+    company_slug: str = "",
 ) -> list[DimensionResult]:
     """Run evaluation dimensions in parallel.
 
@@ -140,15 +141,15 @@ async def _run_all_evaluations(
     # Run async evaluations in parallel
     tasks = [
         ("semantic", evaluate_semantic(content, brief, trace=trace)),
-        ("style", evaluate_style(content, style_guide_md, trace=trace)),
-        ("factual", evaluate_factual(content, brief, company_name, domain, trace=trace)),
+        ("style", evaluate_style(content, style_guide_md, trace=trace, company_slug=company_slug)),
+        ("factual", evaluate_factual(content, brief, company_name, domain, trace=trace, company_slug=company_slug)),
     ]
 
     if use_eeat:
         from core.content_engine.evaluator.eeat_judge import evaluate_eeat
 
         tasks.append(
-            ("eeat", evaluate_eeat(content, brief, company_context_md, trace=trace))
+            ("eeat", evaluate_eeat(content, brief, company_context_md, trace=trace, company_slug=company_slug))
         )
 
     task_results = await asyncio.gather(
@@ -210,6 +211,7 @@ async def _run_targeted_revision(
     domain: str,
     *,
     trace: Optional[object] = None,
+    company_slug: str = "",
 ) -> FormattedContent:
     """Run a targeted revision based on which dimensions failed (v1.3).
 
@@ -244,6 +246,7 @@ async def _run_targeted_revision(
             style_guide_md=style_guide_md,
             company_context_md=company_context_md,
             trace=trace,
+            company_slug=company_slug,
         )
     else:
         from core.models.content_generation import ContentDraft
@@ -262,6 +265,7 @@ async def _run_targeted_revision(
             company_name=company_name,
             domain=domain,
             trace=trace,
+            company_slug=company_slug,
         )
         final_md = checked.markdown
     else:
@@ -354,6 +358,7 @@ async def evaluate_and_optimize(
             user_id=input_data.domain,
         )
 
+    _slug = getattr(input_data, "company_slug", "") or ""
     history = RevisionHistory(brief_id=brief.brief_id)
     current_content = content
     prev_score: Optional[float] = None  # Track for early-stop
@@ -378,6 +383,7 @@ async def evaluate_and_optimize(
             domain=input_data.domain,
             trace=trace,
             use_eeat=use_eeat,
+            company_slug=_slug,
         )
 
         # Compute overall score and pass/fail
@@ -492,6 +498,7 @@ async def evaluate_and_optimize(
                     company_name=input_data.company_name,
                     domain=input_data.domain,
                     trace=trace,
+                    company_slug=_slug,
                 )
             else:
                 # v1.0: Full revision chain (drafter → enricher → formatter)
@@ -502,6 +509,7 @@ async def evaluate_and_optimize(
                     style_guide_md=style_guide_md,
                     company_context_md=company_context_md,
                     trace=trace,
+                    company_slug=_slug,
                 )
 
                 enriched = await enrich_with_facts(
@@ -510,6 +518,7 @@ async def evaluate_and_optimize(
                     company_name=input_data.company_name,
                     domain=input_data.domain,
                     trace=trace,
+                    company_slug=_slug,
                 )
 
                 current_content = await format_content(
@@ -517,6 +526,7 @@ async def evaluate_and_optimize(
                     style_guide_md=style_guide_md,
                     brief=brief,
                     trace=trace,
+                    company_slug=_slug,
                 )
 
             end_span(revision_span, output={

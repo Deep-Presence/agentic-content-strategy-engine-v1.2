@@ -5,6 +5,7 @@ Covers:
 - RedisSaver returned when Redis URL is set
 - Graceful fallback on RedisSaver init failure
 - Explicit override bypasses factory
+- Non-BaseCheckpointSaver override falls through to factory
 - Singleton: RedisSaver created only once
 - reset_checkpointer() clears singleton
 - redis_checkpointer=False disables RedisSaver
@@ -104,6 +105,13 @@ class TestOverride:
 
         result = get_checkpointer(override=custom_cp)
         assert result is custom_cp
+
+    def test_override_with_non_saver_falls_through(self):
+        """Non-BaseCheckpointSaver override falls through to factory."""
+        from core.checkpointer import get_checkpointer
+
+        result = get_checkpointer(override="not-a-saver")
+        assert isinstance(result, BaseCheckpointSaver)
 
 
 # ---------------------------------------------------------------------------

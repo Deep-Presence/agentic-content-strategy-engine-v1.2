@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LocusLogo } from '@/components/ui';
 import { ScreenInput } from './_components/ScreenInput';
@@ -9,6 +9,7 @@ import { ScreenPipeline } from './_components/ScreenPipeline';
 import { ScreenComplete } from './_components/ScreenComplete';
 import { apiPost } from '@/lib/api/client';
 import { ONBOARDING } from '@/lib/api/endpoints';
+import { useAuthStore } from '@/stores/auth';
 
 type Screen = 'input' | 'briefing' | 'pipeline' | 'complete';
 
@@ -30,27 +31,35 @@ export default function OnboardingPage() {
   const [formData, setFormData] = useState<OnboardingFormData | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const company = useAuthStore((s) => s.company);
 
   const handleInputNext = (data: OnboardingFormData) => {
     setFormData(data);
     setScreen('briefing');
   };
 
+  // For individual pipeline API calls, always use the registered company name
+  // and domain from the auth store. The backend derives a slug from company_name
+  // and checks it against the auth token — if the user edits the name in the form,
+  // the derived slug could mismatch and trigger a 403.
+  const companyName = company?.name ?? '';
+  const domain = company?.domain ?? '';
+
+  // Build seed_urls from websiteUrl
+  const seedUrls = useMemo(() => {
+    if (!formData?.websiteUrl) return [];
+    let url = formData.websiteUrl;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = `https://${url}`;
+    }
+    return [url];
+  }, [formData?.websiteUrl]);
+
   const handleStartAnalysis = async () => {
     if (!formData) return;
     setLaunchError(null);
 
     try {
-      // Build seed_urls from websiteUrl
-      const seedUrls: string[] = [];
-      if (formData.websiteUrl) {
-        let url = formData.websiteUrl;
-        if (!url.startsWith('http://') && !url.startsWith('https://')) {
-          url = `https://${url}`;
-        }
-        seedUrls.push(url);
-      }
-
       // Build seed_personas from audience text (split by newline or comma)
       const seedPersonas = formData.audience
         ? formData.audience.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean)
@@ -101,7 +110,12 @@ export default function OnboardingPage() {
               exit="exit"
               transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             >
-              <ScreenBriefing onStart={handleStartAnalysis} />
+              <ScreenBriefing
+                onStart={handleStartAnalysis}
+                companyName={companyName}
+                domain={domain}
+                seedUrls={seedUrls}
+              />
               {launchError && (
                 <div className="mt-4 bg-error/10 border border-error/30 text-error text-[13px] rounded-md px-3 py-2">
                   {launchError}

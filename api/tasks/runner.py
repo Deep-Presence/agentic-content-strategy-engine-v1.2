@@ -111,70 +111,55 @@ def resolve_artifacts(
     slug: str,
     artifacts_root: Path,
     effective_slug: Optional[str] = None,
+    *,
+    backend: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Auto-discover approved research artifacts for a company slug.
 
     Only resolves final (approved) artifacts — ignores .draft.md files.
-
-    When ``effective_slug`` is provided and differs from ``slug``, applies the
-    product-level fallback chain for each artifact type:
-      1. Artifact scoped to effective_slug (product-specific)
-      2. Artifact scoped to slug (company-level)
-      3. None
-
-    Returns a dict with resolved paths and a summary for the API response.
+    When backend is LocalStorageBackend, returns absolute filesystem paths
+    for backward compatibility with downstream consumers.
     """
+    from core.storage.backends.local import LocalStorageBackend
+    _backend = backend or LocalStorageBackend(artifacts_root)
+
     resolved: Dict[str, Any] = {
         "company_context_path": None,
         "persona_paths": [],
         "style_guide_path": None,
     }
-
-    # Build lookup candidates: [effective_slug, slug] if different, else [slug]
     candidates = [effective_slug, slug] if effective_slug and effective_slug != slug else [slug]
 
     # Company context
     for lookup in candidates:
-        company_ctx = artifacts_root / "company_context" / f"{lookup}.md"
-        if company_ctx.exists():
-            resolved["company_context_path"] = str(company_ctx)
+        key = f"company_context/{lookup}.md"
+        if _backend.exists(key):
+            if isinstance(_backend, LocalStorageBackend):
+                resolved["company_context_path"] = str(_backend.root / key)
+            else:
+                resolved["company_context_path"] = key
             break
 
-    # Personas: try NEW audience_personas/{slug}/ first, then legacy personas/
-    ap_found = False
+    # Personas: via PersonaStorage (no legacy fallback)
     for lookup in candidates:
-        ap_dir = artifacts_root / "audience_personas" / lookup
-        if (ap_dir / "_manifest.json").exists():
-            try:
-                from core.research.audience_persona.storage import PersonaStorage
-
-                ap_storage = PersonaStorage(artifacts_root, lookup)
-                ap_paths = ap_storage.list_persona_paths()
-                if ap_paths:
-                    resolved["persona_paths"] = ap_paths
-                    ap_found = True
-                    break
-            except Exception:
-                pass  # Fall through to legacy
-
-    # LEGACY fallback: artifacts/personas/{slug}__persona-*.md
-    if not ap_found:
-        personas_dir = artifacts_root / "personas"
-        if personas_dir.exists():
-            for lookup in candidates:
-                persona_files = sorted(
-                    p for p in personas_dir.glob(f"{lookup}__persona-*.md")
-                    if not p.name.endswith(".draft.md")
-                )
-                if persona_files:
-                    resolved["persona_paths"] = [str(p) for p in persona_files]
-                    break
+        try:
+            from core.research.audience_persona.storage import PersonaStorage
+            ap_storage = PersonaStorage(artifacts_root, lookup, backend=_backend)
+            ap_paths = ap_storage.list_persona_paths()
+            if ap_paths:
+                resolved["persona_paths"] = ap_paths
+                break
+        except Exception:
+            pass
 
     # Style guide
     for lookup in candidates:
-        style_guide = artifacts_root / "style_guides" / f"{lookup}.md"
-        if style_guide.exists():
-            resolved["style_guide_path"] = str(style_guide)
+        key = f"style_guides/{lookup}.md"
+        if _backend.exists(key):
+            if isinstance(_backend, LocalStorageBackend):
+                resolved["style_guide_path"] = str(_backend.root / key)
+            else:
+                resolved["style_guide_path"] = key
             break
 
     return resolved
@@ -366,11 +351,17 @@ async def run_gap_pipeline_task(
         async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "gap_analysis"})
 
+            # C1-fix: create configured backend BEFORE resolve_artifacts
+            # so artifact resolution uses R2 in production (not hardcoded local)
+            from core.storage import get_storage_backend
+            _storage = get_storage_backend(artifacts_root)
+
             # Research artifacts: fallback chain (product-specific → company-level)
             resolved = resolve_artifacts(
                 scope.company_slug,
                 artifacts_root,
                 effective_slug=scope.effective_slug,
+                backend=_storage,
             )
 
             # S1 domain: use product domain when available (D4 — Replace strategy)
@@ -378,13 +369,11 @@ async def run_gap_pipeline_task(
             if scope.product_domain:
                 domain = scope.product_domain
 
-            # Knowledge docs: product-level → company-level fallback
-            knowledge_doc_dir: Optional[str] = None
-            kdocs_base = artifacts_root / "knowledge_docs"
+            # Knowledge docs: product-level → company-level fallback (via StorageBackend)
+            knowledge_doc_slug: Optional[str] = None
             for candidate_slug in [scope.effective_slug, scope.company_slug]:
-                candidate_dir = kdocs_base / candidate_slug
-                if candidate_dir.is_dir() and (candidate_dir / "_metadata.json").exists():
-                    knowledge_doc_dir = str(candidate_dir)
+                if _storage.exists(f"knowledge_docs/{candidate_slug}/_metadata.json"):
+                    knowledge_doc_slug = candidate_slug
                     break
 
             # Merge company pipeline defaults for Optional fields: request
@@ -416,12 +405,13 @@ async def run_gap_pipeline_task(
                 product_slug=scope.product_slug,
                 product_name=scope.product_name,
                 product_description=scope.product_description,
-                knowledge_doc_dir=knowledge_doc_dir,
+                knowledge_doc_slug=knowledge_doc_slug,
             )
 
             report = await run_gap_analysis(
                 input_data=input_data,
                 skip_steps=request.skip_steps,
+                storage=_storage,
                 session_factory=session_factory,
                 run_id=run_id,
                 company_id=company_id,
@@ -730,10 +720,11 @@ async def run_content_v13_pipeline_task(
     effective = _task.effective_slug or _task.company_slug or _derive_slug(input_data.company_name)
     company_slug = _task.company_slug or _derive_slug(input_data.company_name)
 
-    # H5-fix: resolve research artifacts with product→company fallback chain
-    # (same pattern as run_gap_analysis_pipeline_task)
+    # C1-fix: use configured backend for artifact resolution (R2 in prod)
     if artifacts_root:
-        resolved = resolve_artifacts(company_slug, artifacts_root, effective_slug=effective)
+        from core.storage import get_storage_backend
+        _storage = get_storage_backend(artifacts_root)
+        resolved = resolve_artifacts(company_slug, artifacts_root, effective_slug=effective, backend=_storage)
         if resolved["company_context_path"]:
             input_data.company_context_path = resolved["company_context_path"]
         if resolved["style_guide_path"]:
@@ -1945,4 +1936,78 @@ async def run_daily_tracker_task(
         if daily_run_id and session_factory:
             from core.daily_tracker.persistence import mark_daily_run_failed as _mark_dt_failed
             await _mark_dt_failed(session_factory, daily_run_id)
+        clear_context()
+
+
+# ── CMS sync pipeline runner ────────────────────────────────────────
+
+
+async def run_cms_sync_task(
+    task_id: str,
+    company_slug: str,
+    tenant_id: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBus,
+    session_factory: Any,
+    storage: Any,
+    fernet_key: str,
+) -> None:
+    """Background task wrapper for CMS content sync.
+
+    Creates its own DB session and CMSService instance (the DI session
+    from the router is closed by the time the background task runs).
+    """
+    bind_context(task_id=task_id, pipeline_name="cms_sync", company_slug=company_slug)
+    task_store.update_task(task_id, status=TaskStatus.RUNNING, current_step="sync")
+    event_bus.publish(task_id, "pipeline_start", {"pipeline": "cms_sync"})
+
+    try:
+        async with task_store.pipeline_semaphore(task_id):
+            from core.db.repositories.cms_repo import (
+                CMSConnectionRepository,
+                CMSPublishRecordRepository,
+                CMSSyncedPostRepository,
+            )
+            from core.services.cms_service import CMSService
+
+            session = session_factory()
+            try:
+                svc = CMSService(
+                    connection_repo=CMSConnectionRepository(session),
+                    publish_repo=CMSPublishRecordRepository(session),
+                    synced_post_repo=CMSSyncedPostRepository(session),
+                    storage=storage,
+                    fernet_key=fernet_key,
+                )
+
+                connection = await svc.get_connection(company_slug, tenant_id)
+                if connection is None:
+                    raise RuntimeError("CMS connection not found")
+
+                result = await svc.sync_existing_content(company_slug, connection)
+                await session.commit()
+
+                task_store.update_task(
+                    task_id,
+                    status=TaskStatus.COMPLETED,
+                    result=result,
+                )
+                event_bus.publish(task_id, "completed", {"pipeline": "cms_sync", **result})
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+
+    except asyncio.CancelledError:
+        logger.info("CMS sync task %s cancelled", task_id)
+    except Exception as exc:
+        logger.exception("CMS sync task %s failed: %s", task_id, exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        task_store.release_slug_lock(f"cms_sync:{company_slug}")
+        task_store.remove_task_handle(task_id)
         clear_context()

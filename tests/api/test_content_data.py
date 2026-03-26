@@ -14,6 +14,7 @@ scenarios, security (path traversal), and edge cases.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -1340,3 +1341,100 @@ class TestContentDataProductSlug:
         r = client.get("/api/v1/companies/test-co/content/briefs")
         assert r.status_code == 200
         assert len(r.json()["briefs"]) == 3
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TTL Cache Behavior Tests (Phase 5)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestContentCaching:
+    """Cache behavior tests for TTL-based content data caching."""
+
+    def test_ttl_cache_hit(self, client: TestClient, artifacts_root: Path):
+        """Second call within TTL should use cached data."""
+        import api.services.content_data_service as cds
+
+        _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(2))
+        client.get("/api/v1/companies/test-co/content/briefs")
+        assert len(cds._CACHE) > 0
+
+        # Second call should use cache (no change in data)
+        body2 = client.get("/api/v1/companies/test-co/content/briefs").json()
+        assert body2["total"] == 2
+
+    def test_ttl_cache_expired(
+        self, client: TestClient, artifacts_root: Path, monkeypatch,
+    ):
+        """After TTL expires, cache should return fresh data."""
+        import api.services.content_data_service as cds
+
+        _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(2))
+
+        body1 = client.get("/api/v1/companies/test-co/content/briefs").json()
+        assert body1["total"] == 2
+
+        # Write new data with 5 briefs
+        _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(5))
+
+        # Monkeypatch time.monotonic to advance past TTL
+        original_monotonic = time.monotonic
+        offset = cds._DEFAULT_CACHE_TTL_S + 10
+
+        def advanced_monotonic():
+            return original_monotonic() + offset
+
+        monkeypatch.setattr(time, "monotonic", advanced_monotonic)
+
+        body2 = client.get("/api/v1/companies/test-co/content/briefs").json()
+        assert body2["total"] == 5
+
+    def test_ttl_cache_eviction(self, client: TestClient, artifacts_root: Path):
+        """Cache should evict oldest entry when at capacity."""
+        import api.services.content_data_service as cds
+
+        for i in range(cds._CACHE_MAX_ENTRIES + 2):
+            slug = f"co-{i}"
+            _setup_content_dir(artifacts_root, slug=slug, briefs_data=_make_briefs_json(1))
+            client.get(f"/api/v1/companies/{slug}/content/briefs")
+
+        assert len(cds._CACHE) <= cds._CACHE_MAX_ENTRIES
+
+    def test_add_brief_read_after_write(self, client: TestClient, artifacts_root: Path):
+        """After adding a brief, it should be immediately visible."""
+        _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
+
+        # Add a brief
+        resp = client.post(
+            "/api/v1/companies/test-co/content/briefs",
+            json={"title": "New Brief", "cluster": "test"},
+        )
+        assert resp.status_code == 201
+
+        # Read immediately after write — should see the new brief
+        body = client.get("/api/v1/companies/test-co/content/briefs").json()
+        titles = [b["title"] for b in body["briefs"]]
+        assert "New Brief" in titles
+
+    def test_pipeline_state_not_cached(self, client: TestClient, artifacts_root: Path):
+        """pipeline_state.json should be read fresh each time (not through cache)."""
+        import api.services.content_data_service as cds
+
+        _setup_content_dir(
+            artifacts_root,
+            briefs_data=_make_briefs_json(1),
+        )
+        # Write pipeline_state showing "drafting" for brief-0
+        state_path = artifacts_root / "content" / "test-co" / "pipeline_state.json"
+        state_path.write_text(json.dumps({"brief-0": "drafting"}))
+
+        body1 = client.get("/api/v1/companies/test-co/content/briefs").json()
+        assert body1["briefs"][0]["status"] == "drafting"
+
+        # Update pipeline state to "review" — should be reflected immediately
+        state_path.write_text(json.dumps({"brief-0": "review"}))
+
+        # Clear JSON cache (not pipeline_state since it bypasses cache)
+        cds._CACHE.clear()
+        body2 = client.get("/api/v1/companies/test-co/content/briefs").json()
+        assert body2["briefs"][0]["status"] == "review"

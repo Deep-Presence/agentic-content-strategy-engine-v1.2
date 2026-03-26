@@ -22,7 +22,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useState } from 'react';
-import { Clock } from 'lucide-react';
+import { Clock, Upload, ExternalLink } from 'lucide-react';
+import { isSafeUrl } from '@/lib/utils';
 
 // --- Content Card ---
 
@@ -30,10 +31,14 @@ function ContentCard({
   brief,
   onClick,
   isDragging,
+  isCMSConnected,
+  onPublishClick,
 }: {
   brief: ExtendedBrief;
   onClick: () => void;
   isDragging?: boolean;
+  isCMSConnected?: boolean;
+  onPublishClick?: (briefId: string) => void;
 }) {
   const daysAgo = Math.floor(
     (Date.now() - new Date(brief.createdAt).getTime()) / (1000 * 60 * 60 * 24)
@@ -114,7 +119,7 @@ function ContentCard({
         </span>
       </div>
 
-      {/* Persona dots + time */}
+      {/* Persona dots + publish + time */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
           {brief.personas.slice(0, 3).map((p, i) => (
@@ -124,9 +129,34 @@ function ContentCard({
             <span className="text-[9px] text-text-tertiary">+{brief.personas.length - 3}</span>
           )}
         </div>
-        <div className="flex items-center gap-0.5 text-text-tertiary">
-          <Clock size={9} strokeWidth={1.5} />
-          <span className="text-[10px]">{daysAgo}d</span>
+        <div className="flex items-center gap-1.5">
+          {/* Published badge */}
+          {brief.publishedUrl && isSafeUrl(brief.publishedUrl) && (
+            <a
+              href={brief.publishedUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-0.5 text-success"
+              title="View on CMS"
+            >
+              <ExternalLink size={9} strokeWidth={1.5} />
+            </a>
+          )}
+          {/* Publish to CMS icon — only on approved briefs when CMS connected */}
+          {brief.stage === 'approved' && isCMSConnected && onPublishClick && !brief.publishedUrl && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onPublishClick(brief.id); }}
+              className="p-0.5 text-accent hover:bg-accent/10 rounded transition-colors"
+              title="Publish to CMS"
+            >
+              <Upload size={11} strokeWidth={1.5} />
+            </button>
+          )}
+          <div className="flex items-center gap-0.5 text-text-tertiary">
+            <Clock size={9} strokeWidth={1.5} />
+            <span className="text-[10px]">{daysAgo}d</span>
+          </div>
         </div>
       </div>
     </div>
@@ -135,7 +165,17 @@ function ContentCard({
 
 // --- Sortable Card Wrapper ---
 
-function SortableCard({ brief, onClick }: { brief: ExtendedBrief; onClick: () => void }) {
+function SortableCard({
+  brief,
+  onClick,
+  isCMSConnected,
+  onPublishClick,
+}: {
+  brief: ExtendedBrief;
+  onClick: () => void;
+  isCMSConnected?: boolean;
+  onPublishClick?: (briefId: string) => void;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: brief.id,
   });
@@ -147,7 +187,7 @@ function SortableCard({ brief, onClick }: { brief: ExtendedBrief; onClick: () =>
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <ContentCard brief={brief} onClick={onClick} isDragging={isDragging} />
+      <ContentCard brief={brief} onClick={onClick} isDragging={isDragging} isCMSConnected={isCMSConnected} onPublishClick={onPublishClick} />
     </div>
   );
 }
@@ -158,10 +198,14 @@ function KanbanColumn({
   stage,
   items,
   onCardClick,
+  isCMSConnected,
+  onPublishClick,
 }: {
   stage: (typeof stageColumns)[number];
   items: ExtendedBrief[];
   onCardClick: (id: string) => void;
+  isCMSConnected?: boolean;
+  onPublishClick?: (briefId: string) => void;
 }) {
   return (
     <div className="flex flex-col min-w-[200px] flex-1">
@@ -177,7 +221,7 @@ function KanbanColumn({
       <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
         <div className="flex flex-col gap-2 flex-1 min-h-[100px] p-1 rounded-sm">
           {items.map((item) => (
-            <SortableCard key={item.id} brief={item} onClick={() => onCardClick(item.id)} />
+            <SortableCard key={item.id} brief={item} onClick={() => onCardClick(item.id)} isCMSConnected={isCMSConnected} onPublishClick={onPublishClick} />
           ))}
         </div>
       </SortableContext>
@@ -191,9 +235,11 @@ interface KanbanBoardProps {
   items: ExtendedBrief[];
   onItemsChange: (items: ExtendedBrief[]) => void;
   onCardClick: (id: string) => void;
+  isCMSConnected?: boolean;
+  onPublishClick?: (briefId: string) => void;
 }
 
-export function KanbanBoard({ items, onItemsChange, onCardClick }: KanbanBoardProps) {
+export function KanbanBoard({ items, onItemsChange, onCardClick, isCMSConnected, onPublishClick }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const sensors = useSensors(
@@ -262,6 +308,8 @@ export function KanbanBoard({ items, onItemsChange, onCardClick }: KanbanBoardPr
             stage={stage}
             items={getColumnItems(stage.id)}
             onCardClick={onCardClick}
+            isCMSConnected={isCMSConnected}
+            onPublishClick={onPublishClick}
           />
         ))}
       </div>

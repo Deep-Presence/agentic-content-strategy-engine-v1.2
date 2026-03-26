@@ -12,7 +12,7 @@ import math
 import re
 import statistics
 import threading
-from pathlib import Path
+import time
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -21,6 +21,7 @@ import trafilatura
 from bs4 import BeautifulSoup
 
 from core.config.settings import settings
+from core.storage.backends.base import StorageBackend
 from core.models.gap_analysis import (
     EnrichedCitation,
     GeneratedQuery,
@@ -470,12 +471,17 @@ async def enrich_citations(
                 },
             ))
 
+    total_count = sum(len(r.citations) for r in results)
+    unique_count = len(citation_entries)
+    logger.info("S4 dedup: %d unique URLs from %d total citations", unique_count, total_count)
+
     if not citation_entries:
         return []
 
     # ── Phase 1: Fetch all unique URLs concurrently ───────────────────
     semaphore = asyncio.Semaphore(fetch_concurrency)
 
+    fetch_t0 = time.monotonic()
     async with httpx.AsyncClient(
         timeout=20,
         follow_redirects=True,
@@ -499,6 +505,11 @@ async def enrich_citations(
         else:
             fetch_results.append(result)
 
+    fetch_ok = sum(1 for html, _ in fetch_results if html is not None)
+    fetch_fail = len(fetch_results) - fetch_ok
+    fetch_elapsed = time.monotonic() - fetch_t0
+    logger.info("S4 fetch: %d/%d URLs succeeded, %d failed, %.1fs", fetch_ok, len(fetch_results), fetch_fail, fetch_elapsed)
+
     # ── Phase 2: Parse HTMLs in thread pool (CPU-bound offload) ───────
     parse_sem = asyncio.Semaphore(thread_workers)
 
@@ -515,7 +526,13 @@ async def enrich_citations(
         fetchable_entries.append((idx, original_url, meta, final_url))
         parse_tasks_list.append(_parse_one(html))
 
+    parse_t0 = time.monotonic()
     parse_results_raw = await asyncio.gather(*parse_tasks_list, return_exceptions=True)
+    parse_elapsed = time.monotonic() - parse_t0
+
+    parse_ok = sum(1 for r in parse_results_raw if not isinstance(r, BaseException))
+    parse_fail = len(parse_results_raw) - parse_ok
+    logger.info("S4 parse: %d/%d succeeded, %d failed, %.1fs", parse_ok, len(parse_results_raw), parse_fail, parse_elapsed)
 
     # ── Phase 3: Assemble EnrichedCitation objects ────────────────────
     enriched: List[EnrichedCitation] = []
@@ -569,7 +586,6 @@ def compute_structural_signals(html: str) -> Tuple[List[str], StructuralSignals]
     return _extract_paragraphs(html)
 
 
-def save_enriched_citations(enriched: List[EnrichedCitation], output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+def save_enriched_citations(enriched: List[EnrichedCitation], storage: StorageBackend, key: str) -> None:
     payload = [item.model_dump(mode="json") for item in enriched]
-    output_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    storage.write(key, json.dumps(payload, indent=2, default=str))

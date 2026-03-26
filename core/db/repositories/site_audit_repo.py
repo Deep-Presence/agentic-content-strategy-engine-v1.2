@@ -155,6 +155,28 @@ class SiteAuditRepository(SQLAlchemyRepository[SiteAuditModel]):
         result = await self._session.execute(stmt)
         return (result.scalar() or 0) > 0
 
+    async def exists_for_slug_and_domain(
+        self,
+        effective_slug: str,
+        domain: str,
+    ) -> bool:
+        """Check if a completed (or degraded) audit exists for *slug* + *domain*.
+
+        Degraded audits are stored as ``status=completed, is_degraded=True``
+        so the ``completed`` filter covers both.
+        """
+        stmt = (
+            select(sa_func.count())
+            .select_from(SiteAuditModel)
+            .where(
+                SiteAuditModel.effective_slug == effective_slug,
+                SiteAuditModel.site_domain == domain,
+                SiteAuditModel.status == PipelineStatus.completed,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return (result.scalar() or 0) > 0
+
     async def bulk_insert_findings(
         self,
         audit_id: _uuid.UUID | str,

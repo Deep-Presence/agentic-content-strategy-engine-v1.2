@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -85,6 +84,8 @@ def _ap_should_guard(
     artifacts_root: Path,
     effective_slug: str,
     slug: str,
+    *,
+    backend: Optional[Any] = None,
 ) -> tuple[bool, Optional[str]]:
     """Check whether the AP guard should block a new run.
 
@@ -93,7 +94,7 @@ def _ap_should_guard(
     Guard only blocks when approved personas (fresh|stale) exist AND
     the KB hasn't been updated since the last AP run.
     """
-    storage = PersonaStorage(artifacts_root, effective_slug)
+    storage = PersonaStorage(artifacts_root, effective_slug, backend=backend)
     manifest = storage.read_manifest()
 
     # Count approved personas (only fresh|stale count)
@@ -105,16 +106,13 @@ def _ap_should_guard(
         return False, None
 
     # Check KB staleness: if KB synthesis_version > AP's kb_synthesis_version → run
-    kb_manifest_path = artifacts_root / "knowledge_base" / effective_slug / "_manifest.json"
-    if kb_manifest_path.exists():
-        try:
-            kb_data = json.loads(kb_manifest_path.read_text())
-            kb_synth_version = kb_data.get("synthesis_version", 0)
-            ap_synth_version = manifest.kb_synthesis_version or 0
-            if kb_synth_version > ap_synth_version:
-                return False, None
-        except (json.JSONDecodeError, OSError):
-            pass
+    from core.research.knowledge_base.storage import KBStorage
+    kb_storage = KBStorage(artifacts_root, effective_slug, backend=backend)
+    kb_manifest = kb_storage.read_manifest()
+    kb_synth_version = kb_manifest.synthesis_version
+    ap_synth_version = manifest.kb_synthesis_version or 0
+    if kb_synth_version > ap_synth_version:
+        return False, None
 
     return True, (
         f"Audience personas already exist ({approved_count} approved). "
@@ -151,8 +149,9 @@ async def start_audience_persona(
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
     # Guard: check if approved personas already exist
+    _storage_backend = getattr(http_request.app.state, "storage_backend", None)
     if not body.force_rerun:
-        should_guard, message = _ap_should_guard(artifacts_root, effective_slug, slug)
+        should_guard, message = _ap_should_guard(artifacts_root, effective_slug, slug, backend=_storage_backend)
         if should_guard:
             response.status_code = 200
             await log_pipeline_launch(

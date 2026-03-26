@@ -99,13 +99,13 @@ class DbGapDataService:
         pipeline_repo: PipelineRepository,
         signal_repo: SignalRepository,
         platform_repo: PlatformRepository,
-        artifacts_root: Path,
+        storage: "StorageBackend",
     ) -> None:
         self._gap_repo = gap_repo
         self._pipeline_repo = pipeline_repo
         self._signal_repo = signal_repo
         self._platform_repo = platform_repo
-        self._artifacts_root = artifacts_root
+        self._storage = storage
 
     async def _resolve_run_id(self, effective_slug: str) -> Any:
         """Resolve effective_slug → latest completed gap_analysis run_id."""
@@ -441,7 +441,7 @@ class DbGapDataService:
         import asyncio
         from api.services.gap_data_service import get_embedding_projection
         return await asyncio.to_thread(
-            get_embedding_projection, self._artifacts_root, effective_slug, method=method,
+            get_embedding_projection, self._storage, effective_slug, method=method,
         )
 
     async def get_spa_trend(self, effective_slug: str) -> SPATrendResponse:

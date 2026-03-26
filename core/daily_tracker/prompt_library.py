@@ -19,7 +19,9 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+from core.storage.backends.base import StorageBackend
 
 from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
 from core.models.daily_tracker import (
@@ -42,8 +44,13 @@ class PromptLibraryService:
     gap analysis artifacts from the filesystem for import.
     """
 
-    def __init__(self, prompt_repo: TrackedPromptRepository) -> None:
+    def __init__(
+        self,
+        prompt_repo: TrackedPromptRepository,
+        backend: Optional[StorageBackend] = None,
+    ) -> None:
         self._repo = prompt_repo
+        self._backend = backend
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
@@ -199,13 +206,19 @@ class PromptLibraryService:
         Raises:
             FileNotFoundError: If queries.json does not exist for the slug.
         """
-        queries_path = _PROJECT_ROOT / "artifacts" / "gap_analysis" / slug / "queries.json"
-        if not queries_path.exists():
-            raise FileNotFoundError(
-                f"Gap analysis queries not found: {queries_path}"
-            )
+        key = f"gap_analysis/{slug}/queries.json"
+        raw_text: Optional[str] = None
+        if self._backend is not None:
+            raw_text = self._backend.read(key)
+        if raw_text is None:
+            queries_path = _PROJECT_ROOT / "artifacts" / "gap_analysis" / slug / "queries.json"
+            if not queries_path.exists():
+                raise FileNotFoundError(
+                    f"Gap analysis queries not found: {queries_path}"
+                )
+            raw_text = queries_path.read_text(encoding="utf-8")
 
-        raw = json.loads(queries_path.read_text(encoding="utf-8"))
+        raw = json.loads(raw_text)
         if not isinstance(raw, list):
             logger.warning("queries.json is not a list, skipping import")
             return []

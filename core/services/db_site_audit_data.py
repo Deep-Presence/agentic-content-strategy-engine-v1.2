@@ -184,6 +184,14 @@ class DbSiteAuditDataService:
             return False
         return await self._audit_repo.exists_for_domain(company_id, domain)
 
+    async def audit_exists_for_slug(
+        self, effective_slug: str, domain: str
+    ) -> bool:
+        """True when a completed/degraded audit exists for *slug* + *domain*."""
+        return await self._audit_repo.exists_for_slug_and_domain(
+            effective_slug, domain,
+        )
+
     async def get_latest_audit_id(
         self, company_slug: str, domain: str
     ) -> str | None:

@@ -14,6 +14,8 @@ import json
 import logging
 import math
 import re
+import threading
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -25,6 +27,15 @@ _logger = logging.getLogger(__name__)
 
 from core.cache import cache_get, cache_set
 from core.redis import get_sync_redis_or_none
+
+# Module-level FIFO cache (L2 fallback when Redis unavailable):
+# key -> (monotonic_ts, data).
+# Max 10 entries; oldest evicted when full.
+# Protected by _CACHE_LOCK for thread safety (asyncio.to_thread callers).
+_CACHE: dict[str, tuple[float, Any]] = {}
+_CACHE_MAX = 10
+_CACHE_TTL_S = 600  # 10 minutes — audit data is write-once
+_CACHE_LOCK = threading.Lock()
 
 # Slug validation: bare slug OR effective slug (slug__product-slug)
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
@@ -44,11 +55,24 @@ def _validate_slug(slug: str) -> None:
         )
 
 
+def _evict_if_full() -> None:
+    """Remove the oldest cache entry when the cache is full.
+
+    Caller MUST hold ``_CACHE_LOCK``.
+    """
+    if len(_CACHE) >= _CACHE_MAX:
+        oldest_key = next(iter(_CACHE))
+        del _CACHE[oldest_key]
+
+
 def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
-    """Load audit_result.json — Redis cache first, file fallback.
+    """Load audit_result.json — Redis cache first, in-memory L2 fallback, then file.
 
     Derives slug and audit_id from the directory path for cache key.
     Returns an empty dict when the file is missing or unparseable.
+    Uses TTL-based in-memory cache invalidation as L2 fallback.
+    All ``_CACHE`` access is protected by ``_CACHE_LOCK`` for thread
+    safety under ``asyncio.to_thread()``.
     """
     redis = get_sync_redis_or_none()
 
@@ -62,8 +86,16 @@ def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
         if cached is not None:
             return cached
 
-    # File read (fallback or cache miss)
+    # L2: in-memory FIFO cache (fallback when Redis unavailable)
     result_file = audit_dir / "audit_result.json"
+    mem_cache_key = str(result_file)
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        mem_cached = _CACHE.get(mem_cache_key)
+        if mem_cached is not None and (now - mem_cached[0]) < _CACHE_TTL_S:
+            return mem_cached[1]
+
+    # File read (all caches missed)
     if not result_file.exists():
         return {}
 
@@ -73,9 +105,14 @@ def _load_audit_result(audit_dir: Path) -> dict[str, Any]:
         _logger.warning("Failed to parse %s: %s", result_file, exc)
         return {}
 
-    # Populate cache
+    # Populate Redis cache (L1)
     if redis is not None and slug and audit_id:
         cache_set(redis, cache_key, data, ttl=600)
+
+    # Populate in-memory cache (L2)
+    with _CACHE_LOCK:
+        _evict_if_full()
+        _CACHE[mem_cache_key] = (now, data)
 
     return data
 

@@ -394,7 +394,7 @@ class TestStreamTokens:
         assert resp.status_code == 200
         data = resp.json()
         assert "stream_token" in data
-        assert data["expires_in"] == 300
+        assert data["expires_in"] == 3600
 
     def test_stream_token_works_for_sse(
         self,

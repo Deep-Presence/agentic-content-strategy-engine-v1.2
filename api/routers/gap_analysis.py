@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_storage_backend as get_storage_dep, get_task_store
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
 from api.schemas.common import GapAnalysisStartRequest, PipelineRunResponse, TaskResponse
@@ -18,6 +18,7 @@ from api.tasks.models import PipelineTask
 from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_gap_pipeline_task
 from core.services.task_store import TaskStoreProtocol
+from core.storage.backends.base import StorageBackend
 from core.audit import log_pipeline_launch
 from core.models.organization import UserProfile
 
@@ -28,10 +29,12 @@ def _derive_slug(company_name: str) -> str:
     return derive_slug(company_name)
 
 
-def _gap_analysis_artifacts_exist(artifacts_root: Path, effective_slug: str) -> bool:
+def _gap_analysis_artifacts_exist(storage: "StorageBackend", effective_slug: str) -> bool:
     """True if s8 or s6 output exists for this slug (dual-sentinel, mirrors gap_data_service)."""
-    d = artifacts_root / "gap_analysis" / effective_slug
-    return (d / "gap_analysis_complete.json").exists() or (d / "analysis.json").exists()
+    return (
+        storage.exists(f"gap_analysis/{effective_slug}/gap_analysis_complete.json")
+        or storage.exists(f"gap_analysis/{effective_slug}/analysis.json")
+    )
 
 
 def _get_latest_gap_run(
@@ -60,6 +63,7 @@ async def start_gap_analysis(
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
+    storage_backend: StorageBackend = Depends(get_storage_dep),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
     # Tenant isolation: slug must match authenticated user's company
@@ -72,7 +76,7 @@ async def start_gap_analysis(
         )
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
-    if not body.force_rerun and _gap_analysis_artifacts_exist(artifacts_root, effective_slug):
+    if not body.force_rerun and _gap_analysis_artifacts_exist(storage_backend, effective_slug):
         last_task = _get_latest_gap_run(task_store, slug, body.product_slug)
         response.status_code = 200
         await log_pipeline_launch(

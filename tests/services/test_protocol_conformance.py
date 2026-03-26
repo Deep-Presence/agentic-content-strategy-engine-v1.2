@@ -32,22 +32,24 @@ class TestGapDataProtocol:
 
     def test_json_gap_data_is_protocol(self):
         from core.services.json_gap_data import JsonGapDataService
+        from core.storage.backends.local import LocalStorageBackend
 
         instance = JsonGapDataService(
-            artifacts_root=Path("/tmp"),
+            storage=LocalStorageBackend(Path("/tmp")),
             task_store=MagicMock(),
         )
         assert isinstance(instance, GapDataServiceProtocol)
 
     def test_db_gap_data_is_protocol(self):
         from core.services.db_gap_data import DbGapDataService
+        from core.storage.backends.local import LocalStorageBackend
 
         instance = DbGapDataService(
             gap_repo=MagicMock(),
             pipeline_repo=MagicMock(),
             signal_repo=MagicMock(),
             platform_repo=MagicMock(),
-            artifacts_root=Path("/tmp"),
+            storage=LocalStorageBackend(Path("/tmp")),
         )
         assert isinstance(instance, GapDataServiceProtocol)
 

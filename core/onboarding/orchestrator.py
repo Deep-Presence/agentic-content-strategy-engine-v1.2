@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import traceback
 import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -920,8 +921,9 @@ async def run_onboarding_pipeline(
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for name, res in zip(task_names, results):
-                if isinstance(res, Exception):
-                    logger.exception("Onboarding: %s failed", name)
+                if isinstance(res, BaseException):
+                    tb_str = "".join(traceback.format_exception(type(res), res, res.__traceback__))
+                    logger.error("Onboarding: %s failed\n%s", name, tb_str)
                     sub_results[name] = OnboardingSubResult(
                         pipeline=name, phase="phase_c", status="failed",
                         error=str(res),

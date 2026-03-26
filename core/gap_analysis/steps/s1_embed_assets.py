@@ -34,6 +34,7 @@ from bs4 import BeautifulSoup
 
 from core.config.settings import settings
 from core.gap_analysis.steps.s4_enrich_citations import compute_structural_signals
+from core.storage.backends.base import StorageBackend
 from core.models.gap_analysis import (
     CompanyPageAnalysis,
     DiscoveredPage,
@@ -48,12 +49,19 @@ from core.shared_tools.vector_store import (
     async_upsert_embeddings,
 )
 from core.shared_tools.async_embedding_client import async_embed_texts
-from core.shared_tools.knowledge_doc_metadata import mark_documents_embedded
+from core.shared_tools.knowledge_doc_metadata import doc_storage_key, mark_documents_embedded
 from core.shared_tools.text_extraction import extract_text as _extract_text_from_file
+from core.shared_tools.text_extraction import extract_text_from_bytes
 
 logger = logging.getLogger(__name__)
 
 _CONTENT_ENGINE_ROOT = Path(__file__).resolve().parents[3]  # content-strategy-engine/
+
+
+def _ga_dbg(msg: str, **kw: Any) -> None:
+    """Emit a microscopic debug log when GA_DEBUG=true."""
+    if settings.gap_analysis_debug:
+        logger.info("[ga-debug] %s", msg, extra=kw)
 
 # XML namespace map for sitemap parsing
 _SITEMAP_NS = {
@@ -96,12 +104,6 @@ _SKIP_EXTENSIONS = {
 # ===========================================================================
 # Utility Functions
 # ===========================================================================
-
-
-def _ensure_output_dir(company_slug: str) -> Path:
-    path = _CONTENT_ENGINE_ROOT / "artifacts" / "gap_analysis" / company_slug
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def _normalize_url(url: str) -> str:
@@ -448,17 +450,21 @@ async def _init_playwright_browser() -> Optional[Tuple[Any, Any]]:
     """Lazily launch headless Chromium. Returns (browser, pw_instance) or None."""
     try:
         from playwright.async_api import async_playwright
+        _ga_dbg("Launching Playwright browser...")
         pw = await async_playwright().start()
         browser = await pw.chromium.launch(headless=True)
+        _ga_dbg("Playwright browser launched successfully")
         logger.info("[SiteDiscovery] Playwright browser launched for Cloudflare bypass.")
         return browser, pw
     except ImportError:
+        _ga_dbg("Playwright NOT installed!")
         logger.warning(
             "[SiteDiscovery] playwright not installed. "
             "Run: pip install playwright && playwright install chromium"
         )
         return None
     except Exception as e:
+        _ga_dbg(f"Playwright launch FAILED: {e}")
         logger.warning("[SiteDiscovery] Playwright launch failed: %s", e)
         return None
 
@@ -484,6 +490,7 @@ async def _fetch_with_playwright(
                     return None
             return (url, html, status)
         except Exception as e:
+            _ga_dbg(f"Playwright EXCEPTION for {url}: {type(e).__name__}: {e}")
             logger.debug("[Playwright] %s: %s", url, e)
             return None
         finally:
@@ -774,10 +781,17 @@ async def discover_site_tree(
             "site_blocked": False, "available": True,
         }
 
+        # Early-stopping counters
+        _consecutive_pw_fails = 0
+        _consecutive_total_fails = 0
+        _pw_fail_threshold = settings.gap_analysis_pw_fail_threshold
+        _total_fail_threshold = settings.gap_analysis_total_fail_threshold
+
         async def _crawl_one(
             url: str, depth: int, parent_url: Optional[str],
         ) -> Optional[Tuple[str, str, int, dict, Optional[str], Dict[str, str]]]:
             """Fetch a single page. Fallback chain: httpx -> Playwright -> Wayback."""
+            nonlocal _consecutive_pw_fails
             html: Optional[str] = None
             status_code: int = 0
 
@@ -796,7 +810,12 @@ async def discover_site_tree(
                                 canonical = _extract_canonical(html, url)
                                 hreflang = _extract_hreflang(html, url)
                                 return (url, html, status_code, metadata, canonical, hreflang)
+                            else:
+                                _ga_dbg(f"httpx got Cloudflare challenge for {url}")
+                        else:
+                            _ga_dbg(f"httpx non-HTML or error: {url} status={status_code} ct={content_type[:50]}")
                     except Exception as e:
+                        _ga_dbg(f"httpx exception for {url}: {type(e).__name__}: {e}")
                         errors.append(f"Crawl error for {url}: {e}")
 
                 logger.info("[BFS] httpx blocked for %s (status=%d), trying fallbacks", url, status_code)
@@ -808,33 +827,52 @@ async def discover_site_tree(
                     if result is not None:
                         _pw["browser"], _pw["mgr"] = result
                     else:
+                        _ga_dbg(f"Playwright unavailable, skipping tier-2 for {url}")
                         _pw["available"] = False
 
                 if _pw["browser"] is not None:
                     pw_result = await _fetch_with_playwright(url, _pw["browser"], pw_semaphore)
                     if pw_result is not None:
+                        _consecutive_pw_fails = 0
                         _, html, status_code = pw_result
                         if not _pw["site_blocked"]:
                             _pw["site_blocked"] = True
+                            _ga_dbg("Cloudflare confirmed — ALL pages now via Playwright")
                             logger.info(
                                 "[SiteDiscovery] Cloudflare detected — switching to Playwright for all pages."
                             )
-                        metadata = _extract_page_metadata(html)
-                        canonical = _extract_canonical(html, url)
-                        hreflang = _extract_hreflang(html, url)
-                        return (url, html, status_code, metadata, canonical, hreflang)
+                        return (url, html, status_code,
+                                _extract_page_metadata(html),
+                                _extract_canonical(html, url),
+                                _extract_hreflang(html, url))
+                    else:
+                        _consecutive_pw_fails += 1
+                        _ga_dbg(f"Playwright returned None for {url} (consecutive_fails={_consecutive_pw_fails})")
+                        if _consecutive_pw_fails >= _pw_fail_threshold:
+                            _pw["available"] = False
+                            logger.info(
+                                "[SiteDiscovery] Playwright disabled — %d consecutive failures, "
+                                "falling through to Wayback only",
+                                _consecutive_pw_fails,
+                            )
+                            _ga_dbg(f"Playwright DISABLED after {_consecutive_pw_fails} consecutive failures")
+            else:
+                _ga_dbg(f"Playwright not available, falling through to Wayback for {url}")
 
             # --- Tier 3: Wayback Machine ---
             wb_result = await _fetch_from_wayback(url, client)
             if wb_result is not None:
+                _ga_dbg(f"Wayback hit for {url}")
                 _, html, status_code = wb_result
                 metadata = _extract_page_metadata(html)
                 canonical = _extract_canonical(html, url)
                 hreflang = _extract_hreflang(html, url)
                 return (url, html, status_code, metadata, canonical, hreflang)
 
+            _ga_dbg(f"ALL 3 TIERS FAILED for {url}")
             return None
 
+        _bfs_start = time.monotonic()
         try:
             while bfs_queue and crawl_count < max_pages:
                 # Pop a batch for concurrent fetching
@@ -857,12 +895,23 @@ async def discover_site_tree(
                 if not batch:
                     continue
 
+                # --- Microscopic progress every 10 pages ---
+                if crawl_count % 10 == 0:
+                    _elapsed = time.monotonic() - _bfs_start
+                    _ga_dbg(
+                        f"BFS progress: {crawl_count}/{max_pages} crawled, "
+                        f"{len(bfs_queue)} queued, {len(pages_with_html)} with HTML, "
+                        f"playwright={'ON' if _pw['site_blocked'] else 'OFF'}, "
+                        f"elapsed={_elapsed:.1f}s"
+                    )
+
                 # Fetch batch concurrently
                 tasks = [_crawl_one(url, depth, parent_url) for url, depth, parent_url in batch]
                 results = await asyncio.gather(*tasks)
 
                 for (url, depth, parent_url), result in zip(batch, results):
                     if result is None:
+                        _consecutive_total_fails += 1
                         _register(DiscoveredPage(
                             url=url,
                             normalized_url=url,
@@ -874,6 +923,7 @@ async def discover_site_tree(
                         ))
                         continue
 
+                    _consecutive_total_fails = 0
                     fetched_url, html, status_code, metadata, canonical, hreflang = result
                     crawl_count += 1
 
@@ -948,6 +998,20 @@ async def discover_site_tree(
                                 else:
                                     bfs_queue.append(entry)
 
+                # Early-stop: all 3 tiers failing consecutively
+                if _consecutive_total_fails >= _total_fail_threshold:
+                    logger.info(
+                        "[SiteDiscovery] BFS early-stop — %d consecutive pages returned no content. "
+                        "Stopping crawl with %d pages collected.",
+                        _consecutive_total_fails,
+                        len(pages_with_html),
+                    )
+                    _ga_dbg(
+                        f"BFS EARLY-STOP: {_consecutive_total_fails} consecutive total failures, "
+                        f"{len(pages_with_html)} pages collected so far"
+                    )
+                    break
+
                 await asyncio.sleep(0.1)
         finally:
             # Clean up Playwright browser if it was initialized
@@ -962,6 +1026,12 @@ async def discover_site_tree(
                 except Exception:
                     pass
 
+        _bfs_total = time.monotonic() - _bfs_start
+        _ga_dbg(
+            f"BFS DONE: {crawl_count} crawled, {len(pages_with_html)} with HTML, "
+            f"{len(registry)} discovered, playwright={'USED' if _pw['site_blocked'] else 'NOT USED'}, "
+            f"elapsed={_bfs_total:.1f}s"
+        )
         logger.info(
             "[SiteDiscovery] BFS crawled %d pages. Total discovered: %d%s",
             crawl_count,
@@ -1063,28 +1133,27 @@ async def crawl_company_assets(
 
 
 def _load_knowledge_doc_units(
-    knowledge_doc_dir: str,
+    effective_slug: str,
+    storage: StorageBackend,
     start_counter: int = 0,
 ) -> List[SemanticUnit]:
-    """Load knowledge documents from a directory, extract text, chunk into SemanticUnits.
+    """Load knowledge documents via StorageBackend, extract text, chunk into SemanticUnits.
 
-    Reads _metadata.json to discover docs, uses the knowledge_doc_service
-    extract_text helper for PDF/DOCX support.
+    Reads _metadata.json from StorageBackend to discover docs, fetches each
+    document's bytes via ``storage.read_bytes()``, and uses
+    ``extract_text_from_bytes()`` for PDF/DOCX/MD/TXT extraction.
     """
-    doc_dir = Path(knowledge_doc_dir)
-    if not doc_dir.is_dir():
-        logger.info("[knowledge_docs] Directory not found: %s", doc_dir)
-        return []
+    from core.shared_tools.knowledge_doc_metadata import _metadata_key
 
-    metadata_path = doc_dir / "_metadata.json"
-    if not metadata_path.exists():
-        logger.info("[knowledge_docs] No _metadata.json in %s", doc_dir)
+    metadata_content = storage.read(_metadata_key(effective_slug))
+    if metadata_content is None:
+        logger.info("[knowledge_docs] No metadata for slug=%s", effective_slug)
         return []
 
     try:
-        raw = json.loads(metadata_path.read_text(encoding="utf-8"))
+        raw = json.loads(metadata_content)
     except Exception:
-        logger.warning("[knowledge_docs] Failed to parse _metadata.json in %s", doc_dir)
+        logger.warning("[knowledge_docs] Failed to parse _metadata.json for slug=%s", effective_slug)
         return []
 
     units: List[SemanticUnit] = []
@@ -1093,18 +1162,26 @@ def _load_knowledge_doc_units(
     for entry in raw:
         stored_filename = entry.get("stored_filename", "")
         original_filename = entry.get("filename", stored_filename)
-        file_path = doc_dir / stored_filename
+        key = doc_storage_key(effective_slug, stored_filename)
 
-        if not file_path.exists():
-            logger.warning("[knowledge_docs] File missing: %s", file_path)
+        file_bytes = storage.read_bytes(key)
+        if file_bytes is None:
+            logger.warning("[knowledge_docs] File missing: %s", key)
             continue
 
-        # Extract text using shared utility
-        text = _extract_text_from_file(file_path)
-        if not text and file_path.suffix.lower() not in (".md", ".txt", ".pdf", ".docx"):
+        # Extract text using shared utility (from bytes, no filesystem needed)
+        suffix = Path(stored_filename).suffix.lower()
+        text = extract_text_from_bytes(file_bytes, suffix)
+        if not text and suffix not in (".md", ".txt", ".pdf", ".docx"):
             continue
 
         if not text.strip():
+            if suffix in (".md", ".txt", ".pdf", ".docx"):
+                logger.warning(
+                    "[knowledge_docs] Empty text after extraction: filename=%s suffix=%s — skipping",
+                    original_filename,
+                    suffix,
+                )
             continue
 
         # Split into paragraphs and chunk using the same strategy as site content
@@ -1129,9 +1206,9 @@ def _load_knowledge_doc_units(
             )
 
     logger.info(
-        "[knowledge_docs] Loaded %d semantic units from %s",
+        "[knowledge_docs] Loaded %d semantic units for slug=%s",
         len(units),
-        doc_dir,
+        effective_slug,
     )
     return units
 
@@ -1145,50 +1222,60 @@ def _load_knowledge_doc_units(
 # ===========================================================================
 
 
-async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUnit]:
+async def embed_company_assets(
+    input_data: GapAnalysisInput,
+    storage: Optional[StorageBackend] = None,
+    prefix: str = "",
+) -> List[SemanticUnit]:
     """Crawl, chunk, embed, and store company assets (async).
 
     Uses multi-phase discovery (sitemap + RSS + BFS) and stores
     embeddings in pgvector. JSON artifacts are lightweight (IDs only).
     """
+    if storage is None:
+        from core.storage import get_storage_backend
+        storage = get_storage_backend()
+
     company_slug = input_data.company_slug or re.sub(
         r"[^a-z0-9]+", "-", input_data.company_name.lower()
     ).strip("-")
-    out_dir = _ensure_output_dir(company_slug)
+    if not prefix:
+        prefix = f"gap_analysis/{company_slug}"
     max_pages = input_data.max_crawl_pages or settings.gap_analysis_max_crawl_pages
     max_depth = input_data.max_crawl_depth or settings.gap_analysis_max_crawl_depth
 
     seed_urls = [str(u) for u in input_data.seed_urls]
 
     # --- Full site-tree discovery ---
+    _ga_dbg(f"Starting discover_site_tree: domain={input_data.domain}, max_pages={max_pages}, max_depth={max_depth}")
     discovery_result, pages_with_html = await discover_site_tree(
         domain=input_data.domain or "",
         seed_urls=seed_urls,
         max_pages=max_pages,
         max_depth=max_depth,
     )
+    _ga_dbg(f"discover_site_tree complete: {discovery_result.total_pages_discovered} discovered, {len(pages_with_html)} with HTML")
 
     # Save site-tree discovery artifacts
-    discovery_dir = out_dir / "site_discovery"
-    discovery_dir.mkdir(parents=True, exist_ok=True)
+    storage.mkdir(f"{prefix}/site_discovery")
 
-    (discovery_dir / "discovered_pages.json").write_text(
+    storage.write(
+        f"{prefix}/site_discovery/discovered_pages.json",
         json.dumps(
             [p.model_dump(mode="json") for p in discovery_result.pages],
             indent=2,
             default=str,
         ),
-        encoding="utf-8",
     )
 
     if discovery_result.site_tree:
-        (discovery_dir / "site_tree.json").write_text(
+        storage.write(
+            f"{prefix}/site_discovery/site_tree.json",
             json.dumps(
                 discovery_result.site_tree.model_dump(mode="json"),
                 indent=2,
                 default=str,
             ),
-            encoding="utf-8",
         )
 
     summary = {
@@ -1203,22 +1290,23 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
         "errors": discovery_result.errors,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    (discovery_dir / "discovery_summary.json").write_text(
+    storage.write(
+        f"{prefix}/site_discovery/discovery_summary.json",
         json.dumps(summary, indent=2, default=str),
-        encoding="utf-8",
     )
 
     logger.info(
         "[embed_company_assets] Site discovery complete: "
-        "%d URLs discovered, %d pages crawled. Artifacts saved to %s",
+        "%d URLs discovered, %d pages crawled.",
         discovery_result.total_pages_discovered,
         len(pages_with_html),
-        discovery_dir,
     )
 
     # --- Build semantic units ---
+    _ga_dbg(f"Building semantic units from {len(pages_with_html)} pages...")
     discovery_lookup = {_normalize_url(p.url): p for p in discovery_result.pages}
     units = build_semantic_units(pages_with_html, discovery_lookup=discovery_lookup)
+    _ga_dbg(f"Built {len(units)} semantic units")
 
     # --- Structural analysis of company pages (per-page, not per-chunk) ---
     page_analyses: List[CompanyPageAnalysis] = []
@@ -1244,14 +1332,13 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
             )
 
     # Save company page analysis artifact
-    analysis_path = out_dir / "company_page_analysis.json"
-    analysis_path.write_text(
+    storage.write(
+        f"{prefix}/company_page_analysis.json",
         json.dumps(
             [pa.model_dump(mode="json") for pa in page_analyses],
             indent=2,
             default=str,
         ),
-        encoding="utf-8",
     )
     logger.info(
         "[embed_company_assets] Structural analysis complete: %d/%d pages analyzed",
@@ -1260,9 +1347,11 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
     )
 
     # --- Load knowledge documents (if any) ---
-    if input_data.knowledge_doc_dir:
+    kdoc_slug = getattr(input_data, "knowledge_doc_slug", None)
+    if kdoc_slug:
         kdoc_units = _load_knowledge_doc_units(
-            input_data.knowledge_doc_dir,
+            kdoc_slug,
+            storage,
             start_counter=len(units),
         )
         if kdoc_units:
@@ -1275,7 +1364,10 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
 
     # --- Embed (async) ---
     texts = [u.text for u in units]
+    _ga_dbg(f"Embedding {len(texts)} text chunks via OpenAI...")
+    _embed_start = time.monotonic()
     embeddings = await async_embed_texts(texts)
+    _ga_dbg(f"Embedding complete: {len(embeddings)} vectors in {time.monotonic() - _embed_start:.1f}s")
     for unit, embedding in zip(units, embeddings):
         unit.embedding = embedding
         unit.embedding_id = f"{company_slug}__{unit.unit_id}"
@@ -1297,15 +1389,16 @@ async def embed_company_assets(input_data: GapAnalysisInput) -> List[SemanticUni
     )
 
     # --- Save lightweight JSON (embedding_id only, no raw vectors) ---
-    output_path = out_dir / "company_embeddings.json"
     payload = [u.model_dump(mode="json", exclude={"embedding"}) for u in units]
-    output_path.write_text(
-        json.dumps(payload, indent=2, default=str), encoding="utf-8"
+    storage.write(
+        f"{prefix}/company_embeddings.json",
+        json.dumps(payload, indent=2, default=str),
     )
 
     # --- Mark knowledge docs as embedded ---
-    if input_data.knowledge_doc_dir:
-        mark_documents_embedded(input_data.knowledge_doc_dir)
+    # H6-fix: run blocking lock + I/O off the event loop
+    if kdoc_slug:
+        await asyncio.to_thread(mark_documents_embedded, kdoc_slug, storage=storage)
 
     logger.info(
         "[embed_company_assets] S1 complete: %d pages crawled, %d semantic units, "

@@ -26,6 +26,15 @@ WORKDIR /app
 # Python packages from builder
 COPY --from=builder /install /usr/local
 
+# Install Playwright Chromium browser binaries + system deps.
+# --with-deps installs required shared libraries (libnss3, libatk, etc.)
+# Playwright installs to /root/.cache/ms-playwright/ during build (as root).
+# At runtime the app runs as appuser (home=/app), so playwright looks at
+# /app/.cache/ms-playwright/. We copy the browsers there after install.
+RUN playwright install chromium --with-deps && \
+    mkdir -p /app/.cache && \
+    cp -r /root/.cache/ms-playwright /app/.cache/ms-playwright
+
 # Application code
 COPY core/ ./core/
 COPY api/ ./api/

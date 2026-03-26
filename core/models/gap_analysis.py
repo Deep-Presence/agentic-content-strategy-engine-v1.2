@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 from typing import Tuple
 
 
@@ -138,8 +138,22 @@ class GapAnalysisInput(BaseModel):
         default=None, description="Product description for prompt injection."
     )
     knowledge_doc_dir: Optional[str] = Field(
-        default=None, description="Path to knowledge docs directory for s1 embedding."
+        default=None, description="Deprecated — use knowledge_doc_slug. Filesystem path to knowledge docs."
     )
+    knowledge_doc_slug: Optional[str] = Field(
+        default=None, description="Effective slug for knowledge docs in StorageBackend."
+    )
+
+    @model_validator(mode="after")
+    def _backfill_knowledge_doc_slug(self) -> "GapAnalysisInput":
+        """Auto-populate knowledge_doc_slug from deprecated knowledge_doc_dir."""
+        if not self.knowledge_doc_slug and self.knowledge_doc_dir:
+            from pathlib import PurePosixPath
+
+            name = PurePosixPath(self.knowledge_doc_dir.rstrip("/")).name
+            if name:
+                self.knowledge_doc_slug = name
+        return self
 
 
 class SemanticUnit(BaseModel):

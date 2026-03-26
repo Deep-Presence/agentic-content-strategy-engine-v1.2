@@ -7,12 +7,15 @@ import { Plus, LayoutGrid, List, ChevronDown } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth';
 import { useContentBriefs } from '@/lib/hooks/useContent';
 import { useTaskStream } from '@/lib/hooks/useTaskStream';
+import { useCMSConnection, useCMSCategories, useCMSPublish } from '@/lib/hooks/useCMS';
 import { toBrief, toBriefStage } from '@/lib/api/transforms';
 import { type ExtendedBrief } from './_components/content-data';
 import { CyclesSidebar } from './_components/CyclesSidebar';
 import { KanbanBoard } from './_components/KanbanBoard';
 import { DetailView } from './_components/DetailView';
 import { ContentView } from './_components/ContentView';
+import { PublishDrawer } from './_components/PublishDrawer';
+import type { CMSPublishResponse } from '@/lib/api/types';
 
 
 export default function ContentStudioPage() {
@@ -150,6 +153,29 @@ export default function ContentStudioPage() {
   // Reset local overrides when API data refreshes
   const items = apiBriefs;
 
+  // CMS publish integration
+  const { data: cmsConnection } = useCMSConnection();
+  const isCMSConnected = cmsConnection?.is_active ?? false;
+  const { data: cmsCategories, isLoading: categoriesLoading } = useCMSCategories(isCMSConnected);
+  const { publish, isPublishing, error: publishError } = useCMSPublish();
+  const [publishBriefId, setPublishBriefId] = useState<string | null>(null);
+  const [publishResult, setPublishResult] = useState<CMSPublishResponse | null>(null);
+
+  const publishBrief = publishBriefId ? items.find((i) => i.id === publishBriefId) ?? null : null;
+
+  const handlePublish = useCallback(async (data: { brief_id: string; status: 'draft' | 'publish'; slug_override: string; categories: string[] }) => {
+    const result = await publish(data);
+    if (result) {
+      setPublishResult(result);
+      refetch(); // Refresh briefs to get updated published_url
+    }
+  }, [publish, refetch]);
+
+  const handleClosePublishDrawer = useCallback(() => {
+    setPublishBriefId(null);
+    setPublishResult(null);
+  }, []);
+
   const [selectedBriefId, setSelectedBriefId] = useState<string | null>(null);
   const [detailBriefId, setDetailBriefId] = useState<string | null>(null);
   const [fullEditorBriefId, setFullEditorBriefId] = useState<string | null>(null);
@@ -264,6 +290,8 @@ export default function ContentStudioPage() {
               items={items}
               onItemsChange={handleItemsChange}
               onCardClick={handleCardClick}
+              isCMSConnected={isCMSConnected}
+              onPublishClick={setPublishBriefId}
             />
           </div>
         </div>
@@ -282,6 +310,20 @@ export default function ContentStudioPage() {
         <ContentView
           brief={fullEditorBrief}
           onClose={() => setFullEditorBriefId(null)}
+        />
+      )}
+
+      {publishBrief && (
+        <PublishDrawer
+          open={!!publishBriefId}
+          onClose={handleClosePublishDrawer}
+          brief={{ id: publishBrief.id, title: publishBrief.title }}
+          categories={cmsCategories ?? []}
+          categoriesLoading={categoriesLoading}
+          onPublish={handlePublish}
+          isPublishing={isPublishing}
+          publishResult={publishResult}
+          publishError={publishError?.detail ?? null}
         />
       )}
     </>

@@ -26,7 +26,7 @@ from api.exceptions import (
 from api.tasks.store import ApprovalDeliveryError
 from api.auth.middleware import AuthMiddleware
 from api.auth.store import AuthStore
-from api.routers import artifacts, audience_persona, auth, brand_data, companies, content, content_data, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, onboarding, research_orchestrator, settings, site_audit as site_audit_router, tasks, topic_discovery, voice_style_guide
+from api.routers import artifacts, audience_persona, auth, brand_data, cms, companies, content, content_data, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, onboarding, research_orchestrator, settings, site_audit as site_audit_router, tasks, topic_discovery, voice_style_guide
 from api.tasks.event_bus import EventBus
 from api.tasks.store import TaskConflictError, TaskNotFoundError, TaskStore
 
@@ -157,8 +157,8 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "artifacts_root") or app.state.artifacts_root is None:
         app.state.artifacts_root = _PROJECT_ROOT / "artifacts"
     if not hasattr(app.state, "storage_backend") or app.state.storage_backend is None:
-        from core.storage.backends import LocalStorageBackend
-        app.state.storage_backend = LocalStorageBackend(app.state.artifacts_root)
+        from core.storage import get_storage_backend
+        app.state.storage_backend = get_storage_backend(app.state.artifacts_root)
     if not hasattr(app.state, "auth_store") or app.state.auth_store is None:
         app.state.auth_store = AuthStore(base_dir=app.state.artifacts_root)
 
@@ -353,6 +353,7 @@ def create_app() -> FastAPI:
     app.include_router(onboarding.router)
     app.include_router(site_audit_router.router)
     app.include_router(daily_tracker.router)
+    app.include_router(cms.router)
     app.include_router(tasks.router)
 
     return app

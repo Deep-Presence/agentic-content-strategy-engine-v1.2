@@ -23,6 +23,13 @@ except ImportError:
     litellm = None  # type: ignore[assignment]
 
 from core.config.settings import settings
+from core.shared_tools.tracing import (
+    create_span,
+    end_span,
+    extract_provider,
+    log_generation,
+    log_score,
+)
 from core.models.topic_discovery import (
     BuyerStage,
     CaptureRecaptureResult,
@@ -157,6 +164,7 @@ async def _run_completion(
     max_tokens: int = 16384,
     timeout_s: float = 120.0,
     response_format: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, str]:
     """Run LiteLLM completion with pause_turn handling."""
     convo = list(messages)
@@ -172,6 +180,8 @@ async def _run_completion(
     }
     if response_format is not None:
         completion_kwargs["response_format"] = response_format
+    if metadata is not None:
+        completion_kwargs["metadata"] = metadata
 
     for turn in range(_MAX_PAUSE_TURNS + 1):
         # Update messages in kwargs for pause_turn continuations
@@ -281,6 +291,16 @@ def _safe_float(value: Any, default: float = 0.5) -> float:
         return default
 
 
+def _extract_usage(response: Any) -> Dict[str, int]:
+    """Extract token usage from a LiteLLM response safely."""
+    if response and hasattr(response, "usage") and response.usage:
+        return {
+            "prompt_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
+            "completion_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
+        }
+    return {}
+
+
 # ---------------------------------------------------------------------------
 # S1: Multi-Source Subdomain Generation
 # ---------------------------------------------------------------------------
@@ -293,6 +313,8 @@ async def run_source_a_company_brainstorm(
     model: Optional[str] = None,
     timeout_s: float = 120.0,
     revision_note: Optional[str] = None,
+    parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> SourceResult:
     """Source A: Company-perspective subdomain brainstorm (iterative expansion)."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -300,6 +322,7 @@ async def run_source_a_company_brainstorm(
     all_candidates: List[SubdomainCandidate] = []
     previous_names: List[str] = []
     rounds_executed = 0
+    span = create_span(parent_span, "td-source-a", input_data={"max_rounds": max_rounds})
 
     try:
         for round_num in range(1, max_rounds + 1):
@@ -316,8 +339,22 @@ async def run_source_a_company_brainstorm(
                     ),
                 },
             ]
-            _, raw_text = await _run_completion(
-                model=model, messages=messages, timeout_s=timeout_s
+            _meta_a = {
+                "pipeline": "topic_discovery",
+                "pipeline_step": "source_a",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            }
+            response, raw_text = await _run_completion(
+                model=model, messages=messages, timeout_s=timeout_s,
+                metadata=_meta_a,
+            )
+            log_generation(
+                span, f"round-{round_num}", model,
+                messages[-1]["content"][:2000], raw_text[:2000],
+                metadata=_meta_a,
+                usage=_extract_usage(response),
             )
             parsed = _parse_json_response(raw_text)
             if parsed is None:
@@ -347,6 +384,10 @@ async def run_source_a_company_brainstorm(
         total_obs = _count_total_round_observations(all_candidates)
         chao1 = compute_chao1_lower_bound(observed, singletons, doubletons)
         sc = compute_sample_coverage(singletons, total_obs)
+        log_score(span, "chao1_estimate", chao1)
+        log_score(span, "sample_coverage", sc)
+        log_score(span, "candidate_count", float(len(all_candidates)))
+        end_span(span, output={"candidates": len(all_candidates), "rounds": rounds_executed})
         return SourceResult(
             source=TDSource.source_a,
             candidates=all_candidates,
@@ -358,6 +399,7 @@ async def run_source_a_company_brainstorm(
             execution_time_s=time.monotonic() - t0,
         )
     except Exception as exc:
+        end_span(span, error=str(exc)[:500])
         return SourceResult(
             source=TDSource.source_a,
             candidates=all_candidates,
@@ -408,6 +450,8 @@ async def run_source_b_persona_brainstorm(
     timeout_s: float = 120.0,
     revision_note: Optional[str] = None,
     persona_name_to_id: Optional[Dict[str, str]] = None,
+    parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> SourceResult:
     """Source B: Audience-perspective subdomain brainstorm (iterative expansion)."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -415,6 +459,7 @@ async def run_source_b_persona_brainstorm(
     all_candidates: List[SubdomainCandidate] = []
     previous_names: List[str] = []
     rounds_executed = 0
+    span = create_span(parent_span, "td-source-b", input_data={"max_rounds": max_rounds})
 
     try:
         for round_num in range(1, max_rounds + 1):
@@ -432,8 +477,22 @@ async def run_source_b_persona_brainstorm(
                     ),
                 },
             ]
-            _, raw_text = await _run_completion(
-                model=model, messages=messages, timeout_s=timeout_s
+            _meta_b = {
+                "pipeline": "topic_discovery",
+                "pipeline_step": "source_b",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            }
+            response, raw_text = await _run_completion(
+                model=model, messages=messages, timeout_s=timeout_s,
+                metadata=_meta_b,
+            )
+            log_generation(
+                span, f"round-{round_num}", model,
+                messages[-1]["content"][:2000], raw_text[:2000],
+                metadata=_meta_b,
+                usage=_extract_usage(response),
             )
             parsed = _parse_json_response(raw_text)
             if parsed is None:
@@ -475,6 +534,10 @@ async def run_source_b_persona_brainstorm(
         total_obs = _count_total_round_observations(all_candidates)
         chao1 = compute_chao1_lower_bound(observed, singletons, doubletons)
         sc = compute_sample_coverage(singletons, total_obs)
+        log_score(span, "chao1_estimate", chao1)
+        log_score(span, "sample_coverage", sc)
+        log_score(span, "candidate_count", float(len(all_candidates)))
+        end_span(span, output={"candidates": len(all_candidates), "rounds": rounds_executed})
         return SourceResult(
             source=TDSource.source_b,
             candidates=all_candidates,
@@ -486,6 +549,7 @@ async def run_source_b_persona_brainstorm(
             execution_time_s=time.monotonic() - t0,
         )
     except Exception as exc:
+        end_span(span, error=str(exc)[:500])
         return SourceResult(
             source=TDSource.source_b,
             candidates=all_candidates,
@@ -501,8 +565,10 @@ async def run_source_c_deep_research(
     domain: str,
     *,
     model: Optional[str] = None,
-    timeout_s: float = 500.0,
+    timeout_s: float = 900.0,
     revision_note: Optional[str] = None,
+    parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> SourceResult:
     """Source C: Deep research competitive content landscape via Perplexity."""
     from core.research.tools import perplexity_client
@@ -519,6 +585,7 @@ async def run_source_c_deep_research(
 
     model = model or settings.topic_discovery_source_c_model
     t0 = time.monotonic()
+    span = create_span(parent_span, "td-source-c", input_data={"domain": domain, "model": model})
 
     try:
         system_prompt = get_source_c_system_prompt()
@@ -537,6 +604,16 @@ async def run_source_c_deep_research(
             ),
             timeout=timeout_s,
         )
+        # Manual log_generation — Perplexity bypasses LiteLLM callbacks
+        _meta_c = {
+            "pipeline": "topic_discovery",
+            "pipeline_step": "source_c",
+            "provider": "perplexity",
+            "model": model,
+            "company_slug": company_slug,
+        }
+        log_generation(span, "deep-research", model, full_prompt[:2000], raw_text[:2000],
+                       metadata=_meta_c)
 
         # Strip Perplexity citations section before JSON parsing
         if "\n\nSources:\n" in raw_text:
@@ -544,6 +621,8 @@ async def run_source_c_deep_research(
 
         parsed = _parse_json_response(raw_text)
         if parsed is None:
+            log_score(span, "candidate_count", 0.0)
+            end_span(span, output={"candidates": 0})
             return SourceResult(
                 source=TDSource.source_c,
                 candidates=[],
@@ -573,6 +652,8 @@ async def run_source_c_deep_research(
         total_obs = _count_total_round_observations(candidates)
         chao1 = compute_chao1_lower_bound(observed, singletons, doubletons)
         sc = compute_sample_coverage(singletons, total_obs)
+        log_score(span, "candidate_count", float(len(candidates)))
+        end_span(span, output={"candidates": len(candidates)})
         return SourceResult(
             source=TDSource.source_c,
             candidates=candidates,
@@ -584,6 +665,7 @@ async def run_source_c_deep_research(
             execution_time_s=time.monotonic() - t0,
         )
     except asyncio.TimeoutError:
+        end_span(span, error=f"Timeout after {timeout_s}s")
         return SourceResult(
             source=TDSource.source_c,
             total_rounds=1,
@@ -591,6 +673,7 @@ async def run_source_c_deep_research(
             error=f"Timeout after {timeout_s}s",
         )
     except Exception as exc:
+        end_span(span, error=str(exc)[:500])
         return SourceResult(
             source=TDSource.source_c,
             total_rounds=1,
@@ -608,6 +691,8 @@ async def run_source_d_adversarial(
     model: Optional[str] = None,
     timeout_s: float = 120.0,
     revision_note: Optional[str] = None,
+    parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> SourceResult:
     """Source D: Adversarial diversity pass using specialist lenses."""
     model = model or settings.topic_discovery_brainstorm_model
@@ -624,6 +709,10 @@ async def run_source_d_adversarial(
             "customer success advocate",
             "security & risk analyst",
         ]
+
+    span = create_span(parent_span, "td-source-d", input_data={
+        "lenses": len(specialist_lenses), "max_rounds": max_rounds,
+    })
 
     try:
         for round_num, lens in enumerate(specialist_lenses, 1):
@@ -643,8 +732,22 @@ async def run_source_d_adversarial(
                     ),
                 },
             ]
-            _, raw_text = await _run_completion(
-                model=model, messages=messages, timeout_s=timeout_s
+            _meta_d = {
+                "pipeline": "topic_discovery",
+                "pipeline_step": "source_d",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            }
+            response, raw_text = await _run_completion(
+                model=model, messages=messages, timeout_s=timeout_s,
+                metadata=_meta_d,
+            )
+            log_generation(
+                span, f"lens-{round_num}-{lens[:20]}", model,
+                messages[-1]["content"][:2000], raw_text[:2000],
+                metadata=_meta_d,
+                usage=_extract_usage(response),
             )
             parsed = _parse_json_response(raw_text)
             if parsed is None:
@@ -672,6 +775,10 @@ async def run_source_d_adversarial(
         total_obs = _count_total_round_observations(all_candidates)
         chao1 = compute_chao1_lower_bound(observed, singletons, doubletons)
         sc = compute_sample_coverage(singletons, total_obs)
+        log_score(span, "chao1_estimate", chao1)
+        log_score(span, "sample_coverage", sc)
+        log_score(span, "candidate_count", float(len(all_candidates)))
+        end_span(span, output={"candidates": len(all_candidates), "rounds": rounds_executed})
         return SourceResult(
             source=TDSource.source_d,
             candidates=all_candidates,
@@ -683,6 +790,7 @@ async def run_source_d_adversarial(
             execution_time_s=time.monotonic() - t0,
         )
     except Exception as exc:
+        end_span(span, error=str(exc)[:500])
         return SourceResult(
             source=TDSource.source_d,
             candidates=all_candidates,
@@ -701,6 +809,7 @@ async def deduplicate_subdomains_with_clusters(
     candidates: List[SubdomainCandidate],
     *,
     threshold: float = 0.85,
+    parent_span: Optional[Any] = None,
 ) -> DeduplicationResult:
     """Deduplicate subdomains via embedding cosine similarity.
 
@@ -709,6 +818,8 @@ async def deduplicate_subdomains_with_clusters(
     """
     if not candidates:
         return DeduplicationResult()
+
+    span = create_span(parent_span, "td-s2-dedup", input_data={"candidate_count": len(candidates)})
 
     from core.shared_tools.embedding_client import embed_texts
 
@@ -756,6 +867,11 @@ async def deduplicate_subdomains_with_clusters(
         # Deduplicate pain_points preserving order
         kept[kept_idx].pain_points = list(dict.fromkeys(merged_pains))
 
+    dedup_ratio = 1.0 - (len(kept) / len(candidates)) if candidates else 0.0
+    log_score(span, "dedup_ratio", round(dedup_ratio, 4))
+    log_score(span, "total_kept", float(len(kept)))
+    end_span(span, output={"kept": len(kept), "dedup_ratio": round(dedup_ratio, 4)})
+
     return DeduplicationResult(
         kept=kept,
         clusters=clusters,
@@ -794,6 +910,7 @@ async def run_hierarchy_construction(
     *,
     model: Optional[str] = None,
     timeout_s: float = 480.0,
+    company_slug: str = "",
 ) -> TaxonomyTree:
     """Organize flat subdomains into a hierarchical taxonomy tree via LLM.
 
@@ -809,12 +926,21 @@ async def run_hierarchy_construction(
         {"role": "user", "content": user_prompt},
     ]
 
+    _meta_hier = {
+        "pipeline": "topic_discovery",
+        "pipeline_step": "hierarchy_construction",
+        "provider": extract_provider(model),
+        "model": model,
+        "company_slug": company_slug,
+    }
+
     # Attempt 1
     _, raw_text = await _run_completion(
         model=model,
         messages=messages,
         timeout_s=timeout_s,
         response_format={"type": "json_object"},
+        metadata=_meta_hier,
     )
     parsed = _parse_json_response(raw_text)
     nodes = _extract_taxonomy_nodes(parsed)
@@ -844,6 +970,7 @@ async def run_hierarchy_construction(
         messages=retry_messages,
         timeout_s=timeout_s,
         response_format={"type": "json_object"},
+        metadata=_meta_hier,
     )
     retry_parsed = _parse_json_response(retry_text)
     retry_nodes = _extract_taxonomy_nodes(retry_parsed)
@@ -869,6 +996,8 @@ async def run_unified_hierarchy_and_scoring(
     *,
     model: Optional[str] = None,
     timeout_s: float = 600.0,
+    parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> TaxonomyTree:
     """Unified S2: build hierarchy + score subdomains + persona affinity.
 
@@ -883,6 +1012,7 @@ async def run_unified_hierarchy_and_scoring(
         persona_profiles: List of (persona_id, profile_markdown) tuples.
         model: LLM model override (defaults to settings).
         timeout_s: Timeout for LLM call.
+        parent_span: Optional parent trace span for LangSmith.
 
     Returns:
         TaxonomyTree with priority_score, priority_factors, persona_affinity,
@@ -894,6 +1024,9 @@ async def run_unified_hierarchy_and_scoring(
     )
 
     model = model or settings.topic_discovery_unified_s2_model
+    span = create_span(parent_span, "td-s2-unified", input_data={
+        "subdomain_count": len(subdomains),
+    })
 
     system_prompt = get_unified_s2_system_prompt()
     user_prompt = build_unified_s2_user_prompt(
@@ -907,13 +1040,28 @@ async def run_unified_hierarchy_and_scoring(
         {"role": "user", "content": user_prompt},
     ]
 
+    _meta_us2 = {
+        "pipeline": "topic_discovery",
+        "pipeline_step": "unified_s2",
+        "provider": extract_provider(model),
+        "model": model,
+        "company_slug": company_slug,
+    }
+
     # Attempt 1 — larger max_tokens for scoring + persona affinity output
-    _, raw_text = await _run_completion(
+    response, raw_text = await _run_completion(
         model=model,
         messages=messages,
         timeout_s=timeout_s,
         max_tokens=32768,
         response_format={"type": "json_object"},
+        metadata=_meta_us2,
+    )
+    log_generation(
+        span, "hierarchy-scoring", model,
+        user_prompt[:2000], raw_text[:2000],
+        metadata=_meta_us2,
+        usage=_extract_usage(response),
     )
     parsed = _parse_json_response(raw_text)
     nodes = _extract_taxonomy_nodes(parsed)
@@ -926,6 +1074,9 @@ async def run_unified_hierarchy_and_scoring(
                 "TD unified S2: fixed %d composite scores: %s",
                 len(warnings), "; ".join(warnings[:5]),
             )
+        log_score(span, "total_subdomains", float(tree.total_subdomains))
+        log_score(span, "max_depth", float(tree.max_depth))
+        end_span(span, output={"total_subdomains": tree.total_subdomains, "retried": False})
         return tree
 
     # Attempt 2: retry with repair prompt
@@ -946,12 +1097,19 @@ async def run_unified_hierarchy_and_scoring(
         {"role": "assistant", "content": raw_text},
         {"role": "user", "content": repair_prompt},
     ]
-    _, retry_text = await _run_completion(
+    retry_response, retry_text = await _run_completion(
         model=model,
         messages=retry_messages,
         timeout_s=timeout_s,
         max_tokens=32768,
         response_format={"type": "json_object"},
+        metadata=_meta_us2,
+    )
+    log_generation(
+        span, "hierarchy-scoring-retry", model,
+        repair_prompt[:2000], retry_text[:2000],
+        metadata=_meta_us2,
+        usage=_extract_usage(retry_response),
     )
     retry_parsed = _parse_json_response(retry_text)
     retry_nodes = _extract_taxonomy_nodes(retry_parsed)
@@ -960,8 +1118,12 @@ async def run_unified_hierarchy_and_scoring(
         logger.info("TD unified S2: retry succeeded.")
         tree = _build_taxonomy_tree(retry_nodes, company_domain)
         _validate_and_fix_composites(tree.root_nodes)
+        log_score(span, "total_subdomains", float(tree.total_subdomains))
+        log_score(span, "max_depth", float(tree.max_depth))
+        end_span(span, output={"total_subdomains": tree.total_subdomains, "retried": True})
         return tree
 
+    end_span(span, error="Unified S2 failed after 2 attempts")
     raise RuntimeError(
         f"Unified S2 failed after 2 attempts. "
         f"Could not parse LLM response into a valid taxonomy. "
@@ -1154,9 +1316,14 @@ async def run_relevance_filtering(
     *,
     model: Optional[str] = None,
     timeout_s: float = 120.0,
+    parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> List[Dict[str, Any]]:
     """Classify dimension combinations as relevant/marginal/irrelevant."""
     model = model or settings.topic_discovery_dedup_model
+    span = create_span(parent_span, "td-relevance-filter", input_data={
+        "subdomain": subdomain, "dimensions": len(dimensions),
+    })
 
     messages = [
         {"role": "system", "content": get_relevance_system_prompt()},
@@ -1167,15 +1334,32 @@ async def run_relevance_filtering(
             ),
         },
     ]
-    _, raw_text = await _run_completion(
-        model=model, messages=messages, temperature=0.3, timeout_s=timeout_s
+    _meta_rf = {
+        "pipeline": "topic_discovery",
+        "pipeline_step": "relevance_filter",
+        "provider": extract_provider(model),
+        "model": model,
+        "company_slug": company_slug,
+    }
+    response, raw_text = await _run_completion(
+        model=model, messages=messages, temperature=0.3, timeout_s=timeout_s,
+        metadata=_meta_rf,
+    )
+    log_generation(
+        span, "relevance-filter", model,
+        messages[-1]["content"][:2000], raw_text[:2000],
+        metadata=_meta_rf,
+        usage=_extract_usage(response),
     )
     parsed = _parse_json_response(raw_text)
     if parsed is None:
+        end_span(span, output={"classifications": 0})
         return []
     results = parsed.get("classifications", [])
     if not isinstance(results, list):
+        end_span(span, output={"classifications": 0})
         return []
+    end_span(span, output={"classifications": len(results)})
     return results
 
 
@@ -1188,9 +1372,14 @@ async def run_topic_generation(
     *,
     model: Optional[str] = None,
     timeout_s: float = 120.0,
+    parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> List[TopicAssignment]:
     """Generate 2-5 topic assignments for a relevant dimension cell."""
     model = model or settings.topic_discovery_brainstorm_model
+    span = create_span(parent_span, "td-topic-gen", input_data={
+        "subdomain": subdomain, "buyer_stage": buyer_stage, "intent_type": intent_type,
+    })
 
     messages = [
         {"role": "system", "content": get_topic_generation_system_prompt()},
@@ -1202,14 +1391,30 @@ async def run_topic_generation(
             ),
         },
     ]
-    _, raw_text = await _run_completion(
-        model=model, messages=messages, timeout_s=timeout_s
+    _meta_tg = {
+        "pipeline": "topic_discovery",
+        "pipeline_step": "topic_generation",
+        "provider": extract_provider(model),
+        "model": model,
+        "company_slug": company_slug,
+    }
+    response, raw_text = await _run_completion(
+        model=model, messages=messages, timeout_s=timeout_s,
+        metadata=_meta_tg,
+    )
+    log_generation(
+        span, "topic-gen", model,
+        messages[-1]["content"][:2000], raw_text[:2000],
+        metadata=_meta_tg,
+        usage=_extract_usage(response),
     )
     parsed = _parse_json_response(raw_text)
     if parsed is None:
+        end_span(span, output={"assignments": 0})
         return []
     topics = parsed.get("topics", [])
     if not isinstance(topics, list):
+        end_span(span, output={"assignments": 0})
         return []
 
     assignments = []
@@ -1228,6 +1433,7 @@ async def run_topic_generation(
                 priority_factors=t.get("priority_factors", {}),
             )
         )
+    end_span(span, output={"assignments": len(assignments)})
     return assignments
 
 
@@ -1242,6 +1448,8 @@ async def run_subdomain_expansion(
     persona_context: Optional[str] = None,
     model: Optional[str] = None,
     timeout_s: float = 180.0,
+    parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> List[TopicAssignment]:
     """Expand a single subdomain into topic assignments in ONE LLM call.
 
@@ -1258,6 +1466,7 @@ async def run_subdomain_expansion(
         persona_context: Optional persona markdown for focused expansion.
         model: LLM model override.
         timeout_s: Per-call timeout.
+        parent_span: Optional parent trace span for LangSmith.
 
     Returns:
         List of TopicAssignment objects (empty on failure).
@@ -1268,6 +1477,9 @@ async def run_subdomain_expansion(
     )
 
     model = model or settings.topic_discovery_brainstorm_model
+    span = create_span(parent_span, f"td-expand/{subdomain_name[:50]}", input_data={
+        "subdomain": subdomain_name,
+    })
 
     messages = [
         {"role": "system", "content": get_subdomain_expansion_system_prompt()},
@@ -1284,15 +1496,33 @@ async def run_subdomain_expansion(
             ),
         },
     ]
-    _, raw_text = await _run_completion(
-        model=model, messages=messages, timeout_s=timeout_s
+    _meta_exp = {
+        "pipeline": "topic_discovery",
+        "pipeline_step": "subdomain_expansion",
+        "provider": extract_provider(model),
+        "model": model,
+        "company_slug": company_slug,
+    }
+    response, raw_text = await _run_completion(
+        model=model, messages=messages, timeout_s=timeout_s,
+        metadata=_meta_exp,
+    )
+    log_generation(
+        span, "expansion", model,
+        messages[-1]["content"][:2000], raw_text[:2000],
+        metadata=_meta_exp,
+        usage=_extract_usage(response),
     )
     parsed = _parse_json_response(raw_text)
     if parsed is None:
+        log_score(span, "assignments_count", 0.0)
+        end_span(span, output={"assignments": 0})
         return []
 
     topics = parsed.get("topics", [])
     if not isinstance(topics, list):
+        log_score(span, "assignments_count", 0.0)
+        end_span(span, output={"assignments": 0})
         return []
 
     assignments: List[TopicAssignment] = []
@@ -1343,6 +1573,8 @@ async def run_subdomain_expansion(
                 },
             )
         )
+    log_score(span, "assignments_count", float(len(assignments)))
+    end_span(span, output={"assignments": len(assignments)})
     return assignments
 
 

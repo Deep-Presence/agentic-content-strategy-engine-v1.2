@@ -45,3 +45,23 @@ class TestHealth:
             },
         )
         assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+    def test_health_with_db_connected(self, client: TestClient) -> None:
+        """When DB is healthy, response includes 'connected'."""
+        client.app.state.db_healthy = True
+        client.app.state.pgvector_available = True
+        resp = client.get("/health")
+        data = resp.json()
+        assert data["database"] == "connected"
+        assert data["pgvector"] == "available"
+        # Reset
+        client.app.state.db_healthy = False
+        client.app.state.pgvector_available = False
+
+    def test_health_without_db(self, client: TestClient) -> None:
+        """When DB is not configured, response shows 'unavailable'."""
+        client.app.state.db_healthy = False
+        resp = client.get("/health")
+        data = resp.json()
+        assert data["database"] == "unavailable"
+        assert data["status"] == "ok"  # App still healthy without DB
