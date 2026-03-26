@@ -5,13 +5,15 @@ import pytest
 
 
 class TestR2SettingsDefaults:
-    """Verify R2 fields default to safe values (no R2 unless explicitly configured)."""
+    """Verify R2 storage backend is the default, with R2 credential fields defaulting to None."""
 
-    def test_storage_backend_defaults_to_local(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_storage_backend_defaults_to_r2(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The hardcoded default in Settings is 'r2' (env files or env vars may override)."""
         monkeypatch.delenv("STORAGE_BACKEND", raising=False)
         from core.config.settings import Settings
-        s = Settings()
-        assert s.storage_backend == "local"
+        # Build Settings without env files to test the pure class default
+        s = Settings(_env_file=None)
+        assert s.storage_backend == "r2"
 
     def test_r2_fields_default_to_none(self) -> None:
         from core.config.settings import Settings
