@@ -13,12 +13,14 @@ import core.shared_tools.tracing as shared
 
 # The canonical public API that all existing callers rely on.
 _EXPECTED_PUBLIC_API = [
+    "build_llm_metadata",
     "create_pipeline_trace",
     "create_research_trace",
     "create_session",
     "create_span",
     "create_trace",
     "end_span",
+    "extract_provider",
     "flush",
     "get_current_span",
     "log_generation",

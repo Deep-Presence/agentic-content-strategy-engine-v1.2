@@ -20,14 +20,21 @@ from api.services.gap_data_service import (
     get_queries,
     get_summary,
 )
+from core.storage.backends.local import LocalStorageBackend
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 
+@pytest.fixture
+def storage(tmp_path):
+    """Return a LocalStorageBackend rooted at tmp_path."""
+    return LocalStorageBackend(tmp_path)
+
+
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    """Clear mtime cache before each test."""
+    """Clear TTL cache before each test."""
     _CACHE.clear()
     yield
     _CACHE.clear()
@@ -151,7 +158,7 @@ class TestGapSummary:
             _sample_analysis(),
         )
 
-        result = get_summary(tmp_path, slug)
+        result = get_summary(LocalStorageBackend(tmp_path), slug)
 
         assert result.spa_score.t_stat == 2.5
         assert result.spa_score.p_value == 0.01
@@ -167,7 +174,7 @@ class TestGapSummary:
             _sample_analysis(gaps=gaps),
         )
 
-        result = get_summary(tmp_path, slug)
+        result = get_summary(LocalStorageBackend(tmp_path), slug)
 
         assert result.classification_counts.significant_gap == 1
         assert result.classification_counts.gap_to_close == 1
@@ -181,7 +188,7 @@ class TestGapSummary:
             _sample_analysis(),
         )
 
-        result = get_summary(tmp_path, slug)
+        result = get_summary(LocalStorageBackend(tmp_path), slug)
 
         assert len(result.cluster_performance) == 2
         assert result.cluster_performance[0].cluster_name == "cluster-0"
@@ -221,14 +228,14 @@ class TestGapSummary:
         # Also write analysis.json (should be ignored)
         _write_json(gap_dir / "analysis.json", _sample_analysis())
 
-        result = get_summary(tmp_path, slug)
+        result = get_summary(LocalStorageBackend(tmp_path), slug)
 
         # Should use values from gap_analysis_complete.json report
         assert result.spa_score.t_stat == 3.0
 
     def test_missing_slug_dir_raises_404(self, tmp_path: Path):
         with pytest.raises(Exception) as exc_info:
-            get_summary(tmp_path, "nonexistent-co")
+            get_summary(LocalStorageBackend(tmp_path), "nonexistent-co")
         assert exc_info.value.status_code == 404
 
 
@@ -245,7 +252,7 @@ class TestGapQueries:
             _sample_analysis(gaps=_sample_gaps(3)),
         )
 
-        result = get_queries(tmp_path, slug)
+        result = get_queries(LocalStorageBackend(tmp_path), slug)
 
         assert result.total == 3
         assert len(result.queries) == 3
@@ -258,7 +265,7 @@ class TestGapQueries:
             _sample_analysis(gaps=_sample_gaps(5)),
         )
 
-        result = get_queries(tmp_path, slug, page=1, page_size=2)
+        result = get_queries(LocalStorageBackend(tmp_path), slug, page=1, page_size=2)
 
         assert result.total == 5
         assert len(result.queries) == 2
@@ -273,7 +280,7 @@ class TestGapQueries:
             _sample_analysis(gaps=gaps),
         )
 
-        result = get_queries(tmp_path, slug, cluster="cluster-0")
+        result = get_queries(LocalStorageBackend(tmp_path), slug, cluster="cluster-0")
 
         # Only gaps with cluster_name == "cluster-0" (indices 0, 2)
         assert all(q.cluster_name == "cluster-0" for q in result.queries)
@@ -292,7 +299,7 @@ class TestGapClusters:
             _sample_analysis(),
         )
 
-        result = get_clusters(tmp_path, slug)
+        result = get_clusters(LocalStorageBackend(tmp_path), slug)
 
         assert len(result.clusters) == 2
         assert result.clusters[0].cluster_name == "cluster-0"
@@ -307,7 +314,7 @@ class TestGapClusters:
             _sample_analysis(),
         )
 
-        result = get_clusters(tmp_path, slug)
+        result = get_clusters(LocalStorageBackend(tmp_path), slug)
 
         assert result.clusters[0].structural_rates["has_faq_section"] == 0.6
         assert result.clusters[0].faq_rate == 0.6
@@ -323,7 +330,7 @@ class TestGapEdgeCases:
         slug = "test-co"
         _write_json(tmp_path / "gap_analysis" / slug / "analysis.json", {})
 
-        result = get_summary(tmp_path, slug)
+        result = get_summary(LocalStorageBackend(tmp_path), slug)
 
         assert result.spa_score.t_stat == 0.0
         assert result.total_queries == 0
@@ -335,12 +342,12 @@ class TestGapEdgeCases:
         gap_dir.mkdir(parents=True)
         (gap_dir / "analysis.json").write_text("not-json{{{", encoding="utf-8")
 
-        result = get_summary(tmp_path, slug)
+        result = get_summary(LocalStorageBackend(tmp_path), slug)
 
         # Should return defaults, not crash
         assert result.spa_score.t_stat == 0.0
 
     def test_invalid_slug_raises_400(self, tmp_path: Path):
         with pytest.raises(Exception) as exc_info:
-            get_summary(tmp_path, "INVALID SLUG!!!")
+            get_summary(LocalStorageBackend(tmp_path), "INVALID SLUG!!!")
         assert exc_info.value.status_code == 400

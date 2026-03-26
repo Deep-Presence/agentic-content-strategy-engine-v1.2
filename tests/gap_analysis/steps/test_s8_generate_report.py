@@ -311,20 +311,24 @@ class TestGenerationSpecMdPhase3:
 class TestSaveReportPhase3:
     def test_writes_standard_files(self, tmp_path):
         from core.gap_analysis.steps.s8_generate_report import save_report
+        from core.storage.backends.local import LocalStorageBackend
+        storage = LocalStorageBackend(tmp_path)
         report = GapReport(
             report_md="# Test",
             report_json={"executive_summary": "Test"},
             generation_spec_md="# Spec",
             generation_spec_json={"cluster_specs": []},
         )
-        save_report(report, tmp_path)
-        assert (tmp_path / "gap_report.md").exists()
-        assert (tmp_path / "gap_report.json").exists()
-        assert (tmp_path / "generation_spec.md").exists()
-        assert (tmp_path / "generation_spec.json").exists()
+        save_report(report, storage, "out")
+        assert (tmp_path / "out" / "gap_report.md").exists()
+        assert (tmp_path / "out" / "gap_report.json").exists()
+        assert (tmp_path / "out" / "generation_spec.md").exists()
+        assert (tmp_path / "out" / "generation_spec.json").exists()
 
     def test_writes_complete_json_when_analysis_provided(self, tmp_path):
         from core.gap_analysis.steps.s8_generate_report import save_report
+        from core.storage.backends.local import LocalStorageBackend
+        storage = LocalStorageBackend(tmp_path)
         analysis = _make_test_analysis(5)
         report = GapReport(
             report_md="# Test",
@@ -332,8 +336,8 @@ class TestSaveReportPhase3:
             generation_spec_md="# Spec",
             generation_spec_json={"cluster_specs": []},
         )
-        save_report(report, tmp_path, analysis=analysis)
-        complete_path = tmp_path / "gap_analysis_complete.json"
+        save_report(report, storage, "out", analysis=analysis)
+        complete_path = tmp_path / "out" / "gap_analysis_complete.json"
         assert complete_path.exists()
         data = json.loads(complete_path.read_text())
         assert "generated_at" in data
@@ -344,12 +348,16 @@ class TestSaveReportPhase3:
 
     def test_no_complete_json_without_analysis(self, tmp_path):
         from core.gap_analysis.steps.s8_generate_report import save_report
+        from core.storage.backends.local import LocalStorageBackend
+        storage = LocalStorageBackend(tmp_path)
         report = GapReport(report_md="# Test", report_json={}, generation_spec_md="# S", generation_spec_json={})
-        save_report(report, tmp_path)
-        assert not (tmp_path / "gap_analysis_complete.json").exists()
+        save_report(report, storage, "out")
+        assert not (tmp_path / "out" / "gap_analysis_complete.json").exists()
 
     def test_existing_3_files_not_broken(self, tmp_path):
         from core.gap_analysis.steps.s8_generate_report import save_report
+        from core.storage.backends.local import LocalStorageBackend
+        storage = LocalStorageBackend(tmp_path)
         analysis = _make_test_analysis(3)
         report = GapReport(
             report_md="# Gap Report",
@@ -357,7 +365,7 @@ class TestSaveReportPhase3:
             generation_spec_md="# Spec",
             generation_spec_json={"cluster_specs": [{"cluster_name": "test"}]},
         )
-        save_report(report, tmp_path, analysis=analysis)
-        assert (tmp_path / "gap_report.md").read_text() == "# Gap Report"
-        gap_json = json.loads((tmp_path / "gap_report.json").read_text())
+        save_report(report, storage, "out", analysis=analysis)
+        assert (tmp_path / "out" / "gap_report.md").read_text() == "# Gap Report"
+        gap_json = json.loads((tmp_path / "out" / "gap_report.json").read_text())
         assert gap_json["executive_summary"] == "Test"

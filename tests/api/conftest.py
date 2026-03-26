@@ -19,6 +19,7 @@ from api.auth.store import AuthStore
 from api.tasks.event_bus import EventBus
 from api.tasks.store import TaskStore
 from core.models.organization import Company, UserProfile
+from core.storage.backends.local import LocalStorageBackend
 
 
 # ── Infrastructure fixtures ────────────────────────────────
@@ -98,6 +99,8 @@ def app(
     application.state.event_bus = event_bus
     application.state.artifacts_root = artifacts_root
     application.state.auth_store = auth_store
+    # Pin local storage backend — prevents R2 usage if STORAGE_BACKEND=r2 in env
+    application.state.storage_backend = LocalStorageBackend(artifacts_root)
     # Expose secret_key for ASGI middleware (decoupled from AuthStore)
     application.state.secret_key = auth_store._secret_key
     return application

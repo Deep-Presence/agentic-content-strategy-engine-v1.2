@@ -8,12 +8,12 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.auth.dependencies import require_company_member, require_tenant
-from api.dependencies import get_artifacts_root, get_auth_service, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_storage_backend, get_task_store
 from api.schemas.company import (
     CompanyProfileResponse,
     LatestRunSummary,
@@ -34,63 +34,65 @@ router = APIRouter(prefix="/api/v1/companies", tags=["companies"])
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
-def _detect_artifact_status(artifacts_root: Path, type_name: str, slug: str) -> str:
+def _detect_artifact_status(
+    artifacts_root: Path, type_name: str, slug: str,
+    *, backend: Optional[Any] = None,
+) -> str:
     """Check if an artifact exists: 'approved', 'draft', or 'none'.
 
     For flat types (company_context, style_guides): looks for {slug}.md or {slug}.draft.md.
     """
-    type_dir = artifacts_root / type_name
-    if not type_dir.is_dir():
-        return "none"
-
-    approved = type_dir / f"{slug}.md"
-    draft = type_dir / f"{slug}.draft.md"
-
-    if approved.is_file():
+    from core.storage.backends.local import LocalStorageBackend
+    _backend = backend or LocalStorageBackend(artifacts_root)
+    if _backend.exists(f"{type_name}/{slug}.md"):
         return "approved"
-    elif draft.is_file():
+    if _backend.exists(f"{type_name}/{slug}.draft.md"):
         return "draft"
     return "none"
 
 
-def _detect_personas(artifacts_root: Path, slug: str) -> List[str]:
-    """Find all persona files for a company slug."""
-    personas_dir = artifacts_root / "personas"
-    if not personas_dir.is_dir():
+def _detect_personas(
+    artifacts_root: Path, slug: str,
+    *, backend: Optional[Any] = None,
+) -> List[str]:
+    """Find all persona files for a company slug via PersonaStorage."""
+    try:
+        from core.storage.backends.local import LocalStorageBackend
+        from core.research.audience_persona.storage import PersonaStorage
+        _backend = backend or LocalStorageBackend(artifacts_root)
+        ap_storage = PersonaStorage(artifacts_root, slug, backend=_backend)
+        manifest = ap_storage.read_manifest()
+        if not manifest.personas:
+            return []
+        persona_files: List[str] = []
+        for pid, entry in manifest.personas.items():
+            if entry.status in ("fresh", "stale") and entry.current_version > 0:
+                persona_files.append(f"{pid}.md")
+        return sorted(persona_files)
+    except Exception:
         return []
 
-    persona_files = []
-    for f in sorted(personas_dir.iterdir()):
-        if not f.is_file() or f.name.startswith("."):
-            continue
-        if f.name.endswith(".draft.md"):
-            continue
-        stem = f.stem
-        # Match {slug}__persona-*.md
-        if stem.startswith(f"{slug}__persona"):
-            persona_files.append(f.name)
-    return persona_files
 
-
-def _has_nested_artifacts(artifacts_root: Path, type_name: str, slug: str) -> bool:
+def _has_nested_artifacts(
+    artifacts_root: Path, type_name: str, slug: str,
+    *, backend: Optional[Any] = None,
+) -> bool:
     """Check if nested artifact directory exists and has files."""
-    slug_dir = artifacts_root / type_name / slug
-    if not slug_dir.is_dir():
-        return False
-    # Check for any non-hidden files
-    for f in slug_dir.iterdir():
-        if f.is_file() and not f.name.startswith("."):
-            return True
-    return False
+    from core.storage.backends.local import LocalStorageBackend
+    _backend = backend or LocalStorageBackend(artifacts_root)
+    entries = _backend.list_dir(f"{type_name}/{slug}/")
+    # Filter hidden files
+    return any(not e.rsplit("/", 1)[-1].startswith(".") for e in entries)
 
 
 def _build_research_summary(
-    artifacts_root: Path, slug: str
+    artifacts_root: Path, slug: str,
+    *, backend: Optional[Any] = None,
 ) -> ResearchArtifactSummary:
     """Scan filesystem for research artifacts belonging to this company."""
-    cc_status = _detect_artifact_status(artifacts_root, "company_context", slug)
-    sg_status = _detect_artifact_status(artifacts_root, "style_guides", slug)
-    personas = _detect_personas(artifacts_root, slug)
+    cc_status = _detect_artifact_status(artifacts_root, "company_context", slug, backend=backend)
+    sg_status = _detect_artifact_status(artifacts_root, "style_guides", slug, backend=backend)
+    personas = _detect_personas(artifacts_root, slug, backend=backend)
 
     # Determine the file path for company_context if it exists
     cc_file = None
@@ -157,6 +159,7 @@ async def get_company_profile(
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
     task_store: TaskStore = Depends(get_task_store),
     _user: UserProfile = Depends(require_tenant),
+    storage_backend=Depends(get_storage_backend),
 ) -> CompanyProfileResponse:
     """Get company profile with artifacts, products, and latest runs.
 
@@ -170,12 +173,12 @@ async def get_company_profile(
 
     # Check filesystem for artifacts
     has_research = (
-        _detect_artifact_status(artifacts_root, "company_context", slug) != "none"
-        or len(_detect_personas(artifacts_root, slug)) > 0
-        or _detect_artifact_status(artifacts_root, "style_guides", slug) != "none"
+        _detect_artifact_status(artifacts_root, "company_context", slug, backend=storage_backend) != "none"
+        or len(_detect_personas(artifacts_root, slug, backend=storage_backend)) > 0
+        or _detect_artifact_status(artifacts_root, "style_guides", slug, backend=storage_backend) != "none"
     )
-    has_gap_analysis = _has_nested_artifacts(artifacts_root, "gap_analysis", slug)
-    has_content = _has_nested_artifacts(artifacts_root, "content", slug)
+    has_gap_analysis = _has_nested_artifacts(artifacts_root, "gap_analysis", slug, backend=storage_backend)
+    has_content = _has_nested_artifacts(artifacts_root, "content", slug, backend=storage_backend)
 
     # If no company in auth store AND no artifacts, 404
     if company is None and not has_research and not has_gap_analysis and not has_content:
@@ -185,7 +188,7 @@ async def get_company_profile(
         )
 
     # Build sub-components
-    research_summary = _build_research_summary(artifacts_root, slug)
+    research_summary = _build_research_summary(artifacts_root, slug, backend=storage_backend)
     latest_runs = _get_latest_runs(task_store, slug)
 
     # Build product summaries from auth store
@@ -200,10 +203,10 @@ async def get_company_profile(
                     domain=p.domain,
                     description=p.description,
                     has_research=(
-                        _detect_artifact_status(artifacts_root, "company_context", effective) != "none"
+                        _detect_artifact_status(artifacts_root, "company_context", effective, backend=storage_backend) != "none"
                     ),
-                    has_gap_analysis=_has_nested_artifacts(artifacts_root, "gap_analysis", effective),
-                    has_content=_has_nested_artifacts(artifacts_root, "content", effective),
+                    has_gap_analysis=_has_nested_artifacts(artifacts_root, "gap_analysis", effective, backend=storage_backend),
+                    has_content=_has_nested_artifacts(artifacts_root, "content", effective, backend=storage_backend),
                 )
             )
 

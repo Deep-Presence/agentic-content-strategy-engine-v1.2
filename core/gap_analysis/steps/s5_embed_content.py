@@ -15,6 +15,7 @@ from core.models.gap_analysis import EnrichedCitation, GeneratedQuery, Paragraph
 from core.config.settings import settings
 from core.shared_tools.vector_store import async_upsert_citation_embeddings
 from core.shared_tools.async_embedding_client import async_embed_texts
+from core.storage.backends.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -353,16 +354,17 @@ async def embed_enriched_citations(
 def save_embeddings(
     queries: List[GeneratedQuery],
     citations: List[EnrichedCitation],
-    output_dir: Path,
+    storage: StorageBackend,
+    prefix: str,
 ) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    query_path = output_dir / "queries_with_embeddings.json"
-    citation_path = output_dir / "citations_with_embeddings.json"
-    query_path.write_text(
-        json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str), encoding="utf-8"
+    storage.mkdir(prefix)
+    storage.write(
+        f"{prefix}/queries_with_embeddings.json",
+        json.dumps([q.model_dump(mode="json") for q in queries], indent=2, default=str),
     )
-    citation_path.write_text(
-        json.dumps([c.model_dump(mode="json") for c in citations], indent=2, default=str), encoding="utf-8"
+    storage.write(
+        f"{prefix}/citations_with_embeddings.json",
+        json.dumps([c.model_dump(mode="json") for c in citations], indent=2, default=str),
     )
 
 

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.storage.backends.local import LocalStorageBackend
 from core.models.gap_analysis import (
     GapAnalysisInput,
     GapReport,
@@ -141,9 +142,6 @@ class TestAsyncRunGapAnalysis:
             new_callable=AsyncMock,
             return_value=mock_report,
         ), patch(
-            "core.gap_analysis.pipeline._artifact_dir",
-            return_value=tmp_path,
-        ), patch(
             "core.gap_analysis.pipeline.save_platform_results",
         ), patch(
             "core.gap_analysis.pipeline.save_enriched_citations",
@@ -153,7 +151,7 @@ class TestAsyncRunGapAnalysis:
             "core.gap_analysis.pipeline.save_report",
         ):
             from core.gap_analysis.pipeline import run_gap_analysis
-            report = await run_gap_analysis(input_data)
+            report = await run_gap_analysis(input_data, storage=LocalStorageBackend(tmp_path))
 
         assert isinstance(report, GapReport)
         assert report.report_md == "# Test Report"
@@ -161,7 +159,8 @@ class TestAsyncRunGapAnalysis:
     @pytest.mark.asyncio
     async def test_skip_steps_loads_from_artifacts(self, input_data, mock_report, tmp_path):
         """Should load from artifacts when steps are skipped."""
-        (tmp_path / "visualizations").mkdir()
+        storage = LocalStorageBackend(tmp_path)
+        prefix = "gap_analysis/test-co"
         # Create artifact files for steps 1 and 2
         units_data = [
             SemanticUnit(
@@ -179,8 +178,8 @@ class TestAsyncRunGapAnalysis:
             ).model_dump(mode="json"),
         ]
 
-        (tmp_path / "company_embeddings.json").write_text(json.dumps(units_data, default=str))
-        (tmp_path / "queries.json").write_text(json.dumps(queries_data, default=str))
+        storage.write(f"{prefix}/company_embeddings.json", json.dumps(units_data, default=str))
+        storage.write(f"{prefix}/queries.json", json.dumps(queries_data, default=str))
 
         mock_platform_results = []
         mock_enriched = []
@@ -190,9 +189,6 @@ class TestAsyncRunGapAnalysis:
         )
 
         with patch(
-            "core.gap_analysis.pipeline._artifact_dir",
-            return_value=tmp_path,
-        ), patch(
             "core.gap_analysis.pipeline.search_platforms",
             new_callable=AsyncMock,
             return_value=mock_platform_results,
@@ -224,7 +220,7 @@ class TestAsyncRunGapAnalysis:
             "core.gap_analysis.pipeline.save_report",
         ):
             from core.gap_analysis.pipeline import run_gap_analysis
-            report = await run_gap_analysis(input_data, skip_steps=[1, 2])
+            report = await run_gap_analysis(input_data, skip_steps=[1, 2], storage=LocalStorageBackend(tmp_path))
 
         assert isinstance(report, GapReport)
 
@@ -232,9 +228,6 @@ class TestAsyncRunGapAnalysis:
     async def test_step_error_isolation(self, input_data, tmp_path):
         """Individual step failures should not crash the pipeline."""
         with patch(
-            "core.gap_analysis.pipeline._artifact_dir",
-            return_value=tmp_path,
-        ), patch(
             "core.gap_analysis.pipeline.embed_company_assets",
             new_callable=AsyncMock,
             side_effect=RuntimeError("s1 exploded"),
@@ -242,7 +235,7 @@ class TestAsyncRunGapAnalysis:
             from core.gap_analysis.pipeline import run_gap_analysis
             # Should raise since s1 failure means no data for subsequent steps
             with pytest.raises(RuntimeError, match="s1 exploded"):
-                await run_gap_analysis(input_data)
+                await run_gap_analysis(input_data, storage=LocalStorageBackend(tmp_path))
 
 
 # ---------------------------------------------------------------------------
@@ -446,7 +439,7 @@ class TestS1S2Parallelism:
             ),
         ]
 
-        async def _slow_s1(input_data):
+        async def _slow_s1(input_data, **kwargs):
             nonlocal s1_start, s1_end
             s1_start = time.monotonic()
             await asyncio.sleep(0.2)
@@ -490,9 +483,6 @@ class TestS1S2Parallelism:
             "core.gap_analysis.pipeline.generate_gap_report",
             new_callable=AsyncMock, return_value=mock_report,
         ), patch(
-            "core.gap_analysis.pipeline._artifact_dir",
-            return_value=tmp_path,
-        ), patch(
             "core.gap_analysis.pipeline.save_platform_results",
         ), patch(
             "core.gap_analysis.pipeline.save_enriched_citations",
@@ -504,7 +494,7 @@ class TestS1S2Parallelism:
             from core.gap_analysis.pipeline import run_gap_analysis
 
             t0 = time.monotonic()
-            await run_gap_analysis(input_data)
+            await run_gap_analysis(input_data, storage=LocalStorageBackend(tmp_path))
             wall_time = time.monotonic() - t0
 
         # If sequential, total >= 0.4s. If parallel, total ~0.2s
@@ -516,9 +506,6 @@ class TestS1S2Parallelism:
     async def test_s1_failure_aborts_pipeline(self, input_data, tmp_path):
         """If S1 fails, pipeline should abort (S6/S7 need company_units)."""
         with patch(
-            "core.gap_analysis.pipeline._artifact_dir",
-            return_value=tmp_path,
-        ), patch(
             "core.gap_analysis.pipeline.embed_company_assets",
             new_callable=AsyncMock,
             side_effect=RuntimeError("s1 exploded"),
@@ -529,7 +516,7 @@ class TestS1S2Parallelism:
         ):
             from core.gap_analysis.pipeline import run_gap_analysis
             with pytest.raises(RuntimeError, match="s1 exploded"):
-                await run_gap_analysis(input_data)
+                await run_gap_analysis(input_data, storage=LocalStorageBackend(tmp_path))
 
     @pytest.mark.asyncio
     async def test_s2_failure_aborts_pipeline(self, input_data, tmp_path):
@@ -542,9 +529,6 @@ class TestS1S2Parallelism:
         ]
 
         with patch(
-            "core.gap_analysis.pipeline._artifact_dir",
-            return_value=tmp_path,
-        ), patch(
             "core.gap_analysis.pipeline.embed_company_assets",
             new_callable=AsyncMock,
             return_value=mock_units,
@@ -555,12 +539,13 @@ class TestS1S2Parallelism:
         ):
             from core.gap_analysis.pipeline import run_gap_analysis
             with pytest.raises(RuntimeError, match="s2 exploded"):
-                await run_gap_analysis(input_data)
+                await run_gap_analysis(input_data, storage=LocalStorageBackend(tmp_path))
 
     @pytest.mark.asyncio
     async def test_skip_s1_s2_loads_from_artifacts(self, input_data, mock_report, tmp_path):
         """When both S1 and S2 are skipped, artifacts are loaded (no parallelism needed)."""
-        (tmp_path / "visualizations").mkdir()
+        storage = LocalStorageBackend(tmp_path)
+        prefix = "gap_analysis/test-co"
 
         units_data = [
             SemanticUnit(
@@ -574,8 +559,8 @@ class TestS1S2Parallelism:
                 query_text="test?",
             ).model_dump(mode="json"),
         ]
-        (tmp_path / "company_embeddings.json").write_text(json.dumps(units_data, default=str))
-        (tmp_path / "queries.json").write_text(json.dumps(queries_data, default=str))
+        storage.write(f"{prefix}/company_embeddings.json", json.dumps(units_data, default=str))
+        storage.write(f"{prefix}/queries.json", json.dumps(queries_data, default=str))
 
         mock_analysis = AnalysisResult(
             proximity_stats={}, spa_results=[], gaps=[], centroids=[],
@@ -583,8 +568,6 @@ class TestS1S2Parallelism:
         )
 
         with patch(
-            "core.gap_analysis.pipeline._artifact_dir", return_value=tmp_path,
-        ), patch(
             "core.gap_analysis.pipeline.search_platforms",
             new_callable=AsyncMock, return_value=[],
         ), patch(
@@ -612,6 +595,6 @@ class TestS1S2Parallelism:
             "core.gap_analysis.pipeline.save_report",
         ):
             from core.gap_analysis.pipeline import run_gap_analysis
-            report = await run_gap_analysis(input_data, skip_steps=[1, 2])
+            report = await run_gap_analysis(input_data, skip_steps=[1, 2], storage=LocalStorageBackend(tmp_path))
 
         assert isinstance(report, GapReport)

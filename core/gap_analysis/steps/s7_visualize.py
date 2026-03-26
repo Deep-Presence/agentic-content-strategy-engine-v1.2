@@ -17,6 +17,7 @@ from plotly.subplots import make_subplots
 from sklearn.manifold import TSNE
 
 from core.models.gap_analysis import AnalysisResult, EnrichedCitation, GeneratedQuery, SemanticUnit
+from core.storage.backends.base import StorageBackend
 
 TOP_N_CITATIONS = 5   # Max citations per query (ranked by best paragraph similarity)
 TOP_K_PARAGRAPHS = 3  # Max paragraphs per citation URL
@@ -27,10 +28,6 @@ _TYPE_CONFIG = {
     "Citation": {"color": "green", "symbol": "square", "size": 8},
     "Company": {"color": "red", "symbol": "triangle-up", "size": 10},
 }
-
-
-def _ensure_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
 
 
 def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
@@ -205,7 +202,8 @@ def plot_embedding_space(
     queries: List[GeneratedQuery],
     citations: List[EnrichedCitation],
     company_units: List[SemanticUnit],
-    output_path: Path,
+    storage: StorageBackend,
+    key: str,
 ) -> None:
     points, labels, hover = _collect_embedding_points(queries, citations, company_units)
     if len(points) == 0:
@@ -219,10 +217,10 @@ def plot_embedding_space(
         hover_name=hover,
         title="Embedding Space Explorer",
     )
-    fig.write_html(output_path)
+    storage.write(key, fig.to_html())
 
 
-def plot_gap_heatmap(analysis: AnalysisResult, output_path: Path) -> None:
+def plot_gap_heatmap(analysis: AnalysisResult, storage: StorageBackend, key: str) -> None:
     if not analysis.gaps:
         return
     clusters = sorted({g.cluster_name or "unknown" for g in analysis.gaps})
@@ -240,10 +238,10 @@ def plot_gap_heatmap(analysis: AnalysisResult, output_path: Path) -> None:
         color_continuous_scale="RdBu",
         title="Gap Heatmap (per query)",
     )
-    fig.write_html(output_path)
+    storage.write(key, fig.to_html())
 
 
-def plot_gap_distribution(analysis: AnalysisResult, output_path: Path) -> None:
+def plot_gap_distribution(analysis: AnalysisResult, storage: StorageBackend, key: str) -> None:
     gaps = analysis.gaps
     if not gaps:
         return
@@ -252,10 +250,10 @@ def plot_gap_distribution(analysis: AnalysisResult, output_path: Path) -> None:
         "gap": [g.gap or 0.0 for g in gaps],
     }
     fig = px.box(data, x="cluster", y="gap", title="Gap Distribution by Cluster")
-    fig.write_html(output_path)
+    storage.write(key, fig.to_html())
 
 
-def plot_citation_treemap(analysis: AnalysisResult, output_path: Path) -> None:
+def plot_citation_treemap(analysis: AnalysisResult, storage: StorageBackend, key: str) -> None:
     domains = analysis.citation_patterns.get("domains", {})
     if not domains:
         return
@@ -265,10 +263,10 @@ def plot_citation_treemap(analysis: AnalysisResult, output_path: Path) -> None:
         values=list(domains.values()),
         title="Citation Domain Treemap",
     )
-    fig.write_html(output_path)
+    storage.write(key, fig.to_html())
 
 
-def plot_cluster_radar(analysis: AnalysisResult, output_path: Path) -> None:
+def plot_cluster_radar(analysis: AnalysisResult, storage: StorageBackend, key: str) -> None:
     if not analysis.gaps:
         return
     cluster_data: Dict[str, Dict[str, List[float]]] = defaultdict(
@@ -292,7 +290,7 @@ def plot_cluster_radar(analysis: AnalysisResult, output_path: Path) -> None:
         )
     )
     fig.update_layout(title="Company vs Citation Similarity by Cluster")
-    fig.write_html(output_path)
+    storage.write(key, fig.to_html())
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +318,8 @@ def _plot_typed_embedding_space(
     queries: List[GeneratedQuery],
     citations: List[EnrichedCitation],
     company_units: List[SemanticUnit],
-    output_path: Path,
+    storage: StorageBackend,
+    key: str,
     method: str,
 ) -> None:
     """Plot embedding space with 3 distinct types: Query, Citation, Company.
@@ -362,32 +361,35 @@ def _plot_typed_embedding_space(
         yaxis_title=f"{method_label} 2",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    fig.write_html(output_path)
+    storage.write(key, fig.to_html())
 
 
 def plot_tsne_embedding_space(
     queries: List[GeneratedQuery],
     citations: List[EnrichedCitation],
     company_units: List[SemanticUnit],
-    output_path: Path,
+    storage: StorageBackend,
+    key: str,
 ) -> None:
-    _plot_typed_embedding_space(queries, citations, company_units, output_path, "tsne")
+    _plot_typed_embedding_space(queries, citations, company_units, storage, key, "tsne")
 
 
 def plot_umap_embedding_space(
     queries: List[GeneratedQuery],
     citations: List[EnrichedCitation],
     company_units: List[SemanticUnit],
-    output_path: Path,
+    storage: StorageBackend,
+    key: str,
 ) -> None:
-    _plot_typed_embedding_space(queries, citations, company_units, output_path, "umap")
+    _plot_typed_embedding_space(queries, citations, company_units, storage, key, "umap")
 
 
 def plot_clustered_embedding_space(
     queries: List[GeneratedQuery],
     citations: List[EnrichedCitation],
     company_units: List[SemanticUnit],
-    output_path: Path,
+    storage: StorageBackend,
+    key: str,
     method: str = "tsne",
 ) -> None:
     """Plot embedding space colored by cluster assignment.
@@ -457,13 +459,14 @@ def plot_clustered_embedding_space(
         yaxis_title=f"{method_label} 2",
         legend=dict(title="Cluster"),
     )
-    fig.write_html(output_path)
+    storage.write(key, fig.to_html())
 
 
 def plot_similarity_histogram(
     queries: List[GeneratedQuery],
     citations: List[EnrichedCitation],
-    output_path: Path,
+    storage: StorageBackend,
+    key: str,
 ) -> None:
     """Plot similarity distribution: histogram (left) + per-cluster boxplot (right)."""
     pairs = _compute_proximity_pairs(queries, citations)
@@ -514,7 +517,7 @@ def plot_similarity_histogram(
         height=500,
         width=1200,
     )
-    fig.write_html(output_path)
+    storage.write(key, fig.to_html())
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +528,8 @@ def plot_similarity_histogram(
 def _plot_typed_from_coords(
     coords: np.ndarray,
     meta: List[Dict],
-    output_path: Path,
+    storage: StorageBackend,
+    key: str,
     method: str,
 ) -> None:
     """Plot typed embedding space from pre-computed 2D coordinates."""
@@ -558,13 +562,14 @@ def _plot_typed_from_coords(
         yaxis_title=f"{method_label} 2",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    fig.write_html(output_path)
+    storage.write(key, fig.to_html())
 
 
 def _plot_clustered_from_coords(
     coords: np.ndarray,
     meta: List[Dict],
-    output_path: Path,
+    storage: StorageBackend,
+    key: str,
     method: str,
 ) -> None:
     """Plot cluster-colored embedding space from pre-computed 2D coordinates."""
@@ -621,7 +626,7 @@ def _plot_clustered_from_coords(
         yaxis_title=f"{method_label} 2",
         legend=dict(title="Cluster"),
     )
-    fig.write_html(output_path)
+    storage.write(key, fig.to_html())
 
 
 # ---------------------------------------------------------------------------
@@ -632,7 +637,8 @@ def _plot_clustered_from_coords(
 def _save_embedding_projections(
     coords: np.ndarray,
     meta: List[Dict],
-    output_dir: Path,
+    storage: StorageBackend,
+    prefix: str,
     method: str,
 ) -> None:
     """Save 2D projection coordinates as JSON for frontend scatter plots.
@@ -670,8 +676,7 @@ def _save_embedding_projections(
             "query_id": m.get("query_id"),
         })
     payload = {"method": method, "point_count": len(points), "points": points}
-    output_path = output_dir / f"embedding_projections_{method}.json"
-    output_path.write_text(json.dumps(payload))
+    storage.write(f"{prefix}/embedding_projections_{method}.json", json.dumps(payload))
 
 
 # ---------------------------------------------------------------------------
@@ -684,23 +689,24 @@ def generate_visualizations(
     citations: List[EnrichedCitation],
     company_units: List[SemanticUnit],
     analysis: AnalysisResult,
-    output_dir: Path,
+    storage: StorageBackend,
+    prefix: str,
 ) -> Dict[str, str]:
     s7_t0 = time.monotonic()
-    _ensure_dir(output_dir)
-    paths: Dict[str, Path] = {
+    storage.mkdir(prefix)
+    keys: Dict[str, str] = {
         # Existing Plotly (HTML)
-        "embedding_space": output_dir / "embedding_space.html",
-        "gap_heatmap": output_dir / "gap_heatmap.html",
-        "gap_distribution": output_dir / "gap_distribution.html",
-        "citation_treemap": output_dir / "citation_treemap.html",
-        "cluster_radar": output_dir / "cluster_radar.html",
+        "embedding_space": f"{prefix}/embedding_space.html",
+        "gap_heatmap": f"{prefix}/gap_heatmap.html",
+        "gap_distribution": f"{prefix}/gap_distribution.html",
+        "citation_treemap": f"{prefix}/citation_treemap.html",
+        "cluster_radar": f"{prefix}/cluster_radar.html",
         # Typed + clustered Plotly (HTML)
-        "tsne_space": output_dir / "tsne_embedding_space.html",
-        "umap_space": output_dir / "umap_embedding_space.html",
-        "tsne_clustered": output_dir / "tsne_clustered.html",
-        "umap_clustered": output_dir / "umap_clustered.html",
-        "similarity_distribution": output_dir / "similarity_distribution.html",
+        "tsne_space": f"{prefix}/tsne_embedding_space.html",
+        "umap_space": f"{prefix}/umap_embedding_space.html",
+        "tsne_clustered": f"{prefix}/tsne_clustered.html",
+        "umap_clustered": f"{prefix}/umap_clustered.html",
+        "similarity_distribution": f"{prefix}/similarity_distribution.html",
     }
 
     succeeded = 0
@@ -720,11 +726,11 @@ def generate_visualizations(
             logger.warning("S7 %s FAILED: %s", path_key, exc)
 
     # Existing plots (use their own internal UMAP/collection)
-    _safe_plot("embedding_space", plot_embedding_space, queries, citations, company_units, paths["embedding_space"])
-    _safe_plot("gap_heatmap", plot_gap_heatmap, analysis, paths["gap_heatmap"])
-    _safe_plot("gap_distribution", plot_gap_distribution, analysis, paths["gap_distribution"])
-    _safe_plot("citation_treemap", plot_citation_treemap, analysis, paths["citation_treemap"])
-    _safe_plot("cluster_radar", plot_cluster_radar, analysis, paths["cluster_radar"])
+    _safe_plot("embedding_space", plot_embedding_space, queries, citations, company_units, storage, keys["embedding_space"])
+    _safe_plot("gap_heatmap", plot_gap_heatmap, analysis, storage, keys["gap_heatmap"])
+    _safe_plot("gap_distribution", plot_gap_distribution, analysis, storage, keys["gap_distribution"])
+    _safe_plot("citation_treemap", plot_citation_treemap, analysis, storage, keys["citation_treemap"])
+    _safe_plot("cluster_radar", plot_cluster_radar, analysis, storage, keys["cluster_radar"])
 
     # Compute typed embeddings ONCE, reduce ONCE per method, reuse everywhere
     embeddings_arr, meta_list = _collect_typed_embeddings(queries, citations, company_units)
@@ -733,25 +739,25 @@ def generate_visualizations(
         tsne_coords = _reduce_embeddings(embeddings_arr, "tsne")
 
         # HTML plots from pre-computed coords
-        _safe_plot("umap_typed", _plot_typed_from_coords, umap_coords, meta_list, paths["umap_space"], "umap")
-        _safe_plot("tsne_typed", _plot_typed_from_coords, tsne_coords, meta_list, paths["tsne_space"], "tsne")
-        _safe_plot("umap_clustered", _plot_clustered_from_coords, umap_coords, meta_list, paths["umap_clustered"], "umap")
-        _safe_plot("tsne_clustered", _plot_clustered_from_coords, tsne_coords, meta_list, paths["tsne_clustered"], "tsne")
+        _safe_plot("umap_typed", _plot_typed_from_coords, umap_coords, meta_list, storage, keys["umap_space"], "umap")
+        _safe_plot("tsne_typed", _plot_typed_from_coords, tsne_coords, meta_list, storage, keys["tsne_space"], "tsne")
+        _safe_plot("umap_clustered", _plot_clustered_from_coords, umap_coords, meta_list, storage, keys["umap_clustered"], "umap")
+        _safe_plot("tsne_clustered", _plot_clustered_from_coords, tsne_coords, meta_list, storage, keys["tsne_clustered"], "tsne")
 
         # JSON projections for frontend scatter (same coords — no drift)
-        _safe_plot("umap_projections", _save_embedding_projections, umap_coords, meta_list, output_dir, "umap")
-        _safe_plot("tsne_projections", _save_embedding_projections, tsne_coords, meta_list, output_dir, "tsne")
-        paths["umap_projections_json"] = output_dir / "embedding_projections_umap.json"
-        paths["tsne_projections_json"] = output_dir / "embedding_projections_tsne.json"
+        _safe_plot("umap_projections", _save_embedding_projections, umap_coords, meta_list, storage, prefix, "umap")
+        _safe_plot("tsne_projections", _save_embedding_projections, tsne_coords, meta_list, storage, prefix, "tsne")
+        keys["umap_projections_json"] = f"{prefix}/embedding_projections_umap.json"
+        keys["tsne_projections_json"] = f"{prefix}/embedding_projections_tsne.json"
 
     # Similarity histogram (uses its own proximity pair computation)
-    _safe_plot("similarity_histogram", plot_similarity_histogram, queries, citations, paths["similarity_distribution"])
+    _safe_plot("similarity_histogram", plot_similarity_histogram, queries, citations, storage, keys["similarity_distribution"])
 
     total_plots = succeeded + failed
     logger.info("S7 complete: %d/%d visualizations succeeded, %d failed, %.1fs", succeeded, total_plots, failed, time.monotonic() - s7_t0)
 
-    # Remove paths for failed plots so downstream doesn't reference missing files
+    # Remove keys for failed plots so downstream doesn't reference missing files
     for fk in failed_keys:
-        paths.pop(fk, None)
+        keys.pop(fk, None)
 
-    return {k: str(v) for k, v in paths.items()}
+    return keys

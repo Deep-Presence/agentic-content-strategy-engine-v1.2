@@ -36,7 +36,6 @@ def artifacts_root(tmp_path: Path) -> Path:
     root = tmp_path / "artifacts"
     root.mkdir()
     (root / "company_context").mkdir()
-    (root / "personas").mkdir()
     (root / "style_guides").mkdir()
     return root
 
@@ -161,27 +160,31 @@ class TestResolveArtifacts:
 
     def test_persona_fallback_to_company(self, artifacts_root: Path) -> None:
         """Personas fall back to company-level when no product-specific files."""
-        persona_dir = artifacts_root / "personas"
-        (persona_dir / "ramp__persona-icp.md").write_text("persona")
+        from core.research.audience_persona.storage import PersonaStorage
+
+        ps = PersonaStorage(artifacts_root, "ramp")
+        ps.write_version("persona-icp", "ICP Persona", "persona content")
         result = resolve_artifacts(
             "ramp", artifacts_root, effective_slug="ramp__corporate-card"
         )
         assert len(result["persona_paths"]) == 1
-        assert "ramp__persona-icp.md" in result["persona_paths"][0]
+        assert "persona-icp" in result["persona_paths"][0]
 
     def test_product_persona_preferred(self, artifacts_root: Path) -> None:
         """Product-level persona files take precedence."""
-        persona_dir = artifacts_root / "personas"
-        (persona_dir / "ramp__persona-icp.md").write_text("company persona")
-        (persona_dir / "ramp__corporate-card__persona-icp.md").write_text(
-            "product persona"
-        )
+        from core.research.audience_persona.storage import PersonaStorage
+
+        # Company-level persona
+        ps_company = PersonaStorage(artifacts_root, "ramp")
+        ps_company.write_version("persona-icp", "ICP Persona", "company persona")
+        # Product-level persona
+        ps_product = PersonaStorage(artifacts_root, "ramp__corporate-card")
+        ps_product.write_version("persona-icp", "ICP Persona", "product persona")
         result = resolve_artifacts(
             "ramp", artifacts_root, effective_slug="ramp__corporate-card"
         )
         assert any(
-            "ramp__corporate-card__persona-icp.md" in p
-            for p in result["persona_paths"]
+            "ramp__corporate-card" in p for p in result["persona_paths"]
         )
 
     def test_style_guide_fallback_to_company(self, artifacts_root: Path) -> None:
@@ -202,10 +205,14 @@ class TestResolveArtifacts:
         )
         assert "ramp__corporate-card.md" in result["style_guide_path"]
 
-    def test_draft_files_excluded(self, artifacts_root: Path) -> None:
-        """Draft persona files (*.draft.md) are not included in persona_paths."""
-        persona_dir = artifacts_root / "personas"
-        (persona_dir / "ramp__persona-icp.draft.md").write_text("draft persona")
+    def test_archived_personas_excluded(self, artifacts_root: Path) -> None:
+        """Personas with non-active status are excluded from persona_paths."""
+        from core.research.audience_persona.storage import PersonaStorage
+
+        ps = PersonaStorage(artifacts_root, "ramp")
+        ps.write_version(
+            "persona-icp", "ICP Persona", "archived persona", status="archived",
+        )
         result = resolve_artifacts("ramp", artifacts_root)
         assert result["persona_paths"] == []
 

@@ -6,12 +6,12 @@ import json
 import logging
 import random
 import time
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import httpx
 
 from core.config.settings import settings
+from core.storage.backends.base import StorageBackend
 from core.gap_analysis.engines import (
     ClaudeEngine,
     GeminiEngine,
@@ -420,14 +420,12 @@ async def search_platforms(
     return all_results
 
 
-def save_platform_results(results: List[PlatformResult], output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
+def save_platform_results(results: List[PlatformResult], storage: StorageBackend, prefix: str) -> None:
+    storage.mkdir(prefix)
     by_engine: Dict[str, List[PlatformResult]] = {}
     for result in results:
         by_engine.setdefault(result.engine, []).append(result)
 
     for engine, items in by_engine.items():
-        path = output_dir / f"{engine}_results.jsonl"
-        with path.open("w", encoding="utf-8") as f:
-            for item in items:
-                f.write(json.dumps(item.model_dump(mode="json"), default=str) + "\n")
+        lines = [json.dumps(item.model_dump(mode="json"), default=str) for item in items]
+        storage.write(f"{prefix}/{engine}_results.jsonl", "\n".join(lines) + "\n")

@@ -13,7 +13,6 @@ import re
 import statistics
 import threading
 import time
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -22,6 +21,7 @@ import trafilatura
 from bs4 import BeautifulSoup
 
 from core.config.settings import settings
+from core.storage.backends.base import StorageBackend
 from core.models.gap_analysis import (
     EnrichedCitation,
     GeneratedQuery,
@@ -586,7 +586,6 @@ def compute_structural_signals(html: str) -> Tuple[List[str], StructuralSignals]
     return _extract_paragraphs(html)
 
 
-def save_enriched_citations(enriched: List[EnrichedCitation], output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+def save_enriched_citations(enriched: List[EnrichedCitation], storage: StorageBackend, key: str) -> None:
     payload = [item.model_dump(mode="json") for item in enriched]
-    output_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    storage.write(key, json.dumps(payload, indent=2, default=str))

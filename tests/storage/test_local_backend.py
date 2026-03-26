@@ -238,3 +238,54 @@ class TestPathTraversalSafety:
         """a/b/../b/file.md resolves to a/b/file.md — still inside root."""
         backend.write("a/b/file.md", "ok")
         assert backend.read("a/b/../b/file.md") == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Binary read / write
+# ---------------------------------------------------------------------------
+
+
+class TestBinaryReadWrite:
+    def test_bytes_roundtrip(self, backend: LocalStorageBackend) -> None:
+        data = b"\x00\x01\x02\xff\xfe\xfd"
+        backend.write_bytes("bin.dat", data)
+        assert backend.read_bytes("bin.dat") == data
+
+    def test_bytes_nested_path_creates_parents(
+        self, backend: LocalStorageBackend
+    ) -> None:
+        backend.write_bytes("a/b/c/deep.bin", b"deep")
+        assert backend.read_bytes("a/b/c/deep.bin") == b"deep"
+
+    def test_bytes_read_nonexistent_returns_none(
+        self, backend: LocalStorageBackend
+    ) -> None:
+        assert backend.read_bytes("missing.bin") is None
+
+    def test_bytes_read_directory_returns_none(
+        self, backend: LocalStorageBackend
+    ) -> None:
+        backend.mkdir("somedir")
+        assert backend.read_bytes("somedir") is None
+
+    def test_bytes_write_returns_logical_path(
+        self, backend: LocalStorageBackend
+    ) -> None:
+        result = backend.write_bytes("foo/bar.bin", b"content")
+        assert result == "foo/bar.bin"
+
+    def test_bytes_no_temp_files_after_write(
+        self, backend: LocalStorageBackend
+    ) -> None:
+        backend.write_bytes("sub/file.bin", b"data")
+        subdir = backend.root / "sub"
+        tmp_files = [f for f in subdir.iterdir() if f.suffix == ".tmp"]
+        assert tmp_files == []
+
+    def test_bytes_path_traversal_blocked(
+        self, backend: LocalStorageBackend
+    ) -> None:
+        with pytest.raises(ValueError, match="escapes storage root"):
+            backend.read_bytes("../../../etc/passwd")
+        with pytest.raises(ValueError, match="escapes storage root"):
+            backend.write_bytes("../outside.bin", b"bad")

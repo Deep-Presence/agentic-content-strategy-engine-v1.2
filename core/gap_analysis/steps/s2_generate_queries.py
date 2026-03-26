@@ -63,12 +63,27 @@ def _resolve_virtual_path(vpath: str) -> Path:
     return (_CONTENT_ENGINE_ROOT / p.lstrip("/")).resolve()
 
 
-def _read_text(vpath: Optional[str], max_chars: int = 200_000) -> str:
+def _read_text(
+    vpath: Optional[str],
+    max_chars: int = 200_000,
+    *,
+    storage: Optional[Any] = None,
+) -> str:
     if not vpath:
         return ""
+    # C2-fix: try StorageBackend first (R2 or any non-local backend)
+    if storage is not None:
+        content = storage.read(vpath)
+        if content is not None:
+            return content[:max_chars]
+        # H3-fix: non-local backends must NOT fall back to local filesystem
+        from core.storage.backends.local import LocalStorageBackend
+        if not isinstance(storage, LocalStorageBackend):
+            return ""
+    # Filesystem fallback (local dev or absolute paths from LocalStorageBackend)
     p = _resolve_virtual_path(vpath)
     if not p.exists():
-        return f"ERROR: path not found: {vpath}"
+        return ""
     return p.read_text(encoding="utf-8")[:max_chars]
 
 
@@ -501,7 +516,9 @@ Context:
         elapsed = time.monotonic() - t0
         logger.info("S2 fill-in LLM call: model=%s, elapsed=%.1fs", model, elapsed)
         if trace_span:
-            log_generation(trace_span, "s2-fill-in-generation", model, fill_prompt[:500], response_text[:500], usage=None)
+            log_generation(trace_span, "s2-fill-in-generation", model, fill_prompt[:500], response_text[:500], usage=None,
+                           metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_fillin", "provider": "openai", "model": model,
+                                     "company_slug": getattr(input_data, "company_slug", "") or ""})
         payload = _extract_json(response_text)
         raw_fill = payload.get("queries", [])
         start_idx = len(queries) + 1
@@ -533,11 +550,12 @@ async def generate_queries(
     model: Optional[str] = None,
     *,
     trace_span: Optional[Any] = None,
+    storage: Optional[Any] = None,
 ) -> List[GeneratedQuery]:
     clusters = _load_taxonomy(taxonomy_path)
-    company_context = _read_text(input_data.company_context_path)
+    company_context = _read_text(input_data.company_context_path, storage=storage)
     persona_context = "\n\n".join(
-        _read_text(p) for p in input_data.persona_paths if p
+        _read_text(p, storage=storage) for p in input_data.persona_paths if p
     )
     model_name = model or settings.gap_analysis_query_gen_model
 
@@ -566,7 +584,9 @@ async def generate_queries(
     elapsed = time.monotonic() - t0
     logger.info("S2 seed LLM call: model=%s, elapsed=%.1fs", model_name, elapsed)
     if trace_span:
-        log_generation(trace_span, "s2-seed-generation", model_name, prompt[:500], response_text[:500], usage=None)
+        log_generation(trace_span, "s2-seed-generation", model_name, prompt[:500], response_text[:500], usage=None,
+                       metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_seed", "provider": "openai", "model": model_name,
+                                 "company_slug": getattr(input_data, "company_slug", "") or ""})
     payload = _extract_json(response_text)
     raw_queries = payload.get("queries", [])
 
@@ -828,6 +848,8 @@ async def generate_queries_from_topics(
     model: Optional[str] = None,
     *,
     trace_span: Optional[Any] = None,
+    company_slug: str = "",
+    storage: Optional[Any] = None,
 ) -> List[GeneratedQuery]:
     """Generate queries from approved TopicAssignments (TD → GA bridge).
 
@@ -843,9 +865,9 @@ async def generate_queries_from_topics(
     if not topics:
         return []
 
-    company_context = _read_text(company_context_path)
+    company_context = _read_text(company_context_path, storage=storage)
     persona_context = "\n\n".join(
-        _read_text(p) for p in (persona_paths or []) if p
+        _read_text(p, storage=storage) for p in (persona_paths or []) if p
     )
     model_name = model or settings.gap_analysis_query_gen_model
 
@@ -898,7 +920,9 @@ async def generate_queries_from_topics(
                 model_name, topic.topic_text[:50], elapsed,
             )
             if trace_span:
-                log_generation(trace_span, "s2-topic-scoped-generation", model_name, prompt[:500], response_text[:500], usage=None)
+                log_generation(trace_span, "s2-topic-scoped-generation", model_name, prompt[:500], response_text[:500], usage=None,
+                               metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_topic", "provider": "openai", "model": model_name,
+                                         "company_slug": company_slug})
             payload = _extract_json(response_text)
             raw_queries = payload.get("queries", [])
 

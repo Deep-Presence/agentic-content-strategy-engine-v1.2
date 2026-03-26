@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from api.schemas.brand_data import (
     ResearchArtifactsResponse,
@@ -24,15 +24,17 @@ class JsonBrandDataService:
     via ``asyncio.to_thread()`` so routers can be ``async def``.
     """
 
-    def __init__(self, artifacts_root: Path, task_store: TaskStore) -> None:
+    def __init__(self, artifacts_root: Path, task_store: TaskStore, backend: Optional[Any] = None) -> None:
         self._artifacts_root = artifacts_root
         self._task_store = task_store
+        self._backend = backend
 
     async def get_research_artifacts(
         self, slug: str,
     ) -> ResearchArtifactsResponse:
         return await asyncio.to_thread(
             _brand_svc.get_research_artifacts, self._artifacts_root, slug,
+            backend=self._backend,
         )
 
     async def get_run_history(

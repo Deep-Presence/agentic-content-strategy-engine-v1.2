@@ -17,7 +17,7 @@ from core.content_engine.prompts.drafter_prompts import (
     REVISION_SYSTEM_PROMPT,
     build_drafter_user_prompt,
 )
-from core.content_engine.tracing_v13 import create_span, end_span, log_generation
+from core.content_engine.tracing_v13 import create_span, end_span, extract_provider, log_generation
 from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation import ContentBrief, ContentDraft, ContentOutline
 
@@ -33,6 +33,7 @@ async def generate_draft(
     company_context_md: str,
     *,
     trace: Optional[object] = None,
+    company_slug: str = "",
 ) -> ContentDraft:
     """Generate a full markdown draft from an outline.
 
@@ -83,7 +84,15 @@ async def generate_draft(
             system=DRAFTER_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=8192,
-            metadata={"agent": "drafter", "brief_id": brief.brief_id},
+            metadata={
+                "agent": "drafter",
+                "brief_id": brief.brief_id,
+                "pipeline": "content_engine",
+                "pipeline_step": "drafter",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            },
             base_delay=2.0,
         )
 
@@ -136,6 +145,7 @@ async def revise_draft(
     company_context_md: str,
     *,
     trace: Optional[object] = None,
+    company_slug: str = "",
 ) -> ContentDraft:
     """Revise an existing draft based on evaluator feedback.
 
@@ -210,7 +220,15 @@ count target. Return the complete revised article in Markdown.
             system=REVISION_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=8192,
-            metadata={"agent": "revision_drafter", "brief_id": brief.brief_id},
+            metadata={
+                "agent": "revision_drafter",
+                "brief_id": brief.brief_id,
+                "pipeline": "content_engine",
+                "pipeline_step": "revision_drafter",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            },
             base_delay=2.0,
         )
 

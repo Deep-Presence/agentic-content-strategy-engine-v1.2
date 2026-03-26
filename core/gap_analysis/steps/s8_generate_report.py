@@ -20,6 +20,7 @@ from core.models.gap_analysis import (
 )
 from core.config.settings import settings
 from core.shared_tools.tracing import log_generation
+from core.storage.backends.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -362,6 +363,7 @@ async def generate_gap_report(
     model: Optional[str] = None,
     *,
     trace_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> GapReport:
     model_name = model or settings.gap_analysis_report_model
 
@@ -380,7 +382,9 @@ async def generate_gap_report(
         elapsed = time.monotonic() - t0
         logger.info("S8 LLM summary: model=%s, elapsed=%.1fs, recommendations=%d", model_name, elapsed, len(recommendations))
         if trace_span:
-            log_generation(trace_span, "s8-executive-summary", model_name, llm_prompt[:500], llm_response[:500], usage=None)
+            log_generation(trace_span, "s8-executive-summary", model_name, llm_prompt[:500], llm_response[:500], usage=None,
+                           metadata={"pipeline": "gap_analysis", "pipeline_step": "s8_report", "provider": "openai", "model": model_name,
+                                     "company_slug": company_slug})
     except Exception as exc:
         logger.warning("S8 LLM summary generation failed: %s", exc)
         executive_summary = ""
@@ -441,26 +445,27 @@ async def generate_gap_report(
 
 def save_report(
     report: GapReport,
-    output_dir: Path,
+    storage: StorageBackend,
+    prefix: str,
     analysis: Optional[AnalysisResult] = None,
 ) -> None:
-    """Save report artifacts to output directory.
+    """Save report artifacts via storage backend.
 
     Writes the standard 3-file contract (gap_report, generation_spec, analysis.json)
     plus the optional Tier 1 gap_analysis_complete.json for full-fidelity output.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
+    storage.mkdir(prefix)
     if report.report_md:
-        (output_dir / "gap_report.md").write_text(report.report_md, encoding="utf-8")
-    (output_dir / "gap_report.json").write_text(
-        json.dumps(report.report_json, indent=2, default=str), encoding="utf-8"
+        storage.write(f"{prefix}/gap_report.md", report.report_md)
+    storage.write(
+        f"{prefix}/gap_report.json",
+        json.dumps(report.report_json, indent=2, default=str),
     )
     if report.generation_spec_md:
-        (output_dir / "generation_spec.md").write_text(
-            report.generation_spec_md, encoding="utf-8"
-        )
-    (output_dir / "generation_spec.json").write_text(
-        json.dumps(report.generation_spec_json, indent=2, default=str), encoding="utf-8"
+        storage.write(f"{prefix}/generation_spec.md", report.generation_spec_md)
+    storage.write(
+        f"{prefix}/generation_spec.json",
+        json.dumps(report.generation_spec_json, indent=2, default=str),
     )
 
     # Tier 1: Full-fidelity JSON (additive — does NOT replace existing 3-file contract)
@@ -474,8 +479,9 @@ def save_report(
             },
             "cluster_specs": [s.model_dump(mode="json") for s in analysis.cluster_specs],
         }
-        (output_dir / "gap_analysis_complete.json").write_text(
-            json.dumps(complete, indent=2, default=str), encoding="utf-8"
+        storage.write(
+            f"{prefix}/gap_analysis_complete.json",
+            json.dumps(complete, indent=2, default=str),
         )
 
 

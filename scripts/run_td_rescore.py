@@ -311,6 +311,7 @@ async def main() -> None:
                 company_context=company_md,
                 persona_context=expansion_persona_ctx,
                 timeout_s=settings.topic_discovery_expansion_timeout_s,
+                company_slug=company_slug,
             )
         for a in assignments:
             a.subdomain_id = sd_id

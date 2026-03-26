@@ -39,7 +39,7 @@ from core.research.prompts.voice_style_guide.voice_synthesis import (
     get_voice_synthesis_system_prompt,
 )
 from core.research.tools import perplexity_client
-from core.shared_tools.tracing import create_span, end_span, log_generation
+from core.shared_tools.tracing import create_span, end_span, extract_provider, log_generation
 
 logger = logging.getLogger(__name__)
 
@@ -96,22 +96,28 @@ async def _run_discovery_completion(
     max_tokens: int,
     tools: Optional[List[Dict[str, Any]]],
     timeout_s: float,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, str]:
     """Run completion and continue on Anthropic pause_turn when needed."""
     convo = list(messages)
     response: Any = None
     raw_text = ""
 
+    _kwargs: Dict[str, Any] = {
+        "model": model,
+        "api_key": api_key,
+        "messages": convo,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "tools": tools,
+    }
+    if metadata is not None:
+        _kwargs["metadata"] = metadata
+
     for turn in range(_MAX_PAUSE_TURNS + 1):
+        _kwargs["messages"] = convo
         response = await asyncio.wait_for(
-            litellm.acompletion(
-                model=model,
-                api_key=api_key,
-                messages=convo,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                tools=tools,
-            ),
+            litellm.acompletion(**_kwargs),
             timeout=timeout_s,
         )
         choice = response.choices[0]
@@ -409,6 +415,13 @@ async def run_author_discovery(
             "max_uses": 5,
         }
 
+        _disc_meta = {
+            "pipeline": "voice_style_guide",
+            "pipeline_step": "author_discovery",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": input_data.company_slug or "",
+        }
         _, raw_text = await _run_discovery_completion(
             model=model,
             api_key=api_key,
@@ -420,16 +433,12 @@ async def run_author_discovery(
             max_tokens=8192,
             tools=[_web_search_tool],
             timeout_s=timeout_s,
+            metadata=_disc_meta,
         )
-        # _sep = "=" * 60
-        # print(f"\n{_sep}\n  AUTHOR DISCOVERY RAW LLM OUTPUT\n{_sep}\n{raw_text}\n{_sep}\n")
-        # logger.info(
-        #     "Author discovery raw response length=%d, first 500 chars: %s",
-        #     len(raw_text), raw_text[:500],
-        # )
         log_generation(
             span, "vsg-author-discovery", model,
             user_prompt[:2000], raw_text[:2000],
+            metadata=_disc_meta,
         )
 
         cleaned = _strip_code_fences(raw_text)
@@ -464,6 +473,7 @@ async def run_author_discovery(
                     max_tokens=8192,
                     tools=[_web_search_tool],
                     timeout_s=timeout_s,
+                    metadata=_disc_meta,
                 )
                 logger.info(
                     "Author discovery retry response length=%d, first 500 chars: %s",
@@ -545,6 +555,13 @@ async def run_author_research(
             span, f"vsg-author-research-{brief.author_id}",
             settings.perplexity_deep_research_model,
             full_prompt[:2000], result_md[:2000] if result_md else "",
+            metadata={
+                "pipeline": "voice_style_guide",
+                "pipeline_step": "author_research",
+                "provider": "perplexity",
+                "model": settings.perplexity_deep_research_model,
+                "company_slug": input_data.company_slug or "",
+            },
         )
         end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
 
@@ -606,6 +623,13 @@ async def run_voice_synthesis(
         model = settings.voice_style_guide_synthesis_model
         api_key = settings.anthropic_api_key
 
+        _synth_meta = {
+            "pipeline": "voice_style_guide",
+            "pipeline_step": "voice_synthesis",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": input_data.company_slug or "",
+        }
         response = await asyncio.wait_for(
             litellm.acompletion(
                 model=model,
@@ -616,6 +640,7 @@ async def run_voice_synthesis(
                 ],
                 temperature=0.3,
                 max_tokens=8192,
+                metadata=_synth_meta,
             ),
             timeout=timeout_s,
         )
@@ -624,6 +649,7 @@ async def run_voice_synthesis(
         log_generation(
             span, "vsg-voice-synthesis", model,
             user_prompt[:2000], guide_md[:2000],
+            metadata=_synth_meta,
         )
         end_span(span, output={"word_count": len(guide_md.split()) if guide_md else 0})
 
