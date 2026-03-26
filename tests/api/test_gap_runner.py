@@ -420,13 +420,14 @@ class TestResolveArtifactsWithNonLocalBackend:
         assert resolved["company_context_path"] == "company_context/ramp.md"
         assert not resolved["company_context_path"].startswith("/")
 
-    def test_returns_absolute_paths_for_local_backend(self, tmp_path: Path) -> None:
-        """LocalStorageBackend returns absolute filesystem paths (backward compat)."""
+    def test_returns_relative_paths_for_local_backend(self, tmp_path: Path) -> None:
+        """All backends now return relative storage keys (no absolute paths)."""
         root = tmp_path / "artifacts"
         (root / "company_context").mkdir(parents=True)
         (root / "company_context" / "ramp.md").write_text("# Context")
         resolved = resolve_artifacts("ramp", root)
-        assert resolved["company_context_path"].startswith("/")
+        assert resolved["company_context_path"] == "company_context/ramp.md"
+        assert not resolved["company_context_path"].startswith("/")
 
 
 class TestGapRunnerUsesFactoryBackend:

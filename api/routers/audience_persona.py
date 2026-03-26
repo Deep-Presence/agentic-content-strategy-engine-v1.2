@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_persona_data_service, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_persona_data_service, get_storage_backend, get_task_store
 from api.schemas.audience_persona import (
     ApprovalResponseAP,
     AudiencePersonaStartRequest,
@@ -378,6 +378,7 @@ async def add_persona(
     task_store: TaskStoreProtocol = Depends(get_task_store),
     event_bus: EventBus = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
+    backend: Any = Depends(get_storage_backend),
 ) -> Dict[str, Any]:
     user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
     if not user_company_slug or slug != user_company_slug:
@@ -390,7 +391,7 @@ async def add_persona(
     persona_id = _slugify_persona_name(body.persona_name)
 
     # Collision check — append suffix if needed
-    storage = PersonaStorage(artifacts_root, slug)
+    storage = PersonaStorage(artifacts_root, slug, backend=backend)
     existing_ids = set(storage.list_persona_ids())
     if persona_id in existing_ids:
         import uuid as _uuid
@@ -439,12 +440,13 @@ async def standalone_approve_persona(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     artifacts_root: Path = Depends(get_artifacts_root),
+    backend: Any = Depends(get_storage_backend),
 ) -> Dict[str, str]:
     user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
     if not user_company_slug or slug != user_company_slug:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    storage = PersonaStorage(artifacts_root, slug)
+    storage = PersonaStorage(artifacts_root, slug, backend=backend)
     manifest = storage.read_manifest()
 
     entry = manifest.personas.get(persona_id)
