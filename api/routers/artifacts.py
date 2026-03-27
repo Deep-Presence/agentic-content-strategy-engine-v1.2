@@ -2,12 +2,15 @@
 
 All endpoints require authentication. Tenant isolation ensures users
 can only access artifacts belonging to their own company.
+
+Uses StorageBackend for all file I/O so that R2, local filesystem, or any
+other backend works transparently.
 """
 from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any, Dict, List
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -16,8 +19,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from api.auth.dependencies import require_auth
-from api.dependencies import get_artifacts_root
+from api.dependencies import get_storage_backend
 from core.models.organization import UserProfile
+from core.storage.backends.base import StorageBackend
 
 router = APIRouter(prefix="/api/v1/artifacts", tags=["artifacts"])
 
@@ -46,15 +50,56 @@ def _slug_belongs_to_user(slug: str, company_slug: str) -> bool:
     return slug == company_slug or slug.startswith(f"{company_slug}__")
 
 
-def _slugs_from_flat_dir(type_dir: Path) -> set[str]:
+def _basename(path: str) -> str:
+    """Extract the last component of a storage path."""
+    return PurePosixPath(path).name
+
+
+def _stem(path: str) -> str:
+    """Extract the stem (filename without extension) of a storage path."""
+    return PurePosixPath(path).stem
+
+
+def _list_recursive(backend: StorageBackend, prefix: str) -> List[str]:
+    """Recursively list all file paths under a prefix via StorageBackend.
+
+    Uses breadth-first traversal of list_dir to discover all files.
+    Filters out hidden files/dirs (starting with '.') and excluded dirs.
+    """
+    result: List[str] = []
+    queue = [prefix]
+    while queue:
+        current = queue.pop(0)
+        children = backend.list_dir(current)
+        for child in children:
+            name = _basename(child)
+            if name.startswith(".") or name in _EXCLUDED_DIRS:
+                continue
+            # If child has content, it's a file
+            if backend.exists(child):
+                # Could be a file or a prefix that also exists as a key.
+                # Try listing children to distinguish dirs from files.
+                sub_children = backend.list_dir(child)
+                if sub_children:
+                    # It's a directory (has children) — recurse
+                    queue.append(child)
+                else:
+                    # It's a leaf file
+                    result.append(child)
+            else:
+                # Prefix-only entry (virtual directory in R2) — recurse
+                queue.append(child)
+    return sorted(result)
+
+
+def _slugs_from_flat_listing(entries: List[str]) -> set[str]:
     """Extract company slugs from flat file naming convention."""
     slugs: set[str] = set()
-    if not type_dir.is_dir():
-        return slugs
-    for f in type_dir.iterdir():
-        if f.name.startswith(".") or f.name.endswith(".draft.md"):
+    for entry in entries:
+        name = _basename(entry)
+        if name.startswith(".") or name.endswith(".draft.md"):
             continue
-        stem = f.stem
+        stem = _stem(entry)
         if "__" in stem:
             slugs.add(stem.split("__")[0])
         else:
@@ -62,21 +107,20 @@ def _slugs_from_flat_dir(type_dir: Path) -> set[str]:
     return slugs
 
 
-def _slugs_from_nested_dir(type_dir: Path) -> set[str]:
-    """Extract company slugs from nested directory structure (gap_analysis, content)."""
+def _slugs_from_nested_listing(entries: List[str]) -> set[str]:
+    """Extract company slugs from nested directory listing."""
     slugs: set[str] = set()
-    if not type_dir.is_dir():
-        return slugs
-    for d in type_dir.iterdir():
-        if d.is_dir() and d.name not in _EXCLUDED_DIRS and not d.name.startswith("."):
-            slugs.add(d.name)
+    for entry in entries:
+        name = _basename(entry)
+        if name not in _EXCLUDED_DIRS and not name.startswith("."):
+            slugs.add(name)
     return slugs
 
 
 @router.get("/companies")
 def list_companies(
     request: Request,
-    artifacts_root: Path = Depends(get_artifacts_root),
+    backend: StorageBackend = Depends(get_storage_backend),
     _user: UserProfile = Depends(require_auth),
 ) -> Dict[str, List[str]]:
     """List company slugs visible to the authenticated user.
@@ -87,13 +131,13 @@ def list_companies(
     all_slugs: set[str] = set()
 
     for type_name in VALID_TYPES:
-        type_dir = artifacts_root / type_name
-        if not type_dir.is_dir():
+        entries = backend.list_dir(type_name)
+        if not entries:
             continue
         if type_name in _FLAT_TYPES:
-            all_slugs |= _slugs_from_flat_dir(type_dir)
+            all_slugs |= _slugs_from_flat_listing(entries)
         else:
-            all_slugs |= _slugs_from_nested_dir(type_dir)
+            all_slugs |= _slugs_from_nested_listing(entries)
 
     # Filter to only the user's company slugs
     visible = sorted(s for s in all_slugs if _slug_belongs_to_user(s, company_slug))
@@ -105,7 +149,7 @@ def list_artifacts(
     artifact_type: str,
     slug: str,
     request: Request,
-    artifacts_root: Path = Depends(get_artifacts_root),
+    backend: StorageBackend = Depends(get_storage_backend),
     _user: UserProfile = Depends(require_auth),
 ) -> Dict[str, Any]:
     """List files for a given artifact type and company slug."""
@@ -122,38 +166,45 @@ def list_artifacts(
         raise HTTPException(status_code=403, detail="Access denied")
 
     if artifact_type in _FLAT_TYPES:
-        type_dir = artifacts_root / artifact_type
-        if not type_dir.is_dir():
+        entries = backend.list_dir(artifact_type)
+        if not entries:
             raise HTTPException(status_code=404, detail=f"No artifacts of type {artifact_type}")
 
         files = []
-        for f in sorted(type_dir.iterdir()):
-            if not f.is_file() or f.name.startswith("."):
+        for entry in entries:
+            name = _basename(entry)
+            if name.startswith("."):
                 continue
-            stem = f.stem
-            if stem == slug or stem.startswith(f"{slug}__"):
+            stem = _stem(entry)
+            # Strip .draft suffix for matching
+            match_stem = stem[: -len(".draft")] if stem.endswith(".draft") else stem
+            if match_stem == slug or match_stem.startswith(f"{slug}__"):
                 files.append({
-                    "name": f.name,
-                    "size": f.stat().st_size,
+                    "name": name,
+                    "size": 0,  # StorageBackend doesn't expose size; frontend doesn't use it
                 })
 
         if not files:
             raise HTTPException(status_code=404, detail=f"No artifacts for {slug} in {artifact_type}")
-        return {"artifact_type": artifact_type, "slug": slug, "files": files}
+        return {"artifact_type": artifact_type, "slug": slug, "files": sorted(files, key=lambda f: f["name"])}
 
     else:
-        slug_dir = artifacts_root / artifact_type / slug
-        if not slug_dir.is_dir():
+        prefix = f"{artifact_type}/{slug}"
+        all_files = _list_recursive(backend, prefix)
+
+        if not all_files:
             raise HTTPException(status_code=404, detail=f"No {artifact_type} artifacts for {slug}")
 
         files = []
-        for f in sorted(slug_dir.rglob("*")):
-            if not f.is_file() or f.name.startswith("."):
+        for file_path in all_files:
+            name = _basename(file_path)
+            if name.startswith("."):
                 continue
-            rel = f.relative_to(slug_dir)
+            # Relative path from {artifact_type}/{slug}/
+            rel = file_path[len(prefix) + 1:]  # strip "knowledge_base/ramp/"
             files.append({
-                "name": str(rel),
-                "size": f.stat().st_size,
+                "name": rel,
+                "size": 0,  # StorageBackend doesn't expose size; frontend doesn't use it
             })
 
         return {"artifact_type": artifact_type, "slug": slug, "files": files}
@@ -165,7 +216,7 @@ def get_artifact_content(
     slug: str,
     filename: str,
     request: Request,
-    artifacts_root: Path = Depends(get_artifacts_root),
+    backend: StorageBackend = Depends(get_storage_backend),
     _user: UserProfile = Depends(require_auth),
 ) -> Any:
     """Retrieve artifact file content."""
@@ -186,28 +237,21 @@ def get_artifact_content(
         raise HTTPException(status_code=400, detail="Path traversal not allowed")
 
     if artifact_type in _FLAT_TYPES:
-        file_path = (artifacts_root / artifact_type / filename).resolve()
-        expected_parent = (artifacts_root / artifact_type).resolve()
+        storage_key = f"{artifact_type}/{filename}"
 
         # C1 fix: verify filename belongs to the authorized slug (prevents IDOR)
-        stem = Path(filename).stem
+        stem = PurePosixPath(filename).stem
         # Strip .draft suffix for draft files (e.g., "ramp.draft" → "ramp")
         if stem.endswith(".draft"):
             stem = stem[: -len(".draft")]
         if not (stem == slug or stem.startswith(f"{slug}__")):
             raise HTTPException(status_code=403, detail="Access denied")
     else:
-        file_path = (artifacts_root / artifact_type / slug / filename).resolve()
-        expected_parent = (artifacts_root / artifact_type / slug).resolve()
+        storage_key = f"{artifact_type}/{slug}/{filename}"
 
-    # Ensure resolved path stays within expected directory
-    if not file_path.is_relative_to(expected_parent):
-        raise HTTPException(status_code=400, detail="Path traversal not allowed")
-
-    if not file_path.is_file():
+    content = backend.read(storage_key)
+    if content is None:
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-
-    content = file_path.read_text(encoding="utf-8")
 
     if filename.endswith(".json"):
         return JSONResponse(content=json.loads(content))

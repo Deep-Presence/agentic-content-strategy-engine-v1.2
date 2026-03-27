@@ -176,9 +176,9 @@ async def _preflight_check(
     Raises RuntimeError if company context is missing or empty.
     """
     from core.research.utils import read_company_context
-    from core.storage.backends import LocalStorageBackend
+    from core.storage import get_storage_backend
 
-    _backend = backend or LocalStorageBackend(root)
+    _backend = backend or get_storage_backend(root)
 
     # Company context — check effective_slug first, fallback to company_slug
     company_md = read_company_context(_backend, effective_slug, company_slug) or ""

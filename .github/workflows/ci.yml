@@ -7,7 +7,9 @@ on:
     branches: [main, staging]
 
 jobs:
+  # Backend tests — only on merge to main (skipped on PRs to speed up feedback loop)
   backend-test:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -38,6 +40,7 @@ jobs:
       REDIS_EVENT_BUS: "true"
       REDIS_PIPELINE_STATE: "true"
       REDIS_CHECKPOINTER: "true"
+      STORAGE_BACKEND: local
       OPENAI_API_KEY: test-key
       ANTHROPIC_API_KEY: test-key
       PERPLEXITY_API_KEY: test-key

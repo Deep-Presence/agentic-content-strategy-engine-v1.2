@@ -241,7 +241,7 @@ class Settings(BaseSettings):
     url_enrichment_cache_ttl_days: int = 14  # Re-scrape URLs after 14 days
 
     # --- Storage Backend ---
-    storage_backend: Literal["local", "r2"] = "local"
+    storage_backend: Literal["local", "r2"] = "r2"
 
     # --- CMS Integration ---
     cms_fernet_key: str | None = None  # Fernet symmetric encryption key for CMS credentials

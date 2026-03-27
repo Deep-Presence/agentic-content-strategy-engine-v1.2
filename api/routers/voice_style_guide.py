@@ -64,12 +64,15 @@ def _validate_approval_window(
 def _vsg_should_guard(
     artifacts_root: Path,
     effective_slug: str,
+    *,
+    backend: Optional[Any] = None,
 ) -> tuple[bool, Optional[str]]:
     """Check whether the VSG guard should block a new run.
 
     Guard blocks when a fresh voice style guide already exists.
     """
-    storage = VoiceStyleGuideStorage(artifacts_root, effective_slug)
+    kw = {"backend": backend} if backend else {}
+    storage = VoiceStyleGuideStorage(artifacts_root, effective_slug, **kw)
     manifest = storage.read_manifest()
 
     if manifest.guide.current_version > 0 and manifest.guide.status == "fresh":
@@ -108,9 +111,11 @@ async def start_voice_style_guide(
         )
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
+    _sb = getattr(http_request.app.state, "storage_backend", None)
+
     # Guard: check if guide already exists
     if not body.force_rerun:
-        should_guard, message = _vsg_should_guard(artifacts_root, effective_slug)
+        should_guard, message = _vsg_should_guard(artifacts_root, effective_slug, backend=_sb)
         if should_guard:
             response.status_code = 200
             await log_pipeline_launch(

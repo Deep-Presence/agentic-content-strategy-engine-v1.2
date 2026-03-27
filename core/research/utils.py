@@ -6,9 +6,10 @@ abstraction layer.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List, Optional
 
-from core.storage.backends import LocalStorageBackend, StorageBackend
+from core.storage.backends.base import StorageBackend
 
 
 def read_company_context(
@@ -40,14 +41,8 @@ def load_persona_profiles(
     from core.research.audience_persona.storage import PersonaStorage
 
     for check_slug in filter(None, [effective_slug, company_slug]):
-        # PersonaStorage needs artifacts_root; derive from backend when possible.
-        if isinstance(backend, LocalStorageBackend):
-            persona_storage = PersonaStorage(backend.root, check_slug, backend=backend)
-        else:
-            # Non-local backends — construct with a dummy root; backend handles I/O.
-            from pathlib import Path
-
-            persona_storage = PersonaStorage(Path("/unused"), check_slug, backend=backend)
+        # artifacts_root is only used for base_dir property; backend handles all I/O.
+        persona_storage = PersonaStorage(Path("artifacts"), check_slug, backend=backend)
         manifest = persona_storage.read_manifest()
         if manifest.personas:
             break

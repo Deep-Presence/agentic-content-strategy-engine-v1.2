@@ -8,6 +8,7 @@ import { HITLReviews } from './_components/home/HITLReviews';
 import { RecentActivity } from './_components/home/RecentActivity';
 import { RecommendedActions } from './_components/home/RecommendedActions';
 import { StaleContentActions } from './_components/home/StaleContentActions';
+import { PipelineRerunCard } from './_components/home/PipelineRerunCard';
 import { useAuthStore } from '@/stores/auth';
 import { useApiQuery } from '@/lib/hooks/useApiQuery';
 import { useGapSummary } from '@/lib/hooks/useGapAnalysis';
@@ -175,14 +176,19 @@ export default function HomePage() {
 
   if (!hasData) {
     return (
-      <EmptyState
-        title="Welcome to Deep Presence"
-        description="Start by analyzing your brand to see how you're cited across AI platforms."
-        action={{
-          label: 'Begin Analysis',
-          onClick: () => router.push('/onboarding'),
-        }}
-      />
+      <div className="max-w-[960px] mx-auto space-y-6">
+        <EmptyState
+          title="Welcome to Deep Presence"
+          description="Start by analyzing your brand to see how you're cited across AI platforms."
+          action={{
+            label: 'Begin Analysis',
+            onClick: () => router.push('/onboarding'),
+          }}
+        />
+
+        {/* Pipeline Re-run — always visible so users can trigger pipelines */}
+        <PipelineRerunCard companyName={companyName} companyDomain={companyDomain} />
+      </div>
     );
   }
 
@@ -249,6 +255,9 @@ export default function HomePage() {
           queuedIds={queuedIds}
         />
       )}
+
+      {/* Pipeline Re-run */}
+      <PipelineRerunCard companyName={companyName} companyDomain={companyDomain} />
 
       {/* Two-column layout for tasks + reviews */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

@@ -551,10 +551,11 @@ async def run_knowledge_base_pipeline(
             with scoped_bind(agent_name="synthesis"):
                 synthesis_result = await run_synthesis_agent(
                     input_data,
-                    kb_base_dir=storage.base_dir,
                     available_docs=available_docs,
                     missing_docs=missing_docs,
                     parent_span=trace_span,
+                    storage_backend=storage.backend,
+                    storage_prefix=storage.prefix,
                 )
 
                 synthesis_md = ""
@@ -614,11 +615,12 @@ async def run_knowledge_base_pipeline(
                     with scoped_bind(agent_name="synthesis"):
                         synthesis_result = await run_synthesis_agent(
                             input_data,
-                            kb_base_dir=storage.base_dir,
                             available_docs=available_docs,
                             missing_docs=missing_docs,
                             parent_span=trace_span,
                             revision_note=revision_note_3,
+                            storage_backend=storage.backend,
+                            storage_prefix=storage.prefix,
                         )
                         if not synthesis_result.error:
                             synthesis_md = synthesis_result.content_md
@@ -929,13 +931,14 @@ async def run_knowledge_base_pipeline(
         with scoped_bind(agent_name="synthesis"):
             synthesis_result = await run_synthesis_agent(
                 input_data,
-                kb_base_dir=storage.base_dir,
                 available_docs=available_docs,
                 missing_docs=missing_docs,
                 parent_span=trace_span,
                 delta_mode=use_delta,
                 changed_docs=changed_docs_for_synth,
                 previous_synthesis_path=previous_synthesis_path,
+                storage_backend=storage.backend,
+                storage_prefix=storage.prefix,
             )
 
             synthesis_md = ""
@@ -996,7 +999,6 @@ async def run_knowledge_base_pipeline(
                 with scoped_bind(agent_name="synthesis"):
                     synthesis_result = await run_synthesis_agent(
                         input_data,
-                        kb_base_dir=storage.base_dir,
                         available_docs=available_docs,
                         missing_docs=missing_docs,
                         parent_span=trace_span,
@@ -1004,6 +1006,8 @@ async def run_knowledge_base_pipeline(
                         delta_mode=use_delta,
                         changed_docs=changed_docs_for_synth,
                         previous_synthesis_path=previous_synthesis_path,
+                        storage_backend=storage.backend,
+                        storage_prefix=storage.prefix,
                     )
                     if not synthesis_result.error:
                         synthesis_md = synthesis_result.content_md

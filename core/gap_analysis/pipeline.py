@@ -192,6 +192,7 @@ def _resolve_persona_paths(input_data: "GapAnalysisInput", slug: str) -> None:
     """Auto-discover persona paths from audience_persona artifacts when none provided.
 
     Mutates ``input_data.persona_paths`` in place. Explicit paths take priority.
+    Uses the configured storage backend (R2 in production) via PersonaStorage.
     """
     if input_data.persona_paths:
         logger.info("Using %d explicit persona path(s)", len(input_data.persona_paths))

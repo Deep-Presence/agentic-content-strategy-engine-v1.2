@@ -71,12 +71,15 @@ def _validate_approval_window(
 def _td_should_guard(
     artifacts_root: Path,
     effective_slug: str,
+    *,
+    backend: Optional[Any] = None,
 ) -> tuple[bool, Optional[str]]:
     """Check whether the TD guard should block a new run.
 
     Guard blocks when an approved taxonomy + matrix already exist.
     """
-    storage = TopicDiscoveryStorage(artifacts_root, effective_slug)
+    kw = {"backend": backend} if backend else {}
+    storage = TopicDiscoveryStorage(artifacts_root, effective_slug, **kw)
     manifest = storage.read_manifest()
 
     if manifest.taxonomy_version > 0:
@@ -117,10 +120,11 @@ async def start_topic_discovery(
             detail="Cannot start pipeline for another company",
         )
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
+    _sb = getattr(http_request.app.state, "storage_backend", None)
 
     # Guard: check if discovery already exists
     if not body.force_rerun:
-        should_guard, message = _td_should_guard(artifacts_root, effective_slug)
+        should_guard, message = _td_should_guard(artifacts_root, effective_slug, backend=_sb)
         if should_guard:
             response.status_code = 200
             await log_pipeline_launch(
@@ -561,7 +565,9 @@ async def start_topic_expansion(
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
     # Pre-check: discovery must have completed
-    storage = TopicDiscoveryStorage(artifacts_root, effective_slug)
+    _sb = getattr(http_request.app.state, "storage_backend", None)
+    kw = {"backend": _sb} if _sb else {}
+    storage = TopicDiscoveryStorage(artifacts_root, effective_slug, **kw)
     manifest = storage.read_manifest()
     if manifest.taxonomy_version == 0:
         raise HTTPException(
@@ -634,7 +640,9 @@ async def get_expansion_status(
     ):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    storage = TopicDiscoveryStorage(artifacts_root, slug)
+    _sb = getattr(http_request.app.state, "storage_backend", None)
+    kw = {"backend": _sb} if _sb else {}
+    storage = TopicDiscoveryStorage(artifacts_root, slug, **kw)
     taxonomy = storage.get_latest_taxonomy()
     if taxonomy is None:
         raise HTTPException(status_code=404, detail="No taxonomy found")

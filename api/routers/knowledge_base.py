@@ -204,7 +204,8 @@ async def refresh_stale_knowledge_base(
         raise HTTPException(status_code=403, detail="Access denied")
 
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
-    storage = KBStorage(artifacts_root, effective_slug)
+    _sb = getattr(http_request.app.state, "storage_backend", None)
+    storage = KBStorage(artifacts_root, effective_slug, backend=_sb) if _sb else KBStorage(artifacts_root, effective_slug)
     report = storage.get_staleness_report(
         threshold_override=body.staleness_threshold_override,
     )

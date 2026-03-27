@@ -33,9 +33,11 @@ class R2StorageBackend(StorageBackend):
         secret_access_key: str,
         region_name: str = "auto",
         *,
+        key_prefix: str = "",
         _client: Any = None,
     ) -> None:
         self._bucket_name = bucket_name
+        self._key_prefix = key_prefix  # e.g. "deep-presence-stage/" when endpoint URL was misconfigured
         self._client = _client or boto3.client(
             "s3",
             endpoint_url=endpoint_url,
@@ -46,7 +48,7 @@ class R2StorageBackend(StorageBackend):
         )
 
     # ------------------------------------------------------------------
-    # Path validation
+    # Path helpers
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -56,6 +58,16 @@ class R2StorageBackend(StorageBackend):
             raise ValueError(f"Path must be relative: {path!r}")
         if ".." in path.split("/"):
             raise ValueError(f"Path escapes storage scope: {path!r}")
+
+    def _prefixed(self, path: str) -> str:
+        """Prepend key_prefix to a logical path for R2 storage."""
+        return f"{self._key_prefix}{path}" if self._key_prefix else path
+
+    def _unprefixed(self, key: str) -> str:
+        """Strip key_prefix from an R2 key to return the logical path."""
+        if self._key_prefix and key.startswith(self._key_prefix):
+            return key[len(self._key_prefix):]
+        return key
 
     @staticmethod
     def _is_not_found(exc: ClientError) -> bool:
@@ -81,7 +93,7 @@ class R2StorageBackend(StorageBackend):
         try:
             self._client.put_object(
                 Bucket=self._bucket_name,
-                Key=path,
+                Key=self._prefixed(path),
                 Body=content.encode("utf-8"),
                 ContentType="text/plain; charset=utf-8",
             )
@@ -99,7 +111,7 @@ class R2StorageBackend(StorageBackend):
         self._validate_path(path)
         try:
             response = self._client.get_object(
-                Bucket=self._bucket_name, Key=path
+                Bucket=self._bucket_name, Key=self._prefixed(path)
             )
             return response["Body"].read()
         except ClientError as exc:
@@ -113,7 +125,7 @@ class R2StorageBackend(StorageBackend):
         try:
             self._client.put_object(
                 Bucket=self._bucket_name,
-                Key=path,
+                Key=self._prefixed(path),
                 Body=content,
                 ContentType="application/octet-stream",
             )
@@ -135,15 +147,16 @@ class R2StorageBackend(StorageBackend):
         for both files and directories.
         """
         self._validate_path(path)
+        r2_key = self._prefixed(path)
         try:
-            self._client.head_object(Bucket=self._bucket_name, Key=path)
+            self._client.head_object(Bucket=self._bucket_name, Key=r2_key)
             return True
         except ClientError as exc:
             if not self._is_not_found(exc):
                 raise
         # Fallback: check if it's a prefix with children (directory equivalent)
         try:
-            prefix = path.rstrip("/") + "/"
+            prefix = r2_key.rstrip("/") + "/"
             response = self._client.list_objects_v2(
                 Bucket=self._bucket_name,
                 Prefix=prefix,
@@ -161,13 +174,14 @@ class R2StorageBackend(StorageBackend):
         S3 delete_object is idempotent and doesn't report whether the key existed.
         """
         self._validate_path(path)
+        r2_key = self._prefixed(path)
         try:
-            self._client.head_object(Bucket=self._bucket_name, Key=path)
+            self._client.head_object(Bucket=self._bucket_name, Key=r2_key)
         except ClientError as exc:
             if self._is_not_found(exc):
                 return False
             raise
-        self._client.delete_object(Bucket=self._bucket_name, Key=path)
+        self._client.delete_object(Bucket=self._bucket_name, Key=r2_key)
         return True
 
     def list_dir(self, prefix: str) -> list[str]:
@@ -177,33 +191,42 @@ class R2StorageBackend(StorageBackend):
         handle buckets with >1000 keys. Combines ``Contents`` keys and
         ``CommonPrefixes`` entries, strips trailing ``/`` from prefixes,
         and returns a sorted list matching LocalStorageBackend behavior.
+
+        Returns an empty list if the prefix does not exist (handles
+        Cloudflare R2's NoSuchKey on ListObjectsV2 for missing prefixes).
         """
         self._validate_path(prefix)
-        # Normalize prefix: ensure trailing /
-        if not prefix.endswith("/"):
-            prefix = prefix + "/"
+        # Apply key_prefix and normalize: ensure trailing /
+        r2_prefix = self._prefixed(prefix)
+        if not r2_prefix.endswith("/"):
+            r2_prefix = r2_prefix + "/"
 
         entries: list[str] = []
-        paginator = self._client.get_paginator("list_objects_v2")
-        page_iterator = paginator.paginate(
-            Bucket=self._bucket_name,
-            Prefix=prefix,
-            Delimiter="/",
-        )
+        try:
+            paginator = self._client.get_paginator("list_objects_v2")
+            page_iterator = paginator.paginate(
+                Bucket=self._bucket_name,
+                Prefix=r2_prefix,
+                Delimiter="/",
+            )
 
-        for page in page_iterator:
-            # Files at this level
-            for obj in page.get("Contents", []):
-                key = obj["Key"]
-                # Skip directory markers (key == prefix itself)
-                if key == prefix:
-                    continue
-                entries.append(key)
+            for page in page_iterator:
+                # Files at this level
+                for obj in page.get("Contents", []):
+                    key = obj["Key"]
+                    # Skip directory markers (key == prefix itself)
+                    if key == r2_prefix:
+                        continue
+                    entries.append(self._unprefixed(key))
 
-            # Sub-prefixes (subdirectories)
-            for cp in page.get("CommonPrefixes", []):
-                # Strip trailing / to match LocalStorageBackend behavior
-                entries.append(cp["Prefix"].rstrip("/"))
+                # Sub-prefixes (subdirectories)
+                for cp in page.get("CommonPrefixes", []):
+                    # Strip trailing / to match LocalStorageBackend behavior
+                    entries.append(self._unprefixed(cp["Prefix"].rstrip("/")))
+        except ClientError as exc:
+            if self._is_not_found(exc):
+                return []
+            raise
 
         return sorted(entries)
 

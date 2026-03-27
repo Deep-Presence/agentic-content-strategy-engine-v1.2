@@ -716,7 +716,7 @@ class TestEndToEndArtifactChain:
         assert "test-co.md" in resolved["company_context_path"]
 
     def test_content_engine_input_from_resolved(self, tmp_path: Path) -> None:
-        """Resolved AP paths are valid filesystem paths readable by content engine."""
+        """Resolved AP paths are valid storage keys readable via the backend."""
         root = tmp_path / "artifacts"
         root.mkdir()
         _create_ap_persona(root, "test-co", "vp-finance")
@@ -726,9 +726,10 @@ class TestEndToEndArtifactChain:
         persona_paths = resolved["persona_paths"]
 
         assert len(persona_paths) == 2
-        # Each path should be a readable file
+        # Each path is a relative storage key; resolve against artifacts root
         for p in persona_paths:
-            path = Path(p)
+            assert not p.startswith("/"), f"Path should be relative: {p}"
+            path = root / p
             assert path.exists(), f"File does not exist: {p}"
             content = path.read_text(encoding="utf-8")
             assert len(content) > 0, f"File is empty: {p}"

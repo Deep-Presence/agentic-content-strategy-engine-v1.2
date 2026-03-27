@@ -217,13 +217,10 @@ def _load_persona_entries(
     Returns list of tuples for active (fresh/stale) personas.
     """
     from core.research.audience_persona.storage import PersonaStorage
-    from core.storage.backends import LocalStorageBackend
 
     for check_slug in filter(None, [effective_slug, company_slug]):
-        if isinstance(backend, LocalStorageBackend):
-            ps = PersonaStorage(backend.root, check_slug, backend=backend)
-        else:
-            ps = PersonaStorage(Path("/unused"), check_slug, backend=backend)
+        # artifacts_root is only used for base_dir property; backend handles all I/O.
+        ps = PersonaStorage(Path("artifacts"), check_slug, backend=backend)
         manifest = ps.read_manifest()
         if manifest.personas:
             break
@@ -311,9 +308,9 @@ async def run_topic_discovery_pipeline(
         _emit(event_bus, task_id, "td_phase_start", {"phase": 0, "stage": "preflight"})
 
         # Load company context
-        from core.storage.backends import LocalStorageBackend
+        from core.storage import get_storage_backend
 
-        _backend = LocalStorageBackend(root)
+        _backend = get_storage_backend(root)
         company_md = read_company_context(_backend, effective_slug, company_slug) or ""
 
         if not company_md.strip():
@@ -911,8 +908,8 @@ async def run_topic_expansion_pipeline(
 
         # Load company context + persona profiles (needed for expansion prompts)
         domain = input_data.domain or f"{company_slug}.com"
-        from core.storage.backends import LocalStorageBackend
-        backend = LocalStorageBackend(root)
+        from core.storage import get_storage_backend
+        backend = get_storage_backend(root)
 
         company_md = await asyncio.to_thread(
             read_company_context, backend, effective_slug, company_slug,
