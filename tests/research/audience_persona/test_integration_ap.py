@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langgraph.checkpoint.memory import MemorySaver
 
 from api.tasks.runner import resolve_artifacts
 from core.models.audience_persona import (
@@ -435,9 +436,13 @@ class TestDelayedApproval:
 
     @pytest.fixture(autouse=True)
     def _mock_tracing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Disable all tracing functions."""
+        """Disable all tracing functions and use in-memory checkpointer."""
         for fn in ("create_session", "create_span", "end_span", "flush", "log_generation"):
             monkeypatch.setattr(f"{_PIPE}.{fn}", MagicMock())
+        monkeypatch.setattr(
+            "core.research.audience_persona.graph.get_checkpointer",
+            lambda override=None: override if override is not None else MemorySaver(),
+        )
 
     @pytest.fixture()
     def setup_preflight(self, tmp_path: Path) -> Path:
