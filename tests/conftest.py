@@ -7,11 +7,42 @@ from typing import Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langgraph.checkpoint.memory import MemorySaver
 
 # ---------------------------------------------------------------------------
 # Force local storage backend for ALL tests — must run before settings import
 # ---------------------------------------------------------------------------
 os.environ.setdefault("STORAGE_BACKEND", "local")
+
+
+# ---------------------------------------------------------------------------
+# Patch all LangGraph graph modules to use MemorySaver (no Redis required)
+# ---------------------------------------------------------------------------
+_GRAPH_MODULES_WITH_CHECKPOINTER = [
+    "core.content_engine.graph_v13",
+    "core.research.audience_persona.graph",
+    "core.research.knowledge_base.graph",
+    "core.research.voice_style_guide.graph",
+    "core.topic_discovery.graph",
+]
+
+
+@pytest.fixture(autouse=True)
+def _use_memory_checkpointer(monkeypatch):
+    """Replace get_checkpointer in every graph module with MemorySaver.
+
+    Without this, any test that transitively calls build_*_graph() would
+    require a running Redis with RediSearch — which CI does not have.
+    Patched at the *usage* module level so the ``from core.checkpointer
+    import get_checkpointer`` binding is replaced.
+    """
+    for mod in _GRAPH_MODULES_WITH_CHECKPOINTER:
+        monkeypatch.setattr(
+            f"{mod}.get_checkpointer",
+            lambda override=None: override
+            if override is not None
+            else MemorySaver(),
+        )
 
 
 # ---------------------------------------------------------------------------
