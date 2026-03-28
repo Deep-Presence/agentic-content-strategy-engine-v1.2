@@ -49,12 +49,15 @@ misc/
 
 CLAUDE.md
 RESTRUCTURING_ANALYSIS.md
+.claude/
+_memory/
 
 
 .langgraph_api/
 .pytest_cache/
 .dist/
 node_modules
+
 
 
 run_logs/

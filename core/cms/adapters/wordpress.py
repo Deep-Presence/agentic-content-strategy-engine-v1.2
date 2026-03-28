@@ -24,10 +24,17 @@ SEO plugin support:
 from __future__ import annotations
 
 import base64
+import logging
 from datetime import datetime
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
+# ── Rate limiting guards ─────────────────────────────────────────────
+_MAX_NEW_CATEGORIES_PER_CALL = 5   # max new categories created per publish
+_MAX_PAGINATION_PAGES = 50         # max pages to fetch (50 * 100 = 5,000 posts)
 
 from core.cms.exceptions import (
     CMSAPIError,
@@ -168,10 +175,17 @@ class WordPressAdapter:
             posts = [self._parse_post(p) for p in resp.json()]
             return posts, total
 
-    async def list_all_posts(self, status: str = "publish") -> list[CMSPost]:
-        """Paginate through ALL posts (used during initial sync)."""
+    async def list_all_posts(
+        self, status: str = "publish"
+    ) -> tuple[list[CMSPost], bool]:
+        """Paginate through posts (used during initial sync).
+
+        Returns ``(posts, truncated)``.  Caps at ``_MAX_PAGINATION_PAGES``
+        pages (5,000 posts) to prevent unbounded API calls against large sites.
+        """
         all_posts: list[CMSPost] = []
         page = 1
+        truncated = False
         while True:
             posts, total = await self.list_posts(
                 page=page, per_page=100, status=status
@@ -180,7 +194,16 @@ class WordPressAdapter:
             if len(all_posts) >= total or not posts:
                 break
             page += 1
-        return all_posts
+            if page > _MAX_PAGINATION_PAGES:
+                logger.warning(
+                    "Pagination cap reached (%d pages, %d/%d posts). Truncating.",
+                    _MAX_PAGINATION_PAGES,
+                    len(all_posts),
+                    total,
+                )
+                truncated = True
+                break
+        return all_posts, truncated
 
     async def get_post(self, post_id: int | str) -> CMSPost:
         """Fetch a single post by CMS-native ID."""
@@ -358,7 +381,11 @@ class WordPressAdapter:
     async def _resolve_category_ids(
         self, category_names: list[str]
     ) -> list[int]:
-        """Map category names → WP category IDs. Create missing categories."""
+        """Map category names → WP category IDs. Create missing categories.
+
+        Caps new category creation at ``_MAX_NEW_CATEGORIES_PER_CALL`` per
+        call to prevent unbounded POST requests.
+        """
         if not category_names:
             return []
 
@@ -366,10 +393,23 @@ class WordPressAdapter:
         name_to_id = {c.name.lower(): int(c.cms_id) for c in existing}
 
         ids: list[int] = []
+        created_count = 0
         for name in category_names:
             if name.lower() in name_to_id:
                 ids.append(name_to_id[name.lower()])
             else:
+                if created_count >= _MAX_NEW_CATEGORIES_PER_CALL:
+                    remaining = [
+                        n for n in category_names
+                        if n.lower() not in name_to_id
+                    ]
+                    logger.warning(
+                        "Category creation cap reached (%d). "
+                        "Skipping %d remaining new categories.",
+                        _MAX_NEW_CATEGORIES_PER_CALL,
+                        len(remaining),
+                    )
+                    break
                 async with self._client() as client:
                     resp = await client.post(
                         f"{self.api_base}/categories",
@@ -379,4 +419,5 @@ class WordPressAdapter:
                     new_id = resp.json()["id"]
                     ids.append(new_id)
                     name_to_id[name.lower()] = new_id
+                    created_count += 1
         return ids

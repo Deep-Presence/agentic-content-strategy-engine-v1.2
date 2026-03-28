@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from api.auth.store import AuthStore
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
 
 
 def _write_persona_storage(
@@ -144,7 +143,7 @@ class TestCompanyProfile:
     def test_latest_runs_from_task_store(
         self,
         client: TestClient,
-        task_store: TaskStore,
+        task_store,
     ) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         task_store.update_task(task.task_id, status=TaskStatus.COMPLETED)

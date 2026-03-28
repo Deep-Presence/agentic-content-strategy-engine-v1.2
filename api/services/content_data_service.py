@@ -9,8 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-import threading
-import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -30,11 +29,10 @@ from core.storage.backends.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
-# ── Caching ──────────────────────────────────────────────────────────
+# ── Caching (Redis-backed, Session 6) ────────────────────────────────
 
-_CACHE: Dict[str, Tuple[float, Any]] = {}
-_CACHE_MAX_ENTRIES = 10
-_CACHE_LOCK = threading.Lock()  # C6: protects compound check-evict-insert
+from core.cache import cache_delete, cache_get, cache_set
+from core.redis import get_sync_redis_or_none
 
 # Split TTLs by artifact write pattern (Codex C5)
 _TTL_BY_FILE: Dict[str, int] = {
@@ -45,24 +43,31 @@ _TTL_BY_FILE: Dict[str, int] = {
 }
 _DEFAULT_CACHE_TTL_S = 120
 
-
 def _load_json_cached(
     storage: StorageBackend, key: str,
 ) -> Optional[Any]:
-    """Load and parse a JSON artifact via StorageBackend with TTL cache.
+    """Load and parse a JSON artifact via StorageBackend with Redis cache.
 
     *key* is the full storage path, e.g. ``content/test-co/blueprints.json``.
+    Uses Redis as the caching layer (Session 6). Falls back to direct
+    StorageBackend read on cache miss or when Redis is unavailable.
     """
-    now = time.monotonic()
+    redis = get_sync_redis_or_none()
 
     # Determine TTL from filename suffix
     fname = key.rsplit("/", 1)[-1] if "/" in key else key
     ttl = _TTL_BY_FILE.get(fname, _DEFAULT_CACHE_TTL_S)
 
-    cached = _CACHE.get(key)
-    if cached is not None and (now - cached[0]) < ttl:
-        return cached[1]
+    # Build cache key matching invalidation pattern cache:content:{slug}:*
+    # key = "content/{slug}/..." → strip "content/" prefix, replace "/" with ":"
+    _relative = key.removeprefix("content/") if key.startswith("content/") else key
+    cache_key = f"cache:content:{_relative.replace('/', ':')}"
+    if redis is not None:
+        cached = cache_get(redis, cache_key)
+        if cached is not None:
+            return cached
 
+    # StorageBackend read (fallback or cache miss)
     content = storage.read(key)
     if content is None:
         return None
@@ -73,22 +78,55 @@ def _load_json_cached(
         logger.warning("Failed to parse %s: %s", key, exc)
         return None
 
-    # C6: lock protects the compound check-evict-insert against concurrent writes
-    with _CACHE_LOCK:
-        if len(_CACHE) >= _CACHE_MAX_ENTRIES and key not in _CACHE:
-            oldest_key = next(iter(_CACHE))
-            del _CACHE[oldest_key]
-        _CACHE[key] = (now, data)
+    # Populate Redis cache
+    if redis is not None:
+        cache_set(redis, cache_key, data, ttl=ttl)
+
     return data
 
 
-def _load_pipeline_state(artifacts_root: Path, slug: str) -> Dict[str, Any]:
-    """Load pipeline_state.json from local filesystem (NOT StorageBackend).
+def _load_pipeline_state(
+    artifacts_root: Path, slug: str,
+    *, storage: Optional[StorageBackend] = None,
+) -> Dict[str, Any]:
+    """Load pipeline state from Redis (preferred) or StorageBackend (fallback).
 
     pipeline_state.json is ephemeral, sub-second writes during pipeline
-    execution.  It is NOT an R2 artifact — earmarked for Redis migration.
-    Returns empty dict if missing.
+    execution.
+
+    When ``redis_pipeline_state`` is enabled and Redis is healthy, reads
+    from the ``pipeline_state:{slug}`` Redis Hash first. Falls back to
+    StorageBackend on Redis error, empty result, or when Redis is disabled.
     """
+    from core.config.settings import settings
+
+    if settings.redis_pipeline_state and settings.redis_url:
+        try:
+            from core.content_engine.state_redis import read_pipeline_state_redis
+
+            rc = get_sync_redis_or_none()
+            if rc is not None:
+                result = read_pipeline_state_redis(rc, slug)
+                if result:
+                    return result
+                # Redis empty — check file too (migration window)
+        except Exception:
+            logger.warning(
+                "Redis pipeline state read failed — falling back to file",
+                exc_info=True,
+            )
+
+    # StorageBackend fallback (R2 or local)
+    if storage is not None:
+        content = storage.read(f"content/{slug}/pipeline_state.json")
+        if content is not None:
+            try:
+                return json.loads(content)
+            except (json.JSONDecodeError, ValueError):
+                return {}
+        return {}
+
+    # Legacy local filesystem fallback (only when no storage injected)
     state_path = artifacts_root / "content" / slug / "pipeline_state.json"
     try:
         return json.loads(state_path.read_text(encoding="utf-8"))
@@ -102,11 +140,11 @@ def _load_pipeline_state(artifacts_root: Path, slug: str) -> Dict[str, Any]:
 def _resolve_storage(
     artifacts_root: Path, storage: Optional[StorageBackend],
 ) -> StorageBackend:
-    """Return the given StorageBackend or create a LocalStorageBackend."""
+    """Return the given StorageBackend or create one via factory (R2-aware)."""
     if storage is not None:
         return storage
-    from core.storage.backends.local import LocalStorageBackend
-    return LocalStorageBackend(artifacts_root)
+    from core.storage import get_storage_backend
+    return get_storage_backend(artifacts_root)
 
 
 # ── Validation ───────────────────────────────────────────────────────
@@ -367,8 +405,8 @@ def get_briefs(
     # Load run_metadata for pieces + session_id (standard + namespaced files)
     pieces, session_id = _load_all_pieces(sb, slug)
 
-    # Load pipeline_state.json (stays on local filesystem, not R2)
-    pipeline_state = _load_pipeline_state(artifacts_root, slug)
+    # Load pipeline state — Redis first (when configured), StorageBackend fallback
+    pipeline_state = _load_pipeline_state(artifacts_root, slug, storage=sb)
     # Extract brief_id → task_id mapping for frontend HITL approval calls
     task_id_map: Dict[str, str] = {}
     raw_task_ids = pipeline_state.get("__task_ids__")
@@ -467,7 +505,6 @@ def add_brief(
         idx += 1
     brief_id = f"brief-{idx:03d}"
 
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
 
     # Create minimal blueprint entry
@@ -490,9 +527,10 @@ def add_brief(
     existing.append(new_entry)
     sb.write(bp_key, json.dumps(existing, indent=2))
 
-    # Invalidate cache for this file (Codex C3: use lock)
-    with _CACHE_LOCK:
-        _CACHE.pop(bp_key, None)
+    # Invalidate Redis cache for this file
+    redis = get_sync_redis_or_none()
+    if redis is not None:
+        cache_delete(redis, f"cache:content:{slug}:blueprints.json")
 
     return ContentBriefListItem(
         id=brief_id,
@@ -557,8 +595,8 @@ def get_brief_detail(
     # Run metadata pieces (standard + namespaced files)
     pieces, _session_id = _load_all_pieces(sb, slug)
 
-    # Pipeline state for in-progress statuses (stays on local filesystem)
-    pipeline_state = _load_pipeline_state(artifacts_root, slug)
+    # Pipeline state — Redis first, StorageBackend fallback
+    pipeline_state = _load_pipeline_state(artifacts_root, slug, storage=sb)
 
     # Status
     status = _infer_brief_status(brief_id, pieces, sb, slug, pipeline_state=pipeline_state)
@@ -658,10 +696,13 @@ def get_brief_stage_content(
     ):
         raise HTTPException(404, f"No content artifacts for company '{slug}'")
 
-    # Path traversal guard: reject symlinks on local filesystem (defense-in-depth)
-    brief_dir = artifacts_root / "content" / slug / "content" / brief_id
-    if brief_dir.is_symlink():
-        raise HTTPException(400, f"Invalid brief_id: '{brief_id}'")
+    # Path traversal guard: reject symlinks on local filesystem (defense-in-depth).
+    # R2 has no symlinks; StorageBackend.read() validates paths internally.
+    _inner = getattr(sb, "inner", sb)  # unwrap CachedStorageBackend
+    if hasattr(_inner, "root"):
+        brief_dir = artifacts_root / "content" / slug / "content" / brief_id
+        if brief_dir.is_symlink():
+            raise HTTPException(400, f"Invalid brief_id: '{brief_id}'")
 
     filename, mime_type = _STAGE_FILES[stage]
     key = f"{content_prefix}/content/{brief_id}/{filename}"

@@ -43,8 +43,6 @@ class TestTaskListShape:
 
     def test_task_item_shape(self, client: TestClient, task_store):
         """Each task in the list has required fields."""
-        from api.tasks.event_bus import EventBus
-
         t = task_store.create_task("gap_analysis", "test-co")
 
         resp = client.get("/api/v1/tasks")

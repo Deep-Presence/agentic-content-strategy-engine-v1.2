@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from api.tasks.store import TaskStore
 from core.audit.logger import get_sink, set_sink
 from core.audit.models import AuditEvent, AuditEventType
 from core.audit.sink import NoOpAuditSink
@@ -93,7 +92,7 @@ class TestAuditGapAnalysisLaunch:
         assert events[0].detail["outcome"] == "already_exists"
 
     def test_conflict_409_no_audit(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_store.create_task("gap_analysis", "test-co")
         _audit_sink.events.clear()

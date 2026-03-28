@@ -23,7 +23,7 @@ from api.schemas.company import (
     ProductUpdateRequest,
     ResearchArtifactSummary,
 )
-from api.tasks.store import TaskStore
+from core.services.task_store import TaskStoreProtocol
 from core.auth.service import AuthServiceProtocol
 from core.models.organization import Company, Product, UserProfile
 
@@ -117,7 +117,7 @@ def _build_research_summary(
 
 
 def _get_latest_runs(
-    task_store: TaskStore, slug: str
+    task_store: TaskStoreProtocol, slug: str
 ) -> Dict[str, Optional[LatestRunSummary]]:
     """Find the most recent task per pipeline type for this company."""
     latest: Dict[str, Optional[LatestRunSummary]] = {
@@ -157,7 +157,7 @@ async def get_company_profile(
     slug: str,
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
-    task_store: TaskStore = Depends(get_task_store),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
     _user: UserProfile = Depends(require_tenant),
     storage_backend=Depends(get_storage_backend),
 ) -> CompanyProfileResponse:

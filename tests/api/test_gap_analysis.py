@@ -10,7 +10,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
 
 
 # ── Minimal valid payload (simplified schema) ──────────────────────
@@ -83,7 +82,7 @@ class TestStartGapAnalysis:
         assert resp.status_code == 422
 
     def test_slug_conflict(
-        self, client: TestClient, task_store: TaskStore, mock_gap_pipeline
+        self, client: TestClient, task_store, mock_gap_pipeline
     ) -> None:
         task_store.create_task("gap_analysis", "test-co")
         resp = client.post("/api/v1/gap-analysis/start", json=MINIMAL_PAYLOAD)
@@ -182,7 +181,7 @@ class TestStartGapAnalysisGuard:
         assert data["already_exists"] is False
 
     def test_start_already_exists_includes_last_task_run_id(
-        self, client: TestClient, artifacts_root: Path, task_store: TaskStore
+        self, client: TestClient, artifacts_root: Path, task_store
     ) -> None:
         self._make_sentinel(artifacts_root, "test-co")
         task = task_store.create_task("gap_analysis", "test-co")
@@ -229,7 +228,7 @@ class TestStartGapAnalysisGuard:
 
 class TestGetGapAnalysisStatus:
     def test_status_after_start(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         status_resp = client.get(f"/api/v1/gap-analysis/{task.task_id}/status")
@@ -239,7 +238,7 @@ class TestGetGapAnalysisStatus:
         assert data["company_slug"] == "test-co"
 
     def test_completed_status(
-        self, client: TestClient, task_store: TaskStore, mock_gap_pipeline
+        self, client: TestClient, task_store, mock_gap_pipeline
     ) -> None:
         resp = client.post("/api/v1/gap-analysis/start", json=MINIMAL_PAYLOAD)
         run_id = resp.json()["run_id"]
@@ -266,7 +265,7 @@ class TestGetGapAnalysisStatus:
         ]
 
     def test_failed_status(
-        self, client: TestClient, task_store: TaskStore, mock_gap_pipeline
+        self, client: TestClient, task_store, mock_gap_pipeline
     ) -> None:
         resp = client.post("/api/v1/gap-analysis/start", json=MINIMAL_PAYLOAD)
         run_id = resp.json()["run_id"]

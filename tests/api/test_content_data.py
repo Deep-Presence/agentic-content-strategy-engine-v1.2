@@ -14,7 +14,7 @@ scenarios, security (path traversal), and edge cases.
 from __future__ import annotations
 
 import json
-import time
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -198,16 +198,18 @@ def _setup_gap_dir(
 
 
 @pytest.fixture(autouse=True)
-def _clear_caches():
-    """Clear module-level caches before each test."""
-    import api.services.content_data_service as cds
-    import api.services.gap_data_service as gds
-
-    cds._CACHE.clear()
-    gds._CACHE.clear()
+def _no_redis_cache(monkeypatch):
+    """Disable Redis cache so tests use direct file reads."""
+    monkeypatch.setattr(
+        "api.services.content_data_service.get_sync_redis_or_none", lambda: None
+    )
+    monkeypatch.setattr(
+        "api.services.gap_data_service.get_sync_redis_or_none", lambda: None
+    )
+    monkeypatch.setattr(
+        "core.services.gap_context_helper.get_sync_redis_or_none", lambda: None
+    )
     yield
-    cds._CACHE.clear()
-    gds._CACHE.clear()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1342,61 +1344,15 @@ class TestContentDataProductSlug:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# TTL Cache Behavior Tests (Phase 5)
+# Cache Behavior Tests (Redis-backed since Session 6)
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestContentCaching:
-    """Cache behavior tests for TTL-based content data caching."""
-
-    def test_ttl_cache_hit(self, client: TestClient, artifacts_root: Path):
-        """Second call within TTL should use cached data."""
-        import api.services.content_data_service as cds
-
-        _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(2))
-        client.get("/api/v1/companies/test-co/content/briefs")
-        assert len(cds._CACHE) > 0
-
-        # Second call should use cache (no change in data)
-        body2 = client.get("/api/v1/companies/test-co/content/briefs").json()
-        assert body2["total"] == 2
-
-    def test_ttl_cache_expired(
-        self, client: TestClient, artifacts_root: Path, monkeypatch,
-    ):
-        """After TTL expires, cache should return fresh data."""
-        import api.services.content_data_service as cds
-
-        _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(2))
-
-        body1 = client.get("/api/v1/companies/test-co/content/briefs").json()
-        assert body1["total"] == 2
-
-        # Write new data with 5 briefs
-        _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(5))
-
-        # Monkeypatch time.monotonic to advance past TTL
-        original_monotonic = time.monotonic
-        offset = cds._DEFAULT_CACHE_TTL_S + 10
-
-        def advanced_monotonic():
-            return original_monotonic() + offset
-
-        monkeypatch.setattr(time, "monotonic", advanced_monotonic)
-
-        body2 = client.get("/api/v1/companies/test-co/content/briefs").json()
-        assert body2["total"] == 5
-
-    def test_ttl_cache_eviction(self, client: TestClient, artifacts_root: Path):
-        """Cache should evict oldest entry when at capacity."""
-        import api.services.content_data_service as cds
-
-        for i in range(cds._CACHE_MAX_ENTRIES + 2):
-            slug = f"co-{i}"
-            _setup_content_dir(artifacts_root, slug=slug, briefs_data=_make_briefs_json(1))
-            client.get(f"/api/v1/companies/{slug}/content/briefs")
-
-        assert len(cds._CACHE) <= cds._CACHE_MAX_ENTRIES
+    """Cache behavior tests — in-memory _CACHE removed in Session 6 (Redis cache).
+    Tests here validate read-after-write and pipeline state freshness only.
+    Redis cache hit/miss/eviction tested in tests/unit/test_redis_cache.py.
+    """
 
     def test_add_brief_read_after_write(self, client: TestClient, artifacts_root: Path):
         """After adding a brief, it should be immediately visible."""
@@ -1416,8 +1372,6 @@ class TestContentCaching:
 
     def test_pipeline_state_not_cached(self, client: TestClient, artifacts_root: Path):
         """pipeline_state.json should be read fresh each time (not through cache)."""
-        import api.services.content_data_service as cds
-
         _setup_content_dir(
             artifacts_root,
             briefs_data=_make_briefs_json(1),
@@ -1432,7 +1386,5 @@ class TestContentCaching:
         # Update pipeline state to "review" — should be reflected immediately
         state_path.write_text(json.dumps({"brief-0": "review"}))
 
-        # Clear JSON cache (not pipeline_state since it bypasses cache)
-        cds._CACHE.clear()
         body2 = client.get("/api/v1/companies/test-co/content/briefs").json()
         assert body2["briefs"][0]["status"] == "review"

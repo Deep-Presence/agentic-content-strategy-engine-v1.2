@@ -10,15 +10,13 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from api.tasks.event_bus import EventBus
-from api.tasks.store import TaskStore
 
 
 class TestSSEContextBinding:
     """Verify that SSE endpoint binds structured logging context."""
 
     def test_sse_binds_task_id(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "completed", {})
@@ -34,7 +32,7 @@ class TestSSEContextBinding:
         assert all_kwargs.get("task_id") == task.task_id
 
     def test_sse_binds_company_slug(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "completed", {})
@@ -49,7 +47,7 @@ class TestSSEContextBinding:
         assert all_kwargs.get("company_slug") == "test-co"
 
     def test_sse_binds_pipeline_name(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "completed", {})
@@ -64,7 +62,7 @@ class TestSSEContextBinding:
         assert all_kwargs.get("pipeline_name") == "gap_analysis"
 
     def test_sse_generates_correlation_id(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "completed", {})
@@ -81,7 +79,7 @@ class TestSSEContextBinding:
         assert len(all_kwargs["correlation_id"]) == 36
 
     def test_sse_forwards_correlation_id(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "completed", {})
@@ -100,7 +98,7 @@ class TestSSEContextBinding:
         assert all_kwargs.get("correlation_id") == "upstream-abc"
 
     def test_sse_clears_context_after_stream(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "completed", {})

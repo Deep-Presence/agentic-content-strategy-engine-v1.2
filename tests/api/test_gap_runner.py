@@ -9,10 +9,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
 from api.tasks.runner import resolve_artifacts, run_gap_pipeline_task, run_content_v13_pipeline_task
-from api.tasks.store import TaskStore
 from core.models.gap_analysis import GapReport
 
 
@@ -165,7 +163,7 @@ class TestResolveArtifacts:
 class TestRunGapPipelineTask:
     @pytest.mark.asyncio
     async def test_successful_run_updates_status(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         gap_request, mock_report: GapReport, empty_artifacts: Path,
     ) -> None:
         task = task_store.create_task("gap_analysis", "ramp")
@@ -192,7 +190,7 @@ class TestRunGapPipelineTask:
 
     @pytest.mark.asyncio
     async def test_result_includes_resolved_artifacts(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         gap_request, mock_report: GapReport, empty_artifacts: Path,
     ) -> None:
         task = task_store.create_task("gap_analysis", "ramp")
@@ -218,7 +216,7 @@ class TestRunGapPipelineTask:
 
     @pytest.mark.asyncio
     async def test_resolves_existing_artifacts(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         gap_request, mock_report: GapReport, tmp_path: Path,
     ) -> None:
         # Set up artifacts on disk
@@ -249,7 +247,7 @@ class TestRunGapPipelineTask:
 
     @pytest.mark.asyncio
     async def test_failed_run_updates_status(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         gap_request, empty_artifacts: Path,
     ) -> None:
         task = task_store.create_task("gap_analysis", "ramp")
@@ -272,7 +270,7 @@ class TestRunGapPipelineTask:
 
     @pytest.mark.asyncio
     async def test_publishes_pipeline_start_event(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         gap_request, mock_report: GapReport, empty_artifacts: Path,
     ) -> None:
         task = task_store.create_task("gap_analysis", "ramp")
@@ -296,7 +294,7 @@ class TestRunGapPipelineTask:
 
     @pytest.mark.asyncio
     async def test_publishes_failed_event_on_error(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         gap_request, empty_artifacts: Path,
     ) -> None:
         task = task_store.create_task("gap_analysis", "ramp")
@@ -320,7 +318,7 @@ class TestRunGapPipelineTask:
 
     @pytest.mark.asyncio
     async def test_releases_slug_lock_on_success(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         gap_request, mock_report: GapReport, empty_artifacts: Path,
     ) -> None:
         task = task_store.create_task("gap_analysis", "ramp")
@@ -342,7 +340,7 @@ class TestRunGapPipelineTask:
 
     @pytest.mark.asyncio
     async def test_releases_slug_lock_on_failure(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         gap_request, empty_artifacts: Path,
     ) -> None:
         task = task_store.create_task("gap_analysis", "ramp")
@@ -364,7 +362,7 @@ class TestRunGapPipelineTask:
 
     @pytest.mark.asyncio
     async def test_skip_steps_forwarded_to_pipeline(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         mock_report: GapReport, empty_artifacts: Path,
     ) -> None:
         request = SimpleNamespace(
@@ -435,7 +433,7 @@ class TestGapRunnerUsesFactoryBackend:
 
     @pytest.mark.asyncio
     async def test_gap_runner_passes_factory_backend_to_resolve(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         gap_request, mock_report: GapReport, empty_artifacts: Path,
     ) -> None:
         from unittest.mock import MagicMock, call

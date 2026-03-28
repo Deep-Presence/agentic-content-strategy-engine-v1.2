@@ -1,51 +1,43 @@
 {
-  "sprint": "cms-integration-v21",
-  "sprint_goal": "CMS Integration — Full stack. Steps 1-7: backend (adapter, service, ORM, API). Steps 8-9: frontend (Settings CMS, Publish Drawer, Stale Content). Codex review fixes F1-F10.",
-  "sprint_status": "STEPS 1-9 + CODEX F1-F10 COMPLETE. Backend: 11 endpoints, adapter pattern, WordPress v1, 142 tests. Frontend: 6 new components (CMSConnectForm, CMSConnectedState, CMSSyncedPostsTable, PublishDrawer, StaleContentActions, useCMS hooks), 6 modified pages. Codex-reviewed twice (GPT-5.3-Codex: 10+10 findings, all fixed). 62 backend CMS tests + 82 frontend tests passing. Zero regressions.",
+  "sprint": "redis-phase6-remove-fallbacks",
+  "sprint_goal": "Phase 6 — Remove Filesystem Fallbacks. Delete JSON TaskStore, in-memory EventBus, JsonAuthService, and MemorySaver fallback. Make DATABASE_URL + REDIS_URL mandatory for production.",
+  "sprint_status": "COMPLETE — 12-step plan fully executed. 6 files deleted (2 prod + 4 tests), 35+ files modified, 4 files created. 1360 tests passing, 0 failures. DATABASE_URL + REDIS_URL mandatory at startup.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
     "LiteLLM wraps all LLM calls in content engine workers/judges/agents",
     "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception",
-    "No Supabase yet — filesystem artifacts are source of truth",
     "Double-underscore separator for effective slugs: {company}__{product}",
     "Default-deny middleware — all routes protected unless explicitly whitelisted",
     "core/ cannot import from api/ — shared code goes in core/shared_tools/",
-    "DB layer is opt-in via DATABASE_URL — repos flush only, DI session generator owns commit/rollback",
-    "AuthServiceProtocol is the contract — all routers use get_auth_service dependency",
-    "LangSmith is sole tracing backend — Langfuse fully removed",
-    "Hub prompts opt-in via langsmith_use_hub=False — local Python prompts authoritative by default",
-    "pipeline_state.json stays on local filesystem — earmarked for Redis, NOT R2",
-    "Non-local StorageBackends must NOT fall back to filesystem reads (H3 rule)"
+    "DATABASE_URL is REQUIRED — no JSON fallback for TaskStore or AuthService",
+    "REDIS_URL is REQUIRED — no in-memory fallback for EventBus or checkpointer",
+    "Async Redis for hot paths (pipeline writes), sync Redis for locks + sync readers",
+    "Distributed locks are fail-closed when Redis is configured (no split-brain fallback)"
   ],
-  "active_branches": ["feat/front-back"],
+  "active_branches": ["feat/redis-integration"],
   "environment_notes": [
     "Python 3.12", "async-first", "VS Code + Claude Code extension",
-    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, structlog >=24.1, boto3"
+    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, structlog >=24.1, redis[hiredis] >=5.2.0"
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/services/cms_service.py (publish persists published_url/published_at on content_pieces, triage tile creation with warning field)",
-    "frontend/src/lib/hooks/useCMS.ts (10 hooks, inFlightRef guards, mutatePrefix for SWR invalidation)",
-    "frontend/src/app/(dashboard)/settings/_components/IntegrationsTab.tsx (real CMS connect/sync/disconnect flow)",
-    "frontend/src/app/(dashboard)/content/_components/KanbanBoard.tsx (publish icon + published badge on cards)",
-    "frontend/src/app/(dashboard)/content/_components/PublishDrawer.tsx (slide-over, a11y: role=dialog, Escape, focus)",
-    "frontend/src/app/(dashboard)/_components/home/StaleContentActions.tsx (stale cards + refresh → triage)",
-    "frontend/src/lib/utils.ts (isSafeUrl XSS prevention helper)"
+    "api/tasks/exceptions.py (NEW — permanent home for 4 exception classes)",
+    "api/tasks/event_bus.py (EventBus class removed, only Protocol + _format_sse remain)",
+    "api/app.py (DI fallbacks removed — RuntimeError on missing DATABASE_URL/REDIS_URL)",
+    "api/dependencies.py (JsonAuthService fallback removed — RuntimeError on missing DATABASE_URL)",
+    "core/checkpointer.py (MemorySaver fallback removed — RuntimeError on missing REDIS_URL)",
+    "tests/api/conftest.py (DbTaskStore(mock) + InMemoryEventBus + TestAuthService + asyncio proxy)"
   ],
-  "test_count": 3042,
-  "phases_completed_count": 62,
+  "test_count": 1360,
+  "phases_completed_count": 59,
   "recent_phases": [
-    "cms-codex-fixes-f6-f10 v21 — F6 sync retrigger guard, F7 URL crash fix, F8 warning field, F9 isSafeUrl XSS prevention, F10 drawer a11y",
-    "cms-codex-fixes-f1-f5 v21 — F1 publish state persistence, F2 type safety (remove unsafe casts), F3 inFlightRef race guard, F4 SWR prefix invalidation, F5 credential failure toast",
-    "cms-frontend-steps-8-9 v21 — 6 new components + 6 modified pages (Settings CMS, Publish Drawer, Stale Content, useCMS hooks, types, endpoints)",
-    "cms-integration-steps-6-7 v21 — API router (11 endpoints), DI wiring, sync runner, 9 schemas, 49 tests + 3 Codex fixes (F2/F4/F8)",
-    "cms-integration-steps-1-5 v21 — 5 steps (17 new files, 4 modified, 93 new tests, zero regressions)"
+    "redis-phase6-remove-fallbacks — Delete JSON TaskStore, EventBus, JsonAuthService, MemorySaver. DATABASE_URL+REDIS_URL mandatory. 12 steps, ~1300 lines removed, 1360 tests passing.",
+    "r2-blob-storage-phase5 — Reader-side StorageBackend migration: json_site_audit_data full refactor, content/brand/prompt services fixed, DI wiring, 447 tests verified",
+    "r2-blob-storage-phase3 — CachedStorageBackend, mtime removal, brand_data fix, list_dir caching (25 new tests)",
+    "redis-codex-fixes-phase2 — 6 critical/high bug fixes: singleton race, socket leak, cache mismatch, cleanup clobber, semaphore renewal, exception broadening (17 new tests)",
+    "redis-session-5 — Distributed Semaphore, atomic Lua acquire, pipeline_semaphore(), 14 runners (11 new tests)"
   ],
-  "phases_remaining": [
-    "CMS Steps 10-11 — Frontend stale content in Recommended Actions refinement, synced posts standalone page (secondary, low priority)",
-    "R2 Phase 7 — DB Service Fallback Removal (db_content_data, db_kb_data, db_persona_data FS fallbacks)",
-    "R2 Phase 8 — Cleanup (CLAUDE.md update, .gitignore, onboarding docs, LocalStorageBackend verification)"
-  ],
+  "phases_remaining": [],
   "deferred_issues_location": ".claude/sprints/pending/backlog.md"
 }

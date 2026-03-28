@@ -170,7 +170,7 @@ class CMSService:
         Returns: ``{"synced": int, "stale": int, "categories": int}``
         """
         adapter = self._reconstruct_adapter(connection)
-        all_posts = await adapter.list_all_posts(status="publish")
+        all_posts, truncated = await adapter.list_all_posts(status="publish")
         categories = await adapter.list_categories()
         cat_map = {c.cms_id: c.name for c in categories}
 
@@ -227,6 +227,7 @@ class CMSService:
             "synced": len(all_posts),
             "stale": stale_count,
             "categories": len(categories),
+            "truncated": truncated,
         }
 
     # ── Publish Flow ──────────────────────────────────────────────
@@ -268,6 +269,12 @@ class CMSService:
             categories=category_names or [],
         )
         published_post = await adapter.publish_post(post_create)
+
+        # Invalidate categories cache if publish may have created new categories
+        if category_names:
+            from core.services.cms_cache import invalidate_categories
+
+            await asyncio.to_thread(invalidate_categories, connection.site_url)
 
         # Record in publish_records
         await self._publish_repo.create(
@@ -366,7 +373,16 @@ class CMSService:
         self,
         company_slug: str,
     ) -> list[dict[str, Any]]:
-        """Return stale posts as action cards for the Home dashboard."""
+        """Return stale posts as action cards for the Home dashboard.
+
+        Caches the result in Redis (TTL 30min).
+        """
+        from core.services.cms_cache import get_cached_stale_actions, set_cached_stale_actions
+
+        cached = await asyncio.to_thread(get_cached_stale_actions, company_slug)
+        if cached is not None:
+            return cached
+
         stale_posts = await self._synced_post_repo.get_stale(company_slug)
         actions: list[dict[str, Any]] = []
         for post in stale_posts:
@@ -383,6 +399,8 @@ class CMSService:
                 ),
                 "queued_for_refresh": post.queued_for_refresh,
             })
+
+        await asyncio.to_thread(set_cached_stale_actions, company_slug, actions)
         return actions
 
     async def queue_stale_for_refresh(
@@ -449,8 +467,24 @@ class CMSService:
         limit: int = 100,
         offset: int = 0,
     ) -> list:
-        """Return synced posts for a company (thin passthrough to repo)."""
-        return list(
+        """Return synced posts for a company.
+
+        Caches the result in Redis (TTL 10min), keyed by query params.
+        """
+        from core.services.cms_cache import (
+            deserialize_synced_post,
+            get_cached_synced_posts,
+            serialize_synced_post,
+            set_cached_synced_posts,
+        )
+
+        cached = await asyncio.to_thread(
+            get_cached_synced_posts, company_slug, stale_only, limit, offset
+        )
+        if cached is not None:
+            return [deserialize_synced_post(p) for p in cached]
+
+        posts = list(
             await self._synced_post_repo.list_by_company(
                 company_slug,
                 stale_only=stale_only,
@@ -458,6 +492,12 @@ class CMSService:
                 offset=offset,
             )
         )
+
+        serialized = [serialize_synced_post(p) for p in posts]
+        await asyncio.to_thread(
+            set_cached_synced_posts, company_slug, stale_only, limit, offset, serialized
+        )
+        return posts
 
     async def list_publish_history(
         self,
@@ -477,9 +517,24 @@ class CMSService:
         self,
         connection: CMSConnectionModel,
     ) -> list:
-        """Fetch categories from the connected CMS (Codex F4)."""
+        """Fetch categories from the connected CMS (Codex F4).
+
+        Caches the result in Redis (TTL 1h) keyed by site_url.
+        """
+        from core.services.cms_cache import get_cached_categories, set_cached_categories
+
+        cached = await asyncio.to_thread(get_cached_categories, connection.site_url)
+        if cached is not None:
+            from core.cms.models import CMSCategory
+
+            return [CMSCategory(**c) for c in cached]
+
         adapter = self._reconstruct_adapter(connection)
-        return await adapter.list_categories()
+        categories = await adapter.list_categories()
+
+        serialized = [c.model_dump(mode="json") for c in categories]
+        await asyncio.to_thread(set_cached_categories, connection.site_url, serialized)
+        return categories
 
     # ── Private Helpers ───────────────────────────────────────────
 

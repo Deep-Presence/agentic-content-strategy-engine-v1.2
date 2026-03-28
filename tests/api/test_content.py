@@ -7,9 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
 
 
 @pytest.fixture
@@ -54,7 +52,7 @@ class TestStartContent:
         assert resp.status_code == 422
 
     def test_slug_conflict(
-        self, client: TestClient, task_store: TaskStore, mock_content_runner
+        self, client: TestClient, task_store, mock_content_runner
     ) -> None:
         task_store.create_task("content", "test-co")
         resp = client.post(
@@ -80,7 +78,7 @@ class TestStartContent:
 
 class TestContentStatus:
     def test_status_after_start(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("content", "test-co")
         resp = client.get(f"/api/v1/content/{task.task_id}/status")
@@ -110,7 +108,7 @@ class TestContentStatus:
 
 class TestContentApproval:
     def test_approve_pending_task(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("content", "test-co")
         task_store.update_task(
@@ -127,7 +125,7 @@ class TestContentApproval:
         assert resp.json()["decision"] == "approve"
 
     def test_approve_with_editor_notes(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("content", "test-co")
         task_store.update_task(
@@ -155,7 +153,7 @@ class TestContentApproval:
         assert resp.status_code == 404
 
     def test_approve_non_pending_returns_409(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("content", "test-co")
         resp = client.post(

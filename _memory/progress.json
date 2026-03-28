@@ -1,11 +1,10 @@
 {
-  "current_sprint": "cms-integration-v21",
-  "last_updated": "2026-03-26",
-  "test_count": 3042,
+  "current_sprint": "redis-phase6-remove-fallbacks",
+  "last_updated": "2026-03-27",
+  "test_count": 1360,
   "completed_sprints_summary": {
-    "total_tasks_completed": 42,
+    "total_tasks_completed": 40,
     "sprints": [
-      {"sprint": "cms-integration-v21", "date": "2026-03-26", "summary": "CMS Integration Steps 1-9 + Codex F1-F10 fixes. Steps 1-5: Adapter pattern (CMSAdapterProtocol + WordPressAdapter), factory, CMSService, ORM (93 tests). Steps 6-7: API router (11 endpoints), DI, sync runner, 9 schemas, 49 API tests. Steps 8-9: Frontend — 6 new components (CMSConnectForm, CMSConnectedState, CMSSyncedPostsTable, PublishDrawer, StaleContentActions, useCMS.ts with 10 hooks), 6 modified pages (IntegrationsTab, KanbanBoard, content/page, home/page, types.ts, endpoints.ts). Codex-reviewed twice (GPT-5.3-Codex). F1: publish persists to content_pieces. F2: type safety (removed unsafe casts). F3: inFlightRef race guards. F4: SWR prefix invalidation. F5: credential failure toast. F6: sync retrigger guard. F7: URL crash fix. F8: warning field for partial failures. F9: isSafeUrl XSS prevention. F10: drawer a11y. 62 backend + 82 frontend tests. Zero regressions."},
       {"sprint": "v3-async", "date": "2026-02-15", "summary": "Async pipeline conversion (12 tasks), Playwright CF bypass, content engine v1.0"},
       {"sprint": "v3-signals", "date": "2026-02-18", "summary": "Structural Signal Overhaul — S4 dual-soup, ~45 signals, GapContentBrief, 3-tier output"},
       {"sprint": "api-v1", "date": "2026-02-24", "summary": "FastAPI REST API, SSE events, HITL fix, Codex review fixes, approval flow"},
@@ -21,486 +20,250 @@
       {"sprint": "content-engine-v13", "date": "2026-03-02", "summary": "v1.3 pipeline (6 stages, LiteLLM, E-E-A-T, 3 HITL, linker agent, 10-phase refactor), LangSmith migration"},
       {"sprint": "knowledge-base-v1-v5", "date": "2026-03-06", "summary": "KB phases 1-5: 17 models, KBStorage, 6 agents, DAG orchestrator, 3 HITL, API router, staleness tracking, delta synthesis. 260 KB tests"},
       {"sprint": "audience-persona-v6-a-c", "date": "2026-03-06", "summary": "AP phases A-C: 9 Pydantic models, PersonaStorage, 2 agents (suggester + generator), 2 HITL graphs, prompts. 187 AP tests"},
-      {"sprint": "research-orchestrator-v13", "date": "2026-03-11", "summary": "Research Orchestrator — KB→AP→VSG sequential DAG. 7 phases + Codex audit (8 findings, 5 fixed). 67 tests (50 core + 17 API). Skip logic, HITL pass-through, auto-approve, error propagation."},
-      {"sprint": "td-content-integration-v1.2.0", "date": "2026-03-15", "summary": "TD→GA→CE integration — 8-phase plan. Topic-scoped GA (cluster mapping, S2 topic queries, cross-topic dedup), CE TOPIC_DISCOVERY mode, orchestrator, DB persistence (migration 0011), API layer (2 endpoints, task runner). ~44 new tests."},
-      {"sprint": "daily-tracker-db-persistence-v15", "date": "2026-03-15", "summary": "Daily Tracker DB persistence — 6-phase plan. Persistence layer (5 functions), task runner, router refactor (async + DB queries), PG ENUM migration 0014, DB integration tests. Codex-reviewed (7 findings addressed). 392 DT tests, 8 skipped."},
-      {"sprint": "pgvector-migration-v16", "date": "2026-03-15", "summary": "ChromaDB→pgvector migration — 8-phase plan. VectorStoreClient (469 lines), 2 Alembic migrations (0016+0017), EmbeddingRepository extensions, consumer migration (GA+AP+CPS), full ChromaDB removal, data migration script. Codex-reviewed (11 findings addressed). 429 GA tests passing."},
-      {"sprint": "structured-logging-v17", "date": "2026-03-15", "summary": "Structured Logging Foundation (Layer 1) — structlog with stdlib bridge. Central config (core/shared_tools/structured_logging.py), 3 Settings fields, middleware rewrite (correlation IDs, context propagation), 14 runner functions, 5 scripts, 2 print eliminations. Codex-reviewed (6 findings incorporated). 22 new tests."},
-      {"sprint": "structured-logging-layer2-v18", "date": "2026-03-15", "summary": "Structured Logging Layer 2 — Correlation & Context Propagation. 8 phases: get_context_value+scoped_bind, X-Request-ID+middleware hardening, LangSmith trace linkage, SSE context binding (PB-83), auth failure logging (PB-84), per-step/per-agent binding (PB-85), run_id binding in runners, async context propagation tests. Codex-reviewed. 48 new tests. 3 backlog items resolved."},
-      {"sprint": "r2-blob-storage-phase0-v19", "date": "2026-03-24", "summary": "R2 Blob Storage Phase 0 — Infrastructure Layer. R2StorageBackend (S3-compatible, 8 methods), binary read/write on ABC + Local, factory switching (STORAGE_BACKEND=local|r2), path traversal protection, paginated list_dir, exists() dir-prefix fallback, per-field config validation, lazy boto3 import. Codex-reviewed (GPT-5.3-Codex: 9 findings, 5 fixed). 84 new tests. Zero regressions on 790 existing research tests."},
-      {"sprint": "r2-blob-storage-migration-v20", "date": "2026-03-25", "summary": "R2 Blob Storage Phases 1-6. Phase 1: Gap Analysis retrofit — all 49 bypasses replaced with StorageBackend (pipeline.py, s1-s8 steps, gap_data_service, gap_context_helper, gap_analysis router). Phase 2: Content Engine v1.3 — pipeline_v13 _load_artifact_text/_load_artifact_json accept StorageBackend, content_data_service mtime→TTL caching. Phase 3: Site Audit → DB-primary (not R2). Phase 4: AP/VSG cross-pipeline — runner resolve_artifacts, brand_data_service, companies/KB/AP routers, knowledge_doc_service all use StorageBackend. Phase 5: All mtime-based caches replaced with TTL-based (gap=5min, content=60-120s, audit=10min, brand=5min). Phase 6: knowledge_doc_service upload via write_bytes, s1 knowledge doc loading via read_bytes + extract_text_from_bytes. ~92 bypasses eliminated across 55 files, ~715 net lines added. 5 new test files, 18 existing test files updated."}
+      {"sprint": "research-orchestrator-v13", "date": "2026-03-11", "summary": "Research Orchestrator — KB→AP→VSG sequential DAG. 67 tests."},
+      {"sprint": "td-content-integration-v1.2.0", "date": "2026-03-15", "summary": "TD→GA→CE integration — 8-phase plan. ~44 new tests."},
+      {"sprint": "daily-tracker-db-persistence-v15", "date": "2026-03-15", "summary": "Daily Tracker DB persistence — 6-phase plan. 392 DT tests."},
+      {"sprint": "pgvector-migration-v16", "date": "2026-03-15", "summary": "ChromaDB→pgvector migration — 8-phase plan. 429 GA tests."},
+      {"sprint": "structured-logging-v17", "date": "2026-03-15", "summary": "Structured Logging Foundation (Layer 1). 22 new tests."},
+      {"sprint": "structured-logging-layer2-v18", "date": "2026-03-15", "summary": "Structured Logging Layer 2 — Correlation & Context. 48 new tests."},
+      {"sprint": "redis-session-0", "date": "2026-03-22", "summary": "Redis Infrastructure Foundation — core/redis.py (async+sync lazy singletons), settings, health check, DI. 13 tests."},
+      {"sprint": "redis-session-1", "date": "2026-03-22", "summary": "RedisEventBus — Redis Streams SSE, atomic Lua INCR+XADD, EventBusProtocol, thread-safe mirror with eviction. 37 tests."},
+      {"sprint": "redis-session-2", "date": "2026-03-22", "summary": "Pipeline State (Redis Hashes) + Distributed Locks. state_redis.py (8 helpers), async writes, task-scoped cleanup, SET NX EX + Lua compare-delete, fail-closed, orphan cleanup, lock TTL refresh. 36 tests."},
+      {"sprint": "redis-session-3", "date": "2026-03-22", "summary": "HITL RedisSaver — replace MemorySaver with RedisSaver across 12 graph builders. Shared core/checkpointer.py factory (singleton, thread-safe, graceful fallback). 1 Codex finding resolved (race condition). 7 tests."},
+      {"sprint": "redis-session-4", "date": "2026-03-22", "summary": "Redis Approval Queues — BRPOP/LPUSH in DbTaskStore. Nonce in Redis, SET NX duplicate flag, asyncio.to_thread BRPOP. Graceful fallback. 13 tests."},
+      {"sprint": "redis-session-5", "date": "2026-03-22", "summary": "Redis Distributed Semaphore — atomic Lua acquire (Sorted Set), pipeline_semaphore(task_id) protocol method, 14 runner call sites updated, self-healing 2h TTL. 11 tests."},
+      {"sprint": "redis-codex-fixes-phase2", "date": "2026-03-27", "summary": "6 critical Redis bug fixes: checkpointer singleton race (retry on transient failure), close_redis() socket leak (error isolation), cache key mismatch (content invalidation never worked), stale cleanup clobber, semaphore renewal outside HITL (background renewal loop), _or_none exception broadening. 17 new tests."},
+      {"sprint": "r2-blob-storage-phase3", "date": "2026-03-27", "summary": "R2 Blob Storage Redis Cache Layer — 4 changes: (3.1) Replace mtime sorting in json_site_audit_data with JSON timestamps, (3.2+3.4) CachedStorageBackend wrapper for read/list_dir Redis caching with write invalidation, (3.3) Fix brand_data_service ad-hoc LocalStorageBackend bypass. Pre-existing test_research_boundary.py broken import fixed. 25 new tests."},
+      {"sprint": "r2-blob-storage-phase5", "date": "2026-03-27", "summary": "Phase 5 StorageBackend Migration — Reader-side services migrated from direct filesystem to StorageBackend. json_site_audit_data.py full refactor (7 sync helpers, list_dir replaces iterdir). content_data_service pipeline_state reads via StorageBackend. db_site_audit_data/db_content_data forward StorageBackend. prompt_library filesystem fallback replaced. All _resolve_storage() fallbacks now R2-aware via get_storage_backend() factory. DI wiring updated for site audit + prompt library. 447 tests verified across 9 affected suites."},
+      {"sprint": "redis-phase6-remove-fallbacks", "date": "2026-03-27", "summary": "Phase 6 Remove Filesystem Fallbacks — deleted JSON TaskStore (api/tasks/store.py), in-memory EventBus class, JsonAuthService (core/auth/json_service.py), MemorySaver fallback. DATABASE_URL + REDIS_URL now mandatory at startup. Exception classes relocated to api/tasks/exceptions.py. 12 routers + runner migrated EventBus→EventBusProtocol. 4 services migrated TaskStore→TaskStoreProtocol (fixed 2 core/→api/ violations). Test infra: InMemoryEventBus + TestAuthService in tests/_support/, conftest switched to DbTaskStore(mock) with asyncio proxy. ~66 tests deleted (JSON impl tests), ~30 test files updated. 1360 tests passing, ~1300 lines net removed."}
     ]
   },
   "completed": [
     {
-      "id": "T-cms-codex-fixes-f1-f10",
-      "task": "CMS Codex Review Fixes F1-F10. F1: publish_brief/refresh_post persist published_url/published_at on ContentPieceModel via content_repo.update(). F2: toBrief() maps published_url/published_at, removed 3 unsafe 'as unknown as' casts in KanbanBoard. F3: inFlightRef guard on all 5 CMS mutation hooks (race-condition prevention). F4: mutatePrefix() helper for SWR key-prefix matching on parameterized cache keys. F5: handleConnect surfaces connected:false error via toast. F6: isSyncActive prop disables sync while SSE stream active. F7: safePathname() try/catch prevents new URL() crash. F8: warning field in queue_stale_for_refresh response + conditional toast. F9: isSafeUrl() helper in utils.ts guards all 4 external href locations. F10: PublishDrawer a11y — role=dialog, aria-modal, Escape handler, auto-focus, type=button.",
-      "sprint": "cms-integration-v21",
+      "id": "T-redis-phase6-remove-fallbacks",
+      "task": "Phase 6 Remove Filesystem Fallbacks — 12-step surgical removal: (1) Extract exceptions to api/tasks/exceptions.py. (2) Create tests/_support/ with InMemoryEventBus + TestAuthService. (3) Migrate EventBus→EventBusProtocol in 12 routers + runner. (4) Migrate TaskStore→TaskStoreProtocol in 4 services + app.py. (5) Rewrite tests/api/conftest.py: DbTaskStore(mock) + InMemoryEventBus + TestAuthService + asyncio proxy for sync tests. (6) Mass test import migration (~30 files). (7) Delete 4 JSON test files, rewrite lifespan/conformance tests. (8) Remove EventBus class from event_bus.py. (9) Remove DI fallbacks in app.py + dependencies.py (fail-fast RuntimeError). (10) Remove MemorySaver fallback from checkpointer.py. (11) Delete api/tasks/store.py + core/auth/json_service.py. (12) Final grep audit, docstring cleanup, script update.",
+      "sprint": "redis-phase6-remove-fallbacks",
       "status": "done",
-      "completed_at": "2026-03-26",
-      "files_modified": [
-        "core/services/cms_service.py",
-        "api/schemas/cms.py",
-        "api/schemas/content_data.py",
-        "core/services/db_content_data.py",
-        "frontend/src/lib/utils.ts",
-        "frontend/src/lib/api/types.ts",
-        "frontend/src/lib/api/transforms.ts",
-        "frontend/src/lib/hooks/useCMS.ts",
-        "frontend/src/app/(dashboard)/settings/_components/IntegrationsTab.tsx",
-        "frontend/src/app/(dashboard)/settings/_components/CMSConnectedState.tsx",
-        "frontend/src/app/(dashboard)/settings/_components/CMSSyncedPostsTable.tsx",
-        "frontend/src/app/(dashboard)/content/_components/KanbanBoard.tsx",
-        "frontend/src/app/(dashboard)/content/_components/PublishDrawer.tsx",
-        "frontend/src/app/(dashboard)/_components/home/StaleContentActions.tsx",
-        "frontend/src/app/(dashboard)/page.tsx"
-      ]
-    },
-    {
-      "id": "T-cms-frontend-steps-8-9",
-      "task": "CMS Integration Steps 8-9 — Frontend. Step 8 (Settings): CMSConnectForm (credential form), CMSConnectedState (info + sync progress + disconnect), CMSSyncedPostsTable (read-only table), IntegrationsTab rewrite (real CMS flow replacing static mock). Connect→auto-sync chain. Role gating (viewers read-only). Step 9 (Publish + Stale): PublishDrawer (slide-over with slug editor, status toggle, category multi-select), KanbanBoard integration (publish icon on approved cards, published badge), StaleContentActions (stale content cards on Home Dashboard with Refresh Content → triage). Backend additions: published_url/published_at on ContentBriefListItem, brief stub creation in queue_stale_for_refresh. Foundation: 13 CMS TypeScript types, 11 API endpoints, 10 SWR hooks (5 read + 5 mutation).",
-      "sprint": "cms-integration-v21",
-      "status": "done",
-      "completed_at": "2026-03-26",
-      "tests_passing": {"backend_cms": 62, "frontend": 82},
+      "completed_at": "2026-03-27",
+      "tests_added": 0,
+      "tests_deleted": 66,
+      "tests_updated": 35,
       "files_created": [
-        "frontend/src/lib/hooks/useCMS.ts",
-        "frontend/src/app/(dashboard)/settings/_components/CMSConnectForm.tsx",
-        "frontend/src/app/(dashboard)/settings/_components/CMSConnectedState.tsx",
-        "frontend/src/app/(dashboard)/settings/_components/CMSSyncedPostsTable.tsx",
-        "frontend/src/app/(dashboard)/content/_components/PublishDrawer.tsx",
-        "frontend/src/app/(dashboard)/_components/home/StaleContentActions.tsx"
-      ],
-      "files_modified": [
-        "frontend/src/lib/api/types.ts",
-        "frontend/src/lib/api/endpoints.ts",
-        "frontend/src/lib/api/transforms.ts",
-        "frontend/src/app/(dashboard)/settings/_components/IntegrationsTab.tsx",
-        "frontend/src/app/(dashboard)/content/page.tsx",
-        "frontend/src/app/(dashboard)/content/_components/KanbanBoard.tsx",
-        "frontend/src/app/(dashboard)/page.tsx",
-        "api/schemas/content_data.py",
-        "core/services/db_content_data.py",
-        "core/services/cms_service.py",
-        "api/dependencies.py"
-      ]
-    },
-    {
-      "id": "T-cms-integration-steps-6-7",
-      "task": "CMS Integration Steps 6-7 — API router + DI wiring + tests. Step 6: api/schemas/cms.py (9 Pydantic models), api/routers/cms.py (11 endpoints: connect, get_connection, disconnect, sync, synced-posts, stale-actions, stale-to-triage, publish, refresh, publish-history, categories), api/dependencies.py (get_cms_service async generator, DB-required, no JSON fallback), api/tasks/runner.py (run_cms_sync_task with own DB session), api/tasks/models.py (+cms_sync to PipelineTask Literal), api/app.py (mount cms.router). Step 7: tests/api/test_cms.py (49 tests across 11 test classes). Codex F2 fix: tenant isolation in queue_stale_for_refresh. Codex F4 fix: added GET /categories endpoint. Codex F8 fix: reconnect uses UPDATE instead of deactivate+insert (preserves FK refs). Also added 3 CMSService methods: list_synced_posts, list_publish_history, list_categories.",
-      "sprint": "cms-integration-v21",
-      "status": "done",
-      "completed_at": "2026-03-26",
-      "tests_added": 49,
-      "files_created": [
-        "api/schemas/cms.py",
-        "api/routers/cms.py",
-        "tests/api/test_cms.py"
-      ],
-      "files_modified": [
-        "api/dependencies.py",
-        "api/app.py",
-        "api/tasks/models.py",
-        "api/tasks/runner.py",
-        "core/services/cms_service.py"
-      ],
-      "key_architectural_decisions": [
-        "CMSService DI: standalone orchestrator, NOT Protocol→Json→Db — requires DB (503 if no DATABASE_URL/CMS_FERNET_KEY)",
-        "Background sync: run_cms_sync_task creates own session (DI session closed after router 202 response)",
-        "Codex F2: queue_stale_for_refresh verifies post.company_slug == company_slug (tenant isolation)",
-        "Codex F4: GET /categories endpoint for publish UI category selector",
-        "Codex F8: connect() UPDATEs existing row in-place instead of deactivate+insert (preserves FK references)",
-        "All IDs are str (UUID) in schemas (D2: UUIDPKMixin), site_url is str (D9: HttpUrl breaks concat)"
-      ]
-    },
-    {
-      "id": "T-cms-integration-steps-1-5",
-      "task": "CMS Integration Steps 1-5 — Domain layer, WordPress adapter, factory, CMS service orchestrator, ORM + migration.",
-      "sprint": "cms-integration-v21",
-      "status": "done",
-      "completed_at": "2026-03-26",
-      "tests_added": 93,
-      "files_created": [
-        "core/cms/__init__.py",
-        "core/cms/exceptions.py",
-        "core/cms/models.py",
-        "core/cms/protocols.py",
-        "core/cms/adapters/__init__.py",
-        "core/cms/adapters/wordpress.py",
-        "core/cms/factory.py",
-        "core/services/cms_service.py",
-        "core/db/models/cms.py",
-        "core/db/repositories/cms_repo.py",
-        "core/db/migrations/versions/0021_cms_integration.py",
-        "tests/cms/__init__.py",
-        "tests/cms/test_exceptions.py",
-        "tests/cms/test_models.py",
-        "tests/cms/test_protocols.py",
-        "tests/cms/test_wordpress_adapter.py",
-        "tests/cms/test_factory.py",
-        "tests/cms/test_cms_enums.py",
-        "tests/services/test_cms_service.py"
-      ],
-      "files_modified": [
-        "core/db/enums.py",
-        "core/db/models/__init__.py",
-        "core/config/settings.py",
-        "requirements.txt"
-      ],
-      "key_architectural_decisions": [
-        "Adapter pattern: CMSAdapterProtocol → concrete adapters (WordPressAdapter v1)",
-        "CMSService is standalone orchestrator, NOT Protocol→Json→Db data service",
-        "Fernet symmetric encryption for CMS credentials (cryptography library)",
-        "StorageBackend.read() via asyncio.to_thread() for artifact reads (R2-compatible)",
-        "markdown library with [tables, fenced_code, toc, attr_list] for MD→HTML",
-        "UUID PKs via UUIDPKMixin (not Integer), modern mapped_column() ORM style",
-        "Enums in core/db/enums.py (lowercase values), re-exported from core/cms/models.py",
-        "content_preview sanitized: HTML tags stripped, first 500 chars only",
-        "Publish updates ContentPieceModel.published_at/published_url (cross-link to CMS)"
-      ]
-    },
-    {
-      "id": "T-r2-blob-storage-phases-1-6",
-      "task": "R2 Blob Storage Phases 1-6 — Full pipeline retrofit + service layer migration + cache overhaul. Phase 1 (Gap Analysis, ~49 bypasses): _artifact_dir→_ga_prefix, all step files (s1-s8) accept StorageBackend+prefix, pipeline.py orchestrator uses storage for all skip-resume reads/writes, Plotly fig.write_html→fig.to_html()+storage.write(), gap_data_service/gap_context_helper/gap_analysis router all migrated. Phase 2 (Content Engine, ~8 bypasses): pipeline_v13 _load_artifact_text/_load_artifact_json accept optional StorageBackend (storage-first, filesystem-fallback for absolute paths), content_data_service overhauled (TTL caching, StorageBackend reads). Phase 3 (Site Audit): changed plan to DB-primary — structured data better served by PostgreSQL. site_audit_repo.exists_for_slug_and_domain() added, db_site_audit_data.audit_exists_for_slug() added. Phase 4 (Cross-pipeline, ~15 bypasses): runner.py resolve_artifacts accepts optional backend, brand_data_service _detect_artifact/_detect_personas use StorageBackend, companies/KB/AP/knowledge_docs routers use app.state.storage_backend, knowledge_doc_service upload/download via StorageBackend. Phase 5 (Cache invalidation): all mtime-based caches replaced with TTL-based (time.monotonic), TTLs: gap=5min, content=60-120s, audit=10min, brand=5min, gap_context=5min. Phase 6 (Binary upload+loader): knowledge_doc_service writes via storage.write_bytes(), s1_embed_assets reads knowledge docs via storage.read_bytes()+extract_text_from_bytes(), AP agents._load_knowledge_docs same pattern. New shared tool: extract_text_from_bytes() in text_extraction.py.",
-      "sprint": "r2-blob-storage-migration-v20",
-      "status": "done",
-      "completed_at": "2026-03-25",
-      "tests_added": 43,
-      "tests_modified": 18,
-      "files_created": [
-        "tests/content_engine/test_load_artifact_storage.py",
-        "tests/core/test_text_extraction.py",
-        "tests/gap_analysis/steps/test_s2_read_text.py",
-        "tests/gap_analysis/test_gap_analysis_model.py",
-        "tests/services/test_gap_context_helper.py"
-      ],
-      "files_modified": [
-        "core/gap_analysis/pipeline.py",
-        "core/gap_analysis/steps/s1_embed_assets.py",
-        "core/gap_analysis/steps/s2_generate_queries.py",
-        "core/gap_analysis/steps/s3_search_platforms.py",
-        "core/gap_analysis/steps/s4_enrich_citations.py",
-        "core/gap_analysis/steps/s5_embed_content.py",
-        "core/gap_analysis/steps/s7_visualize.py",
-        "core/gap_analysis/steps/s8_generate_report.py",
-        "core/models/gap_analysis.py",
-        "core/content_engine/pipeline_v13.py",
-        "core/daily_tracker/prompt_library.py",
-        "core/research/audience_persona/agents.py",
-        "core/research/audience_persona/pipeline.py",
-        "core/shared_tools/knowledge_doc_metadata.py",
-        "core/shared_tools/text_extraction.py",
-        "core/storage/backends/base.py",
-        "core/storage/backends/r2.py",
-        "core/db/repositories/site_audit_repo.py",
-        "core/services/db_gap_data.py",
-        "core/services/db_site_audit_data.py",
-        "core/services/gap_context_helper.py",
-        "core/services/json_brand_data.py",
-        "core/services/json_content_data.py",
-        "core/services/json_gap_data.py",
-        "core/services/json_site_audit_data.py",
-        "api/dependencies.py",
-        "api/routers/audience_persona.py",
-        "api/routers/companies.py",
-        "api/routers/gap_analysis.py",
-        "api/routers/knowledge_base.py",
-        "api/routers/knowledge_docs.py",
-        "api/services/brand_data_service.py",
-        "api/services/content_data_service.py",
-        "api/services/gap_data_service.py",
-        "api/services/knowledge_doc_service.py",
-        "api/tasks/runner.py"
-      ],
-      "key_architectural_decisions": [
-        "TTL-based caching replaces mtime-based everywhere (R2 has no local st_mtime_ns)",
-        "pipeline_state.json stays on local filesystem (earmarked for Redis, NOT R2)",
-        "Non-local backends must NOT fall back to filesystem reads (H3 fix in s2 _read_text)",
-        "Blocking I/O moved off event loop via asyncio.to_thread (H6 fix)",
-        "GapAnalysisInput.knowledge_doc_slug backfills from deprecated knowledge_doc_dir (backward compat)",
-        "Site audit stays DB-primary — structured data, runs daily, PostgreSQL better fit than blob storage",
-        "knowledge_doc download: FileResponse→Response with storage.read_bytes() (no filesystem path needed)",
-        "_LOCAL_BACKEND_CACHE in gap_context_helper (max 20) avoids per-call LocalStorageBackend instantiation",
-        "R2StorageBackend gains retry config (max_attempts=5) and error logging on write"
-      ]
-    },
-    {
-      "id": "T-r2-blob-storage-phase0",
-      "task": "R2 Blob Storage Phase 0 — Infrastructure Layer. 8 steps: (1) R2 settings fields in core/config/settings.py (6 fields + effective_r2_endpoint_url property), (2) read_bytes/write_bytes abstract methods on StorageBackend ABC, (3) LocalStorageBackend binary methods (atomic writes), (4) R2StorageBackend implementation (8 methods, paginated list_dir, path traversal validation, exists() prefix fallback, proper error propagation), (5) Factory switching with per-field validation, (6) App startup wiring via factory, (7) Lazy exports (boto3 not imported unless STORAGE_BACKEND=r2), (8) .env.example + boto3 dependency. Codex-reviewed (GPT-5.3-Codex: exists() error masking, list_dir missing validation, dir-prefix contract mismatch — all fixed).",
-      "sprint": "r2-blob-storage-phase0-v19",
-      "status": "done",
-      "completed_at": "2026-03-24",
-      "tests_added": 84,
-      "files_created": [
-        "core/storage/backends/r2.py",
-        "tests/storage/test_r2_backend.py",
-        "tests/storage/test_factory.py",
-        "tests/core/test_settings_r2.py"
-      ],
-      "files_modified": [
-        "core/config/settings.py",
-        "core/storage/backends/base.py",
-        "core/storage/backends/local.py",
-        "core/storage/backends/__init__.py",
-        "core/storage/__init__.py",
-        "api/app.py",
-        ".env.example",
-        "requirements.txt",
-        "tests/storage/test_local_backend.py"
-      ]
-    },
-    {
-      "id": "T-structured-logging-layer2",
-      "task": "Structured Logging Layer 2 — Correlation & Context Propagation. 8 phases.",
-      "sprint": "structured-logging-layer2-v18",
-      "status": "done",
-      "completed_at": "2026-03-15",
-      "tests_added": 48,
-      "files_created": [
-        "tests/shared_tools/test_tracing_context.py",
-        "tests/api/test_events_context.py",
-        "tests/api/test_auth_failure_logging.py",
-        "tests/api/test_context_propagation.py",
-        "tests/test_step_context_binding.py"
-      ],
-      "files_modified": [
-        "core/shared_tools/structured_logging.py",
-        "core/shared_tools/tracing.py",
-        "api/app.py",
-        "api/routers/events.py",
-        "api/auth/middleware.py",
-        "api/tasks/runner.py",
-        "core/gap_analysis/pipeline.py",
-        "core/research/knowledge_base/pipeline.py",
-        "core/research/audience_persona/pipeline.py",
-        "core/research/voice_style_guide/pipeline.py",
-        "core/content_engine/pipeline_v13.py",
-        "core/site_audit/pipeline.py",
-        "tests/shared_tools/test_structured_logging.py",
-        "tests/api/test_middleware.py"
-      ]
-    },
-    {
-      "id": "T-structured-logging",
-      "task": "Structured Logging Foundation (Layer 1) — structlog with stdlib bridge, JSON/console modes, correlation IDs, context propagation via contextvars. Phase A: dependency, settings, central module, app/script init, basicConfig replacement, print elimination, 17 tests. Phase B: middleware rewrite (correlation_id, user_id, company_slug binding), 14 runner functions (task_id, pipeline_name binding), 5 middleware tests. Codex-reviewed (6 findings incorporated, 2 rejected with reasoning, 3 deferred).",
-      "sprint": "structured-logging-v17",
-      "status": "done",
-      "completed_at": "2026-03-15",
-      "tests_added": 22,
-      "files_created": [
-        "core/shared_tools/structured_logging.py",
-        "tests/shared_tools/test_structured_logging.py"
-      ],
-      "files_modified": [
-        "pyproject.toml",
-        "core/config/settings.py",
-        "api/app.py",
-        "api/tasks/runner.py",
-        "scripts/run_server.py",
-        "scripts/run_kb.py",
-        "scripts/run_topic_discovery.py",
-        "scripts/run_td_rescore.py",
-        "scripts/backfill_gap_data.py",
-        "scripts/migrate_chroma_to_pgvector.py",
-        "core/research/prompts/persona_suggester.py",
-        "core/reddit_hil/cli.py",
-        "tests/api/test_middleware.py"
-      ]
-    },
-    {
-      "id": "T-pgvector-migration",
-      "task": "ChromaDB→pgvector Migration — 8-phase plan: (1) VectorStoreClient + module-level API, (2) DB migration 0016 (persona_embeddings, company_slug columns, nullable FKs, backfill), (3) EmbeddingRepository extensions (7 new methods), (4) Gap analysis consumer migration (S1, S5, pipeline, persistence), (5) Audience persona import migration, (6) CPS model config + migration 0017, (7) Full ChromaDB removal (3 files deleted, deps removed), (8) Data migration script.",
-      "sprint": "pgvector-migration-v16",
-      "status": "done",
-      "completed_at": "2026-03-15",
-      "tests_added": 493,
-      "tests_deleted": 198,
-      "files_created": [
-        "core/shared_tools/vector_store.py",
-        "core/db/migrations/versions/0016_pgvector_migration.py",
-        "core/db/migrations/versions/0017_cps_training_tables.py",
-        "tests/shared_tools/test_vector_store.py",
-        "scripts/migrate_chroma_to_pgvector.py"
+        "api/tasks/exceptions.py",
+        "tests/_support/__init__.py",
+        "tests/_support/event_bus.py",
+        "tests/_support/auth_service.py"
       ],
       "files_deleted": [
-        "core/shared_tools/chroma_client.py",
-        "core/shared_tools/async_chroma_client.py",
-        "tests/shared_tools/test_async_chroma_client.py"
+        "api/tasks/store.py",
+        "core/auth/json_service.py",
+        "tests/api/test_task_store.py",
+        "tests/api/test_task_store_product.py",
+        "tests/api/test_event_bus.py",
+        "tests/auth/test_json_service.py"
       ],
       "files_modified": [
-        "core/config/settings.py",
-        "core/cps_model/config.py",
-        "core/db/models/embeddings.py",
-        "core/db/repositories/embedding_repo.py",
-        "core/gap_analysis/persistence.py",
-        "core/gap_analysis/pipeline.py",
-        "core/gap_analysis/steps/s1_embed_assets.py",
-        "core/gap_analysis/steps/s5_embed_content.py",
-        "core/research/audience_persona/pipeline.py",
-        "scripts/run_gap_step.py",
-        "tests/conftest.py",
-        "tests/gap_analysis/steps/test_s1_embed_assets.py",
-        "tests/gap_analysis/test_persistence.py",
-        "requirements.txt",
-        "pyproject.toml"
-      ]
-    },
-    {
-      "id": "T-daily-tracker-db-persistence",
-      "task": "Daily Tracker DB Persistence & Production Readiness — 6-phase plan: (1) Infrastructure wiring (ORM exports, PipelineType enum, migration 0014), (2) Persistence layer (5 functions: _should_persist, write_run_artifact, create_daily_run_record, persist_daily_run_result, mark_daily_run_failed), (3) Task runner (run_daily_tracker_task with SSE + slug lock + safety net), (4) Router refactor (POST /runs async, GET /runs DB query, GET /runs/{run_id} tenant-isolated), (5) DB integration tests (8 tests), (6) Analytics verification + docs update.",
-      "sprint": "daily-tracker-db-persistence-v15",
-      "status": "done",
-      "completed_at": "2026-03-15",
-      "tests_added": 41,
-      "test_total_daily_tracker": 392,
-      "files_created": [
-        "core/daily_tracker/persistence.py",
-        "core/db/migrations/versions/0014_daily_tracker_enum.py",
-        "tests/daily_tracker/test_persistence.py",
-        "tests/daily_tracker/test_infra_wiring.py",
-        "tests/api/test_daily_tracker_runner.py",
-        "tests/db/test_daily_tracker_persistence.py"
-      ],
-      "files_modified": [
-        "core/db/models/__init__.py",
-        "core/db/enums.py",
-        "api/tasks/models.py",
+        "api/tasks/event_bus.py",
+        "api/app.py",
+        "api/dependencies.py",
+        "api/exceptions.py",
+        "core/services/task_store.py",
+        "core/checkpointer.py",
         "api/tasks/runner.py",
-        "api/routers/daily_tracker.py",
-        "tests/daily_tracker/test_api_endpoints.py",
-        "docs/API_DOCUMENTATION.md"
-      ]
-    },
-    {
-      "id": "T-td-content-integration",
-      "task": "TD→GA→CE Integration — 8-phase plan: (1) Models + cluster mapping, (2) Topic-scoped S2 queries, (3) S6+S8 modifications, (4) Scoped GA pipeline, (5) CE TD mode + context router, (6) Orchestrator, (7) DB models + migration 0011 + persistence, (8) API endpoints + schemas + task runner.",
-      "sprint": "td-content-integration-v1.2.0",
-      "status": "done",
-      "completed_at": "2026-03-15",
-      "tests_added": 44,
-      "files_created": [
-        "core/gap_analysis/topic_cluster_map.py",
-        "core/orchestration/td_content_orchestrator.py",
-        "core/db/migrations/versions/0011_td_content_integration.py",
-        "tests/gap_analysis/test_topic_cluster_map.py",
-        "tests/gap_analysis/test_s2_topic_queries.py",
-        "tests/content_engine/test_td_mode.py",
-        "tests/orchestration/test_td_content_orchestrator.py",
-        "tests/db/test_td_content_integration.py",
-        "tests/api/test_content_v13_from_topics.py"
-      ],
-      "files_modified": [
-        "core/models/gap_analysis.py",
-        "core/models/content_generation_v13.py",
-        "core/models/content_generation.py",
-        "core/gap_analysis/steps/s2_generate_queries.py",
-        "core/gap_analysis/steps/s6_analyze.py",
-        "core/gap_analysis/steps/s8_generate_report.py",
-        "core/gap_analysis/pipeline.py",
-        "core/content_engine/context_router.py",
-        "core/content_engine/pipeline_v13.py",
-        "core/content_engine/persistence.py",
-        "core/gap_analysis/persistence.py",
-        "core/topic_discovery/persistence.py",
-        "core/db/models/content.py",
-        "core/db/models/gap_analysis.py",
-        "core/db/repositories/content_repo.py",
-        "api/schemas/content_v13.py",
-        "api/tasks/models.py",
-        "api/tasks/runner.py",
-        "api/routers/content_v13.py"
-      ]
-    },
-    {
-      "id": "T-research-orchestrator",
-      "task": "Research Orchestrator — KB→AP→VSG sequential DAG: Pydantic models, core orchestrator (skip logic, HITL pass-through, auto-approve distribution, error propagation), runner wrapper, API schema + router, app wiring. Codex audit: 5 fixes (tenant isolation on status, product_slug validation, failed status mapping, max_authors constraint, skip_fresh wiring). 2 deferred (VSG ap_manifest_version, process-local concurrency).",
-      "sprint": "research-orchestrator-v13",
-      "status": "done",
-      "completed_at": "2026-03-11",
-      "tests_added": 67,
-      "files_created": [
-        "core/models/research_orchestrator.py",
-        "core/research/orchestrator.py",
-        "api/schemas/research_orchestrator.py",
+        "api/routers/gap_analysis.py",
+        "api/routers/content.py",
+        "api/routers/content_v13.py",
+        "api/routers/topic_discovery.py",
+        "api/routers/audience_persona.py",
+        "api/routers/voice_style_guide.py",
         "api/routers/research_orchestrator.py",
-        "tests/research/test_orchestrator.py",
-        "tests/api/test_research_orchestrator.py"
-      ],
-      "files_modified": [
-        "api/tasks/runner.py",
-        "api/tasks/models.py",
-        "api/app.py"
+        "api/routers/daily_tracker.py",
+        "api/routers/tasks.py",
+        "api/routers/knowledge_base.py",
+        "api/routers/onboarding.py",
+        "api/routers/site_audit.py",
+        "api/routers/companies.py",
+        "api/services/brand_data_service.py",
+        "core/services/json_brand_data.py",
+        "core/services/json_gap_data.py",
+        "tests/api/conftest.py",
+        "tests/api/test_lifespan_task_store.py",
+        "tests/api/test_session_lifecycle.py",
+        "tests/api/test_redis_event_bus.py",
+        "tests/api/test_api_response_shapes.py",
+        "tests/services/test_protocol_conformance.py",
+        "tests/services/test_approval_queue_redis.py",
+        "tests/core/test_checkpointer.py",
+        "tests/core/test_settings_edge_cases.py",
+        "tests/integration/test_concurrent_pipelines.py",
+        "tests/daily_tracker/test_api_endpoints.py",
+        "scripts/fake_onboarding_sse.py"
       ]
     },
     {
-      "id": "T-site-audit-db-persistence",
-      "task": "Site Audit DB Persistence — Phases 1-8",
-      "sprint": "site-audit-db-persistence-v12",
+      "id": "T-r2-blob-storage-phase5",
+      "task": "Phase 5 StorageBackend Migration — Reader-Side Services + Gap Analysis Fixes. (5.1) gap_analysis/pipeline.py: thread storage param into _resolve_persona_paths → PersonaStorage(backend=storage). (5.2) json_site_audit_data.py: full refactor — all 7 sync helpers accept StorageBackend instead of Path, _load_audit_result reads via backend.read(), _discover_audit_ids uses backend.list_dir(), removed _audit_dir/_company_audit_root. (5.3) db_site_audit_data.py: accepts backend=, all _fs_* methods forward self._backend. (5.4) content_data_service.py: _resolve_storage uses get_storage_backend() factory, _load_pipeline_state reads via StorageBackend with legacy fallback, is_symlink conditional on local backend. (5.5) brand_data_service.py: _resolve_storage uses get_storage_backend() factory. (5.6) db_content_data.py: constructor uses get_storage_backend() factory, pipeline_state.json read via self._backend.read(). (5.7) prompt_library.py: filesystem fallback replaced with get_storage_backend() factory. (5.8) dependencies.py: backend= wired into site audit services + PromptLibraryService (5 locations). (5.9) test_models.py: _audit_dir tests updated to _validate_audit_id + StorageBackend traversal.",
+      "sprint": "r2-blob-storage-phase5",
       "status": "done",
-      "completed_at": "2026-03-10",
-      "tests_added": 62,
-      "test_total_site_audit": 899
+      "completed_at": "2026-03-27",
+      "tests_added": 0,
+      "tests_updated": 6,
+      "files_created": [],
+      "files_modified": [
+        "core/gap_analysis/pipeline.py",
+        "core/services/json_site_audit_data.py",
+        "core/services/db_site_audit_data.py",
+        "core/services/db_content_data.py",
+        "api/services/content_data_service.py",
+        "api/services/brand_data_service.py",
+        "core/daily_tracker/prompt_library.py",
+        "api/dependencies.py",
+        "tests/core/test_site_audit/test_models.py"
+      ]
     },
     {
-      "id": "T-ap-phase-d",
-      "task": "Audience Persona Phase D — Pipeline Orchestrator",
-      "sprint": "audience-persona-v6-phase-d",
+      "id": "T-r2-blob-storage-phase3",
+      "task": "Phase 3 R2 Blob Storage Redis Cache Layer — 4 changes: (3.1) _sort_timestamp() helper, _sync_list_audits/_sync_get_latest_audit_id rewritten to use completed_at/started_at from JSON (no more Path.stat().st_mtime); (3.2+3.4) CachedStorageBackend decorator wrapping any StorageBackend with Redis TTL cache for read() (300s) and list_dir() (120s), 512KB size guard, write/delete invalidate read+parent listing cache; (3.3) brand_data_service _resolve_storage() pattern replaces ad-hoc LocalStorageBackend creation in _detect_artifact/_detect_personas; app.py wiring wraps backend with CachedStorageBackend when Redis healthy. Also fixed pre-existing test_research_boundary.py broken _CACHE import (Session 6 regression).",
+      "sprint": "r2-blob-storage-phase3",
       "status": "done",
-      "completed_at": "2026-03-06",
-      "tests_added": 45,
-      "test_total_ap": 232
+      "completed_at": "2026-03-27",
+      "tests_added": 25,
+      "files_created": [
+        "core/storage/cached_backend.py",
+        "tests/storage/test_cached_backend.py"
+      ],
+      "files_modified": [
+        "core/services/json_site_audit_data.py",
+        "api/services/brand_data_service.py",
+        "core/storage/__init__.py",
+        "api/app.py",
+        "tests/api/test_site_audit.py",
+        "tests/integration/test_research_boundary.py"
+      ]
     },
     {
-      "id": "T-kb-phase5",
-      "task": "Knowledge Base Phase 5 — Synthesis & Living Document",
-      "sprint": "knowledge-base-v5",
+      "id": "T-redis-codex-fixes-phase2",
+      "task": "Phase 2 Critical Redis Bug Fixes — 6 surgical fixes: (2.1) checkpointer singleton race — _init_attempted moved after success, transient failures allow retry, connection_args added; (2.2) close_redis() socket leak — each close isolated in try/except, sync close via asyncio.to_thread; (2.3) cache key mismatch — content cache keys aligned to cache:content:{slug}:{filename}, KEYS replaced with SCAN; (2.4) stale cleanup clobber — DELETE replaced with warning+skip when task_id=None; (2.5) semaphore renewal outside HITL — background _renewal_loop in _SemaphoreContext, all 15 runners get automatic 60s renewal; (2.6) exception handling broadened in _or_none helpers from RuntimeError to Exception.",
+      "sprint": "redis-codex-fixes-phase2",
       "status": "done",
-      "completed_at": "2026-03-06",
-      "tests_added": 50,
-      "test_total_kb": 260
+      "completed_at": "2026-03-27",
+      "tests_added": 17,
+      "files_created": [],
+      "files_modified": [
+        "core/checkpointer.py",
+        "core/redis.py",
+        "core/cache.py",
+        "core/redis_semaphore.py",
+        "core/content_engine/state_redis.py",
+        "api/services/content_data_service.py",
+        "tests/core/test_checkpointer.py",
+        "tests/core/test_redis_client.py",
+        "tests/unit/test_redis_cache.py",
+        "tests/content_engine/test_state_redis.py",
+        "tests/services/test_redis_semaphore.py"
+      ]
     },
     {
-      "id": "T-kb-phase4",
-      "task": "Knowledge Base Phase 4 — API Router + Schemas",
-      "sprint": "knowledge-base-v4",
+      "id": "T-redis-session-5",
+      "task": "Redis Session 5 — Distributed Semaphore. Replace per-worker asyncio.Semaphore with Redis Sorted Set semaphore. Atomic Lua acquire script (ZREMRANGEBYSCORE+ZCARD+ZADD). pipeline_semaphore(task_id) method on TaskStoreProtocol/DbTaskStore/TaskStore. 14 runner call sites updated. Self-healing 2h member TTL. Graceful fallback to asyncio.Semaphore without Redis.",
+      "sprint": "redis-integration-session-5",
       "status": "done",
-      "completed_at": "2026-03-05",
-      "tests_added": 35
+      "completed_at": "2026-03-22",
+      "tests_added": 11,
+      "files_created": [
+        "core/redis_semaphore.py",
+        "tests/services/test_redis_semaphore.py"
+      ],
+      "files_modified": [
+        "core/services/task_store.py",
+        "core/services/db_task_store.py",
+        "api/tasks/store.py",
+        "api/tasks/runner.py",
+        "tests/services/test_protocol_conformance.py",
+        "CLAUDE.md"
+      ]
     },
     {
-      "id": "T-langsmith-migration",
-      "task": "LangSmith migration — Langfuse eliminated",
-      "sprint": "langsmith-migration",
+      "id": "T-redis-session-4",
+      "task": "Redis Session 4 — Approval Queues. Replace asyncio.Queue with Redis LPUSH/BRPOP in DbTaskStore. Redis-first nonce validation (GET), duplicate prevention (SET NX), payload delivery (LPUSH/BRPOP via asyncio.to_thread). Nonce write/clear in update_task. Graceful fallback to asyncio.Queue when Redis unavailable.",
+      "sprint": "redis-integration-session-4",
       "status": "done",
-      "completed_at": "2026-03-02",
-      "tests_added": 38
+      "completed_at": "2026-03-22",
+      "tests_added": 13,
+      "files_created": [
+        "tests/services/test_approval_queue_redis.py"
+      ],
+      "files_modified": [
+        "core/services/db_task_store.py",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "T-redis-session-3",
+      "task": "Redis Session 3 — HITL RedisSaver. Shared core/checkpointer.py factory (lazy singleton with double-checked locking, graceful MemorySaver fallback). Replaced 5 duplicated _resolve_checkpointer() across graph modules (11 graph builders). Updated v1.0 pipeline to use get_checkpointer(). Config toggle: redis_checkpointer=True. 1 Codex finding (thread-safety race) resolved.",
+      "sprint": "redis-integration-session-3",
+      "status": "done",
+      "completed_at": "2026-03-22",
+      "tests_added": 7,
+      "files_created": [
+        "core/checkpointer.py",
+        "tests/core/test_checkpointer.py"
+      ],
+      "files_modified": [
+        "requirements.txt",
+        "core/config/settings.py",
+        "core/content_engine/graph_v13.py",
+        "core/content_engine/pipeline.py",
+        "core/research/knowledge_base/graph.py",
+        "core/research/audience_persona/graph.py",
+        "core/research/voice_style_guide/graph.py",
+        "core/topic_discovery/graph.py",
+        "tests/topic_discovery/test_graph_td.py",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "T-redis-sessions-0-1-2",
+      "task": "Redis Integration Sessions 0-2 — Foundation, EventBus (Streams), Pipeline State (Hashes), Distributed Locks. Session 0: core/redis.py (async+sync), settings, health, DI. Session 1: RedisEventBus (atomic Lua INCR+XADD+EXPIRE, EventBusProtocol, mirror eviction). Session 2: state_redis.py (8 helpers), async pipeline state writes with lock TTL refresh, task-scoped stale cleanup, DbTaskStore distributed locks (SET NX EX, Lua compare-delete, fail-closed, orphan cleanup on startup), reader changes in content_data_service + db_content_data. 8 Codex findings resolved.",
+      "sprint": "redis-integration-sessions-0-2",
+      "status": "done",
+      "completed_at": "2026-03-22",
+      "tests_added": 86,
+      "files_created": [
+        "core/redis.py",
+        "api/tasks/redis_event_bus.py",
+        "core/content_engine/state_redis.py",
+        "tests/core/test_redis_client.py",
+        "tests/api/test_redis_event_bus.py",
+        "tests/content_engine/test_state_redis.py",
+        "tests/services/test_distributed_locks.py"
+      ],
+      "files_modified": [
+        "api/app.py",
+        "api/dependencies.py",
+        "api/routers/events.py",
+        "api/services/content_data_service.py",
+        "api/tasks/event_bus.py",
+        "api/tasks/runner.py",
+        "api/tasks/store.py",
+        "core/config/settings.py",
+        "core/content_engine/evaluator/loop.py",
+        "core/content_engine/pipeline_v13.py",
+        "core/content_engine/state_helpers.py",
+        "core/content_engine/workers/dispatcher.py",
+        "core/services/db_content_data.py",
+        "core/services/db_task_store.py",
+        "core/services/task_store.py",
+        "CLAUDE.md"
+      ]
     }
   ],
-  "in_progress": [
-  ],
+  "in_progress": [],
   "pending": [
     {
       "id": "T-async-13",
       "task": "Test Playwright fallback on carta.com (run step 1)",
       "sprint": "v3-async",
-      "status": "pending"
-    },
-    {
-      "id": "T-api-cleanup-4",
-      "task": "Add runner-level tests for produced_artifacts in research and content runners",
-      "sprint": "api-v1",
-      "status": "pending"
-    },
-    {
-      "id": "T-sso-followup-1",
-      "task": "Add max(1, concurrency) guard in s4_enrich_citations",
-      "sprint": "v3-signals",
-      "status": "pending"
-    },
-    {
-      "id": "T-sso-followup-2",
-      "task": "Add try/except around _cosine_similarity for dimension mismatch in s6_analyze",
-      "sprint": "v3-signals",
       "status": "pending"
     }
   ],

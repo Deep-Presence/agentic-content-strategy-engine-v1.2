@@ -229,6 +229,19 @@ class TestCMSConnect:
         call_args = mock_cms_service.connect.call_args
         assert call_args.kwargs.get("company_slug") == "test-co" or call_args[1].get("company_slug") == "test-co"
 
+    def test_connect_invalidates_connection_cache(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        """Connection cache is invalidated after successful connect."""
+        with patch("api.routers.cms.invalidate_connection_info") as mock_inv:
+            resp = client.post("/api/v1/cms/connect", json={
+                "provider": "wordpress",
+                "site_url": "https://blog.testco.com",
+                "api_key": "k",
+            })
+        assert resp.status_code == 200
+        mock_inv.assert_called_once_with("test-co", "test-co")
+
 
 # ── 2. Get Connection ─────────────────────────────────────────────────
 
@@ -272,6 +285,15 @@ class TestCMSDisconnect:
         resp = client.delete("/api/v1/cms/connection")
         assert resp.status_code == 200
         assert resp.json()["disconnected"] is True
+
+    def test_disconnect_invalidates_connection_cache(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        """Connection cache is invalidated after disconnect."""
+        with patch("api.routers.cms.invalidate_connection_info") as mock_inv:
+            resp = client.delete("/api/v1/cms/connection")
+        assert resp.status_code == 200
+        mock_inv.assert_called_once_with("test-co", "test-co")
 
     def test_disconnect_no_connection(
         self, client: TestClient, mock_cms_service: AsyncMock,
@@ -416,6 +438,17 @@ class TestCMSStaleToTriage:
             "cms_synced_post_id": str(uuid.uuid4()),
         })
         assert resp.status_code == 400
+
+    def test_stale_to_triage_invalidates_cache(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        """All CMS caches are invalidated after queuing for refresh."""
+        with patch("api.routers.cms.invalidate_all_cms_caches") as mock_inv:
+            resp = client.post("/api/v1/cms/stale-to-triage", json={
+                "cms_synced_post_id": str(uuid.uuid4()),
+            })
+        assert resp.status_code == 200
+        mock_inv.assert_called_once_with("test-co")
 
     def test_stale_to_triage_requires_member(self, viewer_client: TestClient) -> None:
         resp = viewer_client.post("/api/v1/cms/stale-to-triage", json={

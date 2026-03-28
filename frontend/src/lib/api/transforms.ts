@@ -133,6 +133,7 @@ const STATUS_TO_STAGE: Record<string, ContentBrief['stage']> = {
   briefing: 'brief',
   brief_review: 'brief',
   approved: 'brief',
+  pending_brief_approval: 'brief',
   // Generating
   outlining: 'generating',
   drafting: 'generating',
@@ -145,6 +146,7 @@ const STATUS_TO_STAGE: Record<string, ContentBrief['stage']> = {
   // Review
   review: 'review',
   pending_review: 'review',
+  pending_content_approval: 'review',
   // Approved
   completed: 'approved',
   published: 'approved',

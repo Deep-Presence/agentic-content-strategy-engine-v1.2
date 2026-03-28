@@ -14,9 +14,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
 from core.services.task_store import ApprovalWindowError
 
 
@@ -234,7 +232,7 @@ class TestStartAudiencePersona:
         assert resp.status_code == 202
 
     def test_slug_conflict_409(
-        self, client: TestClient, task_store: TaskStore, mock_ap_runner
+        self, client: TestClient, task_store, mock_ap_runner
     ) -> None:
         task_store.create_task("audience_persona", "test-co")
         resp = client.post(f"{PREFIX}/start", json=MINIMAL_PAYLOAD)
@@ -288,7 +286,7 @@ class TestStartAudiencePersona:
 
 class TestAudiencePersonaStatus:
     def test_status_running(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("audience_persona", "test-co")
         resp = client.get(f"{PREFIX}/{task.task_id}/status")
@@ -312,7 +310,7 @@ class TestAudiencePersonaStatus:
         assert resp.status_code == 404
 
     def test_tenant_isolation_403(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("audience_persona", "other-co")
         resp = client.get(f"{PREFIX}/{task.task_id}/status")
@@ -326,7 +324,7 @@ class TestAudiencePersonaStatus:
 
 class TestApproveBriefs:
     def _pending_task(
-        self, task_store: TaskStore, nonce: str = "nonce-abc"
+        self, task_store, nonce: str = "nonce-abc"
     ) -> str:
         """Create a task pending at persona_brief_review."""
         task = task_store.create_task("audience_persona", "test-co")
@@ -342,7 +340,7 @@ class TestApproveBriefs:
         return task.task_id
 
     def test_approve_all_success(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task_id = self._pending_task(task_store)
         resp = client.post(
@@ -355,7 +353,7 @@ class TestApproveBriefs:
         assert data["stage"] == "persona_brief_review"
 
     def test_partial_with_brief_reviews(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task_id = self._pending_task(task_store)
         resp = client.post(
@@ -371,7 +369,7 @@ class TestApproveBriefs:
         assert resp.status_code == 200
 
     def test_partial_with_added_briefs(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task_id = self._pending_task(task_store)
         resp = client.post(
@@ -386,7 +384,7 @@ class TestApproveBriefs:
         assert resp.status_code == 200
 
     def test_reject_all(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task_id = self._pending_task(task_store)
         resp = client.post(
@@ -396,7 +394,7 @@ class TestApproveBriefs:
         assert resp.status_code == 200
 
     def test_approval_data_shape(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         """Verify approval_data matches _process_brief_resume format."""
         task_id = self._pending_task(task_store)
@@ -437,7 +435,7 @@ class TestApproveBriefs:
             assert len(approval_data["added_briefs"]) == 1
 
     def test_stage_mismatch_409(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         """Pending at profile_review but trying to approve briefs → 409."""
         task = task_store.create_task("audience_persona", "test-co")
@@ -456,7 +454,7 @@ class TestApproveBriefs:
         assert resp.status_code == 409
 
     def test_not_pending_409(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("audience_persona", "test-co")
         resp = client.post(
@@ -466,7 +464,7 @@ class TestApproveBriefs:
         assert resp.status_code == 409
 
     def test_tenant_isolation_403(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("audience_persona", "other-co")
         task_store.update_task(
@@ -481,7 +479,7 @@ class TestApproveBriefs:
         assert resp.status_code == 403
 
     def test_stale_nonce_replay_409(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         """Replay with old nonce → ApprovalWindowError → 409."""
         task_id = self._pending_task(task_store, nonce="nonce-abc")
@@ -496,7 +494,7 @@ class TestApproveBriefs:
             )
             assert resp.status_code == 409
 
-    def test_partial_empty_reviews_422(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_partial_empty_reviews_422(self, client: TestClient, task_store) -> None:
         """batch_decision='partial' with no reviews or added_briefs → 422."""
         task_id = self._pending_task(task_store)
         resp = client.post(
@@ -513,7 +511,7 @@ class TestApproveBriefs:
 
 class TestApproveProfiles:
     def _pending_task(
-        self, task_store: TaskStore, nonce: str = "nonce-xyz"
+        self, task_store, nonce: str = "nonce-xyz"
     ) -> str:
         """Create a task pending at persona_profile_review."""
         task = task_store.create_task("audience_persona", "test-co")
@@ -529,7 +527,7 @@ class TestApproveProfiles:
         return task.task_id
 
     def test_approve_success(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task_id = self._pending_task(task_store)
         resp = client.post(
@@ -546,7 +544,7 @@ class TestApproveProfiles:
         assert data["stage"] == "persona_profile_review"
 
     def test_revise_with_note(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task_id = self._pending_task(task_store)
         resp = client.post(
@@ -564,7 +562,7 @@ class TestApproveProfiles:
         assert resp.status_code == 200
 
     def test_reject_profile(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task_id = self._pending_task(task_store)
         resp = client.post(
@@ -578,7 +576,7 @@ class TestApproveProfiles:
         assert resp.status_code == 200
 
     def test_approval_data_shape(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         """Verify approval_data matches _process_profile_resume format."""
         task_id = self._pending_task(task_store)
@@ -608,7 +606,7 @@ class TestApproveProfiles:
             assert len(approval_data["profile_reviews"]) == 2
 
     def test_stage_mismatch_409(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         """Pending at brief_review but trying to approve profiles → 409."""
         task = task_store.create_task("audience_persona", "test-co")
@@ -631,7 +629,7 @@ class TestApproveProfiles:
         assert resp.status_code == 409
 
     def test_not_pending_409(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("audience_persona", "test-co")
         resp = client.post(
@@ -645,7 +643,7 @@ class TestApproveProfiles:
         assert resp.status_code == 409
 
     def test_stale_nonce_replay_409(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task_id = self._pending_task(task_store, nonce="nonce-xyz")
         with patch.object(
@@ -663,7 +661,7 @@ class TestApproveProfiles:
             )
             assert resp.status_code == 409
 
-    def test_empty_reviews_422(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_empty_reviews_422(self, client: TestClient, task_store) -> None:
         """profile_reviews must have at least 1 item."""
         task_id = self._pending_task(task_store)
         resp = client.post(
@@ -713,7 +711,7 @@ class TestAddPersona:
         assert resp.status_code == 422
 
     def test_managed_task_lifecycle(
-        self, client: TestClient, task_store: TaskStore, mock_standalone_runner
+        self, client: TestClient, task_store, mock_standalone_runner
     ) -> None:
         """Verify that add-persona uses create_task + register_task_handle."""
         resp = client.post(
@@ -873,7 +871,7 @@ class TestAudiencePersonaAuth:
         assert resp.status_code == 403
 
     def test_viewer_can_get_status(
-        self, viewer_client: TestClient, task_store: TaskStore
+        self, viewer_client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("audience_persona", "test-co")
         resp = viewer_client.get(f"{PREFIX}/{task.task_id}/status")

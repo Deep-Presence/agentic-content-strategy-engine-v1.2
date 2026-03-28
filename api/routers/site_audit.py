@@ -24,8 +24,9 @@ from api.schemas.site_audit import (
     AuditSummaryResponse,
     SiteAuditStartRequest,
 )
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_site_audit_task
 from core.audit import log_pipeline_launch
 from core.auth.service import AuthServiceProtocol
@@ -106,7 +107,7 @@ async def start_site_audit(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
@@ -172,7 +173,7 @@ async def start_site_audit(
         )
 
     # Slug lock: create_task raises TaskConflictError (→ 409) if already running
-    task = task_store.create_task("site_audit", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "site_audit", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_site_audit_task(

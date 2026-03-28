@@ -1,8 +1,8 @@
 """TaskStoreProtocol — interface for task persistence + coordination.
 
-Both ``TaskStore`` (JSON-file-backed) and ``DbTaskStore`` (PostgreSQL)
-implement this protocol.  Router/runner code programs to the protocol,
-and the DI layer picks the implementation based on configuration.
+``DbTaskStore`` (PostgreSQL) is the sole production implementation.
+Router/runner code programs to the protocol, and the DI layer provides
+the implementation. DATABASE_URL is required at startup.
 
 Re-exports the exception types so consumers only import from here.
 """
@@ -12,9 +12,9 @@ import asyncio
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from api.tasks.models import PipelineTask
-from api.tasks.store import ApprovalWindowError, TaskConflictError, TaskNotFoundError  # noqa: F401
+from api.tasks.exceptions import ApprovalDeliveryError, ApprovalWindowError, TaskConflictError, TaskNotFoundError  # noqa: F401
 
-__all__ = ["TaskStoreProtocol", "TaskNotFoundError", "TaskConflictError", "ApprovalWindowError"]
+__all__ = ["TaskStoreProtocol", "TaskNotFoundError", "TaskConflictError", "ApprovalWindowError", "ApprovalDeliveryError"]
 
 
 @runtime_checkable
@@ -23,6 +23,8 @@ class TaskStoreProtocol(Protocol):
 
     @property
     def semaphore(self) -> asyncio.Semaphore: ...
+
+    def pipeline_semaphore(self, task_id: str): ...  # Returns async context manager
 
     # ── CRUD ──────────────────────────────────────────────────────
 
@@ -48,7 +50,7 @@ class TaskStoreProtocol(Protocol):
 
     # ── Slug Locks ────────────────────────────────────────────────
 
-    def acquire_slug_lock(self, slug: str) -> None: ...
+    def acquire_slug_lock(self, slug: str, task_id: Optional[str] = None) -> None: ...
 
     def release_slug_lock(self, slug: str) -> None: ...
 
@@ -75,3 +77,17 @@ class TaskStoreProtocol(Protocol):
         approval_data: Optional[Dict[str, Any]] = None,
         expected_nonce: Optional[str] = None,
     ) -> None: ...
+
+    # ── Durability (Session 3) ─────────────────────────────────────
+
+    async def ensure_created(self, task_id: str) -> None:
+        """Await DB persistence of a recently created task. No-op for non-DB stores."""
+        ...
+
+    async def flush_terminal(self, task_id: str) -> None:
+        """Await DB persistence of terminal status update. No-op for non-DB stores."""
+        ...
+
+    async def drain_pending(self) -> None:
+        """Await all pending DB writes. Called during graceful shutdown."""
+        ...

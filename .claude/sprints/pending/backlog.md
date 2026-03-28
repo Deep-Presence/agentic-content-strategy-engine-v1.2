@@ -1,6 +1,6 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-24 (cleanup pass — removed resolved items)
+> **Last synced:** 2026-03-26 (merge feat/front-back → feat/redis-integration)
 > **Total open items:** 30
 
 ## Critical (Fix Before Production)
@@ -303,7 +303,10 @@
 
 ### PB-39: HITL test_revise_loops_back_to_agent failing (pre-existing)
 - **Date added:** 2026-02-27
-- **Files affected:** `tests/api/test_hitl_interrupt_resume.py`
+- **Description:** `tests/api/test_hitl_interrupt_resume.py::TestResumeFlow::test_revise_loops_back_to_agent` — fails on assert not `_has_interrupt(r3)`. Root cause: `langgraph-checkpoint` v4.0.0 stores `__interrupt__` as a channel write; with `StateGraph(dict)` it bleeds into `state.values` (~15% intermittent failure rate). `StateGraph(TypedDict)` is immune because `__interrupt__` is not a declared field.
+- **Files affected:** `tests/api/test_hitl_interrupt_resume.py`, `core/content_engine/graph.py`
+- **Blocked by:** nothing
+- **Status:** ✅ RESOLVED 2026-03-22 — Converted test graph + v1.0 production graph from `StateGraph(dict)` to `StateGraph(TypedDict)`. 20/20 passes (was 3/20 before fix).
 
 ### PB-40: Phase 1D — API Key Configuration (deferred by design)
 - **Date added:** 2026-02-27

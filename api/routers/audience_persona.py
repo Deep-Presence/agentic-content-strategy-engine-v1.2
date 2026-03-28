@@ -23,8 +23,9 @@ from api.schemas.audience_persona import (
     StandaloneApproveRequest,
 )
 from api.schemas.common import PipelineRunResponse, TaskResponse
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask, TaskStatus
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_audience_persona_pipeline_task, run_single_persona_generator_task
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
@@ -133,7 +134,7 @@ async def start_audience_persona(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
@@ -176,7 +177,7 @@ async def start_audience_persona(
                 message=message or "",
             )
 
-    task = task_store.create_task("audience_persona", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "audience_persona", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_audience_persona_pipeline_task(
@@ -376,7 +377,7 @@ async def add_persona(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     backend: Any = Depends(get_storage_backend),
 ) -> Dict[str, Any]:
@@ -409,7 +410,7 @@ async def add_persona(
     storage.write_brief(persona_id, brief)
 
     # Managed task lifecycle
-    task = task_store.create_task("audience_persona", slug)
+    task = await create_task_durable(task_store, "audience_persona", slug)
 
     handle = asyncio.create_task(
         run_single_persona_generator_task(
