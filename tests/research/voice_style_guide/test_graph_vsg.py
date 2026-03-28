@@ -15,6 +15,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from langgraph.checkpoint.memory import MemorySaver
 
 from langgraph.types import Command
 
@@ -23,6 +24,15 @@ from core.research.voice_style_guide.graph import (
     run_vsg_hitl_checkpoint,
     _process_author_resume,
 )
+
+
+@pytest.fixture(autouse=True)
+def _use_memory_checkpointer(monkeypatch):
+    """Use in-memory checkpointer so tests don't require Redis."""
+    monkeypatch.setattr(
+        "core.research.voice_style_guide.graph.get_checkpointer",
+        lambda override=None: override if override is not None else MemorySaver(),
+    )
 
 
 # ---------------------------------------------------------------------------
