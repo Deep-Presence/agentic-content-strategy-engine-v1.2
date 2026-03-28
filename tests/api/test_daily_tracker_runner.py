@@ -15,10 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
 from api.tasks.runner import run_daily_tracker_task
-from api.tasks.store import TaskStore
 from core.models.daily_tracker import DailyRunResult, MentionAnalysis, RunStatus
 
 
@@ -140,7 +138,7 @@ def _apply_common_patches(
 
 
 async def _run_task(
-    task_store: TaskStore, event_bus: EventBus,
+    task_store, event_bus,
     run_request: SimpleNamespace, artifacts_root: Path,
     task_id: str,
 ) -> None:
@@ -163,7 +161,7 @@ class TestRunDailyTrackerTask:
 
     @pytest.mark.asyncio
     async def test_publishes_start_and_completed_events(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         run_request: SimpleNamespace, artifacts_root: Path,
     ) -> None:
         task = task_store.create_task("daily_tracker", "ramp")
@@ -188,7 +186,7 @@ class TestRunDailyTrackerTask:
 
     @pytest.mark.asyncio
     async def test_writes_filesystem_artifact(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         run_request: SimpleNamespace, artifacts_root: Path,
     ) -> None:
         task = task_store.create_task("daily_tracker", "ramp")
@@ -204,7 +202,7 @@ class TestRunDailyTrackerTask:
 
     @pytest.mark.asyncio
     async def test_calls_persist_daily_run_result(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         run_request: SimpleNamespace, artifacts_root: Path,
     ) -> None:
         task = task_store.create_task("daily_tracker", "ramp")
@@ -219,7 +217,7 @@ class TestRunDailyTrackerTask:
 
     @pytest.mark.asyncio
     async def test_handles_orchestrator_exception(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         run_request: SimpleNamespace, artifacts_root: Path,
     ) -> None:
         task = task_store.create_task("daily_tracker", "ramp")
@@ -238,7 +236,7 @@ class TestRunDailyTrackerTask:
 
     @pytest.mark.asyncio
     async def test_releases_slug_lock_on_failure(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         run_request: SimpleNamespace, artifacts_root: Path,
     ) -> None:
         """Verify correct slug key format: 'daily_tracker:{company_slug}'."""
@@ -258,7 +256,7 @@ class TestRunDailyTrackerTask:
 
     @pytest.mark.asyncio
     async def test_handles_cancelled_error(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         run_request: SimpleNamespace, artifacts_root: Path,
     ) -> None:
         task = task_store.create_task("daily_tracker", "ramp")
@@ -275,7 +273,7 @@ class TestRunDailyTrackerTask:
 
     @pytest.mark.asyncio
     async def test_marks_pipeline_run_complete(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         run_request: SimpleNamespace, artifacts_root: Path,
     ) -> None:
         task = task_store.create_task("daily_tracker", "ramp")
@@ -289,7 +287,7 @@ class TestRunDailyTrackerTask:
 
     @pytest.mark.asyncio
     async def test_marks_pipeline_run_failed_on_error(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         run_request: SimpleNamespace, artifacts_root: Path,
     ) -> None:
         task = task_store.create_task("daily_tracker", "ramp")
@@ -306,7 +304,7 @@ class TestRunDailyTrackerTask:
 
     @pytest.mark.asyncio
     async def test_works_without_db(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         run_request: SimpleNamespace, artifacts_root: Path,
     ) -> None:
         """When no DATABASE_URL is set, runner fails gracefully."""
@@ -325,7 +323,7 @@ class TestRunDailyTrackerTask:
 
     @pytest.mark.asyncio
     async def test_handles_failed_result_without_exception(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         run_request: SimpleNamespace, artifacts_root: Path,
     ) -> None:
         """Codex finding: orchestrator returns FAILED without raising."""
@@ -344,7 +342,7 @@ class TestRunDailyTrackerTask:
 
     @pytest.mark.asyncio
     async def test_completed_run_sets_result(
-        self, task_store: TaskStore, event_bus: EventBus,
+        self, task_store, event_bus,
         run_request: SimpleNamespace, artifacts_root: Path,
     ) -> None:
         task = task_store.create_task("daily_tracker", "ramp")

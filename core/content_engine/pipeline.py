@@ -161,14 +161,15 @@ async def _run_content_review_hitl(
 ) -> List[ContentPiece]:
     """Run Stage 4 with HITL interrupt/resume via API task_store.
 
-    Same graph as run_content_review(), but uses MemorySaver checkpointer
-    and the task runner's wait_for_approval/submit_approval pattern so the
+    Same graph as run_content_review(), but uses the shared checkpointer
+    (RedisSaver) and the task runner's wait_for_approval/submit_approval pattern so the
     frontend can drive approve/edit/reject decisions via SSE + REST.
     """
     import asyncio
 
-    from langgraph.checkpoint.memory import MemorySaver
     from langgraph.types import Command
+
+    from core.checkpointer import get_checkpointer
 
     from core.content_engine.graph import build_content_review_graph
 
@@ -188,7 +189,7 @@ async def _run_content_review_hitl(
         history = history_map.get(content.brief_id, RevisionHistory(brief_id=content.brief_id))
 
         # Each brief gets its own checkpointer and graph instance
-        checkpointer = MemorySaver()
+        checkpointer = get_checkpointer()
         graph = build_content_review_graph(checkpointer=checkpointer)
         thread_id = f"{task_id}-content-review-{content.brief_id}"
         config = {"configurable": {"thread_id": thread_id}}

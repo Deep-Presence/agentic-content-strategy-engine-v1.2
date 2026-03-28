@@ -21,7 +21,7 @@ from core.content_engine.evaluator.semantic import evaluate_semantic
 from core.content_engine.evaluator.structural import evaluate_structural
 from core.content_engine.evaluator.style_judge import evaluate_style
 from core.content_engine.pipeline import _cli_worker_progress
-from core.content_engine.state_helpers import _emit, _write_pipeline_state
+from core.content_engine.state_helpers import _emit, _write_pipeline_state, _write_pipeline_state_async
 from core.content_engine.tracing_v13 import (
     create_span,
     create_trace,
@@ -297,6 +297,8 @@ async def evaluate_and_optimize(
     use_targeted_revision: bool = False,
     event_bus: Any = None,
     task_id: Optional[str] = None,
+    redis_client: Any = None,
+    effective_slug: Optional[str] = None,
 ) -> Tuple[FormattedContent, RevisionHistory, FeedbackRoute]:
     """Run the evaluation-optimization loop for a single content piece.
 
@@ -464,7 +466,7 @@ async def evaluate_and_optimize(
         failed_dims = [d.dimension for d in dimensions if not d.passed]
 
         # Mark brief as "revising" for Kanban sync
-        _write_pipeline_state(artifact_dir, [brief.brief_id], "revising", task_id=task_id)
+        await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "revising", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
         _emit(event_bus, task_id, "worker_progress", {
             "brief_id": brief.brief_id, "step": "revising", "cycle": cycle + 1,
         })

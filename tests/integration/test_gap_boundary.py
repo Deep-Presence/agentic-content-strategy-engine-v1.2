@@ -15,7 +15,6 @@ from typing import Any, Dict, List
 import pytest
 
 from api.services.gap_data_service import (
-    _CACHE,
     get_clusters,
     get_queries,
     get_summary,
@@ -33,11 +32,17 @@ def storage(tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache():
-    """Clear TTL cache before each test."""
-    _CACHE.clear()
+def _clear_cache(monkeypatch):
+    """Ensure no Redis cache interferes with tests.
+
+    Must patch at the *usage* module level, not the source module, because
+    ``from core.redis import get_sync_redis_or_none`` creates a direct
+    binding that monkeypatching ``core.redis`` does not affect.
+    """
+    monkeypatch.setattr(
+        "api.services.gap_data_service.get_sync_redis_or_none", lambda: None
+    )
     yield
-    _CACHE.clear()
 
 
 def _write_json(path: Path, data: Any) -> None:

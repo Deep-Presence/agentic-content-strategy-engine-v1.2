@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from api.tasks.store import TaskConflictError, TaskNotFoundError
+from api.tasks.exceptions import ApprovalDeliveryError, TaskConflictError, TaskNotFoundError
 
 
 async def task_not_found_handler(request: Request, exc: TaskNotFoundError) -> JSONResponse:
@@ -32,4 +32,18 @@ async def pipeline_error_handler(request: Request, exc: PipelineError) -> JSONRe
     return JSONResponse(
         status_code=500,
         content={"detail": str(exc), "error_code": "pipeline_error"},
+    )
+
+
+async def approval_delivery_error_handler(
+    request: Request, exc: ApprovalDeliveryError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Approval delivery temporarily unavailable — please retry",
+            "error_code": "approval_delivery_failed",
+            "task_id": exc.task_id,
+        },
+        headers={"Retry-After": "5"},
     )

@@ -1,9 +1,7 @@
 """AuthServiceProtocol — async interface for auth operations.
 
-Both ``JsonAuthService`` (wraps AuthStore) and ``DbAuthService``
-(uses DB repos) implement this protocol.  Router code programs to
-the protocol, and the DI layer picks the concrete implementation
-based on whether ``DATABASE_URL`` is configured.
+``DbAuthService`` (uses DB repos) is the sole production implementation.
+Router code programs to the protocol. DATABASE_URL is required at startup.
 """
 from __future__ import annotations
 

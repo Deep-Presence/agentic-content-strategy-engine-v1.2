@@ -11,3 +11,14 @@ restartPolicyMaxRetries = 5
 # Run Alembic migrations before each deploy
 [deploy.pre]
 command = "python -m alembic upgrade head || echo 'Migration skipped — DB unreachable or DATABASE_URL not set'"
+
+# --- Redis ---
+# Redis is provisioned via Railway dashboard (Add Plugin → Redis).
+# Link the Redis service to this service — Railway auto-injects:
+#   REDIS_URL, REDISHOST, REDISUSER, REDISPORT, REDISPASSWORD
+#
+# Required Railway service variables (set in dashboard):
+#   REDIS_EVENT_BUS=true        — Redis Streams-backed SSE event bus
+#   REDIS_PIPELINE_STATE=true   — Redis Hashes for pipeline state + distributed locks
+#   REDIS_CHECKPOINTER=true     — RedisSaver for LangGraph HITL checkpoints
+# All Redis features degrade gracefully if Redis is unavailable.

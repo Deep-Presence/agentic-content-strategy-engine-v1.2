@@ -20,6 +20,7 @@ from core.models.daily_tracker import (
     PromptSource,
     TrackedPrompt,
 )
+from core.storage.backends.local import LocalStorageBackend
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -396,8 +397,8 @@ class TestImportFromGapAnalysis:
     """Tests for import_from_gap_analysis()."""
 
     @pytest.fixture()
-    def queries_json(self, tmp_path: Path) -> Path:
-        """Create a temporary queries.json file."""
+    def queries_json(self, tmp_path: Path, mock_prompt_repo: AsyncMock):
+        """Create a temporary queries.json and return a service with a LocalStorageBackend."""
         data = [
             {
                 "query_id": "q_1",
@@ -418,104 +419,75 @@ class TestImportFromGapAnalysis:
                 "embedding": None,
             },
         ]
-        slug_dir = tmp_path / "artifacts" / "gap_analysis" / "test-co"
+        artifacts_dir = tmp_path / "artifacts"
+        slug_dir = artifacts_dir / "gap_analysis" / "test-co"
         slug_dir.mkdir(parents=True)
         queries_file = slug_dir / "queries.json"
         queries_file.write_text(json.dumps(data), encoding="utf-8")
-        return tmp_path
+        backend = LocalStorageBackend(artifacts_dir)
+        return PromptLibraryService(prompt_repo=mock_prompt_repo, backend=backend)
 
     @pytest.mark.asyncio
     async def test_import_creates_prompts(
         self,
-        service: PromptLibraryService,
         mock_prompt_repo: AsyncMock,
-        queries_json: Path,
+        queries_json: PromptLibraryService,
     ) -> None:
         """import_from_gap_analysis creates prompts from queries.json."""
-        with patch.object(
-            type(service),
-            "_PromptLibraryService__class__",
-            create=True,
-        ):
-            # Patch _PROJECT_ROOT to use tmp_path
-            with patch(
-                "core.daily_tracker.prompt_library._PROJECT_ROOT",
-                queries_json,
-            ):
-                result = await service.import_from_gap_analysis(
-                    "company-abc", "test-co"
-                )
+        result = await queries_json.import_from_gap_analysis(
+            "company-abc", "test-co"
+        )
         assert len(result) == 2
         assert mock_prompt_repo.create.await_count == 2
 
     @pytest.mark.asyncio
     async def test_import_deduplicates(
         self,
-        service: PromptLibraryService,
         mock_prompt_repo: AsyncMock,
-        queries_json: Path,
+        queries_json: PromptLibraryService,
     ) -> None:
         """import_from_gap_analysis skips prompts that already exist."""
         # First query already exists, second does not
         mock_prompt_repo.exists_by_text.side_effect = [True, False]
-        with patch(
-            "core.daily_tracker.prompt_library._PROJECT_ROOT",
-            queries_json,
-        ):
-            result = await service.import_from_gap_analysis(
-                "company-abc", "test-co"
-            )
+        result = await queries_json.import_from_gap_analysis(
+            "company-abc", "test-co"
+        )
         assert len(result) == 1
         assert mock_prompt_repo.create.await_count == 1
 
     @pytest.mark.asyncio
     async def test_import_all_duplicates_returns_empty(
         self,
-        service: PromptLibraryService,
         mock_prompt_repo: AsyncMock,
-        queries_json: Path,
+        queries_json: PromptLibraryService,
     ) -> None:
         """import_from_gap_analysis returns empty when all are duplicates."""
         mock_prompt_repo.exists_by_text.return_value = True
-        with patch(
-            "core.daily_tracker.prompt_library._PROJECT_ROOT",
-            queries_json,
-        ):
-            result = await service.import_from_gap_analysis(
-                "company-abc", "test-co"
-            )
+        result = await queries_json.import_from_gap_analysis(
+            "company-abc", "test-co"
+        )
         assert result == []
         mock_prompt_repo.create.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_import_sets_source_gap_analysis(
         self,
-        service: PromptLibraryService,
         mock_prompt_repo: AsyncMock,
-        queries_json: Path,
+        queries_json: PromptLibraryService,
     ) -> None:
         """import_from_gap_analysis sets source to gap_analysis."""
-        with patch(
-            "core.daily_tracker.prompt_library._PROJECT_ROOT",
-            queries_json,
-        ):
-            await service.import_from_gap_analysis("company-abc", "test-co")
+        await queries_json.import_from_gap_analysis("company-abc", "test-co")
         for call in mock_prompt_repo.create.call_args_list:
             assert call.kwargs["source"] == "gap_analysis"
 
     @pytest.mark.asyncio
     async def test_import_preserves_cluster_as_category(
         self,
-        service: PromptLibraryService,
         mock_prompt_repo: AsyncMock,
-        queries_json: Path,
+        queries_json: PromptLibraryService,
     ) -> None:
         """import_from_gap_analysis uses cluster_name as category."""
-        with patch(
-            "core.daily_tracker.prompt_library._PROJECT_ROOT",
-            queries_json,
-        ):
-            await service.import_from_gap_analysis("company-abc", "test-co")
+        await queries_json.import_from_gap_analysis("company-abc", "test-co")
         categories = [
             c.kwargs["category"] for c in mock_prompt_repo.create.call_args_list
         ]
@@ -524,16 +496,11 @@ class TestImportFromGapAnalysis:
     @pytest.mark.asyncio
     async def test_import_stores_source_metadata(
         self,
-        service: PromptLibraryService,
         mock_prompt_repo: AsyncMock,
-        queries_json: Path,
+        queries_json: PromptLibraryService,
     ) -> None:
         """import_from_gap_analysis stores query metadata in source_metadata."""
-        with patch(
-            "core.daily_tracker.prompt_library._PROJECT_ROOT",
-            queries_json,
-        ):
-            await service.import_from_gap_analysis("company-abc", "test-co")
+        await queries_json.import_from_gap_analysis("company-abc", "test-co")
         first_meta = mock_prompt_repo.create.call_args_list[0].kwargs[
             "source_metadata"
         ]
@@ -545,24 +512,20 @@ class TestImportFromGapAnalysis:
     @pytest.mark.asyncio
     async def test_import_file_not_found_raises(
         self,
-        service: PromptLibraryService,
         mock_prompt_repo: AsyncMock,
         tmp_path: Path,
     ) -> None:
         """import_from_gap_analysis raises FileNotFoundError for missing file."""
-        with patch(
-            "core.daily_tracker.prompt_library._PROJECT_ROOT",
-            tmp_path,
-        ):
-            with pytest.raises(FileNotFoundError, match="queries not found"):
-                await service.import_from_gap_analysis(
-                    "company-abc", "nonexistent-slug"
-                )
+        backend = LocalStorageBackend(tmp_path)
+        svc = PromptLibraryService(prompt_repo=mock_prompt_repo, backend=backend)
+        with pytest.raises(FileNotFoundError, match="queries not found"):
+            await svc.import_from_gap_analysis(
+                "company-abc", "nonexistent-slug"
+            )
 
     @pytest.mark.asyncio
     async def test_import_skips_empty_query_text(
         self,
-        service: PromptLibraryService,
         mock_prompt_repo: AsyncMock,
         tmp_path: Path,
     ) -> None:
@@ -576,39 +539,34 @@ class TestImportFromGapAnalysis:
                 "query_text": "Valid query",
             },
         ]
-        slug_dir = tmp_path / "artifacts" / "gap_analysis" / "test-co"
+        slug_dir = tmp_path / "gap_analysis" / "test-co"
         slug_dir.mkdir(parents=True)
         (slug_dir / "queries.json").write_text(
             json.dumps(data), encoding="utf-8"
         )
-        with patch(
-            "core.daily_tracker.prompt_library._PROJECT_ROOT",
-            tmp_path,
-        ):
-            result = await service.import_from_gap_analysis(
-                "company-abc", "test-co"
-            )
+        backend = LocalStorageBackend(tmp_path)
+        svc = PromptLibraryService(prompt_repo=mock_prompt_repo, backend=backend)
+        result = await svc.import_from_gap_analysis(
+            "company-abc", "test-co"
+        )
         assert len(result) == 1
         assert mock_prompt_repo.create.await_count == 1
 
     @pytest.mark.asyncio
     async def test_import_non_list_json_returns_empty(
         self,
-        service: PromptLibraryService,
         mock_prompt_repo: AsyncMock,
         tmp_path: Path,
     ) -> None:
         """import_from_gap_analysis returns empty if JSON is not a list."""
-        slug_dir = tmp_path / "artifacts" / "gap_analysis" / "test-co"
+        slug_dir = tmp_path / "gap_analysis" / "test-co"
         slug_dir.mkdir(parents=True)
         (slug_dir / "queries.json").write_text('{"not": "a list"}', encoding="utf-8")
-        with patch(
-            "core.daily_tracker.prompt_library._PROJECT_ROOT",
-            tmp_path,
-        ):
-            result = await service.import_from_gap_analysis(
-                "company-abc", "test-co"
-            )
+        backend = LocalStorageBackend(tmp_path)
+        svc = PromptLibraryService(prompt_repo=mock_prompt_repo, backend=backend)
+        result = await svc.import_from_gap_analysis(
+            "company-abc", "test-co"
+        )
         assert result == []
         mock_prompt_repo.create.assert_not_awaited()
 

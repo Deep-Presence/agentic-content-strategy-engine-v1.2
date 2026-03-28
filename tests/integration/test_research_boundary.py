@@ -12,18 +12,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from api.services.brand_data_service import _CACHE, get_research_artifacts
+from api.services.brand_data_service import get_research_artifacts
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache():
-    """Clear TTL cache before each test."""
-    _CACHE.clear()
-    yield
-    _CACHE.clear()
+def _no_redis_cache(monkeypatch):
+    """Disable Redis cache so each test reads from the filesystem."""
+    monkeypatch.setattr(
+        "api.services.brand_data_service.get_sync_redis_or_none",
+        lambda: None,
+    )
 
 
 def _write_text(path: Path, text: str) -> None:

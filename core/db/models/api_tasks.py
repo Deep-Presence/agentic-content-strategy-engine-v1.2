@@ -32,6 +32,7 @@ class ApiTaskModel(UUIDPKMixin, TimestampMixin, Base):
         Index("ix_api_tasks_effective_slug", "effective_slug"),
         Index("ix_api_tasks_status", "status"),
         Index("ix_api_tasks_company_pipeline", "company_slug", "pipeline"),
+        Index("ix_api_tasks_worker_id", "worker_id"),
     )
 
     task_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
@@ -46,6 +47,7 @@ class ApiTaskModel(UUIDPKMixin, TimestampMixin, Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     approval_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     approval_history: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    worker_id: Mapped[str | None] = mapped_column(String, nullable=True)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

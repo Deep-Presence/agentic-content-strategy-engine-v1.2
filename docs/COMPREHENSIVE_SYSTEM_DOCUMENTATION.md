@@ -2,8 +2,8 @@
 
 > **Project:** Deep Presence Content Strategy Engine (formerly AEO-Optimizer)
 > **Owner:** Aryan (CTO & Co-founder, Deep Presence)
-> **Stack:** Python 3.12 · LangGraph · FastAPI · Pydantic v2 · LangSmith · LiteLLM
-> **Document Date:** 2026-03-15 (updated: Structured Logging Foundation — structlog, correlation IDs, context propagation)
+> **Stack:** Python 3.12 · LangGraph · FastAPI · Pydantic v2 · LangSmith · LiteLLM · Redis · R2
+> **Document Date:** 2026-03-28 (updated: Redis Integration Sessions 0-6, R2 Blob Storage, CMS Integration, Phase 6 Remove Fallbacks — DATABASE_URL + REDIS_URL mandatory)
 > **Document Scope:** Exhaustive technical documentation covering architecture, implementation, decisions, vulnerabilities, and roadmap.
 
 ---
@@ -106,7 +106,9 @@
    - 9.2 [DeepAgents Backend Routing (REMOVED)](#92-deepagents-backend-routing-removed)
    - 9.3 [pgvector Vector Store](#93-pgvector-vector-store)
    - 9.4 [Supabase Mirror (Optional DB Layer)](#94-supabase-mirror-optional-db-layer)
-   - 9.5 [Storage Backend Abstraction (Interface)](#95-storage-backend-abstraction-interface)
+   - 9.5 [Storage Backend Abstraction (Implemented)](#95-storage-backend-abstraction-implemented)
+   - 9.9 [Redis Infrastructure (Sessions 0-6)](#99-redis-infrastructure-sessions-0-6)
+   - 9.10 [CMS Integration](#910-cms-integration)
 10. [Data Models — Complete Pydantic v2 Schema Reference](#10-data-models--complete-pydantic-v2-schema-reference)
 11. [Configuration & Environment Variables](#11-configuration--environment-variables)
 12. [CLI Entry Points — Scripts Reference](#12-cli-entry-points--scripts-reference)
@@ -3947,16 +3949,19 @@ Each type has a `mirror_*_if_configured()` convenience wrapper that is safe to c
 }
 ```
 
-### 9.5 Storage Backend Abstraction (Interface)
+### 9.5 Storage Backend Abstraction (Implemented)
 
 **File:** `core/storage/backends/base.py`
 
-**Abstract Interface (defined, no concrete implementations yet):**
+**Abstract Interface:**
 
 ```python
 class StorageBackend(ABC):
     @abstractmethod
     def read(self, path: str) -> Optional[str]: ...
+
+    @abstractmethod
+    def read_bytes(self, path: str) -> Optional[bytes]: ...
 
     @abstractmethod
     def write(self, path: str, content: str) -> str: ...
@@ -3971,12 +3976,24 @@ class StorageBackend(ABC):
     def list_dir(self, prefix: str) -> list[str]: ...
 ```
 
-**Planned Implementations:**
-- `LocalFilesystemBackend` — Local dev (default)
-- `S3Backend` / `GCSBackend` — Cloud storage for production
-- `SupabaseStorageBackend` — Supabase Storage buckets
+**Concrete Implementations:**
 
-**Current Status:** Interface defined but no concrete backend classes implemented yet. The new research pipelines use their own versioned storage classes (`KBStorage`, `PersonaStorage`, `VSGStorage`).
+1. **`LocalStorageBackend`** (`core/storage/backends/local.py`) — Local filesystem. Default for development. Reads/writes to `artifacts/` directory tree. Path validation rejects directory traversal (`..`) and absolute paths.
+
+2. **`R2StorageBackend`** (`core/storage/backends/r2.py`) — Cloudflare R2 (S3-compatible) via `boto3`. Default for production (`STORAGE_BACKEND=r2`). Synchronous operations — call sites wrap in `asyncio.to_thread()` as needed. Config: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_ENDPOINT`. 5-retry config with standard backoff. Path validation prevents traversal.
+
+3. **`CachedStorageBackend`** (`core/storage/cached_backend.py`) — Transparent Redis cache wrapper for any `StorageBackend`. Wraps `read()` and `list_dir()` with Redis TTL cache. Mutations (`write`, `delete`) delegate to inner backend and invalidate cache. Size guard: reads >512KB skip caching. Cache key schema: `artifact:{path}` (read, 300s TTL), `artifact_ls:{prefix}` (list_dir, 120s TTL). Graceful degradation when Redis unavailable.
+
+**Factory:** `core/storage/__init__.py` — `get_storage_backend(root)` returns appropriate backend based on `STORAGE_BACKEND` setting. `create_app()` wraps the backend with `CachedStorageBackend` when Redis is healthy.
+
+**Current Default:** `storage_backend: "r2"` — R2 is default. Set `STORAGE_BACKEND=local` for local development.
+
+**Reader-Side Migration (Phase 5):** All services now use `StorageBackend` instead of direct filesystem access:
+- `json_site_audit_data.py` — 7 sync helpers accept `StorageBackend`, `list_dir()` replaces `Path.iterdir()`
+- `content_data_service.py` — `_load_pipeline_state` reads via `StorageBackend`
+- `brand_data_service.py` — `_resolve_storage()` uses `get_storage_backend()` factory
+- `prompt_library.py` — filesystem fallback replaced with `get_storage_backend()` factory
+- Research pipeline storage classes (`KBStorage`, `PersonaStorage`, `VSGStorage`) accept `backend=` parameter
 
 ### 9.6 Knowledge Document Storage (Added 2026-02-27)
 
@@ -4081,6 +4098,226 @@ artifacts/knowledge_docs/
 **Phase 1 Status:** Infrastructure complete. Fully wired into routers via Phase 2 (auth) and Phase 3 (data services, TaskStore). See §26 for comprehensive 3-phase migration documentation.
 
 **Dependencies:** `sqlalchemy[asyncio]>=2.0.30`, `asyncpg>=0.29`, `psycopg2-binary>=2.9` (sync driver for Alembic), `alembic>=1.13`, `pgvector>=0.3`
+
+### 9.9 Redis Infrastructure (Sessions 0-6, Added 2026-03-22 through 2026-03-27)
+
+**Package:** `core/redis.py` (client), `core/redis_semaphore.py` (semaphore), `core/cache.py` (caching), `core/checkpointer.py` (LangGraph), `api/tasks/redis_event_bus.py` (SSE), `core/content_engine/state_redis.py` (pipeline state)
+
+**Status:** Redis is **mandatory** in production. `REDIS_URL` must be set — app raises `RuntimeError` on startup if missing. All fallbacks (in-memory EventBus, MemorySaver, JSON TaskStore) have been removed (Phase 6, 2026-03-27).
+
+#### 9.9.1 Redis Client Module (`core/redis.py`)
+
+Lazy singleton factories for async and sync Redis clients. Clients are created on first call, not at import time, to avoid breaking CLI scripts and tests.
+
+**Key Functions:**
+| Function | Returns | Purpose |
+|----------|---------|---------|
+| `get_redis()` | `aioredis.Redis` | Async client singleton — hot-path pipeline writes |
+| `get_redis_or_none()` | `Optional[aioredis.Redis]` | Async client or None — graceful degradation |
+| `get_sync_redis()` | `redis.Redis` | Sync client singleton — locks, sync readers |
+| `get_sync_redis_or_none()` | `Optional[redis.Redis]` | Sync client or None — cache operations |
+| `close_redis()` | — | Shutdown both clients — called in app lifespan |
+
+**Patterns:**
+- Thread-safe lazy initialization via `threading.RLock()` + double-checked locking
+- `decode_responses=True` — all values returned as `str`, not `bytes`
+- Connection pool shared across all async tasks within a single worker process
+- Configurable via: `REDIS_URL`, `REDIS_MAX_CONNECTIONS`, `REDIS_SOCKET_TIMEOUT`, `REDIS_SOCKET_CONNECT_TIMEOUT`, `REDIS_RETRY_ON_TIMEOUT`, `REDIS_HEALTH_CHECK_INTERVAL`
+
+#### 9.9.2 RedisEventBus (`api/tasks/redis_event_bus.py`)
+
+Redis Streams-backed event bus, drop-in replacement for the deleted in-memory `EventBus`.
+
+**Architecture:**
+- Uses Redis Streams: `XADD`/`XREAD`/`XRANGE` on `sse:{task_id}` keys
+- **Atomic Lua script** (`_PUBLISH_LUA`): `INCR` + `XADD` + 2×`EXPIRE` in single Redis call — no out-of-order writes
+- Globally monotonic event IDs via `INCR sse:counter:{task_id}` — correct across multiple workers
+- `publish()` is synchronous (fire-and-forget async Lua eval) — all ~40 callers unchanged
+- In-memory mirror for `get_history()`/`is_terminal()` (same-worker fast path)
+- **Thread-safe reads**: `get_history()` and `is_terminal()` acquire `self._lock`
+- **Mirror eviction**: `_MAX_MIRROR_TASKS = 1000`, oldest terminal evicted first
+- Stream TTL: 24h auto-refreshed on write. `MAXLEN ~200` approximate trimming
+- `stream()` wrapped in try/except — Redis errors close SSE gracefully (client can reconnect)
+- `EventBusProtocol` in `api/tasks/event_bus.py` — structural typing shared by both impls
+
+#### 9.9.3 Pipeline State (`core/content_engine/state_redis.py`)
+
+Redis Hashes for per-brief in-flight status tracking during content pipeline execution.
+
+**Config toggle:** `REDIS_PIPELINE_STATE=true` (default True) + `REDIS_URL`
+
+**Key Functions:**
+| Function | Purpose |
+|----------|---------|
+| `_write_pipeline_state()` | Write brief status to Redis Hash + file |
+| `_cleanup_pipeline_state()` | Delete Redis Hash + file on completion |
+| `_read_pipeline_state_sync()` | Sync reader (services) — Redis first, file fallback |
+| `_read_pipeline_state_async()` | Async reader — Redis first, file fallback |
+| `_cleanup_stale_pipeline_state()` | Remove orphaned state on startup |
+
+**Redis key:** `pipeline_state:{effective_slug}` (Hash, 24h TTL refreshed on write)
+**Dual-write:** Both Redis Hash and filesystem `pipeline_state.json` are always written — not Redis-or-file fallback.
+
+#### 9.9.4 Distributed Locks (`core/services/db_task_store.py`)
+
+`DbTaskStore` accepts optional `redis_client` (sync) for distributed slug locks.
+
+- **Acquire:** `SET lock:{pipeline}:{slug} {task_id} NX EX 7200` — no stale detection, TTL handles dead workers
+- **Release:** Lua compare-and-delete script (`_RELEASE_LOCK_LUA`) — ownership-safe, only deletes if holder matches
+- `task_id` generated before lock acquisition in `create_task()` — used as lock value
+- **Fail-closed:** When Redis is configured, lock acquisition failure = reject (no split-brain fallback)
+- Dual write: both Redis and `_slug_locks` in-memory dict updated
+- Redis key: `lock:{pipeline}:{effective_slug}` (String, 2h TTL)
+
+#### 9.9.5 RedisSaver — LangGraph Checkpoints (`core/checkpointer.py`)
+
+Shared factory for LangGraph HITL sub-graph checkpointing.
+
+- `get_checkpointer(override=None)` → `BaseCheckpointSaver`
+- Config: `REDIS_CHECKPOINTER=true` (default True) + `REDIS_URL` — **mandatory**, no MemorySaver fallback
+- Singleton `RedisSaver` with own connection pool (via `langgraph-checkpoint-redis`)
+- Override parameter still works — graph tests pass `MemorySaver` via override
+- Thread-safe: double-checked locking, transient failures allow retry on next call
+- Replaces six identical `_resolve_checkpointer()` functions across 12 graph builders
+
+#### 9.9.6 Redis Approval Queues (`core/services/db_task_store.py`)
+
+BRPOP/LPUSH approval delivery internal to `DbTaskStore` — automatic when `self._redis_sync` available.
+
+- `submit_approval()`: nonce from `GET approval:nonce:{task_id}`, duplicate via `SET approval:flag:{task_id} NX`, payload via `LPUSH approval:{task_id}`
+- `wait_for_approval()`: `BRPOP approval:{task_id}` via `asyncio.to_thread()`, cleanup all 3 keys after consumption
+- `update_task()`: writes nonce on `approval_payload` set, clears nonce+flag on `approval_payload=None`
+- Graceful degradation: Redis errors in submit → log+proceed; Redis errors in wait → auto-reject (fail-safe)
+- Redis keys: `approval:{task_id}` (List, 24h), `approval:flag:{task_id}` (String, 24h), `approval:nonce:{task_id}` (String, 24h)
+
+#### 9.9.7 Distributed Semaphore (`core/redis_semaphore.py`)
+
+Global pipeline concurrency limiter using Redis Sorted Sets.
+
+- **Atomic Lua acquire** (`_ACQUIRE_LUA`): `ZREMRANGEBYSCORE` + `ZCARD` + `ZADD` — purge expired, check capacity, add holder in single script
+- Self-healing: expired holders (dead workers) auto-purged on acquire (`holder_ttl=7200`, 2h)
+- `holder_id` = `task_id` — unique per pipeline run
+- Release: idempotent `ZREM`
+- Polling: `_SemaphoreContext.__aenter__` polls via `asyncio.to_thread()` every 1s, timeout 300s
+- `pipeline_semaphore(task_id)` method on `TaskStoreProtocol` / `DbTaskStore`
+- All 14 runners use `async with task_store.pipeline_semaphore(task_id):` instead of old `task_store.semaphore`
+- Background renewal loop: renews lock + semaphore every 60s during pipeline execution
+- Config: uses `API_MAX_CONCURRENT_PIPELINES` (default 3)
+- Redis key: `semaphore:pipelines` (Sorted Set, self-healing 2h member TTL)
+- `force_clear()` runs at startup to purge stale entries
+
+#### 9.9.8 HITL Lease Renewal Heartbeat
+
+During HITL `wait_for_approval()`, slug lock (2h TTL) and semaphore (2h member TTL) are renewed every ~60s.
+
+- Heartbeat is inline in the BRPOP polling loop — counter-based, fires every 60 iterations
+- **Lock renewal:** Atomic Lua `_RENEW_LOCK_LUA` (compare-and-expire) — prevents GET+EXPIRE race condition
+- **Semaphore renewal:** Atomic Lua `_RENEW_LUA` (ZSCORE+ZADD) — avoids `ZADD XX` return value trap
+- `_renew_leases(task_id)` on `DbTaskStore` — best-effort, all errors logged but never abort the wait
+- `allow_parallel=True` tasks: lock renewal skipped (no lock held), semaphore still renewed
+
+#### 9.9.9 Redis Cache Layer (`core/cache.py`)
+
+Shared cache utility for API response data with JSON serialization and TTL.
+
+**Key Functions:**
+| Function | Purpose |
+|----------|---------|
+| `cache_get(redis_sync, key)` | JSON deserialized value or None |
+| `cache_set(redis_sync, key, value, ttl)` | JSON serialized write with TTL |
+| `cache_delete_pattern(redis_sync, pattern)` | Pattern-based deletion via SCAN |
+| `cache_delete(redis_sync, *keys)` | Direct key deletion |
+
+**TTLs:** gap=5min, content=2min, audit=10min, gap_ctx=5min, brand=5min. Pipeline finalization and runner `finally` blocks call `cache_delete_pattern()` for explicit invalidation.
+
+**Caching layers (intentional double-caching):**
+1. `CachedStorageBackend` (`artifact:*`) — caches raw text at StorageBackend level (300s/120s TTL)
+2. Service-level caches (`cache:gap:*`, `cache:content:*`, etc.) — caches parsed JSON with domain-specific TTLs
+
+#### 9.9.10 Redis Key Schema (Cumulative)
+
+| Key Pattern | Type | TTL | Purpose |
+|---|---|---|---|
+| `sse:{task_id}` | Stream | 24h | SSE event stream |
+| `sse:counter:{task_id}` | String | 24h | Monotonic event ID counter |
+| `pipeline_state:{effective_slug}` | Hash | 24h | Per-brief in-flight status |
+| `lock:{pipeline}:{effective_slug}` | String | 2h | Distributed slug lock |
+| `checkpoint:*` / `checkpoint_writes:*` | Hash/JSON | RedisSaver managed | LangGraph HITL checkpoint state |
+| `approval:{task_id}` | List | 24h | HITL approval payload queue |
+| `approval:flag:{task_id}` | String | 24h | Duplicate submission prevention |
+| `approval:nonce:{task_id}` | String | 24h | Current checkpoint nonce |
+| `semaphore:pipelines` | Sorted Set | Self-healing (2h member TTL) | Global pipeline concurrency limit |
+| `cache:gap:{slug}:{filename}` | String (JSON) | 5min | Parsed gap analysis artifacts |
+| `cache:content:{slug}:{filename}` | String (JSON) | 2min | Parsed content pipeline artifacts |
+| `cache:audit:{slug}:{audit_id}` | String (JSON) | 10min | Parsed site audit result |
+| `cache:gap_ctx:{slug}` | String (JSON) | 5min | analysis.json for content sidebar |
+| `cache:brand:{slug}:artifacts` | String (JSON) | 5min | Research artifact detection results |
+| `artifact:{path}` | String | 5min | CachedStorageBackend read cache |
+| `artifact_ls:{prefix}` | String | 2min | CachedStorageBackend list_dir cache |
+
+### 9.10 CMS Integration (Added 2026-03-27)
+
+**Package:** `core/cms/` (adapters, models, protocols), `core/services/cms_service.py` (business logic), `core/services/cms_cache.py` (Redis cache), `api/routers/cms.py` (11 endpoints), `api/schemas/cms.py` (request/response models)
+
+**Architecture:** Adapter pattern — `CMSAdapterProtocol` → concrete adapters (WordPress, future: Webflow, Strapi). Factory-based instantiation via `create_cms_adapter(config)`.
+
+#### 9.10.1 CMS Adapter Protocol (`core/cms/protocols.py`)
+
+```python
+class CMSAdapterProtocol(Protocol):
+    async def validate_connection(self) -> CMSConnectionStatus: ...
+    async def list_posts(self, page=1, per_page=10, status=None) -> list[CMSPost]: ...
+    async def get_post(self, cms_id: str) -> Optional[CMSPost]: ...
+    async def list_categories(self) -> list[CMSCategory]: ...
+    async def publish_post(self, post: CMSPostCreate) -> CMSPost: ...
+    async def update_post(self, cms_id: str, post: CMSPostUpdate) -> CMSPost: ...
+    async def upload_media(self, media: CMSMediaUpload) -> CMSMediaResult: ...
+```
+
+#### 9.10.2 WordPress Adapter (`core/cms/adapters/wordpress.py`)
+
+- Async `httpx` client for WordPress REST API v2
+- Fernet-encrypted credential storage in DB
+- Application password authentication (Base64 `username:api_key`)
+- Category lookup/creation, media upload, post CRUD
+- Rate limit detection and retry
+
+#### 9.10.3 CMS Models (`core/cms/models.py`)
+
+- `CMSConnectionConfig` — provider, site_url, api_key, username, extra dict
+- `CMSConnectionStatus` — connected flag, site metadata, error
+- `CMSPost` — normalized post (cms_id, title, slug, content_html, status, categories, tags, SEO fields)
+- `CMSPostCreate` / `CMSPostUpdate` — write payloads
+- `CMSCategory` — taxonomy item
+- `CMSMediaUpload` / `CMSMediaResult` — image upload
+- Re-exports `CMSProvider` and `CMSPostStatus` enums from `core.db.enums`
+
+#### 9.10.4 CMS Service (`core/services/cms_service.py`)
+
+Business logic layer orchestrating adapter calls, DB persistence, and cache invalidation.
+
+#### 9.10.5 CMS API Endpoints (`api/routers/cms.py` — 11 endpoints)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `POST` | `/api/v1/cms/connect` | member+ | Connect a CMS (validate + store credentials) |
+| `GET` | `/api/v1/cms/connection` | auth | Get current connection info |
+| `DELETE` | `/api/v1/cms/connection` | member+ | Disconnect CMS |
+| `POST` | `/api/v1/cms/sync` | member+ | Re-sync content from CMS (background) |
+| `GET` | `/api/v1/cms/synced-posts` | auth | List synced posts |
+| `GET` | `/api/v1/cms/stale-actions` | auth | Stale content cards for Home dashboard |
+| `POST` | `/api/v1/cms/stale-to-triage` | member+ | Queue stale post for refresh |
+| `POST` | `/api/v1/cms/publish` | member+ | Publish brief to CMS |
+| `POST` | `/api/v1/cms/refresh/{cms_post_id}` | member+ | Update existing CMS post |
+| `GET` | `/api/v1/cms/publish-history` | auth | Audit trail |
+| `GET` | `/api/v1/cms/categories` | auth | CMS categories |
+
+#### 9.10.6 Database Tables (Migration `0021_cms_integration`)
+
+3 new ORM tables in `core/db/models/cms.py`:
+- `cms_connections` — encrypted credentials, site metadata, per-company
+- `cms_synced_posts` — tracked posts with staleness detection
+- `cms_publish_history` — audit trail of publish/update actions
 
 ---
 
@@ -4407,15 +4644,36 @@ DraftNotification:   thread, fit_score (0.0-1.0), why_match, draft_markdown, met
 | `GAP_ANALYSIS_MAX_CRAWL_PAGES` | `500` | Max pages to crawl in S1 |
 | `GAP_ANALYSIS_MAX_CRAWL_DEPTH` | `4` | Max crawl depth in S1 |
 
-#### Storage & Database
+#### Storage & Database (DATABASE_URL + REDIS_URL **mandatory** since Phase 6)
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `DATABASE_URL` | — | PostgreSQL connection URL (required for pgvector vector storage) |
+| `DATABASE_URL` | — | **REQUIRED.** PostgreSQL async URL (`postgresql+asyncpg://...`). App raises `RuntimeError` on startup if missing. |
+| `REDIS_URL` | — | **REQUIRED.** Redis connection URL (`redis://...`). App raises `RuntimeError` on startup if missing. |
+| `STORAGE_BACKEND` | `r2` | Storage backend: `r2` (Cloudflare R2) or `local` (filesystem) |
+| `R2_ACCOUNT_ID` | — | Cloudflare R2 account ID (required when `STORAGE_BACKEND=r2`) |
+| `R2_ACCESS_KEY_ID` | — | R2 access key ID |
+| `R2_SECRET_ACCESS_KEY` | — | R2 secret access key |
+| `R2_BUCKET_NAME` | — | R2 bucket name |
+| `R2_ENDPOINT` | — | R2 endpoint URL (auto-derived from account ID if not set) |
 | `SUPABASE_URL` | — | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | Supabase admin key (preferred) |
 | `SUPABASE_ANON_KEY` | — | Supabase anon key (fallback) |
 | `SUPABASE_AGENT_ID` | — | Audit trail identifier |
+
+#### Redis Configuration
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `REDIS_URL` | — | **REQUIRED.** Redis connection URL |
+| `REDIS_MAX_CONNECTIONS` | `10` | Connection pool max connections |
+| `REDIS_SOCKET_TIMEOUT` | `5` | Socket timeout (seconds) |
+| `REDIS_SOCKET_CONNECT_TIMEOUT` | `5` | Connection timeout (seconds) |
+| `REDIS_RETRY_ON_TIMEOUT` | `true` | Retry on socket timeout |
+| `REDIS_HEALTH_CHECK_INTERVAL` | `30` | Health check interval (seconds) |
+| `REDIS_EVENT_BUS` | `true` | Use Redis Streams for SSE event bus |
+| `REDIS_PIPELINE_STATE` | `true` | Use Redis Hashes for pipeline state |
+| `REDIS_CHECKPOINTER` | `true` | Use RedisSaver for LangGraph checkpoints |
 
 #### Integrations
 
@@ -4473,17 +4731,18 @@ effective_supabase_key:     SUPABASE_SERVICE_ROLE_KEY or effective_supabase_anon
 database_url_sync:          Derived from DATABASE_URL (replaces +asyncpg with postgresql://)
 ```
 
-#### Optional — Database (PostgreSQL + SQLAlchemy) — Added 2026-02-27
+#### Database Tuning (PostgreSQL + SQLAlchemy)
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `DATABASE_URL` | `None` | PostgreSQL async URL (`postgresql+asyncpg://...`). DB layer is opt-in — `None` means no DB. |
 | `DATABASE_ECHO` | `false` | Enable SQLAlchemy SQL logging |
 | `DATABASE_POOL_SIZE` | `5` | Connection pool size |
 | `DATABASE_MAX_OVERFLOW` | `10` | Max overflow connections beyond pool size |
 | `PLATFORM_CACHE_TTL_DAYS` | `7` | Re-search platforms after N days (cache repo TTL) |
 | `URL_ENRICHMENT_CACHE_TTL_DAYS` | `14` | Re-scrape URLs after N days (cache repo TTL) |
-| `TEST_DATABASE_URL` | — | Test database URL. If not set, all 44 DB tests auto-skip. |
+| `TEST_DATABASE_URL` | — | Test database URL. If not set, DB tests auto-skip. |
+
+> **Note (Phase 6, 2026-03-27):** `DATABASE_URL` and `REDIS_URL` are now **mandatory**. The JSON TaskStore, in-memory EventBus, JsonAuthService, and MemorySaver fallbacks have been removed. App startup fails fast with descriptive `RuntimeError` if either is missing.
 
 ---
 
@@ -4866,22 +5125,30 @@ tests/
 │   └── test_embedding_repo.py           # 5 tests — pgvector store, similarity search, generic embedding
 ```
 
-**Test counts:** ~1978 total tests (~1843 passed + 135 skipped), 1 pre-existing failure (PB-39). **Site Audit sprint added 636 tests** (585 core + 51 API) — models: 52, config: 42, crawler: 60, checks: 86, schema: 76, AEO: 125, steps: 59, repo: 24, integration: 61, API: 51. Research pipeline coverage added 2026-02-26 (+109 tests). Front-back integration sprint added 343 tests across 4 phases. Product-level pipeline sprint added 114 tests across 5 phases. Pipeline guard sprint added 12 tests. Route protection sprint added 44 tests. Settings + Knowledge Docs sprint added 77 tests. SQLAlchemy migration sprint added 44 DB tests — auto-skip without `TEST_DATABASE_URL`. S4 mock regression fixed in Phase -1 of structural signal overhaul.
+**Test counts:** ~1360 tests passing (after Phase 6 deleted ~66 JSON-impl tests and ~30 test files were refactored), 1 pre-existing failure (PB-39 — marked xfail). Major test additions since baseline:
+- **Redis Integration (Sessions 0-6):** 157 new tests — RedisEventBus (37), pipeline state (36), distributed locks (13), RedisSaver (7), approval queues (13), semaphore (11), cache (17), heartbeat renewal (23)
+- **R2 Blob Storage:** 25 new tests — CachedStorageBackend (25), R2 backend (in storage/), factory (in storage/)
+- **CMS Integration:** 65+ new tests — WordPress adapter (50+), CMS service, CMS cache, API router
+- **Phase 6 Cleanup:** ~66 tests deleted (JSON TaskStore, in-memory EventBus, JsonAuthService). Test infra migrated to `tests/_support/` with `InMemoryEventBus` and `TestAuthService`.
+- **Integration boundary tests:** 5 new suites — audit, content, gap, research, concurrent pipelines
+- Site Audit: 793 tests. Knowledge Base: 260 tests. Audience Persona: 232 tests. Content engine: 437 tests (v1.0 + v1.3). CPS model: 44 tests. API layer: 500+ tests. Gap analysis: comprehensive. DB layer: 44 tests (auto-skip without `TEST_DATABASE_URL`). Reddit HIL: still zero tests.
 
-### API Test Coverage (526+ tests — 126 base + 179 front-back + 114 product-level + 12 pipeline-guard + 44 route-protection + 51 site-audit)
+### API Test Coverage (500+ tests)
 
 | Test File | What's Tested |
 |-----------|---------------|
-| `test_health.py` | Health + readiness endpoints, missing API key detection |
+| `test_health.py` | Health + readiness endpoints (includes Redis health check) |
 | `test_gap_analysis.py` | Start pipeline, status polling, skip_steps |
 | `test_research.py` | Start pipeline, HITL approval flow (approve/revise/reject) |
 | `test_content.py` | Start pipeline, HITL per-brief approval |
 | `test_events.py` | SSE streaming, Last-Event-ID reconnection, terminal events |
 | `test_artifacts.py` | Company listing, artifact retrieval by type/slug |
 | `test_tasks.py` | Task CRUD, filtering by pipeline/status, cancellation |
-| `test_store.py` | TaskStore persistence, slug locks, approval events, startup recovery |
-| `test_event_bus.py` | Pub/sub, history replay, subscriber lifecycle |
-| `test_runner.py` | Background task wrappers, graph interrupt/resume loop |
+| `test_redis_event_bus.py` | RedisEventBus: atomic Lua publish, stream(), history, mirror eviction, thread safety (37 tests) |
+| `test_cms.py` | CMS connect/disconnect, publish, sync, stale actions, categories (65+ tests) |
+| `test_api_response_shapes.py` | Smoke tests for API response structure validation |
+
+> **Note (Phase 6):** `test_store.py` (JSON TaskStore), `test_event_bus.py` (in-memory EventBus), `test_task_store.py`, `test_task_store_product.py` — all **deleted**. Task store tests now in `tests/services/test_db_task_store.py`. Event bus tests now in `tests/api/test_redis_event_bus.py`.
 
 ### Front-Back Sprint API Tests (179 new tests — added 2026-02-25/26)
 
@@ -4961,24 +5228,60 @@ tests/
 | `test_style_graph.py` | 10 | Draft promotion, backend write fallback ("already exists"), HITL interrupt/resume all 3 paths, cleanup on reject, empty draft skipped |
 | `test_pipeline.py` | 16 | _has_interrupt/_get_interrupt_value helpers, full pipeline auto-approve, company-only, interrupt at each stage, context passing (company→persona, persona→style), optional stage skip, individual stage delegation |
 
-### Remaining Test Gaps
+### New Test Suites (Added 2026-03-22 through 2026-03-27)
 
-#### Gap Analysis Tests (partial coverage)
-- [ ] Steps s3, s7 integration tests
-- [ ] Step-to-step data flow validation
-- [ ] Platform subset selection
+#### Redis Integration Tests
+| Test File | Count | What's Tested |
+|-----------|-------|---------------|
+| `tests/core/test_redis_client.py` | 20+ | Lazy singleton init, double-checked locking, graceful degradation, close_redis() |
+| `tests/api/test_redis_event_bus.py` | 37 | Atomic Lua publish, stream(), history, mirror eviction, thread safety |
+| `tests/content_engine/test_state_redis.py` | 36 | Pipeline state write/read/cleanup, dual-write, stale cleanup |
+| `tests/services/test_distributed_locks.py` | 13 | SET NX EX, Lua compare-delete, fail-closed, orphan cleanup |
+| `tests/core/test_checkpointer.py` | 7 | RedisSaver factory, singleton, override, mandatory enforcement |
+| `tests/services/test_approval_queue_redis.py` | 13 | BRPOP/LPUSH, nonce, duplicate flag, graceful degradation |
+| `tests/services/test_redis_semaphore.py` | 11 | Atomic Lua acquire, self-healing, release, capacity |
+| `tests/unit/test_redis_cache.py` | 17 | cache_get/set/delete/delete_pattern, TTL, JSON serialization |
+| `tests/services/test_heartbeat_renewal.py` | 23 | Lock/semaphore renewal during HITL wait |
+
+#### Storage Tests
+| Test File | Count | What's Tested |
+|-----------|-------|---------------|
+| `tests/storage/test_cached_backend.py` | 25 | CachedStorageBackend: read/list_dir caching, size guard, invalidation |
+| `tests/storage/test_r2_backend.py` | 20+ | R2StorageBackend: read/write/exists/delete/list_dir, path validation |
+| `tests/storage/test_factory.py` | 10+ | get_storage_backend() factory, R2 vs local selection |
+| `tests/storage/test_local_backend.py` | 5+ | LocalStorageBackend basics |
+
+#### CMS Tests
+| Test File | Count | What's Tested |
+|-----------|-------|---------------|
+| `tests/cms/test_wordpress_adapter.py` | 50+ | WordPress REST API v2 adapter: CRUD, auth, rate limits |
+| `tests/cms/test_models.py` | 20+ | Pydantic model validation |
+| `tests/cms/test_protocols.py` | 5+ | Protocol conformance |
+| `tests/cms/test_factory.py` | 5+ | Adapter registry, unsupported provider |
+| `tests/services/test_cms_service.py` | 30+ | Business logic, DB persistence |
+| `tests/services/test_cms_cache.py` | 15+ | Redis-backed CMS cache |
+| `tests/api/test_cms.py` | 65+ | All 11 CMS API endpoints |
+
+#### Integration Boundary Tests (Added 2026-03-27)
+| Test File | Count | What's Tested |
+|-----------|-------|---------------|
+| `tests/integration/test_audit_boundary.py` | 20+ | Site audit pipeline boundary: start → completion |
+| `tests/integration/test_content_boundary.py` | 30+ | Content pipeline boundary with StorageBackend |
+| `tests/integration/test_gap_boundary.py` | 25+ | Gap analysis pipeline boundary |
+| `tests/integration/test_research_boundary.py` | 15+ | Research pipeline boundary |
+| `tests/integration/test_concurrent_pipelines.py` | 20+ | Concurrent pipeline execution with semaphore |
+
+### Remaining Test Gaps
 
 #### Reddit HIL Tests
 - [ ] PRAW read-only enforcement
 - [ ] Thread ranking and filtering
 - [ ] Webhook delivery (mock Slack/Discord)
 
-#### Content Engine Tests (covered, potential additions)
-- [ ] Semantic evaluator with real embeddings
-- [ ] Style judge prompt quality
-- [ ] Factual judge prompt quality
-- [ ] Multi-brief concurrent dispatch stress test
-- [ ] LangGraph edit flow (non-auto-approve path)
+#### Multi-Worker Tests
+- [ ] Redis-backed state correctness under multiple Uvicorn workers
+- [ ] Semaphore behavior with concurrent workers
+- [ ] SSE reconnection across worker restarts
 
 ---
 
@@ -5310,10 +5613,10 @@ scripts/run_server.py ← API entry point (uvicorn)
 ### Critical Issues
 
 #### 1. PARTIAL TEST COVERAGE (Significantly Improved)
-**Severity:** Low (downgraded from Critical — 2026-02-15, improved through 2026-03-06)
-**Description:** ~2568 total tests, 1 pre-existing failure (PB-39). **Site audit module: 793 tests.** **Knowledge Base: 260 tests.** **Audience Persona: 232 tests.** **Content engine: 437 tests** (v1.0 + v1.3). **CPS model: 44 tests** (7 skipped without torch). Research pipeline: 109 tests. API layer: 526+ tests. Gap analysis: comprehensive coverage. Database layer: 44 tests (auto-skip without `TEST_DATABASE_URL`). Reddit HIL still has zero tests.
-**Impact:** All major pipelines (including site audit, knowledge base, audience persona, CPS model), all API endpoints, settings management, knowledge document upload, and database layer have regression protection. Only Reddit HIL remains unprotected.
-**Recommendation:** Add tests for Reddit HIL (webhook delivery, PRAW mocking). Run DB tests with `TEST_DATABASE_URL` in CI to validate full PostgreSQL integration.
+**Severity:** Low (downgraded from Critical — 2026-02-15, improved through 2026-03-28)
+**Description:** ~1360 tests passing (test count down from ~2568 due to Phase 6 deletion of ~66 JSON-impl tests and refactoring of ~30 test files). All major subsystems covered: Redis integration (157 tests), R2 blob storage (60+ tests), CMS integration (65+ tests), site audit (793 tests), KB (260 tests), AP (232 tests), content engine (437 tests), CPS (44 tests), API (500+ tests), gap analysis (comprehensive), DB (44 tests). Reddit HIL still has zero tests.
+**Impact:** Comprehensive regression protection including Redis, R2, CMS, and all pipelines. Only Reddit HIL remains unprotected.
+**Recommendation:** Add tests for Reddit HIL. Run DB tests with `TEST_DATABASE_URL` in CI.
 
 #### 2. InMemoryStore — Agent Memory Not Persistent
 **Severity:** High
@@ -5322,12 +5625,9 @@ scripts/run_server.py ← API entry point (uvicorn)
 **Impact:** Agents start fresh every run. No memory of previous research, revisions, or approved artifacts.
 **Recommendation:** Evaluate persistent store options: Redis, PostgreSQL (via Supabase), or custom SQLAlchemy store.
 
-#### 3. Hardcoded Query Taxonomy Path
-**Severity:** Medium
-**Description:** The query taxonomy file path is hardcoded to `Deep_Presence/research/Citation_Signal_Predictor/cps_model/b2b_queries_180.json` — a path **outside** the content-strategy-engine directory.
-**Location:** `core/gap_analysis/steps/s2_generate_queries.py`
-**Impact:** Will fail if the external repository structure changes. Not portable.
-**Recommendation:** Bundle the taxonomy file within `content-strategy-engine/core/gap_analysis/` or load from config.
+#### 3. ~~Hardcoded Query Taxonomy Path~~ ✅ RESOLVED
+**Severity:** ~~Medium~~ → **Resolved**
+**Description:** The B2B query taxonomy file has been bundled within the repo at `core/gap_analysis/data/b2b_queries_180.json`. No longer references an external path outside the project directory.
 
 #### 4. No Error Handling in CLI Scripts
 **Severity:** Medium
@@ -5364,11 +5664,9 @@ scripts/run_server.py ← API entry point (uvicorn)
 **Impact:** Maintenance burden. Changes must be replicated across files.
 **Recommendation:** Extract to shared utility in `core/research/graphs/__init__.py` or a `utils.py` module.
 
-#### 9. StorageBackend Interface Without Implementations
-**Severity:** Low (current), High (for production)
-**Description:** `core/storage/backends/base.py` defines a clean `StorageBackend` ABC but no concrete implementations (LocalFilesystemBackend, S3Backend, etc.) exist.
-**Impact:** Cannot swap storage backends as designed. Currently using DeepAgents' own `FilesystemBackend` directly.
-**Recommendation:** Implement `LocalFilesystemBackend` as the default, then cloud backends when needed.
+#### 9. ~~StorageBackend Interface Without Implementations~~ ✅ RESOLVED (R2 Sprint, 2026-03-27)
+**Severity:** ~~High~~ → **Resolved**
+**Description:** `StorageBackend` ABC now has three concrete implementations: `LocalStorageBackend`, `R2StorageBackend` (Cloudflare R2), and `CachedStorageBackend` (Redis cache wrapper). R2 is the default in production. See §9.5 for details.
 
 #### 10. Old Research Pipeline Removed (2026-03-08)
 **Severity:** ~~Medium~~ Resolved
@@ -5379,17 +5677,13 @@ scripts/run_server.py ← API entry point (uvicorn)
 **Description:** Originally written for Langfuse v2 API, then migrated to Langfuse v3 (2026-02-16). Langfuse was **fully removed** on 2026-03-02 and replaced by LangSmith as the sole tracing backend. The unified module `core/shared_tools/tracing.py` uses `RunTree` from `langsmith.run_trees` and is shared across all pipelines. Old `core/content_engine/tracing_v13.py` is a re-export shim for backward compatibility. See §7.3 for full architecture.
 **Location:** `core/shared_tools/tracing.py` (unified), `core/content_engine/tracing_v13.py` (shim)
 
-#### 12. TaskStore JSON Persistence — Single-Server Limitation
-**Severity:** Low (current), Medium (for production)
-**Description:** `TaskStore` uses JSON files in `artifacts/_jobs/` for task persistence. Works fine for single-server deployment but does not support multi-server or horizontal scaling.
-**Location:** `api/tasks/store.py`
-**Impact:** Cannot scale API to multiple servers without shared state.
-**Recommendation:** Migrate to Redis or PostgreSQL-backed task store when horizontal scaling is needed.
+#### 12. ~~TaskStore JSON Persistence — Single-Server Limitation~~ ✅ RESOLVED (Phase 6, 2026-03-27)
+**Severity:** ~~Medium~~ → **Resolved**
+**Description:** JSON `TaskStore` (`api/tasks/store.py`) has been **deleted**. `DbTaskStore` with PostgreSQL persistence is now the only implementation. Distributed locks via Redis, distributed semaphore via Redis Sorted Sets, approval queues via Redis BRPOP/LPUSH. Multi-worker deployment now supported.
 
-#### 13. `model_dump(mode='json')` in TaskStore
-**Severity:** Low
-**Description:** TaskStore persistence uses `model_dump(mode='json')` for Pydantic v2 serialization. Works correctly in current Pydantic v2 but should be verified with future Pydantic upgrades.
-**Location:** `api/tasks/store.py`
+#### 13. ~~`model_dump(mode='json')` in TaskStore~~ ✅ RESOLVED
+**Severity:** ~~Low~~ → **Resolved**
+**Description:** JSON TaskStore has been removed. `DbTaskStore` uses SQLAlchemy ORM for persistence.
 
 ### Data Quality & Operational Concerns
 
@@ -5423,11 +5717,9 @@ scripts/run_server.py ← API entry point (uvicorn)
 **Description:** No allowlist on `setattr` — caller can overwrite `id`, `created_at`, `slug` via `**kwargs`.
 **Fix:** Add allowlist of mutable fields (`name`, `domain`, `additional_domains`, `products`).
 
-#### 19. Module-Level Cache Thread Safety (C6)
-**Severity:** Critical (deferred)
-**Location:** `api/services/gap_data_service.py`, `api/services/content_data_service.py`, `api/services/brand_data_service.py`
-**Description:** FastAPI runs sync endpoints in a thread pool. The compound operation (check length, delete oldest, insert) on `_CACHE` dict is not atomic under concurrent load.
-**Fix:** Add `threading.Lock` around cache mutations, or switch to `cachetools.TTLCache`.
+#### 19. ~~Module-Level Cache Thread Safety (C6)~~ ✅ RESOLVED (Redis Session 6, 2026-03-22)
+**Severity:** ~~Critical~~ → **Resolved**
+**Description:** Module-level `_CACHE` dicts in all three data services have been replaced with Redis-backed `cache_get()`/`cache_set()` from `core/cache.py`. Redis handles concurrency natively. Thread-safety concern eliminated.
 
 #### 20. `_PATTERN_FLAGS` has_comparison_table Mismatch (C7)
 **Severity:** Medium (deferred)
@@ -5459,6 +5751,30 @@ scripts/run_server.py ← API entry point (uvicorn)
 **Severity:** Medium (deferred)
 **Location:** `api/routers/auth.py`
 **Description:** No rate limiter on registration endpoint. Vulnerable to abuse before real usage.
+
+### New Tech Debt (Added 2026-03-28)
+
+#### 26. Multi-Worker Correctness Not Fully Validated
+**Severity:** Medium
+**Description:** Several components were designed for single-worker deployment. Redis distributed locks, semaphore, and event bus enable multi-worker operation, but no load test or multi-worker integration test exists. Edge cases around: (a) SSE reconnection when the originating worker dies, (b) HITL approval delivery if the waiting worker crashes, (c) pipeline state consistency when two workers read/write the same Hash.
+**Recommendation:** Add multi-worker integration tests with 2+ Uvicorn workers.
+
+#### 27. ~92 Direct Filesystem Bypasses (R2 Incompatible)
+**Severity:** Medium
+**Description:** Gap analysis pipeline (49 bypasses) and other modules still use `Path()` / `open()` directly instead of `StorageBackend`. These work with `STORAGE_BACKEND=local` but fail silently or produce incorrect results with R2.
+**Location:** Primarily `core/gap_analysis/` pipeline and step files
+**Recommendation:** Migrate remaining direct filesystem access to `StorageBackend` API.
+
+#### 28. KEYS Command in Cache Deletion
+**Severity:** Low (current scale), Medium (at scale)
+**Description:** `cache_delete_pattern()` in `core/cache.py` uses Redis `SCAN` (replaced `KEYS`) for pattern deletion. Acceptable at current scale (<100 cache keys) but should be monitored.
+**Location:** `core/cache.py`
+
+#### 29. Reddit HIL: ZERO Tests
+**Severity:** Medium
+**Description:** No `tests/reddit_hil/` directory. PRAW mocking, thread ranking, webhook delivery untested.
+**Location:** `core/reddit_hil/`
+**Recommendation:** Add test suite with PRAW mocks and webhook assertions.
 
 ---
 
@@ -5501,18 +5817,22 @@ scripts/run_server.py ← API entry point (uvicorn)
 | Research Pipeline Orchestrator | ✅ Functional | High — cross-stage wiring works, 109 tests |
 | Gap Analysis (8 steps) | ✅ Production | High — complete for Ramp, Carta |
 | Content Generation Engine v1.3 | ✅ Implemented | **High — 6-stage pipeline, LiteLLM, E-E-A-T eval, 3 HITL, LangSmith tracing, 437 tests** |
-| **FastAPI REST API (core)** | ✅ Implemented | **High — 126 tests, SSE, HITL, all 4 pipelines** |
+| **FastAPI REST API (core)** | ✅ Implemented | **High — 500+ tests, SSE via Redis Streams, HITL, all pipelines** |
 | **API Data Endpoints (front-back)** | ✅ Implemented | **High — 16 endpoints, 179 tests, 4-phase sprint complete** |
 | **Product-Level Pipeline Execution** | ✅ Implemented | **High — product CRUD, effective_slug locking, per-product artifact dirs, product prompts, 114 tests** |
-| **Auth System (v0)** | ✅ Implemented | **High — default-deny ASGI middleware, RBAC, tenant isolation, invite flow, 952 tests** |
+| **Auth System (v0)** | ✅ Implemented | **High — default-deny ASGI middleware, RBAC, tenant isolation, invite flow** |
 | **Settings Pages API** | ✅ Implemented | **High — team management, company profile, pipeline defaults, 39 tests** |
 | **Knowledge Doc Upload** | ✅ Implemented | **High — multipart upload, text extraction, s1 integration, embedded status, 37 tests** |
-| Reddit HIL Monitor | ✅ Functional | Medium — tested with Ramp |
+| **Redis Infrastructure (Sessions 0-6)** | ✅ Implemented | **High — EventBus (Streams), distributed locks, semaphore, approval queues, RedisSaver, cache, pipeline state. 157 tests.** |
+| **R2 Blob Storage** | ✅ Implemented | **High — StorageBackend ABC + R2/Local/Cached impls, factory, reader-side migration. 60+ tests.** |
+| **CMS Integration** | ✅ Implemented | **High — WordPress adapter, 11 API endpoints, DB-backed, Fernet-encrypted credentials. 65+ tests.** |
+| **Phase 6 Remove Fallbacks** | ✅ Implemented | **High — DATABASE_URL + REDIS_URL mandatory. JSON TaskStore, EventBus, JsonAuthService, MemorySaver all deleted.** |
+| Reddit HIL Monitor | ✅ Functional | Medium — tested with Ramp, **zero tests** |
 | Supabase Schema | ✅ Production | High — 4 migrations, RLS, HNSW |
 | Supabase Mirror | ✅ Functional | Medium — works but no SQLAlchemy ORM |
 | CLI Scripts | ✅ Functional | Medium — works but no error handling |
 | LangSmith Tracing (sole backend) | ✅ Implemented | **High — all pipelines traced, prompt registry, shared module (Langfuse removed)** |
-| **Knowledge Base (Pipeline 1b)** | ✅ Implemented | **High — 6-agent DAG, 3 HITL checkpoints, staleness tracking, delta synthesis, 260 tests** |
+| **Knowledge Base (Pipeline 1a)** | ✅ Implemented | **High — 6-agent DAG, 3 HITL checkpoints, staleness tracking, delta synthesis, 260 tests** |
 
 ### Completed Sprints
 
@@ -5537,31 +5857,41 @@ scripts/run_server.py ← API entry point (uvicorn)
 | **`content-engine-v13`** | **`feat/content-engine-v13`** | **2026-03-02** | **~437** | **v1.3 pipeline (6 stages, LiteLLM, E-E-A-T, 3 HITL, linker agent), LangSmith migration (Langfuse removed)** |
 | **`site-audit-p3-bugfixes`** | **`fix/site-audit-p3`** | **2026-03-04** | **82** | **P3 bug fixes: config validation, dateutil parsing, canonical URL, crawl-delay, schema validators, AEO improvements → 793 site audit tests** |
 | **`knowledge-base-v1-v5`** | **`research-agent-v1.2.0`** | **2026-03-06** | **260** | **KB Phases 1-5: 17 models, KBStorage, 6 agents, DAG orchestrator, 3 HITL, API router, staleness tracking, delta synthesis → ~2479 total** |
+| **`audience-persona-v6-a-c`** | **`research-agent-v1.2.0`** | **2026-03-06** | **232** | **AP Phases A-C: 9 models, PersonaStorage, 2 agents, 2 HITL graphs, prompts** |
+| **`research-orchestrator-v13`** | **`feat/front-back`** | **2026-03-11** | **67** | **Research Orchestrator — KB→AP→VSG sequential DAG** |
+| **`td-content-integration`** | **`feat/front-back`** | **2026-03-15** | **44** | **TD→GA→CE integration — 8-phase plan** |
+| **`daily-tracker-db-persistence`** | **`feat/front-back`** | **2026-03-15** | **392** | **Daily Tracker DB persistence — 6-phase plan** |
+| **`pgvector-migration`** | **`feat/front-back`** | **2026-03-15** | **429** | **ChromaDB→pgvector migration** |
+| **`structured-logging-v17-v18`** | **`feat/front-back`** | **2026-03-15** | **70** | **Structured Logging Foundation + Correlation & Context** |
+| **`redis-sessions-0-6`** | **`feat/redis-integration`** | **2026-03-22** | **157** | **Redis Infrastructure: EventBus (Streams), pipeline state (Hashes), distributed locks, RedisSaver, approval queues, semaphore, cache** |
+| **`redis-codex-fixes-phase2`** | **`feat/redis-integration`** | **2026-03-27** | **17** | **6 critical Redis bug fixes: singleton race, socket leak, cache mismatch, cleanup clobber, semaphore renewal, exception broadening** |
+| **`r2-blob-storage-phase3+5`** | **`feat/redis-integration`** | **2026-03-27** | **25** | **R2 Blob Storage: CachedStorageBackend, mtime→timestamp migration, reader-side StorageBackend migration** |
+| **`redis-phase6-remove-fallbacks`** | **`feat/redis-integration`** | **2026-03-27** | **0 (66 deleted)** | **Phase 6: Delete JSON TaskStore, EventBus, JsonAuthService, MemorySaver. DATABASE_URL+REDIS_URL mandatory. ~1300 lines removed.** |
+| **`cms-integration`** | **`feat/redis-integration`** | **2026-03-27** | **65+** | **CMS Integration: WordPress adapter, 11 API endpoints, 3 DB tables, Fernet-encrypted credentials** |
 
 ### What's Planned (Future Scope)
 
 | Priority | Component | Description | Dependencies |
 |----------|-----------|-------------|--------------|
-| 1 | **Frontend-Backend Integration** | Wire frontend to live endpoints, remove ~2100 lines of fixture data | ✅ Backend complete (front-back sprint) |
-| 2 | **Content Engine v1.1** | HITL timeout, --offline flag, cost budget cap | Content Engine v1.0 |
-| 3 | **Production Hardening** | Fix deferred issues (C5-C7, CX-1 through CX-10), thread-safe caches, rate limiting | front-back sprint |
-| 4 | **~~Product-Level Pipeline Execution~~** | ~~Model supports it (Company → Products), execution deferred~~ — **DONE in product-level-pipeline sprint** | ✅ Complete |
-| 5 | **Supabase Migration** | Replace JSON AuthStore with Supabase, migrate task persistence | Auth system, Supabase schema |
-| 6 | **~~SQLAlchemy ORM~~** | ~~Replace raw Supabase client with ORM~~ — **DONE in sqlalchemy-migration + service-layer-phase3 sprints** | ✅ Complete |
-| 6 | **Reddit HIL Tests** | Only untested module (PRAW mocking, webhook delivery) | Existing codebase |
-| 7 | **DB Integration for New Research Pipelines** | Add PostgreSQL persistence for KB/AP/VSG | SQLAlchemy + Alembic |
-| 8 | **Cloud Storage Backends** | S3/GCS/Supabase Storage implementations | StorageBackend interface |
-| 9 | ~~**Structured Logging**~~ | ✅ **DONE** — structlog foundation, JSON/console modes, correlation IDs, context propagation | `core/shared_tools/structured_logging.py` |
-| 10 | **CI/CD Pipeline** | Automated tests, linting, deployment | Tests + Docker |
-| 11 | **Redis/PG TaskStore** | Replace JSON-file TaskStore for multi-server | FastAPI backend |
+| 1 | **Remaining ~92 Filesystem Bypasses** | Migrate gap analysis pipeline + other modules from `Path()` to `StorageBackend` | R2 backend (✅ done) |
+| 2 | **Multi-Worker Validation** | Integration tests with 2+ Uvicorn workers, verify Redis correctness | Redis (✅ done) |
+| 3 | **Reddit HIL Tests** | Only untested module (PRAW mocking, webhook delivery) | Existing codebase |
+| 4 | **Production Hardening** | Fix remaining deferred issues (C5, CX-1), rate limiting | front-back sprint |
+| 5 | **DB Integration for New Research Pipelines** | Add PostgreSQL persistence for KB/AP/VSG | SQLAlchemy + Alembic |
+| 6 | **CI/CD Pipeline** | Automated tests, linting, deployment | Tests + Docker |
+| 7 | ~~**Cloud Storage Backends**~~ | ✅ **DONE** — R2StorageBackend + CachedStorageBackend + LocalStorageBackend | `core/storage/` |
+| 8 | ~~**Redis/PG TaskStore**~~ | ✅ **DONE** — DbTaskStore + Redis distributed locks/semaphore/approval queues | Phase 6 complete |
+| 9 | ~~**Structured Logging**~~ | ✅ **DONE** — structlog foundation, JSON/console modes, correlation IDs | `core/shared_tools/structured_logging.py` |
+| 10 | ~~**SQLAlchemy ORM**~~ | ✅ **DONE** — 31+ ORM tables, Alembic migrations, 8 domain repos | sqlalchemy-migration sprint |
+| 11 | ~~**Product-Level Pipeline**~~ | ✅ **DONE** — product CRUD, effective_slug locking | product-level-pipeline sprint |
 
 ---
 
 ## 21. REST API Layer (FastAPI)
 
-**Status:** Implemented (2026-02-16), expanded with data endpoints (2026-02-25/26), expanded with product-level support (2026-02-26), pipeline guard added (2026-02-27), production-grade route protection added (2026-02-27), **Settings Pages API + Knowledge Doc Upload added (2026-02-27)**. 1029 tests passing, 1 pre-existing failure (PB-39). All 3 pipelines wrapped + 16 company-scoped data retrieval endpoints + product CRUD endpoints + `?product_slug=` on all 11 data endpoints. `force_rerun` guard on `/gap-analysis/start`. Default-deny ASGI middleware with RBAC, tenant isolation, invite flow, and stream tokens. **14 routers total** including settings (6 endpoints) and knowledge-docs (5 endpoints). Per-company pipeline defaults wired into the gap analysis runner.
+**Status:** Implemented (2026-02-16), expanded through 2026-03-27. ~1360 tests passing, 1 xfail (PB-39). All pipelines wrapped + 16 company-scoped data endpoints + product CRUD + CMS integration (11 endpoints). Default-deny ASGI middleware with RBAC, tenant isolation, invite flow, and stream tokens. **23 routers total** including CMS (11 endpoints), settings (6), knowledge-docs (5). `DATABASE_URL` and `REDIS_URL` are **mandatory** — app fails fast on startup if missing.
 
-**Architecture Decision:** D-API-1 — `asyncio.create_task()` (not Celery), JSON-file TaskStore, SSE for progress, `MemorySaver` checkpointer for HITL. See §17 Decision 12 for full rationale. Data endpoints added in D-FB-1 through D-FB-5.
+**Architecture (post-Phase 6):** `asyncio.create_task()` for background pipelines. `DbTaskStore` (PostgreSQL) with Redis distributed locks + distributed semaphore. `RedisEventBus` (Redis Streams) for SSE. `RedisSaver` for LangGraph HITL checkpoints. JSON TaskStore, in-memory EventBus, JsonAuthService, and MemorySaver fallbacks have been **deleted**.
 
 ### 21.1 Application Factory & Lifecycle
 
@@ -5572,11 +5902,19 @@ def create_app() -> FastAPI:
 ```
 
 **Startup (lifespan context manager):**
-1. **Initialize structured logging** — `configure_logging()` from `core.shared_tools.structured_logging` (structlog + stdlib bridge, JSON or console mode based on `LOG_FORMAT` env var)
-2. Initialize `EventBus` (in-memory pub/sub for SSE)
-3. Initialize `TaskStore` (JSON-file-backed persistence + semaphore)
-4. Scan disk for orphan tasks — marks stale "running" tasks as `FAILED_RESTART`
-5. Store shared state in `app.state` (accessed via dependency injection)
+1. **Initialize structured logging** — `configure_logging()` from `core.shared_tools.structured_logging`
+2. **Validate mandatory env vars** — `DATABASE_URL` and `REDIS_URL` must be set (raises `RuntimeError` if missing)
+3. **Initialize Redis** — async client via `get_redis()`, health check ping. Store in `app.state.redis`
+4. **Initialize `RedisEventBus`** — Redis Streams-backed SSE event bus
+5. **Initialize `DbTaskStore`** — PostgreSQL-backed task store with Redis distributed locks + semaphore
+6. **Purge stale semaphore entries** — `RedisSemaphore.force_clear()` on startup
+7. **Initialize `DbAuthService`** — PostgreSQL-backed auth service
+8. **Wrap StorageBackend** — `CachedStorageBackend` when Redis healthy, raw backend otherwise
+9. Scan DB for orphan tasks — marks stale "running" tasks as `FAILED_RESTART`
+10. Store shared state in `app.state` (accessed via dependency injection)
+
+**Shutdown:**
+1. Close Redis connections — `close_redis()` (both async + sync clients)
 
 **Middleware (applied in order — FastAPI adds in reverse, so last-added = outermost):**
 1. `CORSMiddleware` — outermost. Handles OPTIONS preflight before auth. Configurable origins (default: `localhost:3000`, `localhost:3001`), credentials enabled.
@@ -5590,7 +5928,7 @@ def create_app() -> FastAPI:
 | `TaskConflictError` | 409 | `task_conflict` |
 | `PipelineError` | 500 | `pipeline_error` |
 
-**Routers (mounted in order):** health, auth, companies, gap_analysis, gap_data, events, artifacts, content, content_v13, cps, content_data, brand_data, settings, knowledge_base, knowledge_docs, audience_persona, voice_style_guide, site_audit, daily_tracker, tasks
+**Routers (mounted in order):** health, auth, companies, gap_analysis, gap_data, events, artifacts, content, content_v13, cps, content_data, brand_data, settings, knowledge_base, knowledge_docs, audience_persona, voice_style_guide, site_audit, daily_tracker, onboarding, topic_discovery, research_orchestrator, **cms**, tasks
 
 ---
 
@@ -5598,7 +5936,7 @@ def create_app() -> FastAPI:
 
 #### Health & Readiness
 ```
-GET  /health                                    → {"status": "ok"}
+GET  /health                                    → {"status": "ok", "redis": "connected"|"unavailable"}
 GET  /readiness                                 → {"ready": bool, "missing_keys": [...]}
 ```
 
@@ -5742,6 +6080,23 @@ POST /api/v1/content/v13/{run_id}/approve/content       → ApprovalResponseV13
 - Content Review: `{ "brief_id": "brief-001", "decision": "approve|edit|reject", "editor_notes": "...", "rethink": false }`
 
 **Approval flow:** Router stores full approval dict on `task.approval_payload` via `update_task()`, then calls `submit_approval(decision=string)` to unblock the pipeline. `run_hitl_checkpoint()` reads `task.approval_payload` for `Command(resume=...)` graph resumption.
+
+#### CMS Integration (Added 2026-03-27)
+```
+POST   /api/v1/cms/connect                      → Connect CMS (validate + store credentials)
+GET    /api/v1/cms/connection                    → Get current connection info
+DELETE /api/v1/cms/connection                    → Disconnect CMS
+POST   /api/v1/cms/sync                         → Re-sync content from CMS (background task)
+GET    /api/v1/cms/synced-posts                  → List synced posts
+GET    /api/v1/cms/stale-actions                 → Stale content cards for Home dashboard
+POST   /api/v1/cms/stale-to-triage              → Queue stale post for refresh
+POST   /api/v1/cms/publish                       → Publish brief to CMS
+POST   /api/v1/cms/refresh/{cms_post_id}        → Update existing CMS post
+GET    /api/v1/cms/publish-history               → Audit trail
+GET    /api/v1/cms/categories                    → CMS categories
+```
+
+All CMS endpoints require authentication. Write operations (`POST`, `DELETE`) require `member` or `superuser` role. See §9.10 for full CMS architecture.
 
 #### SSE Event Streaming
 ```
@@ -6091,73 +6446,65 @@ _CACHE_MAX_ENTRIES = 10  # FIFO eviction when full
 
 ---
 
-### 21.3 TaskStore — JSON-Backed Persistence
+### 21.3 TaskStore — DbTaskStore (PostgreSQL + Redis)
 
-**File:** `api/tasks/store.py`
+**File:** `core/services/db_task_store.py` (production), `core/services/task_store.py` (protocol)
+
+> **Note:** The JSON-backed `TaskStore` (`api/tasks/store.py`) was **deleted** in Phase 6 (2026-03-27). `DbTaskStore` is now the only implementation.
 
 **Architecture:**
-- **In-Memory Dict:** O(1) lookup for active tasks
-- **JSON Files:** Atomic persistence via temp-file + `os.replace()` to `artifacts/_jobs/{task_id}.json`
-- **Slug Locks:** Per-company mutexes prevent concurrent pipeline runs for the same company
-- **Global Semaphore:** Caps concurrent pipelines (default: 3, via `API_MAX_CONCURRENT_PIPELINES`)
-- **Approval Queues:** `asyncio.Queue(maxsize=1)`-based blocking/unblocking for HITL — prevents lost-wakeup race condition (previously used `asyncio.Event` which could miss signals if `set()` was called before `wait()`)
-- **Task Handle Tracking:** `Dict[str, asyncio.Task]` stores background task handles, enabling real cancellation via `asyncio.Task.cancel()`
+- **PostgreSQL Persistence:** Task state stored in `api_tasks` ORM table via SQLAlchemy
+- **Redis Distributed Locks:** `SET lock:{pipeline}:{slug} {task_id} NX EX 7200` — prevents concurrent pipeline runs for the same company/product. Lua compare-and-delete for ownership-safe release.
+- **Redis Distributed Semaphore:** `RedisSemaphore` (Sorted Set) caps concurrent pipelines globally (default: 3, via `API_MAX_CONCURRENT_PIPELINES`). Self-healing 2h member TTL. Atomic Lua acquire script.
+- **Redis Approval Queues:** `LPUSH`/`BRPOP` on `approval:{task_id}` list. Nonce validation, duplicate flag (`SET NX`), auto-reject on Redis failure (fail-safe HITL default).
+- **Task Handle Tracking:** `Dict[str, asyncio.Task]` stores background task handles for cancellation via `asyncio.Task.cancel()`
 
 **Task Lifecycle:**
 ```
-create_task() → acquire slug lock → RUNNING
+create_task() → generate task_id → acquire Redis slug lock → INSERT api_tasks → RUNNING
     ↓
 register_task_handle() → store asyncio.Task for cancellation support
     ↓
-update_task() → RUNNING (progress updates)
+async with pipeline_semaphore(task_id):  → acquire Redis semaphore slot
+    ↓
+update_task() → RUNNING (progress updates, UPDATE api_tasks)
     ↓ (if graph interrupts)
-update_task() → PENDING_APPROVAL (blocked on wait_for_approval())
+update_task() → PENDING_APPROVAL (write nonce to Redis, blocked on BRPOP)
     ↓ (human calls /approve)
-submit_approval() → Queue.put_nowait() unblocks wait_for_approval()
+submit_approval() → validate nonce, SET NX flag, LPUSH → BRPOP unblocks
     ↓
 update_task() → RUNNING → ... → COMPLETED | FAILED
-    ↓ (or user calls /cancel)
-cancel_task_handle() → asyncio.Task.cancel() + CancelledError caught in runner
     ↓
-release_slug_lock() + remove_task_handle()
+release_slug_lock() (Lua compare-delete) + ZREM semaphore + remove_task_handle()
 ```
 
-**Startup Recovery:** On server restart, `_recover_from_disk()` loads all JSON files. Tasks with status `RUNNING` or `PENDING_APPROVAL` are marked `FAILED_RESTART` (orphan recovery).
+**Startup Recovery:** Scans DB for tasks with status `RUNNING` or `PENDING_APPROVAL` — marks as `FAILED_RESTART`. `RedisSemaphore.force_clear()` purges stale semaphore entries.
 
-**Key Model:**
-```python
-class PipelineTask(BaseModel):
-    task_id: str
-    pipeline: Literal["research", "gap_analysis", "content"]
-    status: TaskStatus  # running | pending_approval | completed | failed | cancelled | failed_restart
-    company_slug: str
-    current_step: Optional[str]
-    progress_pct: Optional[float]
-    created_at: datetime
-    updated_at: datetime
-    result: Optional[Dict[str, Any]]
-    error: Optional[str]
-    approval_payload: Optional[Dict[str, Any]]
-    approval_history: List[ApprovalRecord]
-```
+**HITL Lease Renewal:** During HITL wait, background heartbeat renews lock TTL and semaphore score every ~60s (Lua scripts for atomicity). Prevents timeout during long human review periods.
 
 ---
 
-### 21.4 EventBus — SSE Streaming
+### 21.4 EventBus — RedisEventBus (Redis Streams)
 
-**File:** `api/tasks/event_bus.py`
+**File:** `api/tasks/redis_event_bus.py` (production), `api/tasks/event_bus.py` (protocol)
+
+> **Note:** The in-memory `EventBus` class was **deleted** in Phase 6 (2026-03-27). `RedisEventBus` is now the only implementation. `EventBusProtocol` remains for structural typing.
 
 **Architecture:**
-- **Per-Task History:** `collections.deque(maxlen=100)` — bounded event buffer per task
-- **Per-Task Subscribers:** `List[asyncio.Queue]` — live subscriber queues
-- **Auto-Incrementing IDs:** Per-task counter for `Last-Event-ID` reconnection
+- **Redis Streams:** `XADD`/`XREAD`/`XRANGE` on `sse:{task_id}` keys (24h TTL, `MAXLEN ~200`)
+- **Atomic Lua Script:** `INCR` + `XADD` + 2×`EXPIRE` in single Redis call — no out-of-order writes across workers
+- **Globally Monotonic IDs:** `INCR sse:counter:{task_id}` — correct sequence across multiple Uvicorn workers
+- **In-Memory Mirror:** Same-worker fast path for `get_history()`/`is_terminal()`, thread-safe via `self._lock`
+- **Mirror Eviction:** `_MAX_MIRROR_TASKS = 1000`, oldest terminal evicted first
 
 **Flow:**
 1. Background runner calls `event_bus.publish(task_id, event_type, data)`
-2. Event stored in history deque + pushed to all active subscriber queues
-3. SSE endpoint (`GET /tasks/{id}/events`) creates subscriber, streams events
-4. On reconnect with `Last-Event-ID`: replays history starting after that ID, then switches to live
-5. **Heartbeat keepalive:** If no event is published for 15 seconds, the stream yields a SSE comment (`: heartbeat\n\n`) to prevent proxy/browser timeouts
+2. Lua script atomically increments counter + appends to Redis Stream + refreshes TTLs
+3. Event also stored in local mirror (fast path for same-worker queries)
+4. SSE endpoint creates `stream()` generator: `XREAD` with 1s block timeout + heartbeat
+5. On reconnect with `Last-Event-ID`: `XRANGE` replays from stream, then switches to live
+6. **Heartbeat keepalive:** 15s timeout yields SSE comment (`: heartbeat\n\n`)
+7. Redis errors in `stream()` close SSE gracefully — client can reconnect
 
 **Terminal Events:** `completed`, `failed`, `cancelled` — SSE stream closes after yielding a terminal event.
 

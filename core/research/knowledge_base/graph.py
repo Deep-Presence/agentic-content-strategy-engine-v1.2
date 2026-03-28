@@ -14,25 +14,13 @@ from typing import Any, Dict, List, Optional
 from typing_extensions import TypedDict
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
+from core.checkpointer import get_checkpointer
 from core.shared_tools.task_status import TaskStatus
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Checkpointer helper
-# ---------------------------------------------------------------------------
-
-
-def _resolve_checkpointer(checkpointer: Any) -> BaseCheckpointSaver:
-    """Return checkpointer if valid, otherwise default to MemorySaver."""
-    if isinstance(checkpointer, BaseCheckpointSaver):
-        return checkpointer
-    return MemorySaver()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -133,7 +121,7 @@ def build_kb_doc_review_graph(
         },
     )
 
-    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
+    return graph.compile(checkpointer=get_checkpointer(checkpointer))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -196,7 +184,7 @@ def build_kb_synthesis_review_graph(
         },
     )
 
-    return graph.compile(checkpointer=_resolve_checkpointer(checkpointer))
+    return graph.compile(checkpointer=get_checkpointer(checkpointer))
 
 
 # ═══════════════════════════════════════════════════════════════════════

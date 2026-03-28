@@ -13,8 +13,9 @@ from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
 from api.schemas.common import GapAnalysisStartRequest, PipelineRunResponse, TaskResponse
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_gap_pipeline_task
 from core.services.task_store import TaskStoreProtocol
 from core.storage.backends.base import StorageBackend
@@ -60,7 +61,7 @@ async def start_gap_analysis(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     storage_backend: StorageBackend = Depends(get_storage_dep),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
@@ -101,7 +102,7 @@ async def start_gap_analysis(
             message="Artifacts already exist. Pass force_rerun=true to re-run.",
         )
 
-    task = task_store.create_task("gap_analysis", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "gap_analysis", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_gap_pipeline_task(

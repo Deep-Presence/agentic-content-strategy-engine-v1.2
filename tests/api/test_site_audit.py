@@ -21,7 +21,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +51,8 @@ def _write_audit_result(
     total_findings: int = 8,
     page_results: list[dict[str, Any]] | None = None,
     top_findings: list[dict[str, Any]] | None = None,
+    started_at: str = "2026-02-28T10:00:00",
+    completed_at: str = "2026-02-28T10:00:12",
 ) -> Path:
     """Write a minimal audit_result.json to disk and return the directory."""
     audit_dir = artifacts_root / "site_audit" / company_slug / audit_id
@@ -104,8 +105,8 @@ def _write_audit_result(
         },
         "page_results": page_results if page_results is not None else _default_page_results(),
         "top_findings": top_findings if top_findings is not None else _default_top_findings(),
-        "started_at": "2026-02-28T10:00:00",
-        "completed_at": "2026-02-28T10:00:12",
+        "started_at": started_at,
+        "completed_at": completed_at,
     }
 
     (audit_dir / "audit_result.json").write_text(
@@ -270,7 +271,7 @@ class TestStartSiteAudit:
         assert resp.status_code == 403
 
     def test_slug_lock_conflict_409(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         """Returns 409 when an audit is already running for this slug."""
         task_store.create_task("site_audit", "test-co")
@@ -380,7 +381,7 @@ class TestStartSiteAuditGuard:
         assert resp.status_code == 202
 
     def test_guard_uses_existing_task_run_id(
-        self, client: TestClient, artifacts_root: Path, task_store: TaskStore
+        self, client: TestClient, artifacts_root: Path, task_store
     ) -> None:
         audit_id = str(uuid.uuid4())
         _write_audit_result(artifacts_root, "test-co", audit_id)
@@ -427,7 +428,7 @@ class TestStartSiteAuditGuard:
 
 class TestGetSiteAuditStatus:
     def test_status_after_start(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("site_audit", "test-co")
         resp = client.get(f"/api/v1/site-audit/status/{task.task_id}")
@@ -442,7 +443,7 @@ class TestGetSiteAuditStatus:
         assert resp.status_code == 404
 
     def test_requires_auth_401(
-        self, public_client: TestClient, task_store: TaskStore
+        self, public_client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("site_audit", "test-co")
         resp = public_client.get(f"/api/v1/site-audit/status/{task.task_id}")
@@ -451,7 +452,7 @@ class TestGetSiteAuditStatus:
     def test_cross_tenant_access_denied_403(
         self,
         client: TestClient,
-        task_store: TaskStore,
+        task_store,
     ) -> None:
         """Cannot poll status for a task belonging to a different company."""
         task = task_store.create_task("site_audit", "other-corp")
@@ -814,15 +815,58 @@ class TestJsonSiteAuditDataService:
     async def test_get_latest_audit_id_returns_correct_id(
         self, service, artifacts_root: Path
     ) -> None:
-        import time
-
         audit_id_1 = str(uuid.uuid4())
-        _write_audit_result(artifacts_root, "test-co", audit_id_1)
-        time.sleep(0.01)  # ensure mtime difference
+        _write_audit_result(
+            artifacts_root, "test-co", audit_id_1,
+            completed_at="2026-02-28T10:00:00",
+        )
         audit_id_2 = str(uuid.uuid4())
-        _write_audit_result(artifacts_root, "test-co", audit_id_2)
+        _write_audit_result(
+            artifacts_root, "test-co", audit_id_2,
+            completed_at="2026-02-28T10:00:12",
+        )
         result = await service.get_latest_audit_id("test-co", "testco.com")
         assert result == audit_id_2
+
+    @pytest.mark.asyncio
+    async def test_list_audits_ordered_by_completed_at(
+        self, service, artifacts_root: Path
+    ) -> None:
+        """list_audits returns audits sorted by completed_at descending."""
+        audit_id_old = str(uuid.uuid4())
+        _write_audit_result(
+            artifacts_root, "test-co", audit_id_old,
+            completed_at="2026-01-01T00:00:00",
+        )
+        audit_id_new = str(uuid.uuid4())
+        _write_audit_result(
+            artifacts_root, "test-co", audit_id_new,
+            completed_at="2026-03-01T00:00:00",
+        )
+        result = await service.list_audits("test-co")
+        assert len(result) == 2
+        assert result[0]["audit_id"] == audit_id_new
+        assert result[1]["audit_id"] == audit_id_old
+
+    @pytest.mark.asyncio
+    async def test_list_audits_missing_timestamp_sorts_last(
+        self, service, artifacts_root: Path
+    ) -> None:
+        """Audits without completed_at/started_at sort after timestamped ones."""
+        audit_id_ts = str(uuid.uuid4())
+        _write_audit_result(
+            artifacts_root, "test-co", audit_id_ts,
+            completed_at="2026-03-01T00:00:00",
+        )
+        # Write an audit with no timestamps
+        audit_id_none = str(uuid.uuid4())
+        _write_audit_result(
+            artifacts_root, "test-co", audit_id_none,
+            started_at="", completed_at="",
+        )
+        result = await service.list_audits("test-co")
+        assert len(result) == 2
+        assert result[0]["audit_id"] == audit_id_ts
 
     @pytest.mark.asyncio
     async def test_invalid_slug_raises_400(

@@ -11,12 +11,22 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from langgraph.checkpoint.memory import MemorySaver
 
 from core.research.audience_persona.graph import (
     build_ap_brief_review_graph,
     build_ap_profile_review_graph,
     run_ap_hitl_checkpoint,
 )
+
+
+@pytest.fixture(autouse=True)
+def _use_memory_checkpointer(monkeypatch):
+    """Use in-memory checkpointer so tests don't require Redis."""
+    monkeypatch.setattr(
+        "core.research.audience_persona.graph.get_checkpointer",
+        lambda override=None: override if override is not None else MemorySaver(),
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -297,18 +297,17 @@ class TestAuthServiceSessionLifecycle:
         session.close.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_auth_secret_key_none_closes_session(self):
-        """When secret_key is None, session is still closed."""
+    async def test_auth_secret_key_none_raises_and_closes_session(self):
+        """When secret_key is None, DbAuthService construction fails → RuntimeError."""
         session = _make_mock_session()
         sf = MagicMock(return_value=session)
         request = _make_mock_request(db_session_factory=sf, secret_key=None)
         setattr(request.app.state, "auth_service", None)
 
         gen = get_auth_service(request)
-        value = await _exhaust_generator(gen)
-        # Should fall through to JSON auth service
-        assert value is not None
-        # Session must have been closed
+        with pytest.raises(RuntimeError, match="Failed to construct DbAuthService"):
+            await _exhaust_generator(gen)
+        # Session must have been closed even on error
         session.close.assert_awaited()
 
 

@@ -373,7 +373,7 @@ class TestSync:
             "core.services.cms_service.create_cms_adapter"
         ) as mock_factory:
             mock_adapter = AsyncMock()
-            mock_adapter.list_all_posts.return_value = posts
+            mock_adapter.list_all_posts.return_value = (posts, False)
             mock_adapter.list_categories.return_value = categories
             mock_factory.return_value = mock_adapter
 
@@ -382,4 +382,218 @@ class TestSync:
         assert result["synced"] == 2
         assert result["stale"] == 1
         assert result["categories"] == 1
+        assert result["truncated"] is False
         assert synced_repo.upsert_from_cms.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_sync_truncated_result(self) -> None:
+        conn_repo, _, synced_repo = _make_mock_repos()
+        synced_repo.upsert_from_cms.return_value = MagicMock()
+        conn_repo.update_sync_metadata.return_value = None
+
+        service = _make_service(conn_repo=conn_repo, synced_repo=synced_repo)
+        conn = _mock_connection()
+
+        posts = [CMSPost(cms_id="1", title="P", slug="p", categories=[])]
+        with patch(
+            "core.services.cms_service.create_cms_adapter"
+        ) as mock_factory:
+            mock_adapter = AsyncMock()
+            mock_adapter.list_all_posts.return_value = (posts, True)
+            mock_adapter.list_categories.return_value = []
+            mock_factory.return_value = mock_adapter
+
+            result = await service.sync_existing_content("test-co", conn)
+
+        assert result["truncated"] is True
+
+
+# ── Cache Integration Tests ──────────────────────────────────────────
+
+
+class TestCategoriesCacheIntegration:
+    @pytest.mark.asyncio
+    async def test_list_categories_cache_hit(self) -> None:
+        """When cache has categories, adapter is NOT called."""
+        service = _make_service()
+        conn = _mock_connection()
+
+        cached_cats = [{"cms_id": "10", "name": "AI", "slug": "ai"}]
+        with patch(
+            "core.services.cms_service.create_cms_adapter"
+        ) as mock_factory, patch(
+            "core.services.cms_cache.get_sync_redis_or_none"
+        ) as mock_redis_fn:
+            mock_adapter = AsyncMock()
+            mock_factory.return_value = mock_adapter
+
+            # Simulate cache hit
+            mock_redis = MagicMock()
+            import json
+            mock_redis.get.return_value = json.dumps(cached_cats)
+            mock_redis_fn.return_value = mock_redis
+
+            result = await service.list_categories(conn)
+
+        assert len(result) == 1
+        assert result[0].name == "AI"
+        # Adapter was NOT called
+        mock_adapter.list_categories.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_list_categories_cache_miss(self) -> None:
+        """On cache miss, adapter is called and result is cached."""
+        service = _make_service()
+        conn = _mock_connection()
+
+        with patch(
+            "core.services.cms_service.create_cms_adapter"
+        ) as mock_factory, patch(
+            "core.services.cms_cache.get_sync_redis_or_none"
+        ) as mock_redis_fn:
+            mock_adapter = AsyncMock()
+            mock_adapter.list_categories.return_value = [
+                CMSCategory(cms_id="10", name="AI")
+            ]
+            mock_factory.return_value = mock_adapter
+
+            mock_redis = MagicMock()
+            mock_redis.get.return_value = None  # cache miss
+            mock_redis_fn.return_value = mock_redis
+
+            result = await service.list_categories(conn)
+
+        assert len(result) == 1
+        mock_adapter.list_categories.assert_called_once()
+        # cache_set was called (via setex)
+        mock_redis.setex.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_categories_no_redis(self) -> None:
+        """Without Redis, adapter is called directly."""
+        service = _make_service()
+        conn = _mock_connection()
+
+        with patch(
+            "core.services.cms_service.create_cms_adapter"
+        ) as mock_factory, patch(
+            "core.services.cms_cache.get_sync_redis_or_none",
+            return_value=None,
+        ):
+            mock_adapter = AsyncMock()
+            mock_adapter.list_categories.return_value = [
+                CMSCategory(cms_id="10", name="AI")
+            ]
+            mock_factory.return_value = mock_adapter
+
+            result = await service.list_categories(conn)
+
+        assert len(result) == 1
+        mock_adapter.list_categories.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_publish_invalidates_categories_cache(self) -> None:
+        """publish_brief invalidates categories cache when categories provided."""
+        md_content = "# Test\n\nContent."
+        storage = _make_mock_storage(md_content)
+        _, pub_repo, _ = _make_mock_repos()
+        pub_repo.create.return_value = MagicMock()
+
+        service = _make_service(pub_repo=pub_repo, storage=storage)
+        conn = _mock_connection()
+
+        published = CMSPost(cms_id="1", url="https://x.com/1/", word_count=10)
+        with patch(
+            "core.services.cms_service.create_cms_adapter"
+        ) as mock_factory, patch(
+            "core.services.cms_cache.get_sync_redis_or_none"
+        ) as mock_redis_fn:
+            mock_adapter = AsyncMock()
+            mock_adapter.publish_post.return_value = published
+            mock_factory.return_value = mock_adapter
+
+            mock_redis = MagicMock()
+            mock_redis_fn.return_value = mock_redis
+
+            await service.publish_brief(
+                "test-co", "b1", conn,
+                effective_slug="test-co",
+                category_names=["AI"],
+            )
+
+        # Categories cache should have been invalidated (delete called)
+        mock_redis.delete.assert_called()
+
+
+class TestStaleActionsCacheIntegration:
+    @pytest.mark.asyncio
+    async def test_cache_hit(self) -> None:
+        """Cached stale actions returned without DB query."""
+        _, _, synced_repo = _make_mock_repos()
+        service = _make_service(synced_repo=synced_repo)
+
+        cached_actions = [{"title": "Cached Post", "staleness_days": 30}]
+        with patch(
+            "core.services.cms_cache.get_sync_redis_or_none"
+        ) as mock_redis_fn:
+            mock_redis = MagicMock()
+            import json
+            mock_redis.get.return_value = json.dumps(cached_actions)
+            mock_redis_fn.return_value = mock_redis
+
+            result = await service.get_stale_actions("test-co")
+
+        assert result == cached_actions
+        synced_repo.get_stale.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cache_miss(self) -> None:
+        """On cache miss, DB is queried and result is cached."""
+        _, _, synced_repo = _make_mock_repos()
+        mock_post = MagicMock()
+        mock_post.id = uuid.uuid4()
+        mock_post.cms_post_id = "42"
+        mock_post.title = "Old"
+        mock_post.url = "https://x.com/"
+        mock_post.staleness_days = 45
+        mock_post.queued_for_refresh = False
+        synced_repo.get_stale.return_value = [mock_post]
+
+        service = _make_service(synced_repo=synced_repo)
+
+        with patch(
+            "core.services.cms_cache.get_sync_redis_or_none"
+        ) as mock_redis_fn:
+            mock_redis = MagicMock()
+            mock_redis.get.return_value = None  # cache miss
+            mock_redis_fn.return_value = mock_redis
+
+            result = await service.get_stale_actions("test-co")
+
+        assert len(result) == 1
+        synced_repo.get_stale.assert_called_once()
+        mock_redis.setex.assert_called_once()
+
+
+class TestSyncedPostsCacheIntegration:
+    @pytest.mark.asyncio
+    async def test_cache_hit_returns_simplenamespace(self) -> None:
+        """Cached synced posts are deserialized to SimpleNamespace."""
+        _, _, synced_repo = _make_mock_repos()
+        service = _make_service(synced_repo=synced_repo)
+
+        cached_posts = [{"id": "abc", "title": "Cached", "categories": ["AI"]}]
+        with patch(
+            "core.services.cms_cache.get_sync_redis_or_none"
+        ) as mock_redis_fn:
+            mock_redis = MagicMock()
+            import json
+            mock_redis.get.return_value = json.dumps(cached_posts)
+            mock_redis_fn.return_value = mock_redis
+
+            result = await service.list_synced_posts("test-co")
+
+        assert len(result) == 1
+        assert result[0].title == "Cached"
+        assert result[0].categories == ["AI"]
+        synced_repo.list_by_company.assert_not_called()

@@ -22,7 +22,7 @@ from api.schemas.gap_data import (
 )
 from api.services import gap_data_service as _gap_svc
 from api.services import brand_data_service as _brand_svc
-from api.tasks.store import TaskStore
+from core.services.task_store import TaskStoreProtocol
 
 
 class JsonGapDataService:
@@ -32,7 +32,7 @@ class JsonGapDataService:
     via ``asyncio.to_thread()`` so routers can be ``async def``.
     """
 
-    def __init__(self, storage: StorageBackend, task_store: TaskStore) -> None:
+    def __init__(self, storage: StorageBackend, task_store: TaskStoreProtocol) -> None:
         self._storage = storage
         self._task_store = task_store
 

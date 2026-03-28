@@ -9,9 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
 from core.services.task_store import ApprovalWindowError
 
 
@@ -124,7 +122,7 @@ class TestStartKB:
         assert call_kwargs is not None
 
     def test_slug_conflict_409(
-        self, client: TestClient, task_store: TaskStore, mock_kb_runner
+        self, client: TestClient, task_store, mock_kb_runner
     ) -> None:
         task_store.create_task("knowledge_base", "test-co")
         resp = client.post("/api/v1/knowledge-base/start", json=MINIMAL_PAYLOAD)
@@ -230,7 +228,7 @@ class TestStartKBGuard:
 
 class TestKBStatus:
     def test_status_running(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("knowledge_base", "test-co")
         resp = client.get(f"/api/v1/knowledge-base/{task.task_id}/status")
@@ -259,7 +257,7 @@ class TestKBStatus:
 
 class TestKBApprove:
     def test_approve_success(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("knowledge_base", "test-co")
         task_store.update_task(
@@ -275,7 +273,7 @@ class TestKBApprove:
         assert resp.json()["decision"] == "approve"
 
     def test_revise_with_note(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("knowledge_base", "test-co")
         task_store.update_task(
@@ -292,7 +290,7 @@ class TestKBApprove:
         assert resp.json()["revision_note"] == "Add more detail"
 
     def test_revise_constructs_revision_notes_dict(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         """CX-3: Verify that revise decisions construct revision_notes dict keyed by doc types."""
         task = task_store.create_task("knowledge_base", "test-co")
@@ -320,7 +318,7 @@ class TestKBApprove:
             }
 
     def test_revise_checkpoint_2_maps_correct_doc_types(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         """CX-3: checkpoint 2 maps to weakness_analysis + brand_perception."""
         task = task_store.create_task("knowledge_base", "test-co")
@@ -346,7 +344,7 @@ class TestKBApprove:
             }
 
     def test_reject(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("knowledge_base", "test-co")
         task_store.update_task(
@@ -362,7 +360,7 @@ class TestKBApprove:
         assert resp.json()["decision"] == "reject"
 
     def test_not_pending_409(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("knowledge_base", "test-co")
         resp = client.post(
@@ -372,7 +370,7 @@ class TestKBApprove:
         assert resp.status_code == 409
 
     def test_tenant_isolation_403(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("knowledge_base", "other-co")
         task_store.update_task(
@@ -387,7 +385,7 @@ class TestKBApprove:
         assert resp.status_code == 403
 
     def test_duplicate_approval_returns_409(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         """Second approval with stale nonce returns 409."""
         task = task_store.create_task("knowledge_base", "test-co")
@@ -508,7 +506,7 @@ class TestKBAuth:
         assert resp.status_code == 403
 
     def test_viewer_can_read_status(
-        self, viewer_client: TestClient, task_store: TaskStore
+        self, viewer_client: TestClient, task_store
     ) -> None:
         task = task_store.create_task("knowledge_base", "test-co")
         resp = viewer_client.get(

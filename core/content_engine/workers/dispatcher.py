@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.config.settings import settings
 from core.content_engine.pipeline import _brief_dir, _cli_worker_progress
-from core.content_engine.state_helpers import _emit, _write_pipeline_state
+from core.content_engine.state_helpers import _emit, _write_pipeline_state, _write_pipeline_state_async
 from core.content_engine.tracing_v13 import create_span, create_trace, end_span, log_score, update_trace_output
 from core.content_engine.workers.drafter import generate_draft
 from core.content_engine.workers.fact_enricher import enrich_with_facts
@@ -265,6 +265,8 @@ async def _run_worker_chain_v13(
     piece_id: Optional[_uuid.UUID] = None,
     event_bus: Any = None,
     task_id: Optional[str] = None,
+    redis_client: Any = None,
+    effective_slug: Optional[str] = None,
 ) -> FormattedContent:
     """Run the v1.3 4-step worker chain for a single brief.
 
@@ -312,7 +314,7 @@ async def _run_worker_chain_v13(
                 return str((bdir / filename).relative_to(storage.root)) if storage else ""
 
             # Step 1: Outline
-            _write_pipeline_state(artifact_dir, [brief.brief_id], "outlining", task_id=task_id)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "outlining", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "outlining", "worker_num": worker_num,
             })
@@ -337,7 +339,7 @@ async def _run_worker_chain_v13(
                 (bdir / "outline.json").write_text(outline_json, encoding="utf-8")
 
             # Step 2: Draft
-            _write_pipeline_state(artifact_dir, [brief.brief_id], "drafting", task_id=task_id)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "drafting", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "drafting", "worker_num": worker_num,
             })
@@ -360,7 +362,7 @@ async def _run_worker_chain_v13(
                 (bdir / "draft.md").write_text(draft.markdown, encoding="utf-8")
 
             # Step 3: Link
-            _write_pipeline_state(artifact_dir, [brief.brief_id], "linking", task_id=task_id)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "linking", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "linking", "worker_num": worker_num,
             })
@@ -384,7 +386,7 @@ async def _run_worker_chain_v13(
                 (bdir / "linked.md").write_text(linked.markdown, encoding="utf-8")
 
             # Step 4: Fact Check (verify-only, no new content)
-            _write_pipeline_state(artifact_dir, [brief.brief_id], "enriching", task_id=task_id)
+            await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "enriching", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
             _emit(event_bus, task_id, "worker_progress", {
                 "brief_id": brief.brief_id, "step": "enriching", "worker_num": worker_num,
             })
@@ -462,6 +464,8 @@ async def dispatch_workers_v13(
     piece_id_map: Optional[Dict[str, _uuid.UUID]] = None,
     event_bus: Any = None,
     task_id: Optional[str] = None,
+    redis_client: Any = None,
+    effective_slug: Optional[str] = None,
 ) -> Tuple[List[Tuple[str, FormattedContent]], List[Dict[str, str]]]:
     """Dispatch v1.3 worker chains in parallel.
 
@@ -502,6 +506,8 @@ async def dispatch_workers_v13(
             piece_id=pid_map.get(brief.brief_id),
             event_bus=event_bus,
             task_id=task_id,
+            redis_client=redis_client,
+            effective_slug=effective_slug,
         )
         for i, brief in enumerate(briefs)
     ]

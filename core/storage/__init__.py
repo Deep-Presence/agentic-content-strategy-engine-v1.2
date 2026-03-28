@@ -4,8 +4,15 @@ from typing import Optional
 
 from core.storage.backends.base import StorageBackend
 from core.storage.backends.local import LocalStorageBackend
+from core.storage.cached_backend import CachedStorageBackend
 
-__all__ = ["LocalStorageBackend", "R2StorageBackend", "StorageBackend", "get_storage_backend"]
+__all__ = [
+    "CachedStorageBackend",
+    "LocalStorageBackend",
+    "R2StorageBackend",
+    "StorageBackend",
+    "get_storage_backend",
+]
 
 _logger = logging.getLogger(__name__)
 
