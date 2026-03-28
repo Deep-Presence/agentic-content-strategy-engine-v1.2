@@ -33,10 +33,13 @@ from api.services.content_data_service import (
 def _clear_cache(monkeypatch):
     """Ensure no Redis cache interferes with tests.
 
-    The old in-memory _CACHE dict was removed in Session 6 (Redis cache migration).
-    Tests run without Redis, so cache calls are no-ops — nothing to clear.
+    Must patch at the *usage* module level, not the source module, because
+    ``from core.redis import get_sync_redis_or_none`` creates a direct
+    binding that monkeypatching ``core.redis`` does not affect.
     """
-    monkeypatch.setattr("core.redis.get_sync_redis_or_none", lambda: None)
+    monkeypatch.setattr(
+        "api.services.content_data_service.get_sync_redis_or_none", lambda: None
+    )
     yield
 
 
