@@ -19,7 +19,6 @@ import pytest
 
 from api.schemas.content_data import ContentBriefListResponse
 from api.services.content_data_service import (
-    _CACHE,
     _infer_brief_status,
     get_brief_detail,
     get_brief_stage_content,
@@ -31,11 +30,14 @@ from api.services.content_data_service import (
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache():
-    """Clear mtime cache before each test."""
-    _CACHE.clear()
+def _clear_cache(monkeypatch):
+    """Ensure no Redis cache interferes with tests.
+
+    The old in-memory _CACHE dict was removed in Session 6 (Redis cache migration).
+    Tests run without Redis, so cache calls are no-ops — nothing to clear.
+    """
+    monkeypatch.setattr("core.redis.get_sync_redis_or_none", lambda: None)
     yield
-    _CACHE.clear()
 
 
 def _write_json(path: Path, data: Any) -> None:

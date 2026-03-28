@@ -15,7 +15,6 @@ from typing import Any, Dict, List
 import pytest
 
 from api.services.gap_data_service import (
-    _CACHE,
     get_clusters,
     get_queries,
     get_summary,
@@ -33,11 +32,14 @@ def storage(tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache():
-    """Clear TTL cache before each test."""
-    _CACHE.clear()
+def _clear_cache(monkeypatch):
+    """Ensure no Redis cache interferes with tests.
+
+    The old in-memory _CACHE dict was removed in Session 6 (Redis cache migration).
+    Tests run without Redis, so cache calls are no-ops — nothing to clear.
+    """
+    monkeypatch.setattr("core.redis.get_sync_redis_or_none", lambda: None)
     yield
-    _CACHE.clear()
 
 
 def _write_json(path: Path, data: Any) -> None:
