@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -337,10 +337,12 @@ class TestHeartbeatBrpopIntegration:
 
     @pytest.mark.asyncio
     @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
+    @patch("core.services.db_task_store.asyncio.sleep", new_callable=AsyncMock)
     @patch("core.services.db_task_store.asyncio.to_thread", side_effect=_sync_to_thread)
     async def test_heartbeat_stops_on_redis_gave_up(
         self,
         _mock_to_thread: MagicMock,
+        _mock_sleep: AsyncMock,
         store_with_redis: DbTaskStore,
         mock_sync_redis: MagicMock,
     ) -> None:

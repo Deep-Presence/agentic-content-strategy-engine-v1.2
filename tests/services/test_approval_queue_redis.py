@@ -134,7 +134,7 @@ class TestWaitForApprovalRedis:
         """BRPOP returns None (timeout) → auto-reject dict."""
         mock_sync_redis.brpop.return_value = None
 
-        result = await store_with_redis.wait_for_approval("task-001", timeout=300)
+        result = await store_with_redis.wait_for_approval("task-001", timeout=2)
 
         assert result["decision"] == "reject"
         assert "timed out" in result["revision_note"]
