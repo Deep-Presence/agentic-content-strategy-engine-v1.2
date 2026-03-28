@@ -97,6 +97,14 @@ def _mock_publish_record(**overrides):
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _disable_redis_cache(monkeypatch):
+    """Prevent Redis cache from leaking state between CMS tests."""
+    monkeypatch.setattr(
+        "core.services.cms_cache.get_sync_redis_or_none", lambda: None
+    )
+
+
 @pytest.fixture
 def mock_cms_service():
     """Pre-built CMSService mock, set on app.state to bypass DI."""
