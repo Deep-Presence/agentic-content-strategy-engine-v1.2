@@ -269,6 +269,50 @@ class TestCreateAudit:
 # ---------------------------------------------------------------------------
 
 
+class TestExistsForSlugAndDomain:
+    """Tests for exists_for_slug_and_domain() — guard query by effective_slug."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_when_completed_audit_exists(self) -> None:
+        session = make_mock_session()
+        session.execute.return_value.scalar.return_value = 1
+        repo = SiteAuditRepository(session)
+        assert await repo.exists_for_slug_and_domain("acme", "acme.com") is True
+
+    @pytest.mark.asyncio
+    async def test_returns_true_for_degraded_audit(self) -> None:
+        """Degraded audits are stored as status=completed + is_degraded=True.
+
+        The query filters on status=completed, so degraded audits are included.
+        """
+        session = make_mock_session()
+        session.execute.return_value.scalar.return_value = 1
+        repo = SiteAuditRepository(session)
+        assert await repo.exists_for_slug_and_domain("acme", "acme.com") is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_no_match(self) -> None:
+        session = make_mock_session()
+        session.execute.return_value.scalar.return_value = 0
+        repo = SiteAuditRepository(session)
+        assert await repo.exists_for_slug_and_domain("acme", "acme.com") is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_scalar_is_none(self) -> None:
+        session = make_mock_session()
+        session.execute.return_value.scalar.return_value = None
+        repo = SiteAuditRepository(session)
+        assert await repo.exists_for_slug_and_domain("acme", "acme.com") is False
+
+    @pytest.mark.asyncio
+    async def test_never_calls_commit(self) -> None:
+        session = make_mock_session()
+        session.execute.return_value.scalar.return_value = 0
+        repo = SiteAuditRepository(session)
+        await repo.exists_for_slug_and_domain("acme", "acme.com")
+        session.commit.assert_not_called()
+
+
 class TestBulkInsertFindings:
     @pytest.mark.asyncio
     async def test_empty_findings_does_one_flush(self) -> None:

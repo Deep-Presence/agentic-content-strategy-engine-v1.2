@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # Gap Analysis — Crawl
     gap_analysis_max_crawl_pages: int = 500
     gap_analysis_max_crawl_depth: int = 4
+    gap_analysis_debug: bool = False  # GA_DEBUG=true → microscopic pipeline tracing via structlog
+    gap_analysis_pw_fail_threshold: int = 10   # consecutive Playwright timeouts before disabling it
+    gap_analysis_total_fail_threshold: int = 20  # consecutive all-3-tiers failures before stopping BFS
 
     # Gap Analysis — S3 Concurrency (two-level: global + per-engine)
     gap_analysis_s3_global_concurrency: int = 30
@@ -152,6 +155,7 @@ class Settings(BaseSettings):
     langsmith_project: str = "content-engine"
     langsmith_use_hub: bool = False
     langsmith_hub_tag: str = "production"
+    gap_analysis_langsmith_project: str = "gap-analysis"
 
     # --- Research Knowledge Base ---
     research_kb_project: str = "research-kb"
@@ -218,12 +222,36 @@ class Settings(BaseSettings):
     database_pool_size: int = 5
     database_max_overflow: int = 10
 
+    # --- Redis ---
+    redis_url: str | None = None  # redis://localhost:6379/0
+    redis_max_connections: int = 20
+    redis_socket_timeout: float = 20.0
+    redis_socket_connect_timeout: float = 2.0
+    redis_retry_on_timeout: bool = True
+    redis_health_check_interval: int = 30  # seconds
+    redis_event_bus: bool = True  # Use RedisEventBus instead of in-memory EventBus (requires REDIS_URL)
+    redis_pipeline_state: bool = True  # Use Redis Hashes for pipeline_state + distributed slug locks (requires REDIS_URL)
+    redis_checkpointer: bool = True  # Use RedisSaver for LangGraph HITL checkpoints
+
     # --- Auth ---
     invite_ttl_days: int = 7  # Invite codes expire after 7 days
 
     # --- Cache TTLs ---
     platform_cache_ttl_days: int = 7  # Re-search platforms after 7 days
     url_enrichment_cache_ttl_days: int = 14  # Re-scrape URLs after 14 days
+
+    # --- Storage Backend ---
+    storage_backend: Literal["local", "r2"] = "r2"
+
+    # --- CMS Integration ---
+    cms_fernet_key: str | None = None  # Fernet symmetric encryption key for CMS credentials
+
+    # --- Cloudflare R2 (S3-compatible) ---
+    r2_account_id: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket_name: str | None = None
+    r2_endpoint_url: str | None = None  # Auto-derived from account_id if None
 
     # --- Site Audit (Pipeline 0) ---
     site_audit_max_pages: int = 200  # Default max pages to crawl
@@ -249,6 +277,15 @@ class Settings(BaseSettings):
         return self.database_url.replace("+asyncpg", "").replace(
             "asyncpg://", "postgresql://"
         )
+
+    @property
+    def effective_r2_endpoint_url(self) -> str | None:
+        """R2_ENDPOINT_URL if set, else derive from R2_ACCOUNT_ID."""
+        if self.r2_endpoint_url:
+            return self.r2_endpoint_url
+        if self.r2_account_id:
+            return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
+        return None
 
     @property
     def effective_supabase_url(self) -> str | None:

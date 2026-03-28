@@ -2,55 +2,113 @@
 
 Used by both JsonContentDataService and DbContentDataService to enrich
 content briefs with gap analysis data (why we picked this, success
-indicators, exemplars) from the filesystem-based analysis.json.
+indicators, exemplars) from StorageBackend-based analysis.json.
 
-Follows filesystem-first architecture — reads from gap_analysis artifacts
-regardless of whether the brief itself came from DB or JSON.
+Reads gap_analysis artifacts via StorageBackend regardless of whether
+the brief itself came from DB or JSON.
 """
 from __future__ import annotations
 
 import json
 import logging
 import threading
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from api.schemas.content_data import GapContextSummary
+from core.storage.backends.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
-# ── Caching ──────────────────────────────────────────────────────────
+# ── Caching (Redis-backed, Session 6) ────────────────────────────────
 
-_GAP_CACHE: Dict[str, Tuple[int, Any]] = {}
+from core.cache import cache_get, cache_set
+from core.redis import get_sync_redis_or_none
+
+_GAP_CACHE: Dict[str, Tuple[float, Any]] = {}
+_GAP_CACHE_TTL_S = 300  # 5 minutes
 _GAP_CACHE_LOCK = threading.Lock()
 
+# Cache LocalStorageBackend instances by root path to avoid per-call instantiation
+_LOCAL_BACKEND_CACHE: Dict[str, "StorageBackend"] = {}
+_LOCAL_BACKEND_CACHE_MAX = 20
 
-def load_analysis_json(artifacts_root: Path, slug: str) -> Optional[Dict[str, Any]]:
+
+def _resolve_storage(storage_or_root: Union[StorageBackend, Path]) -> StorageBackend:
+    """Resolve a StorageBackend or Path to a StorageBackend instance.
+
+    Caches LocalStorageBackend instances per root path to avoid repeated
+    instantiation on every call.  The Path branch is deprecated — all
+    production callers now inject StorageBackend directly (Phase 7).
+    """
+    if isinstance(storage_or_root, Path):
+        logger.warning(
+            "load_analysis_json called with Path instead of StorageBackend — "
+            "this fallback is deprecated and will be removed",
+        )
+        cache_key = str(storage_or_root)
+        cached = _LOCAL_BACKEND_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        from core.storage.backends.local import LocalStorageBackend
+        backend: StorageBackend = LocalStorageBackend(storage_or_root)
+        if len(_LOCAL_BACKEND_CACHE) >= _LOCAL_BACKEND_CACHE_MAX:
+            oldest_key = next(iter(_LOCAL_BACKEND_CACHE))
+            del _LOCAL_BACKEND_CACHE[oldest_key]
+        _LOCAL_BACKEND_CACHE[cache_key] = backend
+        return backend
+    return storage_or_root
+
+
+def load_analysis_json(
+    storage_or_root: Union[StorageBackend, Path], slug: str,
+) -> Optional[Dict[str, Any]]:
     """Load and cache analysis.json for a company slug.
 
-    Uses mtime-based cache invalidation. Returns None if file doesn't exist.
+    Accepts StorageBackend (preferred) or Path (backward compat for Phase 2
+    callers in content_data_service / db_content_data).
+
+    Cache layers (checked in order):
+    1. Redis (shared across workers, 5min TTL) — Session 6
+    2. In-memory thread-safe dict (process-local, 5min TTL) — R2/StorageBackend branch
+    3. StorageBackend read (file or R2)
     """
-    gap_dir = artifacts_root / "gap_analysis" / slug
-    file_path = gap_dir / "analysis.json"
+    storage = _resolve_storage(storage_or_root)
 
-    try:
-        mtime_ns = file_path.stat().st_mtime_ns
-    except (FileNotFoundError, OSError):
+    # Layer 1: Redis cache (shared across workers)
+    redis = get_sync_redis_or_none()
+    redis_cache_key = f"cache:gap_ctx:{slug}"
+
+    if redis is not None:
+        redis_cached = cache_get(redis, redis_cache_key)
+        if redis_cached is not None:
+            return redis_cached
+
+    # Layer 2: In-memory cache (process-local)
+    mem_cache_key = f"gap_analysis/{slug}/analysis.json"
+    now = time.monotonic()
+    mem_cached = _GAP_CACHE.get(mem_cache_key)
+    if mem_cached is not None and (now - mem_cached[0]) < _GAP_CACHE_TTL_S:
+        return mem_cached[1]
+
+    # Layer 3: StorageBackend read
+    content = storage.read(f"gap_analysis/{slug}/analysis.json")
+    if content is None:
         return None
 
-    cache_key = str(file_path)
-    cached = _GAP_CACHE.get(cache_key)
-    if cached is not None and cached[0] == mtime_ns:
-        return cached[1]
-
     try:
-        data = json.loads(file_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Failed to parse %s: %s", file_path, exc)
+        data = json.loads(content)
+    except json.JSONDecodeError as exc:
+        logger.warning("Failed to parse gap_analysis/%s/analysis.json: %s", slug, exc)
         return None
+
+    # Populate both cache layers
+    if redis is not None:
+        cache_set(redis, redis_cache_key, data, ttl=300)
 
     with _GAP_CACHE_LOCK:
-        _GAP_CACHE[cache_key] = (mtime_ns, data)
+        _GAP_CACHE[mem_cache_key] = (now, data)
     return data
 
 

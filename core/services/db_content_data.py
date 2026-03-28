@@ -1,8 +1,8 @@
 """DbContentDataService — Postgres-backed implementation of ContentDataServiceProtocol.
 
 Reads content brief metadata from content_pieces table via ContentRepository.
-Stage content files (outline.json, draft.md, etc.) remain filesystem-backed
-since they are large blobs read as whole units.
+Stage content reads via StorageBackend (R2 in prod, local in dev).
+pipeline_state.json remains on local filesystem (ephemeral, Redis migration later).
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ _PIECE_STATUS_MAP = {
     "planned": "suggested",
     "drafting": "drafting",
     "review": "review",
-    "approved": "approved",
+    "approved": "completed",  # HITL-3 approved → Approved/Published column
     "published": "published",
     "archived": "published",
 }
@@ -55,7 +55,7 @@ class DbContentDataService:
 
     - ``get_briefs`` reads from content_pieces table
     - ``get_brief_detail`` reads from content_pieces table
-    - ``get_brief_stage_content`` delegates to filesystem (large blob files)
+    - ``get_brief_stage_content`` reads via DB artifact metadata → StorageBackend
     """
 
     def __init__(
@@ -64,11 +64,18 @@ class DbContentDataService:
         pipeline_repo: PipelineRepository,
         artifacts_root: Path,
         artifact_repo: Optional[ContentArtifactRepository] = None,
+        *,
+        backend: Optional["StorageBackend"] = None,
     ) -> None:
         self._content_repo = content_repo
         self._pipeline_repo = pipeline_repo
         self._artifacts_root = artifacts_root
         self._artifact_repo = artifact_repo
+        if backend is not None:
+            self._backend = backend
+        else:
+            from core.storage import get_storage_backend
+            self._backend = get_storage_backend(artifacts_root)
 
     async def _resolve_run_id(self, effective_slug: str) -> Optional[str]:
         """Resolve effective_slug → latest completed content run id."""
@@ -94,26 +101,43 @@ class DbContentDataService:
         if not pieces:
             return ContentBriefListResponse(briefs=[], total=0)
 
-        # Load gap analysis data for sidebar enrichment (filesystem-first)
+        # Load gap analysis data for sidebar enrichment via StorageBackend
         # Derive base company slug from effective_slug for gap analysis lookup
         base_slug = effective_slug.split("__")[0] if "__" in effective_slug else effective_slug
         analysis_json = await asyncio.to_thread(
-            load_analysis_json, self._artifacts_root, base_slug,
+            load_analysis_json, self._backend, base_slug,
         )
 
-        # Load pipeline_state.json for in-progress status overlay (Phase 0,
-        # highest priority during pipeline execution). The pipeline writes
-        # fine-grained statuses here that the DB doesn't have yet.
+        # Load pipeline state — Redis first (when configured), file fallback
         content_root = self._artifacts_root / "content" / effective_slug
         pipeline_state: Dict[str, Any] = {}
-        ps_path = content_root / "pipeline_state.json"
-        if ps_path.is_file():
+        from core.config.settings import settings as _cfg
+
+        if _cfg.redis_pipeline_state and _cfg.redis_url:
             try:
-                raw_ps = json.loads(ps_path.read_text(encoding="utf-8"))
-                if isinstance(raw_ps, dict):
-                    pipeline_state = raw_ps
-            except (json.JSONDecodeError, OSError):
-                pass
+                from core.redis import get_redis_or_none
+                from core.content_engine.state_redis import read_pipeline_state_redis_async
+
+                rc = get_redis_or_none()
+                if rc is not None:
+                    pipeline_state = await read_pipeline_state_redis_async(rc, effective_slug)
+            except Exception:
+                logger.warning(
+                    "Redis pipeline state read failed — falling back to file",
+                    exc_info=True,
+                )
+        if not pipeline_state:
+            # StorageBackend fallback (R2 or local)
+            content = self._backend.read(
+                f"content/{effective_slug}/pipeline_state.json"
+            )
+            if content:
+                try:
+                    raw_ps = json.loads(content)
+                    if isinstance(raw_ps, dict):
+                        pipeline_state = raw_ps
+                except (json.JSONDecodeError, ValueError):
+                    pass
         # Extract brief_id → task_id mapping for frontend HITL approval calls
         task_id_map: Dict[str, str] = {}
         raw_task_ids = pipeline_state.get("__task_ids__")
@@ -177,6 +201,12 @@ class DbContentDataService:
                     else (piece.created_at.isoformat() if piece.created_at else "")
                 ),
                 gap_context=gap_ctx,
+                published_url=piece.published_url or "",
+                published_at=(
+                    piece.published_at.isoformat()
+                    if hasattr(piece, "published_at") and piece.published_at
+                    else None
+                ),
             ))
 
         return ContentBriefListResponse(briefs=items, total=len(items))
@@ -242,15 +272,15 @@ class DbContentDataService:
         priority_score = eval_results.get("priority_score", 0.0)
         exemplars = eval_results.get("exemplars", [])
 
-        # Filesystem fallback: if DB has no blueprint data (common for
-        # newly created briefs), read from blueprints.json on disk.
+        # StorageBackend fallback: if DB has no blueprint data (common for
+        # newly created briefs), read from blueprints.json via StorageBackend.
         fs_brief_id = piece.brief_id or brief_id
         if not key_topics and not key_angles:
-            content_root = self._artifacts_root / "content" / effective_slug
-            bp_path = content_root / "blueprints.json"
-            if bp_path.is_file():
+            bp_key = f"content/{effective_slug}/blueprints.json"
+            bp_raw = self._backend.read(bp_key)
+            if bp_raw is not None:
                 try:
-                    bp_list = json.loads(bp_path.read_text(encoding="utf-8"))
+                    bp_list = json.loads(bp_raw)
                     if isinstance(bp_list, list):
                         bp_entry = next(
                             (b for b in bp_list if b.get("brief_id") == fs_brief_id),
@@ -326,13 +356,8 @@ class DbContentDataService:
                         piece.id, artifact_stage,
                     )
                     if artifact:
-                        from core.storage import get_storage_backend
-
-                        storage = get_storage_backend(self._artifacts_root)
-                        content = storage.read(artifact.storage_key)
+                        content = self._backend.read(artifact.storage_key)
                         if content is not None:
-                            import json
-
                             if artifact.content_type == "application/json":
                                 try:
                                     parsed = json.loads(content)
@@ -350,11 +375,11 @@ class DbContentDataService:
                             )
             except Exception:
                 logger.warning(
-                    "DB artifact lookup failed for %s/%s/%s — falling back to filesystem",
+                    "DB artifact lookup failed for %s/%s/%s — falling back to StorageBackend",
                     effective_slug, brief_id, stage, exc_info=True,
                 )
 
-        # Fallback: filesystem heuristic (backward compat)
+        # Fallback: StorageBackend-based heuristic (backward compat)
         from api.services.content_data_service import get_brief_stage_content
 
         return await asyncio.to_thread(
@@ -363,6 +388,7 @@ class DbContentDataService:
             effective_slug,
             brief_id,
             stage,
+            storage=self._backend,
         )
 
     # ── Add Brief (filesystem-backed) ─────────────────────────────
@@ -376,9 +402,9 @@ class DbContentDataService:
         source: str = "manual",
         gap_query_id: str = "",
     ) -> ContentBriefListItem:
-        """Create a brief entry on disk AND in DB.
+        """Create a brief entry via StorageBackend AND in DB.
 
-        Filesystem write (blueprints.json) is the source of truth for
+        StorageBackend write (blueprints.json) is the source of truth for
         Content Studio. DB row (status=planned) enables DB-backed queries.
         """
         from api.services.content_data_service import add_brief
@@ -392,6 +418,7 @@ class DbContentDataService:
             description,
             source,
             gap_query_id,
+            storage=self._backend,
         )
 
         # DB write (additive) — create ContentPieceModel with status=planned

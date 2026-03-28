@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -12,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from api.auth.dependencies import require_auth, require_role
-from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_persona_data_service, get_task_store
+from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_persona_data_service, get_storage_backend, get_task_store
 from api.schemas.audience_persona import (
     ApprovalResponseAP,
     AudiencePersonaStartRequest,
@@ -24,8 +23,9 @@ from api.schemas.audience_persona import (
     StandaloneApproveRequest,
 )
 from api.schemas.common import PipelineRunResponse, TaskResponse
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask, TaskStatus
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_audience_persona_pipeline_task, run_single_persona_generator_task
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
@@ -84,6 +84,8 @@ def _ap_should_guard(
     artifacts_root: Path,
     effective_slug: str,
     slug: str,
+    *,
+    backend: Optional[Any] = None,
 ) -> tuple[bool, Optional[str]]:
     """Check whether the AP guard should block a new run.
 
@@ -92,7 +94,7 @@ def _ap_should_guard(
     Guard only blocks when approved personas (fresh|stale) exist AND
     the KB hasn't been updated since the last AP run.
     """
-    storage = PersonaStorage(artifacts_root, effective_slug)
+    storage = PersonaStorage(artifacts_root, effective_slug, backend=backend)
     manifest = storage.read_manifest()
 
     # Count approved personas (only fresh|stale count)
@@ -104,16 +106,13 @@ def _ap_should_guard(
         return False, None
 
     # Check KB staleness: if KB synthesis_version > AP's kb_synthesis_version → run
-    kb_manifest_path = artifacts_root / "knowledge_base" / effective_slug / "_manifest.json"
-    if kb_manifest_path.exists():
-        try:
-            kb_data = json.loads(kb_manifest_path.read_text())
-            kb_synth_version = kb_data.get("synthesis_version", 0)
-            ap_synth_version = manifest.kb_synthesis_version or 0
-            if kb_synth_version > ap_synth_version:
-                return False, None
-        except (json.JSONDecodeError, OSError):
-            pass
+    from core.research.knowledge_base.storage import KBStorage
+    kb_storage = KBStorage(artifacts_root, effective_slug, backend=backend)
+    kb_manifest = kb_storage.read_manifest()
+    kb_synth_version = kb_manifest.synthesis_version
+    ap_synth_version = manifest.kb_synthesis_version or 0
+    if kb_synth_version > ap_synth_version:
+        return False, None
 
     return True, (
         f"Audience personas already exist ({approved_count} approved). "
@@ -135,7 +134,7 @@ async def start_audience_persona(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
@@ -150,8 +149,9 @@ async def start_audience_persona(
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
     # Guard: check if approved personas already exist
+    _storage_backend = getattr(http_request.app.state, "storage_backend", None)
     if not body.force_rerun:
-        should_guard, message = _ap_should_guard(artifacts_root, effective_slug, slug)
+        should_guard, message = _ap_should_guard(artifacts_root, effective_slug, slug, backend=_storage_backend)
         if should_guard:
             response.status_code = 200
             await log_pipeline_launch(
@@ -177,7 +177,7 @@ async def start_audience_persona(
                 message=message or "",
             )
 
-    task = task_store.create_task("audience_persona", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "audience_persona", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_audience_persona_pipeline_task(
@@ -377,8 +377,9 @@ async def add_persona(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
+    backend: Any = Depends(get_storage_backend),
 ) -> Dict[str, Any]:
     user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
     if not user_company_slug or slug != user_company_slug:
@@ -391,7 +392,7 @@ async def add_persona(
     persona_id = _slugify_persona_name(body.persona_name)
 
     # Collision check — append suffix if needed
-    storage = PersonaStorage(artifacts_root, slug)
+    storage = PersonaStorage(artifacts_root, slug, backend=backend)
     existing_ids = set(storage.list_persona_ids())
     if persona_id in existing_ids:
         import uuid as _uuid
@@ -409,7 +410,7 @@ async def add_persona(
     storage.write_brief(persona_id, brief)
 
     # Managed task lifecycle
-    task = task_store.create_task("audience_persona", slug)
+    task = await create_task_durable(task_store, "audience_persona", slug)
 
     handle = asyncio.create_task(
         run_single_persona_generator_task(
@@ -440,12 +441,13 @@ async def standalone_approve_persona(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     artifacts_root: Path = Depends(get_artifacts_root),
+    backend: Any = Depends(get_storage_backend),
 ) -> Dict[str, str]:
     user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
     if not user_company_slug or slug != user_company_slug:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    storage = PersonaStorage(artifacts_root, slug)
+    storage = PersonaStorage(artifacts_root, slug, backend=backend)
     manifest = storage.read_manifest()
 
     entry = manifest.personas.get(persona_id)

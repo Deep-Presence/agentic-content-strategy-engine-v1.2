@@ -32,22 +32,24 @@ class TestGapDataProtocol:
 
     def test_json_gap_data_is_protocol(self):
         from core.services.json_gap_data import JsonGapDataService
+        from core.storage.backends.local import LocalStorageBackend
 
         instance = JsonGapDataService(
-            artifacts_root=Path("/tmp"),
+            storage=LocalStorageBackend(Path("/tmp")),
             task_store=MagicMock(),
         )
         assert isinstance(instance, GapDataServiceProtocol)
 
     def test_db_gap_data_is_protocol(self):
         from core.services.db_gap_data import DbGapDataService
+        from core.storage.backends.local import LocalStorageBackend
 
         instance = DbGapDataService(
             gap_repo=MagicMock(),
             pipeline_repo=MagicMock(),
             signal_repo=MagicMock(),
             platform_repo=MagicMock(),
-            artifacts_root=Path("/tmp"),
+            storage=LocalStorageBackend(Path("/tmp")),
         )
         assert isinstance(instance, GapDataServiceProtocol)
 
@@ -163,10 +165,9 @@ class TestProtocolCompleteness:
             "get_pipeline_defaults", "update_pipeline_defaults",
             "create_access_token", "create_stream_token", "verify_token",
         }
-        from core.auth.json_service import JsonAuthService
         from core.auth.db_service import DbAuthService
 
-        for cls in (JsonAuthService, DbAuthService):
+        for cls in (DbAuthService,):
             for method in expected:
                 assert hasattr(cls, method), f"{cls.__name__} missing {method}"
 
@@ -198,13 +199,7 @@ class TestSiteAuditDataProtocol:
 
 
 class TestAuthServiceProtocol:
-    """Verify both implementations satisfy AuthServiceProtocol."""
-
-    def test_json_auth_service_is_protocol(self):
-        from core.auth.json_service import JsonAuthService
-
-        instance = JsonAuthService(store=MagicMock())
-        assert isinstance(instance, AuthServiceProtocol)
+    """Verify DbAuthService satisfies AuthServiceProtocol."""
 
     def test_db_auth_service_is_protocol(self):
         from core.auth.db_service import DbAuthService
@@ -224,29 +219,7 @@ class TestAuthServiceProtocol:
 
 
 class TestTaskStoreProtocol:
-    """Verify TaskStore satisfies TaskStoreProtocol."""
-
-    def test_task_store_is_protocol(self, tmp_path: Path):
-        from api.tasks.event_bus import EventBus
-        from api.tasks.store import TaskStore
-
-        instance = TaskStore(
-            base_dir=tmp_path / "_jobs",
-            event_bus=EventBus(),
-        )
-        assert isinstance(instance, TaskStoreProtocol)
-
-    def test_task_store_protocol_methods(self):
-        expected = {
-            "semaphore", "create_task", "get_task", "update_task",
-            "list_tasks", "acquire_slug_lock", "release_slug_lock",
-            "register_task_handle", "cancel_task_handle", "remove_task_handle",
-            "wait_for_approval", "submit_approval",
-        }
-        from api.tasks.store import TaskStore
-
-        for method in expected:
-            assert hasattr(TaskStore, method), f"TaskStore missing {method}"
+    """Verify DbTaskStore satisfies TaskStoreProtocol."""
 
     def test_db_task_store_is_protocol(self):
         from core.services.db_task_store import DbTaskStore
@@ -256,8 +229,8 @@ class TestTaskStoreProtocol:
 
     def test_db_task_store_protocol_methods(self):
         expected = {
-            "semaphore", "create_task", "get_task", "update_task",
-            "list_tasks", "acquire_slug_lock", "release_slug_lock",
+            "semaphore", "pipeline_semaphore", "create_task", "get_task",
+            "update_task", "list_tasks", "acquire_slug_lock", "release_slug_lock",
             "register_task_handle", "cancel_task_handle", "remove_task_handle",
             "wait_for_approval", "submit_approval",
         }
@@ -410,17 +383,11 @@ class TestTopicDiscoveryDataProtocol:
 class TestDIWiring:
     """Verify get_task_store returns TaskStoreProtocol."""
 
-    def test_get_task_store_returns_protocol(self, tmp_path: Path):
+    def test_get_task_store_returns_protocol(self):
         """DI helper returns an object satisfying TaskStoreProtocol."""
-        from fastapi.testclient import TestClient
+        from core.services.db_task_store import DbTaskStore
 
-        from api.app import create_app
-        from api.tasks.event_bus import EventBus
-        from api.tasks.store import TaskStore
-
-        app = create_app()
-        store = TaskStore(base_dir=tmp_path / "_jobs", event_bus=EventBus())
-        app.state.task_store = store
+        store = DbTaskStore(session_factory=MagicMock())
         assert isinstance(store, TaskStoreProtocol)
 
     def test_get_task_store_annotation_is_protocol(self):

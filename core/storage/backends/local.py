@@ -104,6 +104,32 @@ class LocalStorageBackend(StorageBackend):
             entries.append(str(rel))
         return entries
 
+    def read_bytes(self, path: str) -> Optional[bytes]:
+        """Read binary artifact. Returns ``None`` if the file does not exist."""
+        p = self._resolve(path)
+        if not p.is_file():
+            return None
+        return p.read_bytes()
+
+    def write_bytes(self, path: str, content: bytes) -> str:
+        """Write binary *content* atomically (tempfile + os.replace). Creates parent dirs."""
+        p = self._resolve(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(p.parent), suffix=".tmp", prefix=p.stem + "_",
+        )
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(content)
+            os.replace(tmp_path, str(p))
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        return path
+
     def mkdir(self, path: str) -> None:
         """Create directory (and parents) at *path*."""
         p = self._resolve(path)

@@ -5,11 +5,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
 
 
 class TestListTasks:
-    def test_list_all_tasks(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_list_all_tasks(self, client: TestClient, task_store) -> None:
         task_store.create_task("gap_analysis", "test-co")
         task_store.release_slug_lock("gap_analysis:test-co")
         task_store.create_task("research", "test-co")
@@ -19,7 +18,7 @@ class TestListTasks:
         data = resp.json()
         assert len(data["tasks"]) == 2
 
-    def test_filter_by_pipeline(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_filter_by_pipeline(self, client: TestClient, task_store) -> None:
         task_store.create_task("gap_analysis", "test-co")
         task_store.release_slug_lock("gap_analysis:test-co")
         task_store.create_task("research", "test-co")
@@ -30,7 +29,7 @@ class TestListTasks:
         assert len(tasks) == 1
         assert tasks[0]["pipeline"] == "gap_analysis"
 
-    def test_filter_by_status(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_filter_by_status(self, client: TestClient, task_store) -> None:
         t1 = task_store.create_task("gap_analysis", "test-co")
         task_store.update_task(t1.task_id, status=TaskStatus.COMPLETED)
         task_store.release_slug_lock("gap_analysis:test-co")
@@ -49,7 +48,7 @@ class TestListTasks:
 
 
 class TestGetTask:
-    def test_get_task_detail(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_get_task_detail(self, client: TestClient, task_store) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         resp = client.get(f"/api/v1/tasks/{task.task_id}")
         assert resp.status_code == 200
@@ -64,7 +63,7 @@ class TestGetTask:
 
 
 class TestCancelTask:
-    def test_cancel_running_task(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_cancel_running_task(self, client: TestClient, task_store) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         resp = client.post(f"/api/v1/tasks/{task.task_id}/cancel")
         assert resp.status_code == 200
@@ -74,7 +73,7 @@ class TestCancelTask:
         updated = task_store.get_task(task.task_id)
         assert updated.status == TaskStatus.CANCELLED
 
-    def test_cancel_pending_approval_task(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_cancel_pending_approval_task(self, client: TestClient, task_store) -> None:
         task = task_store.create_task("research", "test-co")
         task_store.update_task(task.task_id, status=TaskStatus.PENDING_APPROVAL)
 
@@ -82,7 +81,7 @@ class TestCancelTask:
         assert resp.status_code == 200
         assert resp.json()["status"] == "cancelled"
 
-    def test_cancel_completed_returns_409(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_cancel_completed_returns_409(self, client: TestClient, task_store) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         task_store.update_task(task.task_id, status=TaskStatus.COMPLETED)
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,8 +21,9 @@ from api.schemas.common import (
     PipelineRunResponse,
     TaskResponse,
 )
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask, TaskStatus
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_kb_pipeline_task
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
@@ -48,16 +48,15 @@ def _derive_slug(company_name: str) -> str:
     return derive_slug(company_name)
 
 
-def _kb_artifacts_exist(artifacts_root: Path, effective_slug: str) -> bool:
+def _kb_artifacts_exist(
+    artifacts_root: Path,
+    effective_slug: str,
+    backend: Optional[Any] = None,
+) -> bool:
     """Check if a completed KB run exists (manifest with synthesis_version > 0)."""
-    manifest_path = artifacts_root / "knowledge_base" / effective_slug / "_manifest.json"
-    if not manifest_path.exists():
-        return False
-    try:
-        manifest = json.loads(manifest_path.read_text())
-        return manifest.get("synthesis_version", 0) > 0
-    except (json.JSONDecodeError, OSError):
-        return False
+    storage = KBStorage(artifacts_root, effective_slug, backend=backend)
+    manifest = storage.read_manifest()
+    return manifest.synthesis_version > 0
 
 
 def _get_latest_kb_run(
@@ -83,7 +82,7 @@ async def start_knowledge_base(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
@@ -98,7 +97,8 @@ async def start_knowledge_base(
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
     # Guard: skip if already completed and not force_rerun
-    if not body.force_rerun and _kb_artifacts_exist(artifacts_root, effective_slug):
+    _sb = getattr(http_request.app.state, "storage_backend", None)
+    if not body.force_rerun and _kb_artifacts_exist(artifacts_root, effective_slug, backend=_sb):
         last_task = _get_latest_kb_run(task_store, slug, body.product_slug)
         response.status_code = 200
         await log_pipeline_launch(
@@ -128,7 +128,7 @@ async def start_knowledge_base(
             ),
         )
 
-    task = task_store.create_task("knowledge_base", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "knowledge_base", slug, product_slug=body.product_slug)
 
     handle = asyncio.create_task(
         run_kb_pipeline_task(
@@ -194,7 +194,7 @@ async def refresh_stale_knowledge_base(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
@@ -204,7 +204,8 @@ async def refresh_stale_knowledge_base(
         raise HTTPException(status_code=403, detail="Access denied")
 
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
-    storage = KBStorage(artifacts_root, effective_slug)
+    _sb = getattr(http_request.app.state, "storage_backend", None)
+    storage = KBStorage(artifacts_root, effective_slug, backend=_sb) if _sb else KBStorage(artifacts_root, effective_slug)
     report = storage.get_staleness_report(
         threshold_override=body.staleness_threshold_override,
     )
@@ -227,7 +228,7 @@ async def refresh_stale_knowledge_base(
     # Topological sort stale docs using DAG
     sorted_stale = _topological_sort_stale(stale_types)
 
-    task = task_store.create_task("knowledge_base", slug, product_slug=body.product_slug)
+    task = await create_task_durable(task_store, "knowledge_base", slug, product_slug=body.product_slug)
 
     # Build a KnowledgeBaseStartRequest-compatible body for the runner
     from api.schemas.common import KnowledgeBaseStartRequest as KBStartReq

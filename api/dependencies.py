@@ -4,13 +4,14 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+import redis.asyncio as aioredis
 
 from fastapi import HTTPException, Request
 
 from api.auth.store import AuthStore
-from api.tasks.event_bus import EventBus
-from core.auth.json_service import JsonAuthService
+from api.tasks.event_bus import EventBusProtocol
 from core.auth.service import AuthServiceProtocol
 from core.services.brand_data import BrandDataServiceProtocol
 from core.services.content_data import ContentDataServiceProtocol
@@ -34,15 +35,11 @@ _logger = logging.getLogger(__name__)
 
 
 def get_task_store(request: Request) -> TaskStoreProtocol:
-    """Return the task store — JSON-backed TaskStore or DbTaskStore.
-
-    Auto-selected at startup in ``app.py._init_task_store()``:
-    DbTaskStore when DATABASE_URL is set, else JSON-backed TaskStore.
-    """
+    """Return the task store (DbTaskStore). DATABASE_URL required at startup."""
     return request.app.state.task_store
 
 
-def get_event_bus(request: Request) -> EventBus:
+def get_event_bus(request: Request) -> EventBusProtocol:
     return request.app.state.event_bus
 
 
@@ -52,11 +49,20 @@ def get_artifacts_root(request: Request) -> Path:
 
 def get_storage_backend(request: Request):
     """Return the app-level StorageBackend (LocalStorageBackend or S3StorageBackend)."""
-    return request.app.state.storage_backend
+    backend = getattr(request.app.state, "storage_backend", None)
+    if backend is None:
+        from core.storage import get_storage_backend as _gsb
+        backend = _gsb(getattr(request.app.state, "artifacts_root", None))
+    return backend
 
 
 def get_auth_store(request: Request) -> AuthStore:
     return request.app.state.auth_store
+
+
+def get_redis(request: Request) -> Optional[aioredis.Redis]:
+    """Return the Redis client from app state, or None if unavailable."""
+    return getattr(request.app.state, "redis", None)
 
 
 # ── Session-managed helpers ─────────────────────────────────────────
@@ -101,7 +107,7 @@ async def get_auth_service(
 ) -> AsyncGenerator[AuthServiceProtocol, None]:
     """Return the auth service with proper DB session lifecycle.
 
-    Priority: pre-built override → DbAuthService (DATABASE_URL) → JsonAuthService.
+    Priority: pre-built override → DbAuthService (DATABASE_URL required).
     DB sessions are committed on success, rolled back on error.
     """
     # 1. Pre-built override (tests, etc.)
@@ -109,27 +115,27 @@ async def get_auth_service(
     if service is not None:
         yield service
         return
-    # 2. Per-request DB service (when DATABASE_URL is set)
+    # 2. Per-request DB service (DATABASE_URL required)
     sf = getattr(request.app.state, "db_session_factory", None)
-    if sf is not None:
-        session = sf()
-        try:
-            db_service = _build_db_auth_service(request, session)
-            if db_service is not None:
-                yield db_service
-                await session.commit()
-            else:
-                # Construction failed — close session, fall through to JSON
-                await session.close()
-                yield JsonAuthService(request.app.state.auth_store)
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-        return
-    # 3. Fallback: JSON-backed
-    yield JsonAuthService(request.app.state.auth_store)
+    if sf is None:
+        raise RuntimeError(
+            "DATABASE_URL is required for auth service. "
+            "Set it in your environment or .env file."
+        )
+    session = sf()
+    try:
+        db_service = _build_db_auth_service(request, session)
+        if db_service is None:
+            raise RuntimeError(
+                "Failed to construct DbAuthService — check DATABASE_URL and secret_key."
+            )
+        yield db_service
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
 
 def _build_db_gap_data_service(request: Request, session: Any) -> GapDataServiceProtocol | None:
@@ -140,13 +146,18 @@ def _build_db_gap_data_service(request: Request, session: Any) -> GapDataService
         from core.db.repositories.platform_repo import PlatformRepository
         from core.db.repositories.signal_repo import SignalRepository
         from core.services.db_gap_data import DbGapDataService
+        from core.storage import get_storage_backend as _gsb
+
+        _sb = getattr(request.app.state, "storage_backend", None)
+        if _sb is None:
+            _sb = _gsb(getattr(request.app.state, "artifacts_root", None))
 
         return DbGapDataService(
             gap_repo=GapAnalysisRepository(session),
             pipeline_repo=PipelineRepository(session),
             signal_repo=SignalRepository(session),
             platform_repo=PlatformRepository(session),
-            artifacts_root=request.app.state.artifacts_root,
+            storage=_sb,
         )
     except Exception:
         _logger.debug("Failed to build DbGapDataService", exc_info=True)
@@ -162,6 +173,7 @@ def _build_db_brand_data_service(request: Request, session: Any) -> BrandDataSer
         return DbBrandDataService(
             pipeline_repo=PipelineRepository(session),
             artifacts_root=request.app.state.artifacts_root,
+            backend=getattr(request.app.state, "storage_backend", None),
         )
     except Exception:
         _logger.debug("Failed to build DbBrandDataService", exc_info=True)
@@ -181,6 +193,7 @@ def _build_db_content_data_service(request: Request, session: Any) -> ContentDat
             pipeline_repo=PipelineRepository(session),
             artifacts_root=request.app.state.artifacts_root,
             artifact_repo=ContentArtifactRepository(session),
+            backend=getattr(request.app.state, "storage_backend", None),
         )
     except Exception:
         _logger.debug("Failed to build DbContentDataService", exc_info=True)
@@ -203,8 +216,12 @@ async def get_gap_data_service(
         yield service
         return
 
+    _storage_backend = getattr(request.app.state, "storage_backend", None)
+    if _storage_backend is None:
+        from core.storage import get_storage_backend
+        _storage_backend = get_storage_backend(getattr(request.app.state, "artifacts_root", None))
     json_service = JsonGapDataService(
-        artifacts_root=request.app.state.artifacts_root,
+        storage=_storage_backend,
         task_store=request.app.state.task_store,
     )
 
@@ -256,6 +273,7 @@ async def get_brand_data_service(
                 yield JsonBrandDataService(
                     artifacts_root=request.app.state.artifacts_root,
                     task_store=request.app.state.task_store,
+                    backend=getattr(request.app.state, "storage_backend", None),
                 )
         except Exception:
             await session.rollback()
@@ -266,6 +284,7 @@ async def get_brand_data_service(
     yield JsonBrandDataService(
         artifacts_root=request.app.state.artifacts_root,
         task_store=request.app.state.task_store,
+        backend=getattr(request.app.state, "storage_backend", None),
     )
 
 
@@ -292,6 +311,7 @@ async def get_content_data_service(
                 await session.close()
                 yield JsonContentDataService(
                     artifacts_root=request.app.state.artifacts_root,
+                    storage=getattr(request.app.state, "storage_backend", None),
                 )
         except Exception:
             await session.rollback()
@@ -301,6 +321,7 @@ async def get_content_data_service(
         return
     yield JsonContentDataService(
         artifacts_root=request.app.state.artifacts_root,
+        storage=getattr(request.app.state, "storage_backend", None),
     )
 
 
@@ -317,6 +338,7 @@ def _build_db_site_audit_data_service(
             audit_repo=SiteAuditRepository(session),
             company_repo=CompanyRepository(session),
             artifacts_root=request.app.state.artifacts_root,
+            backend=getattr(request.app.state, "storage_backend", None),
         )
     except Exception:
         _logger.debug("Failed to build DbSiteAuditDataService", exc_info=True)
@@ -349,6 +371,7 @@ async def get_site_audit_data_service(
                 await session.close()
                 yield JsonSiteAuditDataService(
                     artifacts_root=request.app.state.artifacts_root,
+                    backend=getattr(request.app.state, "storage_backend", None),
                 )
         except Exception:
             await session.rollback()
@@ -356,9 +379,10 @@ async def get_site_audit_data_service(
         finally:
             await session.close()
         return
-    # 3. Fallback: filesystem-backed
+    # 3. Fallback: StorageBackend-backed
     yield JsonSiteAuditDataService(
         artifacts_root=request.app.state.artifacts_root,
+        backend=getattr(request.app.state, "storage_backend", None),
     )
 
 
@@ -642,7 +666,10 @@ async def get_prompt_library_service(request: Request) -> AsyncGenerator[Any, No
             from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
             from core.daily_tracker.prompt_library import PromptLibraryService
 
-            svc = PromptLibraryService(prompt_repo=TrackedPromptRepository(session))
+            svc = PromptLibraryService(
+                prompt_repo=TrackedPromptRepository(session),
+                backend=getattr(request.app.state, "storage_backend", None),
+            )
             yield svc
             await session.commit()
         except Exception:
@@ -721,7 +748,10 @@ async def get_daily_tracker_orchestrator(request: Request) -> AsyncGenerator[Any
 
             prompt_repo = TrackedPromptRepository(session)
             svc = DailyTrackerOrchestrator(
-                prompt_service=PromptLibraryService(prompt_repo=prompt_repo),
+                prompt_service=PromptLibraryService(
+                    prompt_repo=prompt_repo,
+                    backend=getattr(request.app.state, "storage_backend", None),
+                ),
                 runner_service=PlatformRunnerService(),
                 mention_detector=MentionDetector(),
             )
@@ -792,3 +822,64 @@ class _DbResponseDataProvider:
                 "citation_rank": row.citation_rank,
             },
         }
+
+
+# ── CMS Service ────────────────────────────────────────────────────────
+
+
+async def get_cms_service(
+    request: Request,
+) -> AsyncGenerator[Any, None]:
+    """Return the CMS service with proper DB session lifecycle.
+
+    CMS requires DB (encrypted credentials in Postgres).
+    No JSON fallback — raises 503 if DATABASE_URL or CMS_FERNET_KEY not set.
+    Tests bypass DI entirely via ``app.state.cms_service`` pre-built override.
+    """
+    # 1. Pre-built override (tests set app.state.cms_service)
+    service = getattr(request.app.state, "cms_service", None)
+    if service is not None:
+        yield service
+        return
+
+    # 2. Require DB
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(
+            status_code=503,
+            detail="CMS requires database — set DATABASE_URL",
+        )
+
+    from core.config.settings import settings
+
+    if not settings.cms_fernet_key:
+        raise HTTPException(
+            status_code=503,
+            detail="CMS requires CMS_FERNET_KEY to be set",
+        )
+
+    session = sf()
+    try:
+        from core.db.repositories.cms_repo import (
+            CMSConnectionRepository,
+            CMSPublishRecordRepository,
+            CMSSyncedPostRepository,
+        )
+        from core.db.repositories.content_repo import ContentRepository
+        from core.services.cms_service import CMSService
+
+        svc = CMSService(
+            connection_repo=CMSConnectionRepository(session),
+            publish_repo=CMSPublishRecordRepository(session),
+            synced_post_repo=CMSSyncedPostRepository(session),
+            storage=get_storage_backend(request),
+            fernet_key=settings.cms_fernet_key,
+            content_repo=ContentRepository(session),
+        )
+        yield svc
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()

@@ -16,10 +16,11 @@ from api.schemas.common import (
     PipelineRunResponse,
     TaskResponse,
 )
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import TaskStatus
+from api.routers._helpers import create_task_durable
 from api.tasks.runner import _derive_slug, _resolve_scope_async, run_content_pipeline_task
-from core.services.task_store import TaskStoreProtocol
+from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
 from core.models.content_generation import ContentGenerationInput
 from core.models.organization import UserProfile
 
@@ -32,7 +33,7 @@ async def start_content(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
     # Tenant isolation: slug must match authenticated user's company
@@ -62,7 +63,7 @@ async def start_content(
         product_name=scope.product_name,
         product_description=scope.product_description,
     )
-    task = task_store.create_task("content", company_slug, product_slug=product_slug)
+    task = await create_task_durable(task_store, "content", company_slug, product_slug=product_slug)
 
     handle = asyncio.create_task(
         run_content_pipeline_task(
@@ -142,12 +143,16 @@ async def approve_content(
     stage = (task.approval_payload or {}).get("stage", "content_review")
     if body.brief_id:
         stage = f"{stage}:{body.brief_id}"
-    task_store.submit_approval(
-        run_id,
-        decision=body.decision,
-        revision_note=body.editor_notes,
-        stage=stage,
-    )
+    try:
+        task_store.submit_approval(
+            run_id,
+            decision=body.decision,
+            revision_note=body.editor_notes,
+            stage=stage,
+        )
+    except ApprovalWindowError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    # ApprovalDeliveryError is handled by global exception handler → 503
 
     return ContentApprovalResponse(
         run_id=run_id,

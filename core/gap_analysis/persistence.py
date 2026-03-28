@@ -429,9 +429,11 @@ async def persist_s6(
         from core.db.repositories.gap_analysis_repo import GapAnalysisRepository
 
         async with session_factory() as session:
-            # Idempotent: clear all s6-owned tables for this run
+            # Idempotent: clear all s6-owned tables for this run.
+            # QueryExemplarModel has no run_id column — it's linked via
+            # query_gap_id FK with ondelete="CASCADE", so deleting
+            # QueryGapModel rows automatically cascades to exemplars.
             for model_cls in (
-                QueryExemplarModel,  # child first (FK to query_gaps)
                 QueryGapModel,
                 ClusterSpecModel,
                 SpaResultModel,

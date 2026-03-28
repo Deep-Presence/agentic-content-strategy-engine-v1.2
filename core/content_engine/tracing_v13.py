@@ -5,12 +5,14 @@ This file is kept for backward compatibility so that all existing imports
 to work without any callsite changes.
 """
 from core.shared_tools.tracing import (  # noqa: F401 — re-exports
+    build_llm_metadata,
     create_pipeline_trace,
     create_research_trace,
     create_session,
     create_span,
     create_trace,
     end_span,
+    extract_provider,
     flush,
     get_current_span,
     log_generation,
@@ -20,12 +22,14 @@ from core.shared_tools.tracing import (  # noqa: F401 — re-exports
 )
 
 __all__ = [
+    "build_llm_metadata",
     "create_pipeline_trace",
     "create_research_trace",
     "create_session",
     "create_span",
     "create_trace",
     "end_span",
+    "extract_provider",
     "flush",
     "get_current_span",
     "log_generation",

@@ -4,14 +4,21 @@ Satisfies TaskStoreProtocol. Uses a session_factory (not request-scoped)
 for per-operation sessions. Process-local state (semaphore, queues, handles,
 slug locks) stays in-memory only.
 
-Single-instance durability scope: SSE streaming, asyncio queues, and task
-handles are process-local. Horizontal scaling would require Redis pub/sub
-or PG LISTEN/NOTIFY (future work).
+Durability guarantees (Session 3):
+- ``create_task()`` + ``ensure_created()`` — DB INSERT awaited before
+  returning task_id to client. Process crash after create → task survives.
+- Terminal ``update_task()`` + ``flush_terminal()`` — DB UPDATE awaited
+  before runner cleanup. Process crash after terminal → correct status in DB.
+- ``drain_pending()`` — graceful shutdown drains all pending writes.
+- ``recover_from_db()`` — scoped to this worker's tasks (worker_id).
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import socket
 import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
@@ -20,9 +27,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.tasks.models import ApprovalRecord, PipelineTask
 from core.shared_tools.task_status import TaskStatus
-from core.services.task_store import ApprovalWindowError, TaskConflictError, TaskNotFoundError
+from core.services.task_store import ApprovalDeliveryError, ApprovalWindowError, TaskConflictError, TaskNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def _generate_worker_id() -> str:
+    """Unique per-process worker ID: hostname:pid."""
+    return f"{socket.gethostname()}:{os.getpid()}"
 
 
 class DbTaskStore:
@@ -38,10 +50,34 @@ class DbTaskStore:
     - Process-local state (semaphore, queues, handles, slug locks) stays in-memory.
     """
 
+    # Lua script: ownership-safe lock release (compare-and-delete)
+    _RELEASE_LOCK_LUA = """\
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+else
+    return 0
+end
+"""
+
+    # Lua script: ownership-safe lock TTL renewal (compare-and-expire)
+    # Atomic: prevents race where lock expires between GET and EXPIRE.
+    _RENEW_LOCK_LUA = """\
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("EXPIRE", KEYS[1], ARGV[2])
+else
+    return 0
+end
+"""
+
+    # Heartbeat interval: renew leases every ~60 BRPOP iterations (~60s)
+    _LEASE_RENEWAL_INTERVAL = 60
+
     def __init__(
         self,
         session_factory: Callable[..., AsyncSession],
         max_concurrent: int = 10,
+        redis_client: Optional[Any] = None,
+        worker_id: Optional[str] = None,
     ) -> None:
         self._tasks: Dict[str, PipelineTask] = {}
         self._session_factory = session_factory
@@ -49,25 +85,85 @@ class DbTaskStore:
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._approval_queues: Dict[str, asyncio.Queue] = {}
         self._task_handles: Dict[str, asyncio.Task] = {}
+        self._max_concurrent = max_concurrent
+        self._worker_id = worker_id or _generate_worker_id()
+        # Pending DB writes for durability (Session 3 — Fix 1d)
+        self._pending_creates: Dict[str, asyncio.Task] = {}
+        self._pending_terminals: Dict[str, asyncio.Task] = {}
+        # Redis for distributed slug locks (sync client, sub-ms ops)
+        self._redis_sync = redis_client
+        self._release_script = (
+            redis_client.register_script(self._RELEASE_LOCK_LUA)
+            if redis_client is not None
+            else None
+        )
+        self._renew_lock_script = (
+            redis_client.register_script(self._RENEW_LOCK_LUA)
+            if redis_client is not None
+            else None
+        )
+        # Redis distributed semaphore (global pipeline concurrency)
+        self._redis_semaphore = None
+        if redis_client is not None:
+            from core.redis_semaphore import RedisSemaphore
+            self._redis_semaphore = RedisSemaphore(
+                redis_sync=redis_client,
+                name="pipelines",
+                max_concurrent=max_concurrent,
+            )
 
     @property
     def semaphore(self) -> asyncio.Semaphore:
         return self._semaphore
 
+    def pipeline_semaphore(self, task_id: str):
+        """Return an async context manager for the pipeline concurrency semaphore.
+
+        With Redis: returns RedisSemaphore context (distributed, atomic).
+        Without Redis: returns asyncio.Semaphore (process-local fallback).
+        """
+        if self._redis_semaphore is not None:
+            return self._redis_semaphore.acquire_context(task_id)
+        return self._semaphore
+
     # ── Startup recovery ──────────────────────────────────────────────
 
     async def recover_from_db(self) -> int:
-        """Load non-terminal tasks and mark orphans as failed_restart.
+        """Load non-terminal tasks and mark THIS worker's orphans as failed_restart.
 
-        Called once at app startup. Returns the number of orphans recovered.
+        Called once at app startup. Instance-aware: only marks tasks belonging
+        to this worker_id (+ legacy NULL worker_id rows) as failed. Other
+        workers' running tasks are left untouched.
+
+        Falls back to blanket orphan recovery if the worker_id column hasn't
+        been migrated yet (migration 0022).
+
+        Returns the number of orphans recovered.
         """
+        from sqlalchemy.exc import ProgrammingError
+
         from core.db.repositories.task_repo import TaskRepository
 
         async with self._session_factory() as session:
             repo = TaskRepository(session)
-            orphan_count = await repo.mark_orphans_failed()
+            try:
+                orphan_count, orphan_task_ids = await repo.mark_worker_orphans_failed(
+                    self._worker_id
+                )
+            except ProgrammingError:
+                # worker_id column not yet migrated — roll back the failed
+                # statement and fall back to blanket (non-scoped) recovery.
+                await session.rollback()
+                logger.warning(
+                    "worker_id column missing — falling back to blanket "
+                    "orphan recovery. Run migration 0022 to enable "
+                    "multi-worker scoped recovery."
+                )
+                orphan_count = await repo.mark_orphans_failed()
+                orphan_task_ids = []
 
-            # Load all tasks into memory cache
+            # Load all tasks into memory cache (not just this worker's —
+            # needed for cross-worker lock status checks)
             all_tasks = await repo.list_tasks()
             for row in all_tasks:
                 task = self._row_to_pipeline_task(row)
@@ -75,12 +171,56 @@ class DbTaskStore:
 
             await session.commit()
 
+        # Clean up orphaned Redis locks (checks task status in _tasks)
+        orphan_locks_cleaned = 0
+        semaphore_cleared = 0
+        if self._redis_sync is not None:
+            try:
+                orphan_locks_cleaned = self._cleanup_orphan_locks()
+            except Exception:
+                logger.warning("Failed to clean orphan Redis locks", exc_info=True)
+            # Scoped semaphore cleanup: only remove THIS worker's orphaned
+            # task_ids (replaces blanket force_clear for multi-worker safety)
+            if self._redis_semaphore is not None and orphan_task_ids:
+                try:
+                    semaphore_cleared = self._cleanup_semaphore_entries(
+                        orphan_task_ids
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to clear stale semaphore entries", exc_info=True
+                    )
+
         logger.info(
-            "DbTaskStore recovered: %d tasks loaded, %d orphans marked failed_restart",
+            "DbTaskStore[%s] recovered: %d tasks loaded, %d orphans marked "
+            "failed_restart, %d orphan Redis locks cleaned, "
+            "%d stale semaphore entries cleared",
+            self._worker_id,
             len(self._tasks),
             orphan_count,
+            orphan_locks_cleaned,
+            semaphore_cleared,
         )
         return orphan_count
+
+    def _cleanup_semaphore_entries(self, task_ids: list[str]) -> int:
+        """Remove specific task_ids from the pipeline semaphore.
+
+        Used during startup recovery to clean only THIS worker's orphaned
+        slots, leaving other workers' legitimate entries intact.
+        """
+        if not task_ids:
+            return 0
+        cleaned = 0
+        for tid in task_ids:
+            try:
+                self._redis_semaphore.release(tid)
+                cleaned += 1
+            except Exception:
+                logger.warning(
+                    "Failed to release semaphore for %s", tid, exc_info=True
+                )
+        return cleaned
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
@@ -105,10 +245,12 @@ class DbTaskStore:
         )
         lock_key = f"{pipeline}:{effective}"
 
-        if not allow_parallel:
-            self.acquire_slug_lock(lock_key)
-
+        # Generate task_id BEFORE acquiring lock (needed as lock value for Redis)
         task_id = str(_uuid.uuid4())
+
+        if not allow_parallel:
+            self.acquire_slug_lock(lock_key, task_id=task_id)
+
         now = datetime.now(timezone.utc)
         task = PipelineTask(
             task_id=task_id,
@@ -123,9 +265,35 @@ class DbTaskStore:
         if not allow_parallel:
             self._slug_locks[lock_key] = task_id
 
-        # Write-through to DB (critical: must persist before returning)
-        asyncio.create_task(self._db_create(task))
+        # Schedule DB INSERT — caller MUST await ensure_created() before
+        # returning task_id to client (durability guarantee).
+        self._pending_creates[task_id] = asyncio.create_task(self._db_create(task))
         return task
+
+    async def ensure_created(self, task_id: str) -> None:
+        """Await the DB INSERT for a recently created task.
+
+        Called by routers immediately after ``create_task()`` to guarantee the
+        task_id returned to the client survives a process restart.
+        Raises if the DB write failed — caller should roll back via
+        ``rollback_create()``.
+        """
+        pending = self._pending_creates.pop(task_id, None)
+        if pending is not None:
+            await pending  # Re-raises if _db_create failed
+
+    def rollback_create(self, task_id: str) -> None:
+        """Undo an in-memory create when DB persistence fails.
+
+        Removes the task from memory and releases the slug lock so the
+        pipeline slot is not permanently consumed.
+        """
+        task = self._tasks.pop(task_id, None)
+        if task:
+            effective = task.effective_slug or task.company_slug
+            lock_key = f"{task.pipeline}:{effective}"
+            self.release_slug_lock(lock_key)
+        self._pending_creates.pop(task_id, None)
 
     def get_task(self, task_id: str) -> PipelineTask:
         if task_id not in self._tasks:
@@ -142,16 +310,76 @@ class DbTaskStore:
                 if key == "status" and isinstance(value, str) and not isinstance(value, TaskStatus):
                     value = TaskStatus(value)
                 setattr(task, key, value)
+
+        # Store/clear approval nonce in Redis for cross-worker validation
+        if self._redis_sync is not None and "approval_payload" in kwargs:
+            ap = kwargs["approval_payload"]
+            nonce_key = f"approval:nonce:{task_id}"
+            flag_key = f"approval:flag:{task_id}"
+            if ap is not None:
+                nonce = ap.get("checkpoint_nonce")
+                if nonce:
+                    try:
+                        self._redis_sync.set(nonce_key, nonce, ex=86400)
+                    except Exception:
+                        logger.warning(
+                            "Redis: failed to write nonce for %s", task_id, exc_info=True
+                        )
+            else:
+                # Clearing approval_payload — remove nonce + flag for next checkpoint
+                try:
+                    self._redis_sync.delete(nonce_key, flag_key)
+                except Exception:
+                    logger.warning(
+                        "Redis: failed to clear nonce/flag for %s", task_id, exc_info=True
+                    )
+
         task.updated_at = datetime.now(timezone.utc)
 
-        # Determine if this is a critical update (status change) or progress
-        is_status_change = "status" in kwargs
-        if is_status_change:
-            asyncio.create_task(self._db_update(task_id, **kwargs))
-        else:
-            # Fire-and-forget for non-critical updates (progress_pct, current_step)
-            asyncio.create_task(self._db_update(task_id, **kwargs))
+        # Schedule DB write. Terminal status changes are tracked so runners
+        # can await them via flush_terminal() before cleanup.
+        status_val = kwargs.get("status")
+        is_terminal = isinstance(status_val, TaskStatus) and status_val in (
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+            TaskStatus.FAILED_RESTART,
+        )
+
+        db_task = asyncio.create_task(self._db_update(task_id, **kwargs))
+        if is_terminal:
+            self._pending_terminals[task_id] = db_task
         return task
+
+    async def flush_terminal(self, task_id: str) -> None:
+        """Await DB persistence of a terminal status change.
+
+        Called by runners in their finally blocks to guarantee the terminal
+        status persists before the asyncio.Task completes. Swallows exceptions
+        (best-effort) so cleanup continues even if DB is down.
+        """
+        pending = self._pending_terminals.pop(task_id, None)
+        if pending is not None:
+            try:
+                await pending
+            except Exception:
+                logger.exception(
+                    "DbTaskStore: terminal flush failed for %s — "
+                    "task may show as running after restart",
+                    task_id,
+                )
+
+    async def drain_pending(self) -> None:
+        """Await all pending DB writes. Called during graceful shutdown."""
+        tasks = list(self._pending_creates.values()) + list(self._pending_terminals.values())
+        if tasks:
+            logger.info("Draining %d pending DB writes...", len(tasks))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.warning("Pending write failed during drain: %s", r)
+        self._pending_creates.clear()
+        self._pending_terminals.clear()
 
     def list_tasks(
         self,
@@ -173,7 +401,34 @@ class DbTaskStore:
 
     # ── Slug Locks ────────────────────────────────────────────────────
 
-    def acquire_slug_lock(self, slug: str) -> None:
+    def acquire_slug_lock(self, slug: str, task_id: Optional[str] = None) -> None:
+        """Acquire a per-slug lock. Redis when configured, in-memory otherwise.
+
+        When Redis is configured (``redis_client`` provided), uses
+        ``SET NX EX 7200`` for distributed locking. **Fail-closed**: Redis
+        errors raise ``TaskConflictError`` rather than falling back to
+        in-memory (prevents split-brain in multi-worker deployments).
+
+        When Redis is NOT configured (``redis_client=None``), uses the
+        existing in-memory ``_slug_locks`` dict.
+        """
+        if self._redis_sync is not None and task_id:
+            try:
+                return self._acquire_redis_lock(slug, task_id)
+            except TaskConflictError:
+                raise
+            except Exception:
+                # Fail-closed: Redis is configured but unavailable — refuse to start
+                logger.error(
+                    "Redis lock acquire failed — refusing to start pipeline "
+                    "(fail-closed to prevent split-brain)",
+                    exc_info=True,
+                )
+                raise TaskConflictError(
+                    f"Cannot acquire lock for '{slug}': Redis is unavailable. "
+                    f"Retry when Redis is back online."
+                )
+        # In-memory fallback (only when redis_client is None)
         if slug in self._slug_locks:
             existing_id = self._slug_locks[slug]
             if existing_id in self._tasks:
@@ -185,8 +440,68 @@ class DbTaskStore:
                     )
             del self._slug_locks[slug]
 
+    def _cleanup_orphan_locks(self) -> int:
+        """Remove Redis lock keys whose holder task is terminal or unknown.
+
+        Called during startup recovery. SCAN for all ``lock:*`` keys, check
+        each holder's status in ``_tasks``. If the holder is not active
+        (RUNNING/PENDING_APPROVAL), delete the lock.
+        """
+        cleaned = 0
+        cursor = 0
+        while True:
+            cursor, keys = self._redis_sync.scan(cursor, match="lock:*", count=100)
+            for key in keys:
+                holder = self._redis_sync.get(key)
+                if holder is None:
+                    continue  # Key expired between SCAN and GET
+                task = self._tasks.get(holder)
+                if task is None or task.status not in (
+                    TaskStatus.RUNNING,
+                    TaskStatus.PENDING_APPROVAL,
+                ):
+                    self._redis_sync.delete(key)
+                    cleaned += 1
+                    logger.info("Cleaned orphan Redis lock: %s (holder=%s)", key, holder)
+            if cursor == 0:
+                break
+        return cleaned
+
+    @staticmethod
+    def _lock_key(slug: str) -> str:
+        """Build validated Redis key for distributed lock."""
+        if len(slug) > 256:
+            raise ValueError(f"Slug too long for Redis lock key: {len(slug)}")
+        return f"lock:{slug}"
+
+    def _acquire_redis_lock(self, slug: str, task_id: str) -> None:
+        """Acquire distributed lock via Redis SET NX EX.
+
+        No stale detection — simply try to acquire. The 2h TTL handles
+        dead workers. If the lock is held, raise TaskConflictError.
+        """
+        key = self._lock_key(slug)
+        acquired = self._redis_sync.set(key, task_id, nx=True, ex=7200)
+        if not acquired:
+            raise TaskConflictError(
+                f"A pipeline is already running for '{slug}'"
+            )
+
     def release_slug_lock(self, slug: str) -> None:
-        self._slug_locks.pop(slug, None)
+        """Release a per-slug lock. Ownership-safe Redis delete + in-memory."""
+        task_id = self._slug_locks.pop(slug, None)
+        if self._redis_sync is not None and self._release_script is not None and task_id:
+            try:
+                self._release_script(
+                    keys=[self._lock_key(slug)],
+                    args=[task_id],
+                )
+            except Exception:
+                logger.warning(
+                    "Redis lock release failed for %s — TTL will expire",
+                    slug,
+                    exc_info=True,
+                )
 
     # ── Task Handle Tracking ──────────────────────────────────────────
 
@@ -208,6 +523,9 @@ class DbTaskStore:
     async def wait_for_approval(
         self, task_id: str, timeout: float = 86400
     ) -> Dict[str, Any]:
+        if self._redis_sync is not None:
+            return await self._wait_for_approval_redis(task_id, timeout)
+        # Fallback: existing asyncio.Queue logic
         if task_id not in self._approval_queues:
             self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
         try:
@@ -227,6 +545,182 @@ class DbTaskStore:
         self._approval_queues.pop(task_id, None)
         return data
 
+    async def _wait_for_approval_redis(
+        self, task_id: str, timeout: float
+    ) -> Dict[str, Any]:
+        """Poll Redis BRPOP in short intervals until approval arrives or timeout expires.
+
+        Uses 1s BRPOP intervals to stay within the sync client's socket_timeout
+        and to remain cancellable via asyncio.
+
+        On persistent Redis failure (10 consecutive errors), falls back to an
+        asyncio.Queue so the frontend can still deliver approvals via the
+        in-memory path rather than silently auto-rejecting.
+        """
+        key = f"approval:{task_id}"
+        flag_key = f"approval:flag:{task_id}"
+        nonce_key = f"approval:nonce:{task_id}"
+
+        import time
+
+        _MAX_CONSECUTIVE_ERRORS = 10
+        deadline = time.monotonic() + timeout
+        result = None
+        consecutive_errors = 0
+        redis_gave_up = False
+        iterations_since_heartbeat = 0
+        while time.monotonic() < deadline:
+            # Periodic lease renewal (~every 60s)
+            iterations_since_heartbeat += 1
+            if iterations_since_heartbeat >= self._LEASE_RENEWAL_INTERVAL:
+                iterations_since_heartbeat = 0
+                try:
+                    await asyncio.to_thread(self._renew_leases, task_id)
+                except Exception:
+                    logger.warning(
+                        "Heartbeat: renewal call failed for %s",
+                        task_id,
+                        exc_info=True,
+                    )
+
+            try:
+                result = await asyncio.to_thread(
+                    self._redis_sync.brpop, key, timeout=1
+                )
+                consecutive_errors = 0  # reset on success (incl. None = no item)
+                if result is not None:
+                    break
+            except Exception:
+                consecutive_errors += 1
+                if consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
+                    logger.exception(
+                        "Redis BRPOP failed %d times for task %s — falling back to Queue",
+                        consecutive_errors,
+                        task_id,
+                    )
+                    redis_gave_up = True
+                    break
+                backoff = min(2 ** (consecutive_errors - 1), 10)
+                logger.warning(
+                    "Redis BRPOP transient error for task %s (attempt %d) — retrying in %.0fs",
+                    task_id,
+                    consecutive_errors,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+
+        if redis_gave_up:
+            # Fall back to asyncio.Queue — frontend submit_approval() also
+            # pushes to the in-memory queue as a hybrid safety net.
+            logger.info(
+                "BRPOP fallback: waiting on asyncio.Queue for task %s", task_id
+            )
+            if task_id not in self._approval_queues:
+                self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
+            remaining = max(1.0, deadline - time.monotonic())
+            try:
+                data = await asyncio.wait_for(
+                    self._approval_queues[task_id].get(), timeout=remaining
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Approval timed out after %.0fs for task %s — auto-rejecting",
+                    timeout,
+                    task_id,
+                )
+                data = {
+                    "decision": "reject",
+                    "revision_note": f"Approval timed out after {int(timeout)}s",
+                }
+            self._approval_queues.pop(task_id, None)
+        elif result is None:
+            logger.warning(
+                "Approval timed out after %.0fs for task %s — auto-rejecting",
+                timeout,
+                task_id,
+            )
+            data: Dict[str, Any] = {
+                "decision": "reject",
+                "revision_note": f"Approval timed out after {int(timeout)}s",
+            }
+        else:
+            _, raw = result
+            try:
+                data = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                logger.exception(
+                    "Malformed approval payload for task %s — auto-rejecting", task_id
+                )
+                data = {
+                    "decision": "reject",
+                    "revision_note": "Malformed approval payload",
+                }
+
+        # Cleanup all approval keys
+        try:
+            self._redis_sync.delete(key, flag_key, nonce_key)
+        except Exception:
+            logger.warning(
+                "Redis: failed to cleanup approval keys for %s",
+                task_id,
+                exc_info=True,
+            )
+
+        # Also clean local queue if it exists (hybrid safety)
+        self._approval_queues.pop(task_id, None)
+
+        return data
+
+    def _renew_leases(self, task_id: str) -> None:
+        """Renew TTL on slug lock and semaphore during HITL wait.
+
+        Called every ~60s from the BRPOP polling loop. All operations are
+        best-effort: failures are logged but never abort the wait.
+        """
+        task = self._tasks.get(task_id)
+        if task is None or self._redis_sync is None:
+            return
+
+        effective = task.effective_slug or task.company_slug
+
+        # 1. Slug lock — atomic compare-and-expire (skip if allow_parallel / no lock)
+        lock_slug = f"{task.pipeline}:{effective}"
+        if lock_slug in self._slug_locks and self._renew_lock_script is not None:
+            lock_key = self._lock_key(lock_slug)
+            try:
+                renewed = self._renew_lock_script(
+                    keys=[lock_key],
+                    args=[task_id, 7200],
+                )
+                if renewed:
+                    logger.debug("Heartbeat: renewed lock %s", lock_key)
+                else:
+                    logger.warning(
+                        "Heartbeat: lock ownership lost %s (task=%s)",
+                        lock_key, task_id,
+                    )
+            except Exception:
+                logger.warning(
+                    "Heartbeat: lock renewal failed %s", lock_key, exc_info=True
+                )
+
+        # 2. Semaphore — atomic Lua renewal (ZSCORE + ZADD)
+        if self._redis_semaphore is not None:
+            try:
+                renewed = self._redis_semaphore.renew(task_id)
+                if renewed:
+                    logger.debug("Heartbeat: renewed semaphore for %s", task_id)
+                else:
+                    logger.warning(
+                        "Heartbeat: semaphore slot missing for %s", task_id
+                    )
+            except Exception:
+                logger.warning(
+                    "Heartbeat: semaphore renewal failed %s",
+                    task_id,
+                    exc_info=True,
+                )
+
     def submit_approval(
         self,
         task_id: str,
@@ -241,15 +735,94 @@ class DbTaskStore:
 
         task = self._tasks[task_id]
 
-        # Atomic nonce validation — prevents TOCTOU and replay
+        # Nonce validation — Redis-first if available
         if expected_nonce is not None:
-            current_nonce = (task.approval_payload or {}).get("checkpoint_nonce")
+            if self._redis_sync is not None:
+                try:
+                    current_nonce = self._redis_sync.get(
+                        f"approval:nonce:{task_id}"
+                    )
+                except Exception:
+                    logger.warning(
+                        "Redis nonce read failed for %s — falling back to local",
+                        task_id,
+                        exc_info=True,
+                    )
+                    current_nonce = (task.approval_payload or {}).get(
+                        "checkpoint_nonce"
+                    )
+            else:
+                current_nonce = (task.approval_payload or {}).get(
+                    "checkpoint_nonce"
+                )
             if current_nonce != expected_nonce:
                 raise ApprovalWindowError(
                     f"Stale or replayed approval: nonce mismatch "
                     f"(expected {expected_nonce}, current {current_nonce})"
                 )
 
+        # Duplicate submission check — Redis flag (atomic SET NX)
+        if self._redis_sync is not None:
+            flag_key = f"approval:flag:{task_id}"
+            try:
+                was_set = self._redis_sync.set(flag_key, "1", nx=True, ex=86400)
+                if not was_set:
+                    raise ApprovalWindowError(
+                        f"Approval already submitted for task {task_id}"
+                    )
+            except ApprovalWindowError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Redis flag check failed for %s — proceeding",
+                    task_id,
+                    exc_info=True,
+                )
+
+        # Construct payload BEFORE delivery attempt
+        payload = approval_data if approval_data is not None else {"decision": decision, "revision_note": revision_note}
+
+        # ── Deliver payload (must succeed before recording history) ──
+        if self._redis_sync is not None:
+            key = f"approval:{task_id}"
+            try:
+                self._redis_sync.lpush(key, json.dumps(payload))
+            except Exception:
+                logger.exception(
+                    "Redis LPUSH failed for task %s — clearing flag for retry",
+                    task_id,
+                )
+                try:
+                    self._redis_sync.delete(f"approval:flag:{task_id}")
+                except Exception:
+                    pass
+                raise ApprovalDeliveryError(task_id)
+            # LPUSH succeeded — EXPIRE is best-effort (non-fatal)
+            try:
+                self._redis_sync.expire(key, 86400)
+            except Exception:
+                logger.warning(
+                    "Redis EXPIRE failed for approval:%s (non-fatal)", task_id
+                )
+            # Hybrid safety net: also push to local queue so BRPOP→Queue
+            # fallback path can still receive the payload (CX-3).
+            if task_id not in self._approval_queues:
+                self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
+            try:
+                self._approval_queues[task_id].put_nowait(payload)
+            except asyncio.QueueFull:
+                pass  # BRPOP path will handle it
+        else:
+            if task_id not in self._approval_queues:
+                self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
+            try:
+                self._approval_queues[task_id].put_nowait(payload)
+            except asyncio.QueueFull:
+                raise ApprovalWindowError(
+                    f"Approval already submitted for task {task_id} — queue full"
+                )
+
+        # ── Record approval history (only after successful delivery) ──
         resolved_stage = (
             stage
             or (task.approval_payload or {}).get("stage")
@@ -273,39 +846,30 @@ class DbTaskStore:
             )
         )
 
-        # Queue the full approval data if provided, else generic payload
-        payload = approval_data if approval_data is not None else {"decision": decision, "revision_note": revision_note}
-        if task_id not in self._approval_queues:
-            self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
-        try:
-            self._approval_queues[task_id].put_nowait(payload)
-        except asyncio.QueueFull:
-            raise ApprovalWindowError(
-                f"Approval already submitted for task {task_id} — queue full"
-            )
-
     # ── DB write-through helpers ──────────────────────────────────────
 
     async def _db_create(self, task: PipelineTask) -> None:
-        """Insert a new task row into DB."""
+        """Insert a new task row into DB.
+
+        Exceptions propagate to ``ensure_created()`` — the caller decides
+        whether to abort (HTTP 503) or proceed.
+        """
         from core.db.repositories.task_repo import TaskRepository
 
-        try:
-            async with self._session_factory() as session:
-                repo = TaskRepository(session)
-                await repo.create_task(
-                    task_id=task.task_id,
-                    pipeline=task.pipeline,
-                    status=task.status.value,
-                    company_slug=task.company_slug,
-                    product_slug=task.product_slug,
-                    effective_slug=task.effective_slug,
-                    current_step=task.current_step,
-                    progress_pct=task.progress_pct,
-                )
-                await session.commit()
-        except Exception:
-            logger.exception("DbTaskStore: failed to persist create for %s", task.task_id)
+        async with self._session_factory() as session:
+            repo = TaskRepository(session)
+            await repo.create_task(
+                task_id=task.task_id,
+                pipeline=task.pipeline,
+                status=task.status.value,
+                company_slug=task.company_slug,
+                product_slug=task.product_slug,
+                effective_slug=task.effective_slug,
+                current_step=task.current_step,
+                progress_pct=task.progress_pct,
+                worker_id=self._worker_id,
+            )
+            await session.commit()
 
     async def _db_update(self, task_id: str, **kwargs: Any) -> None:
         """Update a task row in DB."""

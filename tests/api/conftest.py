@@ -3,11 +3,16 @@
 All fixtures that return a ``TestClient`` inject a valid auth token
 automatically so that the default-deny middleware does not block
 requests.  Use ``public_client`` for testing 401 enforcement.
+
+Phase 6: Switched from JSON TaskStore + in-memory EventBus to
+DbTaskStore (mocked session) + InMemoryEventBus (test-only) +
+TestAuthService (test-only).
 """
 from __future__ import annotations
 
 from pathlib import Path
 from typing import AsyncGenerator
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -16,22 +21,70 @@ from httpx import ASGITransport, AsyncClient
 
 from api.app import create_app
 from api.auth.store import AuthStore
-from api.tasks.event_bus import EventBus
-from api.tasks.store import TaskStore
 from core.models.organization import Company, UserProfile
+from core.storage.backends.local import LocalStorageBackend
+from tests._support.auth_service import TestAuthService
+from tests._support.event_bus import InMemoryEventBus
 
 
 # ── Infrastructure fixtures ────────────────────────────────
 
 
 @pytest.fixture
-def event_bus() -> EventBus:
-    return EventBus()
+def event_bus() -> InMemoryEventBus:
+    return InMemoryEventBus()
 
 
 @pytest.fixture
-def task_store(tmp_path: Path, event_bus: EventBus) -> TaskStore:
-    return TaskStore(base_dir=tmp_path / "_jobs", event_bus=event_bus)
+def task_store():
+    """DbTaskStore with mocked session_factory — no real DB needed.
+
+    Follows the same pattern as tests/services/test_db_task_store.py.
+    All in-memory operations (CRUD, locks, approval) work normally.
+    DB write-through is suppressed by the _patch_db_writes autouse fixture.
+    """
+    from core.services.db_task_store import DbTaskStore
+
+    return DbTaskStore(session_factory=MagicMock(), max_concurrent=10)
+
+
+@pytest.fixture(autouse=True)
+def _patch_db_writes(monkeypatch):
+    """Prevent DbTaskStore background DB writes in tests.
+
+    DbTaskStore.create_task() and update_task() schedule DB writes via
+    ``asyncio.create_task(self._db_create/update(...))``.  In tests:
+    - ``_db_create`` / ``_db_update`` are replaced with instant no-ops
+    - The ``asyncio.create_task`` call may fail in sync tests (no event loop),
+      so we proxy it to gracefully degrade on failure.
+
+    Uses a module-level proxy so only db_task_store's asyncio reference is
+    affected — the real ``asyncio.create_task`` remains intact for routers.
+    """
+    import asyncio as _aio
+    from unittest.mock import AsyncMock
+    from core.services import db_task_store as _mod
+
+    _real_create_task = _aio.create_task
+
+    def _safe_create_task(coro, **kwargs):
+        """Try real create_task; if no event loop (sync test), close and fake."""
+        try:
+            return _real_create_task(coro, **kwargs)
+        except RuntimeError:
+            coro.close()
+            return MagicMock()
+
+    class _AsyncioProxy:
+        """Proxy that delegates to real asyncio but overrides create_task."""
+        create_task = staticmethod(_safe_create_task)
+
+        def __getattr__(self, name):
+            return getattr(_aio, name)
+
+    monkeypatch.setattr(_mod, "asyncio", _AsyncioProxy())
+    monkeypatch.setattr(_mod.DbTaskStore, "_db_create", AsyncMock())
+    monkeypatch.setattr(_mod.DbTaskStore, "_db_update", AsyncMock())
 
 
 @pytest.fixture
@@ -88,8 +141,8 @@ def auth_headers(auth_token: str) -> dict[str, str]:
 
 @pytest.fixture
 def app(
-    task_store: TaskStore,
-    event_bus: EventBus,
+    task_store,
+    event_bus,
     artifacts_root: Path,
     auth_store: AuthStore,
 ) -> FastAPI:
@@ -98,8 +151,12 @@ def app(
     application.state.event_bus = event_bus
     application.state.artifacts_root = artifacts_root
     application.state.auth_store = auth_store
+    # Pin local storage backend — prevents R2 usage if STORAGE_BACKEND=r2 in env
+    application.state.storage_backend = LocalStorageBackend(artifacts_root)
     # Expose secret_key for ASGI middleware (decoupled from AuthStore)
     application.state.secret_key = auth_store._secret_key
+    # Pre-build auth service for test isolation (bypasses DB-backed get_auth_service() DI)
+    application.state.auth_service = TestAuthService(auth_store)
     return application
 
 

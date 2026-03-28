@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from langgraph.checkpoint.memory import MemorySaver
+
 from core.content_engine.graph_v13 import (
     _brief_approval_gate,
     _brief_present,
@@ -29,6 +31,15 @@ from core.content_engine.graph_v13 import (
     build_topic_approval_graph,
     run_hitl_checkpoint,
 )
+
+
+@pytest.fixture(autouse=True)
+def _use_memory_checkpointer(monkeypatch):
+    """Use in-memory checkpointer so tests don't require Redis."""
+    monkeypatch.setattr(
+        "core.content_engine.graph_v13.get_checkpointer",
+        lambda override=None: override if override is not None else MemorySaver(),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -89,8 +100,9 @@ class TestTopicRoute:
     def test_reject_routes_to_rejected(self):
         assert _topic_route({"topic_decision": "reject"}) == "rejected"
 
-    def test_default_routes_to_approved(self):
-        assert _topic_route({}) == "approved"
+    def test_default_routes_to_rejected(self):
+        """Missing topic_decision defaults to 'reject' (fail-safe)."""
+        assert _topic_route({}) == "rejected"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -135,8 +147,9 @@ class TestBriefRoute:
     def test_reject_routes_to_rejected(self):
         assert _brief_route({"brief_decision": "reject"}) == "rejected"
 
-    def test_default_routes_to_approved(self):
-        assert _brief_route({}) == "approved"
+    def test_default_routes_to_rejected(self):
+        """Missing brief_decision defaults to 'reject' (fail-safe)."""
+        assert _brief_route({}) == "rejected"
 
 
 # ═══════════════════════════════════════════════════════════════════════

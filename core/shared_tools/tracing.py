@@ -107,6 +107,65 @@ def _get_client() -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Cost-tracking metadata helpers
+# ---------------------------------------------------------------------------
+
+
+def extract_provider(model: str) -> str:
+    """Extract the LLM provider name from a model string.
+
+    Handles both LiteLLM-prefixed (``"anthropic/claude-sonnet-4-6"``) and
+    bare model names (``"claude-sonnet-4-6"``).
+    """
+    if "/" in model:
+        return model.split("/")[0]
+    if model.startswith("claude-"):
+        return "anthropic"
+    if model.startswith("sonar"):
+        return "perplexity"
+    if model.startswith("gpt-") or model.startswith("o1") or model.startswith("o3"):
+        return "openai"
+    if model.startswith("gemini-"):
+        return "google"
+    return "unknown"
+
+
+def build_llm_metadata(
+    *,
+    pipeline: str,
+    pipeline_step: str,
+    provider: str,
+    model: str,
+    company_slug: str = "",
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Build a standardised metadata dict for LLM cost tracking in LangSmith.
+
+    The returned dict is passed to either LiteLLM's ``metadata`` kwarg
+    (auto-forwarded to LangSmith) or to :func:`log_generation`'s ``metadata``
+    kwarg (stored in ``extra.metadata`` on the RunTree span).  LangSmith
+    custom dashboards can then group/filter by these fields.
+
+    Args:
+        pipeline: Pipeline identifier (e.g. ``"content_engine"``).
+        pipeline_step: Agent or step name within the pipeline.
+        provider: LLM provider (e.g. ``"anthropic"``, ``"perplexity"``).
+        model: Full model string.
+        company_slug: Customer context (optional).
+        **extra: Additional key-value pairs merged into the dict.
+    """
+    meta: Dict[str, Any] = {
+        "pipeline": pipeline,
+        "pipeline_step": pipeline_step,
+        "provider": provider,
+        "model": model,
+        "company_slug": company_slug,
+    }
+    meta.update(extra)
+    return meta
+
+
+# ---------------------------------------------------------------------------
 # Session + Trace Management
 # ---------------------------------------------------------------------------
 

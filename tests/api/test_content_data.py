@@ -14,6 +14,7 @@ scenarios, security (path traversal), and edge cases.
 from __future__ import annotations
 
 import json
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -197,16 +198,18 @@ def _setup_gap_dir(
 
 
 @pytest.fixture(autouse=True)
-def _clear_caches():
-    """Clear module-level caches before each test."""
-    import api.services.content_data_service as cds
-    import api.services.gap_data_service as gds
-
-    cds._CACHE.clear()
-    gds._CACHE.clear()
+def _no_redis_cache(monkeypatch):
+    """Disable Redis cache so tests use direct file reads."""
+    monkeypatch.setattr(
+        "api.services.content_data_service.get_sync_redis_or_none", lambda: None
+    )
+    monkeypatch.setattr(
+        "api.services.gap_data_service.get_sync_redis_or_none", lambda: None
+    )
+    monkeypatch.setattr(
+        "core.services.gap_context_helper.get_sync_redis_or_none", lambda: None
+    )
     yield
-    cds._CACHE.clear()
-    gds._CACHE.clear()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1338,3 +1341,50 @@ class TestContentDataProductSlug:
         r = client.get("/api/v1/companies/test-co/content/briefs")
         assert r.status_code == 200
         assert len(r.json()["briefs"]) == 3
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Cache Behavior Tests (Redis-backed since Session 6)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestContentCaching:
+    """Cache behavior tests — in-memory _CACHE removed in Session 6 (Redis cache).
+    Tests here validate read-after-write and pipeline state freshness only.
+    Redis cache hit/miss/eviction tested in tests/unit/test_redis_cache.py.
+    """
+
+    def test_add_brief_read_after_write(self, client: TestClient, artifacts_root: Path):
+        """After adding a brief, it should be immediately visible."""
+        _setup_content_dir(artifacts_root, briefs_data=_make_briefs_json(1))
+
+        # Add a brief
+        resp = client.post(
+            "/api/v1/companies/test-co/content/briefs",
+            json={"title": "New Brief", "cluster": "test"},
+        )
+        assert resp.status_code == 201
+
+        # Read immediately after write — should see the new brief
+        body = client.get("/api/v1/companies/test-co/content/briefs").json()
+        titles = [b["title"] for b in body["briefs"]]
+        assert "New Brief" in titles
+
+    def test_pipeline_state_not_cached(self, client: TestClient, artifacts_root: Path):
+        """pipeline_state.json should be read fresh each time (not through cache)."""
+        _setup_content_dir(
+            artifacts_root,
+            briefs_data=_make_briefs_json(1),
+        )
+        # Write pipeline_state showing "drafting" for brief-0
+        state_path = artifacts_root / "content" / "test-co" / "pipeline_state.json"
+        state_path.write_text(json.dumps({"brief-0": "drafting"}))
+
+        body1 = client.get("/api/v1/companies/test-co/content/briefs").json()
+        assert body1["briefs"][0]["status"] == "drafting"
+
+        # Update pipeline state to "review" — should be reflected immediately
+        state_path.write_text(json.dumps({"brief-0": "review"}))
+
+        body2 = client.get("/api/v1/companies/test-co/content/briefs").json()
+        assert body2["briefs"][0]["status"] == "review"

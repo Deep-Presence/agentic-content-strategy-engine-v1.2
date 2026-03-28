@@ -15,7 +15,7 @@ from core.content_engine.prompts.enricher_prompts import (
     ENRICHER_SYSTEM_PROMPT,
     build_enricher_user_prompt,
 )
-from core.content_engine.tracing_v13 import create_span, end_span, log_generation
+from core.content_engine.tracing_v13 import create_span, end_span, extract_provider, log_generation
 from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation import ContentBrief, ContentDraft, EnrichedDraft
 
@@ -29,6 +29,7 @@ async def enrich_with_facts(
     domain: str,
     *,
     trace: Optional[object] = None,
+    company_slug: str = "",
 ) -> EnrichedDraft:
     """Enrich a draft with verified facts using Perplexity sonar-pro.
 
@@ -85,7 +86,15 @@ async def enrich_with_facts(
             system=ENRICHER_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=8192,
-            metadata={"agent": "fact_enricher", "brief_id": brief.brief_id},
+            metadata={
+                "agent": "fact_enricher",
+                "brief_id": brief.brief_id,
+                "pipeline": "content_engine",
+                "pipeline_step": "fact_enricher",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            },
             max_retries=2,
             base_delay=3.0,
         )

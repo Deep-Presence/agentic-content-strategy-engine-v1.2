@@ -41,8 +41,10 @@ from core.content_engine.graph_v13 import (
 from core.content_engine.llm_client import configure_litellm_callbacks
 from core.content_engine.state_helpers import (
     _cleanup_pipeline_state,
+    _cleanup_pipeline_state_async,
     _emit,
     _write_pipeline_state,
+    _write_pipeline_state_async,
 )
 from core.content_engine.persistence import (
     persist_content_pieces,
@@ -100,20 +102,37 @@ _STAGE_NAMES_V13: Dict[int, str] = {
 # ── Artifact helpers ──────────────────────────────────────────────────
 
 
-def _load_artifact_text(path: Optional[str]) -> str:
-    """Load a text artifact from a path (absolute or relative to project root)."""
+def _load_artifact_text(path: Optional[str], *, storage: Optional[Any] = None) -> str:
+    """Load a text artifact via StorageBackend (preferred) or filesystem fallback."""
     if not path:
         return ""
+    # CX-1 fix: try StorageBackend for relative storage keys (R2 or local)
+    # Absolute paths are already filesystem paths — skip storage for those.
+    if storage is not None and not Path(path).is_absolute():
+        content = storage.read(path)
+        if content is not None:
+            return content
+    # Filesystem fallback (absolute paths, local dev, or storage miss)
     p = Path(path) if Path(path).is_absolute() else _PROJECT_ROOT / path.lstrip("/")
     if p.exists():
         return p.read_text(encoding="utf-8")
     return ""
 
 
-def _load_artifact_json(path: Optional[str]) -> Dict[str, Any]:
-    """Load a JSON artifact from a path."""
+def _load_artifact_json(path: Optional[str], *, storage: Optional[Any] = None) -> Dict[str, Any]:
+    """Load a JSON artifact via StorageBackend (preferred) or filesystem fallback."""
     if not path:
         return {}
+    # CX-1 fix: try StorageBackend for relative storage keys (R2 or local)
+    # Absolute paths are already filesystem paths — skip storage for those.
+    if storage is not None and not Path(path).is_absolute():
+        content = storage.read(path)
+        if content is not None:
+            try:
+                return json.loads(content)
+            except (json.JSONDecodeError, ValueError):
+                return {}
+    # Filesystem fallback (absolute paths, local dev, or storage miss)
     p = Path(path) if Path(path).is_absolute() else _PROJECT_ROOT / path.lstrip("/")
     if p.exists():
         return json.loads(p.read_text(encoding="utf-8"))
@@ -123,23 +142,35 @@ def _load_artifact_json(path: Optional[str]) -> Dict[str, Any]:
 def _merge_and_write_blueprints(
     bp_path: Path,
     pipeline_blueprints: list,
+    *,
+    storage: Optional[Any] = None,
+    storage_key: str = "",
 ) -> None:
-    """Write pipeline blueprints to disk, preserving externally-added entries.
+    """Write pipeline blueprints via StorageBackend, preserving externally-added entries.
 
     Entries with a ``_source`` field (e.g. "manual", "citation") were created
     via the ``add_brief()`` API and must survive pipeline writes. Pipeline-
     generated blueprints do not carry ``_source``.
 
-    Strategy: load existing file → partition by ``_source`` → replace pipeline
+    Strategy: load existing → partition by ``_source`` → replace pipeline
     entries with the new set → keep sourced entries intact.
     """
     existing: list[dict] = []
-    if bp_path.is_file():
+    # Read existing blueprints via StorageBackend (preferred) or filesystem fallback
+    raw_content: Optional[str] = None
+    if storage and storage_key:
+        raw_content = storage.read(storage_key)
+    elif bp_path.is_file():
         try:
-            raw = json.loads(bp_path.read_text(encoding="utf-8"))
+            raw_content = bp_path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    if raw_content is not None:
+        try:
+            raw = json.loads(raw_content)
             if isinstance(raw, list):
                 existing = raw
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, ValueError):
             pass
 
     # Preserve entries that have a _source field (non-pipeline)
@@ -147,7 +178,11 @@ def _merge_and_write_blueprints(
 
     new_entries = [bp.model_dump(mode="json") for bp in pipeline_blueprints]
     merged = new_entries + preserved
-    bp_path.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+    content = json.dumps(merged, indent=2)
+    if storage and storage_key:
+        storage.write(storage_key, content)
+    else:
+        bp_path.write_text(content, encoding="utf-8")
 
 
 def _resolve_slug(input_data: ContentGenerationInputV13) -> str:
@@ -332,6 +367,7 @@ async def _apply_human_edits(
     company_context_md: str,
     company_name: str,
     domain: str,
+    company_slug: str = "",
 ) -> Optional[FormattedContent]:
     """Apply human edits by routing to drafter + fact checker.
 
@@ -362,6 +398,7 @@ async def _apply_human_edits(
             feedback=f"[HUMAN REVIEW]\n{editor_notes}",
             style_guide_md=style_guide_md,
             company_context_md=company_context_md,
+            company_slug=company_slug,
         )
 
         # Re-run fact checker on revised content
@@ -376,6 +413,7 @@ async def _apply_human_edits(
             brief=blueprint,
             company_name=company_name,
             domain=domain,
+            company_slug=company_slug,
         )
 
         # Compute structural counts inline
@@ -405,6 +443,8 @@ async def _rebrief_and_rerun(
     parent_span: Optional[object] = None,
     event_bus: Any = None,
     task_id: Optional[str] = None,
+    redis_client: Optional[Any] = None,
+    slug: Optional[str] = None,
 ) -> Optional[tuple]:
     """Re-brief a piece via Agent 2 and re-run the full worker+evaluator chain.
 
@@ -424,6 +464,8 @@ async def _rebrief_and_rerun(
         Tuple of (FormattedContent, RevisionHistory, FeedbackRoute), or None on failure.
     """
     try:
+        _slug = getattr(input_data, "company_slug", "") or ""
+
         # Extract worker contexts from the blueprint's gap_context.
         # gap_context is a WorkerQueryContext Pydantic model — use attribute access,
         # NOT .get() or isinstance(dict) which is always False on a Pydantic model.
@@ -460,6 +502,7 @@ async def _rebrief_and_rerun(
             max_concurrent=1,
             parent_span=parent_span,
             brief_id_overrides=[rebrief_id],
+            company_slug=_slug,
         )
 
         if not new_blueprints:
@@ -483,6 +526,8 @@ async def _rebrief_and_rerun(
             parent_span=parent_span,
             event_bus=event_bus,
             task_id=task_id,
+            redis_client=redis_client,
+            effective_slug=slug,
         )
 
         if not formatted_list:
@@ -507,6 +552,8 @@ async def _rebrief_and_rerun(
             use_targeted_revision=True,
             event_bus=event_bus,
             task_id=task_id,
+            redis_client=redis_client,
+            effective_slug=slug,
         )
 
         return (final_content, history, feedback_route)
@@ -535,6 +582,8 @@ async def _finalize_pipeline(
     task_store: Optional[Any],
     task_id: Optional[str],
     event_bus: Optional[Any],
+    redis_client: Optional[Any] = None,
+    storage: Optional[Any] = None,
 ) -> None:
     """Single finalization path — all pipeline exits MUST call this.
 
@@ -552,16 +601,20 @@ async def _finalize_pipeline(
     entry_mode = output.run_metadata.get("entry_mode", "autonomous") if output.run_metadata else "autonomous"
     if entry_mode == "manual" and pieces:
         first_brief = pieces[0].brief_id
-        meta_path = artifact_dir / f"run_metadata_v13_{first_brief}.json"
+        meta_filename = f"run_metadata_v13_{first_brief}.json"
     else:
-        meta_path = artifact_dir / "run_metadata_v13.json"
-    meta_path.write_text(output.model_dump_json(indent=2), encoding="utf-8")
+        meta_filename = "run_metadata_v13.json"
+    meta_content = output.model_dump_json(indent=2)
+    meta_key = f"content/{slug}/{meta_filename}"
+    if storage:
+        storage.write(meta_key, meta_content)
+    else:
+        meta_path = artifact_dir / meta_filename
+        meta_path.write_text(meta_content, encoding="utf-8")
 
-    # Clean up this run's brief IDs from pipeline_state.json.
-    # Per-brief removal is concurrency-safe: parallel manual runs retain their entries.
-    _cleanup_pipeline_state(artifact_dir, [p.brief_id for p in pieces])
-
-    # 2-3. Persist to DB
+    # 2-3. Persist to DB BEFORE pipeline_state cleanup.
+    # This eliminates the window where neither pipeline_state nor DB has the
+    # brief's status (which causes a Triage flash in the frontend).
     await persist_content_pieces(
         session_factory=session_factory,
         run_id=run_id,
@@ -578,6 +631,19 @@ async def _finalize_pipeline(
         total_approved=sum(1 for p in pieces if p.status == ContentStatus.APPROVED),
         total_rejected=sum(1 for p in pieces if p.status == ContentStatus.REJECTED),
     )
+
+    # Clean up this run's brief IDs from pipeline_state.json.
+    # Per-brief removal is concurrency-safe: parallel manual runs retain their entries.
+    # Runs AFTER DB persist so the DB fallback is ready before pipeline_state is removed.
+    await _cleanup_pipeline_state_async(artifact_dir, [p.brief_id for p in pieces], redis_client=redis_client, effective_slug=slug)
+
+    # Invalidate content cache so next dashboard request gets fresh data
+    from core.cache import cache_delete_pattern
+    from core.redis import get_sync_redis_or_none
+
+    _cache_redis = get_sync_redis_or_none()
+    if _cache_redis:
+        cache_delete_pattern(_cache_redis, f"cache:content:{slug}:*")
 
     # 4. Update trace and flush
     # update_trace_output ends the trace internally — no end_span needed
@@ -619,6 +685,7 @@ async def run_content_generation_v13(
     session_factory: Optional[async_sessionmaker] = None,
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
+    redis_client: Optional[Any] = None,
 ) -> ContentGenerationOutput:
     """Run the v1.3 content generation pipeline.
 
@@ -687,6 +754,7 @@ async def run_content_generation_v13(
             session_factory=session_factory,
             run_id=run_id,
             company_id=company_id,
+            redis_client=redis_client,
         )
     except Exception as exc:
         error_msg = str(exc)[:500]
@@ -712,18 +780,23 @@ async def _run_pipeline_stages(
     session_factory: Optional[Any] = None,
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
+    redis_client: Optional[Any] = None,
 ) -> ContentGenerationOutput:
     """Internal stage execution — called by run_content_generation_v13 inside try/except."""
+
+    # Initialize StorageBackend early — needed for Stage 0 artifact loading (CX-1 fix)
+    from core.storage import get_storage_backend as _get_storage_backend
+    storage = _get_storage_backend(_PROJECT_ROOT / "artifacts") if artifact_dir else None
 
     # ── Stage 0: Entry Routing + Artifact Loading ──────────────────
     with scoped_bind(step_name="stage_0_entry_router"):
         stage0_span = create_span(pipeline_trace, "stage/0-entry-router")
         _update_task(task_store, task_id, status=TaskStatus.RUNNING.value, progress={"stage": 0, "stage_name": "Entry Router"})
 
-        company_context_md = _load_artifact_text(input_data.company_context_path)
-        style_guide_md = _load_artifact_text(input_data.style_guide_path)
-        persona_mds = [_load_artifact_text(p) for p in input_data.persona_paths]
-        analysis_json = _load_artifact_json(input_data.analysis_json_path)
+        company_context_md = _load_artifact_text(input_data.company_context_path, storage=storage)
+        style_guide_md = _load_artifact_text(input_data.style_guide_path, storage=storage)
+        persona_mds = [_load_artifact_text(p, storage=storage) for p in input_data.persona_paths]
+        analysis_json = _load_artifact_json(input_data.analysis_json_path, storage=storage)
 
         end_span(stage0_span, output={"entry_mode": input_data.entry_mode.value})
 
@@ -757,13 +830,18 @@ async def _run_pipeline_stages(
                 scorecard=scorecard,
                 max_topics=input_data.max_topics,
                 parent_span=stage1_span,
+                company_slug=slug,
             )
 
             # Save planner output
-            planner_path = artifact_dir / "planner_selections.json"
-            planner_path.write_text(
-                planner_output.model_dump_json(indent=2), encoding="utf-8"
-            )
+            planner_key = f"content/{slug}/planner_selections.json"
+            if storage:
+                storage.write(planner_key, planner_output.model_dump_json(indent=2))
+            else:
+                planner_path = artifact_dir / "planner_selections.json"
+                planner_path.write_text(
+                    planner_output.model_dump_json(indent=2), encoding="utf-8"
+                )
 
             # HITL Checkpoint 1: Topic Approval
             set_current_span(stage1_span)
@@ -804,8 +882,13 @@ async def _run_pipeline_stages(
                     max_topics=input_data.max_topics,
                     parent_span=stage1_span,
                     user_feedback=topic_feedback,
+                    company_slug=slug,
                 )
-                planner_path.write_text(planner_output.model_dump_json(indent=2), encoding="utf-8")
+                if storage:
+                    storage.write(planner_key, planner_output.model_dump_json(indent=2))
+                else:
+                    planner_path = artifact_dir / "planner_selections.json"
+                    planner_path.write_text(planner_output.model_dump_json(indent=2), encoding="utf-8")
 
                 set_current_span(stage1_span)
                 topic_graph = build_topic_approval_graph()
@@ -853,6 +936,8 @@ async def _run_pipeline_stages(
                     task_store=task_store,
                     task_id=task_id,
                     event_bus=event_bus,
+                    redis_client=redis_client,
+                    storage=storage,
                 )
                 return output
 
@@ -879,20 +964,27 @@ async def _run_pipeline_stages(
             )
 
             # Mark approved topics as "approved" for Kanban sync
-            _write_pipeline_state(
+            await _write_pipeline_state_async(
                 artifact_dir,
                 [f"brief-{r + 1:03d}" for r in approved_ranks],
                 "approved",
                 task_id=task_id,
+                redis_client=redis_client,
+                effective_slug=slug,
             )
 
         else:
             # Skip stage 1 — load from saved file
-            planner_path = artifact_dir / "planner_selections.json"
-            if planner_path.exists():
-                planner_output = StrategicPlannerOutput.model_validate_json(
-                    planner_path.read_text(encoding="utf-8")
-                )
+            _planner_raw: Optional[str] = None
+            _planner_key = f"content/{slug}/planner_selections.json"
+            if storage:
+                _planner_raw = storage.read(_planner_key)
+            else:
+                _planner_fs = artifact_dir / "planner_selections.json"
+                if _planner_fs.exists():
+                    _planner_raw = _planner_fs.read_text(encoding="utf-8")
+            if _planner_raw:
+                planner_output = StrategicPlannerOutput.model_validate_json(_planner_raw)
                 approved_topics = planner_output.selections
             else:
                 logger.warning("Stage 1 skipped but no planner_selections.json found")
@@ -925,19 +1017,25 @@ async def _run_pipeline_stages(
                 style_guide_md=style_guide_md,
                 max_concurrent=input_data.max_concurrent_workers,
                 parent_span=stage2_span,
+                company_slug=slug,
             )
 
             # Save blueprints (C1-fix: merge to preserve manually-added entries)
             blueprints_path = artifact_dir / "blueprints.json"
-            _merge_and_write_blueprints(blueprints_path, blueprints)
+            _merge_and_write_blueprints(
+                blueprints_path, blueprints,
+                storage=storage, storage_key=f"content/{slug}/blueprints.json",
+            )
 
             # Mark blueprints as "brief_review" pending HITL-2
             # (Uses actual brief_ids from build_briefs_parallel, not predicted IDs)
-            _write_pipeline_state(
+            await _write_pipeline_state_async(
                 artifact_dir,
                 [bp.brief_id for bp in blueprints],
                 "brief_review",
                 task_id=task_id,
+                redis_client=redis_client,
+                effective_slug=slug,
             )
 
             # HITL Checkpoint 2: Brief Approval (per blueprint) with feedback loop
@@ -949,6 +1047,14 @@ async def _run_pipeline_stages(
                 brief_feedback_count = 0
 
                 while True:
+                    # Write pending state before HITL graph so polling sees it
+                    await _write_pipeline_state_async(
+                        artifact_dir, [bp.brief_id],
+                        "pending_brief_approval",
+                        task_id=task_id,
+                        redis_client=redis_client,
+                        effective_slug=slug,
+                    )
                     set_current_span(stage2_span)
                     brief_graph = build_brief_approval_graph()
                     brief_state = await run_hitl_checkpoint(
@@ -970,7 +1076,7 @@ async def _run_pipeline_stages(
                         if feedback:
                             bp.user_feedback = feedback
                         approved_blueprints.append(bp)
-                        _write_pipeline_state(artifact_dir, [bp.brief_id], "approved", task_id=task_id)
+                        await _write_pipeline_state_async(artifact_dir, [bp.brief_id], "approved", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                         brief_decision_log.append({
                             "brief_id": bp.brief_id,
                             "decision": "approve",
@@ -1006,6 +1112,7 @@ async def _run_pipeline_stages(
                                 max_concurrent=1,
                                 parent_span=stage2_span,
                                 brief_id_overrides=[bp.brief_id],
+                                company_slug=slug,
                             )
                             if revised:
                                 bp = revised[0]
@@ -1175,13 +1282,23 @@ async def _run_pipeline_stages(
         else:
             # Reads blueprints.json for existing IDs and picks the next sequential one.
             _existing_ids: set[str] = set()
-            _bp_path = artifact_dir / "blueprints.json"
-            if _bp_path.is_file():
+            _bp_raw: Optional[str] = None
+            _bp_key = f"content/{slug}/blueprints.json"
+            if storage:
+                _bp_raw = storage.read(_bp_key)
+            else:
+                _bp_path = artifact_dir / "blueprints.json"
+                if _bp_path.is_file():
+                    try:
+                        _bp_raw = _bp_path.read_text(encoding="utf-8")
+                    except OSError:
+                        pass
+            if _bp_raw:
                 try:
-                    _existing = json.loads(_bp_path.read_text(encoding="utf-8"))
+                    _existing = json.loads(_bp_raw)
                     if isinstance(_existing, list):
                         _existing_ids = {b.get("brief_id", "") for b in _existing if isinstance(b, dict)}
-                except (json.JSONDecodeError, OSError):
+                except (json.JSONDecodeError, ValueError):
                     pass
             _next_idx = 1
             while f"brief-{_next_idx:03d}" in _existing_ids:
@@ -1189,7 +1306,7 @@ async def _run_pipeline_stages(
             _manual_brief_id = f"brief-{_next_idx:03d}"
 
         # Mark brief as "briefing" for Kanban sync — Brief Builder is about to run
-        _write_pipeline_state(artifact_dir, [_manual_brief_id], "briefing", task_id=task_id)
+        await _write_pipeline_state_async(artifact_dir, [_manual_brief_id], "briefing", task_id=task_id, redis_client=redis_client, effective_slug=slug)
 
         blueprints = await build_briefs_parallel(
             contexts=worker_contexts,
@@ -1200,14 +1317,18 @@ async def _run_pipeline_stages(
             max_concurrent=1,
             parent_span=pipeline_trace,
             brief_id_overrides=[_manual_brief_id],
+            company_slug=slug,
         )
 
         # Save blueprints before HITL-2 (C1-fix: merge to preserve existing entries)
         blueprints_path = artifact_dir / "blueprints.json"
-        _merge_and_write_blueprints(blueprints_path, blueprints)
+        _merge_and_write_blueprints(
+            blueprints_path, blueprints,
+            storage=storage, storage_key=f"content/{slug}/blueprints.json",
+        )
 
         # Write "brief_review" state — brief is built, pending HITL-2 review
-        _write_pipeline_state(artifact_dir, [bp.brief_id for bp in blueprints], "brief_review", task_id=task_id)
+        await _write_pipeline_state_async(artifact_dir, [bp.brief_id for bp in blueprints], "brief_review", task_id=task_id, redis_client=redis_client, effective_slug=slug)
 
         # HITL Checkpoint 2: Brief Approval (per blueprint) with feedback loop
         # Same as autonomous mode — user reviews the generated blueprint before
@@ -1220,6 +1341,14 @@ async def _run_pipeline_stages(
             brief_feedback_count = 0
 
             while True:
+                # Write pending state before HITL graph so polling sees it
+                await _write_pipeline_state_async(
+                    artifact_dir, [bp.brief_id],
+                    "pending_brief_approval",
+                    task_id=task_id,
+                    redis_client=redis_client,
+                    effective_slug=slug,
+                )
                 set_current_span(pipeline_trace)
                 brief_graph = build_brief_approval_graph()
                 brief_state = await run_hitl_checkpoint(
@@ -1241,7 +1370,7 @@ async def _run_pipeline_stages(
                     if feedback:
                         bp.user_feedback = feedback
                     approved_blueprints.append(bp)
-                    _write_pipeline_state(artifact_dir, [bp.brief_id], "approved", task_id=task_id)
+                    await _write_pipeline_state_async(artifact_dir, [bp.brief_id], "approved", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                     brief_decision_log.append({
                         "brief_id": bp.brief_id,
                         "decision": "approve",
@@ -1275,6 +1404,7 @@ async def _run_pipeline_stages(
                             max_concurrent=1,
                             parent_span=pipeline_trace,
                             brief_id_overrides=[bp.brief_id],
+                            company_slug=slug,
                         )
                         if revised:
                             bp = revised[0]
@@ -1339,14 +1469,21 @@ async def _run_pipeline_stages(
         # Load topic-scoped analysis
         td_analysis_json: dict[str, Any] = {}
         if input_data.td_ga_run_id:
-            scoped_path = (
-                _PROJECT_ROOT / "artifacts" / "gap_analysis" / slug
-                / "topic_scoped" / input_data.td_ga_run_id / "analysis.json"
-            )
-            if scoped_path.exists():
-                td_analysis_json = json.loads(scoped_path.read_text(encoding="utf-8"))
+            _scoped_key = f"gap_analysis/{slug}/topic_scoped/{input_data.td_ga_run_id}/analysis.json"
+            _scoped_raw: Optional[str] = None
+            if storage:
+                _scoped_raw = storage.read(_scoped_key)
             else:
-                logger.warning("Scoped analysis not found: %s", scoped_path)
+                scoped_path = (
+                    _PROJECT_ROOT / "artifacts" / "gap_analysis" / slug
+                    / "topic_scoped" / input_data.td_ga_run_id / "analysis.json"
+                )
+                if scoped_path.exists():
+                    _scoped_raw = scoped_path.read_text(encoding="utf-8")
+            if _scoped_raw:
+                td_analysis_json = json.loads(_scoped_raw)
+            else:
+                logger.warning("Scoped analysis not found: %s", _scoped_key)
 
         topic_query_map = td_analysis_json.get("topic_query_map", {})
         gaps_raw = td_analysis_json.get("gaps", [])
@@ -1375,6 +1512,7 @@ async def _run_pipeline_stages(
                 style_guide_md=style_guide_md,
                 max_concurrent=input_data.max_concurrent_workers,
                 parent_span=pipeline_trace,
+                company_slug=slug,
             )
 
             if input_data.auto_approve:
@@ -1407,7 +1545,10 @@ async def _run_pipeline_stages(
     # C1-fix: merge to preserve manually-added entries (those with _source field)
     if approved_blueprints:
         bp_path = artifact_dir / "blueprints.json"
-        _merge_and_write_blueprints(bp_path, approved_blueprints)
+        _merge_and_write_blueprints(
+            bp_path, approved_blueprints,
+            storage=storage, storage_key=f"content/{slug}/blueprints.json",
+        )
 
     # C6-fix: fail early when manual/TD modes produce zero blueprints.
     # Autonomous mode may legitimately have zero if user rejected all at HITL-2.
@@ -1477,12 +1618,6 @@ async def _run_pipeline_stages(
         except Exception:
             logger.warning("Failed to create early ContentPieceModel rows", exc_info=True)
 
-    # Initialize StorageBackend for stage artifact persistence
-    # Root must be PROJECT_ROOT/artifacts (not artifact_dir.parent which is artifacts/content)
-    # so that storage keys are relative to the same root the reader uses.
-    from core.storage import get_storage_backend
-    storage = get_storage_backend(_PROJECT_ROOT / "artifacts") if artifact_dir else None
-
     # Clear stale step_name left by bind_context() in stages 1/2
     bind_context(step_name=None)
 
@@ -1517,6 +1652,8 @@ async def _run_pipeline_stages(
                 piece_id_map=piece_id_map,
                 event_bus=event_bus,
                 task_id=task_id,
+                redis_client=redis_client,
+                effective_slug=slug,
             )
 
             # H2 FIX: Surface worker failures as rejected pieces + SSE events
@@ -1565,7 +1702,7 @@ async def _run_pipeline_stages(
                     )
                     continue
                 # Mark brief as "evaluating" for Kanban sync
-                _write_pipeline_state(artifact_dir, [brief_id], "evaluating", task_id=task_id)
+                await _write_pipeline_state_async(artifact_dir, [brief_id], "evaluating", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                 _emit(event_bus, task_id, "worker_progress", {
                     "brief_id": brief_id, "step": "evaluating",
                 })
@@ -1584,6 +1721,8 @@ async def _run_pipeline_stages(
                     use_targeted_revision=True,
                     event_bus=event_bus,
                     task_id=task_id,
+                    redis_client=redis_client,
+                    effective_slug=slug,
                 )
                 evaluated.append((brief_id, final_content, history, feedback_route))
 
@@ -1591,11 +1730,13 @@ async def _run_pipeline_stages(
             _emit(event_bus, task_id, "stage_complete", {"stage": 4, "evaluated": len(evaluated)})
 
             # Mark evaluated briefs as "review" for Kanban sync (HITL-3 pending)
-            _write_pipeline_state(
+            await _write_pipeline_state_async(
                 artifact_dir,
                 [bid for bid, _, _, _ in evaluated],
                 "review",
                 task_id=task_id,
+                redis_client=redis_client,
+                effective_slug=slug,
             )
         else:
             evaluated = [
@@ -1656,6 +1797,8 @@ async def _run_pipeline_stages(
                         parent_span=stage5_span,
                         event_bus=event_bus,
                         task_id=task_id,
+                        redis_client=redis_client,
+                        slug=slug,
                     )
                     if rebriefed:
                         final_content, history, feedback_route = rebriefed
@@ -1682,6 +1825,15 @@ async def _run_pipeline_stages(
                         eval_summary["cps"] = cps_data
 
                     # HITL Checkpoint 3: Final Content Review
+                    # Write pending state BEFORE graph starts so polling also
+                    # discovers the HITL state (not just SSE events).
+                    await _write_pipeline_state_async(
+                        artifact_dir, [final_content.brief_id],
+                        "pending_content_approval",
+                        task_id=task_id,
+                        redis_client=redis_client,
+                        effective_slug=slug,
+                    )
                     set_current_span(stage5_span)
                     review_graph = build_content_review_graph()
                     review_state = await run_hitl_checkpoint(
@@ -1710,22 +1862,23 @@ async def _run_pipeline_stages(
                         _emit(event_bus, task_id, "brief_completed", {
                             "brief_id": final_content.brief_id, "decision": "approve",
                         })
-                        # Approved — write final.md
-                        bd = _brief_dir(artifact_dir, final_content.brief_id)
-                        final_path = bd / "final.md"
-                        final_path.write_text(final_content.markdown, encoding="utf-8")
-                        # DB-ready: persist final artifact metadata
-                        if storage and piece_id_map.get(final_content.brief_id):
+                        # Approved — write final.md via StorageBackend
+                        _brief_dir(artifact_dir, final_content.brief_id)  # ensure local dir for state_helpers
+                        final_rel_path = f"content/{slug}/content/{final_content.brief_id}/final.md"
+                        if storage:
                             from core.content_engine.artifact_writer import persist_stage_artifact
                             from core.db.enums import ContentArtifactStage as _CAS
 
                             await persist_stage_artifact(
                                 storage=storage, session_factory=session_factory,
-                                piece_id=piece_id_map[final_content.brief_id],
+                                piece_id=piece_id_map.get(final_content.brief_id),
                                 stage=_CAS.final,
-                                relative_path=str(final_path.relative_to(storage.root)),
+                                relative_path=final_rel_path,
                                 content=final_content.markdown,
                             )
+                        else:
+                            bd = _brief_dir(artifact_dir, final_content.brief_id)
+                            (bd / "final.md").write_text(final_content.markdown, encoding="utf-8")
                         pieces.append(
                             ContentPiece(
                                 brief_id=final_content.brief_id,
@@ -1734,18 +1887,18 @@ async def _run_pipeline_stages(
                                 final_markdown=final_content.markdown,
                                 eval_summary=eval_summary,
                                 human_notes=review_state.get("editor_notes"),
-                                artifact_path=str(final_path.relative_to(_PROJECT_ROOT)),
+                                artifact_path=final_rel_path,
                                 topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                             )
                         )
-                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "completed", task_id=task_id)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "completed", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                         piece_resolved = True
 
                     elif content_decision == "edit" and edit_count < _MAX_EDIT_ATTEMPTS:
                         # Edit → drafter revision with human notes → fact checker → re-present
                         edit_count += 1
                         # Mark as revising for Kanban sync (tile moves back to Generating)
-                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "revising", task_id=task_id)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "revising", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                         _emit(event_bus, task_id, "worker_progress", {
                             "brief_id": final_content.brief_id, "step": "revising",
                             "edit_attempt": edit_count,
@@ -1765,6 +1918,7 @@ async def _run_pipeline_stages(
                             company_context_md=company_context_md,
                             company_name=input_data.company_name,
                             domain=input_data.domain,
+                            company_slug=slug,
                         )
                         if revised:
                             final_content = revised
@@ -1784,6 +1938,8 @@ async def _run_pipeline_stages(
                                 use_targeted_revision=True,
                                 event_bus=event_bus,
                                 task_id=task_id,
+                                redis_client=redis_client,
+                                effective_slug=slug,
                             )
                         # Loop back to re-present at HITL-3
 
@@ -1796,7 +1952,7 @@ async def _run_pipeline_stages(
                         # Reject + rethink → re-brief with user comment → re-run full chain
                         rebrief_count += 1
                         # Mark as "briefing" for Kanban sync (tile moves back to Brief column)
-                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "briefing", task_id=task_id)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "briefing", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                         _emit(event_bus, task_id, "worker_progress", {
                             "brief_id": final_content.brief_id, "step": "briefing",
                             "rebrief_attempt": rebrief_count,
@@ -1821,6 +1977,8 @@ async def _run_pipeline_stages(
                             parent_span=stage5_span,
                             event_bus=event_bus,
                             task_id=task_id,
+                            redis_client=redis_client,
+                            slug=slug,
                         )
                         if rebriefed:
                             final_content, history, feedback_route = rebriefed
@@ -1843,7 +2001,7 @@ async def _run_pipeline_stages(
 
                     else:
                         # Exhausted edit/rebrief attempts or explicit reject — permanent rejection
-                        _write_pipeline_state(artifact_dir, [final_content.brief_id], "rejected", task_id=task_id)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "rejected", task_id=task_id, redis_client=redis_client, effective_slug=slug)
                         _emit(event_bus, task_id, "brief_rejected", {
                             "brief_id": final_content.brief_id,
                         })
@@ -1863,21 +2021,22 @@ async def _run_pipeline_stages(
         else:
             # Auto-approve all
             for _brief_id, final_content, history, _feedback_route in evaluated:
-                bd = _brief_dir(artifact_dir, final_content.brief_id)
-                final_path = bd / "final.md"
-                final_path.write_text(final_content.markdown, encoding="utf-8")
-                # DB-ready: persist final artifact metadata
-                if storage and piece_id_map.get(final_content.brief_id):
+                _brief_dir(artifact_dir, final_content.brief_id)  # ensure local dir for state_helpers
+                final_rel_path = f"content/{slug}/content/{final_content.brief_id}/final.md"
+                if storage:
                     from core.content_engine.artifact_writer import persist_stage_artifact
                     from core.db.enums import ContentArtifactStage as _CAS
 
                     await persist_stage_artifact(
                         storage=storage, session_factory=session_factory,
-                        piece_id=piece_id_map[final_content.brief_id],
+                        piece_id=piece_id_map.get(final_content.brief_id),
                         stage=_CAS.final,
-                        relative_path=str(final_path.relative_to(storage.root)),
+                        relative_path=final_rel_path,
                         content=final_content.markdown,
                     )
+                else:
+                    bd = _brief_dir(artifact_dir, final_content.brief_id)
+                    (bd / "final.md").write_text(final_content.markdown, encoding="utf-8")
                 auto_eval: Dict[str, Any] = {}
                 if history.cycles:
                     last_eval = history.cycles[-1]
@@ -1899,7 +2058,7 @@ async def _run_pipeline_stages(
                         status=ContentStatus.APPROVED,
                         final_markdown=final_content.markdown,
                         eval_summary=auto_eval,
-                        artifact_path=str(final_path.relative_to(_PROJECT_ROOT)),
+                        artifact_path=final_rel_path,
                         topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                     )
                 )
@@ -1937,6 +2096,8 @@ async def _run_pipeline_stages(
         task_store=task_store,
         task_id=task_id,
         event_bus=event_bus,
+        redis_client=redis_client,
+        storage=storage,
     )
 
     return output

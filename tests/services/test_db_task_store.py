@@ -212,3 +212,191 @@ class TestDbTaskStoreApproval:
         fetched = store.get_task(task.task_id)
         assert len(fetched.approval_history) == 1
         assert fetched.approval_history[0].decision == "approve"
+
+
+# ── Session 3: DB Durability & Recovery ──────────────────────────────
+
+
+class TestDbTaskStoreDurableWrites:
+    """Tests for Fix 1d: ensure_created, flush_terminal, rollback_create, drain_pending."""
+
+    @pytest.mark.asyncio
+    async def test_create_task_tracks_pending_write(self, store):
+        """After create_task(), _pending_creates[task_id] should contain a task."""
+        with patch(_PATCH_TARGET, return_value=MagicMock()) as mock_ct:
+            task = store.create_task("gap_analysis", "test-co")
+        assert task.task_id in store._pending_creates
+
+    @pytest.mark.asyncio
+    async def test_ensure_created_awaits_and_removes_pending(self, store):
+        """ensure_created() awaits the pending future and removes it from the dict."""
+        async def noop():
+            pass
+
+        store._pending_creates["task-001"] = asyncio.create_task(noop())
+        await store.ensure_created("task-001")
+        assert "task-001" not in store._pending_creates
+
+    @pytest.mark.asyncio
+    async def test_ensure_created_raises_on_db_failure(self, store):
+        """ensure_created() propagates exceptions from the DB write."""
+        async def failing():
+            raise RuntimeError("DB down")
+
+        store._pending_creates["task-001"] = asyncio.create_task(failing())
+        await asyncio.sleep(0)  # let the task complete
+        with pytest.raises(RuntimeError, match="DB down"):
+            await store.ensure_created("task-001")
+
+    @pytest.mark.asyncio
+    async def test_ensure_created_noop_when_no_pending(self, store):
+        """ensure_created() should not raise when task_id has no pending write."""
+        await store.ensure_created("nonexistent-id")
+        # No exception means success
+
+    @pytest.mark.asyncio
+    async def test_terminal_status_tracked_in_pending_terminals(self, store):
+        """Terminal status updates (COMPLETED, FAILED, CANCELLED) are tracked in _pending_terminals."""
+        for status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+            with patch(_PATCH_TARGET, return_value=MagicMock()):
+                task = store.create_task("research", f"co-{status.value}")
+                store.update_task(task.task_id, status=status)
+            assert task.task_id in store._pending_terminals
+
+    @pytest.mark.asyncio
+    async def test_non_terminal_update_not_tracked(self, store):
+        """Non-terminal updates (e.g., progress_pct) should NOT appear in _pending_terminals."""
+        with patch(_PATCH_TARGET, return_value=MagicMock()):
+            task = store.create_task("research", "test-co")
+            store.update_task(task.task_id, progress_pct=50.0)
+        assert task.task_id not in store._pending_terminals
+
+    @pytest.mark.asyncio
+    async def test_flush_terminal_awaits_and_removes(self, store):
+        """flush_terminal() awaits the pending future and removes it."""
+        async def noop():
+            pass
+
+        store._pending_terminals["task-001"] = asyncio.create_task(noop())
+        await store.flush_terminal("task-001")
+        assert "task-001" not in store._pending_terminals
+
+    @pytest.mark.asyncio
+    async def test_flush_terminal_swallows_exception(self, store):
+        """flush_terminal() swallows exceptions (best-effort) so cleanup continues."""
+        async def failing():
+            raise RuntimeError("DB down")
+
+        store._pending_terminals["task-001"] = asyncio.create_task(failing())
+        await asyncio.sleep(0)  # let the task complete
+        # Should NOT raise
+        await store.flush_terminal("task-001")
+        assert "task-001" not in store._pending_terminals
+
+    @pytest.mark.asyncio
+    async def test_rollback_create_cleans_up(self, store):
+        """rollback_create() removes task from memory and releases slug lock."""
+        with patch(_PATCH_TARGET, return_value=MagicMock()):
+            task = store.create_task("research", "test-co")
+        store.rollback_create(task.task_id)
+
+        # Task should be gone
+        with pytest.raises(TaskNotFoundError):
+            store.get_task(task.task_id)
+
+        # Slug lock released — can create again
+        with patch(_PATCH_TARGET, return_value=MagicMock()):
+            task2 = store.create_task("research", "test-co")
+        assert task2.task_id != task.task_id
+
+    @pytest.mark.asyncio
+    async def test_drain_pending_awaits_all(self, store):
+        """drain_pending() awaits all pending creates and terminals, then clears both dicts."""
+        async def noop():
+            pass
+
+        store._pending_creates["c1"] = asyncio.create_task(noop())
+        store._pending_creates["c2"] = asyncio.create_task(noop())
+        store._pending_terminals["t1"] = asyncio.create_task(noop())
+
+        await store.drain_pending()
+        assert len(store._pending_creates) == 0
+        assert len(store._pending_terminals) == 0
+
+
+class TestDbTaskStoreWorkerRecovery:
+    """Tests for Fix 1e: worker_id, scoped recovery, scoped semaphore cleanup."""
+
+    def test_worker_id_set_explicitly(self):
+        """Explicit worker_id is stored as-is."""
+        mock_factory = MagicMock()
+        s = DbTaskStore(session_factory=mock_factory, worker_id="host1:1234")
+        assert s._worker_id == "host1:1234"
+
+    def test_worker_id_auto_generated(self):
+        """Auto-generated worker_id contains ':' and the current PID."""
+        import os
+
+        mock_factory = MagicMock()
+        s = DbTaskStore(session_factory=mock_factory)
+        assert ":" in s._worker_id
+        assert str(os.getpid()) in s._worker_id
+
+    @pytest.mark.asyncio
+    async def test_scoped_semaphore_cleanup_removes_specific_ids(self):
+        """_cleanup_semaphore_entries releases each task_id from the semaphore."""
+        mock_factory = MagicMock()
+        store = DbTaskStore(session_factory=mock_factory)
+        mock_sem = MagicMock()
+        store._redis_semaphore = mock_sem
+
+        cleaned = store._cleanup_semaphore_entries(["task-1", "task-2"])
+
+        assert cleaned == 2
+        assert mock_sem.release.call_count == 2
+        mock_sem.release.assert_any_call("task-1")
+        mock_sem.release.assert_any_call("task-2")
+
+    @pytest.mark.asyncio
+    async def test_scoped_semaphore_cleanup_empty_list(self):
+        """Empty list returns 0 and release is not called."""
+        mock_factory = MagicMock()
+        store = DbTaskStore(session_factory=mock_factory)
+        mock_sem = MagicMock()
+        store._redis_semaphore = mock_sem
+
+        cleaned = store._cleanup_semaphore_entries([])
+
+        assert cleaned == 0
+        mock_sem.release.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_scoped_semaphore_cleanup_tolerates_individual_errors(self):
+        """If release raises on one call, others still proceed."""
+        mock_factory = MagicMock()
+        store = DbTaskStore(session_factory=mock_factory)
+        mock_sem = MagicMock()
+        mock_sem.release.side_effect = [RuntimeError("boom"), None]
+        store._redis_semaphore = mock_sem
+
+        cleaned = store._cleanup_semaphore_entries(["task-1", "task-2"])
+
+        assert cleaned == 1
+        assert mock_sem.release.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_drain_pending_handles_mixed_success_failure(self, store):
+        """drain_pending() doesn't raise when some futures fail, and clears both dicts."""
+        async def noop():
+            pass
+
+        async def failing():
+            raise RuntimeError("DB down")
+
+        store._pending_creates["ok"] = asyncio.create_task(noop())
+        store._pending_terminals["fail"] = asyncio.create_task(failing())
+
+        # Should NOT raise
+        await store.drain_pending()
+        assert len(store._pending_creates) == 0
+        assert len(store._pending_terminals) == 0

@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.storage.backends.base import StorageBackend
+
 import anthropic
 from langchain.chat_models import init_chat_model
 from langgraph.prebuilt import create_react_agent
@@ -46,7 +48,7 @@ from core.research.prompts.weakness_analyst import (
     get_weakness_analyst_system_prompt,
 )
 from core.research.tools import perplexity_client
-from core.shared_tools.tracing import create_span, end_span, log_generation
+from core.shared_tools.tracing import create_span, end_span, extract_provider, log_generation
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +146,7 @@ async def _run_perplexity_agent(
     timeout_s: float = 500.0,
     span_name: str = "agent",
     model: Optional[str] = None,
+    company_slug: str = "",
 ) -> KBAgentResult:
     """Shared runner for Perplexity-based agents."""
     span = create_span(
@@ -160,12 +163,21 @@ async def _run_perplexity_agent(
             ),
             timeout=timeout_s,
         )
+        _effective_model = model or settings.perplexity_deep_research_model
+        _kb_meta = {
+            "pipeline": "knowledge_base",
+            "pipeline_step": doc_type.value,
+            "provider": "perplexity",
+            "model": _effective_model,
+            "company_slug": company_slug,
+        }
         log_generation(
             span,
             span_name,
-            model or settings.perplexity_deep_research_model,
+            _effective_model,
             full_prompt[:2000],
             result_md[:2000] if result_md else "",
+            metadata=_kb_meta,
         )
         end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
         return KBAgentResult(
@@ -203,6 +215,7 @@ async def run_company_overview_agent(
     return await _run_perplexity_agent(
         KBDocType.COMPANY_OVERVIEW, full_prompt, parent_span, timeout_s, "company-overview",
         model=settings.research_kb_company_overview_model,
+        company_slug=input_data.company_slug or "",
     )
 
 
@@ -219,6 +232,7 @@ async def run_customer_reviews_agent(
     return await _run_perplexity_agent(
         KBDocType.CUSTOMER_REVIEWS, full_prompt, parent_span, timeout_s, "customer-reviews",
         model=settings.research_kb_customer_reviews_model,
+        company_slug=input_data.company_slug or "",
     )
 
 
@@ -238,6 +252,7 @@ async def run_competitor_scanner_agent(
     return await _run_perplexity_agent(
         KBDocType.COMPETITOR_REGISTRY, full_prompt, parent_span, timeout_s, "competitor-scanner",
         model=settings.research_kb_competitor_scanner_model,
+        company_slug=input_data.company_slug or "",
     )
 
 
@@ -259,6 +274,7 @@ async def run_weakness_analyst_agent(
     return await _run_perplexity_agent(
         KBDocType.WEAKNESS_ANALYSIS, full_prompt, parent_span, timeout_s, "weakness-analyst",
         model=settings.research_kb_weakness_analyst_model,
+        company_slug=input_data.company_slug or "",
     )
 
 
@@ -307,9 +323,17 @@ async def run_brand_perception_agent(
             timeout=timeout_s,
         )
         bp_model = settings.research_kb_brand_perception_model
+        _bp_meta = {
+            "pipeline": "knowledge_base",
+            "pipeline_step": "brand_perception",
+            "provider": "anthropic",
+            "model": bp_model,
+            "company_slug": input_data.company_slug or "",
+        }
         log_generation(
             span, "brand-perception/turn-0", bp_model,
             user_prompt[:2000], _extract_text_with_citations(response)[:2000],
+            metadata=_bp_meta,
         )
 
         # Handle pause_turn loop — Claude hit server-side iteration limit.
@@ -338,6 +362,7 @@ async def run_brand_perception_agent(
             log_generation(
                 span, f"brand-perception/turn-{pause_turns}", bp_model,
                 "(continuation)", _extract_text_with_citations(response)[:2000],
+                metadata=_bp_meta,
             )
 
         is_partial = pause_turns >= _MAX_PAUSE_TURNS
@@ -374,22 +399,33 @@ async def run_brand_perception_agent(
 
 def build_synthesis_agent(
     model: Optional[Any] = None,
-    kb_base_dir: Optional[Path] = None,
+    *,
+    storage_backend: Optional[StorageBackend] = None,
+    storage_prefix: str = "knowledge_base/",
     checkpointer: Optional[Any] = None,
+    # Deprecated — ignored when storage_backend is provided
+    kb_base_dir: Optional[Path] = None,
 ) -> Any:
     """Build the synthesis agent using langgraph.prebuilt.create_react_agent.
 
     Args:
         model: LangChain chat model (default: built from settings).
-        kb_base_dir: Root directory for the read_file tool.
+        storage_backend: StorageBackend instance for reading KB artifacts.
+        storage_prefix: Key prefix (e.g. ``knowledge_base/{slug}/``).
         checkpointer: Optional LangGraph checkpointer.
+        kb_base_dir: **Deprecated** — kept for backward compat with tests.
 
     Returns:
         CompiledStateGraph ready for .ainvoke().
     """
     if model is None:
         model = _build_model(settings.research_kb_synthesis_model)
-    read_file = make_read_file_tool(kb_base_dir or Path("artifacts/knowledge_base"))
+
+    if storage_backend is None:
+        from core.storage import get_storage_backend
+        storage_backend = get_storage_backend(kb_base_dir or Path("artifacts"))
+
+    read_file = make_read_file_tool(storage_backend, storage_prefix)
     return create_react_agent(
         model,
         [read_file],
@@ -400,21 +436,24 @@ def build_synthesis_agent(
 
 async def run_synthesis_agent(
     input_data: KnowledgeBaseInput,
-    kb_base_dir: Path,
-    available_docs: Dict[str, str],
-    missing_docs: List[str],
+    kb_base_dir: Optional[Path] = None,
+    available_docs: Optional[Dict[str, str]] = None,
+    missing_docs: Optional[List[str]] = None,
     parent_span: Optional[Any] = None,
     timeout_s: float = 600.0,
     revision_note: Optional[str] = None,
     delta_mode: bool = False,
     changed_docs: Optional[Dict[str, str]] = None,
     previous_synthesis_path: Optional[str] = None,
+    *,
+    storage_backend: Optional[StorageBackend] = None,
+    storage_prefix: str = "knowledge_base/",
 ) -> KBAgentResult:
     """Run L2 → L3 synthesis — requires minimum 3 of 5 L2 docs.
 
     Args:
         input_data: Pipeline input with company details.
-        kb_base_dir: Root directory for the read_file tool.
+        kb_base_dir: **Deprecated** — kept for backward compat.
         available_docs: Dict mapping doc_type.value to file path.
         missing_docs: List of doc_type.value strings that are missing.
         parent_span: Optional parent tracing span.
@@ -425,10 +464,14 @@ async def run_synthesis_agent(
             (required when delta_mode=True).
         previous_synthesis_path: Relative path to previous synthesis file
             (required when delta_mode=True).
+        storage_backend: StorageBackend instance for reading KB artifacts.
+        storage_prefix: Key prefix (e.g. ``knowledge_base/{slug}/``).
 
     Returns:
         KBAgentResult with synthesized company profile or error.
     """
+    available_docs = available_docs or {}
+    missing_docs = missing_docs or []
     # Partial failure policy (CX-14): minimum 3/5 L2 docs
     if len(available_docs) < 3:
         return KBAgentResult(
@@ -466,7 +509,13 @@ async def run_synthesis_agent(
             else get_synthesis_system_prompt()
         )
         model = _build_model(settings.research_kb_synthesis_model)
-        read_file = make_read_file_tool(kb_base_dir)
+
+        # Resolve storage backend — prefer explicit, fall back for compat
+        if storage_backend is None:
+            from core.storage import get_storage_backend
+            storage_backend = get_storage_backend(kb_base_dir or Path("artifacts"))
+
+        read_file = make_read_file_tool(storage_backend, storage_prefix)
         agent = create_react_agent(model, [read_file], prompt=system_prompt)
 
         # Build user prompt based on mode
@@ -494,7 +543,14 @@ async def run_synthesis_agent(
         # LangChainTracer (a proper BaseCallbackHandler) rather than
         # passing the RunTree directly — RunTree lacks the `run_inline`
         # attribute that langchain-core's callback manager requires.
-        invoke_config: Dict[str, Any] = {}
+        _synth_meta = {
+            "pipeline": "knowledge_base",
+            "pipeline_step": "synthesis",
+            "provider": extract_provider(settings.research_kb_synthesis_model),
+            "model": settings.research_kb_synthesis_model,
+            "company_slug": input_data.company_slug or "",
+        }
+        invoke_config: Dict[str, Any] = {"metadata": _synth_meta}
         if span is not None:
             try:
                 import os
@@ -533,6 +589,7 @@ async def run_synthesis_agent(
             settings.research_kb_synthesis_model,
             user_prompt[:2000],
             output_md[:2000],
+            metadata=_synth_meta,
         )
         end_span(span, output={"word_count": len(output_md.split())})
         return KBAgentResult(

@@ -32,7 +32,6 @@ from core.models.voice_style_guide import (
     VoiceStyleGuideManifest,
 )
 from core.storage.backends.base import StorageBackend
-from core.storage.backends.local import LocalStorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +48,11 @@ class VoiceStyleGuideStorage:
     ) -> None:
         self._artifacts_root = Path(artifacts_root)
         self._slug = slug
-        self._backend = backend or LocalStorageBackend(self._artifacts_root)
+        if backend is not None:
+            self._backend = backend
+        else:
+            from core.storage import get_storage_backend
+            self._backend = get_storage_backend(self._artifacts_root)
         self._prefix = f"voice_style_guide/{slug}/"
 
     # ------------------------------------------------------------------
@@ -288,21 +291,20 @@ class VoiceStyleGuideStorage:
     # Promotion to style_guides/
     # ------------------------------------------------------------------
 
-    def promote_to_style_guides(self, artifacts_root: Path) -> Optional[str]:
-        """Copy the latest guide to artifacts/style_guides/{slug}.md.
+    def promote_to_style_guides(self, artifacts_root: Optional[Path] = None) -> Optional[str]:
+        """Copy the latest guide to style_guides/{slug}.md via the storage backend.
 
-        Returns the path if successful, None if no guide exists.
+        Returns the relative storage key if successful, None if no guide exists.
         """
         guide_md = self.get_latest_guide()
         if not guide_md:
             return None
 
-        self._backend.write(f"style_guides/{self._slug}.md", guide_md)
+        rel_key = f"style_guides/{self._slug}.md"
+        self._backend.write(rel_key, guide_md)
 
-        # Return absolute path for backward compatibility with callers
-        target = Path(artifacts_root) / "style_guides" / f"{self._slug}.md"
-        logger.info("VSG/%s: promoted guide to %s", self._slug, target)
-        return str(target)
+        logger.info("VSG/%s: promoted guide to %s", self._slug, rel_key)
+        return rel_key
 
     # ------------------------------------------------------------------
     # List / query helpers

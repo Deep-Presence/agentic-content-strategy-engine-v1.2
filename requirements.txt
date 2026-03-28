@@ -8,12 +8,19 @@ praw>=7.7,<8
 
 # LangChain / LangGraph ecosystem
 langgraph>=1.0
+langgraph-checkpoint-redis>=0.0.1
 langchain>=1.2
 langchain-anthropic>=0.3
 langchain-core>=1.2
 langchain-google-genai>=2.0
 perplexityai>=0.2
 google-genai>=1.0
+
+# Cloudflare R2 (S3-compatible blob storage)
+boto3>=1.35.0
+
+# CMS credential encryption
+cryptography>=42.0
 
 # Gap analysis pipeline
 openai>=2.0
@@ -55,6 +62,9 @@ asyncpg>=0.29
 psycopg2-binary>=2.9
 alembic>=1.13
 pgvector>=0.3
+
+# Redis caching / pub-sub layer
+redis[hiredis]>=5.2.0
 
 # CPS model — PyTorch inference (CPU-only)
 --extra-index-url https://download.pytorch.org/whl/cpu

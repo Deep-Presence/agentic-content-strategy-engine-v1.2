@@ -1,28 +1,24 @@
 """Tests for task store initialization in app lifespan.
 
 Verifies:
-- Default: JSON TaskStore when no DATABASE_URL
-- DbTaskStore when DATABASE_URL set
-- Fallback to JSON TaskStore on DB init failure
+- DATABASE_URL required — RuntimeError without it
+- DbTaskStore created when DATABASE_URL is set
+- RuntimeError on DB init failure (no fallback)
 """
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from api.app import _init_task_store
-from api.tasks.store import TaskStore
 
 
 @pytest.fixture
 def app_stub() -> MagicMock:
-    """Minimal app stub with event_bus on state."""
-    from api.tasks.event_bus import EventBus
-
+    """Minimal app stub with state attributes."""
     app = MagicMock()
-    app.state.event_bus = EventBus()
+    app.state.redis_healthy = False
     return app
 
 
@@ -30,13 +26,13 @@ class TestInitTaskStore:
     """Tests for _init_task_store helper."""
 
     @pytest.mark.asyncio
-    async def test_default_json_task_store(self, app_stub: MagicMock):
-        """No DATABASE_URL → returns JSON TaskStore."""
+    async def test_raises_without_database_url(self, app_stub: MagicMock):
+        """No DATABASE_URL → raises RuntimeError."""
         with patch("core.config.settings.settings") as mock_settings:
             mock_settings.database_url = None
-            store = await _init_task_store(app_stub)
 
-        assert isinstance(store, TaskStore)
+            with pytest.raises(RuntimeError, match="DATABASE_URL is required"):
+                await _init_task_store(app_stub)
 
     @pytest.mark.asyncio
     async def test_db_task_store_when_database_url_set(self, app_stub: MagicMock):
@@ -55,6 +51,7 @@ class TestInitTaskStore:
             ),
         ):
             mock_settings.database_url = "postgresql+asyncpg://localhost/testdb"
+            mock_settings.redis_pipeline_state = False
             store = await _init_task_store(app_stub)
 
         from core.services.db_task_store import DbTaskStore
@@ -63,8 +60,8 @@ class TestInitTaskStore:
         mock_recover.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_fallback_on_session_factory_failure(self, app_stub: MagicMock):
-        """DATABASE_URL set but get_session_factory fails → falls back to JSON."""
+    async def test_raises_on_session_factory_failure(self, app_stub: MagicMock):
+        """DATABASE_URL set but get_session_factory fails → RuntimeError (no fallback)."""
         with (
             patch("core.config.settings.settings") as mock_settings,
             patch(
@@ -73,13 +70,13 @@ class TestInitTaskStore:
             ),
         ):
             mock_settings.database_url = "postgresql+asyncpg://localhost/testdb"
-            store = await _init_task_store(app_stub)
 
-        assert isinstance(store, TaskStore)
+            with pytest.raises(RuntimeError):
+                await _init_task_store(app_stub)
 
     @pytest.mark.asyncio
-    async def test_fallback_on_recover_failure(self, app_stub: MagicMock):
-        """DATABASE_URL set, session OK, but recover_from_db fails → fallback."""
+    async def test_raises_on_recover_failure(self, app_stub: MagicMock):
+        """DATABASE_URL set, session OK, but recover_from_db fails → RuntimeError."""
         with (
             patch("core.config.settings.settings") as mock_settings,
             patch(
@@ -92,6 +89,7 @@ class TestInitTaskStore:
             ),
         ):
             mock_settings.database_url = "postgresql+asyncpg://localhost/testdb"
-            store = await _init_task_store(app_stub)
+            mock_settings.redis_pipeline_state = False
 
-        assert isinstance(store, TaskStore)
+            with pytest.raises(Exception):
+                await _init_task_store(app_stub)

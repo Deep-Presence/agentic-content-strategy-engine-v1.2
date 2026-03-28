@@ -31,7 +31,6 @@ from core.models.audience_persona import (
     PersonaProfileEntry,
 )
 from core.storage.backends.base import StorageBackend
-from core.storage.backends.local import LocalStorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +47,11 @@ class PersonaStorage:
     ) -> None:
         self._artifacts_root = Path(artifacts_root)
         self._slug = slug
-        self._backend = backend or LocalStorageBackend(self._artifacts_root)
+        if backend is not None:
+            self._backend = backend
+        else:
+            from core.storage import get_storage_backend
+            self._backend = get_storage_backend(self._artifacts_root)
         self._prefix = f"audience_personas/{slug}/"
 
     # ------------------------------------------------------------------
@@ -263,10 +266,11 @@ class PersonaStorage:
         ]
 
     def list_persona_paths(self) -> List[str]:
-        """Return paths to latest .md files for active personas (content engine integration).
+        """Return relative storage keys to latest .md files for active personas.
 
-        Returns absolute filesystem paths for backward compatibility with
-        content engine and gap analysis pipelines.
+        Always returns relative paths (storage keys) compatible with any
+        StorageBackend (R2, local, etc.). Downstream consumers must use
+        the storage backend to read these paths.
         """
         manifest = self.read_manifest()
         paths: List[str] = []
@@ -274,11 +278,7 @@ class PersonaStorage:
             if entry.status in ("fresh", "stale") and entry.current_version > 0:
                 rel_key = self._version_md_key(pid, entry.current_version)
                 if self._backend.exists(rel_key):
-                    # Return absolute path for downstream consumers
-                    if isinstance(self._backend, LocalStorageBackend):
-                        paths.append(str(self._backend.root / rel_key))
-                    else:
-                        paths.append(rel_key)
+                    paths.append(rel_key)
         return paths
 
     # ------------------------------------------------------------------

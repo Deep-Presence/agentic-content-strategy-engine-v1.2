@@ -19,7 +19,7 @@ from core.content_engine.prompts.strategic_planner_prompts import (
     STRATEGIC_PLANNER_SYSTEM_PROMPT,
     build_strategic_planner_user_prompt,
 )
-from core.content_engine.tracing_v13 import create_span, end_span, log_generation
+from core.content_engine.tracing_v13 import create_span, end_span, extract_provider, log_generation
 from core.content_engine.utils import safe_parse, truncate_to_token_limit
 from core.models.content_generation_v13 import (
     PlannerScorecard,
@@ -35,6 +35,7 @@ async def select_topics(
     max_topics: int = 6,
     user_feedback: str = "",
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> StrategicPlannerOutput:
     """Run the Strategic Planner to select top-K content opportunities.
 
@@ -87,6 +88,11 @@ async def select_topics(
             "agent": "strategic_planner",
             "total_queries": scorecard.total_queries,
             "max_topics": max_topics,
+            "pipeline": "content_engine",
+            "pipeline_step": "strategic_planner",
+            "provider": extract_provider(model),
+            "model": model,
+            "company_slug": company_slug,
         },
     )
 

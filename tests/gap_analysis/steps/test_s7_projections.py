@@ -20,6 +20,7 @@ from core.models.gap_analysis import (
     ParagraphMatch,
     SemanticUnit,
 )
+from core.storage.backends.local import LocalStorageBackend
 
 
 # ---------------------------------------------------------------------------
@@ -82,9 +83,9 @@ class TestSaveEmbeddingProjections:
             {"type": "Citation", "cluster_name": "c1", "hover_text": "http://ex.com"},
             {"type": "Company", "cluster_name": "Company", "hover_text": "http://co.com"},
         ]
-        _save_embedding_projections(coords, meta, tmp_path, "umap")
+        _save_embedding_projections(coords, meta, LocalStorageBackend(tmp_path), "viz","umap")
 
-        out_file = tmp_path / "embedding_projections_umap.json"
+        out_file = tmp_path / "viz" / "embedding_projections_umap.json"
         assert out_file.exists()
         data = json.loads(out_file.read_text())
         assert data["method"] == "umap"
@@ -97,9 +98,9 @@ class TestSaveEmbeddingProjections:
             {"type": "Query", "cluster_name": "c1", "hover_text": "q1", "query_id": "Q1"},
             {"type": "Citation", "cluster_name": "c1", "hover_text": "http://ex.com"},
         ]
-        _save_embedding_projections(coords, meta, tmp_path, "tsne")
+        _save_embedding_projections(coords, meta, LocalStorageBackend(tmp_path), "viz","tsne")
 
-        out_file = tmp_path / "embedding_projections_tsne.json"
+        out_file = tmp_path / "viz" / "embedding_projections_tsne.json"
         assert out_file.exists()
         data = json.loads(out_file.read_text())
         assert data["method"] == "tsne"
@@ -111,8 +112,8 @@ class TestSaveEmbeddingProjections:
             {"type": "Query", "cluster_name": f"c{i}", "hover_text": f"q{i}", "query_id": f"Q{i}"}
             for i in range(n)
         ]
-        _save_embedding_projections(coords, meta, tmp_path, "umap")
-        data = json.loads((tmp_path / "embedding_projections_umap.json").read_text())
+        _save_embedding_projections(coords, meta, LocalStorageBackend(tmp_path), "viz","umap")
+        data = json.loads((tmp_path / "viz" / "embedding_projections_umap.json").read_text())
         assert data["point_count"] == n
         assert len(data["points"]) == n
 
@@ -123,8 +124,8 @@ class TestSaveEmbeddingProjections:
             {"type": "Citation", "cluster_name": "c1", "hover_text": "url"},
             {"type": "Company", "cluster_name": "Company", "hover_text": "co"},
         ]
-        _save_embedding_projections(coords, meta, tmp_path, "umap")
-        data = json.loads((tmp_path / "embedding_projections_umap.json").read_text())
+        _save_embedding_projections(coords, meta, LocalStorageBackend(tmp_path), "viz","umap")
+        data = json.loads((tmp_path / "viz" / "embedding_projections_umap.json").read_text())
         types = {p["type"] for p in data["points"]}
         assert types == {"query", "citation", "company"}
 
@@ -133,20 +134,20 @@ class TestSaveEmbeddingProjections:
         meta = [
             {"type": "Query", "cluster_name": "c1", "hover_text": "q1", "query_id": "Q-42"},
         ]
-        _save_embedding_projections(coords, meta, tmp_path, "umap")
-        data = json.loads((tmp_path / "embedding_projections_umap.json").read_text())
+        _save_embedding_projections(coords, meta, LocalStorageBackend(tmp_path), "viz","umap")
+        data = json.loads((tmp_path / "viz" / "embedding_projections_umap.json").read_text())
         assert data["points"][0]["query_id"] == "Q-42"
 
     def test_empty_embeddings_no_file(self, tmp_path: Path) -> None:
         coords = np.array([])
-        _save_embedding_projections(coords, [], tmp_path, "umap")
-        assert not (tmp_path / "embedding_projections_umap.json").exists()
+        _save_embedding_projections(coords, [], LocalStorageBackend(tmp_path), "viz", "umap")
+        assert not (tmp_path / "viz" / "embedding_projections_umap.json").exists()
 
     def test_coordinate_rounding(self, tmp_path: Path) -> None:
         coords = np.array([[1.123456789, 2.987654321]])
         meta = [{"type": "Query", "cluster_name": "c1", "hover_text": "q", "query_id": "Q1"}]
-        _save_embedding_projections(coords, meta, tmp_path, "umap")
-        data = json.loads((tmp_path / "embedding_projections_umap.json").read_text())
+        _save_embedding_projections(coords, meta, LocalStorageBackend(tmp_path), "viz","umap")
+        data = json.loads((tmp_path / "viz" / "embedding_projections_umap.json").read_text())
         p = data["points"][0]
         assert p["x"] == 1.1235
         assert p["y"] == 2.9877
@@ -160,16 +161,16 @@ class TestSaveEmbeddingProjections:
             {"type": "Company", "cluster_name": "Company", "hover_text": "co0"},
             {"type": "Citation", "cluster_name": "c1", "hover_text": "url1"},
         ]
-        _save_embedding_projections(coords, meta, tmp_path, "umap")
-        data = json.loads((tmp_path / "embedding_projections_umap.json").read_text())
+        _save_embedding_projections(coords, meta, LocalStorageBackend(tmp_path), "viz","umap")
+        data = json.loads((tmp_path / "viz" / "embedding_projections_umap.json").read_text())
         ids = [p["id"] for p in data["points"]]
         assert ids == ["q-0", "q-1", "c-0", "co-0", "c-1"]
 
     def test_cluster_id_defaults_to_cluster_name(self, tmp_path: Path) -> None:
         coords = np.array([[0, 0]])
         meta = [{"type": "Query", "cluster_name": "my-cluster", "hover_text": "q", "query_id": "Q1"}]
-        _save_embedding_projections(coords, meta, tmp_path, "umap")
-        data = json.loads((tmp_path / "embedding_projections_umap.json").read_text())
+        _save_embedding_projections(coords, meta, LocalStorageBackend(tmp_path), "viz","umap")
+        data = json.loads((tmp_path / "viz" / "embedding_projections_umap.json").read_text())
         assert data["points"][0]["cluster_id"] == "my-cluster"
 
     def test_nan_points_filtered_out(self, tmp_path: Path) -> None:
@@ -190,8 +191,8 @@ class TestSaveEmbeddingProjections:
             {"type": "Company", "cluster_name": "Company", "hover_text": "-inf-y"},
             {"type": "Company", "cluster_name": "Company", "hover_text": "ok2"},
         ]
-        _save_embedding_projections(coords, meta, tmp_path, "umap")
-        data = json.loads((tmp_path / "embedding_projections_umap.json").read_text())
+        _save_embedding_projections(coords, meta, LocalStorageBackend(tmp_path), "viz","umap")
+        data = json.loads((tmp_path / "viz" / "embedding_projections_umap.json").read_text())
         # Only the 2 valid points should survive
         assert data["point_count"] == 2
         assert len(data["points"]) == 2
@@ -239,7 +240,8 @@ class TestGenerateVisualizationsProjections:
         analysis = _make_analysis()
 
         result = generate_visualizations(
-            queries, citations, company_units, analysis, tmp_path
+            queries, citations, company_units, analysis,
+            storage=LocalStorageBackend(tmp_path), prefix="viz",
         )
 
         # JSON projections should be in the returned paths
@@ -247,8 +249,8 @@ class TestGenerateVisualizationsProjections:
         assert "tsne_projections_json" in result
 
         # Files should exist
-        umap_file = tmp_path / "embedding_projections_umap.json"
-        tsne_file = tmp_path / "embedding_projections_tsne.json"
+        umap_file = tmp_path / "viz" / "embedding_projections_umap.json"
+        tsne_file = tmp_path / "viz" / "embedding_projections_tsne.json"
         assert umap_file.exists()
         assert tsne_file.exists()
 
@@ -260,6 +262,6 @@ class TestGenerateVisualizationsProjections:
 
     def test_no_projections_with_empty_data(self, tmp_path: Path) -> None:
         analysis = _make_analysis()
-        result = generate_visualizations([], [], [], analysis, tmp_path)
+        result = generate_visualizations([], [], [], analysis, storage=LocalStorageBackend(tmp_path), prefix="viz")
         assert "umap_projections_json" not in result
-        assert not (tmp_path / "embedding_projections_umap.json").exists()
+        assert not (tmp_path / "viz" / "embedding_projections_umap.json").exists()

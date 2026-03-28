@@ -20,6 +20,7 @@ class BriefPipelineStatus(str, Enum):
     # Brief column
     BRIEFING = "briefing"  # Brief Builder running
     BRIEF_REVIEW = "brief_review"  # HITL-2 pending (autonomous only)
+    PENDING_BRIEF_APPROVAL = "pending_brief_approval"  # HITL-2 interrupt active
     APPROVED = "approved"  # Brief approved, queued for workers
 
     # Generating column
@@ -31,7 +32,8 @@ class BriefPipelineStatus(str, Enum):
     REVISING = "revising"  # Eval failed, drafter re-running
 
     # Review column
-    REVIEW = "review"  # HITL-3 pending
+    REVIEW = "review"  # HITL-3 pending (evaluator done, entering review)
+    PENDING_CONTENT_APPROVAL = "pending_content_approval"  # HITL-3 interrupt active
 
     # Approved column
     COMPLETED = "completed"  # HITL-3 approved, final.md written

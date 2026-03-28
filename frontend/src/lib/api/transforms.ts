@@ -133,6 +133,7 @@ const STATUS_TO_STAGE: Record<string, ContentBrief['stage']> = {
   briefing: 'brief',
   brief_review: 'brief',
   approved: 'brief',
+  pending_brief_approval: 'brief',
   // Generating
   outlining: 'generating',
   drafting: 'generating',
@@ -145,6 +146,7 @@ const STATUS_TO_STAGE: Record<string, ContentBrief['stage']> = {
   // Review
   review: 'review',
   pending_review: 'review',
+  pending_content_approval: 'review',
   // Approved
   completed: 'approved',
   published: 'approved',
@@ -170,5 +172,7 @@ export function toBrief(item: ContentBriefItem): ContentBrief {
     cpsPredict: {} as Record<Platform, number>,
     structuralTargets: { words: item.target_word_count, paragraphs: 0, headers: 0, lists: 0, stats: 0, citations: 0 },
     createdAt: item.created_at,
+    publishedAt: item.published_at ?? undefined,
+    publishedUrl: item.published_url || undefined,
   };
 }

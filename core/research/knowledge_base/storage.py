@@ -42,7 +42,6 @@ from core.models.knowledge_base import (
     KBManifest,
 )
 from core.storage.backends.base import StorageBackend
-from core.storage.backends.local import LocalStorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,11 @@ class KBStorage:
     ) -> None:
         self._artifacts_root = Path(artifacts_root)
         self._slug = slug
-        self._backend = backend or LocalStorageBackend(self._artifacts_root)
+        if backend is not None:
+            self._backend = backend
+        else:
+            from core.storage import get_storage_backend
+            self._backend = get_storage_backend(self._artifacts_root)
         self._prefix = f"knowledge_base/{slug}/"
 
     # ------------------------------------------------------------------
@@ -78,6 +81,16 @@ class KBStorage:
     @property
     def slug(self) -> str:
         return self._slug
+
+    @property
+    def backend(self) -> StorageBackend:
+        """The underlying storage backend (local or R2)."""
+        return self._backend
+
+    @property
+    def prefix(self) -> str:
+        """Key prefix for this slug (e.g. ``knowledge_base/{slug}/``)."""
+        return self._prefix
 
     # ------------------------------------------------------------------
     # Key helpers (return paths relative to backend root)

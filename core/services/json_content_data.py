@@ -1,4 +1,4 @@
-"""JsonContentDataService — filesystem-backed implementation of ContentDataServiceProtocol.
+"""JsonContentDataService — StorageBackend-backed implementation of ContentDataServiceProtocol.
 
 Wraps the existing module-level functions in ``api.services.content_data_service``
 via ``asyncio.to_thread()``.
@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Optional
 
 from api.schemas.content_data import (
     ContentBriefDetailResponse,
@@ -15,23 +16,28 @@ from api.schemas.content_data import (
     StageContentResponse,
 )
 from api.services import content_data_service as _content_svc
+from core.storage.backends.base import StorageBackend
 
 
 class JsonContentDataService:
-    """Filesystem-backed content data service.
+    """StorageBackend-backed content data service.
 
     All methods delegate to the existing synchronous service functions
     via ``asyncio.to_thread()`` so routers can be ``async def``.
     """
 
-    def __init__(self, artifacts_root: Path) -> None:
+    def __init__(
+        self, artifacts_root: Path, *, storage: Optional[StorageBackend] = None,
+    ) -> None:
         self._artifacts_root = artifacts_root
+        self._storage = storage
 
     async def get_briefs(
         self, effective_slug: str,
     ) -> ContentBriefListResponse:
         return await asyncio.to_thread(
             _content_svc.get_briefs, self._artifacts_root, effective_slug,
+            storage=self._storage,
         )
 
     async def get_brief_detail(
@@ -42,6 +48,7 @@ class JsonContentDataService:
             self._artifacts_root,
             effective_slug,
             brief_id,
+            storage=self._storage,
         )
 
     async def get_brief_stage_content(
@@ -53,6 +60,7 @@ class JsonContentDataService:
             effective_slug,
             brief_id,
             stage,
+            storage=self._storage,
         )
 
     async def add_brief(
@@ -73,4 +81,5 @@ class JsonContentDataService:
             description,
             source,
             gap_query_id,
+            storage=self._storage,
         )

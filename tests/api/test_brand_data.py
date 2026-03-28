@@ -4,6 +4,7 @@ TDD: These tests are written BEFORE the service/router implementation.
 """
 from __future__ import annotations
 
+import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +13,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.tasks.models import PipelineTask, TaskStatus
-from api.tasks.store import TaskStore
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -22,6 +22,42 @@ def _write_artifact(path: Path, content: str) -> None:
     """Write content to a file, creating parent directories."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _write_persona_storage(
+    artifacts_root: Path,
+    slug: str,
+    persona_id: str,
+    *,
+    version: int = 1,
+    status: str = "fresh",
+    kind: str = "icp",
+    content: str = "# Persona",
+    persona_name: str | None = None,
+) -> None:
+    """Write a persona via the audience_personas manifest + versioned file."""
+    base = artifacts_root / "audience_personas" / slug
+    base.mkdir(parents=True, exist_ok=True)
+    persona_dir = base / persona_id
+    persona_dir.mkdir(parents=True, exist_ok=True)
+    if version > 0:
+        (persona_dir / f"v{version}.md").write_text(content, encoding="utf-8")
+    manifest_path = base / "_manifest.json"
+    manifest: dict = {}
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+    personas = manifest.get("personas", {})
+    personas[persona_id] = {
+        "persona_name": persona_name or persona_id.replace("-", " ").title(),
+        "kind": kind,
+        "status": status,
+        "current_version": version,
+        "last_updated": None,
+    }
+    manifest["personas"] = personas
+    manifest.setdefault("slug", slug)
+    manifest.setdefault("kb_synthesis_version", 0)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
 
 def _make_gap_result(
@@ -54,7 +90,7 @@ def _make_gap_result(
 
 
 def _create_task(
-    task_store: TaskStore,
+    task_store,
     pipeline: str,
     slug: str,
     *,
@@ -91,21 +127,12 @@ def _create_task(
 
 
 @pytest.fixture(autouse=True)
-def _clear_caches():
-    """Clear module-level caches between tests."""
-    try:
-        from api.services import brand_data_service
-
-        brand_data_service._CACHE.clear()
-    except (ImportError, AttributeError):
-        pass
+def _no_redis_cache(monkeypatch):
+    """Disable Redis cache so tests use direct file reads."""
+    monkeypatch.setattr(
+        "api.services.brand_data_service.get_sync_redis_or_none", lambda: None
+    )
     yield
-    try:
-        from api.services import brand_data_service
-
-        brand_data_service._CACHE.clear()
-    except (ImportError, AttributeError):
-        pass
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -166,7 +193,8 @@ class TestResearchArtifacts:
         data = resp.json()["company_context"]
         assert data["status"] == "approved"
         assert data["content"] == "# Webflow Company Context"
-        assert data["updated_at"] is not None
+        # StorageBackend.read() does not return mtime — updated_at may be None
+        # (mtime tracking removed in R2 StorageBackend migration)
 
     def test_draft_company_context(
         self, client: TestClient, artifacts_root: Path
@@ -201,9 +229,9 @@ class TestResearchArtifacts:
     def test_single_persona_icp(
         self, client: TestClient, artifacts_root: Path
     ):
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# ICP Persona",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-icp",
+            kind="icp", content="# ICP Persona",
         )
         resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
@@ -217,13 +245,13 @@ class TestResearchArtifacts:
     def test_multiple_personas(
         self, client: TestClient, artifacts_root: Path
     ):
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# ICP",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-icp",
+            kind="icp", content="# ICP",
         )
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-secondary-sales.md",
-            "# Secondary Sales",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-secondary-sales",
+            kind="secondary", content="# Secondary Sales",
         )
         resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
@@ -232,44 +260,12 @@ class TestResearchArtifacts:
         assert "persona-icp" in ids
         assert "persona-secondary-sales" in ids
 
-    def test_persona_draft_detection(
-        self, client: TestClient, artifacts_root: Path
-    ):
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.draft.md",
-            "# Draft Persona",
-        )
-        resp = client.get(self.URL.format(slug="test-co"))
-        personas = resp.json()["personas"]
-        assert len(personas) == 1
-        assert personas[0]["status"] == "draft"
-        assert personas[0]["content"] == "# Draft Persona"
-
-    def test_persona_approved_over_draft(
-        self, client: TestClient, artifacts_root: Path
-    ):
-        """When both .md and .draft.md exist, approved wins."""
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# Approved Persona",
-        )
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.draft.md",
-            "# Draft Persona",
-        )
-        resp = client.get(self.URL.format(slug="test-co"))
-        personas = resp.json()["personas"]
-        icp = [p for p in personas if p["id"] == "persona-icp"]
-        assert len(icp) == 1
-        assert icp[0]["status"] == "approved"
-        assert icp[0]["content"] == "# Approved Persona"
-
     def test_persona_type_secondary(
         self, client: TestClient, artifacts_root: Path
     ):
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-secondary-finance.md",
-            "# Finance Persona",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-secondary-finance",
+            kind="secondary", content="# Finance Persona",
         )
         resp = client.get(self.URL.format(slug="test-co"))
         personas = resp.json()["personas"]
@@ -278,12 +274,13 @@ class TestResearchArtifacts:
     def test_persona_name_derived_from_id(
         self, client: TestClient, artifacts_root: Path
     ):
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# ICP",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-icp",
+            kind="icp", content="# ICP",
+            persona_name="Persona Icp",
         )
         resp = client.get(self.URL.format(slug="test-co"))
-        # Name should be title-cased from id with hyphens as spaces
+        # Name comes from manifest persona_name field
         name = resp.json()["personas"][0]["name"]
         assert name == "Persona Icp"
 
@@ -291,29 +288,12 @@ class TestResearchArtifacts:
         self, client: TestClient, artifacts_root: Path
     ):
         """Personas for a different slug should not appear."""
-        _write_artifact(
-            artifacts_root / "personas" / "ramp__persona-icp.md",
-            "# Ramp ICP",
+        _write_persona_storage(
+            artifacts_root, "ramp", "persona-icp",
+            kind="icp", content="# Ramp ICP",
         )
         resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["personas"] == []
-
-    def test_non_persona_files_excluded(
-        self, client: TestClient, artifacts_root: Path
-    ):
-        """Files like {slug}__notes.md should not appear as personas (Codex CX-4)."""
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__notes.md",
-            "# Internal notes",
-        )
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# ICP",
-        )
-        resp = client.get(self.URL.format(slug="test-co"))
-        personas = resp.json()["personas"]
-        assert len(personas) == 1
-        assert personas[0]["id"] == "persona-icp"
 
     # ── Style guide ──
 
@@ -350,10 +330,8 @@ class TestResearchArtifacts:
         _write_artifact(path, "# Context")
         resp = client.get(self.URL.format(slug="test-co"))
         updated_at = resp.json()["company_context"]["updated_at"]
-        assert updated_at is not None
-        # Should be a parseable ISO datetime
-        dt = datetime.fromisoformat(updated_at)
-        assert dt.year >= 2026
+        # StorageBackend.read() does not return mtime — updated_at is None
+        assert updated_at is None
 
     # ── Full integration ──
 
@@ -364,13 +342,13 @@ class TestResearchArtifacts:
             artifacts_root / "company_context" / "test-co.md",
             "# Company",
         )
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-icp.md",
-            "# ICP",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-icp",
+            kind="icp", content="# ICP",
         )
-        _write_artifact(
-            artifacts_root / "personas" / "test-co__persona-secondary-sales.md",
-            "# Sales",
+        _write_persona_storage(
+            artifacts_root, "test-co", "persona-secondary-sales",
+            kind="secondary", content="# Sales",
         )
         _write_artifact(
             artifacts_root / "style_guides" / "test-co.md",
@@ -404,7 +382,7 @@ class TestRunHistory:
     # ── Empty state ──
 
     def test_no_tasks_returns_empty(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         resp = client.get(self.URL.format(slug="test-co"))
         assert resp.status_code == 200
@@ -413,7 +391,7 @@ class TestRunHistory:
         assert data["total"] == 0
 
     def test_no_matching_slug_returns_empty(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "gap_analysis", "ramp")
         resp = client.get(self.URL.format(slug="test-co"))
@@ -422,7 +400,7 @@ class TestRunHistory:
     # ── Basic listing ──
 
     def test_completed_gap_run_with_metrics(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         result = _make_gap_result(spa_t_stat=14.975, total_queries=72, total_citations=1422)
         _create_task(
@@ -445,7 +423,7 @@ class TestRunHistory:
         assert run["total_steps"] == 8
 
     def test_failed_run_zero_metrics(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -461,7 +439,7 @@ class TestRunHistory:
         assert run["queries"] == 0
 
     def test_running_task_with_partial_steps(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -476,7 +454,7 @@ class TestRunHistory:
         assert run["steps_completed"] == 4
 
     def test_multiple_runs_sorted_by_started_desc(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -506,7 +484,7 @@ class TestRunHistory:
     # ── Duration ──
 
     def test_duration_hours_and_minutes(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -521,7 +499,7 @@ class TestRunHistory:
         assert resp.json()["runs"][0]["duration"] == "3h 46m"
 
     def test_duration_minutes_only(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -536,7 +514,7 @@ class TestRunHistory:
         assert resp.json()["runs"][0]["duration"] == "23m"
 
     def test_duration_running_empty_string(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -553,7 +531,7 @@ class TestRunHistory:
     # ── Steps completed inference ──
 
     def test_gap_completed_8_of_8(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -568,7 +546,7 @@ class TestRunHistory:
         assert run["total_steps"] == 8
 
     def test_gap_running_at_s4(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -583,7 +561,7 @@ class TestRunHistory:
         assert run["total_steps"] == 8
 
     def test_content_completed_4_of_4(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -600,7 +578,7 @@ class TestRunHistory:
     # ── Metrics extraction ──
 
     def test_spa_score_from_report_json(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         result = _make_gap_result(spa_t_stat=11.234)
         _create_task(
@@ -611,7 +589,7 @@ class TestRunHistory:
         assert resp.json()["runs"][0]["spa_score"] == pytest.approx(11.234)
 
     def test_nan_spa_score_returns_zero(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         result = _make_gap_result(spa_t_stat=float("nan"))
         _create_task(
@@ -622,7 +600,7 @@ class TestRunHistory:
         assert resp.json()["runs"][0]["spa_score"] == 0.0
 
     def test_missing_result_returns_zero_metrics(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -637,7 +615,7 @@ class TestRunHistory:
     # ── Filters ──
 
     def test_filter_by_pipeline(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.COMPLETED, result=_make_gap_result())
@@ -651,7 +629,7 @@ class TestRunHistory:
         assert data["runs"][0]["pipeline"] == "gap_analysis"
 
     def test_filter_by_status(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.COMPLETED, result=_make_gap_result())
@@ -665,7 +643,7 @@ class TestRunHistory:
         assert data["runs"][0]["status"] == "completed"
 
     def test_filter_pipeline_and_status(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.COMPLETED, result=_make_gap_result())
@@ -683,7 +661,7 @@ class TestRunHistory:
     # ── Mapped-status filters (Codex CX-1) ──
 
     def test_filter_running_includes_pending_approval(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         """pending_approval maps to 'running' so ?status=running should include it."""
         _create_task(task_store, "research", "test-co",
@@ -698,7 +676,7 @@ class TestRunHistory:
         assert all(r["status"] == "running" for r in data["runs"])
 
     def test_filter_failed_includes_cancelled(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         """cancelled maps to 'failed' so ?status=failed should include it."""
         _create_task(task_store, "gap_analysis", "test-co",
@@ -715,7 +693,7 @@ class TestRunHistory:
     # ── Company name ──
 
     def test_company_name_from_slug(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -725,7 +703,7 @@ class TestRunHistory:
         assert resp.json()["runs"][0]["company"] == "Test Co"
 
     def test_compound_slug_company_name(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         """Compound slugs with hyphens derive title-cased company name.
 
@@ -742,7 +720,7 @@ class TestRunHistory:
     # ── Started field ──
 
     def test_started_is_iso_string(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -776,14 +754,14 @@ class TestSPATrend:
     # ── Empty state ──
 
     def test_no_runs_returns_empty_trend(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         resp = client.get(self.URL.format(slug="test-co"))
         assert resp.status_code == 200
         assert resp.json()["trend"] == []
 
     def test_no_gap_runs_returns_empty(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "research", "test-co",
                       status=TaskStatus.COMPLETED, result={"stage": "complete"})
@@ -791,7 +769,7 @@ class TestSPATrend:
         assert resp.json()["trend"] == []
 
     def test_incomplete_gap_runs_excluded(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.FAILED)
@@ -801,7 +779,7 @@ class TestSPATrend:
     # ── Single run ──
 
     def test_single_completed_run(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         result = _make_gap_result(
             spa_t_stat=14.975, total_queries=72, total_citations=1422,
@@ -825,7 +803,7 @@ class TestSPATrend:
     # ── Multiple runs ──
 
     def test_multiple_runs_sorted_by_timestamp_asc(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -847,7 +825,7 @@ class TestSPATrend:
         assert trend[1]["spa_score"] == pytest.approx(15.0)
 
     def test_run_label_short_date_format(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -861,7 +839,7 @@ class TestSPATrend:
     # ── Guard rails ──
 
     def test_nan_spa_score_returns_zero(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         result = _make_gap_result(spa_t_stat=float("nan"))
         _create_task(
@@ -872,7 +850,7 @@ class TestSPATrend:
         assert resp.json()["trend"][0]["spa_score"] == 0.0
 
     def test_missing_report_json_skips_run(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -883,7 +861,7 @@ class TestSPATrend:
         assert resp.json()["trend"] == []
 
     def test_missing_spa_results_skips_run(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -894,7 +872,7 @@ class TestSPATrend:
         assert resp.json()["trend"] == []
 
     def test_other_slug_excluded(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "ramp",
@@ -904,7 +882,7 @@ class TestSPATrend:
         assert resp.json()["trend"] == []
 
     def test_run_id_populated(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         task = _create_task(
             task_store, "gap_analysis", "test-co",
@@ -912,3 +890,10 @@ class TestSPATrend:
         )
         resp = client.get(self.URL.format(slug="test-co"))
         assert resp.json()["trend"][0]["run_id"] == task.task_id
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  BRAND CACHING TESTS
+# ══════════════════════════════════════════════════════════════════════
+# In-memory _CACHE removed in Session 6 (Redis cache migration).
+# Redis cache hit/miss/eviction tested in tests/unit/test_redis_cache.py.

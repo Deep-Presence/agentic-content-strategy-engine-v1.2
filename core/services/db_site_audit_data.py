@@ -24,7 +24,10 @@ import math
 import re
 import uuid as _uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from core.storage.backends.base import StorageBackend
 
 from core.db.repositories.company_repo import CompanyRepository
 from core.db.repositories.site_audit_repo import SiteAuditRepository
@@ -146,16 +149,18 @@ def _page_result_to_dict(pr: Any) -> dict[str, Any]:
 
 
 class DbSiteAuditDataService:
-    """DB-first site audit data service with per-audit filesystem fallback.
+    """DB-first site audit data service with per-audit StorageBackend fallback.
 
     Reads enriched audits from DB columns / child tables. Falls back to
-    filesystem for pre-migration audits (``overall_score IS NULL``) or
+    StorageBackend for pre-migration audits (``overall_score IS NULL``) or
     when the audit row is missing entirely.
 
     Args:
         audit_repo: SiteAuditRepository for DB queries.
         company_repo: CompanyRepository for slug → company_id resolution.
         artifacts_root: Root artifacts directory (e.g. ``Path("artifacts")``).
+        backend: Optional StorageBackend. When omitted, created via factory
+            (respects ``STORAGE_BACKEND`` setting — R2 or local).
     """
 
     def __init__(
@@ -163,10 +168,17 @@ class DbSiteAuditDataService:
         audit_repo: SiteAuditRepository,
         company_repo: CompanyRepository,
         artifacts_root: Path,
+        *,
+        backend: Optional["StorageBackend"] = None,
     ) -> None:
         self._audit_repo = audit_repo
         self._company_repo = company_repo
         self._artifacts_root = artifacts_root
+        if backend is not None:
+            self._backend = backend
+        else:
+            from core.storage import get_storage_backend
+            self._backend = get_storage_backend(artifacts_root)
 
     async def _resolve_company_id(self, company_slug: str) -> Any:
         """Resolve company_slug → company UUID via CompanyRepository."""
@@ -183,6 +195,14 @@ class DbSiteAuditDataService:
         if company_id is None:
             return False
         return await self._audit_repo.exists_for_domain(company_id, domain)
+
+    async def audit_exists_for_slug(
+        self, effective_slug: str, domain: str
+    ) -> bool:
+        """True when a completed/degraded audit exists for *slug* + *domain*."""
+        return await self._audit_repo.exists_for_slug_and_domain(
+            effective_slug, domain,
+        )
 
     async def get_latest_audit_id(
         self, company_slug: str, domain: str
@@ -373,17 +393,17 @@ class DbSiteAuditDataService:
             company_slug, audit_id, page, page_size
         )
 
-    # ── Filesystem fallback helpers ──────────────────────────────────────
+    # ── StorageBackend fallback helpers ─────────────────────────────────
 
     async def _fs_list_audits(
         self, company_slug: str, limit: int
     ) -> list[dict]:
-        """Filesystem fallback for list_audits."""
+        """StorageBackend fallback for list_audits."""
         from core.services.json_site_audit_data import _sync_list_audits
 
         return await asyncio.to_thread(
             _sync_list_audits,
-            self._artifacts_root,
+            self._backend,
             company_slug,
             limit,
         )
@@ -391,19 +411,19 @@ class DbSiteAuditDataService:
     async def _fs_get_audit_summary_safe(
         self, company_slug: str, audit_id: str
     ) -> dict:
-        """Load audit summary from filesystem, returning empty dict on error."""
+        """Load audit summary from StorageBackend, returning empty dict on error."""
         try:
             from core.services.json_site_audit_data import _sync_get_audit_summary
 
             return await asyncio.to_thread(
                 _sync_get_audit_summary,
-                self._artifacts_root,
+                self._backend,
                 company_slug,
                 audit_id,
             )
         except Exception:
             _logger.debug(
-                "Failed to load audit summary from filesystem for %s/%s",
+                "Failed to load audit summary from storage for %s/%s",
                 company_slug,
                 audit_id,
             )
@@ -412,12 +432,12 @@ class DbSiteAuditDataService:
     async def _fs_get_audit_summary(
         self, company_slug: str, audit_id: str
     ) -> dict:
-        """Filesystem fallback for get_audit_summary (raises on 404)."""
+        """StorageBackend fallback for get_audit_summary (raises on 404)."""
         from core.services.json_site_audit_data import _sync_get_audit_summary
 
         return await asyncio.to_thread(
             _sync_get_audit_summary,
-            self._artifacts_root,
+            self._backend,
             company_slug,
             audit_id,
         )
@@ -425,12 +445,12 @@ class DbSiteAuditDataService:
     async def _fs_get_audit_detail(
         self, company_slug: str, audit_id: str
     ) -> dict:
-        """Filesystem fallback for get_audit_detail (raises on 404)."""
+        """StorageBackend fallback for get_audit_detail (raises on 404)."""
         from core.services.json_site_audit_data import _sync_get_audit_detail
 
         return await asyncio.to_thread(
             _sync_get_audit_detail,
-            self._artifacts_root,
+            self._backend,
             company_slug,
             audit_id,
         )
@@ -444,12 +464,12 @@ class DbSiteAuditDataService:
         page: int,
         page_size: int,
     ) -> dict:
-        """Filesystem fallback for get_findings."""
+        """StorageBackend fallback for get_findings."""
         from core.services.json_site_audit_data import _sync_get_findings
 
         return await asyncio.to_thread(
             _sync_get_findings,
-            self._artifacts_root,
+            self._backend,
             company_slug,
             audit_id,
             severity,
@@ -465,12 +485,12 @@ class DbSiteAuditDataService:
         page: int,
         page_size: int,
     ) -> dict:
-        """Filesystem fallback for get_page_results."""
+        """StorageBackend fallback for get_page_results."""
         from core.services.json_site_audit_data import _sync_get_page_results
 
         return await asyncio.to_thread(
             _sync_get_page_results,
-            self._artifacts_root,
+            self._backend,
             company_slug,
             audit_id,
             page,

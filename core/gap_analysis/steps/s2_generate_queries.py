@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,15 +23,14 @@ from core.gap_analysis.topic_cluster_map import (
     is_excluded_combo,
 )
 from core.shared_tools.async_embedding_client import async_embed_texts
+from core.shared_tools.tracing import log_generation
 
 logger = logging.getLogger(__name__)
 
 _CONTENT_ENGINE_ROOT = Path(__file__).resolve().parents[3]  # content-strategy-engine/
 _DEFAULT_TAXONOMY_PATH = (
-    _CONTENT_ENGINE_ROOT.parent.parent  # Deep_Presence/
-    / "research"
-    / "Citation_Signal_Predictor"
-    / "cps_model"
+    Path(__file__).resolve().parent.parent  # core/gap_analysis/
+    / "data"
     / "b2b_queries_180.json"
 )
 
@@ -63,12 +63,24 @@ def _resolve_virtual_path(vpath: str) -> Path:
     return (_CONTENT_ENGINE_ROOT / p.lstrip("/")).resolve()
 
 
-def _read_text(vpath: Optional[str], max_chars: int = 200_000) -> str:
+def _read_text(
+    vpath: Optional[str],
+    max_chars: int = 200_000,
+    *,
+    storage: Optional[Any] = None,
+) -> str:
     if not vpath:
         return ""
+    # Read via storage backend (R2 or local)
+    if storage is not None:
+        content = storage.read(vpath)
+        if content is not None:
+            return content[:max_chars]
+        return ""
+    # Filesystem fallback only when no storage backend provided
     p = _resolve_virtual_path(vpath)
     if not p.exists():
-        return f"ERROR: path not found: {vpath}"
+        return ""
     return p.read_text(encoding="utf-8")[:max_chars]
 
 
@@ -426,6 +438,8 @@ async def _validate_coverage(
     company_context: str,
     persona_context: str,
     model: str,
+    *,
+    trace_span: Optional[Any] = None,
 ) -> List[GeneratedQuery]:
     """Ensure balanced cluster distribution; generate fill-ins for underrepresented clusters."""
     if not queries or not clusters:
@@ -494,7 +508,14 @@ Context:
 {persona_context[:1000]}"""
 
     try:
+        t0 = time.monotonic()
         response_text = await _call_openai(fill_prompt, model)
+        elapsed = time.monotonic() - t0
+        logger.info("S2 fill-in LLM call: model=%s, elapsed=%.1fs", model, elapsed)
+        if trace_span:
+            log_generation(trace_span, "s2-fill-in-generation", model, fill_prompt[:500], response_text[:500], usage=None,
+                           metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_fillin", "provider": "openai", "model": model,
+                                     "company_slug": getattr(input_data, "company_slug", "") or ""})
         payload = _extract_json(response_text)
         raw_fill = payload.get("queries", [])
         start_idx = len(queries) + 1
@@ -524,11 +545,14 @@ async def generate_queries(
     input_data: GapAnalysisInput,
     taxonomy_path: Optional[Path] = None,
     model: Optional[str] = None,
+    *,
+    trace_span: Optional[Any] = None,
+    storage: Optional[Any] = None,
 ) -> List[GeneratedQuery]:
     clusters = _load_taxonomy(taxonomy_path)
-    company_context = _read_text(input_data.company_context_path)
+    company_context = _read_text(input_data.company_context_path, storage=storage)
     persona_context = "\n\n".join(
-        _read_text(p) for p in input_data.persona_paths if p
+        _read_text(p, storage=storage) for p in input_data.persona_paths if p
     )
     model_name = model or settings.gap_analysis_query_gen_model
 
@@ -552,7 +576,14 @@ async def generate_queries(
         product_context=product_context,
     )
 
+    t0 = time.monotonic()
     response_text = await _call_openai(prompt, model_name)
+    elapsed = time.monotonic() - t0
+    logger.info("S2 seed LLM call: model=%s, elapsed=%.1fs", model_name, elapsed)
+    if trace_span:
+        log_generation(trace_span, "s2-seed-generation", model_name, prompt[:500], response_text[:500], usage=None,
+                       metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_seed", "provider": "openai", "model": model_name,
+                                 "company_slug": getattr(input_data, "company_slug", "") or ""})
     payload = _extract_json(response_text)
     raw_queries = payload.get("queries", [])
 
@@ -582,6 +613,7 @@ async def generate_queries(
         company_context=company_context,
         persona_context=persona_context,
         model=model_name,
+        trace_span=trace_span,
     )
 
     # Re-assign sequential query IDs
@@ -811,6 +843,10 @@ async def generate_queries_from_topics(
     product_slug: Optional[str] = None,
     product_description: Optional[str] = None,
     model: Optional[str] = None,
+    *,
+    trace_span: Optional[Any] = None,
+    company_slug: str = "",
+    storage: Optional[Any] = None,
 ) -> List[GeneratedQuery]:
     """Generate queries from approved TopicAssignments (TD → GA bridge).
 
@@ -826,9 +862,9 @@ async def generate_queries_from_topics(
     if not topics:
         return []
 
-    company_context = _read_text(company_context_path)
+    company_context = _read_text(company_context_path, storage=storage)
     persona_context = "\n\n".join(
-        _read_text(p) for p in (persona_paths or []) if p
+        _read_text(p, storage=storage) for p in (persona_paths or []) if p
     )
     model_name = model or settings.gap_analysis_query_gen_model
 
@@ -873,7 +909,17 @@ async def generate_queries_from_topics(
         )
 
         try:
+            t0 = time.monotonic()
             response_text = await _call_openai(prompt, model_name)
+            elapsed = time.monotonic() - t0
+            logger.info(
+                "S2 topic-scoped LLM call: model=%s, topic='%s', elapsed=%.1fs",
+                model_name, topic.topic_text[:50], elapsed,
+            )
+            if trace_span:
+                log_generation(trace_span, "s2-topic-scoped-generation", model_name, prompt[:500], response_text[:500], usage=None,
+                               metadata={"pipeline": "gap_analysis", "pipeline_step": "s2_query_gen_topic", "provider": "openai", "model": model_name,
+                                         "company_slug": company_slug})
             payload = _extract_json(response_text)
             raw_queries = payload.get("queries", [])
 

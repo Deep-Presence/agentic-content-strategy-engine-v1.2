@@ -11,13 +11,15 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import TaskStatus
 from core.services.task_store import TaskStoreProtocol
 from core.gap_analysis.pipeline import run_gap_analysis
 from core.auth.utils.domain import derive_slug
 from core.models.gap_analysis import GapAnalysisInput
 from core.shared_tools.structured_logging import bind_context, clear_context
+from core.cache import cache_delete, cache_delete_pattern
+from core.redis import get_sync_redis_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -109,70 +111,48 @@ def resolve_artifacts(
     slug: str,
     artifacts_root: Path,
     effective_slug: Optional[str] = None,
+    *,
+    backend: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Auto-discover approved research artifacts for a company slug.
 
     Only resolves final (approved) artifacts — ignores .draft.md files.
-
-    When ``effective_slug`` is provided and differs from ``slug``, applies the
-    product-level fallback chain for each artifact type:
-      1. Artifact scoped to effective_slug (product-specific)
-      2. Artifact scoped to slug (company-level)
-      3. None
-
-    Returns a dict with resolved paths and a summary for the API response.
+    Always returns relative storage keys compatible with any backend.
     """
+    from core.storage import get_storage_backend
+    _backend = backend or get_storage_backend(artifacts_root)
+
     resolved: Dict[str, Any] = {
         "company_context_path": None,
         "persona_paths": [],
         "style_guide_path": None,
     }
-
-    # Build lookup candidates: [effective_slug, slug] if different, else [slug]
     candidates = [effective_slug, slug] if effective_slug and effective_slug != slug else [slug]
 
     # Company context
     for lookup in candidates:
-        company_ctx = artifacts_root / "company_context" / f"{lookup}.md"
-        if company_ctx.exists():
-            resolved["company_context_path"] = str(company_ctx)
+        key = f"company_context/{lookup}.md"
+        if _backend.exists(key):
+            resolved["company_context_path"] = key
             break
 
-    # Personas: try NEW audience_personas/{slug}/ first, then legacy personas/
-    ap_found = False
+    # Personas: via PersonaStorage
     for lookup in candidates:
-        ap_dir = artifacts_root / "audience_personas" / lookup
-        if (ap_dir / "_manifest.json").exists():
-            try:
-                from core.research.audience_persona.storage import PersonaStorage
-
-                ap_storage = PersonaStorage(artifacts_root, lookup)
-                ap_paths = ap_storage.list_persona_paths()
-                if ap_paths:
-                    resolved["persona_paths"] = ap_paths
-                    ap_found = True
-                    break
-            except Exception:
-                pass  # Fall through to legacy
-
-    # LEGACY fallback: artifacts/personas/{slug}__persona-*.md
-    if not ap_found:
-        personas_dir = artifacts_root / "personas"
-        if personas_dir.exists():
-            for lookup in candidates:
-                persona_files = sorted(
-                    p for p in personas_dir.glob(f"{lookup}__persona-*.md")
-                    if not p.name.endswith(".draft.md")
-                )
-                if persona_files:
-                    resolved["persona_paths"] = [str(p) for p in persona_files]
-                    break
+        try:
+            from core.research.audience_persona.storage import PersonaStorage
+            ap_storage = PersonaStorage(artifacts_root, lookup, backend=_backend)
+            ap_paths = ap_storage.list_persona_paths()
+            if ap_paths:
+                resolved["persona_paths"] = ap_paths
+                break
+        except Exception:
+            pass
 
     # Style guide
     for lookup in candidates:
-        style_guide = artifacts_root / "style_guides" / f"{lookup}.md"
-        if style_guide.exists():
-            resolved["style_guide_path"] = str(style_guide)
+        key = f"style_guides/{lookup}.md"
+        if _backend.exists(key):
+            resolved["style_guide_path"] = key
             break
 
     return resolved
@@ -296,15 +276,32 @@ async def _mark_pipeline_run_failed(
 
 
 def _cleanup_stale_pipeline_state(
-    artifacts_root: Optional[Path], effective_slug: str,
+    artifacts_root: Optional[Path],
+    effective_slug: str,
+    *,
+    redis_client: Optional[Any] = None,
+    task_id: Optional[str] = None,
 ) -> None:
-    """Best-effort removal of pipeline_state.json on failure/cancel.
+    """Best-effort removal of pipeline state on failure/cancel.
 
-    On error paths we cannot determine which brief IDs belong to this run
-    (pieces may be empty), so we remove the whole file. This is acceptable
-    because parallel runs are manual-mode only (no HITL-1/2 state to
-    preserve), and file-based inference (Phase 2) still works correctly.
+    **Redis (task-scoped):** Only removes briefs belonging to ``task_id``
+    via ``__tid:`` field matching. This prevents clobbering other parallel
+    manual runs sharing the same slug.
+
+    **File:** Still does full file deletion (legacy behavior — parallel manual
+    runs don't reliably write separate state files). File cleanup is kept as
+    safety net for stale data prevention.
     """
+    # Redis cleanup (task-scoped — only removes this run's briefs)
+    if redis_client is not None:
+        try:
+            from core.content_engine.state_redis import cleanup_stale_pipeline_state_redis
+
+            cleanup_stale_pipeline_state_redis(redis_client, effective_slug, task_id=task_id)
+        except Exception:
+            logger.warning("Redis stale state cleanup failed", exc_info=True)
+
+    # File cleanup (always — dual cleanup for safety)
     if not artifacts_root:
         return
     state_path = artifacts_root / "content" / effective_slug / "pipeline_state.json"
@@ -320,7 +317,7 @@ async def run_gap_pipeline_task(
     request: Any,
     artifacts_root: Path,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
 ) -> None:
     """Background task wrapper for gap analysis pipeline.
@@ -344,14 +341,20 @@ async def run_gap_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="gap_analysis", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "gap_analysis"})
+
+            # C1-fix: create configured backend BEFORE resolve_artifacts
+            # so artifact resolution uses R2 in production (not hardcoded local)
+            from core.storage import get_storage_backend
+            _storage = get_storage_backend(artifacts_root)
 
             # Research artifacts: fallback chain (product-specific → company-level)
             resolved = resolve_artifacts(
                 scope.company_slug,
                 artifacts_root,
                 effective_slug=scope.effective_slug,
+                backend=_storage,
             )
 
             # S1 domain: use product domain when available (D4 — Replace strategy)
@@ -359,13 +362,11 @@ async def run_gap_pipeline_task(
             if scope.product_domain:
                 domain = scope.product_domain
 
-            # Knowledge docs: product-level → company-level fallback
-            knowledge_doc_dir: Optional[str] = None
-            kdocs_base = artifacts_root / "knowledge_docs"
+            # Knowledge docs: product-level → company-level fallback (via StorageBackend)
+            knowledge_doc_slug: Optional[str] = None
             for candidate_slug in [scope.effective_slug, scope.company_slug]:
-                candidate_dir = kdocs_base / candidate_slug
-                if candidate_dir.is_dir() and (candidate_dir / "_metadata.json").exists():
-                    knowledge_doc_dir = str(candidate_dir)
+                if _storage.exists(f"knowledge_docs/{candidate_slug}/_metadata.json"):
+                    knowledge_doc_slug = candidate_slug
                     break
 
             # Merge company pipeline defaults for Optional fields: request
@@ -397,12 +398,13 @@ async def run_gap_pipeline_task(
                 product_slug=scope.product_slug,
                 product_name=scope.product_name,
                 product_description=scope.product_description,
-                knowledge_doc_dir=knowledge_doc_dir,
+                knowledge_doc_slug=knowledge_doc_slug,
             )
 
             report = await run_gap_analysis(
                 input_data=input_data,
                 skip_steps=request.skip_steps,
+                storage=_storage,
                 session_factory=session_factory,
                 run_id=run_id,
                 company_id=company_id,
@@ -431,6 +433,14 @@ async def run_gap_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:gap:{scope.effective_slug}:*")
+                cache_delete(_rc, f"cache:gap_ctx:{scope.effective_slug}")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"gap_analysis:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -447,7 +457,7 @@ async def run_site_audit_task(
     request: Any,
     artifacts_root: Path,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
 ) -> None:
     """Background task wrapper for site audit pipeline.
@@ -487,7 +497,7 @@ async def run_site_audit_task(
         if run_id:
             bind_context(run_id=str(run_id))
 
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "site_audit"})
 
             try:
@@ -581,6 +591,13 @@ async def run_site_audit_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:audit:{scope.effective_slug}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"site_audit:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -590,7 +607,7 @@ async def run_content_pipeline_task(
     task_id: str,
     input_data: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
 ) -> None:
     """Background task wrapper for content generation pipeline.
 
@@ -616,7 +633,7 @@ async def run_content_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="content", company_slug=company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "content"})
 
             output = await run_content_generation(
@@ -659,6 +676,13 @@ async def run_content_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:content:{effective}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"content:{effective}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -668,7 +692,7 @@ async def run_content_v13_pipeline_task(
     task_id: str,
     input_data: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     artifacts_root: Optional[Path] = None,
     *,
     is_parallel: bool = False,
@@ -689,10 +713,11 @@ async def run_content_v13_pipeline_task(
     effective = _task.effective_slug or _task.company_slug or _derive_slug(input_data.company_name)
     company_slug = _task.company_slug or _derive_slug(input_data.company_name)
 
-    # H5-fix: resolve research artifacts with product→company fallback chain
-    # (same pattern as run_gap_analysis_pipeline_task)
+    # C1-fix: use configured backend for artifact resolution (R2 in prod)
     if artifacts_root:
-        resolved = resolve_artifacts(company_slug, artifacts_root, effective_slug=effective)
+        from core.storage import get_storage_backend
+        _storage = get_storage_backend(artifacts_root)
+        resolved = resolve_artifacts(company_slug, artifacts_root, effective_slug=effective, backend=_storage)
         if resolved["company_context_path"]:
             input_data.company_context_path = resolved["company_context_path"]
         if resolved["style_guide_path"]:
@@ -707,8 +732,22 @@ async def run_content_v13_pipeline_task(
         )
 
     bind_context(task_id=task_id, pipeline_name="content_v13", company_slug=company_slug, run_id=str(run_id) if run_id else None)
+
+    # Obtain async Redis client for pipeline state writes (non-blocking)
+    # + sync Redis client for error-path cleanup (sync file ops anyway)
+    _redis_async = None
+    _redis_sync = None
     try:
-        async with task_store.semaphore:
+        from core.config.settings import settings as _cfg
+        if _cfg.redis_pipeline_state and _cfg.redis_url:
+            from core.redis import get_redis_or_none
+            _redis_async = get_redis_or_none()
+            _redis_sync = get_sync_redis_or_none()  # module-level import
+    except Exception:
+        pass
+
+    try:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "content_v13"})
 
             output = await run_content_generation_v13(
@@ -719,6 +758,7 @@ async def run_content_v13_pipeline_task(
                 session_factory=session_factory,
                 run_id=run_id,
                 company_id=company_id,
+                redis_client=_redis_async,
             )
 
             result = {
@@ -741,14 +781,21 @@ async def run_content_v13_pipeline_task(
 
     except asyncio.CancelledError:
         logger.info("Content v1.3 pipeline cancelled: task_id=%s", task_id)
-        _cleanup_stale_pipeline_state(artifacts_root, effective)
+        _cleanup_stale_pipeline_state(artifacts_root, effective, redis_client=_redis_sync, task_id=task_id)
     except Exception as exc:
         logger.exception("Content v1.3 pipeline failed: %s", exc)
         task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
-        _cleanup_stale_pipeline_state(artifacts_root, effective)
+        _cleanup_stale_pipeline_state(artifacts_root, effective, redis_client=_redis_sync, task_id=task_id)
     finally:
+        await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:content:{effective}:*")
+        except Exception:
+            pass
         if not is_parallel:
             task_store.release_slug_lock(f"content_v13:{effective}")
         task_store.remove_task_handle(task_id)
@@ -762,7 +809,7 @@ async def run_kb_pipeline_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
 ) -> None:
     """Background task wrapper for Knowledge Base pipeline.
@@ -789,7 +836,7 @@ async def run_kb_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="knowledge_base", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = KnowledgeBaseInput(
                 company_name=request.company_name,
                 domain=getattr(request, "domain", None),
@@ -852,6 +899,13 @@ async def run_kb_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:brand:{scope.effective_slug}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"knowledge_base:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -866,7 +920,7 @@ async def run_audience_persona_pipeline_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -890,7 +944,7 @@ async def run_audience_persona_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="audience_persona", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = AudiencePersonaInput(
                 company_name=request.company_name,
                 domain=getattr(request, "domain", None),
@@ -943,6 +997,13 @@ async def run_audience_persona_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:brand:{scope.effective_slug}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"audience_persona:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -953,7 +1014,7 @@ async def run_single_persona_generator_task(
     persona_id: str,
     slug: str,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     artifacts_root: Any = None,
 ) -> None:
     """Background task for standalone single-persona generation."""
@@ -964,7 +1025,7 @@ async def run_single_persona_generator_task(
 
     bind_context(task_id=task_id, pipeline_name="audience_persona", company_slug=slug)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             root = Path(artifacts_root) if artifacts_root else Path("artifacts")
             storage = PersonaStorage(root, slug)
             brief = storage.read_brief(persona_id)
@@ -1025,6 +1086,7 @@ async def run_single_persona_generator_task(
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"audience_persona:{slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1039,7 +1101,7 @@ async def run_voice_style_guide_pipeline_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -1063,7 +1125,7 @@ async def run_voice_style_guide_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="voice_style_guide", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = VoiceStyleGuideInput(
                 company_name=request.company_name,
                 domain=getattr(request, "domain", None),
@@ -1118,6 +1180,13 @@ async def run_voice_style_guide_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:brand:{scope.effective_slug}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"voice_style_guide:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1132,7 +1201,7 @@ async def run_research_orchestrator_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -1166,7 +1235,7 @@ async def run_research_orchestrator_task(
         if run_id:
             bind_context(run_id=str(run_id))
 
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             # Build auto-approve config
             auto_approve_raw = getattr(request, "auto_approve", None)
             auto_approve_dict = {}
@@ -1269,7 +1338,14 @@ async def run_research_orchestrator_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         _eff = scope.effective_slug if scope else company_slug
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:brand:{_eff}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"research_orchestrator:{_eff}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1284,7 +1360,7 @@ async def run_topic_discovery_pipeline_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -1308,7 +1384,7 @@ async def run_topic_discovery_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="topic_discovery", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = TopicDiscoveryInput(
                 company_name=request.company_name,
                 domain=getattr(request, "domain", None),
@@ -1365,6 +1441,7 @@ async def run_topic_discovery_pipeline_task(
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"topic_discovery:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1374,7 +1451,7 @@ async def run_topic_expansion_pipeline_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -1397,7 +1474,7 @@ async def run_topic_expansion_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="topic_expansion", company_slug=scope.company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = TopicExpansionInput(
                 company_name=request.company_name,
                 domain=getattr(request, "domain", None),
@@ -1449,6 +1526,7 @@ async def run_topic_expansion_pipeline_task(
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"topic_expansion:{scope.effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1464,7 +1542,7 @@ async def run_td_content_pipeline_task(
     company_name: str,
     domain: str,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     *,
     product_slug: Optional[str] = None,
     product_name: Optional[str] = None,
@@ -1494,7 +1572,7 @@ async def run_td_content_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="td_content", company_slug=company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "td_content"})
 
             output = await run_td_to_content_pipeline(
@@ -1542,6 +1620,7 @@ async def run_td_content_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"td_content:{effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1559,7 +1638,7 @@ async def run_onboarding_task(
     company_domain: str,
     company_slug: str,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -1587,7 +1666,7 @@ async def run_onboarding_task(
         if run_id:
             bind_context(run_id=str(run_id))
 
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             input_data = OnboardingInput(
                 company_name=company_name,
                 domain=company_domain,
@@ -1671,6 +1750,7 @@ async def run_onboarding_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"onboarding:{company_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
@@ -1685,7 +1765,7 @@ async def run_daily_tracker_task(
     company_slug: str,
     artifacts_root: Path,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
 ) -> None:
     """Background task wrapper for the daily tracker pipeline.
 
@@ -1736,7 +1816,7 @@ async def run_daily_tracker_task(
                 "Daily tracker requires DATABASE_URL for prompt storage"
             )
 
-        async with task_store.semaphore:
+        async with task_store.pipeline_semaphore(task_id):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "daily_tracker"})
 
             from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
@@ -1842,10 +1922,92 @@ async def run_daily_tracker_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, pipeline_run_id, str(exc))
     finally:
+        await task_store.flush_terminal(task_id)
         task_store.release_slug_lock(f"daily_tracker:{company_slug}")
         task_store.remove_task_handle(task_id)
         # Safety net: ensure daily_runs row doesn't stay in 'running' state
         if daily_run_id and session_factory:
             from core.daily_tracker.persistence import mark_daily_run_failed as _mark_dt_failed
             await _mark_dt_failed(session_factory, daily_run_id)
+        clear_context()
+
+
+# ── CMS sync pipeline runner ────────────────────────────────────────
+
+
+async def run_cms_sync_task(
+    task_id: str,
+    company_slug: str,
+    tenant_id: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBusProtocol,
+    session_factory: Any,
+    storage: Any,
+    fernet_key: str,
+) -> None:
+    """Background task wrapper for CMS content sync.
+
+    Creates its own DB session and CMSService instance (the DI session
+    from the router is closed by the time the background task runs).
+    """
+    bind_context(task_id=task_id, pipeline_name="cms_sync", company_slug=company_slug)
+    task_store.update_task(task_id, status=TaskStatus.RUNNING, current_step="sync")
+    event_bus.publish(task_id, "pipeline_start", {"pipeline": "cms_sync"})
+
+    try:
+        async with task_store.pipeline_semaphore(task_id):
+            from core.db.repositories.cms_repo import (
+                CMSConnectionRepository,
+                CMSPublishRecordRepository,
+                CMSSyncedPostRepository,
+            )
+            from core.services.cms_service import CMSService
+
+            session = session_factory()
+            try:
+                svc = CMSService(
+                    connection_repo=CMSConnectionRepository(session),
+                    publish_repo=CMSPublishRecordRepository(session),
+                    synced_post_repo=CMSSyncedPostRepository(session),
+                    storage=storage,
+                    fernet_key=fernet_key,
+                )
+
+                connection = await svc.get_connection(company_slug, tenant_id)
+                if connection is None:
+                    raise RuntimeError("CMS connection not found")
+
+                result = await svc.sync_existing_content(company_slug, connection)
+                await session.commit()
+
+                task_store.update_task(
+                    task_id,
+                    status=TaskStatus.COMPLETED,
+                    result=result,
+                )
+                event_bus.publish(task_id, "completed", {"pipeline": "cms_sync", **result})
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+
+    except asyncio.CancelledError:
+        logger.info("CMS sync task %s cancelled", task_id)
+    except Exception as exc:
+        logger.exception("CMS sync task %s failed: %s", task_id, exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:cms:{company_slug}:*")
+        except Exception:
+            pass
+        task_store.release_slug_lock(f"cms_sync:{company_slug}")
+        task_store.remove_task_handle(task_id)
         clear_context()

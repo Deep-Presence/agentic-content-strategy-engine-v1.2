@@ -1,49 +1,43 @@
 {
-  "sprint": "structured-logging-layer2-v18",
-  "sprint_goal": "Structured Logging Layer 2 — Correlation & Context Propagation. X-Request-ID middleware, LangSmith trace linkage, SSE context binding (PB-83), auth failure logging (PB-84), per-step/per-agent context binding (PB-85), run_id binding, async context propagation tests.",
-  "sprint_status": "COMPLETE — 8 phases, 4 new test files, 12 modified files. 48 new tests. Codex-reviewed (6 findings incorporated). 3 backlog items resolved (PB-83, PB-84, PB-85). Zero regressions.",
+  "sprint": "redis-phase6-remove-fallbacks",
+  "sprint_goal": "Phase 6 — Remove Filesystem Fallbacks. Delete JSON TaskStore, in-memory EventBus, JsonAuthService, and MemorySaver fallback. Make DATABASE_URL + REDIS_URL mandatory for production.",
+  "sprint_status": "COMPLETE — 12-step plan fully executed. 6 files deleted (2 prod + 4 tests), 35+ files modified, 4 files created. 1360 tests passing, 0 failures. DATABASE_URL + REDIS_URL mandatory at startup.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
     "LiteLLM wraps all LLM calls in content engine workers/judges/agents",
     "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception",
-    "No Supabase yet — filesystem artifacts are source of truth",
     "Double-underscore separator for effective slugs: {company}__{product}",
     "Default-deny middleware — all routes protected unless explicitly whitelisted",
     "core/ cannot import from api/ — shared code goes in core/shared_tools/",
-    "DB layer is opt-in via DATABASE_URL — repos flush only, DI session generator owns commit/rollback",
-    "AuthServiceProtocol is the contract — all routers use get_auth_service dependency",
-    "LangSmith is sole tracing backend — Langfuse fully removed",
-    "Hub prompts opt-in via langsmith_use_hub=False — local Python prompts authoritative by default"
+    "DATABASE_URL is REQUIRED — no JSON fallback for TaskStore or AuthService",
+    "REDIS_URL is REQUIRED — no in-memory fallback for EventBus or checkpointer",
+    "Async Redis for hot paths (pipeline writes), sync Redis for locks + sync readers",
+    "Distributed locks are fail-closed when Redis is configured (no split-brain fallback)"
   ],
-  "active_branches": ["feat/deployment-prep-sprints"],
+  "active_branches": ["feat/redis-integration"],
   "environment_notes": [
     "Python 3.12", "async-first", "VS Code + Claude Code extension",
-    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, structlog >=24.1"
+    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, structlog >=24.1, redis[hiredis] >=5.2.0"
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/shared_tools/structured_logging.py (MODIFIED — added get_context_value + scoped_bind)",
-    "core/shared_tools/tracing.py (MODIFIED — langsmith_trace_id binding)",
-    "api/app.py (MODIFIED — X-Request-ID, try/finally, correlation ID sanitization)",
-    "api/routers/events.py (MODIFIED — SSE context binding)",
-    "api/auth/middleware.py (MODIFIED — auth failure structured logging)",
-    "api/tasks/runner.py (MODIFIED — run_id binding in all 14 runner functions)",
-    "6 pipeline files (MODIFIED — scoped_bind for step_name/agent_name)"
+    "api/tasks/exceptions.py (NEW — permanent home for 4 exception classes)",
+    "api/tasks/event_bus.py (EventBus class removed, only Protocol + _format_sse remain)",
+    "api/app.py (DI fallbacks removed — RuntimeError on missing DATABASE_URL/REDIS_URL)",
+    "api/dependencies.py (JsonAuthService fallback removed — RuntimeError on missing DATABASE_URL)",
+    "core/checkpointer.py (MemorySaver fallback removed — RuntimeError on missing REDIS_URL)",
+    "tests/api/conftest.py (DbTaskStore(mock) + InMemoryEventBus + TestAuthService + asyncio proxy)"
   ],
-  "test_count": 2773,
-  "phases_completed_count": 50,
+  "test_count": 1360,
+  "phases_completed_count": 59,
   "recent_phases": [
-    "structured-logging-layer2 v18 — 8 phases (48 new tests, 3 backlog items resolved)",
-    "structured-logging v17 — Phase A (foundation) + Phase B (context propagation) + Codex audit (22 new tests)",
-    "pgvector-migration v16 — 8 phases + Codex audit (493 new tests, 198 deleted)",
-    "daily-tracker-db-persistence v15 — 6 phases + Codex audit (392 DT tests, 41 new)",
-    "td-content-integration v1.2.0 — 8 phases (44 new tests)"
+    "redis-phase6-remove-fallbacks — Delete JSON TaskStore, EventBus, JsonAuthService, MemorySaver. DATABASE_URL+REDIS_URL mandatory. 12 steps, ~1300 lines removed, 1360 tests passing.",
+    "r2-blob-storage-phase5 — Reader-side StorageBackend migration: json_site_audit_data full refactor, content/brand/prompt services fixed, DI wiring, 447 tests verified",
+    "r2-blob-storage-phase3 — CachedStorageBackend, mtime removal, brand_data fix, list_dir caching (25 new tests)",
+    "redis-codex-fixes-phase2 — 6 critical/high bug fixes: singleton race, socket leak, cache mismatch, cleanup clobber, semaphore renewal, exception broadening (17 new tests)",
+    "redis-session-5 — Distributed Semaphore, atomic Lua acquire, pipeline_semaphore(), 14 runners (11 new tests)"
   ],
-  "phases_remaining": [
-    "audience-persona Phase E — API Router + Runner (~30 tests)",
-    "audience-persona Phase F — Integration (~20 tests)",
-    "knowledge-base Phase 6 — Integration (wire to gap analysis, Daily Tracker, frontend)"
-  ],
+  "phases_remaining": [],
   "deferred_issues_location": ".claude/sprints/pending/backlog.md"
 }

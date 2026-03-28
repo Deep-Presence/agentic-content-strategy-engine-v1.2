@@ -14,7 +14,7 @@ from core.content_engine.prompts.formatter_prompts import (
     FORMATTER_SYSTEM_PROMPT,
     build_formatter_user_prompt,
 )
-from core.content_engine.tracing_v13 import create_span, end_span, log_generation
+from core.content_engine.tracing_v13 import create_span, end_span, extract_provider, log_generation
 from core.content_engine.utils import truncate_to_token_limit
 from core.models.content_generation import ContentBrief, EnrichedDraft, FormattedContent
 
@@ -50,6 +50,7 @@ async def format_content(
     *,
     brief: Optional[ContentBrief] = None,
     trace: Optional[object] = None,
+    company_slug: str = "",
 ) -> FormattedContent:
     """Format and polish enriched content using Haiku 4.5.
 
@@ -89,7 +90,15 @@ async def format_content(
             system=FORMATTER_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=8192,
-            metadata={"agent": "formatter", "brief_id": enriched.brief_id},
+            metadata={
+                "agent": "formatter",
+                "brief_id": enriched.brief_id,
+                "pipeline": "content_engine",
+                "pipeline_step": "formatter",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
+            },
         )
 
         raw_text = response.content

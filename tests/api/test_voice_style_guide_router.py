@@ -11,9 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
 from core.services.task_store import ApprovalWindowError
 
 

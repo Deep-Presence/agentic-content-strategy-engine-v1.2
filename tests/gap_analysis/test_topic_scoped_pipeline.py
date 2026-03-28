@@ -255,10 +255,12 @@ class TestRunTopicScopedGapAnalysis:
         import uuid
 
         from core.gap_analysis.pipeline import run_topic_scoped_gap_analysis
+        from core.storage.backends.local import LocalStorageBackend
 
         topic = _make_topic()
         base_input = _make_base_input()
         test_run_id = uuid.UUID("12345678-1234-1234-1234-123456789abc")
+        storage = LocalStorageBackend(tmp_path)
 
         mock_queries = [
             GeneratedQuery(
@@ -269,8 +271,6 @@ class TestRunTopicScopedGapAnalysis:
         ]
 
         with patch(
-            "core.gap_analysis.pipeline._PROJECT_ROOT", tmp_path,
-        ), patch(
             "core.gap_analysis.pipeline._resolve_persona_paths",
         ), patch(
             "core.gap_analysis.pipeline.embed_company_assets",
@@ -309,20 +309,17 @@ class TestRunTopicScopedGapAnalysis:
                 topics=[topic],
                 base_input=base_input,
                 run_id=test_run_id,
+                storage=storage,
             )
 
-        scoped_dir = (
-            tmp_path / "artifacts" / "gap_analysis" / "test-co"
-            / "topic_scoped" / str(test_run_id)
-        )
-        assert scoped_dir.exists()
-        assert (scoped_dir / "queries.json").exists()
-        assert (scoped_dir / "analysis.json").exists()
-        assert (scoped_dir / "topic_metrics.json").exists()
+        prefix = f"gap_analysis/test-co/topic_scoped/{test_run_id}"
+        assert storage.exists(f"{prefix}/queries.json")
+        assert storage.exists(f"{prefix}/analysis.json")
+        assert storage.exists(f"{prefix}/topic_metrics.json")
 
         # Verify topic_query_map is in analysis.json
         analysis_data = json.loads(
-            (scoped_dir / "analysis.json").read_text(encoding="utf-8")
+            storage.read(f"{prefix}/analysis.json")
         )
         assert "topic_query_map" in analysis_data
         assert "ta-1" in analysis_data["topic_query_map"]

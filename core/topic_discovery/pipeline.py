@@ -217,13 +217,10 @@ def _load_persona_entries(
     Returns list of tuples for active (fresh/stale) personas.
     """
     from core.research.audience_persona.storage import PersonaStorage
-    from core.storage.backends import LocalStorageBackend
 
     for check_slug in filter(None, [effective_slug, company_slug]):
-        if isinstance(backend, LocalStorageBackend):
-            ps = PersonaStorage(backend.root, check_slug, backend=backend)
-        else:
-            ps = PersonaStorage(Path("/unused"), check_slug, backend=backend)
+        # artifacts_root is only used for base_dir property; backend handles all I/O.
+        ps = PersonaStorage(Path("artifacts"), check_slug, backend=backend)
         manifest = ps.read_manifest()
         if manifest.personas:
             break
@@ -311,9 +308,9 @@ async def run_topic_discovery_pipeline(
         _emit(event_bus, task_id, "td_phase_start", {"phase": 0, "stage": "preflight"})
 
         # Load company context
-        from core.storage.backends import LocalStorageBackend
+        from core.storage import get_storage_backend
 
-        _backend = LocalStorageBackend(root)
+        _backend = get_storage_backend(root)
         company_md = read_company_context(_backend, effective_slug, company_slug) or ""
 
         if not company_md.strip():
@@ -400,12 +397,14 @@ async def run_topic_discovery_pipeline(
             source_a_task = run_source_a_company_brainstorm(
                 company_md, max_rounds=max_rounds, timeout_s=timeout_s,
                 revision_note=_revision, parent_span=s1_span,
+                company_slug=company_slug,
             )
             source_b_task = run_source_b_persona_brainstorm(
                 persona_summaries, company_md, max_rounds=max_rounds, timeout_s=timeout_s,
                 revision_note=_revision,
                 persona_name_to_id=persona_name_to_id,
                 parent_span=s1_span,
+                company_slug=company_slug,
             )
 
             # Source C: deep research competitive content landscape
@@ -413,6 +412,7 @@ async def run_topic_discovery_pipeline(
                 company_md, competitor_landscape, domain,
                 timeout_s=settings.topic_discovery_source_c_timeout_s,
                 revision_note=_revision, parent_span=s1_span,
+                company_slug=company_slug,
             )
 
             results_abc = await asyncio.gather(
@@ -450,6 +450,7 @@ async def run_topic_discovery_pipeline(
             source_d_result = await run_source_d_adversarial(
                 company_md, existing_names, max_rounds=max_rounds, timeout_s=timeout_s,
                 revision_note=_revision, parent_span=s1_span,
+                company_slug=company_slug,
             )
             source_results.append(source_d_result)
             if source_d_result.error:
@@ -544,6 +545,7 @@ async def run_topic_discovery_pipeline(
                 persona_profiles=persona_profiles_for_s2,
                 timeout_s=600.0,
                 parent_span=s2_span,
+                company_slug=company_slug,
             )
 
             # Enrich taxonomy with coverage data
@@ -906,8 +908,8 @@ async def run_topic_expansion_pipeline(
 
         # Load company context + persona profiles (needed for expansion prompts)
         domain = input_data.domain or f"{company_slug}.com"
-        from core.storage.backends import LocalStorageBackend
-        backend = LocalStorageBackend(root)
+        from core.storage import get_storage_backend
+        backend = get_storage_backend(root)
 
         company_md = await asyncio.to_thread(
             read_company_context, backend, effective_slug, company_slug,
@@ -1014,6 +1016,7 @@ async def run_topic_expansion_pipeline(
                     persona_context=expansion_persona_ctx,
                     timeout_s=settings.topic_discovery_expansion_timeout_s,
                     parent_span=s3_span,
+                    company_slug=company_slug,
                 )
             for a in assignments:
                 a.subdomain_id = sd_id

@@ -24,7 +24,7 @@ from core.content_engine.prompts.brief_builder_prompts import (
     BRIEF_BUILDER_SYSTEM_PROMPT,
     build_brief_builder_user_prompt,
 )
-from core.content_engine.tracing_v13 import create_span, end_span, log_generation
+from core.content_engine.tracing_v13 import create_span, end_span, extract_provider, log_generation
 from core.content_engine.utils import safe_parse, truncate_to_token_limit
 from core.models.content_generation_v13 import (
     ContentBlueprint,
@@ -44,6 +44,7 @@ async def build_brief(
     style_guide_md: str = "",
     brief_id: str = "brief-001",
     parent_span: Optional[Any] = None,
+    company_slug: str = "",
 ) -> ContentBlueprint:
     """Build a detailed content blueprint from full query context.
 
@@ -107,6 +108,11 @@ async def build_brief(
                 "brief_id": brief_id,
                 "cluster": topic_selection.cluster_name,
                 "parse_attempt": parse_attempt,
+                "pipeline": "content_engine",
+                "pipeline_step": "brief_builder",
+                "provider": extract_provider(model),
+                "model": model,
+                "company_slug": company_slug,
             },
         )
 
@@ -172,6 +178,7 @@ async def build_briefs_parallel(
     max_concurrent: int = 3,
     parent_span: Optional[Any] = None,
     brief_id_overrides: Optional[List[str]] = None,
+    company_slug: str = "",
 ) -> List[ContentBlueprint]:
     """Build briefs for multiple topics in parallel using semaphore control.
 
@@ -232,6 +239,7 @@ async def build_briefs_parallel(
                     style_guide_md=style_guide_md,
                     brief_id=brief_id,
                     parent_span=span,
+                    company_slug=company_slug,
                 )
             except Exception as exc:
                 logger.error(

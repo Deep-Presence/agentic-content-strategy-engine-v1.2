@@ -20,10 +20,12 @@ _REQUIRED_KEYS = [
 async def health(request: Request) -> Dict[str, Any]:
     db_healthy = getattr(request.app.state, "db_healthy", False)
     pgvector = getattr(request.app.state, "pgvector_available", False)
+    redis_healthy = getattr(request.app.state, "redis_healthy", False)
     return {
         "status": "ok",
         "database": "connected" if db_healthy else "unavailable",
         "pgvector": "available" if pgvector else "unavailable",
+        "redis": "connected" if redis_healthy else "unavailable",
     }
 
 

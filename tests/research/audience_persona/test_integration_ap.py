@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langgraph.checkpoint.memory import MemorySaver
 
 from api.tasks.runner import resolve_artifacts
 from core.models.audience_persona import (
@@ -66,14 +67,6 @@ def _create_ap_persona(
         )
     return str(storage._artifacts_root / storage._version_md_key(persona_id, version))
 
-
-def _create_legacy_persona(root: Path, slug: str, name: str = "icp") -> str:
-    """Create a legacy persona file at artifacts/personas/{slug}__persona-{name}.md."""
-    personas_dir = root / "personas"
-    personas_dir.mkdir(parents=True, exist_ok=True)
-    path = personas_dir / f"{slug}__persona-{name}.md"
-    path.write_text(f"# Legacy Persona {name}\n\nLegacy content.", encoding="utf-8")
-    return str(path)
 
 
 def _create_kb_artifacts(
@@ -223,19 +216,16 @@ class TestResolveArtifactsAudiencePersona:
         resolved = resolve_artifacts("test-co", root)
         assert resolved["persona_paths"] == []
 
-    def test_resolve_falls_back_to_legacy(self, tmp_path: Path) -> None:
-        """Falls back to legacy persona path when no AP directory exists."""
+    def test_resolve_returns_empty_when_no_ap_directory(self, tmp_path: Path) -> None:
+        """Returns empty when no AP directory exists (legacy fallback removed in R2 migration)."""
         root = tmp_path / "artifacts"
         root.mkdir()
-        _create_legacy_persona(root, "test-co", "icp")
 
         resolved = resolve_artifacts("test-co", root)
-        assert len(resolved["persona_paths"]) == 1
-        assert "personas" in resolved["persona_paths"][0]
-        assert "test-co__persona-icp.md" in resolved["persona_paths"][0]
+        assert resolved["persona_paths"] == []
 
-    def test_resolve_falls_back_when_manifest_empty(self, tmp_path: Path) -> None:
-        """Falls back to legacy when AP manifest exists but has zero personas."""
+    def test_resolve_returns_empty_when_manifest_empty(self, tmp_path: Path) -> None:
+        """Returns empty when AP manifest exists but has zero personas."""
         root = tmp_path / "artifacts"
         root.mkdir()
 
@@ -247,39 +237,17 @@ class TestResolveArtifactsAudiencePersona:
             manifest.model_dump_json(indent=2), encoding="utf-8",
         )
 
-        # Create legacy fallback
-        _create_legacy_persona(root, "test-co", "icp")
-
         resolved = resolve_artifacts("test-co", root)
-        assert len(resolved["persona_paths"]) == 1
-        assert "personas" in resolved["persona_paths"][0]
+        assert resolved["persona_paths"] == []
 
-    def test_resolve_falls_back_when_only_archived(self, tmp_path: Path) -> None:
-        """Falls back to legacy when AP has only archived personas (Codex finding #1)."""
+    def test_resolve_returns_empty_when_only_archived(self, tmp_path: Path) -> None:
+        """Returns empty when AP has only archived personas."""
         root = tmp_path / "artifacts"
         root.mkdir()
         _create_ap_persona(root, "test-co", "old-persona", status="archived")
 
-        # Create legacy fallback
-        _create_legacy_persona(root, "test-co", "icp")
-
         resolved = resolve_artifacts("test-co", root)
-        # list_persona_paths() returns empty for archived-only,
-        # so should fall back to legacy
-        assert len(resolved["persona_paths"]) == 1
-        assert "personas" in resolved["persona_paths"][0]
-
-    def test_resolve_prefers_new_over_legacy(self, tmp_path: Path) -> None:
-        """When both AP and legacy exist, AP takes precedence."""
-        root = tmp_path / "artifacts"
-        root.mkdir()
-        _create_ap_persona(root, "test-co", "vp-finance")
-        _create_legacy_persona(root, "test-co", "icp")
-
-        resolved = resolve_artifacts("test-co", root)
-        assert len(resolved["persona_paths"]) == 1
-        assert "audience_personas" in resolved["persona_paths"][0]
-        assert "vp-finance" in resolved["persona_paths"][0]
+        assert resolved["persona_paths"] == []
 
     def test_resolve_effective_slug_product_level(self, tmp_path: Path) -> None:
         """Product-level effective_slug finds AP personas at product path."""
@@ -306,8 +274,8 @@ class TestResolveArtifactsAudiencePersona:
         assert len(resolved["persona_paths"]) == 1
         assert "audience_personas/test-co/" in resolved["persona_paths"][0]
 
-    def test_resolve_corrupt_manifest_falls_back(self, tmp_path: Path) -> None:
-        """Corrupt AP manifest falls back to legacy gracefully (Codex finding #3)."""
+    def test_resolve_corrupt_manifest_returns_empty(self, tmp_path: Path) -> None:
+        """Corrupt AP manifest is handled gracefully — returns empty, no crash."""
         root = tmp_path / "artifacts"
         root.mkdir()
 
@@ -318,13 +286,9 @@ class TestResolveArtifactsAudiencePersona:
             "{corrupt json data!!", encoding="utf-8",
         )
 
-        # Create legacy fallback
-        _create_legacy_persona(root, "test-co", "icp")
-
         resolved = resolve_artifacts("test-co", root)
-        # Should fall back to legacy due to corrupt manifest
-        assert len(resolved["persona_paths"]) == 1
-        assert "personas" in resolved["persona_paths"][0]
+        # PersonaStorage.read_manifest() returns empty manifest on parse error
+        assert resolved["persona_paths"] == []
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -472,9 +436,13 @@ class TestDelayedApproval:
 
     @pytest.fixture(autouse=True)
     def _mock_tracing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Disable all tracing functions."""
+        """Disable all tracing functions and use in-memory checkpointer."""
         for fn in ("create_session", "create_span", "end_span", "flush", "log_generation"):
             monkeypatch.setattr(f"{_PIPE}.{fn}", MagicMock())
+        monkeypatch.setattr(
+            "core.research.audience_persona.graph.get_checkpointer",
+            lambda override=None: override if override is not None else MemorySaver(),
+        )
 
     @pytest.fixture()
     def setup_preflight(self, tmp_path: Path) -> Path:
@@ -753,7 +721,7 @@ class TestEndToEndArtifactChain:
         assert "test-co.md" in resolved["company_context_path"]
 
     def test_content_engine_input_from_resolved(self, tmp_path: Path) -> None:
-        """Resolved AP paths are valid filesystem paths readable by content engine."""
+        """Resolved AP paths are valid storage keys readable via the backend."""
         root = tmp_path / "artifacts"
         root.mkdir()
         _create_ap_persona(root, "test-co", "vp-finance")
@@ -763,9 +731,10 @@ class TestEndToEndArtifactChain:
         persona_paths = resolved["persona_paths"]
 
         assert len(persona_paths) == 2
-        # Each path should be a readable file
+        # Each path is a relative storage key; resolve against artifacts root
         for p in persona_paths:
-            path = Path(p)
+            assert not p.startswith("/"), f"Path should be relative: {p}"
+            path = root / p
             assert path.exists(), f"File does not exist: {p}"
             content = path.read_text(encoding="utf-8")
             assert len(content) > 0, f"File is empty: {p}"
@@ -795,25 +764,21 @@ class TestEndToEndArtifactChain:
         assert not storage.check_kb_staleness(3)
         assert storage.check_kb_staleness(4)  # stale if KB advances
 
-    def test_both_legacy_and_new_coexist(self, tmp_path: Path) -> None:
-        """Different companies can use different persona storage formats."""
+    def test_separate_companies_independent_personas(self, tmp_path: Path) -> None:
+        """Different companies have independent persona storage."""
         root = tmp_path / "artifacts"
         root.mkdir()
 
-        # Ramp uses legacy
-        _create_legacy_persona(root, "ramp", "icp")
-
-        # Carta uses new AP
+        # Ramp has no personas
+        # Carta uses AP
         _create_ap_persona(root, "carta", "vp-finance")
 
         # Resolve each
         ramp_resolved = resolve_artifacts("ramp", root)
         carta_resolved = resolve_artifacts("carta", root)
 
-        # Ramp gets legacy
-        assert len(ramp_resolved["persona_paths"]) == 1
-        assert "personas" in ramp_resolved["persona_paths"][0]
-        assert "ramp__persona-icp.md" in ramp_resolved["persona_paths"][0]
+        # Ramp gets nothing (no AP personas)
+        assert ramp_resolved["persona_paths"] == []
 
         # Carta gets AP
         assert len(carta_resolved["persona_paths"]) == 1
