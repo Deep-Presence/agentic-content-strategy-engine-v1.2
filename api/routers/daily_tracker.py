@@ -48,7 +48,7 @@ from api.dependencies import (
     get_task_store,
 )
 from api.schemas.common import PipelineRunResponse
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from core.daily_tracker.analytics_engine import AnalyticsService
 from core.daily_tracker.orchestrator import DailyTrackerOrchestrator
 from core.daily_tracker.prompt_library import PromptLibraryService
@@ -317,7 +317,7 @@ async def trigger_daily_run(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
 ) -> PipelineRunResponse:
     """Trigger a daily tracking run as an async background task.
@@ -327,9 +327,10 @@ async def trigger_daily_run(
     """
     company_slug = _get_company_id(request)
 
+    from api.routers._helpers import create_task_durable
     from api.tasks.runner import run_daily_tracker_task
 
-    task = task_store.create_task("daily_tracker", company_slug)
+    task = await create_task_durable(task_store, "daily_tracker", company_slug)
 
     handle = asyncio.create_task(
         run_daily_tracker_task(

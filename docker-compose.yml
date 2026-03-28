@@ -35,6 +35,48 @@ services:
       timeout: 3s
       retries: 5
 
+  redis:
+    image: redis:7.4-alpine
+    container_name: dp-redis
+    command: >
+      redis-server
+      --requirepass dp_local_redis
+      --maxmemory 256mb
+      --maxmemory-policy noeviction
+      --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "dp_local_redis", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-staging:
+    image: redis:7.4-alpine
+    container_name: dp-redis-staging
+    command: >
+      redis-server
+      --requirepass dp_staging_redis
+      --maxmemory 256mb
+      --maxmemory-policy noeviction
+      --appendonly yes
+    ports:
+      - "6380:6379"
+    volumes:
+      - redisdata_staging:/data
+    profiles:
+      - staging
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "dp_staging_redis", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   backend:
     build:
       context: .
@@ -46,6 +88,10 @@ services:
       - .env.local
     environment:
       DATABASE_URL: postgresql+asyncpg://deep_presence:dp_local_password@db:5432/deep_presence
+      REDIS_URL: redis://:dp_local_redis@redis:6379/0
+      REDIS_EVENT_BUS: "true"
+      REDIS_PIPELINE_STATE: "true"
+      REDIS_CHECKPOINTER: "true"
       LOG_FORMAT: console
       LOG_LEVEL: DEBUG
     volumes:
@@ -54,11 +100,14 @@ services:
       - ./scripts:/app/scripts
       - ./artifacts:/app/artifacts
     command: >
+      sh -c "python -m alembic upgrade head &&
       python -m uvicorn api.app:create_app --factory
       --host 0.0.0.0 --port 8000 --reload
-      --reload-dir /app/core --reload-dir /app/api
+      --reload-dir /app/core --reload-dir /app/api"
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   migrate:
@@ -96,4 +145,6 @@ services:
 volumes:
   pgdata:
   pgdata_staging:
+  redisdata:
+  redisdata_staging:
   frontend_node_modules:

@@ -34,19 +34,17 @@ class TestSettingsDefaults:
 
 
 class TestDISwitch:
-    """Test that dependency injection correctly switches between JSON and DB modes."""
+    """Test that dependency injection requires DATABASE_URL for task store."""
 
-    def test_no_database_url_uses_json_task_store(self):
-        """Without DATABASE_URL, the app uses JSON TaskStore."""
-        from api.tasks.store import TaskStore
+    def test_db_task_store_is_importable(self):
+        """DbTaskStore is the only production task store implementation."""
+        from core.services.db_task_store import DbTaskStore
 
-        # TaskStore is the JSON variant — it should be importable
-        assert TaskStore is not None
+        assert DbTaskStore is not None
 
-    def test_lifespan_fallback_on_missing_db(self):
+    def test_missing_database_url_raises(self):
         """Verified via test_lifespan_task_store.py — referenced here for completeness.
 
-        When DATABASE_URL is set but DB connection fails, system falls back
-        to JSON TaskStore (tested in tests/api/test_lifespan_task_store.py).
+        When DATABASE_URL is not set, _init_task_store raises RuntimeError.
         """
         pass  # Covered by existing test_lifespan_task_store.py

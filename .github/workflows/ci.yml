@@ -25,8 +25,21 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_dp
+      REDIS_URL: redis://localhost:6379/0
+      REDIS_EVENT_BUS: "true"
+      REDIS_PIPELINE_STATE: "true"
+      REDIS_CHECKPOINTER: "true"
       STORAGE_BACKEND: local
       OPENAI_API_KEY: test-key
       ANTHROPIC_API_KEY: test-key

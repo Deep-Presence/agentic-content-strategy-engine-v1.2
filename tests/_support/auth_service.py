@@ -1,11 +1,8 @@
-"""JsonAuthService — async wrapper around the JSON-file AuthStore.
+"""TestAuthService — async wrapper around AuthStore for testing.
 
-Implements ``AuthServiceProtocol`` so routers can program to the
-protocol.  Read ops call the sync store directly (in-memory dict
-lookups, near-instant).  Write ops that touch disk are delegated
-via ``asyncio.to_thread()`` to avoid blocking the event loop.
-
-This is the *default* implementation when ``DATABASE_URL`` is not set.
+This is a test-only copy of the original JsonAuthService that was removed
+from core/auth/json_service.py during Phase 6 (filesystem fallback removal).
+Production code uses DbAuthService exclusively.
 """
 from __future__ import annotations
 
@@ -18,13 +15,13 @@ if TYPE_CHECKING:
     from api.auth.store import AuthStore
 
 
-class JsonAuthService:
-    """Async adapter around the sync ``AuthStore``."""
+class TestAuthService:
+    """Async adapter around the sync ``AuthStore`` for testing."""
 
     def __init__(self, store: AuthStore) -> None:
         self._store = store
 
-    # ── Company ops (read = sync, write = threaded) ────────────
+    # ── Company ops ────────────────────────────────────────────
 
     async def get_company_by_slug(self, slug: str) -> Optional[Company]:
         return self._store.get_company_by_slug(slug)
@@ -162,7 +159,7 @@ class JsonAuthService:
             self._store.update_pipeline_defaults, company_slug, **kwargs
         )
 
-    # ── Tokens (sync — pure computation, no I/O) ──────────────
+    # ── Tokens ─────────────────────────────────────────────────
 
     def create_access_token(
         self, user_id: str, company_slug: str, expires_hours: int = 24

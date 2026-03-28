@@ -89,8 +89,9 @@ class TestTopicRoute:
     def test_reject_routes_to_rejected(self):
         assert _topic_route({"topic_decision": "reject"}) == "rejected"
 
-    def test_default_routes_to_approved(self):
-        assert _topic_route({}) == "approved"
+    def test_default_routes_to_rejected(self):
+        """Missing topic_decision defaults to 'reject' (fail-safe)."""
+        assert _topic_route({}) == "rejected"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -135,8 +136,9 @@ class TestBriefRoute:
     def test_reject_routes_to_rejected(self):
         assert _brief_route({"brief_decision": "reject"}) == "rejected"
 
-    def test_default_routes_to_approved(self):
-        assert _brief_route({}) == "approved"
+    def test_default_routes_to_rejected(self):
+        """Missing brief_decision defaults to 'reject' (fail-safe)."""
+        assert _brief_route({}) == "rejected"
 
 
 # ═══════════════════════════════════════════════════════════════════════

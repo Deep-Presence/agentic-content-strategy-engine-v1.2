@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db.models.api_tasks import ApiTaskModel
@@ -94,3 +94,37 @@ class TaskRepository(SQLAlchemyRepository[ApiTaskModel]):
         result = await self._session.execute(stmt)
         await self._session.flush()
         return result.rowcount
+
+    async def mark_worker_orphans_failed(
+        self, worker_id: str
+    ) -> Tuple[int, List[str]]:
+        """Mark non-terminal tasks belonging to this worker as failed_restart.
+
+        Also claims NULL worker_id tasks (legacy rows from before worker
+        tracking was added). This ensures old tasks are recovered by the
+        first worker to start after the upgrade.
+
+        Returns ``(count, list_of_orphan_task_ids)`` — the task IDs are used
+        for scoped semaphore cleanup.
+        """
+        non_terminal = {"running", "pending_approval"}
+        stmt = (
+            update(ApiTaskModel)
+            .where(
+                ApiTaskModel.status.in_(non_terminal),
+                or_(
+                    ApiTaskModel.worker_id == worker_id,
+                    ApiTaskModel.worker_id.is_(None),
+                ),
+            )
+            .values(
+                status="failed_restart",
+                error="Process restarted — task was in-flight",
+                updated_at=datetime.now(timezone.utc),
+            )
+            .returning(ApiTaskModel.task_id)
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        orphan_ids = [row[0] for row in result.fetchall()]
+        return len(orphan_ids), orphan_ids

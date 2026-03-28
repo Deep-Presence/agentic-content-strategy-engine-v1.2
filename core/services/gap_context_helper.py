@@ -21,7 +21,10 @@ from core.storage.backends.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
-# ── Caching ──────────────────────────────────────────────────────────
+# ── Caching (Redis-backed, Session 6) ────────────────────────────────
+
+from core.cache import cache_get, cache_set
+from core.redis import get_sync_redis_or_none
 
 _GAP_CACHE: Dict[str, Tuple[float, Any]] = {}
 _GAP_CACHE_TTL_S = 300  # 5 minutes
@@ -65,16 +68,31 @@ def load_analysis_json(
 
     Accepts StorageBackend (preferred) or Path (backward compat for Phase 2
     callers in content_data_service / db_content_data).
-    Uses TTL-based cache invalidation.
+
+    Cache layers (checked in order):
+    1. Redis (shared across workers, 5min TTL) — Session 6
+    2. In-memory thread-safe dict (process-local, 5min TTL) — R2/StorageBackend branch
+    3. StorageBackend read (file or R2)
     """
     storage = _resolve_storage(storage_or_root)
 
-    cache_key = f"gap_analysis/{slug}/analysis.json"
-    now = time.monotonic()
-    cached = _GAP_CACHE.get(cache_key)
-    if cached is not None and (now - cached[0]) < _GAP_CACHE_TTL_S:
-        return cached[1]
+    # Layer 1: Redis cache (shared across workers)
+    redis = get_sync_redis_or_none()
+    redis_cache_key = f"cache:gap_ctx:{slug}"
 
+    if redis is not None:
+        redis_cached = cache_get(redis, redis_cache_key)
+        if redis_cached is not None:
+            return redis_cached
+
+    # Layer 2: In-memory cache (process-local)
+    mem_cache_key = f"gap_analysis/{slug}/analysis.json"
+    now = time.monotonic()
+    mem_cached = _GAP_CACHE.get(mem_cache_key)
+    if mem_cached is not None and (now - mem_cached[0]) < _GAP_CACHE_TTL_S:
+        return mem_cached[1]
+
+    # Layer 3: StorageBackend read
     content = storage.read(f"gap_analysis/{slug}/analysis.json")
     if content is None:
         return None
@@ -85,8 +103,12 @@ def load_analysis_json(
         logger.warning("Failed to parse gap_analysis/%s/analysis.json: %s", slug, exc)
         return None
 
+    # Populate both cache layers
+    if redis is not None:
+        cache_set(redis, redis_cache_key, data, ttl=300)
+
     with _GAP_CACHE_LOCK:
-        _GAP_CACHE[cache_key] = (now, data)
+        _GAP_CACHE[mem_cache_key] = (now, data)
     return data
 
 

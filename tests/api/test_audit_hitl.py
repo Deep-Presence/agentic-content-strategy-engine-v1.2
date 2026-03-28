@@ -6,9 +6,7 @@ from typing import List
 import pytest
 from fastapi.testclient import TestClient
 
-from api.tasks.event_bus import EventBus
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
 from core.audit.logger import get_sink, set_sink
 from core.audit.models import AuditEvent, AuditEventType
 from core.audit.sink import NoOpAuditSink
@@ -46,7 +44,7 @@ def _rejected_events(sink: _CaptureSink) -> List[AuditEvent]:
 
 
 def _pending_task(
-    task_store: TaskStore,
+    task_store,
     pipeline: str,
     stage: str,
     slug: str = "test-co",
@@ -71,7 +69,7 @@ def _pending_task(
 
 class TestKBApproveAudit:
     def test_approve_emits_hitl_event(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(task_store, "knowledge_base", "kb_checkpoint_1")
         resp = client.post(
@@ -91,7 +89,7 @@ class TestKBApproveAudit:
         assert evt.company_slug == "test-co"
 
     def test_revise_emits_hitl_event(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(task_store, "knowledge_base", "kb_checkpoint_2")
         resp = client.post(
@@ -106,7 +104,7 @@ class TestKBApproveAudit:
         assert events[0].detail["revision_note_provided"] is True
 
     def test_stale_nonce_emits_rejected(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(task_store, "knowledge_base", "kb_checkpoint_1")
         # First approval succeeds
@@ -134,7 +132,7 @@ class TestKBApproveAudit:
 
 class TestContentV13ApproveAudit:
     def test_topic_approval_emits_hitl(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(task_store, "content_v13", "topic_approval")
         resp = client.post(
@@ -149,7 +147,7 @@ class TestContentV13ApproveAudit:
         assert events[0].detail["stage"] == "topic_approval"
 
     def test_brief_approval_emits_hitl(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(task_store, "content_v13", "brief_approval")
         resp = client.post(
@@ -164,7 +162,7 @@ class TestContentV13ApproveAudit:
         assert events[0].detail["brief_id"] == "brief-001"
 
     def test_content_review_emits_hitl(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(task_store, "content_v13", "content_review")
         resp = client.post(
@@ -183,7 +181,7 @@ class TestContentV13ApproveAudit:
 
 class TestTopicDiscoveryApproveAudit:
     def test_taxonomy_approval_emits_hitl(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(
             task_store, "topic_discovery", "td_taxonomy_review",
@@ -201,7 +199,7 @@ class TestTopicDiscoveryApproveAudit:
         assert events[0].detail["stage"] == "td_taxonomy_review"
 
     def test_subdomain_selection_emits_hitl(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(
             task_store, "topic_discovery", "td_subdomain_selection",
@@ -218,7 +216,7 @@ class TestTopicDiscoveryApproveAudit:
         assert events[0].detail["stage"] == "td_subdomain_selection"
 
     def test_matrix_approval_emits_hitl(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(
             task_store, "topic_discovery", "td_matrix_review",
@@ -240,7 +238,7 @@ class TestTopicDiscoveryApproveAudit:
 
 class TestAudiencePersonaApproveAudit:
     def test_brief_approval_emits_hitl(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(task_store, "audience_persona", "persona_brief_review")
         resp = client.post(
@@ -255,7 +253,7 @@ class TestAudiencePersonaApproveAudit:
         assert events[0].detail["stage"] == "persona_brief_review"
 
     def test_profile_approval_emits_hitl(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(task_store, "audience_persona", "persona_profile_review")
         resp = client.post(
@@ -274,7 +272,7 @@ class TestAudiencePersonaApproveAudit:
 
 class TestVSGApproveAudit:
     def test_author_approval_emits_hitl(
-        self, client: TestClient, task_store: TaskStore, _audit_sink: _CaptureSink
+        self, client: TestClient, task_store, _audit_sink: _CaptureSink
     ) -> None:
         task_id = _pending_task(task_store, "voice_style_guide", "vsg_author_review")
         resp = client.post(

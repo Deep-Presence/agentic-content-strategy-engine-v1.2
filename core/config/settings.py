@@ -222,6 +222,17 @@ class Settings(BaseSettings):
     database_pool_size: int = 5
     database_max_overflow: int = 10
 
+    # --- Redis ---
+    redis_url: str | None = None  # redis://localhost:6379/0
+    redis_max_connections: int = 20
+    redis_socket_timeout: float = 20.0
+    redis_socket_connect_timeout: float = 2.0
+    redis_retry_on_timeout: bool = True
+    redis_health_check_interval: int = 30  # seconds
+    redis_event_bus: bool = True  # Use RedisEventBus instead of in-memory EventBus (requires REDIS_URL)
+    redis_pipeline_state: bool = True  # Use Redis Hashes for pipeline_state + distributed slug locks (requires REDIS_URL)
+    redis_checkpointer: bool = True  # Use RedisSaver for LangGraph HITL checkpoints
+
     # --- Auth ---
     invite_ttl_days: int = 7  # Invite codes expire after 7 days
 

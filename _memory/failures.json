@@ -88,5 +88,14 @@
     "fix_applied": "Changed patch target to api.routers.site_audit.run_site_audit_task (point-of-use patching).",
     "lesson": "When a module uses 'from X import Y', patching 'X.Y' does NOT affect the importer's local binding. Always patch at the point of use: patch the importing module's attribute, not the source module's.",
     "files_affected": ["tests/api/test_site_audit.py"]
+  },
+  {
+    "id": "F13",
+    "timestamp": "2026-03-22",
+    "what_broke": "test_revise_loops_back_to_agent (PB-39) — intermittent ~15% failure rate after langgraph-checkpoint-redis install",
+    "root_cause": "langgraph-checkpoint v4.0.0 stores __interrupt__ as a channel write in the checkpoint. With StateGraph(dict), there are no declared channels — everything goes into a catch-all __root__ channel. This means __interrupt__ gets persisted as part of state.values and bleeds into subsequent invoke() results even after the graph completes. StateGraph(TypedDict) is immune because __interrupt__ is not a declared field.",
+    "fix_applied": "Converted test graph (test_hitl_interrupt_resume.py) and v1.0 production graph (core/content_engine/graph.py) from StateGraph(dict) to StateGraph(TypedDict). All production v1.3+ graphs already used TypedDict and were never affected.",
+    "lesson": "Never use StateGraph(dict) with interrupt()/Command(resume=...) and a checkpointer. Always use StateGraph(TypedDict) so that __interrupt__ is correctly filtered as a special channel, not stored as state. This is a langgraph-checkpoint v4.0.0 behavioral change.",
+    "files_affected": ["tests/api/test_hitl_interrupt_resume.py", "core/content_engine/graph.py"]
   }
 ]

@@ -9,10 +9,7 @@ import json
 import logging
 import math
 import re
-import threading
-import time
 from collections import Counter, defaultdict
-from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from core.storage.backends.base import StorageBackend
@@ -49,25 +46,25 @@ from api.schemas.gap_data import (
 
 logger = logging.getLogger(__name__)
 
-# ── Caching ──────────────────────────────────────────────────────────
+# ── Caching (Redis-backed, Session 6) ────────────────────────────────
 
-_CACHE: Dict[Tuple[str, str], Tuple[float, Any]] = {}
-_CACHE_MAX_ENTRIES = 10
-_CACHE_TTL_S = 300  # 5 minutes — GA artifacts are write-once-read-many
-_CACHE_LOCK = threading.Lock()  # C6: protects compound check-evict-insert
+from core.cache import cache_get, cache_set
+from core.redis import get_sync_redis_or_none
 
 
 def _load_json_cached(
     storage: StorageBackend, slug: str, filename: str
 ) -> Optional[Any]:
-    """Load and parse a JSON file via StorageBackend with TTL cache."""
-    cache_key = (slug, filename)
-    now = time.monotonic()
+    """Load a gap analysis JSON file — Redis cache first, StorageBackend fallback."""
+    redis = get_sync_redis_or_none()
+    cache_key = f"cache:gap:{slug}:{filename}"
 
-    cached = _CACHE.get(cache_key)
-    if cached is not None and (now - cached[0]) < _CACHE_TTL_S:
-        return cached[1]
+    if redis is not None:
+        cached = cache_get(redis, cache_key)
+        if cached is not None:
+            return cached
 
+    # StorageBackend read (fallback or cache miss)
     content = storage.read(f"gap_analysis/{slug}/{filename}")
     if content is None:
         return None
@@ -78,12 +75,10 @@ def _load_json_cached(
         logger.warning("Failed to parse gap_analysis/%s/%s: %s", slug, filename, exc)
         return None
 
-    # C6: lock protects the compound check-evict-insert against concurrent writes
-    with _CACHE_LOCK:
-        if len(_CACHE) >= _CACHE_MAX_ENTRIES and cache_key not in _CACHE:
-            oldest_key = next(iter(_CACHE))
-            del _CACHE[oldest_key]
-        _CACHE[cache_key] = (now, data)
+    # Populate Redis cache
+    if redis is not None:
+        cache_set(redis, cache_key, data, ttl=300)
+
     return data
 
 

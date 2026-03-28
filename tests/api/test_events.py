@@ -4,8 +4,6 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from api.tasks.event_bus import EventBus
-from api.tasks.store import TaskStore
 
 
 class TestSSEEvents:
@@ -14,7 +12,7 @@ class TestSSEEvents:
         assert resp.status_code == 404
 
     def test_sse_content_type(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "pipeline_start", {"pipeline": "gap_analysis"})
@@ -25,7 +23,7 @@ class TestSSEEvents:
             assert "text/event-stream" in resp.headers["content-type"]
 
     def test_sse_replays_existing_events(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         task = task_store.create_task("gap_analysis", "test-co")
         event_bus.publish(task.task_id, "step_start", {"step": 1})
@@ -43,7 +41,7 @@ class TestSSEEvents:
             assert "event: completed" in combined
 
     def test_sse_stream_terminates_on_completed(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         """Stream should terminate after a completed event is replayed."""
         task = task_store.create_task("gap_analysis", "test-co")
@@ -59,7 +57,7 @@ class TestSSEEvents:
         assert "event: completed" in combined
 
     def test_sse_stream_terminates_on_failed(
-        self, client: TestClient, task_store: TaskStore, event_bus: EventBus
+        self, client: TestClient, task_store, event_bus
     ) -> None:
         """Stream should terminate after a failed event is replayed."""
         task = task_store.create_task("gap_analysis", "test-co")

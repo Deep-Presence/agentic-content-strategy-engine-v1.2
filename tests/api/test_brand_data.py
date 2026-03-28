@@ -13,7 +13,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.tasks.models import PipelineTask, TaskStatus
-from api.tasks.store import TaskStore
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -91,7 +90,7 @@ def _make_gap_result(
 
 
 def _create_task(
-    task_store: TaskStore,
+    task_store,
     pipeline: str,
     slug: str,
     *,
@@ -128,21 +127,12 @@ def _create_task(
 
 
 @pytest.fixture(autouse=True)
-def _clear_caches():
-    """Clear module-level caches between tests."""
-    try:
-        from api.services import brand_data_service
-
-        brand_data_service._CACHE.clear()
-    except (ImportError, AttributeError):
-        pass
+def _no_redis_cache(monkeypatch):
+    """Disable Redis cache so tests use direct file reads."""
+    monkeypatch.setattr(
+        "api.services.brand_data_service.get_sync_redis_or_none", lambda: None
+    )
     yield
-    try:
-        from api.services import brand_data_service
-
-        brand_data_service._CACHE.clear()
-    except (ImportError, AttributeError):
-        pass
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -392,7 +382,7 @@ class TestRunHistory:
     # ── Empty state ──
 
     def test_no_tasks_returns_empty(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         resp = client.get(self.URL.format(slug="test-co"))
         assert resp.status_code == 200
@@ -401,7 +391,7 @@ class TestRunHistory:
         assert data["total"] == 0
 
     def test_no_matching_slug_returns_empty(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "gap_analysis", "ramp")
         resp = client.get(self.URL.format(slug="test-co"))
@@ -410,7 +400,7 @@ class TestRunHistory:
     # ── Basic listing ──
 
     def test_completed_gap_run_with_metrics(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         result = _make_gap_result(spa_t_stat=14.975, total_queries=72, total_citations=1422)
         _create_task(
@@ -433,7 +423,7 @@ class TestRunHistory:
         assert run["total_steps"] == 8
 
     def test_failed_run_zero_metrics(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -449,7 +439,7 @@ class TestRunHistory:
         assert run["queries"] == 0
 
     def test_running_task_with_partial_steps(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -464,7 +454,7 @@ class TestRunHistory:
         assert run["steps_completed"] == 4
 
     def test_multiple_runs_sorted_by_started_desc(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -494,7 +484,7 @@ class TestRunHistory:
     # ── Duration ──
 
     def test_duration_hours_and_minutes(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -509,7 +499,7 @@ class TestRunHistory:
         assert resp.json()["runs"][0]["duration"] == "3h 46m"
 
     def test_duration_minutes_only(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -524,7 +514,7 @@ class TestRunHistory:
         assert resp.json()["runs"][0]["duration"] == "23m"
 
     def test_duration_running_empty_string(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -541,7 +531,7 @@ class TestRunHistory:
     # ── Steps completed inference ──
 
     def test_gap_completed_8_of_8(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -556,7 +546,7 @@ class TestRunHistory:
         assert run["total_steps"] == 8
 
     def test_gap_running_at_s4(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -571,7 +561,7 @@ class TestRunHistory:
         assert run["total_steps"] == 8
 
     def test_content_completed_4_of_4(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store,
@@ -588,7 +578,7 @@ class TestRunHistory:
     # ── Metrics extraction ──
 
     def test_spa_score_from_report_json(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         result = _make_gap_result(spa_t_stat=11.234)
         _create_task(
@@ -599,7 +589,7 @@ class TestRunHistory:
         assert resp.json()["runs"][0]["spa_score"] == pytest.approx(11.234)
 
     def test_nan_spa_score_returns_zero(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         result = _make_gap_result(spa_t_stat=float("nan"))
         _create_task(
@@ -610,7 +600,7 @@ class TestRunHistory:
         assert resp.json()["runs"][0]["spa_score"] == 0.0
 
     def test_missing_result_returns_zero_metrics(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -625,7 +615,7 @@ class TestRunHistory:
     # ── Filters ──
 
     def test_filter_by_pipeline(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.COMPLETED, result=_make_gap_result())
@@ -639,7 +629,7 @@ class TestRunHistory:
         assert data["runs"][0]["pipeline"] == "gap_analysis"
 
     def test_filter_by_status(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.COMPLETED, result=_make_gap_result())
@@ -653,7 +643,7 @@ class TestRunHistory:
         assert data["runs"][0]["status"] == "completed"
 
     def test_filter_pipeline_and_status(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.COMPLETED, result=_make_gap_result())
@@ -671,7 +661,7 @@ class TestRunHistory:
     # ── Mapped-status filters (Codex CX-1) ──
 
     def test_filter_running_includes_pending_approval(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         """pending_approval maps to 'running' so ?status=running should include it."""
         _create_task(task_store, "research", "test-co",
@@ -686,7 +676,7 @@ class TestRunHistory:
         assert all(r["status"] == "running" for r in data["runs"])
 
     def test_filter_failed_includes_cancelled(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         """cancelled maps to 'failed' so ?status=failed should include it."""
         _create_task(task_store, "gap_analysis", "test-co",
@@ -703,7 +693,7 @@ class TestRunHistory:
     # ── Company name ──
 
     def test_company_name_from_slug(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -713,7 +703,7 @@ class TestRunHistory:
         assert resp.json()["runs"][0]["company"] == "Test Co"
 
     def test_compound_slug_company_name(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         """Compound slugs with hyphens derive title-cased company name.
 
@@ -730,7 +720,7 @@ class TestRunHistory:
     # ── Started field ──
 
     def test_started_is_iso_string(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -764,14 +754,14 @@ class TestSPATrend:
     # ── Empty state ──
 
     def test_no_runs_returns_empty_trend(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         resp = client.get(self.URL.format(slug="test-co"))
         assert resp.status_code == 200
         assert resp.json()["trend"] == []
 
     def test_no_gap_runs_returns_empty(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "research", "test-co",
                       status=TaskStatus.COMPLETED, result={"stage": "complete"})
@@ -779,7 +769,7 @@ class TestSPATrend:
         assert resp.json()["trend"] == []
 
     def test_incomplete_gap_runs_excluded(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(task_store, "gap_analysis", "test-co",
                       status=TaskStatus.FAILED)
@@ -789,7 +779,7 @@ class TestSPATrend:
     # ── Single run ──
 
     def test_single_completed_run(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         result = _make_gap_result(
             spa_t_stat=14.975, total_queries=72, total_citations=1422,
@@ -813,7 +803,7 @@ class TestSPATrend:
     # ── Multiple runs ──
 
     def test_multiple_runs_sorted_by_timestamp_asc(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -835,7 +825,7 @@ class TestSPATrend:
         assert trend[1]["spa_score"] == pytest.approx(15.0)
 
     def test_run_label_short_date_format(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -849,7 +839,7 @@ class TestSPATrend:
     # ── Guard rails ──
 
     def test_nan_spa_score_returns_zero(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         result = _make_gap_result(spa_t_stat=float("nan"))
         _create_task(
@@ -860,7 +850,7 @@ class TestSPATrend:
         assert resp.json()["trend"][0]["spa_score"] == 0.0
 
     def test_missing_report_json_skips_run(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -871,7 +861,7 @@ class TestSPATrend:
         assert resp.json()["trend"] == []
 
     def test_missing_spa_results_skips_run(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "test-co",
@@ -882,7 +872,7 @@ class TestSPATrend:
         assert resp.json()["trend"] == []
 
     def test_other_slug_excluded(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         _create_task(
             task_store, "gap_analysis", "ramp",
@@ -892,7 +882,7 @@ class TestSPATrend:
         assert resp.json()["trend"] == []
 
     def test_run_id_populated(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ):
         task = _create_task(
             task_store, "gap_analysis", "test-co",
@@ -905,60 +895,5 @@ class TestSPATrend:
 # ══════════════════════════════════════════════════════════════════════
 #  BRAND CACHING TESTS
 # ══════════════════════════════════════════════════════════════════════
-
-
-class TestBrandCaching:
-    """Cache behavior tests for get_research_artifacts TTL cache."""
-
-    URL = "/api/v1/companies/{slug}/research/artifacts"
-
-    def test_cache_hit(self, client: TestClient, artifacts_root: Path):
-        """Second call within TTL should return cached data without re-reading."""
-        from api.services import brand_data_service
-
-        _write_artifact(
-            artifacts_root / "company_context" / "test-co.md", "# Test Company",
-        )
-        resp1 = client.get(self.URL.format(slug="test-co"))
-        assert resp1.status_code == 200
-        assert resp1.json()["company_context"]["status"] == "approved"
-
-        # Cache should be populated
-        assert len(brand_data_service._CACHE) > 0
-
-        # Second call should use cache
-        resp2 = client.get(self.URL.format(slug="test-co"))
-        assert resp2.status_code == 200
-        assert resp2.json()["company_context"]["content"] == "# Test Company"
-
-    def test_cache_miss_after_clear(self, client: TestClient, artifacts_root: Path):
-        """Clearing cache should force re-read from storage."""
-        from api.services import brand_data_service
-
-        _write_artifact(
-            artifacts_root / "company_context" / "test-co.md", "# V1",
-        )
-        resp1 = client.get(self.URL.format(slug="test-co"))
-        assert resp1.json()["company_context"]["content"] == "# V1"
-
-        # Overwrite file and clear cache
-        _write_artifact(
-            artifacts_root / "company_context" / "test-co.md", "# V2",
-        )
-        brand_data_service._CACHE.clear()
-
-        resp2 = client.get(self.URL.format(slug="test-co"))
-        assert resp2.json()["company_context"]["content"] == "# V2"
-
-    def test_cache_eviction(self, client: TestClient, artifacts_root: Path):
-        """Cache should evict oldest entry when at capacity."""
-        from api.services import brand_data_service
-
-        for i in range(brand_data_service._CACHE_MAX_ENTRIES + 2):
-            slug = f"co-{i}"
-            _write_artifact(
-                artifacts_root / "company_context" / f"{slug}.md", f"# Co {i}",
-            )
-            client.get(self.URL.format(slug=slug))
-
-        assert len(brand_data_service._CACHE) <= brand_data_service._CACHE_MAX_ENTRIES
+# In-memory _CACHE removed in Session 6 (Redis cache migration).
+# Redis cache hit/miss/eviction tested in tests/unit/test_redis_cache.py.

@@ -204,8 +204,9 @@ class TestListAllPosts:
         adapter = WordPressAdapter(
             config, _transport=httpx.MockTransport(handler)
         )
-        posts = await adapter.list_all_posts()
+        posts, truncated = await adapter.list_all_posts()
         assert len(posts) == 3
+        assert truncated is False
 
 
 # ── Get Post Tests ────────────────────────────────────────────────────
@@ -526,3 +527,169 @@ class TestProtocolCompliance:
         )
         adapter = WordPressAdapter(config)
         assert isinstance(adapter, CMSAdapterProtocol)
+
+
+# ── Rate Limiting: Category Creation Cap ─────────────────────────────
+
+
+class TestCategoryCreationCap:
+    @pytest.mark.asyncio
+    async def test_caps_at_limit(self) -> None:
+        """Only _MAX_NEW_CATEGORIES_PER_CALL new categories are created."""
+        from core.cms.adapters.wordpress import _MAX_NEW_CATEGORIES_PER_CALL
+
+        post_count = 0
+        next_id = 100
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal post_count, next_id
+            if request.method == "GET" and request.url.path.endswith("/categories"):
+                return httpx.Response(
+                    200, json=[], headers={"X-WP-TotalPages": "1"}
+                )
+            if request.method == "POST" and request.url.path.endswith("/categories"):
+                post_count += 1
+                next_id += 1
+                return httpx.Response(201, json={"id": next_id})
+            return httpx.Response(404, json={})
+
+        config = CMSConnectionConfig(
+            provider=CMSProvider.wordpress,
+            site_url=_SITE_URL,
+            username="admin",
+            api_key="key",
+        )
+        adapter = WordPressAdapter(config, _transport=httpx.MockTransport(handler))
+
+        # 8 new categories — should only create 5
+        names = [f"Cat-{i}" for i in range(8)]
+        ids = await adapter._resolve_category_ids(names)
+
+        assert post_count == _MAX_NEW_CATEGORIES_PER_CALL
+        assert len(ids) == _MAX_NEW_CATEGORIES_PER_CALL
+
+    @pytest.mark.asyncio
+    async def test_existing_not_counted_against_cap(self) -> None:
+        """Existing categories do not count against the creation cap."""
+        from core.cms.adapters.wordpress import _MAX_NEW_CATEGORIES_PER_CALL
+
+        existing_cats = [
+            {"id": i, "name": f"Existing-{i}", "slug": f"existing-{i}", "parent": 0, "count": 0}
+            for i in range(3)
+        ]
+        post_count = 0
+        next_id = 200
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal post_count, next_id
+            if request.method == "GET" and request.url.path.endswith("/categories"):
+                return httpx.Response(
+                    200, json=existing_cats, headers={"X-WP-TotalPages": "1"}
+                )
+            if request.method == "POST" and request.url.path.endswith("/categories"):
+                post_count += 1
+                next_id += 1
+                return httpx.Response(201, json={"id": next_id})
+            return httpx.Response(404, json={})
+
+        config = CMSConnectionConfig(
+            provider=CMSProvider.wordpress,
+            site_url=_SITE_URL,
+            username="admin",
+            api_key="key",
+        )
+        adapter = WordPressAdapter(config, _transport=httpx.MockTransport(handler))
+
+        # 3 existing + 3 new → all should resolve (under cap)
+        names = [f"Existing-{i}" for i in range(3)] + ["New-A", "New-B", "New-C"]
+        ids = await adapter._resolve_category_ids(names)
+
+        assert post_count == 3
+        assert len(ids) == 6
+
+    @pytest.mark.asyncio
+    async def test_under_cap_all_created(self) -> None:
+        """When under cap, all new categories are created."""
+        post_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal post_count
+            if request.method == "GET" and request.url.path.endswith("/categories"):
+                return httpx.Response(
+                    200, json=[], headers={"X-WP-TotalPages": "1"}
+                )
+            if request.method == "POST" and request.url.path.endswith("/categories"):
+                post_count += 1
+                return httpx.Response(201, json={"id": post_count})
+            return httpx.Response(404, json={})
+
+        config = CMSConnectionConfig(
+            provider=CMSProvider.wordpress,
+            site_url=_SITE_URL,
+            username="admin",
+            api_key="key",
+        )
+        adapter = WordPressAdapter(config, _transport=httpx.MockTransport(handler))
+        ids = await adapter._resolve_category_ids(["A", "B", "C"])
+        assert post_count == 3
+        assert len(ids) == 3
+
+
+# ── Rate Limiting: Pagination Cap ────────────────────────────────────
+
+
+class TestPaginationCap:
+    @pytest.mark.asyncio
+    async def test_truncates_at_page_limit(self) -> None:
+        """list_all_posts stops after _MAX_PAGINATION_PAGES pages."""
+        from core.cms.adapters.wordpress import _MAX_PAGINATION_PAGES
+
+        page_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal page_count
+            if request.url.path.endswith("/posts"):
+                page_count += 1
+                # Always return 100 posts, total=999999 (never ends naturally)
+                posts = [_sample_wp_post(i) for i in range(100)]
+                return httpx.Response(
+                    200, json=posts, headers={"X-WP-Total": "999999"}
+                )
+            return httpx.Response(404, json={})
+
+        config = CMSConnectionConfig(
+            provider=CMSProvider.wordpress,
+            site_url=_SITE_URL,
+            username="admin",
+            api_key="key",
+        )
+        adapter = WordPressAdapter(config, _transport=httpx.MockTransport(handler))
+        posts, truncated = await adapter.list_all_posts()
+
+        assert truncated is True
+        assert page_count == _MAX_PAGINATION_PAGES
+        assert len(posts) == _MAX_PAGINATION_PAGES * 100
+
+    @pytest.mark.asyncio
+    async def test_no_truncation_for_small_site(self) -> None:
+        """Small site (1 page) returns all posts without truncation."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/posts"):
+                posts = [_sample_wp_post(i) for i in range(5)]
+                return httpx.Response(
+                    200, json=posts, headers={"X-WP-Total": "5"}
+                )
+            return httpx.Response(404, json={})
+
+        config = CMSConnectionConfig(
+            provider=CMSProvider.wordpress,
+            site_url=_SITE_URL,
+            username="admin",
+            api_key="key",
+        )
+        adapter = WordPressAdapter(config, _transport=httpx.MockTransport(handler))
+        posts, truncated = await adapter.list_all_posts()
+
+        assert truncated is False
+        assert len(posts) == 5
