@@ -135,15 +135,32 @@ end
         to this worker_id (+ legacy NULL worker_id rows) as failed. Other
         workers' running tasks are left untouched.
 
+        Falls back to blanket orphan recovery if the worker_id column hasn't
+        been migrated yet (migration 0022).
+
         Returns the number of orphans recovered.
         """
+        from sqlalchemy.exc import ProgrammingError
+
         from core.db.repositories.task_repo import TaskRepository
 
         async with self._session_factory() as session:
             repo = TaskRepository(session)
-            orphan_count, orphan_task_ids = await repo.mark_worker_orphans_failed(
-                self._worker_id
-            )
+            try:
+                orphan_count, orphan_task_ids = await repo.mark_worker_orphans_failed(
+                    self._worker_id
+                )
+            except ProgrammingError:
+                # worker_id column not yet migrated — roll back the failed
+                # statement and fall back to blanket (non-scoped) recovery.
+                await session.rollback()
+                logger.warning(
+                    "worker_id column missing — falling back to blanket "
+                    "orphan recovery. Run migration 0022 to enable "
+                    "multi-worker scoped recovery."
+                )
+                orphan_count = await repo.mark_orphans_failed()
+                orphan_task_ids = []
 
             # Load all tasks into memory cache (not just this worker's —
             # needed for cross-worker lock status checks)
