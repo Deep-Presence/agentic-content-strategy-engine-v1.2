@@ -58,10 +58,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 
 STOPSIGNAL SIGTERM
 
-# Production: no reload, single worker (accepted constraint per PB-73/77)
+# Production: run migrations then start server (single worker per PB-73/77)
 # Shell form (not exec form) so $PORT is expanded at runtime.
 # Railway sets PORT dynamically; local docker-compose falls back to 8000.
-CMD python -m uvicorn api.app:create_app --factory \
+CMD python -m alembic upgrade head && \
+    python -m uvicorn api.app:create_app --factory \
     --host 0.0.0.0 --port ${PORT:-8000} \
     --no-access-log \
     --timeout-graceful-shutdown 30
