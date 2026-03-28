@@ -13,7 +13,7 @@ from api.auth.dependencies import require_auth, require_role
 from api.dependencies import get_auth_service, get_event_bus, get_task_store
 from core.auth.service import AuthServiceProtocol
 from api.schemas.common import CancelResponse, TaskListResponse, TaskResponse, TaskSummary
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import TaskStatus
 from core.services.task_store import TaskStoreProtocol
 from core.models.organization import UserProfile
@@ -93,7 +93,7 @@ async def cancel_task(
     task_id: str,
     request: Request,
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     _user: UserProfile = Depends(require_role("member", "superuser")),
 ) -> CancelResponse:
     task = task_store.get_task(task_id)

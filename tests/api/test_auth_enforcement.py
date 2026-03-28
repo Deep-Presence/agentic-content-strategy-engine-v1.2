@@ -20,7 +20,6 @@ from fastapi.testclient import TestClient
 
 from api.auth.store import AuthStore
 from api.tasks.models import PipelineTask, TaskStatus
-from api.tasks.store import TaskStore
 from core.models.organization import Company, UserProfile
 from tests.api.conftest import _AuthTestClient
 
@@ -60,13 +59,13 @@ def other_client(
 
 
 @pytest.fixture
-def test_co_task(task_store: TaskStore, test_company: Company) -> PipelineTask:
+def test_co_task(task_store, test_company: Company) -> PipelineTask:
     """Create a task owned by test-co."""
     return task_store.create_task("gap_analysis", "test-co")
 
 
 @pytest.fixture
-def other_co_task(task_store: TaskStore, other_company: Company) -> PipelineTask:
+def other_co_task(task_store, other_company: Company) -> PipelineTask:
     """Create a task owned by other-co."""
     return task_store.create_task("gap_analysis", "other-co")
 
@@ -693,7 +692,7 @@ class TestC2C3SSEAuthDependency:
         auth_store: AuthStore,
         test_user: UserProfile,
         test_company: Company,
-        task_store: TaskStore,
+        task_store,
         event_bus,
     ) -> None:
         """Deactivated user with valid token gets 401 from SSE endpoint."""

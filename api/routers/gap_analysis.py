@@ -13,7 +13,7 @@ from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus
 from core.auth.service import AuthServiceProtocol
 from core.auth.utils.domain import derive_slug
 from api.schemas.common import GapAnalysisStartRequest, PipelineRunResponse, TaskResponse
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask
 from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_gap_pipeline_task
@@ -61,7 +61,7 @@ async def start_gap_analysis(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     storage_backend: StorageBackend = Depends(get_storage_dep),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),

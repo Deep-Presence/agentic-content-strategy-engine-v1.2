@@ -1,14 +1,15 @@
 """Tests for core.checkpointer — shared LangGraph checkpointer factory.
 
 Covers:
-- MemorySaver fallback when no Redis URL
+- RuntimeError when no Redis URL (no fallback)
 - RedisSaver returned when Redis URL is set
-- Graceful fallback on RedisSaver init failure
+- RuntimeError on RedisSaver init failure (no fallback)
 - Explicit override bypasses factory
 - Non-BaseCheckpointSaver override falls through to factory
 - Singleton: RedisSaver created only once
 - reset_checkpointer() clears singleton
-- redis_checkpointer=False disables RedisSaver
+- redis_checkpointer=False raises RuntimeError
+- Transient failure allows retry on next call
 """
 from __future__ import annotations
 
@@ -31,20 +32,20 @@ def _reset_singleton():
 
 
 # ---------------------------------------------------------------------------
-# 1. MemorySaver fallback when no Redis URL
+# 1. RuntimeError when no Redis URL (no fallback)
 # ---------------------------------------------------------------------------
 
 
-class TestMemorySaverFallback:
-    def test_returns_memory_saver_when_no_redis_url(self):
+class TestNoRedisUrl:
+    def test_raises_when_no_redis_url(self):
         with patch("core.checkpointer.settings") as mock_settings:
             mock_settings.redis_url = None
             mock_settings.redis_checkpointer = True
 
             from core.checkpointer import get_checkpointer
 
-            result = get_checkpointer()
-            assert isinstance(result, MemorySaver)
+            with pytest.raises(RuntimeError, match="REDIS_URL"):
+                get_checkpointer()
 
 
 # ---------------------------------------------------------------------------
@@ -72,12 +73,12 @@ class TestRedisSaverReturned:
 
 
 # ---------------------------------------------------------------------------
-# 3. Graceful fallback on RedisSaver init failure
+# 3. RuntimeError on RedisSaver init failure (no fallback)
 # ---------------------------------------------------------------------------
 
 
-class TestGracefulFallback:
-    def test_fallback_on_redis_init_failure(self):
+class TestInitFailure:
+    def test_raises_on_redis_init_failure(self):
         with (
             patch("core.checkpointer.settings") as mock_settings,
             patch("core.checkpointer._import_redis_saver") as mock_import,
@@ -88,8 +89,8 @@ class TestGracefulFallback:
 
             from core.checkpointer import get_checkpointer
 
-            result = get_checkpointer()
-            assert isinstance(result, MemorySaver)
+            with pytest.raises(RuntimeError, match="REDIS_URL"):
+                get_checkpointer()
 
 
 # ---------------------------------------------------------------------------
@@ -106,12 +107,24 @@ class TestOverride:
         result = get_checkpointer(override=custom_cp)
         assert result is custom_cp
 
-    def test_override_with_non_saver_falls_through(self):
-        """Non-BaseCheckpointSaver override falls through to factory."""
+    def test_override_with_memory_saver_works(self):
+        """MemorySaver passed as override is accepted (tests use this pattern)."""
         from core.checkpointer import get_checkpointer
 
-        result = get_checkpointer(override="not-a-saver")
-        assert isinstance(result, BaseCheckpointSaver)
+        ms = MemorySaver()
+        result = get_checkpointer(override=ms)
+        assert result is ms
+
+    def test_override_with_non_saver_falls_through(self):
+        """Non-BaseCheckpointSaver override falls through to factory (raises)."""
+        from core.checkpointer import get_checkpointer
+
+        with patch("core.checkpointer.settings") as mock_settings:
+            mock_settings.redis_url = None
+            mock_settings.redis_checkpointer = True
+
+            with pytest.raises(RuntimeError):
+                get_checkpointer(override="not-a-saver")
 
 
 # ---------------------------------------------------------------------------
@@ -173,17 +186,51 @@ class TestReset:
 
 
 # ---------------------------------------------------------------------------
-# 7. redis_checkpointer=False disables RedisSaver
+# 7. Transient failure allows retry on next call
+# ---------------------------------------------------------------------------
+
+
+class TestTransientRetry:
+    def test_retries_after_transient_failure(self):
+        """After a transient init failure, next call retries and succeeds."""
+        mock_saver = MagicMock(spec=BaseCheckpointSaver)
+
+        with (
+            patch("core.checkpointer.settings") as mock_settings,
+            patch("core.checkpointer._import_redis_saver") as mock_import,
+        ):
+            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_checkpointer = True
+
+            # First call: transient failure → RuntimeError
+            mock_import.side_effect = ConnectionError("transient")
+
+            from core.checkpointer import get_checkpointer
+
+            with pytest.raises(RuntimeError):
+                get_checkpointer()
+
+            # Second call: succeeds
+            mock_import.side_effect = None
+            mock_import.return_value = mock_saver
+
+            result2 = get_checkpointer()
+            assert result2 is mock_saver
+            assert mock_import.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# 8. redis_checkpointer=False raises RuntimeError
 # ---------------------------------------------------------------------------
 
 
 class TestConfigDisable:
-    def test_disabled_via_config(self):
+    def test_disabled_via_config_raises(self):
         with patch("core.checkpointer.settings") as mock_settings:
             mock_settings.redis_url = "redis://localhost:6379/0"
             mock_settings.redis_checkpointer = False
 
             from core.checkpointer import get_checkpointer
 
-            result = get_checkpointer()
-            assert isinstance(result, MemorySaver)
+            with pytest.raises(RuntimeError, match="REDIS_CHECKPOINTER"):
+                get_checkpointer()

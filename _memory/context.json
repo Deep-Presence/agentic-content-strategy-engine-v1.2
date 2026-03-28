@@ -1,18 +1,17 @@
 {
-  "sprint": "redis-integration-session-5",
-  "sprint_goal": "Redis Session 5 — Distributed Semaphore. Replace per-worker asyncio.Semaphore with Redis Sorted Set for global pipeline concurrency limit across all workers.",
-  "sprint_status": "COMPLETE — Session 5 done. Atomic Lua acquire, pipeline_semaphore() protocol method, 14 runner call sites updated, 11 new tests. All Redis sessions (0-5) complete.",
+  "sprint": "redis-phase6-remove-fallbacks",
+  "sprint_goal": "Phase 6 — Remove Filesystem Fallbacks. Delete JSON TaskStore, in-memory EventBus, JsonAuthService, and MemorySaver fallback. Make DATABASE_URL + REDIS_URL mandatory for production.",
+  "sprint_status": "COMPLETE — 12-step plan fully executed. 6 files deleted (2 prod + 4 tests), 35+ files modified, 4 files created. 1360 tests passing, 0 failures. DATABASE_URL + REDIS_URL mandatory at startup.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
     "LiteLLM wraps all LLM calls in content engine workers/judges/agents",
     "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception",
-    "No Supabase yet — filesystem artifacts are source of truth",
     "Double-underscore separator for effective slugs: {company}__{product}",
     "Default-deny middleware — all routes protected unless explicitly whitelisted",
     "core/ cannot import from api/ — shared code goes in core/shared_tools/",
-    "DB layer is opt-in via DATABASE_URL — repos flush only, DI session generator owns commit/rollback",
-    "Redis is opt-in via REDIS_URL — all features have config toggles + graceful fallback",
+    "DATABASE_URL is REQUIRED — no JSON fallback for TaskStore or AuthService",
+    "REDIS_URL is REQUIRED — no in-memory fallback for EventBus or checkpointer",
     "Async Redis for hot paths (pipeline writes), sync Redis for locks + sync readers",
     "Distributed locks are fail-closed when Redis is configured (no split-brain fallback)"
   ],
@@ -23,25 +22,21 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/redis.py (async + sync lazy singletons)",
-    "api/tasks/redis_event_bus.py (RedisEventBus — Streams + Lua)",
-    "core/content_engine/state_redis.py (8 Redis state helpers)",
-    "core/content_engine/state_helpers.py (async wrappers + lock TTL refresh)",
-    "core/services/db_task_store.py (distributed locks + orphan cleanup)",
-    "api/app.py (Redis init, EventBus selection, DbTaskStore wiring)",
-    "api/tasks/runner.py (async+sync Redis threading, stale cleanup)",
-    "CLAUDE.md (Redis key schema, config toggles)",
-    "core/checkpointer.py (shared RedisSaver factory, singleton, thread-safe)",
-    "core/redis_semaphore.py (distributed semaphore — atomic Lua, Sorted Set)"
+    "api/tasks/exceptions.py (NEW — permanent home for 4 exception classes)",
+    "api/tasks/event_bus.py (EventBus class removed, only Protocol + _format_sse remain)",
+    "api/app.py (DI fallbacks removed — RuntimeError on missing DATABASE_URL/REDIS_URL)",
+    "api/dependencies.py (JsonAuthService fallback removed — RuntimeError on missing DATABASE_URL)",
+    "core/checkpointer.py (MemorySaver fallback removed — RuntimeError on missing REDIS_URL)",
+    "tests/api/conftest.py (DbTaskStore(mock) + InMemoryEventBus + TestAuthService + asyncio proxy)"
   ],
-  "test_count": 2131,
-  "phases_completed_count": 56,
+  "test_count": 1360,
+  "phases_completed_count": 59,
   "recent_phases": [
-    "redis-session-5 — Distributed Semaphore, atomic Lua acquire, pipeline_semaphore(), 14 runners (11 new tests)",
-    "redis-session-4 — Approval Queues (BRPOP/LPUSH), nonce in Redis, duplicate flag (13 new tests)",
-    "redis-session-3 — HITL RedisSaver, shared checkpointer factory, 1 Codex finding resolved (7 new tests)",
-    "redis-session-2 — 9 phases + 8 Codex findings resolved (36 new tests)",
-    "redis-session-1 — RedisEventBus + 8 Codex findings resolved (37 new tests)"
+    "redis-phase6-remove-fallbacks — Delete JSON TaskStore, EventBus, JsonAuthService, MemorySaver. DATABASE_URL+REDIS_URL mandatory. 12 steps, ~1300 lines removed, 1360 tests passing.",
+    "r2-blob-storage-phase5 — Reader-side StorageBackend migration: json_site_audit_data full refactor, content/brand/prompt services fixed, DI wiring, 447 tests verified",
+    "r2-blob-storage-phase3 — CachedStorageBackend, mtime removal, brand_data fix, list_dir caching (25 new tests)",
+    "redis-codex-fixes-phase2 — 6 critical/high bug fixes: singleton race, socket leak, cache mismatch, cleanup clobber, semaphore renewal, exception broadening (17 new tests)",
+    "redis-session-5 — Distributed Semaphore, atomic Lua acquire, pipeline_semaphore(), 14 runners (11 new tests)"
   ],
   "phases_remaining": [],
   "deferred_issues_location": ".claude/sprints/pending/backlog.md"

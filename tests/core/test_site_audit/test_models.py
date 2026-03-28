@@ -720,24 +720,28 @@ class TestSiteAuditResult:
 
 
 # ---------------------------------------------------------------------------
-# T-SA-01: Path traversal — _validate_audit_id + _audit_dir hardening
+# T-SA-01: Path traversal — _validate_audit_id hardening
 # ---------------------------------------------------------------------------
 
 
 class TestAuditIdValidation:
-    """Verify that _validate_audit_id and _audit_dir reject path traversal
-    attempts while accepting valid UUID4 strings (T-SA-01 fix)."""
+    """Verify that _validate_audit_id rejects path traversal attempts
+    while accepting valid UUID4 strings (T-SA-01 fix).
 
-    def test_valid_uuid4_accepted(self, tmp_path: Path) -> None:
-        from core.services.json_site_audit_data import _audit_dir
+    With the StorageBackend migration, path construction and symlink
+    defense-in-depth are handled by StorageBackend._resolve(). These
+    tests focus on the audit ID validation layer.
+    """
+
+    def test_valid_uuid4_accepted(self) -> None:
+        from core.services.json_site_audit_data import _validate_audit_id
 
         audit_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-        # Just verify no exception — directory need not exist
-        result = _audit_dir(tmp_path, "test-co", audit_id)
-        assert result == tmp_path / "site_audit" / "test-co" / audit_id
+        # Should not raise
+        _validate_audit_id(audit_id)
 
-    def test_path_traversal_rejected(self, tmp_path: Path) -> None:
-        from core.services.json_site_audit_data import _audit_dir
+    def test_path_traversal_rejected(self) -> None:
+        from core.services.json_site_audit_data import _validate_audit_id
 
         for malicious_id in [
             "../../etc",
@@ -747,39 +751,32 @@ class TestAuditIdValidation:
             "..%2F..%2Fetc",
         ]:
             with pytest.raises(HTTPException) as exc_info:
-                _audit_dir(tmp_path, "test-co", malicious_id)
+                _validate_audit_id(malicious_id)
             assert exc_info.value.status_code == 400
 
-    def test_uppercase_uuid_rejected(self, tmp_path: Path) -> None:
-        from core.services.json_site_audit_data import _audit_dir
+    def test_uppercase_uuid_rejected(self) -> None:
+        from core.services.json_site_audit_data import _validate_audit_id
 
         with pytest.raises(HTTPException) as exc_info:
-            _audit_dir(tmp_path, "test-co", "A1B2C3D4-E5F6-7890-ABCD-EF1234567890")
+            _validate_audit_id("A1B2C3D4-E5F6-7890-ABCD-EF1234567890")
         assert exc_info.value.status_code == 400
 
-    def test_wrong_format_rejected(self, tmp_path: Path) -> None:
-        from core.services.json_site_audit_data import _audit_dir
+    def test_wrong_format_rejected(self) -> None:
+        from core.services.json_site_audit_data import _validate_audit_id
 
         for bad_id in ["not-a-uuid", "", "12345", "abc", "hello world"]:
             with pytest.raises(HTTPException) as exc_info:
-                _audit_dir(tmp_path, "test-co", bad_id)
+                _validate_audit_id(bad_id)
             assert exc_info.value.status_code == 400
 
-    def test_symlink_escape_rejected(self, tmp_path: Path) -> None:
-        """Symlink that points outside company_root must be rejected."""
-        from core.services.json_site_audit_data import _audit_dir
+    def test_storage_backend_rejects_traversal(self, tmp_path: Path) -> None:
+        """StorageBackend._resolve() rejects paths with '..' components."""
+        from core.storage.backends.local import LocalStorageBackend
 
-        company_root = tmp_path / "site_audit" / "test-co"
-        company_root.mkdir(parents=True)
-        audit_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-        # Create a symlink inside company_root that points outside
-        escape_target = tmp_path / "secrets"
-        escape_target.mkdir()
-        (company_root / audit_id).symlink_to(escape_target)
-
-        with pytest.raises(HTTPException) as exc_info:
-            _audit_dir(tmp_path, "test-co", audit_id)
-        assert exc_info.value.status_code == 400
+        backend = LocalStorageBackend(tmp_path)
+        # StorageBackend.read() validates paths and rejects traversal
+        with pytest.raises(ValueError):
+            backend.read("../../../etc/passwd")
 
     def test_validate_audit_id_directly(self) -> None:
         from core.services.json_site_audit_data import _validate_audit_id

@@ -82,12 +82,17 @@ def get_redis_or_none() -> Optional[aioredis.Redis]:
 
     Used by code that should degrade gracefully without Redis
     (e.g., local development, CLI scripts).
+
+    Catches all exceptions from client creation (RuntimeError, ValueError,
+    ConnectionError, TimeoutError, etc.) so callers always get None rather
+    than an unexpected crash when Redis is misconfigured or unreachable.
     """
     if not settings.redis_url:
         return None
     try:
         return get_redis()
-    except RuntimeError:
+    except Exception as exc:
+        logger.debug("Redis async client unavailable: %s", exc)
         return None
 
 
@@ -119,18 +124,31 @@ def get_sync_redis() -> _sync_redis.Redis:
 
 
 def get_sync_redis_or_none() -> Optional[_sync_redis.Redis]:
-    """Return the sync Redis client if REDIS_URL is configured, else None."""
+    """Return the sync Redis client if REDIS_URL is configured, else None.
+
+    Catches all exceptions from client creation so callers always get None
+    rather than an unexpected crash when Redis is misconfigured or unreachable.
+    """
     if not settings.redis_url:
         return None
     try:
         return get_sync_redis()
-    except RuntimeError:
+    except Exception as exc:
+        logger.debug("Redis sync client unavailable: %s", exc)
         return None
 
 
 async def close_redis() -> None:
-    """Close all Redis clients. Call during app shutdown."""
+    """Close all Redis clients. Call during app shutdown.
+
+    Each close is isolated so one failure does not leak the others' sockets.
+    Sync client is closed via asyncio.to_thread() to avoid blocking the loop.
+    """
+    import asyncio as _asyncio
+
     global _pool, _client, _sync_client
+
+    # Snapshot and clear globals first (prevents new callers)
     with _lock:
         client = _client
         pool = _pool
@@ -139,12 +157,33 @@ async def close_redis() -> None:
     with _sync_lock:
         sync = _sync_client
         _sync_client = None
+
+    errors: list[Exception] = []
+
     if client is not None:
-        await client.aclose()
+        try:
+            await client.aclose()
+        except Exception as exc:
+            errors.append(exc)
+
     if pool is not None:
-        await pool.aclose()
+        try:
+            await pool.aclose()
+        except Exception as exc:
+            errors.append(exc)
+
     if sync is not None:
-        sync.close()
+        try:
+            await _asyncio.to_thread(sync.close)
+        except Exception as exc:
+            errors.append(exc)
+
+    if errors:
+        logger.warning(
+            "Errors during Redis shutdown (%d): %s",
+            len(errors),
+            "; ".join(str(e) for e in errors),
+        )
     logger.info("Redis connection pool closed")
 
 

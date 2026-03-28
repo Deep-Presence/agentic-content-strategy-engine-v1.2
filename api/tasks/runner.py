@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import TaskStatus
 from core.services.task_store import TaskStoreProtocol
 from core.gap_analysis.pipeline import run_gap_analysis
@@ -317,7 +317,7 @@ async def run_gap_pipeline_task(
     request: Any,
     artifacts_root: Path,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
 ) -> None:
     """Background task wrapper for gap analysis pipeline.
@@ -457,7 +457,7 @@ async def run_site_audit_task(
     request: Any,
     artifacts_root: Path,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
 ) -> None:
     """Background task wrapper for site audit pipeline.
@@ -607,7 +607,7 @@ async def run_content_pipeline_task(
     task_id: str,
     input_data: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
 ) -> None:
     """Background task wrapper for content generation pipeline.
 
@@ -692,7 +692,7 @@ async def run_content_v13_pipeline_task(
     task_id: str,
     input_data: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     artifacts_root: Optional[Path] = None,
     *,
     is_parallel: bool = False,
@@ -809,7 +809,7 @@ async def run_kb_pipeline_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
 ) -> None:
     """Background task wrapper for Knowledge Base pipeline.
@@ -920,7 +920,7 @@ async def run_audience_persona_pipeline_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -1014,7 +1014,7 @@ async def run_single_persona_generator_task(
     persona_id: str,
     slug: str,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     artifacts_root: Any = None,
 ) -> None:
     """Background task for standalone single-persona generation."""
@@ -1101,7 +1101,7 @@ async def run_voice_style_guide_pipeline_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -1201,7 +1201,7 @@ async def run_research_orchestrator_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -1360,7 +1360,7 @@ async def run_topic_discovery_pipeline_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -1451,7 +1451,7 @@ async def run_topic_expansion_pipeline_task(
     task_id: str,
     request: Any,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -1542,7 +1542,7 @@ async def run_td_content_pipeline_task(
     company_name: str,
     domain: str,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     *,
     product_slug: Optional[str] = None,
     product_name: Optional[str] = None,
@@ -1638,7 +1638,7 @@ async def run_onboarding_task(
     company_domain: str,
     company_slug: str,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     auth_service: Optional[Any] = None,
     artifacts_root: Optional[Path] = None,
 ) -> None:
@@ -1765,7 +1765,7 @@ async def run_daily_tracker_task(
     company_slug: str,
     artifacts_root: Path,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
 ) -> None:
     """Background task wrapper for the daily tracker pipeline.
 
@@ -1940,7 +1940,7 @@ async def run_cms_sync_task(
     company_slug: str,
     tenant_id: str,
     task_store: TaskStoreProtocol,
-    event_bus: EventBus,
+    event_bus: EventBusProtocol,
     session_factory: Any,
     storage: Any,
     fernet_key: str,
@@ -2001,6 +2001,13 @@ async def run_cms_sync_task(
         )
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
+        await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:cms:{company_slug}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"cms_sync:{company_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()

@@ -23,12 +23,11 @@ from api.exceptions import (
     task_conflict_handler,
     task_not_found_handler,
 )
-from api.tasks.store import ApprovalDeliveryError
+from api.tasks.exceptions import ApprovalDeliveryError
 from api.auth.middleware import AuthMiddleware
 from api.auth.store import AuthStore
 from api.routers import artifacts, audience_persona, auth, brand_data, cms, companies, content, content_data, content_v13, cps, daily_tracker, events, gap_analysis, gap_data, health, knowledge_base, knowledge_docs, onboarding, research_orchestrator, settings, site_audit as site_audit_router, tasks, topic_discovery, voice_style_guide
-from api.tasks.event_bus import EventBus
-from api.tasks.store import TaskConflictError, TaskNotFoundError, TaskStore
+from api.tasks.exceptions import TaskConflictError, TaskNotFoundError
 
 logger = logging.getLogger(__name__)
 middleware_logger = logging.getLogger("api.middleware")
@@ -53,49 +52,41 @@ def _generate_worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
-async def _init_task_store(app: FastAPI) -> TaskStore:
-    """Try DbTaskStore when DATABASE_URL is set, fall back to JSON TaskStore."""
+async def _init_task_store(app: FastAPI):
+    """Initialize DbTaskStore. Requires DATABASE_URL."""
     from core.config.settings import settings
 
-    if settings.database_url:
+    if not settings.database_url:
+        raise RuntimeError(
+            "DATABASE_URL is required. Set it in your environment or .env file."
+        )
+
+    from core.db.engine import get_session_factory
+    from core.services.db_task_store import DbTaskStore
+
+    session_factory = get_session_factory()
+
+    # Sync Redis for distributed slug locks
+    redis_sync = None
+    if settings.redis_pipeline_state and getattr(app.state, "redis_healthy", False):
         try:
-            from core.db.engine import get_session_factory
-            from core.services.db_task_store import DbTaskStore
+            from core.redis import get_sync_redis_or_none
 
-            session_factory = get_session_factory()
-
-            # Sync Redis for distributed slug locks
-            redis_sync = None
-            if settings.redis_pipeline_state and getattr(app.state, "redis_healthy", False):
-                try:
-                    from core.redis import get_sync_redis_or_none
-
-                    redis_sync = get_sync_redis_or_none()
-                except Exception:
-                    logger.warning("Sync Redis unavailable — locks will be in-memory")
-
-            db_store = DbTaskStore(
-                session_factory=session_factory,
-                max_concurrent=api_settings.max_concurrent_pipelines,
-                redis_client=redis_sync,
-                worker_id=_generate_worker_id(),
-            )
-            orphan_count = await db_store.recover_from_db()
-            logger.info(
-                "Using DbTaskStore (recovered %d orphans)", orphan_count
-            )
-            return db_store  # type: ignore[return-value]
+            redis_sync = get_sync_redis_or_none()
         except Exception:
-            logger.exception(
-                "Failed to initialize DbTaskStore — falling back to JSON TaskStore"
-            )
+            logger.warning("Sync Redis unavailable — locks will be in-memory")
 
-    jobs_dir = _PROJECT_ROOT / "artifacts" / "_jobs"
-    return TaskStore(
-        base_dir=jobs_dir,
-        event_bus=app.state.event_bus,
+    db_store = DbTaskStore(
+        session_factory=session_factory,
         max_concurrent=api_settings.max_concurrent_pipelines,
+        redis_client=redis_sync,
+        worker_id=_generate_worker_id(),
     )
+    orphan_count = await db_store.recover_from_db()
+    logger.info(
+        "Using DbTaskStore (recovered %d orphans)", orphan_count
+    )
+    return db_store
 
 
 @asynccontextmanager
@@ -128,28 +119,23 @@ async def lifespan(app: FastAPI):
             "Redis initialization failed — continuing without Redis"
         )
 
-    # ── EventBus selection (Redis Streams or in-memory) ────────────────
+    # ── EventBus selection (Redis Streams required) ─────────────────────
     if not hasattr(app.state, "event_bus") or app.state.event_bus is None:
-        from core.config.settings import settings as _cfg
-
         redis_client = getattr(app.state, "redis", None)
-        use_redis_bus = (
-            redis_client is not None
-            and getattr(app.state, "redis_healthy", False)
-            and _cfg.redis_event_bus
-        )
-        if use_redis_bus:
-            from api.tasks.redis_event_bus import RedisEventBus
-
-            app.state.event_bus = RedisEventBus(
-                redis=redis_client,
-                max_history=200,
-                loop=asyncio.get_running_loop(),
+        if redis_client is None or not getattr(app.state, "redis_healthy", False):
+            raise RuntimeError(
+                "REDIS_URL is required and Redis must be healthy. "
+                "Set REDIS_URL in your environment or .env file."
             )
-            logger.info("Using RedisEventBus (Redis Streams)")
-        else:
-            app.state.event_bus = EventBus()
-            logger.info("Using in-memory EventBus")
+
+        from api.tasks.redis_event_bus import RedisEventBus
+
+        app.state.event_bus = RedisEventBus(
+            redis=redis_client,
+            max_history=200,
+            loop=asyncio.get_running_loop(),
+        )
+        logger.info("Using RedisEventBus (Redis Streams)")
 
     # Only set defaults if not already overridden (e.g., by tests)
     if not hasattr(app.state, "task_store") or app.state.task_store is None:
@@ -158,7 +144,12 @@ async def lifespan(app: FastAPI):
         app.state.artifacts_root = _PROJECT_ROOT / "artifacts"
     if not hasattr(app.state, "storage_backend") or app.state.storage_backend is None:
         from core.storage import get_storage_backend
-        app.state.storage_backend = get_storage_backend(app.state.artifacts_root)
+        _backend = get_storage_backend(app.state.artifacts_root)
+        if getattr(app.state, "redis_healthy", False):
+            from core.storage.cached_backend import CachedStorageBackend
+            _backend = CachedStorageBackend(_backend)
+            logger.info("StorageBackend wrapped with CachedStorageBackend")
+        app.state.storage_backend = _backend
     if not hasattr(app.state, "auth_store") or app.state.auth_store is None:
         app.state.auth_store = AuthStore(base_dir=app.state.artifacts_root)
 

@@ -174,7 +174,11 @@ async def cleanup_stale_pipeline_state_redis_async(
     """
     key = _state_key(slug)
     if task_id is None:
-        await redis_async.delete(key)
+        logger.warning(
+            "cleanup_stale_pipeline_state_redis_async called without task_id for slug=%r; "
+            "skipping to avoid clobbering other runs' state",
+            slug,
+        )
         return
 
     raw = await redis_async.hgetall(key)
@@ -252,8 +256,13 @@ def cleanup_stale_pipeline_state_redis(
     """
     key = _state_key(slug)
     if task_id is None:
-        # No task_id → cannot scope cleanup → full delete (legacy behavior)
-        redis_sync.delete(key)
+        # No task_id → cannot scope cleanup → skip to avoid clobbering
+        # other runs. Callers MUST pass task_id for safe scoped cleanup.
+        logger.warning(
+            "cleanup_stale_pipeline_state_redis called without task_id for slug=%r; "
+            "skipping to avoid clobbering other runs' state",
+            slug,
+        )
         return
 
     # Scan hash for briefs belonging to this task_id

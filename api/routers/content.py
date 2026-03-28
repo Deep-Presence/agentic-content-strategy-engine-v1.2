@@ -16,7 +16,7 @@ from api.schemas.common import (
     PipelineRunResponse,
     TaskResponse,
 )
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import TaskStatus
 from api.routers._helpers import create_task_durable
 from api.tasks.runner import _derive_slug, _resolve_scope_async, run_content_pipeline_task
@@ -33,7 +33,7 @@ async def start_content(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
     # Tenant isolation: slug must match authenticated user's company

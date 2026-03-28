@@ -188,7 +188,12 @@ def _ga_prefix(company_slug: str) -> str:
     return f"gap_analysis/{company_slug}"
 
 
-def _resolve_persona_paths(input_data: "GapAnalysisInput", slug: str) -> None:
+def _resolve_persona_paths(
+    input_data: "GapAnalysisInput",
+    slug: str,
+    *,
+    storage: Optional[StorageBackend] = None,
+) -> None:
     """Auto-discover persona paths from audience_persona artifacts when none provided.
 
     Mutates ``input_data.persona_paths`` in place. Explicit paths take priority.
@@ -198,8 +203,12 @@ def _resolve_persona_paths(input_data: "GapAnalysisInput", slug: str) -> None:
         logger.info("Using %d explicit persona path(s)", len(input_data.persona_paths))
         return
 
-    storage = PersonaStorage(artifacts_root=_PROJECT_ROOT / "artifacts", slug=slug)
-    paths = storage.list_persona_paths()
+    ps = PersonaStorage(
+        artifacts_root=_PROJECT_ROOT / "artifacts",
+        slug=slug,
+        backend=storage,
+    )
+    paths = ps.list_persona_paths()
     if paths:
         input_data.persona_paths = paths
         logger.info(
@@ -276,7 +285,7 @@ async def run_gap_analysis(
     _cli_header(slug, skip_steps)
 
     # Auto-resolve persona paths before query generation (depends on neither S1 nor S2)
-    _resolve_persona_paths(input_data, slug)
+    _resolve_persona_paths(input_data, slug, storage=storage)
 
     # ── Branch A: S1 (crawl + embed company assets) ─────────────────
     # ── Branch B: S2 → S3 → S4 → S5 (query → search → enrich → embed)
@@ -651,7 +660,7 @@ async def run_topic_scoped_gap_analysis(
     )
 
     # Auto-resolve persona paths
-    _resolve_persona_paths(base_input, slug)
+    _resolve_persona_paths(base_input, slug, storage=storage)
 
     # ── S1: Reuse cached company embeddings ──
     with scoped_bind(step_name="s1_embed_company_assets"):

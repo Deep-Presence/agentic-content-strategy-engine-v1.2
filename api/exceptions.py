@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from api.tasks.store import ApprovalDeliveryError, TaskConflictError, TaskNotFoundError
+from api.tasks.exceptions import ApprovalDeliveryError, TaskConflictError, TaskNotFoundError
 
 
 async def task_not_found_handler(request: Request, exc: TaskNotFoundError) -> JSONResponse:

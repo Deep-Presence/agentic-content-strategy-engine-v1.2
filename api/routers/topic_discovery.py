@@ -25,7 +25,7 @@ from api.schemas.topic_discovery import (
     TopicDiscoveryStartRequest,
     TopicExpansionStartRequest,
 )
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask, TaskStatus
 from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_topic_discovery_pipeline_task, run_topic_expansion_pipeline_task
@@ -107,7 +107,7 @@ async def start_topic_discovery(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:
@@ -550,7 +550,7 @@ async def start_topic_expansion(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:

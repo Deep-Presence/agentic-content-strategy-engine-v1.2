@@ -36,13 +36,22 @@ def cache_set(redis_sync, key: str, value: Any, ttl: int = DEFAULT_TTL) -> None:
         logger.debug("Cache write failed for %s", key, exc_info=True)
 
 
-def cache_delete_pattern(redis_sync, pattern: str) -> int:
-    """Delete all keys matching a pattern. Returns count deleted."""
+def cache_delete_pattern(redis_sync, pattern: str, *, _batch_size: int = 500) -> int:
+    """Delete all keys matching a pattern. Returns count deleted.
+
+    Uses SCAN instead of KEYS to avoid blocking the Redis server.
+    """
     try:
-        keys = redis_sync.keys(pattern)
-        if keys:
-            return redis_sync.delete(*keys)
-        return 0
+        deleted = 0
+        batch: list[str] = []
+        for key in redis_sync.scan_iter(match=pattern, count=_batch_size):
+            batch.append(key)
+            if len(batch) >= _batch_size:
+                deleted += redis_sync.delete(*batch)
+                batch = []
+        if batch:
+            deleted += redis_sync.delete(*batch)
+        return deleted
     except Exception:
         logger.debug("Cache pattern delete failed for %s", pattern, exc_info=True)
         return 0

@@ -29,7 +29,7 @@ from api.schemas.content_v13 import (
     TopicContentStatusItem,
     TopicContentStatusResponse,
 )
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask, TaskStatus
 from api.tasks.runner import (
     _derive_slug,
@@ -108,7 +108,7 @@ async def start_content_v13(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponseV13:
     """Launch the v1.3 content generation pipeline."""
@@ -448,7 +448,7 @@ async def start_from_topics(
     http_request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponseV13:
     """Launch the TD → GA → CE pipeline for approved topic assignments."""

@@ -449,7 +449,7 @@ class TestSubmitApprovalLpushFailure:
         self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
     ) -> None:
         """LPUSH raises → ApprovalDeliveryError raised, flag cleared for retry."""
-        from api.tasks.store import ApprovalDeliveryError
+        from api.tasks.exceptions import ApprovalDeliveryError
 
         _seed_task(store_with_redis, "task-001")
         mock_sync_redis.lpush.side_effect = ConnectionError("Redis down")
@@ -465,7 +465,7 @@ class TestSubmitApprovalLpushFailure:
         self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
     ) -> None:
         """Failed LPUSH should NOT create a phantom approval history entry."""
-        from api.tasks.store import ApprovalDeliveryError
+        from api.tasks.exceptions import ApprovalDeliveryError
 
         task = _seed_task(store_with_redis, "task-001")
         mock_sync_redis.lpush.side_effect = ConnectionError("Redis down")
@@ -496,7 +496,7 @@ class TestSubmitApprovalLpushFailure:
         self, store_with_redis: DbTaskStore, mock_sync_redis: MagicMock
     ) -> None:
         """Both LPUSH and DELETE fail → ApprovalDeliveryError still raised."""
-        from api.tasks.store import ApprovalDeliveryError
+        from api.tasks.exceptions import ApprovalDeliveryError
 
         _seed_task(store_with_redis, "task-001")
         mock_sync_redis.lpush.side_effect = ConnectionError("Redis down")

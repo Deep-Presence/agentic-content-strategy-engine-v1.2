@@ -1289,12 +1289,12 @@ class TestBackwardCompat:
 
 
 class TestCaching:
-    """Cache behavior tests (Redis-backed, Session 6)."""
+    """Cache behavior tests (Redis-backed, Session 6).
+    In-memory _CACHE removed — hit/miss/eviction tested in tests/unit/test_redis_cache.py.
+    """
 
     def test_repeated_calls_return_same_data(self, client: TestClient, artifacts_root: Path):
         """Repeated calls return the same data (no Redis = direct file reads)."""
-        from api.services import gap_data_service
-
         data = _make_complete_new_format(num_gaps=3)
         _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
 
@@ -1302,30 +1302,6 @@ class TestCaching:
         body2 = client.get(_url("test-co", "summary")).json()
         assert body1 == body2
         assert body1["total_queries"] == 3
-
-        # Second call uses cache
-        client.get(_url("test-co", "summary"))
-        assert len(gap_data_service._CACHE) > 0
-
-    def test_cache_invalidation_on_file_change(
-        self, client: TestClient, artifacts_root: Path,
-    ):
-        """Cache should return fresh data when TTL-cleared after file update."""
-        from api.services import gap_data_service
-
-        data = _make_complete_new_format(num_gaps=2)
-        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data)
-
-        body1 = client.get(_url("test-co", "summary")).json()
-        assert body1["total_queries"] == 2
-
-        # Update the file with different data and clear cache to simulate TTL expiry
-        data2 = _make_complete_new_format(num_gaps=7)
-        _write_artifact(artifacts_root, "test-co", "gap_analysis_complete.json", data2)
-        gap_data_service._CACHE.clear()
-
-        body2 = client.get(_url("test-co", "summary")).json()
-        assert body2["total_queries"] == 7
 
     def test_corrupted_json_returns_defaults(
         self, client: TestClient, artifacts_root: Path,

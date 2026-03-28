@@ -1,8 +1,8 @@
 """TaskStoreProtocol — interface for task persistence + coordination.
 
-Both ``TaskStore`` (JSON-file-backed) and ``DbTaskStore`` (PostgreSQL)
-implement this protocol.  Router/runner code programs to the protocol,
-and the DI layer picks the implementation based on configuration.
+``DbTaskStore`` (PostgreSQL) is the sole production implementation.
+Router/runner code programs to the protocol, and the DI layer provides
+the implementation. DATABASE_URL is required at startup.
 
 Re-exports the exception types so consumers only import from here.
 """
@@ -12,7 +12,7 @@ import asyncio
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from api.tasks.models import PipelineTask
-from api.tasks.store import ApprovalDeliveryError, ApprovalWindowError, TaskConflictError, TaskNotFoundError  # noqa: F401
+from api.tasks.exceptions import ApprovalDeliveryError, ApprovalWindowError, TaskConflictError, TaskNotFoundError  # noqa: F401
 
 __all__ = ["TaskStoreProtocol", "TaskNotFoundError", "TaskConflictError", "ApprovalWindowError", "ApprovalDeliveryError"]
 

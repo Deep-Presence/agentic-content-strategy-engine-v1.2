@@ -62,19 +62,19 @@ class TestCacheSet:
 
 class TestCacheDeletePattern:
     def test_deletes_matching_keys(self):
-        """cache_delete_pattern finds and deletes all matching keys."""
+        """cache_delete_pattern finds and deletes all matching keys via SCAN."""
         from core.cache import cache_delete_pattern
 
         r = MagicMock()
-        r.keys.return_value = [
+        r.scan_iter.return_value = iter([
             "cache:gap:ramp:analysis.json",
             "cache:gap:ramp:gap_report.json",
             "cache:gap:ramp:enriched_citations.json",
-        ]
+        ])
         r.delete.return_value = 3
         count = cache_delete_pattern(r, "cache:gap:ramp:*")
         assert count == 3
-        r.keys.assert_called_once_with("cache:gap:ramp:*")
+        r.scan_iter.assert_called_once_with(match="cache:gap:ramp:*", count=500)
         r.delete.assert_called_once_with(
             "cache:gap:ramp:analysis.json",
             "cache:gap:ramp:gap_report.json",
@@ -86,19 +86,35 @@ class TestCacheDeletePattern:
         from core.cache import cache_delete_pattern
 
         r = MagicMock()
-        r.keys.return_value = []
+        r.scan_iter.return_value = iter([])
         assert cache_delete_pattern(r, "cache:gap:nonexistent:*") == 0
         r.delete.assert_not_called()
+
+    def test_batches_large_key_sets(self):
+        """cache_delete_pattern batches DELETE calls for large key sets."""
+        from core.cache import cache_delete_pattern
+
+        r = MagicMock()
+        # 3 keys with batch_size=2 → two DELETE calls
+        r.scan_iter.return_value = iter(["k1", "k2", "k3"])
+        r.delete.side_effect = [2, 1]
+
+        count = cache_delete_pattern(r, "prefix:*", _batch_size=2)
+        assert count == 3
+        assert r.delete.call_count == 2
 
 
 # ── Service integration tests ───────────────────────────────────────
 
 
 class TestGapDataServiceCache:
+    @staticmethod
+    def _make_storage(tmp_path: Path):
+        from core.storage.backends.local import LocalStorageBackend
+        return LocalStorageBackend(tmp_path)
+
     def test_returns_from_redis_on_hit(self, tmp_path: Path):
         """When Redis has cached data, file should NOT be read."""
-        from core.cache import cache_get
-
         mock_redis = MagicMock()
         mock_redis.get.return_value = '{"queries": [{"text": "test"}]}'
 
@@ -108,14 +124,12 @@ class TestGapDataServiceCache:
         ):
             from api.services.gap_data_service import _load_json_cached
 
-            result = _load_json_cached(tmp_path, "test-co", "analysis.json")
+            result = _load_json_cached(self._make_storage(tmp_path), "test-co", "analysis.json")
 
         assert result == {"queries": [{"text": "test"}]}
-        # File path was never accessed (no stat call needed)
 
     def test_reads_file_and_populates_on_miss(self, tmp_path: Path):
         """On cache miss, file is read and cache is populated."""
-        # Create artifact file
         gap_dir = tmp_path / "gap_analysis" / "test-co"
         gap_dir.mkdir(parents=True)
         (gap_dir / "analysis.json").write_text('{"queries": []}', encoding="utf-8")
@@ -129,10 +143,9 @@ class TestGapDataServiceCache:
         ):
             from api.services.gap_data_service import _load_json_cached
 
-            result = _load_json_cached(tmp_path, "test-co", "analysis.json")
+            result = _load_json_cached(self._make_storage(tmp_path), "test-co", "analysis.json")
 
         assert result == {"queries": []}
-        # Verify cache was populated
         mock_redis.setex.assert_called_once()
         call_args = mock_redis.setex.call_args
         assert call_args[0][0] == "cache:gap:test-co:analysis.json"
@@ -150,18 +163,22 @@ class TestGapDataServiceCache:
         ):
             from api.services.gap_data_service import _load_json_cached
 
-            result = _load_json_cached(tmp_path, "test-co", "analysis.json")
+            result = _load_json_cached(self._make_storage(tmp_path), "test-co", "analysis.json")
 
         assert result == {"data": True}
 
 
 class TestContentDataServiceCache:
-    def test_uses_2min_ttl(self, tmp_path: Path):
-        """Content data service uses 2-minute TTL (120s), not the default 5min."""
-        content_root = tmp_path / "content" / "test-co"
-        content_root.mkdir(parents=True)
-        (content_root / "blueprints.json").write_text("[]", encoding="utf-8")
+    def test_uses_correct_ttl_and_key_format(self, tmp_path: Path):
+        """Content data service uses 60s TTL for blueprints.json and aligned key format."""
+        from core.storage.backends.local import LocalStorageBackend
 
+        # Create file at path StorageBackend will resolve
+        content_dir = tmp_path / "content" / "test-co"
+        content_dir.mkdir(parents=True)
+        (content_dir / "blueprints.json").write_text("[]", encoding="utf-8")
+
+        storage = LocalStorageBackend(tmp_path)
         mock_redis = MagicMock()
         mock_redis.get.return_value = None  # Cache miss
 
@@ -171,29 +188,31 @@ class TestContentDataServiceCache:
         ):
             from api.services.content_data_service import _load_json_cached
 
-            _load_json_cached(content_root, "blueprints.json", slug="test-co")
+            _load_json_cached(storage, "content/test-co/blueprints.json")
 
         mock_redis.setex.assert_called_once()
         call_args = mock_redis.setex.call_args
-        assert call_args[0][1] == 120  # 2 min TTL
+        # Key format must match invalidation pattern cache:content:{slug}:*
+        assert call_args[0][0] == "cache:content:test-co:blueprints.json"
+        assert call_args[0][1] == 60  # blueprints.json has 60s TTL in _TTL_BY_FILE
 
 
 class TestPipelineFinalizationCache:
     def test_finalization_invalidates_cache(self):
-        """cache_delete_pattern correctly invalidates content cache keys."""
+        """cache_delete_pattern correctly invalidates content cache keys via SCAN."""
         from core.cache import cache_delete_pattern
 
         mock_redis = MagicMock()
-        mock_redis.keys.return_value = [
+        mock_redis.scan_iter.return_value = iter([
             "cache:content:test-co:blueprints.json",
             "cache:content:test-co:run_metadata_v13.json",
-        ]
+        ])
         mock_redis.delete.return_value = 2
 
         count = cache_delete_pattern(mock_redis, "cache:content:test-co:*")
 
         assert count == 2
-        mock_redis.keys.assert_called_once_with("cache:content:test-co:*")
+        mock_redis.scan_iter.assert_called_once_with(match="cache:content:test-co:*", count=500)
         mock_redis.delete.assert_called_once_with(
             "cache:content:test-co:blueprints.json",
             "cache:content:test-co:run_metadata_v13.json",

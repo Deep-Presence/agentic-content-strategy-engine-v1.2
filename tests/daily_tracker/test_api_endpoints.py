@@ -20,8 +20,33 @@ from api.dependencies import (
     get_daily_tracker_orchestrator,
     get_prompt_library_service,
 )
-from api.tasks.event_bus import EventBus
-from api.tasks.store import TaskStore
+from tests._support.auth_service import TestAuthService
+from tests._support.event_bus import InMemoryEventBus
+
+
+@pytest.fixture(autouse=True)
+def _patch_db_writes(monkeypatch):
+    """Prevent DbTaskStore background DB writes."""
+    import asyncio as _aio
+    from core.services import db_task_store as _mod
+
+    _real_ct = _aio.create_task
+
+    def _safe_ct(coro, **kw):
+        try:
+            return _real_ct(coro, **kw)
+        except RuntimeError:
+            coro.close()
+            return MagicMock()
+
+    class _Proxy:
+        create_task = staticmethod(_safe_ct)
+        def __getattr__(self, name):
+            return getattr(_aio, name)
+
+    monkeypatch.setattr(_mod, "asyncio", _Proxy())
+    monkeypatch.setattr(_mod.DbTaskStore, "_db_create", AsyncMock())
+    monkeypatch.setattr(_mod.DbTaskStore, "_db_update", AsyncMock())
 from core.models.daily_tracker import (
     CompetitorMetrics,
     DailyRunResult,
@@ -155,11 +180,14 @@ def _app_with_overrides(
     """Create app with daily tracker DI overrides."""
     application = create_app()
 
+    from unittest.mock import MagicMock
+    from core.services.db_task_store import DbTaskStore
+
     # Infrastructure state
-    event_bus = EventBus()
+    event_bus = InMemoryEventBus()
     application.state.event_bus = event_bus
-    application.state.task_store = TaskStore(
-        base_dir=tmp_path / "_jobs", event_bus=event_bus
+    application.state.task_store = DbTaskStore(
+        session_factory=MagicMock(), max_concurrent=10,
     )
     artifacts_root = tmp_path / "artifacts"
     artifacts_root.mkdir(exist_ok=True)
@@ -167,6 +195,7 @@ def _app_with_overrides(
     auth_store = AuthStore(base_dir=artifacts_root)
     application.state.auth_store = auth_store
     application.state.secret_key = auth_store._secret_key
+    application.state.auth_service = TestAuthService(auth_store)
 
     # Create test company + user
     auth_store.create_company("test-co", "Test Co", "testco.com")

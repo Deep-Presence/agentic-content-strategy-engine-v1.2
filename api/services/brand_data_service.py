@@ -29,7 +29,7 @@ from api.schemas.brand_data import (
     SPATrendResponse,
 )
 from api.tasks.models import PipelineTask, TaskStatus
-from api.tasks.store import TaskStore
+from core.services.task_store import TaskStoreProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,17 @@ def _safe_float(val: Any) -> float:
         return 0.0
 
 
-# ── File utilities ───────────────────────────────────────────────────
+# ── Storage resolution ───────────────────────────────────────────────
+
+
+def _resolve_storage(
+    artifacts_root: Path, backend: Optional[StorageBackend],
+) -> StorageBackend:
+    """Return the given StorageBackend or create one via factory (R2-aware)."""
+    if backend is not None:
+        return backend
+    from core.storage import get_storage_backend
+    return get_storage_backend(artifacts_root)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -75,35 +85,29 @@ def _safe_float(val: Any) -> float:
 
 
 def _detect_artifact(
-    artifacts_root: Path, type_name: str, slug: str,
-    *, backend: Optional[StorageBackend] = None,
+    type_name: str, slug: str, backend: StorageBackend,
 ) -> ArtifactContent:
     """Detect artifact status and read content.
 
     Checks {slug}.md (approved) first, then {slug}.draft.md (draft).
     Returns ArtifactContent with content, status, updated_at.
     """
-    from core.storage.backends.local import LocalStorageBackend
-    _backend = backend or LocalStorageBackend(artifacts_root)
-    content = _backend.read(f"{type_name}/{slug}.md")
+    content = backend.read(f"{type_name}/{slug}.md")
     if content is not None:
         return ArtifactContent(content=content, status="approved", updated_at=None)
-    content = _backend.read(f"{type_name}/{slug}.draft.md")
+    content = backend.read(f"{type_name}/{slug}.draft.md")
     if content is not None:
         return ArtifactContent(content=content, status="draft", updated_at=None)
     return ArtifactContent()
 
 
 def _detect_personas(
-    artifacts_root: Path, slug: str,
-    *, backend: Optional[StorageBackend] = None,
+    artifacts_root: Path, slug: str, backend: StorageBackend,
 ) -> List[PersonaArtifact]:
     """Find all persona profiles for a slug, read content, detect status."""
-    from core.storage.backends.local import LocalStorageBackend
-    _backend = backend or LocalStorageBackend(artifacts_root)
     try:
         from core.research.audience_persona.storage import PersonaStorage
-        ap_storage = PersonaStorage(artifacts_root, slug, backend=_backend)
+        ap_storage = PersonaStorage(artifacts_root, slug, backend=backend)
         manifest = ap_storage.read_manifest()
         if not manifest.personas:
             return []
@@ -112,7 +116,7 @@ def _detect_personas(
             if entry.status not in ("fresh", "stale") or entry.current_version == 0:
                 continue
             key = f"audience_personas/{slug}/{pid}/v{entry.current_version}.md"
-            content = _backend.read(key)
+            content = backend.read(key)
             if content is None:
                 continue
             personas.append(PersonaArtifact(
@@ -135,6 +139,7 @@ def get_research_artifacts(
 ) -> ResearchArtifactsResponse:
     """Build research artifacts response — Redis cache first, compute fallback."""
     _validate_slug(slug)
+    sb = _resolve_storage(artifacts_root, backend)
 
     redis = get_sync_redis_or_none()
     if redis is not None:
@@ -145,9 +150,9 @@ def get_research_artifacts(
             except Exception:
                 logger.debug("Corrupted brand cache for %s — recomputing", slug)
 
-    company_context = _detect_artifact(artifacts_root, "company_context", slug, backend=backend)
-    style_guide = _detect_artifact(artifacts_root, "style_guides", slug, backend=backend)
-    personas = _detect_personas(artifacts_root, slug, backend=backend)
+    company_context = _detect_artifact("company_context", slug, sb)
+    style_guide = _detect_artifact("style_guides", slug, sb)
+    personas = _detect_personas(artifacts_root, slug, sb)
 
     result = ResearchArtifactsResponse(
         company_context=company_context,
@@ -278,7 +283,7 @@ def _slug_to_company_name(slug: str) -> str:
 
 
 def get_run_history(
-    task_store: TaskStore,
+    task_store: TaskStoreProtocol,
     slug: str,
     *,
     pipeline: Optional[str] = None,
@@ -364,7 +369,7 @@ def get_run_history(
 
 
 def get_spa_trend(
-    task_store: TaskStore,
+    task_store: TaskStoreProtocol,
     slug: str,
 ) -> SPATrendResponse:
     """Build SPA score trend from completed gap analysis runs.

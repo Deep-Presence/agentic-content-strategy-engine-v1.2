@@ -12,7 +12,6 @@ from fastapi import HTTPException, Request
 
 from api.auth.store import AuthStore
 from api.tasks.event_bus import EventBusProtocol
-from core.auth.json_service import JsonAuthService
 from core.auth.service import AuthServiceProtocol
 from core.services.brand_data import BrandDataServiceProtocol
 from core.services.content_data import ContentDataServiceProtocol
@@ -36,11 +35,7 @@ _logger = logging.getLogger(__name__)
 
 
 def get_task_store(request: Request) -> TaskStoreProtocol:
-    """Return the task store — JSON-backed TaskStore or DbTaskStore.
-
-    Auto-selected at startup in ``app.py._init_task_store()``:
-    DbTaskStore when DATABASE_URL is set, else JSON-backed TaskStore.
-    """
+    """Return the task store (DbTaskStore). DATABASE_URL required at startup."""
     return request.app.state.task_store
 
 
@@ -112,7 +107,7 @@ async def get_auth_service(
 ) -> AsyncGenerator[AuthServiceProtocol, None]:
     """Return the auth service with proper DB session lifecycle.
 
-    Priority: pre-built override → DbAuthService (DATABASE_URL) → JsonAuthService.
+    Priority: pre-built override → DbAuthService (DATABASE_URL required).
     DB sessions are committed on success, rolled back on error.
     """
     # 1. Pre-built override (tests, etc.)
@@ -120,27 +115,27 @@ async def get_auth_service(
     if service is not None:
         yield service
         return
-    # 2. Per-request DB service (when DATABASE_URL is set)
+    # 2. Per-request DB service (DATABASE_URL required)
     sf = getattr(request.app.state, "db_session_factory", None)
-    if sf is not None:
-        session = sf()
-        try:
-            db_service = _build_db_auth_service(request, session)
-            if db_service is not None:
-                yield db_service
-                await session.commit()
-            else:
-                # Construction failed — close session, fall through to JSON
-                await session.close()
-                yield JsonAuthService(request.app.state.auth_store)
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-        return
-    # 3. Fallback: JSON-backed
-    yield JsonAuthService(request.app.state.auth_store)
+    if sf is None:
+        raise RuntimeError(
+            "DATABASE_URL is required for auth service. "
+            "Set it in your environment or .env file."
+        )
+    session = sf()
+    try:
+        db_service = _build_db_auth_service(request, session)
+        if db_service is None:
+            raise RuntimeError(
+                "Failed to construct DbAuthService — check DATABASE_URL and secret_key."
+            )
+        yield db_service
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
 
 def _build_db_gap_data_service(request: Request, session: Any) -> GapDataServiceProtocol | None:
@@ -343,6 +338,7 @@ def _build_db_site_audit_data_service(
             audit_repo=SiteAuditRepository(session),
             company_repo=CompanyRepository(session),
             artifacts_root=request.app.state.artifacts_root,
+            backend=getattr(request.app.state, "storage_backend", None),
         )
     except Exception:
         _logger.debug("Failed to build DbSiteAuditDataService", exc_info=True)
@@ -375,6 +371,7 @@ async def get_site_audit_data_service(
                 await session.close()
                 yield JsonSiteAuditDataService(
                     artifacts_root=request.app.state.artifacts_root,
+                    backend=getattr(request.app.state, "storage_backend", None),
                 )
         except Exception:
             await session.rollback()
@@ -382,9 +379,10 @@ async def get_site_audit_data_service(
         finally:
             await session.close()
         return
-    # 3. Fallback: filesystem-backed
+    # 3. Fallback: StorageBackend-backed
     yield JsonSiteAuditDataService(
         artifacts_root=request.app.state.artifacts_root,
+        backend=getattr(request.app.state, "storage_backend", None),
     )
 
 
@@ -668,7 +666,10 @@ async def get_prompt_library_service(request: Request) -> AsyncGenerator[Any, No
             from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
             from core.daily_tracker.prompt_library import PromptLibraryService
 
-            svc = PromptLibraryService(prompt_repo=TrackedPromptRepository(session))
+            svc = PromptLibraryService(
+                prompt_repo=TrackedPromptRepository(session),
+                backend=getattr(request.app.state, "storage_backend", None),
+            )
             yield svc
             await session.commit()
         except Exception:
@@ -747,7 +748,10 @@ async def get_daily_tracker_orchestrator(request: Request) -> AsyncGenerator[Any
 
             prompt_repo = TrackedPromptRepository(session)
             svc = DailyTrackerOrchestrator(
-                prompt_service=PromptLibraryService(prompt_repo=prompt_repo),
+                prompt_service=PromptLibraryService(
+                    prompt_repo=prompt_repo,
+                    backend=getattr(request.app.state, "storage_backend", None),
+                ),
                 runner_service=PlatformRunnerService(),
                 mention_detector=MentionDetector(),
             )

@@ -137,15 +137,20 @@ class TestAcquireContext:
     async def test_acquire_context_acquires_and_releases(
         self, mock_to_thread, semaphore: RedisSemaphore,
     ) -> None:
-        """async with acquires on enter, releases on exit."""
+        """async with acquires on enter (starts renewal), releases on exit (stops renewal)."""
         semaphore._acquire_script.return_value = 1
 
-        async with semaphore.acquire_context("task-001"):
+        async with semaphore.acquire_context("task-001") as ctx:
             # Inside context — should have acquired
             semaphore._acquire_script.assert_called_once()
+            # Renewal task should be running
+            assert ctx._renewal_task is not None
+            assert not ctx._renewal_task.done()
 
-        # After exit — should have released
+        # After exit — should have released and cancelled renewal
         semaphore._redis.zrem.assert_called_once_with("semaphore:pipelines", "task-001")
+        assert ctx._released is True
+        assert ctx._renewal_task.done()
 
     @pytest.mark.asyncio
     @patch("core.redis_semaphore.asyncio.to_thread", side_effect=_sync_to_thread)
@@ -160,8 +165,8 @@ class TestAcquireContext:
             pass
 
         assert semaphore._acquire_script.call_count == 3
-        assert mock_sleep.call_count == 2
-        mock_sleep.assert_called_with(0.5)
+        # At least 2 poll sleeps; renewal loop may add additional sleep calls
+        assert mock_sleep.call_count >= 2
 
     @pytest.mark.asyncio
     @patch("core.redis_semaphore.asyncio.to_thread", side_effect=_sync_to_thread)
@@ -185,11 +190,71 @@ class TestAcquireContext:
         semaphore._acquire_script.return_value = 1
 
         with pytest.raises(ValueError, match="boom"):
-            async with semaphore.acquire_context("task-005"):
+            async with semaphore.acquire_context("task-005") as ctx:
                 raise ValueError("boom")
 
-        # Release must have been called
+        # Release must have been called, renewal must be stopped
         semaphore._redis.zrem.assert_called_once_with("semaphore:pipelines", "task-005")
+        assert ctx._released is True
+        assert ctx._renewal_task.done()
+
+
+# ── Renewal loop tests ───────────────────────────────────────────────
+
+
+class TestSemaphoreRenewalLoop:
+    @pytest.mark.asyncio
+    @patch("core.redis_semaphore.asyncio.to_thread", side_effect=_sync_to_thread)
+    async def test_renewal_stops_on_exit(
+        self, mock_to_thread, semaphore: RedisSemaphore,
+    ) -> None:
+        """__aexit__ cancels renewal task cleanly."""
+        semaphore._acquire_script.return_value = 1
+
+        async with semaphore.acquire_context("task-stop") as ctx:
+            assert ctx._renewal_task is not None
+            assert not ctx._renewal_task.done()
+
+        # After exit, task should be done (cancelled)
+        assert ctx._renewal_task.done()
+        assert ctx._released is True
+
+    @pytest.mark.asyncio
+    async def test_renewal_survives_redis_error(
+        self, semaphore: RedisSemaphore,
+    ) -> None:
+        """Renewal continues after a transient Redis error."""
+        # The fixture's register_script returns the same mock for both scripts,
+        # so we need to replace _renew_script with a separate mock.
+        mock_renew = MagicMock()
+        mock_renew.side_effect = [ConnectionError("down"), 1]
+        semaphore._renew_script = mock_renew
+        semaphore._acquire_script.return_value = 1
+
+        cycle = 0
+        _real_sleep = asyncio.sleep
+
+        async def controlled_sleep(duration):
+            nonlocal cycle
+            cycle += 1
+            if cycle > 2:
+                raise asyncio.CancelledError
+            # Yield control without recursing into the patched sleep
+            await _real_sleep(0)
+
+        with patch("core.redis_semaphore.asyncio.sleep", side_effect=controlled_sleep):
+            with patch("core.redis_semaphore.asyncio.to_thread", side_effect=_sync_to_thread):
+                ctx = semaphore.acquire_context("task-err")
+                await ctx.__aenter__()
+                try:
+                    await ctx._renewal_task
+                except asyncio.CancelledError:
+                    pass
+                ctx._released = True
+                semaphore.release("task-err")
+
+        # Both calls should have been made despite first failure
+        assert mock_renew.call_count == 2
 
 
 # ── DbTaskStore fallback test ────────────────────────────────────────

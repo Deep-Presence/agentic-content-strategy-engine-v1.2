@@ -24,6 +24,13 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from core.services.cms_cache import (
+    get_cached_connection_info,
+    invalidate_all_cms_caches,
+    invalidate_connection_info,
+    set_cached_connection_info,
+)
+
 from api.auth.dependencies import require_auth, require_role
 from api.dependencies import get_auth_service, get_cms_service, get_event_bus, get_task_store
 from api.schemas.cms import (
@@ -135,6 +142,9 @@ async def connect_cms(
             status_code=422, detail=str(exc)
         )
 
+    # Invalidate cached connection info after successful connect
+    await asyncio.to_thread(invalidate_connection_info, company_slug, company_slug)
+
     return CMSConnectResponse(**result)
 
 
@@ -149,10 +159,19 @@ async def get_connection(
 ) -> Optional[CMSConnectionInfoResponse]:
     """Get the current CMS connection info for this company."""
     company_slug = _get_company_slug(http_request)
+
+    # Redis cache check (display fields only, no credentials)
+    cached = await asyncio.to_thread(
+        get_cached_connection_info, company_slug, company_slug
+    )
+    if cached is not None:
+        return CMSConnectionInfoResponse(**cached)
+
     conn = await cms_service.get_connection(company_slug, tenant_id=company_slug)
     if conn is None:
         return None
-    return CMSConnectionInfoResponse(
+
+    response = CMSConnectionInfoResponse(
         provider=conn.provider.value if hasattr(conn.provider, "value") else str(conn.provider),
         site_url=conn.site_url,
         site_name=conn.site_name,
@@ -162,6 +181,16 @@ async def get_connection(
         last_sync_at=conn.last_sync_at,
         sync_post_count=conn.sync_post_count,
     )
+
+    # Cache write (fire-and-forget)
+    await asyncio.to_thread(
+        set_cached_connection_info,
+        company_slug,
+        company_slug,
+        response.model_dump(mode="json"),
+    )
+
+    return response
 
 
 # ── 3. Disconnect ─────────────────────────────────────────────────────
@@ -176,6 +205,10 @@ async def disconnect_cms(
     """Disconnect the CMS integration. Does NOT delete synced data."""
     company_slug = _get_company_slug(http_request)
     disconnected = await cms_service.disconnect(company_slug, tenant_id=company_slug)
+
+    # Invalidate cached connection info after disconnect
+    await asyncio.to_thread(invalidate_connection_info, company_slug, company_slug)
+
     return {"disconnected": disconnected}
 
 
@@ -293,6 +326,10 @@ async def stale_to_triage(
         )
     except CMSError as exc:
         raise _handle_cms_error(exc)
+
+    # Invalidate stale/posts caches after queuing for refresh
+    await asyncio.to_thread(invalidate_all_cms_caches, company_slug)
+
     return StaleToTriageResponse(**result)
 
 

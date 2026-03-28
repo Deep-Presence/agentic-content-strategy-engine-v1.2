@@ -24,7 +24,7 @@ from api.schemas.site_audit import (
     AuditSummaryResponse,
     SiteAuditStartRequest,
 )
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask
 from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_site_audit_task
@@ -107,7 +107,7 @@ async def start_site_audit(
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
 ) -> PipelineRunResponse:

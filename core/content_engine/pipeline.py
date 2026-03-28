@@ -161,8 +161,8 @@ async def _run_content_review_hitl(
 ) -> List[ContentPiece]:
     """Run Stage 4 with HITL interrupt/resume via API task_store.
 
-    Same graph as run_content_review(), but uses MemorySaver checkpointer
-    and the task runner's wait_for_approval/submit_approval pattern so the
+    Same graph as run_content_review(), but uses the shared checkpointer
+    (RedisSaver) and the task runner's wait_for_approval/submit_approval pattern so the
     frontend can drive approve/edit/reject decisions via SSE + REST.
     """
     import asyncio

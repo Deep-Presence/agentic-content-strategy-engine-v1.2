@@ -23,7 +23,7 @@ from api.auth.dependencies import require_auth, require_role
 from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus, get_task_store
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.research_orchestrator import ResearchOrchestratorStartRequest
-from api.tasks.event_bus import EventBus
+from api.tasks.event_bus import EventBusProtocol
 from api.routers._helpers import create_task_durable
 from api.tasks.runner import run_research_orchestrator_task
 from core.audit import log_pipeline_launch
@@ -46,7 +46,7 @@ async def start_research_orchestrator(
     http_request: Request,
     _user=Depends(require_role("member", "superuser")),
     task_store: TaskStoreProtocol = Depends(get_task_store),
-    event_bus: EventBus = Depends(get_event_bus),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
     artifacts_root: Path = Depends(get_artifacts_root),
     auth_service=Depends(get_auth_service),
 ) -> PipelineRunResponse:

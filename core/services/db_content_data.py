@@ -67,13 +67,15 @@ class DbContentDataService:
         *,
         backend: Optional["StorageBackend"] = None,
     ) -> None:
-        from core.storage.backends import LocalStorageBackend
-
         self._content_repo = content_repo
         self._pipeline_repo = pipeline_repo
         self._artifacts_root = artifacts_root
         self._artifact_repo = artifact_repo
-        self._backend = backend or LocalStorageBackend(artifacts_root)
+        if backend is not None:
+            self._backend = backend
+        else:
+            from core.storage import get_storage_backend
+            self._backend = get_storage_backend(artifacts_root)
 
     async def _resolve_run_id(self, effective_slug: str) -> Optional[str]:
         """Resolve effective_slug → latest completed content run id."""
@@ -125,13 +127,16 @@ class DbContentDataService:
                     exc_info=True,
                 )
         if not pipeline_state:
-            ps_path = content_root / "pipeline_state.json"
-            if ps_path.is_file():
+            # StorageBackend fallback (R2 or local)
+            content = self._backend.read(
+                f"content/{effective_slug}/pipeline_state.json"
+            )
+            if content:
                 try:
-                    raw_ps = json.loads(ps_path.read_text(encoding="utf-8"))
+                    raw_ps = json.loads(content)
                     if isinstance(raw_ps, dict):
                         pipeline_state = raw_ps
-                except (json.JSONDecodeError, OSError):
+                except (json.JSONDecodeError, ValueError):
                     pass
         # Extract brief_id → task_id mapping for frontend HITL approval calls
         task_id_map: Dict[str, str] = {}

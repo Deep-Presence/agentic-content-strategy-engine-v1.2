@@ -229,8 +229,8 @@ class Settings(BaseSettings):
     redis_socket_connect_timeout: float = 2.0
     redis_retry_on_timeout: bool = True
     redis_health_check_interval: int = 30  # seconds
-    redis_event_bus: bool = False  # Use RedisEventBus instead of in-memory EventBus
-    redis_pipeline_state: bool = False  # Use Redis Hashes for pipeline_state + distributed slug locks
+    redis_event_bus: bool = True  # Use RedisEventBus instead of in-memory EventBus (requires REDIS_URL)
+    redis_pipeline_state: bool = True  # Use Redis Hashes for pipeline_state + distributed slug locks (requires REDIS_URL)
     redis_checkpointer: bool = True  # Use RedisSaver for LangGraph HITL checkpoints
 
     # --- Auth ---

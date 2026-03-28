@@ -1,7 +1,7 @@
 {
-  "current_sprint": "redis-integration-session-5",
-  "last_updated": "2026-03-22",
-  "test_count": 2131,
+  "current_sprint": "redis-phase6-remove-fallbacks",
+  "last_updated": "2026-03-27",
+  "test_count": 1360,
   "completed_sprints_summary": {
     "total_tasks_completed": 40,
     "sprints": [
@@ -31,10 +31,138 @@
       {"sprint": "redis-session-2", "date": "2026-03-22", "summary": "Pipeline State (Redis Hashes) + Distributed Locks. state_redis.py (8 helpers), async writes, task-scoped cleanup, SET NX EX + Lua compare-delete, fail-closed, orphan cleanup, lock TTL refresh. 36 tests."},
       {"sprint": "redis-session-3", "date": "2026-03-22", "summary": "HITL RedisSaver — replace MemorySaver with RedisSaver across 12 graph builders. Shared core/checkpointer.py factory (singleton, thread-safe, graceful fallback). 1 Codex finding resolved (race condition). 7 tests."},
       {"sprint": "redis-session-4", "date": "2026-03-22", "summary": "Redis Approval Queues — BRPOP/LPUSH in DbTaskStore. Nonce in Redis, SET NX duplicate flag, asyncio.to_thread BRPOP. Graceful fallback. 13 tests."},
-      {"sprint": "redis-session-5", "date": "2026-03-22", "summary": "Redis Distributed Semaphore — atomic Lua acquire (Sorted Set), pipeline_semaphore(task_id) protocol method, 14 runner call sites updated, self-healing 2h TTL. 11 tests."}
+      {"sprint": "redis-session-5", "date": "2026-03-22", "summary": "Redis Distributed Semaphore — atomic Lua acquire (Sorted Set), pipeline_semaphore(task_id) protocol method, 14 runner call sites updated, self-healing 2h TTL. 11 tests."},
+      {"sprint": "redis-codex-fixes-phase2", "date": "2026-03-27", "summary": "6 critical Redis bug fixes: checkpointer singleton race (retry on transient failure), close_redis() socket leak (error isolation), cache key mismatch (content invalidation never worked), stale cleanup clobber, semaphore renewal outside HITL (background renewal loop), _or_none exception broadening. 17 new tests."},
+      {"sprint": "r2-blob-storage-phase3", "date": "2026-03-27", "summary": "R2 Blob Storage Redis Cache Layer — 4 changes: (3.1) Replace mtime sorting in json_site_audit_data with JSON timestamps, (3.2+3.4) CachedStorageBackend wrapper for read/list_dir Redis caching with write invalidation, (3.3) Fix brand_data_service ad-hoc LocalStorageBackend bypass. Pre-existing test_research_boundary.py broken import fixed. 25 new tests."},
+      {"sprint": "r2-blob-storage-phase5", "date": "2026-03-27", "summary": "Phase 5 StorageBackend Migration — Reader-side services migrated from direct filesystem to StorageBackend. json_site_audit_data.py full refactor (7 sync helpers, list_dir replaces iterdir). content_data_service pipeline_state reads via StorageBackend. db_site_audit_data/db_content_data forward StorageBackend. prompt_library filesystem fallback replaced. All _resolve_storage() fallbacks now R2-aware via get_storage_backend() factory. DI wiring updated for site audit + prompt library. 447 tests verified across 9 affected suites."},
+      {"sprint": "redis-phase6-remove-fallbacks", "date": "2026-03-27", "summary": "Phase 6 Remove Filesystem Fallbacks — deleted JSON TaskStore (api/tasks/store.py), in-memory EventBus class, JsonAuthService (core/auth/json_service.py), MemorySaver fallback. DATABASE_URL + REDIS_URL now mandatory at startup. Exception classes relocated to api/tasks/exceptions.py. 12 routers + runner migrated EventBus→EventBusProtocol. 4 services migrated TaskStore→TaskStoreProtocol (fixed 2 core/→api/ violations). Test infra: InMemoryEventBus + TestAuthService in tests/_support/, conftest switched to DbTaskStore(mock) with asyncio proxy. ~66 tests deleted (JSON impl tests), ~30 test files updated. 1360 tests passing, ~1300 lines net removed."}
     ]
   },
   "completed": [
+    {
+      "id": "T-redis-phase6-remove-fallbacks",
+      "task": "Phase 6 Remove Filesystem Fallbacks — 12-step surgical removal: (1) Extract exceptions to api/tasks/exceptions.py. (2) Create tests/_support/ with InMemoryEventBus + TestAuthService. (3) Migrate EventBus→EventBusProtocol in 12 routers + runner. (4) Migrate TaskStore→TaskStoreProtocol in 4 services + app.py. (5) Rewrite tests/api/conftest.py: DbTaskStore(mock) + InMemoryEventBus + TestAuthService + asyncio proxy for sync tests. (6) Mass test import migration (~30 files). (7) Delete 4 JSON test files, rewrite lifespan/conformance tests. (8) Remove EventBus class from event_bus.py. (9) Remove DI fallbacks in app.py + dependencies.py (fail-fast RuntimeError). (10) Remove MemorySaver fallback from checkpointer.py. (11) Delete api/tasks/store.py + core/auth/json_service.py. (12) Final grep audit, docstring cleanup, script update.",
+      "sprint": "redis-phase6-remove-fallbacks",
+      "status": "done",
+      "completed_at": "2026-03-27",
+      "tests_added": 0,
+      "tests_deleted": 66,
+      "tests_updated": 35,
+      "files_created": [
+        "api/tasks/exceptions.py",
+        "tests/_support/__init__.py",
+        "tests/_support/event_bus.py",
+        "tests/_support/auth_service.py"
+      ],
+      "files_deleted": [
+        "api/tasks/store.py",
+        "core/auth/json_service.py",
+        "tests/api/test_task_store.py",
+        "tests/api/test_task_store_product.py",
+        "tests/api/test_event_bus.py",
+        "tests/auth/test_json_service.py"
+      ],
+      "files_modified": [
+        "api/tasks/event_bus.py",
+        "api/app.py",
+        "api/dependencies.py",
+        "api/exceptions.py",
+        "core/services/task_store.py",
+        "core/checkpointer.py",
+        "api/tasks/runner.py",
+        "api/routers/gap_analysis.py",
+        "api/routers/content.py",
+        "api/routers/content_v13.py",
+        "api/routers/topic_discovery.py",
+        "api/routers/audience_persona.py",
+        "api/routers/voice_style_guide.py",
+        "api/routers/research_orchestrator.py",
+        "api/routers/daily_tracker.py",
+        "api/routers/tasks.py",
+        "api/routers/knowledge_base.py",
+        "api/routers/onboarding.py",
+        "api/routers/site_audit.py",
+        "api/routers/companies.py",
+        "api/services/brand_data_service.py",
+        "core/services/json_brand_data.py",
+        "core/services/json_gap_data.py",
+        "tests/api/conftest.py",
+        "tests/api/test_lifespan_task_store.py",
+        "tests/api/test_session_lifecycle.py",
+        "tests/api/test_redis_event_bus.py",
+        "tests/api/test_api_response_shapes.py",
+        "tests/services/test_protocol_conformance.py",
+        "tests/services/test_approval_queue_redis.py",
+        "tests/core/test_checkpointer.py",
+        "tests/core/test_settings_edge_cases.py",
+        "tests/integration/test_concurrent_pipelines.py",
+        "tests/daily_tracker/test_api_endpoints.py",
+        "scripts/fake_onboarding_sse.py"
+      ]
+    },
+    {
+      "id": "T-r2-blob-storage-phase5",
+      "task": "Phase 5 StorageBackend Migration — Reader-Side Services + Gap Analysis Fixes. (5.1) gap_analysis/pipeline.py: thread storage param into _resolve_persona_paths → PersonaStorage(backend=storage). (5.2) json_site_audit_data.py: full refactor — all 7 sync helpers accept StorageBackend instead of Path, _load_audit_result reads via backend.read(), _discover_audit_ids uses backend.list_dir(), removed _audit_dir/_company_audit_root. (5.3) db_site_audit_data.py: accepts backend=, all _fs_* methods forward self._backend. (5.4) content_data_service.py: _resolve_storage uses get_storage_backend() factory, _load_pipeline_state reads via StorageBackend with legacy fallback, is_symlink conditional on local backend. (5.5) brand_data_service.py: _resolve_storage uses get_storage_backend() factory. (5.6) db_content_data.py: constructor uses get_storage_backend() factory, pipeline_state.json read via self._backend.read(). (5.7) prompt_library.py: filesystem fallback replaced with get_storage_backend() factory. (5.8) dependencies.py: backend= wired into site audit services + PromptLibraryService (5 locations). (5.9) test_models.py: _audit_dir tests updated to _validate_audit_id + StorageBackend traversal.",
+      "sprint": "r2-blob-storage-phase5",
+      "status": "done",
+      "completed_at": "2026-03-27",
+      "tests_added": 0,
+      "tests_updated": 6,
+      "files_created": [],
+      "files_modified": [
+        "core/gap_analysis/pipeline.py",
+        "core/services/json_site_audit_data.py",
+        "core/services/db_site_audit_data.py",
+        "core/services/db_content_data.py",
+        "api/services/content_data_service.py",
+        "api/services/brand_data_service.py",
+        "core/daily_tracker/prompt_library.py",
+        "api/dependencies.py",
+        "tests/core/test_site_audit/test_models.py"
+      ]
+    },
+    {
+      "id": "T-r2-blob-storage-phase3",
+      "task": "Phase 3 R2 Blob Storage Redis Cache Layer — 4 changes: (3.1) _sort_timestamp() helper, _sync_list_audits/_sync_get_latest_audit_id rewritten to use completed_at/started_at from JSON (no more Path.stat().st_mtime); (3.2+3.4) CachedStorageBackend decorator wrapping any StorageBackend with Redis TTL cache for read() (300s) and list_dir() (120s), 512KB size guard, write/delete invalidate read+parent listing cache; (3.3) brand_data_service _resolve_storage() pattern replaces ad-hoc LocalStorageBackend creation in _detect_artifact/_detect_personas; app.py wiring wraps backend with CachedStorageBackend when Redis healthy. Also fixed pre-existing test_research_boundary.py broken _CACHE import (Session 6 regression).",
+      "sprint": "r2-blob-storage-phase3",
+      "status": "done",
+      "completed_at": "2026-03-27",
+      "tests_added": 25,
+      "files_created": [
+        "core/storage/cached_backend.py",
+        "tests/storage/test_cached_backend.py"
+      ],
+      "files_modified": [
+        "core/services/json_site_audit_data.py",
+        "api/services/brand_data_service.py",
+        "core/storage/__init__.py",
+        "api/app.py",
+        "tests/api/test_site_audit.py",
+        "tests/integration/test_research_boundary.py"
+      ]
+    },
+    {
+      "id": "T-redis-codex-fixes-phase2",
+      "task": "Phase 2 Critical Redis Bug Fixes — 6 surgical fixes: (2.1) checkpointer singleton race — _init_attempted moved after success, transient failures allow retry, connection_args added; (2.2) close_redis() socket leak — each close isolated in try/except, sync close via asyncio.to_thread; (2.3) cache key mismatch — content cache keys aligned to cache:content:{slug}:{filename}, KEYS replaced with SCAN; (2.4) stale cleanup clobber — DELETE replaced with warning+skip when task_id=None; (2.5) semaphore renewal outside HITL — background _renewal_loop in _SemaphoreContext, all 15 runners get automatic 60s renewal; (2.6) exception handling broadened in _or_none helpers from RuntimeError to Exception.",
+      "sprint": "redis-codex-fixes-phase2",
+      "status": "done",
+      "completed_at": "2026-03-27",
+      "tests_added": 17,
+      "files_created": [],
+      "files_modified": [
+        "core/checkpointer.py",
+        "core/redis.py",
+        "core/cache.py",
+        "core/redis_semaphore.py",
+        "core/content_engine/state_redis.py",
+        "api/services/content_data_service.py",
+        "tests/core/test_checkpointer.py",
+        "tests/core/test_redis_client.py",
+        "tests/unit/test_redis_cache.py",
+        "tests/content_engine/test_state_redis.py",
+        "tests/services/test_redis_semaphore.py"
+      ]
+    },
     {
       "id": "T-redis-session-5",
       "task": "Redis Session 5 — Distributed Semaphore. Replace per-worker asyncio.Semaphore with Redis Sorted Set semaphore. Atomic Lua acquire script (ZREMRANGEBYSCORE+ZCARD+ZADD). pipeline_semaphore(task_id) method on TaskStoreProtocol/DbTaskStore/TaskStore. 14 runner call sites updated. Self-healing 2h member TTL. Graceful fallback to asyncio.Semaphore without Redis.",

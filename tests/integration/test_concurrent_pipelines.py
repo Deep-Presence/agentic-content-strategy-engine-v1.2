@@ -11,21 +11,50 @@ from typing import Any, Dict, List
 
 import pytest
 
-from api.tasks.event_bus import EventBus
-from api.tasks.store import TaskConflictError, TaskStore
+from unittest.mock import MagicMock
+
+from api.tasks.exceptions import TaskConflictError
+from tests._support.event_bus import InMemoryEventBus
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 
 @pytest.fixture
-def event_bus() -> EventBus:
-    return EventBus()
+def event_bus() -> InMemoryEventBus:
+    return InMemoryEventBus()
+
+
+@pytest.fixture(autouse=True)
+def _patch_db_writes(monkeypatch):
+    """Prevent DbTaskStore background DB writes — same pattern as api/conftest."""
+    import asyncio as _aio
+    from unittest.mock import AsyncMock
+    from core.services import db_task_store as _mod
+
+    _real_create_task = _aio.create_task
+
+    def _safe_create_task(coro, **kwargs):
+        try:
+            return _real_create_task(coro, **kwargs)
+        except RuntimeError:
+            coro.close()
+            return MagicMock()
+
+    class _AsyncioProxy:
+        create_task = staticmethod(_safe_create_task)
+        def __getattr__(self, name):
+            return getattr(_aio, name)
+
+    monkeypatch.setattr(_mod, "asyncio", _AsyncioProxy())
+    monkeypatch.setattr(_mod.DbTaskStore, "_db_create", AsyncMock())
+    monkeypatch.setattr(_mod.DbTaskStore, "_db_update", AsyncMock())
 
 
 @pytest.fixture
-def task_store(tmp_path, event_bus) -> TaskStore:
-    return TaskStore(tmp_path / "_jobs", event_bus, max_concurrent=2)
+def task_store():
+    from core.services.db_task_store import DbTaskStore
+    return DbTaskStore(session_factory=MagicMock(), max_concurrent=2)
 
 
 # ── Slug locks ───────────────────────────────────────────────────────
@@ -34,21 +63,21 @@ def task_store(tmp_path, event_bus) -> TaskStore:
 class TestSlugLocks:
     """Test that slug locks prevent duplicate pipeline runs."""
 
-    def test_duplicate_slug_raises_conflict(self, task_store: TaskStore):
+    def test_duplicate_slug_raises_conflict(self, task_store):
         """Creating two tasks for the same slug raises TaskConflictError."""
         task_store.create_task("gap_analysis", "test-co")
 
         with pytest.raises(TaskConflictError):
             task_store.create_task("gap_analysis", "test-co")
 
-    def test_different_pipelines_same_slug_allowed(self, task_store: TaskStore):
+    def test_different_pipelines_same_slug_allowed(self, task_store):
         """Different pipeline types can run concurrently for the same slug."""
         t1 = task_store.create_task("gap_analysis", "test-co")
         t2 = task_store.create_task("content", "test-co")
 
         assert t1.task_id != t2.task_id
 
-    def test_lock_released_after_completion(self, task_store: TaskStore):
+    def test_lock_released_after_completion(self, task_store):
         """Completing a task frees the slug lock for a new run."""
         t1 = task_store.create_task("gap_analysis", "test-co")
         task_store.update_task(t1.task_id, status="completed")
@@ -58,7 +87,7 @@ class TestSlugLocks:
         t2 = task_store.create_task("gap_analysis", "test-co")
         assert t2.task_id != t1.task_id
 
-    def test_stale_lock_auto_cleared(self, task_store: TaskStore):
+    def test_stale_lock_auto_cleared(self, task_store):
         """A lock pointing to a completed task is auto-cleared on next acquire."""
         t1 = task_store.create_task("gap_analysis", "test-co")
         task_store.update_task(t1.task_id, status="completed")
@@ -67,7 +96,7 @@ class TestSlugLocks:
         t2 = task_store.create_task("gap_analysis", "test-co")
         assert t2.task_id != t1.task_id
 
-    def test_product_slug_creates_separate_lock(self, task_store: TaskStore):
+    def test_product_slug_creates_separate_lock(self, task_store):
         """product_slug creates effective_slug = company__product."""
         t1 = task_store.create_task("content", "ramp", product_slug="card")
         t2 = task_store.create_task("content", "ramp", product_slug="travel")
@@ -75,7 +104,7 @@ class TestSlugLocks:
         assert t1.effective_slug == "ramp__card"
         assert t2.effective_slug == "ramp__travel"
 
-    def test_allow_parallel_skips_lock(self, task_store: TaskStore):
+    def test_allow_parallel_skips_lock(self, task_store):
         """allow_parallel=True allows multiple tasks for the same slug."""
         t1 = task_store.create_task("content", "test-co", allow_parallel=True)
         t2 = task_store.create_task("content", "test-co", allow_parallel=True)
@@ -90,7 +119,7 @@ class TestSemaphore:
     """Test that the global semaphore limits concurrency."""
 
     @pytest.mark.asyncio
-    async def test_semaphore_limits_concurrent_tasks(self, task_store: TaskStore):
+    async def test_semaphore_limits_concurrent_tasks(self, task_store):
         """Only max_concurrent tasks can hold the semaphore simultaneously."""
         entered = []
         barrier = asyncio.Event()
@@ -125,7 +154,7 @@ class TestSemaphore:
 class TestEventBusConcurrency:
     """Test EventBus ordering under concurrent publish."""
 
-    def test_sequential_ids_single_task(self, event_bus: EventBus):
+    def test_sequential_ids_single_task(self, event_bus):
         """Events for the same task_id get monotonically increasing IDs."""
         for i in range(10):
             event_bus.publish("task-1", "progress", {"step": i})
@@ -135,7 +164,7 @@ class TestEventBusConcurrency:
         assert ids == list(range(1, 11))
 
     @pytest.mark.asyncio
-    async def test_concurrent_publish_preserves_ordering(self, event_bus: EventBus):
+    async def test_concurrent_publish_preserves_ordering(self, event_bus):
         """Multiple concurrent publishers still get sequential IDs."""
         async def publish_batch(start: int):
             for i in range(5):
@@ -155,7 +184,7 @@ class TestEventBusConcurrency:
         assert len(set(ids)) == len(ids)  # no duplicates
         assert len(ids) == 10
 
-    def test_independent_id_counters_per_task(self, event_bus: EventBus):
+    def test_independent_id_counters_per_task(self, event_bus):
         """Each task_id has its own counter."""
         event_bus.publish("task-a", "progress", {"x": 1})
         event_bus.publish("task-b", "progress", {"x": 1})
@@ -165,7 +194,7 @@ class TestEventBusConcurrency:
         assert event_bus.get_history("task-b")[-1]["id"] == 1
 
     @pytest.mark.asyncio
-    async def test_subscriber_receives_live_events(self, event_bus: EventBus):
+    async def test_subscriber_receives_live_events(self, event_bus):
         """Subscriber queue receives events published after subscription."""
         queue = event_bus.subscribe("task-1")
         event_bus.publish("task-1", "progress", {"step": 1})
@@ -181,7 +210,7 @@ class TestApprovalQueue:
     """Test HITL approval queue concurrent submit/wait."""
 
     @pytest.mark.asyncio
-    async def test_submit_before_wait(self, task_store: TaskStore):
+    async def test_submit_before_wait(self, task_store):
         """submit_approval before wait_for_approval still delivers."""
         t = task_store.create_task("content", "test-co")
         task_store.submit_approval(t.task_id, "approve")
@@ -190,7 +219,7 @@ class TestApprovalQueue:
         assert result["decision"] == "approve"
 
     @pytest.mark.asyncio
-    async def test_wait_then_submit(self, task_store: TaskStore):
+    async def test_wait_then_submit(self, task_store):
         """wait_for_approval blocks until submit_approval is called."""
         t = task_store.create_task("content", "test-co")
 
@@ -208,7 +237,7 @@ class TestApprovalQueue:
         assert result["revision_note"] == "Needs work"
 
     @pytest.mark.asyncio
-    async def test_approval_timeout_auto_rejects(self, task_store: TaskStore):
+    async def test_approval_timeout_auto_rejects(self, task_store):
         """Timeout on wait_for_approval returns auto-reject."""
         t = task_store.create_task("content", "test-co")
 

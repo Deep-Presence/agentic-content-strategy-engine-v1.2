@@ -221,13 +221,15 @@ class TestReadPipelineStateRedisAsync:
 
 
 class TestCleanupStalePipelineStateRedis:
-    def test_deletes_entire_key_when_no_task_id(self, mock_sync_redis: MagicMock) -> None:
-        """DELETE called on pipeline_state:{slug} when task_id is None."""
+    def test_skips_cleanup_when_no_task_id(self, mock_sync_redis: MagicMock) -> None:
+        """No task_id → logs warning and skips (no DELETE, no HDEL)."""
         from core.content_engine.state_redis import cleanup_stale_pipeline_state_redis
 
         cleanup_stale_pipeline_state_redis(mock_sync_redis, "ramp")
 
-        mock_sync_redis.delete.assert_called_once_with("pipeline_state:ramp")
+        # Must NOT delete the entire key (would clobber other runs)
+        mock_sync_redis.delete.assert_not_called()
+        mock_sync_redis.hdel.assert_not_called()
 
     def test_task_scoped_cleanup_only_removes_own_briefs(self, mock_sync_redis: MagicMock) -> None:
         """With task_id, only removes briefs belonging to that task."""
@@ -306,18 +308,20 @@ class TestReadFallback:
         # Redis returns empty
         mock_sync_redis.hgetall.return_value = {}
 
-        # File has data
-        content_root = tmp_path
-        (content_root / "pipeline_state.json").write_text(
+        # File has data — must match the path _load_pipeline_state constructs:
+        # artifacts_root / "content" / slug / "pipeline_state.json"
+        state_dir = tmp_path / "content" / "ramp"
+        state_dir.mkdir(parents=True)
+        (state_dir / "pipeline_state.json").write_text(
             json.dumps({"brief-001": "generating"})
         )
 
         with patch("core.config.settings.settings") as mock_cfg:
             mock_cfg.redis_pipeline_state = True
             mock_cfg.redis_url = "redis://localhost:6379/0"
-            with patch("core.redis.get_sync_redis_or_none", return_value=mock_sync_redis):
+            with patch("api.services.content_data_service.get_sync_redis_or_none", return_value=mock_sync_redis):
                 from api.services.content_data_service import _load_pipeline_state
-                result = _load_pipeline_state(content_root, "ramp")
+                result = _load_pipeline_state(tmp_path, "ramp")
 
         assert result.get("brief-001") == "generating"
 

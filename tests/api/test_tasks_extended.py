@@ -4,13 +4,12 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from api.tasks.models import TaskStatus
-from api.tasks.store import TaskStore
 
 
 class TestTaskListTotal:
     """Verify the total field is included in TaskListResponse."""
 
-    def test_total_matches_task_count(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_total_matches_task_count(self, client: TestClient, task_store) -> None:
         task_store.create_task("gap_analysis", "test-co")
         task_store.release_slug_lock("gap_analysis:test-co")
         task_store.create_task("research", "test-co")
@@ -26,7 +25,7 @@ class TestTaskListTotal:
         assert resp.status_code == 200
         assert resp.json()["total"] == 0
 
-    def test_total_reflects_filter(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_total_reflects_filter(self, client: TestClient, task_store) -> None:
         task_store.create_task("gap_analysis", "test-co")
         task_store.release_slug_lock("gap_analysis:test-co")
         task_store.create_task("research", "test-co")
@@ -40,7 +39,7 @@ class TestTaskListTotal:
 class TestTaskListCompanySlugFilter:
     """Verify the company_slug query parameter filters tasks."""
 
-    def test_filter_by_company_slug(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_filter_by_company_slug(self, client: TestClient, task_store) -> None:
         task_store.create_task("gap_analysis", "test-co")
         task_store.release_slug_lock("gap_analysis:test-co")
         task_store.create_task("research", "test-co")
@@ -52,7 +51,7 @@ class TestTaskListCompanySlugFilter:
         assert all(t["company_slug"] == "test-co" for t in data["tasks"])
 
     def test_company_slug_query_param_ignored_uses_auth(
-        self, client: TestClient, task_store: TaskStore
+        self, client: TestClient, task_store
     ) -> None:
         """company_slug query param is ignored — endpoint auto-filters by auth user's company."""
         task_store.create_task("gap_analysis", "test-co")
@@ -63,7 +62,7 @@ class TestTaskListCompanySlugFilter:
         assert resp.status_code == 200
         assert resp.json()["total"] == 1
 
-    def test_combined_filters(self, client: TestClient, task_store: TaskStore) -> None:
+    def test_combined_filters(self, client: TestClient, task_store) -> None:
         t1 = task_store.create_task("gap_analysis", "test-co")
         task_store.update_task(t1.task_id, status=TaskStatus.COMPLETED)
         task_store.release_slug_lock("gap_analysis:test-co")

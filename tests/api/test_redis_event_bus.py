@@ -8,7 +8,8 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from api.tasks.event_bus import EventBus, EventBusProtocol, _format_sse
+from api.tasks.event_bus import EventBusProtocol, _format_sse
+from tests._support.event_bus import InMemoryEventBus
 from api.tasks.redis_event_bus import RedisEventBus, _format_sse_from_fields
 
 
@@ -529,7 +530,7 @@ class TestSSEFormatParity:
 class TestProtocolCompliance:
     def test_eventbus_satisfies_protocol(self) -> None:
         """EventBus satisfies EventBusProtocol."""
-        bus = EventBus()
+        bus = InMemoryEventBus()
         assert isinstance(bus, EventBusProtocol)
 
     def test_redis_eventbus_satisfies_protocol(
@@ -596,87 +597,52 @@ class TestIsTerminal:
 class TestStartupToggle:
     @pytest.mark.asyncio
     async def test_redis_event_bus_selected_when_configured(self) -> None:
-        """When REDIS_EVENT_BUS=true and Redis is healthy, RedisEventBus is created."""
+        """When Redis is healthy, RedisEventBus is created."""
         mock_app = MagicMock()
         mock_app.state = MagicMock()
         mock_app.state.redis = AsyncMock()
         mock_app.state.redis_healthy = True
         mock_app.state.event_bus = None
 
-        with patch("core.config.settings.settings") as mock_cfg:
-            mock_cfg.redis_event_bus = True
-
-            redis_client = getattr(mock_app.state, "redis", None)
-            use_redis_bus = (
-                redis_client is not None
-                and getattr(mock_app.state, "redis_healthy", False)
-                and mock_cfg.redis_event_bus
-            )
-            if use_redis_bus:
-                loop = asyncio.get_running_loop()
-                mock_app.state.event_bus = RedisEventBus(
-                    redis=redis_client, max_history=200, loop=loop
-                )
-            else:
-                mock_app.state.event_bus = EventBus()
+        # Production logic: Redis healthy → RedisEventBus
+        redis_client = getattr(mock_app.state, "redis", None)
+        if redis_client is None or not getattr(mock_app.state, "redis_healthy", False):
+            raise RuntimeError("REDIS_URL required")
+        loop = asyncio.get_running_loop()
+        mock_app.state.event_bus = RedisEventBus(
+            redis=redis_client, max_history=200, loop=loop
+        )
 
         assert isinstance(mock_app.state.event_bus, RedisEventBus)
 
-    @pytest.mark.asyncio
-    async def test_in_memory_event_bus_when_redis_disabled(self) -> None:
-        """When REDIS_EVENT_BUS=false, in-memory EventBus is used."""
+    def test_raises_when_redis_unhealthy(self) -> None:
+        """When Redis is unhealthy, RuntimeError is raised (no fallback)."""
         mock_app = MagicMock()
         mock_app.state = MagicMock()
-        mock_app.state.redis = AsyncMock()
-        mock_app.state.redis_healthy = True
-        mock_app.state.event_bus = None
-
-        with patch("core.config.settings.settings") as mock_cfg:
-            mock_cfg.redis_event_bus = False
-
-            redis_client = getattr(mock_app.state, "redis", None)
-            use_redis_bus = (
-                redis_client is not None
-                and getattr(mock_app.state, "redis_healthy", False)
-                and mock_cfg.redis_event_bus
-            )
-            if use_redis_bus:
-                loop = asyncio.get_running_loop()
-                mock_app.state.event_bus = RedisEventBus(
-                    redis=redis_client, max_history=200, loop=loop
-                )
-            else:
-                mock_app.state.event_bus = EventBus()
-
-        assert isinstance(mock_app.state.event_bus, EventBus)
-
-    @pytest.mark.asyncio
-    async def test_in_memory_event_bus_when_redis_unhealthy(self) -> None:
-        """When Redis is unhealthy, falls back to in-memory EventBus."""
-        mock_app = MagicMock()
-        mock_app.state = MagicMock()
-        mock_app.state.redis = AsyncMock()
+        mock_app.state.redis = None
         mock_app.state.redis_healthy = False
         mock_app.state.event_bus = None
 
-        with patch("core.config.settings.settings") as mock_cfg:
-            mock_cfg.redis_event_bus = True
-
-            redis_client = getattr(mock_app.state, "redis", None)
-            use_redis_bus = (
-                redis_client is not None
-                and getattr(mock_app.state, "redis_healthy", False)
-                and mock_cfg.redis_event_bus
-            )
-            if use_redis_bus:
-                loop = asyncio.get_running_loop()
-                mock_app.state.event_bus = RedisEventBus(
-                    redis=redis_client, max_history=200, loop=loop
+        redis_client = getattr(mock_app.state, "redis", None)
+        with pytest.raises(RuntimeError, match="REDIS_URL"):
+            if redis_client is None or not getattr(mock_app.state, "redis_healthy", False):
+                raise RuntimeError(
+                    "REDIS_URL is required and Redis must be healthy."
                 )
-            else:
-                mock_app.state.event_bus = EventBus()
 
-        assert isinstance(mock_app.state.event_bus, EventBus)
+    def test_raises_when_redis_none(self) -> None:
+        """When REDIS_URL not set (redis=None), RuntimeError is raised."""
+        mock_app = MagicMock()
+        mock_app.state = MagicMock()
+        mock_app.state.redis = None
+        mock_app.state.redis_healthy = False
+
+        redis_client = getattr(mock_app.state, "redis", None)
+        with pytest.raises(RuntimeError, match="REDIS_URL"):
+            if redis_client is None or not getattr(mock_app.state, "redis_healthy", False):
+                raise RuntimeError(
+                    "REDIS_URL is required and Redis must be healthy."
+                )
 
 
 # ── Terminal event retry tests (Issue 1b) ─────────────────────────
@@ -896,7 +862,7 @@ class TestStreamDbFallback:
     @pytest.mark.asyncio
     async def test_in_memory_eventbus_accepts_task_status_fn(self) -> None:
         """EventBus.stream() accepts task_status_fn kwarg without error."""
-        bus = EventBus()
+        bus = InMemoryEventBus()
         bus.publish("task-1", "completed", {})
 
         events = []

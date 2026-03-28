@@ -128,7 +128,14 @@ class RedisSemaphore:
 
 
 class _SemaphoreContext:
-    """Async context manager for RedisSemaphore — replaces ``async with semaphore:``."""
+    """Async context manager for RedisSemaphore — replaces ``async with semaphore:``.
+
+    Spawns a background renewal task on acquire that refreshes the holder's
+    timestamp every 60s, preventing slot expiry during long-running pipelines
+    (not just HITL waits).
+    """
+
+    _RENEWAL_INTERVAL = 60  # seconds — matches DbTaskStore._LEASE_RENEWAL_INTERVAL
 
     def __init__(
         self,
@@ -141,6 +148,40 @@ class _SemaphoreContext:
         self._holder_id = holder_id
         self._poll_interval = poll_interval
         self._timeout = timeout
+        self._renewal_task: Optional[asyncio.Task] = None
+        self._released = False
+
+    async def _renewal_loop(self) -> None:
+        """Background coroutine: renew semaphore slot every 60s.
+
+        Runs for the entire duration the semaphore is held — not just during
+        HITL waits. Ensures non-HITL pipelines (gap analysis, site audit, KB,
+        etc.) never have their slots expire mid-run.
+        """
+        while not self._released:
+            await asyncio.sleep(self._RENEWAL_INTERVAL)
+            if self._released:
+                break
+            try:
+                renewed = await asyncio.to_thread(
+                    self._sem.renew, self._holder_id
+                )
+                if renewed:
+                    logger.debug(
+                        "Semaphore renewed",
+                        extra={"holder_id": self._holder_id},
+                    )
+                else:
+                    logger.warning(
+                        "Semaphore renewal: slot missing",
+                        extra={"holder_id": self._holder_id},
+                    )
+            except Exception:
+                logger.warning(
+                    "Semaphore renewal failed",
+                    extra={"holder_id": self._holder_id},
+                    exc_info=True,
+                )
 
     async def __aenter__(self) -> _SemaphoreContext:
         deadline = time.monotonic() + self._timeout
@@ -150,6 +191,10 @@ class _SemaphoreContext:
                 logger.debug(
                     "Semaphore acquired",
                     extra={"holder_id": self._holder_id, "key": self._sem._key},
+                )
+                self._renewal_task = asyncio.create_task(
+                    self._renewal_loop(),
+                    name=f"semaphore-renew-{self._holder_id}",
                 )
                 return self
             if time.monotonic() >= deadline:
@@ -164,6 +209,13 @@ class _SemaphoreContext:
             await asyncio.sleep(self._poll_interval)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self._released = True
+        if self._renewal_task is not None and not self._renewal_task.done():
+            self._renewal_task.cancel()
+            try:
+                await self._renewal_task
+            except asyncio.CancelledError:
+                pass
         await asyncio.to_thread(self._sem.release, self._holder_id)
         logger.debug(
             "Semaphore released",

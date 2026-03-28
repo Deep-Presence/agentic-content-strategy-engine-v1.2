@@ -16,10 +16,15 @@ import time
 
 
 async def main(task_id: str):
-    # Import after PYTHONPATH is set
-    from api.tasks.event_bus import EventBus
+    # Phase 6: EventBus removed. Use RedisEventBus (requires REDIS_URL).
+    from api.tasks.redis_event_bus import RedisEventBus
+    from core.redis import get_redis_or_none
 
-    bus = EventBus()
+    redis_client = get_redis_or_none()
+    if redis_client is None:
+        print("ERROR: REDIS_URL must be set to use this script.")
+        sys.exit(1)
+    bus = RedisEventBus(redis=redis_client, max_history=200, loop=asyncio.get_running_loop())
 
     def emit(event_type: str, data: dict):
         bus.publish(task_id, event_type, data)

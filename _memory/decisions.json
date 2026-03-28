@@ -1,5 +1,72 @@
 [
   {
+    "id": "D-REDIS-PHASE6",
+    "timestamp": "2026-03-27",
+    "task": "Phase 6 — Remove Filesystem Fallbacks (DATABASE_URL + REDIS_URL mandatory)",
+    "decisions": [
+      "Exception classes (TaskNotFoundError, TaskConflictError, ApprovalWindowError, ApprovalDeliveryError) moved from api/tasks/store.py to api/tasks/exceptions.py — standalone module with zero internal imports, no circular dependency risk.",
+      "EventBus class deleted from api/tasks/event_bus.py. EventBusProtocol and _format_sse helper kept. Production uses RedisEventBus exclusively.",
+      "All 12 routers + runner migrated from EventBus → EventBusProtocol type hints. events.py already used protocol.",
+      "TaskStore → TaskStoreProtocol migration in api/routers/companies.py, api/services/brand_data_service.py, core/services/json_brand_data.py, core/services/json_gap_data.py. The last two also fix existing core/ → api/ import violations.",
+      "_init_task_store() in api/app.py: JSON TaskStore fallback removed. Raises RuntimeError('DATABASE_URL is required') if not set. No try/except around DbTaskStore init — failures propagate.",
+      "EventBus selection in lifespan: in-memory EventBus() fallback removed. Raises RuntimeError('REDIS_URL is required') if Redis not healthy.",
+      "get_auth_service() in api/dependencies.py: JsonAuthService fallback removed. Raises RuntimeError if db_session_factory unavailable or DbAuthService construction fails.",
+      "get_checkpointer() in core/checkpointer.py: MemorySaver() fallback removed. Raises RuntimeError('REDIS_URL and REDIS_CHECKPOINTER=true required'). The override parameter still works — graph tests pass MemorySaver via override.",
+      "Test conftest strategy: DbTaskStore(session_factory=MagicMock()) with asyncio proxy that gracefully handles no-event-loop in sync tests. _db_create and _db_update patched as AsyncMock no-ops. TestAuthService injected via app.state.auth_service to bypass get_auth_service() DI.",
+      "Test-only EventBus: InMemoryEventBus in tests/_support/event_bus.py — exact copy of deleted EventBus, renamed. Satisfies EventBusProtocol. Used by conftest and ~5 test files with local fixtures.",
+      "Test-only AuthService: TestAuthService in tests/_support/auth_service.py — exact copy of deleted JsonAuthService, renamed. Wraps AuthStore for async interface.",
+      "scripts/fake_onboarding_sse.py updated to use RedisEventBus instead of deleted EventBus."
+    ],
+    "approved_by": "Aryan (via plan approval)",
+    "files_affected": ["api/tasks/exceptions.py", "api/tasks/event_bus.py", "api/tasks/store.py (deleted)", "core/auth/json_service.py (deleted)", "api/app.py", "api/dependencies.py", "core/checkpointer.py", "tests/api/conftest.py", "tests/_support/event_bus.py", "tests/_support/auth_service.py"]
+  },
+  {
+    "id": "D-R2-PHASE5",
+    "timestamp": "2026-03-27",
+    "task": "Phase 5 — StorageBackend Migration for Reader-Side Services (9 files)",
+    "decisions": [
+      "json_site_audit_data.py fully refactored: all 7 _sync_* helpers take StorageBackend instead of Path. _load_audit_result uses backend.read() instead of Path.read_text(). _discover_audit_ids uses backend.list_dir() with prefix stripping instead of Path.iterdir(). Removed _audit_dir and _company_audit_root (path construction no longer needed). In-memory _CACHE L2 kept — caches parsed JSON dicts, CachedStorageBackend only caches raw strings.",
+      "All _resolve_storage() fallbacks changed from LocalStorageBackend(root) to get_storage_backend(root) — respects STORAGE_BACKEND setting (R2 or local). Applies to content_data_service.py and brand_data_service.py.",
+      "_load_pipeline_state in content_data_service accepts optional storage= param. StorageBackend path tried first, legacy Path.read_text() kept as fallback when storage=None (migration window). db_content_data.py inline pipeline_state read also migrated to self._backend.read().",
+      "is_symlink() guard in content_data_service made conditional: only runs when backend is LocalStorageBackend (via getattr(sb, 'inner', sb) unwrap for CachedStorageBackend). R2 has no symlinks — StorageBackend._resolve() handles traversal protection.",
+      "prompt_library.py filesystem fallback replaced with get_storage_backend() factory call — no more hardcoded _PROJECT_ROOT / 'artifacts' path for queries.json reads.",
+      "PersonaStorage bypass in gap analysis pipeline.py fixed: _resolve_persona_paths now accepts storage= kwarg, passes backend=storage to PersonaStorage constructor. Both call sites (run_gap_analysis, run_topic_scoped_gap_analysis) updated.",
+      "b2b_queries_180.json in s2_generate_queries.py intentionally NOT migrated — static bundled code asset shipped with repo, not a runtime artifact.",
+      "db_site_audit_data.py and db_content_data.py constructors now use get_storage_backend() factory when no backend injected, instead of ad-hoc LocalStorageBackend creation.",
+      "DI wiring in dependencies.py: backend= param added to JsonSiteAuditDataService (2 locations), DbSiteAuditDataService (1 location), PromptLibraryService (2 locations)."
+    ],
+    "approved_by": "Aryan (via plan approval)",
+    "files_affected": ["core/gap_analysis/pipeline.py", "core/services/json_site_audit_data.py", "core/services/db_site_audit_data.py", "core/services/db_content_data.py", "api/services/content_data_service.py", "api/services/brand_data_service.py", "core/daily_tracker/prompt_library.py", "api/dependencies.py", "tests/core/test_site_audit/test_models.py"]
+  },
+  {
+    "id": "D-R2-PHASE3",
+    "timestamp": "2026-03-27",
+    "task": "Phase 3 — R2 Blob Storage Redis Cache Layer (4 changes)",
+    "decisions": [
+      "Change 3.1: Replace Path.stat().st_mtime with JSON completed_at/started_at for audit sorting. ISO 8601 strings sort lexicographically — no datetime parsing needed. _sync_list_audits now loads ALL audit JSON (cached) then sorts, instead of mtime-sort-then-load-top-N.",
+      "Change 3.2+3.4: CachedStorageBackend calls get_sync_redis_or_none() per-operation (not constructor injection) — matches all service patterns and enables graceful degradation if Redis dies after startup. read_bytes() NOT cached due to decode_responses=True on Redis client requiring base64 encoding (33% overhead). exists() NOT cached (boolean, cheap, invalidation complexity). 512KB size guard prevents Redis bloat from large audit JSON files. None reads NOT cached (avoids stale negative entries). Empty list_dir results ARE cached (prevents repeated R2 ListObjectsV2). Shallow parent-only invalidation for list_dir (acceptable because list_dir returns immediate children only).",
+      "Change 3.3: _resolve_storage() pattern in brand_data_service matches content_data_service pattern. _detect_artifact and _detect_personas made positional-required for backend param — both are module-private, only called from get_research_artifacts.",
+      "Double-caching accepted: CachedStorageBackend (artifact:*) caches raw text at StorageBackend level; service-level caches (cache:gap:*, cache:content:*) cache parsed JSON with domain-specific TTLs. Intentional layering — CachedStorageBackend is general-purpose, service caches are domain-specific. Acceptable at current scale (<100 cache keys).",
+      "Cache key schema: artifact:{path} for reads, artifact_ls:{prefix} for list_dir. Avoids collision with existing cache:* prefix keys."
+    ],
+    "approved_by": "Aryan (via plan approval)",
+    "files_affected": ["core/storage/cached_backend.py", "core/services/json_site_audit_data.py", "api/services/brand_data_service.py", "api/app.py", "core/storage/__init__.py"]
+  },
+  {
+    "id": "D-REDIS-CODEX-P2",
+    "timestamp": "2026-03-27",
+    "task": "Phase 2 — Critical Redis Bug Fixes (6 fixes)",
+    "decisions": [
+      "Fix 2.1: _init_attempted set AFTER success only; transient failures allow retry; connection_args passed to RedisSaver for timeout parity with core/redis.py",
+      "Fix 2.2: Each close_redis() close isolated in try/except; sync.close() via asyncio.to_thread to avoid blocking event loop; errors collected and logged as warning",
+      "Fix 2.3: Content cache key changed from cache:content:{full_path} to cache:content:{slug}:{colon-separated-relative} to match invalidation pattern; KEYS replaced with scan_iter+batched DELETE (500 batch size)",
+      "Fix 2.4: cleanup_stale when task_id=None changed from DELETE (clobber) to warning+skip; callers MUST pass task_id for scoped cleanup",
+      "Fix 2.5: Background _renewal_loop added to _SemaphoreContext — renews every 60s, started on acquire, cancelled on release; all 15 runners get automatic renewal; HITL heartbeat renewal kept as belt-and-suspenders (also renews slug lock)",
+      "Fix 2.6: _or_none helpers broadened from except RuntimeError to except Exception with logger.debug; prevents 20+ caller crash vectors"
+    ],
+    "rationale": "These are correctness bugs found by Codex audit that affect multi-worker deployments. Fixing before filesystem elimination phase to ensure Redis-first path is robust."
+  },
+  {
     "id": "D-REDIS-SEM-5",
     "timestamp": "2026-03-22",
     "task": "Redis Session 5 — Distributed Semaphore Design Decisions",

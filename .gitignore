@@ -49,6 +49,8 @@ misc/
 
 CLAUDE.md
 RESTRUCTURING_ANALYSIS.md
+.claude/
+_memory/
 
 
 .langgraph_api/
