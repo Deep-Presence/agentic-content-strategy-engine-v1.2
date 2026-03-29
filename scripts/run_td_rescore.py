@@ -34,7 +34,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from core.config.settings import settings
-from core.content_engine.llm_client import configure_litellm_callbacks
+from core.content_engine.llm_client import configure_openrouter
 from core.models.topic_discovery import (
     BuyerStage,
     IntentType,
@@ -122,7 +122,7 @@ async def main() -> None:
     storage = TopicDiscoveryStorage(root, slug)
     backend = LocalStorageBackend(root)
 
-    configure_litellm_callbacks()
+    configure_openrouter()
 
     t0 = time.time()
 

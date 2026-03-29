@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.config.settings import settings
-from core.content_engine.llm_client import configure_litellm_callbacks
+from core.content_engine.llm_client import configure_openrouter
 from core.models.voice_style_guide import (
     AuthorBrief,
     AuthorResearchResult,
@@ -172,8 +172,8 @@ async def run_voice_style_guide_pipeline(
     storage = VoiceStyleGuideStorage(root, effective_slug)
     auto_approve_cps = set(input_data.auto_approve_checkpoints)
 
-    # Configure LiteLLM callbacks for LangSmith tracing
-    configure_litellm_callbacks()
+    # Configure OpenRouter client
+    configure_openrouter()
 
     # Tracing
     session_id = create_session(slug)

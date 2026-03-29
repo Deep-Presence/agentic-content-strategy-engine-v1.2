@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from core.config.settings import settings
-from core.content_engine.llm_client import configure_litellm_callbacks
+from core.content_engine.llm_client import configure_openrouter
 from core.models.topic_discovery import (
     BuyerStage,
     CaptureRecaptureResult,
@@ -288,7 +288,7 @@ async def run_topic_discovery_pipeline(
     timeout_s = settings.topic_discovery_source_timeout_s
 
     # Configure LiteLLM callbacks for LangSmith tracing
-    configure_litellm_callbacks()
+    configure_openrouter()
 
     # Tracing
     session_id = create_session(slug)
@@ -866,7 +866,7 @@ async def run_topic_expansion_pipeline(
         "effective_slug": effective_slug,
     })
 
-    configure_litellm_callbacks()
+    configure_openrouter()
     session_id = create_session(f"td-expansion-{effective_slug}")
     trace_span = create_trace(
         session_id,

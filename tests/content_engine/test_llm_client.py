@@ -1,6 +1,6 @@
-"""Tests for core.content_engine.llm_client — LiteLLM wrapper.
+"""Tests for core.content_engine.llm_client — OpenRouter wrapper.
 
-Tests model prefix detection, retry logic, and callback configuration.
+Tests model prefix detection, retry logic, and OpenRouter configuration.
 """
 from __future__ import annotations
 
@@ -9,59 +9,66 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.content_engine.llm_client import _ensure_model_prefix
+
+# Backward-compatible import alias
 from core.content_engine.llm_client import _ensure_litellm_model
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# _ensure_litellm_model (provider prefix detection)
+# _ensure_model_prefix (provider prefix detection)
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestEnsureLitellmModel:
-    """Tests for _ensure_litellm_model()."""
+class TestEnsureModelPrefix:
+    """Tests for _ensure_model_prefix()."""
 
     def test_already_prefixed_passes_through(self):
-        assert _ensure_litellm_model("anthropic/claude-sonnet-4-5") == "anthropic/claude-sonnet-4-5"
+        assert _ensure_model_prefix("anthropic/claude-sonnet-4-5") == "anthropic/claude-sonnet-4-5"
 
     def test_claude_gets_anthropic_prefix(self):
-        assert _ensure_litellm_model("claude-sonnet-4-5-20250929") == "anthropic/claude-sonnet-4-5-20250929"
+        assert _ensure_model_prefix("claude-sonnet-4-5-20250929") == "anthropic/claude-sonnet-4-5-20250929"
 
     def test_claude_haiku_gets_anthropic_prefix(self):
-        assert _ensure_litellm_model("claude-haiku-4-5-20251001") == "anthropic/claude-haiku-4-5-20251001"
+        assert _ensure_model_prefix("claude-haiku-4-5-20251001") == "anthropic/claude-haiku-4-5-20251001"
 
     def test_sonar_gets_perplexity_prefix(self):
-        assert _ensure_litellm_model("sonar-pro") == "perplexity/sonar-pro"
+        assert _ensure_model_prefix("sonar-pro") == "perplexity/sonar-pro"
 
     def test_sonar_deep_gets_perplexity_prefix(self):
-        assert _ensure_litellm_model("sonar-deep-research") == "perplexity/sonar-deep-research"
+        assert _ensure_model_prefix("sonar-deep-research") == "perplexity/sonar-deep-research"
 
     def test_gpt_gets_openai_prefix(self):
-        assert _ensure_litellm_model("gpt-5.2-2025-12-11") == "openai/gpt-5.2-2025-12-11"
+        assert _ensure_model_prefix("gpt-5.2-2025-12-11") == "openai/gpt-5.2-2025-12-11"
 
     def test_o1_gets_openai_prefix(self):
-        assert _ensure_litellm_model("o1-preview") == "openai/o1-preview"
+        assert _ensure_model_prefix("o1-preview") == "openai/o1-preview"
 
     def test_o3_gets_openai_prefix(self):
-        assert _ensure_litellm_model("o3-mini") == "openai/o3-mini"
+        assert _ensure_model_prefix("o3-mini") == "openai/o3-mini"
 
     def test_gemini_gets_google_prefix(self):
-        assert _ensure_litellm_model("gemini-3-flash-preview") == "google/gemini-3-flash-preview"
+        assert _ensure_model_prefix("gemini-3-flash-preview") == "google/gemini-3-flash-preview"
 
     def test_unknown_model_passes_through(self):
-        assert _ensure_litellm_model("my-custom-model") == "my-custom-model"
+        assert _ensure_model_prefix("my-custom-model") == "my-custom-model"
 
     def test_openai_prefixed_passes_through(self):
-        assert _ensure_litellm_model("openai/gpt-5.2") == "openai/gpt-5.2"
+        assert _ensure_model_prefix("openai/gpt-5.2") == "openai/gpt-5.2"
+
+    def test_backward_compat_alias(self):
+        """_ensure_litellm_model is a backward-compatible alias."""
+        assert _ensure_litellm_model is _ensure_model_prefix
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# llm_call (async LLM wrapper)
+# llm_call (async LLM wrapper via OpenRouter)
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def _mock_litellm_response(content="Hello", model="test-model",
-                            prompt_tokens=50, completion_tokens=100):
-    """Create a mock LiteLLM response object."""
+def _mock_openai_response(content="Hello", model="test-model",
+                           prompt_tokens=50, completion_tokens=100):
+    """Create a mock OpenAI chat completion response."""
     choice = MagicMock()
     choice.message.content = content
     choice.finish_reason = "stop"
@@ -76,6 +83,13 @@ def _mock_litellm_response(content="Hello", model="test-model",
     return response
 
 
+def _mock_async_client(response):
+    """Create a mock AsyncOpenAI client with async chat.completions.create."""
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=response)
+    return mock_client
+
+
 class TestLlmCall:
     """Tests for llm_call()."""
 
@@ -83,10 +97,10 @@ class TestLlmCall:
     async def test_successful_call_returns_llm_response(self):
         from core.content_engine.llm_client import llm_call
 
-        mock_resp = _mock_litellm_response(content="Test output", model="anthropic/claude-sonnet-4-5")
-        with patch("core.content_engine.llm_client.litellm") as mock_litellm, \
-             patch("core.content_engine.llm_client._litellm_available", True):
-            mock_litellm.acompletion = AsyncMock(return_value=mock_resp)
+        mock_resp = _mock_openai_response(content="Test output", model="anthropic/claude-sonnet-4-5")
+        mock_client = _mock_async_client(mock_resp)
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client):
             result = await llm_call(
                 model="anthropic/claude-sonnet-4-5",
                 system="You are a test.",
@@ -103,13 +117,14 @@ class TestLlmCall:
     async def test_retry_on_transient_failure(self):
         from core.content_engine.llm_client import llm_call
 
-        mock_resp = _mock_litellm_response(content="Eventually works")
-        with patch("core.content_engine.llm_client.litellm") as mock_litellm, \
-             patch("core.content_engine.llm_client._litellm_available", True), \
+        mock_resp = _mock_openai_response(content="Eventually works")
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=[Exception("Transient"), mock_resp]
+        )
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
              patch("core.content_engine.llm_client.asyncio.sleep", new_callable=AsyncMock):
-            mock_litellm.acompletion = AsyncMock(
-                side_effect=[Exception("Transient"), mock_resp]
-            )
             result = await llm_call(
                 model="anthropic/claude-sonnet-4-5",
                 system="sys",
@@ -118,18 +133,19 @@ class TestLlmCall:
                 base_delay=0.01,
             )
         assert result.content == "Eventually works"
-        assert mock_litellm.acompletion.call_count == 2
+        assert mock_client.chat.completions.create.call_count == 2
 
     @pytest.mark.asyncio
     async def test_raises_after_max_retries(self):
         from core.content_engine.llm_client import llm_call
 
-        with patch("core.content_engine.llm_client.litellm") as mock_litellm, \
-             patch("core.content_engine.llm_client._litellm_available", True), \
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=Exception("Permanent failure")
+        )
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
              patch("core.content_engine.llm_client.asyncio.sleep", new_callable=AsyncMock):
-            mock_litellm.acompletion = AsyncMock(
-                side_effect=Exception("Permanent failure")
-            )
             with pytest.raises(Exception, match="Permanent failure"):
                 await llm_call(
                     model="test-model",
@@ -138,14 +154,17 @@ class TestLlmCall:
                     max_retries=2,
                     base_delay=0.01,
                 )
-        assert mock_litellm.acompletion.call_count == 2
+        assert mock_client.chat.completions.create.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_raises_runtime_error_when_unavailable(self):
+    async def test_raises_runtime_error_when_no_api_key(self):
         from core.content_engine.llm_client import llm_call
 
-        with patch("core.content_engine.llm_client._litellm_available", False):
-            with pytest.raises(RuntimeError, match="litellm is not installed"):
+        with patch(
+            "core.shared_tools.openrouter_client.get_async_client",
+            side_effect=RuntimeError("OPENROUTER_API_KEY is not set"),
+        ):
+            with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY is not set"):
                 await llm_call(
                     model="test-model",
                     system="sys",
@@ -153,55 +172,87 @@ class TestLlmCall:
                 )
 
     @pytest.mark.asyncio
-    async def test_metadata_passed_through(self):
+    async def test_metadata_passed_via_extra_body(self):
         from core.content_engine.llm_client import llm_call
 
-        mock_resp = _mock_litellm_response()
-        with patch("core.content_engine.llm_client.litellm") as mock_litellm, \
-             patch("core.content_engine.llm_client._litellm_available", True):
-            mock_litellm.acompletion = AsyncMock(return_value=mock_resp)
+        mock_resp = _mock_openai_response()
+        mock_client = _mock_async_client(mock_resp)
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client):
             await llm_call(
                 model="anthropic/claude-sonnet-4-5",
                 system="sys",
                 user="usr",
                 metadata={"run_id": "abc"},
             )
-        call_kwargs = mock_litellm.acompletion.call_args[1]
-        assert call_kwargs["metadata"] == {"run_id": "abc"}
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert call_kwargs["extra_body"] == {"metadata": {"run_id": "abc"}}
+
+    @pytest.mark.asyncio
+    async def test_content_none_returns_empty_string(self):
+        from core.content_engine.llm_client import llm_call
+
+        mock_resp = _mock_openai_response(content=None)
+        mock_client = _mock_async_client(mock_resp)
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client):
+            result = await llm_call(
+                model="anthropic/claude-sonnet-4-5",
+                system="sys",
+                user="usr",
+            )
+        assert result.content == ""
+
+    @pytest.mark.asyncio
+    async def test_missing_usage_returns_zero_tokens(self):
+        from core.content_engine.llm_client import llm_call
+
+        mock_resp = _mock_openai_response()
+        mock_resp.usage = None
+        mock_client = _mock_async_client(mock_resp)
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client):
+            result = await llm_call(
+                model="anthropic/claude-sonnet-4-5",
+                system="sys",
+                user="usr",
+            )
+        assert result.input_tokens == 0
+        assert result.output_tokens == 0
+        assert result.total_tokens == 0
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# configure_litellm_callbacks
+# configure_openrouter / configure_litellm_callbacks (backward alias)
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestConfigureLitellmCallbacks:
-    """Tests for configure_litellm_callbacks()."""
+class TestConfigureOpenrouter:
+    """Tests for configure_openrouter() and its backward-compatible alias."""
 
-    def test_sets_callbacks_when_langsmith_key_set(self, monkeypatch):
-        from core.content_engine.llm_client import configure_litellm_callbacks
+    def test_backward_compat_alias_exists(self):
+        from core.content_engine.llm_client import (
+            configure_litellm_callbacks,
+            configure_openrouter,
+        )
+        assert configure_litellm_callbacks is configure_openrouter
 
-        monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
-        with patch("core.content_engine.llm_client.litellm") as mock_litellm, \
-             patch("core.content_engine.llm_client._litellm_available", True):
-            configure_litellm_callbacks()
-            assert mock_litellm.success_callback == ["langsmith"]
-            assert mock_litellm.failure_callback == ["langsmith"]
+    def test_succeeds_when_api_key_set(self):
+        from core.content_engine.llm_client import configure_openrouter
 
-    def test_skips_when_no_langsmith_key(self, monkeypatch):
-        from core.content_engine.llm_client import configure_litellm_callbacks
+        mock_client = MagicMock()
+        with patch(
+            "core.shared_tools.openrouter_client.get_async_client",
+            return_value=mock_client,
+        ):
+            configure_openrouter()  # should not raise
 
-        monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
-        with patch("core.content_engine.llm_client.litellm") as mock_litellm, \
-             patch("core.content_engine.llm_client._litellm_available", True):
-            configure_litellm_callbacks()
-            # success_callback should NOT have been set
-            assert not hasattr(mock_litellm.success_callback, '__iter__') or \
-                mock_litellm.success_callback != ["langsmith"]
+    def test_warns_when_api_key_missing(self):
+        from core.content_engine.llm_client import configure_openrouter
 
-    def test_noop_when_litellm_unavailable(self):
-        from core.content_engine.llm_client import configure_litellm_callbacks
-
-        with patch("core.content_engine.llm_client._litellm_available", False):
-            # Should not raise
-            configure_litellm_callbacks()
+        with patch(
+            "core.shared_tools.openrouter_client.get_async_client",
+            side_effect=RuntimeError("OPENROUTER_API_KEY is not set"),
+        ):
+            # Should not raise — just log a warning
+            configure_openrouter()

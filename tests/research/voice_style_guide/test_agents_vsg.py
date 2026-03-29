@@ -590,8 +590,9 @@ class TestVoiceSynthesis:
             "ann-handley": "# Ann Handley analysis...",
         }
 
-        with patch("core.research.voice_style_guide.agents.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(return_value=mock_response)
+        mock_or_client = MagicMock()
+        mock_or_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_or_client):
             guide_md, elapsed = await asyncio.wait_for(
                 _import_and_run_synthesis(author_mds, company_context_md, persona_mds, vsg_input),
                 timeout=10,
@@ -599,18 +600,19 @@ class TestVoiceSynthesis:
 
         assert "Voice Style Guide" in guide_md
         assert elapsed > 0
-        mock_litellm.acompletion.assert_called_once()
+        mock_or_client.chat.completions.create.assert_called_once()
 
         # Verify max_tokens=8192 was passed
-        call_kwargs = mock_litellm.acompletion.call_args
+        call_kwargs = mock_or_client.chat.completions.create.call_args
         assert call_kwargs.kwargs.get("max_tokens") == 8192
 
     @pytest.mark.asyncio
     async def test_timeout_returns_empty(
         self, vsg_input: VoiceStyleGuideInput, company_context_md: str, persona_mds: list[str],
     ) -> None:
-        with patch("core.research.voice_style_guide.agents.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_or_client = MagicMock()
+        mock_or_client.chat.completions.create = AsyncMock(side_effect=asyncio.TimeoutError())
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_or_client):
             guide_md, elapsed = await asyncio.wait_for(
                 _import_and_run_synthesis({}, company_context_md, persona_mds, vsg_input),
                 timeout=10,
@@ -623,8 +625,9 @@ class TestVoiceSynthesis:
     async def test_api_error_returns_empty(
         self, vsg_input: VoiceStyleGuideInput, company_context_md: str, persona_mds: list[str],
     ) -> None:
-        with patch("core.research.voice_style_guide.agents.litellm") as mock_litellm:
-            mock_litellm.acompletion = AsyncMock(side_effect=RuntimeError("Model not found"))
+        mock_or_client = MagicMock()
+        mock_or_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("Model not found"))
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_or_client):
             guide_md, elapsed = await asyncio.wait_for(
                 _import_and_run_synthesis({}, company_context_md, persona_mds, vsg_input),
                 timeout=10,

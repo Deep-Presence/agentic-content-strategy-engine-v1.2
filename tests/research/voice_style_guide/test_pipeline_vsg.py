@@ -250,7 +250,7 @@ class TestPipelineHappyPath:
             new_callable=AsyncMock,
             return_value=(guide_md, 5.0),
         ), patch(
-            "core.research.voice_style_guide.pipeline.configure_litellm_callbacks",
+            "core.research.voice_style_guide.pipeline.configure_openrouter",
         ):
             from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
 
@@ -281,7 +281,7 @@ class TestPipelineEarlyExits:
         root.mkdir()
 
         with patch(
-            "core.research.voice_style_guide.pipeline.configure_litellm_callbacks",
+            "core.research.voice_style_guide.pipeline.configure_openrouter",
         ), pytest.raises(RuntimeError, match="Company context not found"):
             from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
 
@@ -295,7 +295,7 @@ class TestPipelineEarlyExits:
         (cc_dir / "ramp.md").write_text("# Ramp\n\nCompany context.", encoding="utf-8")
 
         with patch(
-            "core.research.voice_style_guide.pipeline.configure_litellm_callbacks",
+            "core.research.voice_style_guide.pipeline.configure_openrouter",
         ), pytest.raises(RuntimeError, match="No active persona profiles"):
             from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
 
@@ -328,7 +328,7 @@ class TestPipelineEarlyExits:
             new_callable=AsyncMock,
             return_value=mock_hitl_result,
         ), patch(
-            "core.research.voice_style_guide.pipeline.configure_litellm_callbacks",
+            "core.research.voice_style_guide.pipeline.configure_openrouter",
         ):
             from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
 
@@ -355,7 +355,7 @@ class TestPipelineEarlyExits:
             new_callable=AsyncMock,
             return_value=failed_result,
         ), patch(
-            "core.research.voice_style_guide.pipeline.configure_litellm_callbacks",
+            "core.research.voice_style_guide.pipeline.configure_openrouter",
         ):
             from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
 
@@ -397,7 +397,7 @@ class TestPipelinePartialFailure:
             new_callable=AsyncMock,
             return_value=(guide_md, 5.0),
         ), patch(
-            "core.research.voice_style_guide.pipeline.configure_litellm_callbacks",
+            "core.research.voice_style_guide.pipeline.configure_openrouter",
         ):
             from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
 
@@ -431,7 +431,7 @@ class TestPipelineSSEEvents:
             new_callable=AsyncMock,
             return_value=(guide_md, 5.0),
         ), patch(
-            "core.research.voice_style_guide.pipeline.configure_litellm_callbacks",
+            "core.research.voice_style_guide.pipeline.configure_openrouter",
         ):
             from core.research.voice_style_guide.pipeline import run_voice_style_guide_pipeline
 

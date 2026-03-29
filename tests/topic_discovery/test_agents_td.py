@@ -542,7 +542,7 @@ class TestCountTreeStats:
 # ── LLM Agent Functions (mocked) ────────────────────────────────────────
 
 def _make_mock_response(content: str):
-    """Create a mock LiteLLM response."""
+    """Create a mock OpenAI chat completion response."""
     mock_response = MagicMock()
     mock_choice = MagicMock()
     mock_choice.message.content = content
@@ -551,11 +551,33 @@ def _make_mock_response(content: str):
     return mock_response
 
 
+class _LiteLLMCompat:
+    """Shim so existing tests can keep using ``mock_litellm.acompletion = AsyncMock(...)``."""
+
+    def __init__(self, mock_client: MagicMock):
+        self._client = mock_client
+
+    @property
+    def acompletion(self):
+        return self._client.chat.completions.create
+
+    @acompletion.setter
+    def acompletion(self, value):
+        self._client.chat.completions.create = value
+
+
 @pytest.fixture
 def mock_litellm():
-    """Patch litellm.acompletion to return controlled responses."""
-    with patch("core.topic_discovery.agents.litellm") as mock:
-        yield mock
+    """Patch OpenRouter async client so tests control LLM responses.
+
+    Yields a shim with ``.acompletion`` property that maps to
+    ``client.chat.completions.create`` — backward-compatible with all
+    existing test code that does ``mock_litellm.acompletion = AsyncMock(...)``.
+    """
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock()
+    with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client):
+        yield _LiteLLMCompat(mock_client)
 
 
 class TestSourceABrainstorm:

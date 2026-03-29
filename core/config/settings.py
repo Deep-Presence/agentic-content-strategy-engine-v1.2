@@ -33,10 +33,14 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # OpenRouter (unified LLM routing — centralized cost tracking)
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
     # Perplexity
     perplexity_api_key: str | None = None
-    perplexity_deep_research_model: str = "sonar-deep-research"
-    perplexity_search_model: str = "sonar-pro"
+    perplexity_deep_research_model: str = "perplexity/sonar-deep-research"
+    perplexity_search_model: str = "perplexity/sonar-pro"
 
     # OpenAI
     openai_api_key: str | None = None
@@ -199,7 +203,7 @@ class Settings(BaseSettings):
     )
     topic_discovery_max_subdomains_to_expand: int = 10
     # Source C: Perplexity deep research for competitive content landscape
-    topic_discovery_source_c_model: str = "sonar-deep-research"
+    topic_discovery_source_c_model: str = "perplexity/sonar-deep-research"
     topic_discovery_source_c_timeout_s: float = 900.0
     # Unified S2 model (hierarchy + scoring + persona affinity)
     topic_discovery_unified_s2_model: str = "anthropic/claude-sonnet-4-6"

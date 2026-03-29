@@ -630,17 +630,18 @@ async def run_voice_synthesis(
             "model": model,
             "company_slug": input_data.company_slug or "",
         }
+        from core.shared_tools.openrouter_client import get_async_client
+        or_client = get_async_client()
         response = await asyncio.wait_for(
-            litellm.acompletion(
+            or_client.chat.completions.create(
                 model=model,
-                api_key=api_key,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.3,
                 max_tokens=8192,
-                metadata=_synth_meta,
+                extra_body={"metadata": _synth_meta},
             ),
             timeout=timeout_s,
         )
