@@ -59,7 +59,7 @@ class Settings(BaseSettings):
 
     # Google / Gemini – Reddit HIL
     google_api_key_reddit_hil: str | None = None
-    google_gemini_model_reddit_hil: str = "gemini-3-flash-preview"
+    google_gemini_model_reddit_hil: str = "google/gemini-3-flash-preview"
 
     # Pipeline / Agent
     aeo_agent_invoke_timeout_s: int = 900
@@ -95,7 +95,7 @@ class Settings(BaseSettings):
 
     # Gap Analysis – Models
     gap_analysis_query_gen_model: str = "gpt-5.2-2025-12-11"
-    gap_analysis_report_model: str = "gpt-5.2-2025-12-11"
+    gap_analysis_report_model: str = "openai/gpt-5.2-2025-12-11"
     gap_analysis_openai_engine_model: str = "gpt-5.2-2025-12-11"
     gap_analysis_claude_engine_model: str = "claude-sonnet-4-6"
     gap_analysis_gemini_engine_model: str = "gemini-3-flash-preview"
@@ -120,7 +120,7 @@ class Settings(BaseSettings):
     discord_webhook_url: str = ""
 
     # Content Generation Engine – Models
-    content_engine_planner_model: str = "claude-opus-4-6"
+    content_engine_planner_model: str = "anthropic/claude-opus-4-6"
     content_engine_worker_model: str = "claude-sonnet-4-6"
     content_engine_formatter_model: str = "claude-haiku-4-5-20251001"
     content_engine_style_judge_model: str = "claude-haiku-4-5-20251001"
@@ -170,12 +170,12 @@ class Settings(BaseSettings):
     research_kb_weakness_analyst_model: str = "sonar-deep-research"
     # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
     research_kb_brand_perception_model: str = "claude-sonnet-4-6"
-    # Synthesis agent — init_chat_model(), needs provider:model format
-    research_kb_synthesis_model: str = "anthropic:claude-opus-4-6"
+    # Synthesis agent — ChatOpenAI via OpenRouter, provider/model format
+    research_kb_synthesis_model: str = "anthropic/claude-opus-4-6"
 
     # --- Audience Persona Pipeline ---
     google_api_key_audience_persona: str | None = None
-    audience_persona_suggester_model: str = "gemini-3-flash-preview"
+    audience_persona_suggester_model: str = "google/gemini-3-flash-preview"
     audience_persona_generator_model: str = "sonar-deep-research"
     audience_persona_max_concurrent_generators: int = 3
 

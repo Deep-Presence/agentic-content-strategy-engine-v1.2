@@ -50,6 +50,12 @@ class TestEnsureModelPrefix:
     def test_gemini_gets_google_prefix(self):
         assert _ensure_model_prefix("gemini-3-flash-preview") == "google/gemini-3-flash-preview"
 
+    def test_text_embedding_small_gets_openai_prefix(self):
+        assert _ensure_model_prefix("text-embedding-3-small") == "openai/text-embedding-3-small"
+
+    def test_text_embedding_large_gets_openai_prefix(self):
+        assert _ensure_model_prefix("text-embedding-3-large") == "openai/text-embedding-3-large"
+
     def test_unknown_model_passes_through(self):
         assert _ensure_model_prefix("my-custom-model") == "my-custom-model"
 
@@ -220,6 +226,105 @@ class TestLlmCall:
         assert result.input_tokens == 0
         assert result.output_tokens == 0
         assert result.total_tokens == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# llm_call — cost tracking
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestLlmCallCostTracking:
+    """Verify track_llm_cost() is called inside llm_call()."""
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_on_successful_call(self):
+        from core.content_engine.llm_client import llm_call
+
+        mock_resp = _mock_openai_response(
+            content="OK", model="anthropic/claude-sonnet-4-6",
+            prompt_tokens=50, completion_tokens=100,
+        )
+        mock_client = _mock_async_client(mock_resp)
+        meta = {
+            "pipeline": "content_engine",
+            "pipeline_step": "outliner",
+            "company_slug": "test-co",
+        }
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
+             patch("core.content_engine.llm_client.track_llm_cost") as mock_track:
+            await llm_call(
+                model="anthropic/claude-sonnet-4-6",
+                system="sys", user="usr", metadata=meta,
+            )
+        mock_track.assert_called_once()
+        kw = mock_track.call_args[1]
+        assert kw["model"] == "anthropic/claude-sonnet-4-6"
+        assert kw["provider"] == "openrouter"
+        assert kw["pipeline"] == "content_engine"
+        assert kw["pipeline_step"] == "outliner"
+        assert kw["prompt_tokens"] == 50
+        assert kw["completion_tokens"] == 100
+        assert kw["company_slug"] == "test-co"
+        assert kw["source"] == "openrouter"
+        assert kw["call_site"] == "core.content_engine.llm_client"
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_with_empty_metadata(self):
+        from core.content_engine.llm_client import llm_call
+
+        mock_resp = _mock_openai_response()
+        mock_client = _mock_async_client(mock_resp)
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
+             patch("core.content_engine.llm_client.track_llm_cost") as mock_track:
+            await llm_call(
+                model="anthropic/claude-sonnet-4-6",
+                system="sys", user="usr", metadata=None,
+            )
+        mock_track.assert_called_once()
+        kw = mock_track.call_args[1]
+        assert kw["pipeline"] == ""
+        assert kw["pipeline_step"] == ""
+        assert kw["company_slug"] == ""
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_with_partial_metadata(self):
+        from core.content_engine.llm_client import llm_call
+
+        mock_resp = _mock_openai_response()
+        mock_client = _mock_async_client(mock_resp)
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
+             patch("core.content_engine.llm_client.track_llm_cost") as mock_track:
+            await llm_call(
+                model="anthropic/claude-sonnet-4-6",
+                system="sys", user="usr",
+                metadata={"agent": "outliner"},  # no pipeline keys
+            )
+        kw = mock_track.call_args[1]
+        assert kw["pipeline"] == ""
+        assert kw["pipeline_step"] == ""
+        assert kw["company_slug"] == ""
+
+    @pytest.mark.asyncio
+    async def test_cost_not_tracked_on_failure(self):
+        from core.content_engine.llm_client import llm_call
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=Exception("Permanent failure")
+        )
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
+             patch("core.content_engine.llm_client.asyncio.sleep", new_callable=AsyncMock), \
+             patch("core.content_engine.llm_client.track_llm_cost") as mock_track:
+            with pytest.raises(Exception, match="Permanent failure"):
+                await llm_call(
+                    model="test-model", system="sys", user="usr",
+                    max_retries=2, base_delay=0.01,
+                )
+        mock_track.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════════════════════════

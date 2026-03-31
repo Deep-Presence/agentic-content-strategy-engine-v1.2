@@ -8,9 +8,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from anthropic import AsyncAnthropic
-
 from core.config.settings import settings
+from core.shared_tools.openrouter_client import get_async_client, _ensure_model_prefix
+from core.shared_tools.cost_tracker import track_llm_cost
 from core.content_engine.prompts.planner_prompts import (
     PLANNER_SYSTEM_PROMPT,
     build_planner_user_prompt,
@@ -118,34 +118,51 @@ async def plan_content(
         user_prompt, _MAX_INPUT_TOKENS, label="planner_prompt"
     )
 
-    # Call LLM
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+    # Call LLM via OpenRouter
+    client = get_async_client()
+    prefixed_model = _ensure_model_prefix(model)
 
     async def _call():
-        return await client.messages.create(
-            model=model,
+        return await client.chat.completions.create(
+            model=prefixed_model,
             max_tokens=16384,
-            system=PLANNER_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=[
+                {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            extra_body={"metadata": {"pipeline": "content_engine", "step": "planner"}},
         )
 
     response = await _retry_async_anthropic(_call, max_retries=3, base_delay=2.0)
 
-    # Extract text from response
-    raw_text = ""
-    for block in response.content:
-        if hasattr(block, "text"):
-            raw_text += block.text
+    # Extract text from response (OpenAI chat completion format)
+    raw_text = response.choices[0].message.content or ""
 
     # Parse into PlannerOutput
     planner_output = safe_parse(raw_text, PlannerOutput)
 
-    # Enrich metadata
+    # Enrich metadata (OpenAI uses prompt_tokens / completion_tokens)
+    usage = response.usage
+    in_tokens = getattr(usage, "prompt_tokens", 0) or 0
+    out_tokens = getattr(usage, "completion_tokens", 0) or 0
     planner_output.planning_metadata.update({
         "model": model,
-        "input_tokens": response.usage.input_tokens,
-        "output_tokens": response.usage.output_tokens,
+        "input_tokens": in_tokens,
+        "output_tokens": out_tokens,
     })
+
+    # Cost tracking (never raises)
+    track_llm_cost(
+        model=model,
+        provider="openrouter",
+        pipeline="content_engine",
+        pipeline_step="planner",
+        prompt_tokens=in_tokens,
+        completion_tokens=out_tokens,
+        company_slug=getattr(input_data, "company_slug", "") or "",
+        call_site="core.content_engine.planner",
+        source="openrouter",
+    )
 
     # LangSmith logging
     log_generation(
@@ -160,8 +177,8 @@ async def plan_content(
         },
         model_parameters={"max_tokens": 16384},
         usage={
-            "input": response.usage.input_tokens,
-            "output": response.usage.output_tokens,
+            "input": in_tokens,
+            "output": out_tokens,
         },
     )
     log_score(trace, "briefs_generated", len(planner_output.briefs))
@@ -170,8 +187,8 @@ async def plan_content(
         "brief_ids": [b.brief_id for b in planner_output.briefs],
         "brief_titles": [b.title for b in planner_output.briefs],
         "token_usage": {
-            "input": response.usage.input_tokens,
-            "output": response.usage.output_tokens,
+            "input": in_tokens,
+            "output": out_tokens,
         },
     }
     if parent_span is not None:
@@ -184,8 +201,8 @@ async def plan_content(
         "Planner produced %d briefs (model=%s, tokens=%d+%d)",
         len(planner_output.briefs),
         model,
-        response.usage.input_tokens,
-        response.usage.output_tokens,
+        in_tokens,
+        out_tokens,
     )
 
     return planner_output

@@ -91,7 +91,7 @@ def make_embedding_response(
 
 @pytest.fixture
 def mock_openai_embeddings():
-    """Fixture that patches AsyncOpenAI to return deterministic embeddings."""
+    """Fixture that patches get_async_client to return deterministic embeddings."""
     dim = 8
 
     async def fake_create(*, model: str, input: List[str], **kwargs):
@@ -102,7 +102,7 @@ def mock_openai_embeddings():
     mock_client.embeddings = MagicMock()
     mock_client.embeddings.create = AsyncMock(side_effect=fake_create)
 
-    with patch("core.shared_tools.async_embedding_client.AsyncOpenAI", return_value=mock_client):
+    with patch("core.shared_tools.async_embedding_client.get_async_client", return_value=mock_client):
         yield mock_client
 
 

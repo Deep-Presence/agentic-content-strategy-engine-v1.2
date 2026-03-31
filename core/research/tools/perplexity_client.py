@@ -42,6 +42,9 @@ def research(
     include_answer: bool = True,
     timeout_s: float = 300.0,
     model: Optional[str] = None,
+    pipeline: str = "",
+    pipeline_step: str = "",
+    company_slug: str = "",
     **kwargs: Any,
 ) -> str:
     """
@@ -77,6 +80,22 @@ def research(
             "Check usage at https://openrouter.ai/settings/keys"
         ) from e
 
+    # Cost tracking (never raises)
+    from core.shared_tools.cost_tracker import track_llm_cost
+
+    _usage = getattr(completion, "usage", None)
+    track_llm_cost(
+        model=model,
+        provider="openrouter",
+        pipeline=pipeline,
+        pipeline_step=pipeline_step,
+        prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(_usage, "completion_tokens", 0) or 0,
+        company_slug=company_slug,
+        call_site="core.research.tools.perplexity_client",
+        source="openrouter",
+    )
+
     content = ""
     if completion.choices:
         msg = completion.choices[0].message
@@ -105,6 +124,9 @@ def search(
     include_answer: bool = True,
     timeout_s: float = 300.0,
     model: Optional[str] = None,
+    pipeline: str = "",
+    pipeline_step: str = "",
+    company_slug: str = "",
     **kwargs: Any,
 ) -> str:
     """Alias for research (Perplexity Deep Research covers both search and deep research)."""
@@ -116,5 +138,8 @@ def search(
         include_answer=include_answer,
         timeout_s=timeout_s,
         model=model,
+        pipeline=pipeline,
+        pipeline_step=pipeline_step,
+        company_slug=company_slug,
         **kwargs,
     )

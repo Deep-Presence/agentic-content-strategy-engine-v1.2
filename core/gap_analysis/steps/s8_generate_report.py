@@ -8,8 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from openai import AsyncOpenAI
-
 from core.models.gap_analysis import (
     AnalysisResult,
     ClusterContentSpec,
@@ -26,17 +24,30 @@ logger = logging.getLogger(__name__)
 
 
 async def _call_openai(prompt: str, model: str) -> str:
-    api_key = settings.openai_api_key
-    if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. Add it to .env.local to enable report generation."
-        )
-    client = AsyncOpenAI(api_key=api_key)
-    response = await client.responses.create(
-        model=model,
-        input=prompt,
+    from core.shared_tools.openrouter_client import get_async_client, _ensure_model_prefix
+    from core.shared_tools.cost_tracker import track_llm_cost
+
+    client = get_async_client()
+    response = await client.chat.completions.create(
+        model=_ensure_model_prefix(model),
+        messages=[{"role": "user", "content": prompt}],
+        extra_body={"metadata": {"pipeline": "gap_analysis", "step": "s8_report"}},
     )
-    return getattr(response, "output_text", None) or ""
+
+    # Cost tracking (never raises)
+    _usage = getattr(response, "usage", None)
+    track_llm_cost(
+        model=model,
+        provider="openrouter",
+        pipeline="gap_analysis",
+        pipeline_step="s8_report",
+        prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(_usage, "completion_tokens", 0) or 0,
+        call_site="core.gap_analysis.steps.s8_generate_report",
+        source="openrouter",
+    )
+
+    return response.choices[0].message.content or ""
 
 
 def _extract_json(text: str) -> Dict[str, Any]:

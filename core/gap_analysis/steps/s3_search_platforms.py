@@ -309,11 +309,10 @@ async def _run_engine_batch(
                 AsyncOpenAI(api_key=settings.openai_api_key)
             )
         elif engine.engine_name == "perplexity":
-            from perplexity import AsyncPerplexity
+            from core.shared_tools.openrouter_client import get_async_client
 
-            shared_client = await stack.enter_async_context(
-                AsyncPerplexity(api_key=settings.perplexity_api_key)
-            )
+            # Singleton client — do NOT enter into exit stack
+            shared_client = get_async_client()
 
         tasks = [asyncio.create_task(_throttled_run(q)) for q in queries]
         results = list(await asyncio.gather(*tasks))

@@ -28,35 +28,11 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Model prefix helper
+# Model prefix helper (canonical implementation in openrouter_client)
 # ---------------------------------------------------------------------------
 
-
-def _ensure_model_prefix(model: str) -> str:
-    """Ensure a model string has a provider prefix for OpenRouter routing.
-
-    OpenRouter requires provider-prefixed model strings for routing.
-    Auto-detects and prefixes known model families so callers can pass
-    either ``"claude-sonnet-4-6"`` or ``"anthropic/claude-sonnet-4-6"``.
-
-    Args:
-        model: Raw model string (may or may not have a provider prefix).
-
-    Returns:
-        Provider-prefixed model string suitable for OpenRouter.
-    """
-    if "/" in model:
-        return model  # Already prefixed
-    if model.startswith("claude-"):
-        return f"anthropic/{model}"
-    if model.startswith("sonar"):
-        return f"perplexity/{model}"
-    if model.startswith("gpt-") or model.startswith("o1") or model.startswith("o3"):
-        return f"openai/{model}"
-    if model.startswith("gemini-"):
-        return f"google/{model}"
-    return model  # Unknown — let OpenRouter route it
-
+from core.shared_tools.openrouter_client import _ensure_model_prefix  # noqa: E402
+from core.shared_tools.cost_tracker import track_llm_cost  # noqa: E402
 
 # Backward-compatible alias
 _ensure_litellm_model = _ensure_model_prefix
@@ -154,6 +130,20 @@ async def llm_call(
             # Extract response fields
             choice = response.choices[0]
             usage = response.usage
+
+            # Cost tracking (never raises)
+            _meta = metadata or {}
+            track_llm_cost(
+                model=response.model or model,
+                provider="openrouter",
+                pipeline=_meta.get("pipeline", ""),
+                pipeline_step=_meta.get("pipeline_step", ""),
+                prompt_tokens=usage.prompt_tokens if usage else 0,
+                completion_tokens=usage.completion_tokens if usage else 0,
+                company_slug=_meta.get("company_slug", ""),
+                call_site="core.content_engine.llm_client",
+                source="openrouter",
+            )
 
             return LLMResponse(
                 content=choice.message.content or "",

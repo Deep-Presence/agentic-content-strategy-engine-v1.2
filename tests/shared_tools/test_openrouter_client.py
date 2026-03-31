@@ -102,3 +102,82 @@ class TestResetClients:
             client2 = openrouter_client.get_async_client()
 
             assert client1 is not client2
+
+
+class TestBuildChatOpenAIViaOpenRouter:
+    """Tests for build_chat_openai_via_openrouter() — LangChain ChatOpenAI factory."""
+
+    def test_returns_chat_openai_instance(self):
+        from langchain_openai import ChatOpenAI
+
+        with patch.object(openrouter_client, "_get_settings") as mock_settings:
+            mock_settings.return_value.openrouter_api_key = "sk-or-test"
+            mock_settings.return_value.openrouter_base_url = "https://openrouter.ai/api/v1"
+
+            model = openrouter_client.build_chat_openai_via_openrouter("anthropic/claude-opus-4-6")
+
+            assert isinstance(model, ChatOpenAI)
+
+    def test_sets_base_url_from_settings(self):
+        with patch.object(openrouter_client, "_get_settings") as mock_settings:
+            mock_settings.return_value.openrouter_api_key = "sk-or-test"
+            mock_settings.return_value.openrouter_base_url = "https://custom.example.com/v1"
+
+            model = openrouter_client.build_chat_openai_via_openrouter("anthropic/claude-opus-4-6")
+
+            assert str(model.openai_api_base) == "https://custom.example.com/v1"
+
+    def test_sets_api_key_from_settings(self):
+        with patch.object(openrouter_client, "_get_settings") as mock_settings:
+            mock_settings.return_value.openrouter_api_key = "sk-or-key-123"
+            mock_settings.return_value.openrouter_base_url = "https://openrouter.ai/api/v1"
+
+            model = openrouter_client.build_chat_openai_via_openrouter("anthropic/claude-opus-4-6")
+
+            assert model.openai_api_key.get_secret_value() == "sk-or-key-123"
+
+    def test_applies_model_prefix(self):
+        with patch.object(openrouter_client, "_get_settings") as mock_settings:
+            mock_settings.return_value.openrouter_api_key = "sk-or-test"
+            mock_settings.return_value.openrouter_base_url = "https://openrouter.ai/api/v1"
+
+            model = openrouter_client.build_chat_openai_via_openrouter("claude-opus-4-6")
+
+            assert model.model_name == "anthropic/claude-opus-4-6"
+
+    def test_handles_colon_format(self):
+        """Legacy KB synthesis format: 'anthropic:claude-opus-4-6'."""
+        with patch.object(openrouter_client, "_get_settings") as mock_settings:
+            mock_settings.return_value.openrouter_api_key = "sk-or-test"
+            mock_settings.return_value.openrouter_base_url = "https://openrouter.ai/api/v1"
+
+            model = openrouter_client.build_chat_openai_via_openrouter("anthropic:claude-opus-4-6")
+
+            assert model.model_name == "anthropic/claude-opus-4-6"
+
+    def test_passes_already_prefixed(self):
+        with patch.object(openrouter_client, "_get_settings") as mock_settings:
+            mock_settings.return_value.openrouter_api_key = "sk-or-test"
+            mock_settings.return_value.openrouter_base_url = "https://openrouter.ai/api/v1"
+
+            model = openrouter_client.build_chat_openai_via_openrouter("anthropic/claude-opus-4-6")
+
+            assert model.model_name == "anthropic/claude-opus-4-6"
+
+    def test_raises_without_api_key(self):
+        with patch.object(openrouter_client, "_get_settings") as mock_settings:
+            mock_settings.return_value.openrouter_api_key = None
+
+            with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY is not set"):
+                openrouter_client.build_chat_openai_via_openrouter("anthropic/claude-opus-4-6")
+
+    def test_passes_kwargs_through(self):
+        with patch.object(openrouter_client, "_get_settings") as mock_settings:
+            mock_settings.return_value.openrouter_api_key = "sk-or-test"
+            mock_settings.return_value.openrouter_base_url = "https://openrouter.ai/api/v1"
+
+            model = openrouter_client.build_chat_openai_via_openrouter(
+                "anthropic/claude-opus-4-6", temperature=0.5,
+            )
+
+            assert model.temperature == 0.5

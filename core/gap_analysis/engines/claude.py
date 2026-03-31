@@ -149,6 +149,15 @@ class ClaudeEngine(SearchEngine):
             async with httpx.AsyncClient(timeout=90) as http_client:
                 data = await _do_request(http_client)
 
+        from core.shared_tools.cost_tracker import extract_usage_anthropic_http, track_llm_cost
+
+        _pt, _ct = extract_usage_anthropic_http(data)
+        track_llm_cost(
+            model=self.model, provider="anthropic", pipeline="gap_analysis",
+            pipeline_step="s3_claude_engine", prompt_tokens=_pt, completion_tokens=_ct,
+            call_site="core.gap_analysis.engines.claude",
+        )
+
         response_text, citations = _extract_claude_output_from_json(data)
         logger.info(
             "Claude search response for query %s: citations=%d",

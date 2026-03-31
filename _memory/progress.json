@@ -1,9 +1,9 @@
 {
-  "current_sprint": "redis-phase6-remove-fallbacks",
-  "last_updated": "2026-03-27",
-  "test_count": 1360,
+  "current_sprint": "openrouter-phase2",
+  "last_updated": "2026-03-30",
+  "test_count": 1865,
   "completed_sprints_summary": {
-    "total_tasks_completed": 40,
+    "total_tasks_completed": 41,
     "sprints": [
       {"sprint": "v3-async", "date": "2026-02-15", "summary": "Async pipeline conversion (12 tasks), Playwright CF bypass, content engine v1.0"},
       {"sprint": "v3-signals", "date": "2026-02-18", "summary": "Structural Signal Overhaul — S4 dual-soup, ~45 signals, GapContentBrief, 3-tier output"},
@@ -35,10 +35,70 @@
       {"sprint": "redis-codex-fixes-phase2", "date": "2026-03-27", "summary": "6 critical Redis bug fixes: checkpointer singleton race (retry on transient failure), close_redis() socket leak (error isolation), cache key mismatch (content invalidation never worked), stale cleanup clobber, semaphore renewal outside HITL (background renewal loop), _or_none exception broadening. 17 new tests."},
       {"sprint": "r2-blob-storage-phase3", "date": "2026-03-27", "summary": "R2 Blob Storage Redis Cache Layer — 4 changes: (3.1) Replace mtime sorting in json_site_audit_data with JSON timestamps, (3.2+3.4) CachedStorageBackend wrapper for read/list_dir Redis caching with write invalidation, (3.3) Fix brand_data_service ad-hoc LocalStorageBackend bypass. Pre-existing test_research_boundary.py broken import fixed. 25 new tests."},
       {"sprint": "r2-blob-storage-phase5", "date": "2026-03-27", "summary": "Phase 5 StorageBackend Migration — Reader-side services migrated from direct filesystem to StorageBackend. json_site_audit_data.py full refactor (7 sync helpers, list_dir replaces iterdir). content_data_service pipeline_state reads via StorageBackend. db_site_audit_data/db_content_data forward StorageBackend. prompt_library filesystem fallback replaced. All _resolve_storage() fallbacks now R2-aware via get_storage_backend() factory. DI wiring updated for site audit + prompt library. 447 tests verified across 9 affected suites."},
-      {"sprint": "redis-phase6-remove-fallbacks", "date": "2026-03-27", "summary": "Phase 6 Remove Filesystem Fallbacks — deleted JSON TaskStore (api/tasks/store.py), in-memory EventBus class, JsonAuthService (core/auth/json_service.py), MemorySaver fallback. DATABASE_URL + REDIS_URL now mandatory at startup. Exception classes relocated to api/tasks/exceptions.py. 12 routers + runner migrated EventBus→EventBusProtocol. 4 services migrated TaskStore→TaskStoreProtocol (fixed 2 core/→api/ violations). Test infra: InMemoryEventBus + TestAuthService in tests/_support/, conftest switched to DbTaskStore(mock) with asyncio proxy. ~66 tests deleted (JSON impl tests), ~30 test files updated. 1360 tests passing, ~1300 lines net removed."}
+      {"sprint": "redis-phase6-remove-fallbacks", "date": "2026-03-27", "summary": "Phase 6 Remove Filesystem Fallbacks — deleted JSON TaskStore (api/tasks/store.py), in-memory EventBus class, JsonAuthService (core/auth/json_service.py), MemorySaver fallback. DATABASE_URL + REDIS_URL now mandatory at startup. Exception classes relocated to api/tasks/exceptions.py. 12 routers + runner migrated EventBus→EventBusProtocol. 4 services migrated TaskStore→TaskStoreProtocol (fixed 2 core/→api/ violations). Test infra: InMemoryEventBus + TestAuthService in tests/_support/, conftest switched to DbTaskStore(mock) with asyncio proxy. ~66 tests deleted (JSON impl tests), ~30 test files updated. 1360 tests passing, ~1300 lines net removed."},
+      {"sprint": "openrouter-phase1", "date": "2026-03-29", "summary": "OpenRouter Phase 1 — Migrate LiteLLM + Perplexity SDK to OpenAI SDK pointed at OpenRouter for centralized cost tracking. 3 wrappers migrated: llm_call() (11 CE callers), _run_completion() (10+ TD callers), perplexity_client.research() (7 research callers), VSG-3 synthesis (1 caller). ~32 call sites total. New shared client factory (core/shared_tools/openrouter_client.py). Removed pause_turn continuation, typed OpenAI exceptions, citations via model_extra. VSG-1 excluded (Anthropic web_search tool). 386 tests passing, 18 files changed."},
+      {"sprint": "openrouter-phase2", "date": "2026-03-30", "summary": "OpenRouter Phase 2 — Migrate 4 direct SDK calls to OpenRouter. CE-0 planner (AsyncAnthropic→OpenRouter), AP-1 persona suggester (google.genai→OpenRouter), GA-S8 report (OpenAI responses.create→chat.completions.create), GA Perplexity engine (AsyncPerplexity→OpenRouter). _ensure_model_prefix() moved to shared module. 3 settings defaults prefixed. _get_gemini_api_key() removed. S3 singleton client safety (no exit-stack). Dual citation extraction for Perplexity. 8 source files + 3 test files modified. 1865 tests passing."}
     ]
   },
   "completed": [
+    {
+      "id": "T-openrouter-phase2",
+      "task": "OpenRouter Phase 2 — Migrate 4 direct SDK call sites from native SDKs to OpenRouter. 7 implementation steps: (0) Move _ensure_model_prefix() to core/shared_tools/openrouter_client.py with backward-compat alias. (1) GA-PPLX engine: AsyncPerplexity→get_async_client(), dual citation extraction (attr + model_extra), S3 singleton client (no exit-stack). (2) GA-S8 report: responses.create→chat.completions.create, remove AsyncOpenAI import. (3) CE-0 planner: AsyncAnthropic→get_async_client(), Anthropic content blocks→choices[0].message.content, usage field mapping (input_tokens→prompt_tokens). (4) AP-1 suggester: google.genai→get_async_client(), GenerateContentConfig→response_format json_object, remove _get_gemini_api_key(). (5) Settings: 3 defaults prefixed (anthropic/claude-opus-4-6, google/gemini-3-flash-preview, openai/gpt-5.2-2025-12-11). (6) Tests: MockAnthropicResponse→MockOpenRouterResponse, Gemini mock→OR mock, TestGetGeminiApiKey removed.",
+      "sprint": "openrouter-phase2",
+      "status": "done",
+      "completed_at": "2026-03-30",
+      "tests_added": 0,
+      "tests_updated": 15,
+      "tests_deleted": 4,
+      "files_created": [],
+      "files_modified": [
+        "core/shared_tools/openrouter_client.py",
+        "core/content_engine/llm_client.py",
+        "core/content_engine/planner.py",
+        "core/research/audience_persona/agents.py",
+        "core/gap_analysis/steps/s8_generate_report.py",
+        "core/gap_analysis/engines/perplexity.py",
+        "core/gap_analysis/steps/s3_search_platforms.py",
+        "core/config/settings.py",
+        "tests/content_engine/conftest.py",
+        "tests/gap_analysis/steps/test_s8_generate_report.py",
+        "tests/research/audience_persona/test_agents_ap.py"
+      ]
+    },
+    {
+      "id": "T-openrouter-phase1",
+      "task": "OpenRouter Phase 1 — Migrate 3 centralized LLM wrappers from LiteLLM + Perplexity SDK to OpenAI SDK pointed at OpenRouter. 10 implementation steps: (1) Add openrouter_api_key + openrouter_base_url settings. (2) Create core/shared_tools/openrouter_client.py (singleton AsyncOpenAI/OpenAI factory, max_retries=0). (3) Rewrite llm_call() in llm_client.py (litellm.acompletion → client.chat.completions.create, metadata via extra_body). (4) Rewrite _run_completion() in TD agents.py (remove pause_turn loop, litellm → OpenRouter). (5) Rewrite perplexity_client.py (Perplexity SDK → openai.OpenAI, typed exceptions, citations via model_extra). (6) Migrate VSG-3 voice synthesis (litellm → get_async_client). (7) Update 4 pipeline startup call sites (configure_litellm_callbacks → configure_openrouter). (8) Prefix Perplexity model strings (sonar-* → perplexity/sonar-*). (9) Verify perplexityai dep stays (GA engines still use AsyncPerplexity). (10) Update .env.example with OPENROUTER_API_KEY.",
+      "sprint": "openrouter-phase1",
+      "status": "done",
+      "completed_at": "2026-03-29",
+      "tests_added": 26,
+      "tests_updated": 30,
+      "files_created": [
+        "core/shared_tools/openrouter_client.py",
+        "tests/shared_tools/test_openrouter_client.py",
+        "tests/config/test_settings_openrouter.py"
+      ],
+      "files_modified": [
+        "core/config/settings.py",
+        "core/content_engine/llm_client.py",
+        "core/content_engine/pipeline_v13.py",
+        "core/topic_discovery/agents.py",
+        "core/topic_discovery/pipeline.py",
+        "core/research/tools/perplexity_client.py",
+        "core/research/voice_style_guide/agents.py",
+        "core/research/voice_style_guide/pipeline.py",
+        "scripts/run_td_rescore.py",
+        ".env.example",
+        "tests/content_engine/test_llm_client.py",
+        "tests/content_engine/test_pipeline_v13.py",
+        "tests/topic_discovery/test_agents_td.py",
+        "tests/topic_discovery/test_pipeline_td.py",
+        "tests/topic_discovery/test_expansion_pipeline_td.py",
+        "tests/research/tools/test_perplexity_client.py",
+        "tests/research/voice_style_guide/test_agents_vsg.py",
+        "tests/research/voice_style_guide/test_pipeline_vsg.py"
+      ]
+    },
     {
       "id": "T-redis-phase6-remove-fallbacks",
       "task": "Phase 6 Remove Filesystem Fallbacks — 12-step surgical removal: (1) Extract exceptions to api/tasks/exceptions.py. (2) Create tests/_support/ with InMemoryEventBus + TestAuthService. (3) Migrate EventBus→EventBusProtocol in 12 routers + runner. (4) Migrate TaskStore→TaskStoreProtocol in 4 services + app.py. (5) Rewrite tests/api/conftest.py: DbTaskStore(mock) + InMemoryEventBus + TestAuthService + asyncio proxy for sync tests. (6) Mass test import migration (~30 files). (7) Delete 4 JSON test files, rewrite lifespan/conformance tests. (8) Remove EventBus class from event_bus.py. (9) Remove DI fallbacks in app.py + dependencies.py (fail-fast RuntimeError). (10) Remove MemorySaver fallback from checkpointer.py. (11) Delete api/tasks/store.py + core/auth/json_service.py. (12) Final grep audit, docstring cleanup, script update.",

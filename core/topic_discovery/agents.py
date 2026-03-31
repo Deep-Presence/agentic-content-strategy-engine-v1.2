@@ -176,6 +176,24 @@ async def _run_completion(
         client.chat.completions.create(**completion_kwargs),
         timeout=timeout_s,
     )
+
+    # Cost tracking (never raises)
+    from core.shared_tools.cost_tracker import track_llm_cost
+
+    _meta = metadata or {}
+    _usage = getattr(response, "usage", None)
+    track_llm_cost(
+        model=model,
+        provider="openrouter",
+        pipeline=_meta.get("pipeline", ""),
+        pipeline_step=_meta.get("pipeline_step", ""),
+        prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(_usage, "completion_tokens", 0) or 0,
+        company_slug=_meta.get("company_slug", ""),
+        call_site="core.topic_discovery.agents",
+        source="openrouter",
+    )
+
     choice = response.choices[0]
     raw_text = _extract_text_content(choice.message.content)
     return response, raw_text

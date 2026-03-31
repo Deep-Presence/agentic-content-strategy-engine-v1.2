@@ -1,4 +1,4 @@
-"""Tests for Audience Persona agents — Suggester (Gemini) + Profile Generator (Perplexity).
+"""Tests for Audience Persona agents — Suggester (OpenRouter) + Profile Generator (Perplexity).
 
 TDD: tests written FIRST, implementation follows.
 """
@@ -25,7 +25,7 @@ from core.models.audience_persona import (
 
 _AGENTS_MOD = "core.research.audience_persona.agents"
 _PERPLEXITY_PATCH = f"{_AGENTS_MOD}.perplexity_client"
-_GENAI_PATCH = f"{_AGENTS_MOD}.genai"
+_OR_CLIENT_PATCH = f"{_AGENTS_MOD}.get_async_client"
 
 
 # ---------------------------------------------------------------------------
@@ -109,61 +109,28 @@ def _mock_tracing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(f"{_AGENTS_MOD}.log_generation", lambda *a, **kw: None)
 
 
-def _make_gemini_response(text: str = _VALID_BRIEFS_JSON) -> MagicMock:
-    """Build a mock google.genai GenerateContentResponse."""
+def _make_or_response(text: str = _VALID_BRIEFS_JSON) -> MagicMock:
+    """Build a mock OpenRouter chat.completions.create response."""
+    msg = MagicMock()
+    msg.content = text
+    choice = MagicMock()
+    choice.message = msg
     response = MagicMock()
-    response.text = text
+    response.choices = [choice]
     return response
 
 
-def _mock_gemini_client(monkeypatch: pytest.MonkeyPatch, response: MagicMock) -> MagicMock:
-    """Patch genai.Client to return a mock with given response."""
-    mock_aio_models = AsyncMock()
-    mock_aio_models.generate_content = AsyncMock(return_value=response)
-    mock_aio = MagicMock()
-    mock_aio.models = mock_aio_models
-    mock_client = MagicMock()
-    mock_client.aio = mock_aio
-    monkeypatch.setattr(f"{_GENAI_PATCH}.Client", MagicMock(return_value=mock_client))
+def _mock_or_client(monkeypatch: pytest.MonkeyPatch, response: MagicMock) -> MagicMock:
+    """Patch get_async_client to return a mock with given response."""
+    mock_client = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=response)
+    monkeypatch.setattr(_OR_CLIENT_PATCH, lambda: mock_client)
     return mock_client
 
 
 # ---------------------------------------------------------------------------
 # TestGetGeminiApiKey
 # ---------------------------------------------------------------------------
-
-
-class TestGetGeminiApiKey:
-    """API key resolution with fallback chain."""
-
-    def test_uses_primary_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from core.research.audience_persona.agents import _get_gemini_api_key
-
-        monkeypatch.setattr("core.config.settings.settings.google_api_key_audience_persona", "primary-key")
-        monkeypatch.setattr("core.config.settings.settings.google_api_key_persona_research_deepagent", "fallback-key")
-        assert _get_gemini_api_key() == "primary-key"
-
-    def test_falls_back_to_deepagent_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from core.research.audience_persona.agents import _get_gemini_api_key
-
-        monkeypatch.setattr("core.config.settings.settings.google_api_key_audience_persona", None)
-        monkeypatch.setattr("core.config.settings.settings.google_api_key_persona_research_deepagent", "fallback-key")
-        assert _get_gemini_api_key() == "fallback-key"
-
-    def test_raises_when_no_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from core.research.audience_persona.agents import _get_gemini_api_key
-
-        monkeypatch.setattr("core.config.settings.settings.google_api_key_audience_persona", None)
-        monkeypatch.setattr("core.config.settings.settings.google_api_key_persona_research_deepagent", None)
-        with pytest.raises(RuntimeError, match="GOOGLE_API_KEY"):
-            _get_gemini_api_key()
-
-    def test_primary_takes_precedence(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from core.research.audience_persona.agents import _get_gemini_api_key
-
-        monkeypatch.setattr("core.config.settings.settings.google_api_key_audience_persona", "primary")
-        monkeypatch.setattr("core.config.settings.settings.google_api_key_persona_research_deepagent", "fallback")
-        assert _get_gemini_api_key() == "primary"
 
 
 # ---------------------------------------------------------------------------
@@ -414,13 +381,7 @@ class TestLoadKnowledgeDocs:
 
 
 class TestRunPersonaSuggester:
-    """Agent 1 — Gemini Flash persona brief generation."""
-
-    @pytest.fixture(autouse=True)
-    def _mock_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "core.config.settings.settings.google_api_key_audience_persona", "test-key"
-        )
+    """Agent 1 — Persona brief generation via OpenRouter."""
 
     @pytest.mark.asyncio
     async def test_success_returns_briefs(
@@ -428,7 +389,7 @@ class TestRunPersonaSuggester:
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        _mock_gemini_client(monkeypatch, _make_gemini_response(_VALID_BRIEFS_JSON))
+        _mock_or_client(monkeypatch, _make_or_response(_VALID_BRIEFS_JSON))
         briefs, elapsed = await run_persona_suggester(
             ap_input, "company context", "customer reviews", timeout_s=10,
         )
@@ -441,24 +402,25 @@ class TestRunPersonaSuggester:
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        _mock_gemini_client(monkeypatch, _make_gemini_response(_VALID_BRIEFS_JSON))
+        _mock_or_client(monkeypatch, _make_or_response(_VALID_BRIEFS_JSON))
         briefs, _ = await run_persona_suggester(
             ap_input, "ctx", "reviews", timeout_s=10,
         )
         assert len(briefs) == len(_VALID_BRIEFS_RAW)
 
     @pytest.mark.asyncio
-    async def test_system_prompt_passed_as_config(
+    async def test_system_prompt_in_messages(
         self, ap_input: AudiencePersonaInput, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        mock_client = _mock_gemini_client(monkeypatch, _make_gemini_response(_VALID_BRIEFS_JSON))
+        mock_client = _mock_or_client(monkeypatch, _make_or_response(_VALID_BRIEFS_JSON))
         await run_persona_suggester(ap_input, "ctx", "reviews", timeout_s=10)
-        call_kwargs = mock_client.aio.models.generate_content.call_args
-        config = call_kwargs.kwargs.get("config") or call_kwargs[1].get("config")
-        assert config is not None
-        assert config.system_instruction is not None
+        call_kwargs = mock_client.chat.completions.create.call_args
+        messages = call_kwargs.kwargs.get("messages")
+        assert messages is not None
+        assert messages[0]["role"] == "system"
+        assert len(messages[0]["content"]) > 0
 
     @pytest.mark.asyncio
     async def test_json_mode_enabled(
@@ -466,11 +428,11 @@ class TestRunPersonaSuggester:
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        mock_client = _mock_gemini_client(monkeypatch, _make_gemini_response(_VALID_BRIEFS_JSON))
+        mock_client = _mock_or_client(monkeypatch, _make_or_response(_VALID_BRIEFS_JSON))
         await run_persona_suggester(ap_input, "ctx", "reviews", timeout_s=10)
-        call_kwargs = mock_client.aio.models.generate_content.call_args
-        config = call_kwargs.kwargs.get("config") or call_kwargs[1].get("config")
-        assert config.response_mime_type == "application/json"
+        call_kwargs = mock_client.chat.completions.create.call_args
+        rf = call_kwargs.kwargs.get("response_format")
+        assert rf == {"type": "json_object"}
 
     @pytest.mark.asyncio
     async def test_uses_correct_model(
@@ -478,10 +440,10 @@ class TestRunPersonaSuggester:
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        mock_client = _mock_gemini_client(monkeypatch, _make_gemini_response(_VALID_BRIEFS_JSON))
+        mock_client = _mock_or_client(monkeypatch, _make_or_response(_VALID_BRIEFS_JSON))
         await run_persona_suggester(ap_input, "ctx", "reviews", timeout_s=10)
-        call_kwargs = mock_client.aio.models.generate_content.call_args
-        model_arg = call_kwargs.kwargs.get("model") or call_kwargs[0][0]
+        call_kwargs = mock_client.chat.completions.create.call_args
+        model_arg = call_kwargs.kwargs.get("model")
         assert "gemini" in model_arg.lower()
 
     @pytest.mark.asyncio
@@ -490,7 +452,7 @@ class TestRunPersonaSuggester:
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        _mock_gemini_client(monkeypatch, _make_gemini_response(_VALID_BRIEFS_JSON))
+        _mock_or_client(monkeypatch, _make_or_response(_VALID_BRIEFS_JSON))
         with patch(f"{_AGENTS_MOD}.asyncio.wait_for", side_effect=asyncio.TimeoutError):
             briefs, elapsed = await run_persona_suggester(
                 ap_input, "ctx", "reviews", timeout_s=0.01,
@@ -504,9 +466,8 @@ class TestRunPersonaSuggester:
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        mock_response = _make_gemini_response(_VALID_BRIEFS_JSON)
-        mock_client = _mock_gemini_client(monkeypatch, mock_response)
-        mock_client.aio.models.generate_content = AsyncMock(
+        mock_client = _mock_or_client(monkeypatch, _make_or_response(_VALID_BRIEFS_JSON))
+        mock_client.chat.completions.create = AsyncMock(
             side_effect=RuntimeError("API quota exceeded"),
         )
         briefs, elapsed = await run_persona_suggester(
@@ -521,20 +482,16 @@ class TestRunPersonaSuggester:
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        bad_resp = _make_gemini_response("not valid json at all")
-        good_resp = _make_gemini_response(_VALID_BRIEFS_JSON)
+        bad_resp = _make_or_response("not valid json at all")
+        good_resp = _make_or_response(_VALID_BRIEFS_JSON)
 
-        mock_aio_models = AsyncMock()
-        mock_aio_models.generate_content = AsyncMock(side_effect=[bad_resp, good_resp])
-        mock_aio = MagicMock()
-        mock_aio.models = mock_aio_models
-        mock_client = MagicMock()
-        mock_client.aio = mock_aio
-        monkeypatch.setattr(f"{_GENAI_PATCH}.Client", MagicMock(return_value=mock_client))
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=[bad_resp, good_resp])
+        monkeypatch.setattr(_OR_CLIENT_PATCH, lambda: mock_client)
 
         briefs, _ = await run_persona_suggester(ap_input, "ctx", "reviews", timeout_s=10)
         assert len(briefs) >= 3
-        assert mock_aio_models.generate_content.call_count == 2
+        assert mock_client.chat.completions.create.call_count == 2
 
     @pytest.mark.asyncio
     async def test_too_few_briefs_triggers_retry(
@@ -542,20 +499,15 @@ class TestRunPersonaSuggester:
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        # First response: only 2 briefs (below _MIN_BRIEFS=3)
         two_briefs = json.dumps(_VALID_BRIEFS_RAW[:2])
         three_briefs = _VALID_BRIEFS_JSON
 
-        bad_resp = _make_gemini_response(two_briefs)
-        good_resp = _make_gemini_response(three_briefs)
+        bad_resp = _make_or_response(two_briefs)
+        good_resp = _make_or_response(three_briefs)
 
-        mock_aio_models = AsyncMock()
-        mock_aio_models.generate_content = AsyncMock(side_effect=[bad_resp, good_resp])
-        mock_aio = MagicMock()
-        mock_aio.models = mock_aio_models
-        mock_client = MagicMock()
-        mock_client.aio = mock_aio
-        monkeypatch.setattr(f"{_GENAI_PATCH}.Client", MagicMock(return_value=mock_client))
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=[bad_resp, good_resp])
+        monkeypatch.setattr(_OR_CLIENT_PATCH, lambda: mock_client)
 
         briefs, _ = await run_persona_suggester(ap_input, "ctx", "reviews", timeout_s=10)
         assert len(briefs) >= 3
@@ -567,28 +519,26 @@ class TestRunPersonaSuggester:
         from core.research.audience_persona.agents import run_persona_suggester
 
         two_briefs = json.dumps(_VALID_BRIEFS_RAW[:2])
-        bad1 = _make_gemini_response(two_briefs)
-        bad2 = _make_gemini_response(two_briefs)
+        bad1 = _make_or_response(two_briefs)
+        bad2 = _make_or_response(two_briefs)
 
-        mock_aio_models = AsyncMock()
-        mock_aio_models.generate_content = AsyncMock(side_effect=[bad1, bad2])
-        mock_aio = MagicMock()
-        mock_aio.models = mock_aio_models
-        mock_client = MagicMock()
-        mock_client.aio = mock_aio
-        monkeypatch.setattr(f"{_GENAI_PATCH}.Client", MagicMock(return_value=mock_client))
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=[bad1, bad2])
+        monkeypatch.setattr(_OR_CLIENT_PATCH, lambda: mock_client)
 
         briefs, _ = await run_persona_suggester(ap_input, "ctx", "reviews", timeout_s=10)
         assert len(briefs) == 2  # Partial results returned
 
     @pytest.mark.asyncio
-    async def test_missing_api_key_returns_empty(
+    async def test_missing_openrouter_key_returns_empty(
         self, ap_input: AudiencePersonaInput, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        monkeypatch.setattr("core.config.settings.settings.google_api_key_audience_persona", None)
-        monkeypatch.setattr("core.config.settings.settings.google_api_key_persona_research_deepagent", None)
+        monkeypatch.setattr(
+            _OR_CLIENT_PATCH,
+            MagicMock(side_effect=RuntimeError("OPENROUTER_API_KEY is not set")),
+        )
         briefs, elapsed = await run_persona_suggester(
             ap_input, "ctx", "reviews", timeout_s=10,
         )
@@ -601,12 +551,12 @@ class TestRunPersonaSuggester:
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        mock_client = _mock_gemini_client(monkeypatch, _make_gemini_response(_VALID_BRIEFS_JSON))
+        mock_client = _mock_or_client(monkeypatch, _make_or_response(_VALID_BRIEFS_JSON))
         await run_persona_suggester(ap_input, "ctx", "reviews", timeout_s=10)
-        call_kwargs = mock_client.aio.models.generate_content.call_args
-        config = call_kwargs.kwargs.get("config") or call_kwargs[1].get("config")
+        call_kwargs = mock_client.chat.completions.create.call_args
+        messages = call_kwargs.kwargs.get("messages")
         # System prompt should have max_personas resolved (no {max_personas} placeholder)
-        assert "{max_personas}" not in config.system_instruction
+        assert "{max_personas}" not in messages[0]["content"]
 
     @pytest.mark.asyncio
     async def test_strips_code_fences_from_response(
@@ -615,7 +565,7 @@ class TestRunPersonaSuggester:
         from core.research.audience_persona.agents import run_persona_suggester
 
         fenced = f"```json\n{_VALID_BRIEFS_JSON}\n```"
-        _mock_gemini_client(monkeypatch, _make_gemini_response(fenced))
+        _mock_or_client(monkeypatch, _make_or_response(fenced))
         briefs, _ = await run_persona_suggester(ap_input, "ctx", "reviews", timeout_s=10)
         assert len(briefs) == 3
 
@@ -625,7 +575,7 @@ class TestRunPersonaSuggester:
     ) -> None:
         from core.research.audience_persona.agents import run_persona_suggester
 
-        _mock_gemini_client(monkeypatch, _make_gemini_response(_VALID_BRIEFS_JSON))
+        _mock_or_client(monkeypatch, _make_or_response(_VALID_BRIEFS_JSON))
         _, elapsed = await run_persona_suggester(ap_input, "ctx", "reviews", timeout_s=10)
         assert elapsed > 0
 
@@ -836,3 +786,37 @@ class TestRunPersonaProfileGenerator:
             sample_brief, ap_input, "ctx", "reviews", timeout_s=10,
         )
         assert result.execution_time_s > 0
+
+
+# ---------------------------------------------------------------------------
+# Cost tracking tests
+# ---------------------------------------------------------------------------
+
+
+class TestPersonaSuggesterCostTracking:
+    """Verify track_llm_cost() is called inside run_persona_suggester()."""
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_on_initial_call(
+        self,
+        ap_input: AudiencePersonaInput,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from core.research.audience_persona.agents import run_persona_suggester
+
+        resp = _make_or_response(_VALID_BRIEFS_JSON)
+        resp.usage = MagicMock(prompt_tokens=50, completion_tokens=100)
+        _mock_or_client(monkeypatch, resp)
+
+        with patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            await run_persona_suggester(ap_input, "company ctx", "reviews", timeout_s=10)
+
+        # At least the initial call should be tracked
+        assert mock_track.call_count >= 1
+        kw = mock_track.call_args_list[0][1]
+        assert kw["pipeline"] == "audience_persona"
+        assert kw["pipeline_step"] == "persona_suggester"
+        assert kw["provider"] == "openrouter"
+        assert kw["source"] == "openrouter"
+        assert kw["prompt_tokens"] == 50
+        assert kw["completion_tokens"] == 100

@@ -207,6 +207,9 @@ class TestSearch:
                 include_answer=True,
                 timeout_s=300.0,
                 model=None,
+                pipeline="",
+                pipeline_step="",
+                company_slug="",
             )
             assert result == "result"
 
@@ -221,4 +224,101 @@ class TestSearch:
                 include_answer=True,
                 timeout_s=300.0,
                 model=None,
+                pipeline="",
+                pipeline_step="",
+                company_slug="",
             )
+
+
+# ---------------------------------------------------------------------------
+# Cost tracking tests
+# ---------------------------------------------------------------------------
+
+class TestResearchCostTracking:
+    """Verify track_llm_cost() is called inside research()."""
+
+    def _make_completion(self, content="Answer", prompt_tokens=100, completion_tokens=200):
+        msg = MagicMock()
+        msg.content = content
+        choice = MagicMock()
+        choice.message = msg
+        completion = MagicMock()
+        completion.choices = [choice]
+        completion.citations = None
+        completion.model_extra = {}
+        completion.usage = MagicMock(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+        return completion
+
+    def test_cost_tracked_on_success(self):
+        completion = self._make_completion(prompt_tokens=100, completion_tokens=200)
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = completion
+
+        with patch.object(perplexity_client, "_client", return_value=mock_client), \
+             patch.object(perplexity_client, "settings") as ms, \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            ms.perplexity_deep_research_model = "sonar-deep-research"
+            perplexity_client.research("test query")
+
+        mock_track.assert_called_once()
+        kw = mock_track.call_args[1]
+        assert kw["model"] == "perplexity/sonar-deep-research"
+        assert kw["provider"] == "openrouter"
+        assert kw["prompt_tokens"] == 100
+        assert kw["completion_tokens"] == 200
+        assert kw["source"] == "openrouter"
+        assert kw["call_site"] == "core.research.tools.perplexity_client"
+
+    def test_cost_tracked_with_pipeline_params(self):
+        completion = self._make_completion()
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = completion
+
+        with patch.object(perplexity_client, "_client", return_value=mock_client), \
+             patch.object(perplexity_client, "settings") as ms, \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            ms.perplexity_deep_research_model = "sonar-deep-research"
+            perplexity_client.research(
+                "test query",
+                pipeline="knowledge_base",
+                pipeline_step="kb1_overview",
+                company_slug="test-co",
+            )
+
+        kw = mock_track.call_args[1]
+        assert kw["pipeline"] == "knowledge_base"
+        assert kw["pipeline_step"] == "kb1_overview"
+        assert kw["company_slug"] == "test-co"
+
+    def test_cost_tracked_with_missing_usage(self):
+        completion = self._make_completion()
+        completion.usage = None
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = completion
+
+        with patch.object(perplexity_client, "_client", return_value=mock_client), \
+             patch.object(perplexity_client, "settings") as ms, \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            ms.perplexity_deep_research_model = "sonar-test"
+            perplexity_client.research("q")
+
+        kw = mock_track.call_args[1]
+        assert kw["prompt_tokens"] == 0
+        assert kw["completion_tokens"] == 0
+
+    def test_cost_not_tracked_on_api_error(self):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = openai.AuthenticationError(
+            message="Invalid API key",
+            response=MagicMock(status_code=401),
+            body=None,
+        )
+
+        with patch.object(perplexity_client, "_client", return_value=mock_client), \
+             patch.object(perplexity_client, "settings") as ms, \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            ms.perplexity_deep_research_model = "sonar-test"
+            with pytest.raises(RuntimeError):
+                perplexity_client.research("q")
+
+        mock_track.assert_not_called()
