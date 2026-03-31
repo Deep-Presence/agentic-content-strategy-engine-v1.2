@@ -211,6 +211,7 @@ async def _run_engine_batch(
     queries: List[GeneratedQuery],
     engine_limit: int,
     global_sem: asyncio.Semaphore,
+    trace_span: Optional[Any] = None,
 ) -> List[PlatformResult]:
     """Run all queries for a single engine with per-engine + global throttling.
 
@@ -274,6 +275,28 @@ async def _run_engine_batch(
         else:
             total_citations += len(result.citations)
             cb.record_success()
+            # LangSmith tracing — log per-query engine call
+            if trace_span and (result.prompt_tokens or result.completion_tokens):
+                from core.shared_tools.tracing import log_generation
+
+                log_generation(
+                    trace_span,
+                    f"s3-{engine.engine_name}/{query.query_id}",
+                    getattr(engine, "model", "") or "",
+                    query.query_text[:2000] if query.query_text else "",
+                    (result.response_text or "")[:2000],
+                    metadata={
+                        "pipeline": "gap_analysis",
+                        "pipeline_step": f"s3_{engine.engine_name}",
+                        "provider": engine.engine_name,
+                        "model": getattr(engine, "model", "") or "",
+                    },
+                    usage={
+                        "prompt_tokens": result.prompt_tokens,
+                        "completion_tokens": result.completion_tokens,
+                        "total_tokens": result.prompt_tokens + result.completion_tokens,
+                    },
+                )
 
         # Log progress every 10% or every 25 queries, whichever is smaller
         interval = max(1, min(total // 10, 25))
@@ -382,6 +405,7 @@ async def search_platforms(
             queries,
             engine_limits.get(engine.engine_name, concurrency),
             global_sem,
+            trace_span=trace_span,
         )
         for engine in engines
     ]

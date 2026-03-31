@@ -1,9 +1,12 @@
-"""Cost tracking for non-OpenRouter LLM calls.
+"""Cost tracking for LLM calls — structured logging + fire-and-forget DB persistence.
 
-Emits structured log events with token usage and estimated cost for native
-API call sites that cannot be routed through OpenRouter (web search, grounding,
-reasoning APIs, LangGraph agents).  Events use the ``llm_cost`` logger and are
-wired through the structlog stdlib bridge for consistent JSON output.
+Emits structured log events with token usage and estimated cost.  Events use
+the ``llm_cost`` logger and are wired through the structlog stdlib bridge for
+consistent JSON output.
+
+When a DATABASE_URL is configured and an asyncio event loop is running, each
+event is also persisted to the ``llm_cost_events`` table via a fire-and-forget
+``asyncio.create_task``.  DB writes never block or fail the caller.
 
 Usage::
 
@@ -16,11 +19,14 @@ Usage::
         prompt_tokens=pt, completion_tokens=ct,
     )
 
-Last updated: 2026-03-30
+Last updated: 2026-04-01
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import uuid as _uuid
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger("llm_cost")
@@ -106,12 +112,16 @@ def track_llm_cost(
     call_site: str = "",
     extra: dict[str, Any] | None = None,
     source: str = "native",
+    run_id: str | None = None,
 ) -> None:
     """Emit a structured log event with cost data.  **Never raises.**
 
     The event is logged at INFO level on the ``llm_cost`` logger (wired
     through the structlog stdlib bridge).  All fields are attached as
     ``extra`` so they appear as top-level keys in JSON output.
+
+    When a DB is available and an asyncio loop is running, also persists
+    the event to ``llm_cost_events`` via fire-and-forget ``create_task``.
     """
     try:
         cost = estimate_cost(
@@ -133,12 +143,92 @@ def track_llm_cost(
             "call_site": call_site,
             "source": source,
         }
+        if run_id:
+            fields["run_id"] = run_id
         if extra:
             fields.update(extra)
         logger.info("llm_cost_tracked", extra=fields)
+
+        # Fire-and-forget DB persistence
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_persist_cost_event(
+                model=model,
+                provider=provider,
+                pipeline=pipeline,
+                pipeline_step=pipeline_step,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                estimated_cost_usd=cost,
+                company_slug=company_slug,
+                call_site=call_site,
+                source=source,
+                run_id=run_id,
+                extra_json=extra,
+            ))
+        except RuntimeError:
+            pass  # no running event loop — log-only, skip DB
     except Exception:  # noqa: BLE001 — must never propagate
         try:
             logger.warning("track_llm_cost failed silently", exc_info=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Fire-and-forget DB persistence (own session, never raises)
+# ---------------------------------------------------------------------------
+
+
+async def _persist_cost_event(
+    *,
+    model: str,
+    provider: str,
+    pipeline: str,
+    pipeline_step: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    estimated_cost_usd: float,
+    company_slug: str,
+    call_site: str,
+    source: str,
+    run_id: str | None,
+    extra_json: dict[str, Any] | None,
+) -> None:
+    """Persist a cost event to the DB.  Never raises — catches all errors."""
+    try:
+        from core.db.engine import get_session_factory
+
+        factory = get_session_factory()
+    except Exception:  # noqa: BLE001
+        return  # No DB configured — silently skip
+
+    try:
+        from core.db.models.cost import LLMCostEventModel
+
+        parsed_run_id = _uuid.UUID(run_id) if run_id else None
+
+        async with factory() as session:
+            event = LLMCostEventModel(
+                event_time=datetime.now(timezone.utc),
+                model=model,
+                provider=provider,
+                pipeline=pipeline,
+                pipeline_step=pipeline_step,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                estimated_cost_usd=estimated_cost_usd,
+                company_slug=company_slug,
+                call_site=call_site,
+                source=source,
+                run_id=parsed_run_id,
+                extra_json=extra_json,
+            )
+            session.add(event)
+            await session.commit()
+    except Exception:  # noqa: BLE001
+        try:
+            logger.warning("cost_event_db_write_failed", exc_info=True)
         except Exception:  # noqa: BLE001
             pass
 

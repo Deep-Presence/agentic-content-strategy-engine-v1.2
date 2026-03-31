@@ -137,8 +137,8 @@ class Settings(BaseSettings):
         '{"pillar_page": 3, "comparison": 3, "long_blog": 2, "how_to": 2, "short_faq": 1}'
     )
 
-    # --- Content Engine v1.3 — LiteLLM model identifiers ---
-    # Provider-prefixed strings for LiteLLM routing
+    # --- Content Engine v1.3 — OpenRouter model identifiers ---
+    # Provider-prefixed strings for OpenRouter routing
     content_engine_v13_planner_model: str =  "anthropic/claude-sonnet-4-6"
     content_engine_v13_brief_builder_model: str = "anthropic/claude-sonnet-4-6"
     content_engine_v13_worker_model: str = "anthropic/claude-sonnet-4-6"

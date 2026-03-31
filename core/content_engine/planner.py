@@ -177,8 +177,9 @@ async def plan_content(
         },
         model_parameters={"max_tokens": 16384},
         usage={
-            "input": in_tokens,
-            "output": out_tokens,
+            "prompt_tokens": in_tokens,
+            "completion_tokens": out_tokens,
+            "total_tokens": in_tokens + out_tokens,
         },
     )
     log_score(trace, "briefs_generated", len(planner_output.briefs))

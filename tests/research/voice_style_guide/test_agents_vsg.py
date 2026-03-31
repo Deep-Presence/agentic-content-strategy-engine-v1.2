@@ -517,7 +517,7 @@ class TestAuthorResearch:
 
         with patch(
             "core.research.voice_style_guide.agents.perplexity_client.research",
-            return_value=mock_md,
+            return_value=(mock_md, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}),
         ):
             result = await asyncio.wait_for(
                 _import_and_run_research(author_brief, vsg_input, company_context_md, "Persona summaries"),

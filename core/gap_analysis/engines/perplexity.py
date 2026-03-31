@@ -32,13 +32,15 @@ class PerplexityEngine(SearchEngine):
         from core.shared_tools.cost_tracker import track_llm_cost
 
         _usage = getattr(completion, "usage", None)
+        _pt = getattr(_usage, "prompt_tokens", 0) or 0
+        _ct = getattr(_usage, "completion_tokens", 0) or 0
         track_llm_cost(
             model=self.model,
             provider="openrouter",
             pipeline="gap_analysis",
             pipeline_step="s3_perplexity_engine",
-            prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
-            completion_tokens=getattr(_usage, "completion_tokens", 0) or 0,
+            prompt_tokens=_pt,
+            completion_tokens=_ct,
             call_site="core.gap_analysis.engines.perplexity",
             source="openrouter",
         )
@@ -69,4 +71,6 @@ class PerplexityEngine(SearchEngine):
             query_text=query_text,
             response_text=response_text,
             citations=citation_refs,
+            prompt_tokens=_pt,
+            completion_tokens=_ct,
         )

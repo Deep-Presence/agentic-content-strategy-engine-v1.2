@@ -209,6 +209,8 @@ class PlatformResult(BaseModel):
     query_text: Optional[str] = None
     response_text: Optional[str] = None
     citations: List[CitationRef] = Field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class StructuralSignals(BaseModel):

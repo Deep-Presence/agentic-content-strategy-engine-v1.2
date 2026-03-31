@@ -585,7 +585,7 @@ async def run_source_c_deep_research(
         )
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        raw_text: str = await asyncio.wait_for(
+        raw_text, _pplx_usage = await asyncio.wait_for(
             asyncio.to_thread(
                 perplexity_client.research,
                 query=full_prompt,
@@ -603,7 +603,7 @@ async def run_source_c_deep_research(
             "company_slug": company_slug,
         }
         log_generation(span, "deep-research", model, full_prompt[:2000], raw_text[:2000],
-                       metadata=_meta_c)
+                       metadata=_meta_c, usage=_pplx_usage)
 
         # Strip Perplexity citations section before JSON parsing
         if "\n\nSources:\n" in raw_text:

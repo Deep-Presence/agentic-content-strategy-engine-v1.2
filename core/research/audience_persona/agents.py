@@ -356,7 +356,7 @@ async def run_persona_profile_generator(
         )
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        result_md = await asyncio.wait_for(
+        result_md, _pplx_usage = await asyncio.wait_for(
             asyncio.to_thread(
                 perplexity_client.research,
                 query=full_prompt,
@@ -376,6 +376,7 @@ async def run_persona_profile_generator(
                 "model": settings.audience_persona_generator_model,
                 "company_slug": input_data.company_slug or "",
             },
+            usage=_pplx_usage,
         )
         end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
 

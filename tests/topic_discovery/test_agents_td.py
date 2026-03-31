@@ -678,7 +678,7 @@ class TestSourceCDeepResearch:
         with patch(
             "core.research.tools.perplexity_client"
         ) as mock_pplx:
-            mock_pplx.research = MagicMock(return_value=response_json)
+            mock_pplx.research = MagicMock(return_value=(response_json, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
             result = await run_source_c_deep_research(
                 "Ramp is a fintech company", "Competitor data", "fintech",
                 timeout_s=10.0,
@@ -735,7 +735,7 @@ class TestSourceCDeepResearch:
         with patch(
             "core.research.tools.perplexity_client"
         ) as mock_pplx:
-            mock_pplx.research = MagicMock(return_value=raw_with_citations)
+            mock_pplx.research = MagicMock(return_value=(raw_with_citations, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
             result = await run_source_c_deep_research(
                 "Company context", "", "cybersecurity", timeout_s=10.0,
             )

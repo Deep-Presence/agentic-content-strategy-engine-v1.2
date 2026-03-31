@@ -59,7 +59,7 @@ class TestRunCompanyOverviewAgent:
         from core.research.knowledge_base.agents import run_company_overview_agent
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value="# Company Overview\n\nGreat content.")
+        mock_client.research = MagicMock(return_value=("# Company Overview\n\nGreat content.", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_company_overview_agent(kb_input, timeout_s=10)
@@ -104,7 +104,7 @@ class TestRunCompanyOverviewAgent:
         from core.research.knowledge_base.agents import run_company_overview_agent
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value="")
+        mock_client.research = MagicMock(return_value=("", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_company_overview_agent(kb_input, timeout_s=10)
@@ -125,7 +125,7 @@ class TestRunCustomerReviewsAgent:
         from core.research.knowledge_base.agents import run_customer_reviews_agent
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value="# Reviews\n\nPositive feedback.")
+        mock_client.research = MagicMock(return_value=("# Reviews\n\nPositive feedback.", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_customer_reviews_agent(kb_input, timeout_s=10)
@@ -158,7 +158,7 @@ class TestRunCompetitorScannerAgent:
         from core.research.knowledge_base.agents import run_competitor_scanner_agent
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value="# Competitors\n\n- Rival Inc")
+        mock_client.research = MagicMock(return_value=("# Competitors\n\n- Rival Inc", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_competitor_scanner_agent(
@@ -173,9 +173,9 @@ class TestRunCompetitorScannerAgent:
 
         captured_query = {}
 
-        def _capture(query: str, **kw: Any) -> str:
+        def _capture(query: str, **kw: Any):
             captured_query["q"] = query
-            return "# Result"
+            return ("# Result", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
         mock_client = MagicMock()
         mock_client.research = MagicMock(side_effect=_capture)
@@ -211,7 +211,7 @@ class TestRunWeaknessAnalystAgent:
         from core.research.knowledge_base.agents import run_weakness_analyst_agent
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value="# Weaknesses\n\nRival has gaps.")
+        mock_client.research = MagicMock(return_value=("# Weaknesses\n\nRival has gaps.", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_weakness_analyst_agent(
@@ -226,9 +226,9 @@ class TestRunWeaknessAnalystAgent:
 
         captured_query = {}
 
-        def _capture(query: str, **kw: Any) -> str:
+        def _capture(query: str, **kw: Any):
             captured_query["q"] = query
-            return "# Result"
+            return ("# Result", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
         mock_client = MagicMock()
         mock_client.research = MagicMock(side_effect=_capture)
@@ -645,9 +645,9 @@ class TestRevisionNotePassThrough:
 
         captured_query = {}
 
-        def _capture(query: str, **kw: Any) -> str:
+        def _capture(query: str, **kw: Any):
             captured_query["q"] = query
-            return "# Result"
+            return ("# Result", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
         mock_client = MagicMock()
         mock_client.research = MagicMock(side_effect=_capture)
@@ -880,9 +880,9 @@ class TestPerplexityTimeoutForwarded:
 
         captured_kwargs: Dict[str, Any] = {}
 
-        def _capture(**kw: Any) -> str:
+        def _capture(**kw: Any):
             captured_kwargs.update(kw)
-            return "# Result"
+            return ("# Result", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
         mock_client = MagicMock()
         mock_client.research = MagicMock(side_effect=_capture)

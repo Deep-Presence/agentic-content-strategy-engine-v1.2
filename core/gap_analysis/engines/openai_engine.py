@@ -108,4 +108,6 @@ class OpenAIEngine(SearchEngine):
             query_text=query_text,
             response_text=response_text,
             citations=citation_refs,
+            prompt_tokens=_pt,
+            completion_tokens=_ct,
         )

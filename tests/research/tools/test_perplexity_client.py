@@ -63,12 +63,14 @@ class TestResearch:
         with patch.object(perplexity_client, "_client", return_value=mock_client), \
              patch.object(perplexity_client, "settings") as ms:
             ms.perplexity_deep_research_model = "sonar-test"
-            result = perplexity_client.research("test query")
+            result, usage = perplexity_client.research("test query")
 
         assert "Answer text" in result
         assert "Sources:" in result
         assert "[1] https://url1.com" in result
         assert "[2] https://url2.com" in result
+        assert isinstance(usage, dict)
+        assert "prompt_tokens" in usage
 
     def test_returns_content_without_citations(self):
         completion = self._make_completion(content="Just an answer", citations=None)
@@ -94,7 +96,7 @@ class TestResearch:
         with patch.object(perplexity_client, "_client", return_value=mock_client), \
              patch.object(perplexity_client, "settings") as ms:
             ms.perplexity_deep_research_model = "sonar-test"
-            result = perplexity_client.research("q")
+            result, usage = perplexity_client.research("q")
 
         assert result == ""
 
@@ -152,7 +154,7 @@ class TestResearch:
         with patch.object(perplexity_client, "_client", return_value=mock_client), \
              patch.object(perplexity_client, "settings") as ms:
             ms.perplexity_deep_research_model = "sonar-test"
-            result = perplexity_client.research("q")
+            result, usage = perplexity_client.research("q")
 
         assert result == ""
 
@@ -172,7 +174,7 @@ class TestResearch:
         with patch.object(perplexity_client, "_client", return_value=mock_client), \
              patch.object(perplexity_client, "settings") as ms:
             ms.perplexity_deep_research_model = "sonar-test"
-            result = perplexity_client.research("q")
+            result, usage = perplexity_client.research("q")
 
         assert "[1] https://source.com" in result
 
@@ -197,8 +199,9 @@ class TestResearch:
 
 class TestSearch:
     def test_delegates_to_research(self):
-        with patch.object(perplexity_client, "research", return_value="result") as mock_research:
-            result = perplexity_client.search("test query")
+        _rv = ("result", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+        with patch.object(perplexity_client, "research", return_value=_rv) as mock_research:
+            result, usage = perplexity_client.search("test query")
             mock_research.assert_called_once_with(
                 query="test query",
                 max_results=8,
@@ -214,7 +217,8 @@ class TestSearch:
             assert result == "result"
 
     def test_passes_kwargs_through(self):
-        with patch.object(perplexity_client, "research", return_value="r") as mock_research:
+        _rv = ("r", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+        with patch.object(perplexity_client, "research", return_value=_rv) as mock_research:
             perplexity_client.search("q", max_results=5, search_depth="basic")
             mock_research.assert_called_once_with(
                 query="q",

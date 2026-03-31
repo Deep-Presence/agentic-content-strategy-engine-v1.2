@@ -123,7 +123,7 @@ async def _run_perplexity_agent(
     )
     start = time.time()
     try:
-        result_md = await asyncio.wait_for(
+        result_md, _pplx_usage = await asyncio.wait_for(
             asyncio.to_thread(
                 perplexity_client.research, query=full_prompt, timeout_s=timeout_s,
                 model=model,
@@ -145,6 +145,7 @@ async def _run_perplexity_agent(
             full_prompt[:2000],
             result_md[:2000] if result_md else "",
             metadata=_kb_meta,
+            usage=_pplx_usage,
         )
         end_span(span, output={"word_count": len(result_md.split()) if result_md else 0})
         return KBAgentResult(

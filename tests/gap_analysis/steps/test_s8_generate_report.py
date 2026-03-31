@@ -42,9 +42,10 @@ class TestAsyncCallOpenAI:
             return_value=mock_client_instance,
         ):
             from core.gap_analysis.steps.s8_generate_report import _call_openai
-            result = await _call_openai("test prompt", "gpt-4o")
+            result, usage = await _call_openai("test prompt", "gpt-4o")
 
         assert result == "test report output"
+        assert isinstance(usage, dict)
 
 
 class TestAsyncGenerateGapReport:
@@ -114,10 +115,11 @@ class TestAsyncGenerateGapReport:
             ],
         })
 
+        _usage_stub = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         with patch(
             "core.gap_analysis.steps.s8_generate_report._call_openai",
             new_callable=AsyncMock,
-            return_value=llm_json,
+            return_value=(llm_json, _usage_stub),
         ), patch(
             "core.gap_analysis.steps.s8_generate_report.settings"
         ) as mock_settings:

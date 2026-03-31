@@ -598,7 +598,7 @@ class TestRunPersonaProfileGenerator:
         from core.research.audience_persona.agents import run_persona_profile_generator
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value=_PROFILE_MD)
+        mock_client.research = MagicMock(return_value=(_PROFILE_MD, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_persona_profile_generator(
@@ -618,7 +618,7 @@ class TestRunPersonaProfileGenerator:
         from core.research.audience_persona.agents import run_persona_profile_generator
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value=_PROFILE_MD)
+        mock_client.research = MagicMock(return_value=(_PROFILE_MD, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_persona_profile_generator(
@@ -637,7 +637,7 @@ class TestRunPersonaProfileGenerator:
         from core.research.audience_persona.agents import run_persona_profile_generator
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value=_PROFILE_MD)
+        mock_client.research = MagicMock(return_value=(_PROFILE_MD, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         with patch(f"{_AGENTS_MOD}.asyncio.wait_for", side_effect=asyncio.TimeoutError):
@@ -676,7 +676,7 @@ class TestRunPersonaProfileGenerator:
         from core.research.audience_persona.agents import run_persona_profile_generator
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value="")
+        mock_client.research = MagicMock(return_value=("", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_persona_profile_generator(
@@ -695,7 +695,7 @@ class TestRunPersonaProfileGenerator:
         from core.research.audience_persona.agents import run_persona_profile_generator
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value=_PROFILE_MD)
+        mock_client.research = MagicMock(return_value=(_PROFILE_MD, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         await run_persona_profile_generator(
@@ -717,7 +717,7 @@ class TestRunPersonaProfileGenerator:
         from core.research.audience_persona.agents import run_persona_profile_generator
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value=_PROFILE_MD)
+        mock_client.research = MagicMock(return_value=(_PROFILE_MD, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         await run_persona_profile_generator(
@@ -737,7 +737,7 @@ class TestRunPersonaProfileGenerator:
         from core.research.audience_persona.agents import run_persona_profile_generator
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value=_PROFILE_MD)
+        mock_client.research = MagicMock(return_value=(_PROFILE_MD, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         await run_persona_profile_generator(
@@ -760,7 +760,7 @@ class TestRunPersonaProfileGenerator:
         from core.research.audience_persona.agents import run_persona_profile_generator
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value=_PROFILE_MD)
+        mock_client.research = MagicMock(return_value=(_PROFILE_MD, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         await run_persona_profile_generator(
@@ -779,7 +779,7 @@ class TestRunPersonaProfileGenerator:
         from core.research.audience_persona.agents import run_persona_profile_generator
 
         mock_client = MagicMock()
-        mock_client.research = MagicMock(return_value=_PROFILE_MD)
+        mock_client.research = MagicMock(return_value=(_PROFILE_MD, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
         monkeypatch.setattr(_PERPLEXITY_PATCH, mock_client)
 
         result = await run_persona_profile_generator(

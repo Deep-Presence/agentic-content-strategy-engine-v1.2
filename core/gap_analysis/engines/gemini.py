@@ -157,5 +157,7 @@ class GeminiEngine(SearchEngine):
             query_id=query_id or "",
             query_text=query_text,
             response_text=response_text,
+            prompt_tokens=_pt,
+            completion_tokens=_ct,
             citations=citation_refs,
         )

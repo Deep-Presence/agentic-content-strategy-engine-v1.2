@@ -6,7 +6,7 @@ web-grounded research with citations.
 
 The sync OpenAI client is used because all callers wrap this in asyncio.to_thread().
 """
-from typing import Any, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import openai
 
@@ -46,7 +46,7 @@ def research(
     pipeline_step: str = "",
     company_slug: str = "",
     **kwargs: Any,
-) -> str:
+) -> Tuple[str, Dict[str, int]]:
     """
     Deep web research using Perplexity sonar-deep-research model via OpenRouter.
 
@@ -80,17 +80,25 @@ def research(
             "Check usage at https://openrouter.ai/settings/keys"
         ) from e
 
+    # Extract usage from response
+    _usage = getattr(completion, "usage", None)
+    usage_dict: Dict[str, int] = {
+        "prompt_tokens": getattr(_usage, "prompt_tokens", 0) or 0,
+        "completion_tokens": getattr(_usage, "completion_tokens", 0) or 0,
+        "total_tokens": (getattr(_usage, "prompt_tokens", 0) or 0)
+        + (getattr(_usage, "completion_tokens", 0) or 0),
+    }
+
     # Cost tracking (never raises)
     from core.shared_tools.cost_tracker import track_llm_cost
 
-    _usage = getattr(completion, "usage", None)
     track_llm_cost(
         model=model,
         provider="openrouter",
         pipeline=pipeline,
         pipeline_step=pipeline_step,
-        prompt_tokens=getattr(_usage, "prompt_tokens", 0) or 0,
-        completion_tokens=getattr(_usage, "completion_tokens", 0) or 0,
+        prompt_tokens=usage_dict["prompt_tokens"],
+        completion_tokens=usage_dict["completion_tokens"],
         company_slug=company_slug,
         call_site="core.research.tools.perplexity_client",
         source="openrouter",
@@ -113,7 +121,7 @@ def research(
         cited = "\n\nSources:\n" + "\n".join(f"[{i+1}] {c}" for i, c in enumerate(citations))
         content = (content or "").rstrip() + "\n" + cited
 
-    return content or ""
+    return content or "", usage_dict
 
 
 def search(
@@ -128,7 +136,7 @@ def search(
     pipeline_step: str = "",
     company_slug: str = "",
     **kwargs: Any,
-) -> str:
+) -> Tuple[str, Dict[str, int]]:
     """Alias for research (Perplexity Deep Research covers both search and deep research)."""
     return research(
         query=query,

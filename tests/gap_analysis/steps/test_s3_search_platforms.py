@@ -232,7 +232,7 @@ class TestBatchLevelErrorIsolation:
 
             original_run = _run_engine_batch
 
-            async def _selective_batch(engine, queries, limit, global_sem):
+            async def _selective_batch(engine, queries, limit, global_sem, **kwargs):
                 if engine.engine_name == "broken":
                     raise RuntimeError("Import error: no module named 'perplexity'")
                 return await original_run(engine, queries, limit, global_sem)
