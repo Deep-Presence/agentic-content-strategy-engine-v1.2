@@ -254,6 +254,15 @@ class Settings(BaseSettings):
     # --- CMS Integration ---
     cms_fernet_key: str | None = None  # Fernet symmetric encryption key for CMS credentials
 
+    # --- Google Analytics (GA4) Integration ---
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = None
+    google_oauth_redirect_uri: str = "https://app.deeppresence.ai/api/v1/analytics/google/callback"
+    ga4_sync_lookback_days: int = 7
+    ai_referral_sources: str = "chatgpt.com:openai,chat.openai.com:openai,perplexity.ai:perplexity,gemini.google.com:google,copilot.microsoft.com:microsoft,claude.ai:anthropic,you.com:you,phind.com:phind"
+    google_oauth_frontend_settings_url: str = "https://app.deeppresence.ai/settings/integrations"
+    ga4_sync_api_key: str = ""  # API key for cron-triggered /sync-all endpoint
+
     # --- Cloudflare R2 (S3-compatible) ---
     r2_account_id: str | None = None
     r2_access_key_id: str | None = None

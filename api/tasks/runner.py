@@ -2011,3 +2011,92 @@ async def run_cms_sync_task(
         task_store.release_slug_lock(f"cms_sync:{company_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
+
+
+async def run_ga4_sync_task(
+    task_id: str,
+    company_slug: str,
+    tenant_id: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBusProtocol,
+    session_factory: Any,
+    fernet_key: str,
+    lookback_days: int = 7,
+    start_date_override: str | None = None,
+    end_date_override: str | None = None,
+) -> None:
+    """Background task wrapper for GA4 data sync.
+
+    Creates its own DB session and GA4AnalyticsService instance (the DI session
+    from the router is closed by the time the background task runs).
+    """
+    bind_context(task_id=task_id, pipeline_name="ga4_sync", company_slug=company_slug)
+    task_store.update_task(task_id, status=TaskStatus.RUNNING, current_step="sync")
+    event_bus.publish(task_id, "pipeline_start", {"pipeline": "ga4_sync"})
+
+    try:
+        async with task_store.pipeline_semaphore(task_id):
+            from core.analytics.service import GA4AnalyticsService
+            from core.config.settings import settings
+            from core.db.repositories.analytics_repo import (
+                AnalyticsConnectionRepository,
+                GA4ConversionEventRepository,
+                GA4TrafficDataRepository,
+            )
+
+            session = session_factory()
+            try:
+                svc = GA4AnalyticsService(
+                    connection_repo=AnalyticsConnectionRepository(session),
+                    traffic_repo=GA4TrafficDataRepository(session),
+                    conversion_repo=GA4ConversionEventRepository(session),
+                    fernet_key=fernet_key,
+                    client_id=settings.google_oauth_client_id or "",
+                    client_secret=settings.google_oauth_client_secret or "",
+                    redirect_uri=settings.google_oauth_redirect_uri,
+                    ai_referral_sources=settings.ai_referral_sources,
+                    lookback_days=lookback_days,
+                )
+
+                result = await svc.sync_data(
+                    company_slug=company_slug,
+                    tenant_id=tenant_id,
+                    start_date_override=start_date_override,
+                    end_date_override=end_date_override,
+                )
+                await session.commit()
+
+                task_store.update_task(
+                    task_id,
+                    status=TaskStatus.COMPLETED,
+                    result=result.model_dump(),
+                )
+                event_bus.publish(
+                    task_id, "completed",
+                    {"pipeline": "ga4_sync", **result.model_dump()},
+                )
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+
+    except asyncio.CancelledError:
+        logger.info("GA4 sync task %s cancelled", task_id)
+    except Exception as exc:
+        logger.exception("GA4 sync task %s failed: %s", task_id, exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:ga4:{company_slug}:*")
+        except Exception:
+            pass
+        task_store.release_slug_lock(f"ga4_sync:{company_slug}")
+        task_store.remove_task_handle(task_id)
+        clear_context()
