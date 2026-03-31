@@ -112,7 +112,7 @@ def _make_planner_output() -> StrategicPlannerOutput:
 
 
 _TRACING_PATCHES = {
-    "configure_litellm_callbacks": "core.content_engine.pipeline_v13.configure_litellm_callbacks",
+    "configure_litellm_callbacks": "core.content_engine.pipeline_v13.configure_openrouter",
     "create_session": "core.content_engine.pipeline_v13.create_session",
     "create_pipeline_trace": "core.content_engine.pipeline_v13.create_pipeline_trace",
     "create_span": "core.content_engine.pipeline_v13.create_span",

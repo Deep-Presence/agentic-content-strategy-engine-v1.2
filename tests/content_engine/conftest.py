@@ -230,12 +230,20 @@ def sample_formatted() -> FormattedContent:
 # ---------------------------------------------------------------------------
 
 
-class MockAnthropicResponse:
-    """Mock for AsyncAnthropic.messages.create response (v1.0 planner only)."""
+class MockOpenRouterResponse:
+    """Mock for OpenRouter chat.completions.create response (v1.0 planner)."""
 
-    def __init__(self, text: str, input_tokens: int = 100, output_tokens: int = 200):
-        self.content = [MagicMock(text=text)]
-        self.usage = MagicMock(input_tokens=input_tokens, output_tokens=output_tokens)
+    def __init__(self, text: str, prompt_tokens: int = 100, completion_tokens: int = 200):
+        msg = MagicMock()
+        msg.content = text
+        choice = MagicMock()
+        choice.message = msg
+        self.choices = [choice]
+        self.usage = MagicMock(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+
+
+# Backward-compatible alias
+MockAnthropicResponse = MockOpenRouterResponse
 
 
 def _make_llm_response(text: str, input_tokens: int = 100, output_tokens: int = 200):
@@ -254,20 +262,20 @@ def _make_llm_response(text: str, input_tokens: int = 100, output_tokens: int = 
 
 @pytest.fixture
 def mock_anthropic_planner(sample_brief):
-    """Mock AsyncAnthropic that returns a valid PlannerOutput JSON (v1.0 planner)."""
+    """Mock OpenRouter client for v1.0 planner (CE-0)."""
     planner_output = PlannerOutput(
         briefs=[sample_brief],
         planning_metadata={"model": "test"},
     )
     response_text = json.dumps(planner_output.model_dump(mode="json"), default=str)
 
-    mock_response = MockAnthropicResponse(response_text)
+    mock_response = MockOpenRouterResponse(response_text)
 
-    with patch("core.content_engine.planner.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-        mock_cls.return_value = mock_client
-        yield mock_cls
+    mock_client = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with patch("core.content_engine.planner.get_async_client", return_value=mock_client) as mock_fn:
+        yield mock_fn
 
 
 @pytest.fixture

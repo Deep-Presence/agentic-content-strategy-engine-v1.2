@@ -211,7 +211,7 @@ def _pipeline_patches(
     @contextmanager
     def _ctx():
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -271,7 +271,7 @@ class TestPreflightErrors:
     @pytest.mark.asyncio
     async def test_missing_company_context(self, td_input, tmp_path):
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -284,7 +284,7 @@ class TestPreflightErrors:
     @pytest.mark.asyncio
     async def test_missing_personas(self, td_input, artifacts_dir):
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -382,7 +382,7 @@ class TestPartialSourceFailure:
         # Re-do with side_effect for source_b
         sa = _make_source(TDSource.source_a)
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -405,7 +405,7 @@ class TestPartialSourceFailure:
     async def test_all_sources_zero_candidates_raises(self, td_input, artifacts_dir):
         empty = SourceResult(source=TDSource.source_a)
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -604,7 +604,7 @@ class TestTaxonomyRetryFeedback:
         ]
 
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -676,7 +676,7 @@ class TestTaxonomyRetryExhaustion:
         ]
 
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -724,7 +724,7 @@ class TestTaxonomyRetryExhaustion:
         ]
 
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),

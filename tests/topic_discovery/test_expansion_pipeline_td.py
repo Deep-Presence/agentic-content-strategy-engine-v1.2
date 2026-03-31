@@ -181,7 +181,7 @@ def _expansion_patches():
     @contextmanager
     def _ctx():
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -391,7 +391,7 @@ class TestExpansionPartialFailure:
             return _make_topics(2)
 
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -427,7 +427,7 @@ class TestExpansionPartialFailure:
             return _make_topics(2)
 
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -539,7 +539,7 @@ class TestExpansionReentrant:
 
         # Second expansion of sd-1: returns 3 topics this time
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -569,7 +569,7 @@ class TestExpansionReentrant:
         )
 
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),
@@ -601,7 +601,7 @@ class TestExpansionReentrant:
             raise RuntimeError("Simulated failure")
 
         with (
-            patch(f"{_P}.configure_litellm_callbacks"),
+            patch(f"{_P}.configure_openrouter"),
             patch(f"{_P}.create_session", return_value="s"),
             patch(f"{_P}.create_trace", return_value=MagicMock()),
             patch(f"{_P}.end_span"),

@@ -254,6 +254,7 @@ async def run_audience_persona_pipeline(
     session_factory: Optional[Any] = None,
     run_id: Optional[Any] = None,
     company_id: Optional[Any] = None,
+    langsmith_project: Optional[str] = None,
 ) -> AudiencePersonaOutput:
     """Run the Audience Persona pipeline.
 
@@ -270,9 +271,10 @@ async def run_audience_persona_pipeline(
 
     # Tracing
     session_id = create_session(slug)
+    _ls_project = langsmith_project or settings.audience_persona_langsmith_project
     trace_span = create_trace(session_id, f"ap-pipeline/{slug}", input_data={
         "company": input_data.company_name, "max_personas": input_data.max_personas,
-    })
+    }, project_name=_ls_project)
 
     # SSE: pipeline start
     _emit(event_bus, task_id, "pipeline_start", {"pipeline": "audience_persona"})

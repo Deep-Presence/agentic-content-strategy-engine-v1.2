@@ -33,10 +33,14 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # OpenRouter (unified LLM routing — centralized cost tracking)
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
     # Perplexity
     perplexity_api_key: str | None = None
-    perplexity_deep_research_model: str = "sonar-deep-research"
-    perplexity_search_model: str = "sonar-pro"
+    perplexity_deep_research_model: str = "perplexity/sonar-deep-research"
+    perplexity_search_model: str = "perplexity/sonar-pro"
 
     # OpenAI
     openai_api_key: str | None = None
@@ -55,7 +59,7 @@ class Settings(BaseSettings):
 
     # Google / Gemini – Reddit HIL
     google_api_key_reddit_hil: str | None = None
-    google_gemini_model_reddit_hil: str = "gemini-3-flash-preview"
+    google_gemini_model_reddit_hil: str = "google/gemini-3-flash-preview"
 
     # Pipeline / Agent
     aeo_agent_invoke_timeout_s: int = 900
@@ -91,7 +95,7 @@ class Settings(BaseSettings):
 
     # Gap Analysis – Models
     gap_analysis_query_gen_model: str = "gpt-5.2-2025-12-11"
-    gap_analysis_report_model: str = "gpt-5.2-2025-12-11"
+    gap_analysis_report_model: str = "openai/gpt-5.2-2025-12-11"
     gap_analysis_openai_engine_model: str = "gpt-5.2-2025-12-11"
     gap_analysis_claude_engine_model: str = "claude-sonnet-4-6"
     gap_analysis_gemini_engine_model: str = "gemini-3-flash-preview"
@@ -116,7 +120,7 @@ class Settings(BaseSettings):
     discord_webhook_url: str = ""
 
     # Content Generation Engine – Models
-    content_engine_planner_model: str = "claude-opus-4-6"
+    content_engine_planner_model: str = "anthropic/claude-opus-4-6"
     content_engine_worker_model: str = "claude-sonnet-4-6"
     content_engine_formatter_model: str = "claude-haiku-4-5-20251001"
     content_engine_style_judge_model: str = "claude-haiku-4-5-20251001"
@@ -133,8 +137,8 @@ class Settings(BaseSettings):
         '{"pillar_page": 3, "comparison": 3, "long_blog": 2, "how_to": 2, "short_faq": 1}'
     )
 
-    # --- Content Engine v1.3 — LiteLLM model identifiers ---
-    # Provider-prefixed strings for LiteLLM routing
+    # --- Content Engine v1.3 — OpenRouter model identifiers ---
+    # Provider-prefixed strings for OpenRouter routing
     content_engine_v13_planner_model: str =  "anthropic/claude-sonnet-4-6"
     content_engine_v13_brief_builder_model: str = "anthropic/claude-sonnet-4-6"
     content_engine_v13_worker_model: str = "anthropic/claude-sonnet-4-6"
@@ -156,6 +160,10 @@ class Settings(BaseSettings):
     langsmith_use_hub: bool = False
     langsmith_hub_tag: str = "production"
     gap_analysis_langsmith_project: str = "gap-analysis"
+    audience_persona_langsmith_project: str = "audience-persona"
+    voice_style_guide_langsmith_project: str = "voice-style-guide"
+    topic_discovery_langsmith_project: str = "topic-discovery"
+    onboarding_langsmith_project: str = "onboarding"
 
     # --- Research Knowledge Base ---
     research_kb_project: str = "research-kb"
@@ -166,12 +174,12 @@ class Settings(BaseSettings):
     research_kb_weakness_analyst_model: str = "sonar-deep-research"
     # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
     research_kb_brand_perception_model: str = "claude-sonnet-4-6"
-    # Synthesis agent — init_chat_model(), needs provider:model format
-    research_kb_synthesis_model: str = "anthropic:claude-opus-4-6"
+    # Synthesis agent — ChatOpenAI via OpenRouter, provider/model format
+    research_kb_synthesis_model: str = "anthropic/claude-opus-4-6"
 
     # --- Audience Persona Pipeline ---
     google_api_key_audience_persona: str | None = None
-    audience_persona_suggester_model: str = "gemini-3-flash-preview"
+    audience_persona_suggester_model: str = "google/gemini-3-flash-preview"
     audience_persona_generator_model: str = "sonar-deep-research"
     audience_persona_max_concurrent_generators: int = 3
 
@@ -199,7 +207,7 @@ class Settings(BaseSettings):
     )
     topic_discovery_max_subdomains_to_expand: int = 10
     # Source C: Perplexity deep research for competitive content landscape
-    topic_discovery_source_c_model: str = "sonar-deep-research"
+    topic_discovery_source_c_model: str = "perplexity/sonar-deep-research"
     topic_discovery_source_c_timeout_s: float = 900.0
     # Unified S2 model (hierarchy + scoring + persona affinity)
     topic_discovery_unified_s2_model: str = "anthropic/claude-sonnet-4-6"

@@ -124,7 +124,7 @@ class TestSourceCTracing:
     @pytest.mark.asyncio
     async def test_source_c_logs_manual_generation(self):
         mock_ppx = MagicMock()
-        mock_ppx.research.return_value = '{"subdomains": []}'
+        mock_ppx.research.return_value = ('{"subdomains": []}', {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
         with (
             patch("core.research.tools.perplexity_client", mock_ppx),

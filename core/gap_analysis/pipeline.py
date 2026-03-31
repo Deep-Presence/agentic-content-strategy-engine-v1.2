@@ -238,6 +238,7 @@ async def run_gap_analysis(
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
     trace_parent: Optional[object] = None,
+    langsmith_project: Optional[str] = None,
 ) -> GapReport:
     skip_steps = skip_steps or []
     slug = _company_slug(input_data)
@@ -268,7 +269,7 @@ async def run_gap_analysis(
                 "max_queries": input_data.max_queries,
                 "skip_steps": skip_steps,
             },
-            project_name=_settings.gap_analysis_langsmith_project,
+            project_name=langsmith_project or _settings.gap_analysis_langsmith_project,
         )
 
     # Fast/demo mode: cap queries and use only fastest engines

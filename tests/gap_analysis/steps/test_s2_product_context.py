@@ -179,9 +179,9 @@ class TestGenerateQueriesProductContext:
         """Company-level GapAnalysisInput → prompt has no product block."""
         captured: list[str] = []
 
-        async def fake_call(prompt: str, model: str) -> str:
+        async def fake_call(prompt: str, model: str) -> tuple:
             captured.append(prompt)
-            return '{"queries": []}'
+            return '{"queries": []}', (0, 0)
 
         with patch(
             "core.gap_analysis.steps.s2_generate_queries._call_openai",
@@ -209,9 +209,9 @@ class TestGenerateQueriesProductContext:
         """Product GapAnalysisInput with product_name → prompt includes product block."""
         captured: list[str] = []
 
-        async def fake_call(prompt: str, model: str) -> str:
+        async def fake_call(prompt: str, model: str) -> tuple:
             captured.append(prompt)
-            return '{"queries": []}'
+            return '{"queries": []}', (0, 0)
 
         with patch(
             "core.gap_analysis.steps.s2_generate_queries._call_openai",
@@ -246,9 +246,9 @@ class TestGenerateQueriesProductContext:
         """product_slug set but product_name is None → no block (guard respected)."""
         captured: list[str] = []
 
-        async def fake_call(prompt: str, model: str) -> str:
+        async def fake_call(prompt: str, model: str) -> tuple:
             captured.append(prompt)
-            return '{"queries": []}'
+            return '{"queries": []}', (0, 0)
 
         with patch(
             "core.gap_analysis.steps.s2_generate_queries._call_openai",

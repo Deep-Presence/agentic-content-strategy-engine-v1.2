@@ -1,5 +1,104 @@
 [
   {
+    "id": "D-OPENROUTER-PHASE2",
+    "timestamp": "2026-03-30",
+    "task": "Phase 2 — OpenRouter Migration (Direct SDK calls → OpenAI SDK pointed at OpenRouter)",
+    "decisions": [
+      "CE-0 planner: AsyncAnthropic().messages.create → get_async_client().chat.completions.create. Response extraction: content blocks → choices[0].message.content. Usage: input_tokens → prompt_tokens, output_tokens → completion_tokens. _retry_async_anthropic() preserved unchanged — already catches both Anthropic + OpenAI exceptions.",
+      "AP-1 persona suggester: google.genai.Client → get_async_client(). GenerateContentConfig(response_mime_type='application/json') → response_format={'type':'json_object'}. _get_gemini_api_key() deleted entirely — OpenRouter handles auth. Existing _parse_json_array() handles potential object-wrapper from json_object mode.",
+      "GA-S8 report: AsyncOpenAI().responses.create(input=prompt) → get_async_client().chat.completions.create(messages=[user]). response.output_text → response.choices[0].message.content. Lazy import pattern used for get_async_client inside _call_openai().",
+      "GA Perplexity engine: AsyncPerplexity → get_async_client(). Dual citation extraction: getattr(completion, 'citations') then model_extra fallback. Matches Phase 1 perplexity_client.py pattern.",
+      "S3 Perplexity client: Singleton get_async_client() NOT entered into AsyncExitStack — prevents premature close of shared client. Other engines (OpenAI, Claude, Gemini) still use exit-stack pattern.",
+      "_ensure_model_prefix() moved from core/content_engine/llm_client.py to core/shared_tools/openrouter_client.py. Backward-compat import alias retained in llm_client.py.",
+      "Settings defaults prefixed: content_engine_planner_model → 'anthropic/claude-opus-4-6', audience_persona_suggester_model → 'google/gemini-3-flash-preview', gap_analysis_report_model → 'openai/gpt-5.2-2025-12-11'. All protected by _ensure_model_prefix() at call site for backward compat.",
+      "VSG-1 EXCLUDED again — confirmed uses web_search_20250305 tool in actual code despite audit doc listing it as Phase 2 candidate. Stays on litellm.acompletion().",
+      "perplexityai package now unused after GA Perplexity engine migration — candidate for removal from requirements.txt (deferred to cleanup).",
+      "TestGetGeminiApiKey test class removed (tested deleted _get_gemini_api_key function)."
+    ],
+    "codex_review": {
+      "findings_incorporated": [
+        "AP-1 json_object may return object wrapper — _parse_json_array() already handles this",
+        "S3 exit-stack lifecycle conflict — singleton must NOT be entered into AsyncExitStack",
+        "S3 test coupling — test_sdk_clients_entered_into_exit_stack mocks AsyncPerplexity",
+        "Daily Tracker downstream effect — DT reuses PerplexityEngine, gets migrated automatically",
+        "Implementation order: GA-PPLX first (lowest risk) → GA-S8 → CE-0 → AP-1 last (highest JSON sensitivity)"
+      ],
+      "findings_rejected": [
+        "Use json_schema for AP-1 — over-engineering, existing _parse_json_array() + validation + retry sufficient",
+        "Retry regression in CE-0 — _retry_async_anthropic already catches OpenAI exceptions",
+        "Planner response-shape break — already addressed in implementation plan"
+      ],
+      "findings_deferred": [
+        "Health endpoint update — remove perplexity_api_key from _REQUIRED_KEYS or add openrouter_api_key",
+        "require_parameters provider constraint — OpenRouter feature for JSON mode enforcement"
+      ]
+    },
+    "approved_by": "Aryan (via plan approval)",
+    "files_affected": [
+      "core/shared_tools/openrouter_client.py",
+      "core/content_engine/llm_client.py",
+      "core/content_engine/planner.py",
+      "core/research/audience_persona/agents.py",
+      "core/gap_analysis/steps/s8_generate_report.py",
+      "core/gap_analysis/engines/perplexity.py",
+      "core/gap_analysis/steps/s3_search_platforms.py",
+      "core/config/settings.py",
+      "tests/content_engine/conftest.py",
+      "tests/gap_analysis/steps/test_s8_generate_report.py",
+      "tests/research/audience_persona/test_agents_ap.py"
+    ]
+  },
+  {
+    "id": "D-OPENROUTER-PHASE1",
+    "timestamp": "2026-03-29",
+    "task": "Phase 1 — OpenRouter Migration (LiteLLM + Perplexity SDK → OpenAI SDK pointed at OpenRouter)",
+    "decisions": [
+      "Use openai SDK (already a dep) pointed at OpenRouter base_url — no new packages. AsyncOpenAI for async wrappers, OpenAI for sync Perplexity client.",
+      "Model strings need no transformation — OpenRouter uses same provider/model format as LiteLLM (e.g. anthropic/claude-sonnet-4-6). Kept _ensure_model_prefix() for bare names.",
+      "LangSmith tracing already handled at caller level via manual log_generation() calls. LiteLLM auto-callback was creating duplicate traces. Removing it is a cleanup.",
+      "Shared client factory in core/shared_tools/openrouter_client.py — singleton pattern with max_retries=0 to prevent retry multiplication with wrapper-level retries.",
+      "Perplexity client stays sync — all 7 callers use asyncio.to_thread(). openai.OpenAI replaces Perplexity() SDK. Citations extracted via model_extra fallback.",
+      "pause_turn continuation removed from _run_completion() — OpenRouter doesn't surface Anthropic's pause_turn finish reason. Codex verified Choice.finish_reason is Literal enum (stop/length/tool_calls/content_filter/function_call only).",
+      "configure_litellm_callbacks() → configure_openrouter() with backward-compatible alias. Existing pipeline startup sites and test patches updated to use new name.",
+      "VSG-1 author discovery EXCLUDED — uses Anthropic web_search_20250305 tool which OpenRouter cannot replicate. Stays on litellm.acompletion().",
+      "perplexityai and litellm deps STAY in requirements — GA engines still use AsyncPerplexity, VSG-1 still uses litellm.",
+      "Typed OpenAI exceptions (AuthenticationError, RateLimitError) replace string-matching error handling in perplexity_client.",
+      "Perplexity model strings prefixed defensively in settings (sonar-deep-research → perplexity/sonar-deep-research) alongside runtime _ensure_model_prefix() handling."
+    ],
+    "codex_review": {
+      "findings_incorporated": [
+        "VSG-1 uses web_search_20250305 tool — excluded from Phase 1",
+        "OpenAI SDK max_retries=2 default causes retry multiplication — set to 0",
+        "Choice.finish_reason is Literal enum — confirms pause_turn removal is correct",
+        "Citations via model_extra confirmed working (Codex verified with real code)",
+        "TD Source C citation format dependency — noted for lenient stripping",
+        "Typed OpenAI exceptions differ from LiteLLM — catch typed instead of string-matching"
+      ],
+      "findings_rejected": [
+        "Keep Perplexity SDK for fidelity — defeats cost tracking purpose",
+        "_hidden_params dependency — removing pause_turn makes this irrelevant"
+      ],
+      "findings_deferred": [
+        "Timeout-leak tests (asyncio.wait_for + to_thread + client timeout) — pre-existing",
+        "LLMResponse.model format change — monitor in production"
+      ]
+    },
+    "approved_by": "Aryan (via plan approval)",
+    "files_affected": [
+      "core/config/settings.py",
+      "core/shared_tools/openrouter_client.py (NEW)",
+      "core/content_engine/llm_client.py",
+      "core/topic_discovery/agents.py",
+      "core/research/tools/perplexity_client.py",
+      "core/research/voice_style_guide/agents.py",
+      "core/content_engine/pipeline_v13.py",
+      "core/topic_discovery/pipeline.py",
+      "core/research/voice_style_guide/pipeline.py",
+      "scripts/run_td_rescore.py",
+      ".env.example"
+    ]
+  },
+  {
     "id": "D-REDIS-PHASE6",
     "timestamp": "2026-03-27",
     "task": "Phase 6 — Remove Filesystem Fallbacks (DATABASE_URL + REDIS_URL mandatory)",

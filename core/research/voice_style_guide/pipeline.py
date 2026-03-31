@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.config.settings import settings
-from core.content_engine.llm_client import configure_litellm_callbacks
+from core.content_engine.llm_client import configure_openrouter
 from core.models.voice_style_guide import (
     AuthorBrief,
     AuthorResearchResult,
@@ -158,6 +158,7 @@ async def run_voice_style_guide_pipeline(
     session_factory: Optional[Any] = None,
     run_id: Optional[Any] = None,
     company_id: Optional[Any] = None,
+    langsmith_project: Optional[str] = None,
 ) -> VoiceStyleGuideOutput:
     """Run the Voice Style Guide pipeline.
 
@@ -172,14 +173,15 @@ async def run_voice_style_guide_pipeline(
     storage = VoiceStyleGuideStorage(root, effective_slug)
     auto_approve_cps = set(input_data.auto_approve_checkpoints)
 
-    # Configure LiteLLM callbacks for LangSmith tracing
-    configure_litellm_callbacks()
+    # Configure OpenRouter client
+    configure_openrouter()
 
     # Tracing
     session_id = create_session(slug)
+    _ls_project = langsmith_project or settings.voice_style_guide_langsmith_project
     trace_span = create_trace(session_id, f"vsg-pipeline/{slug}", input_data={
         "company": input_data.company_name, "max_authors": input_data.max_authors,
-    })
+    }, project_name=_ls_project)
 
     # SSE: pipeline start
     _emit(event_bus, task_id, "pipeline_start", {"pipeline": "voice_style_guide"})

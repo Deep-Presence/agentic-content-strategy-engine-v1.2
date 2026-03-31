@@ -1,17 +1,14 @@
-"""Unified LLM client via LiteLLM for the v1.3 content pipeline.
+"""Unified LLM client via OpenRouter for the v1.3 content pipeline.
 
 All LLM calls in the v1.3 pipeline route through this module, providing:
   - Model abstraction (Anthropic, OpenAI, Perplexity, Google via one interface)
   - Retry logic with jittered exponential backoff
   - Token budget enforcement
-  - Automatic tracing via LangSmith callbacks (when configured)
+  - Tracing via per-caller log_generation() calls (LangSmith)
 
-The module replaces direct SDK calls (anthropic.AsyncAnthropic, httpx to
-Perplexity, etc.) with a single ``llm_call()`` function. The v1.0 pipeline
-continues using raw SDKs — this module is for v1.3 only.
-
-Model strings use LiteLLM's provider-prefixed format:
-  - "anthropic/claude-sonnet-4-5-20250929"
+The module uses the ``openai`` SDK pointed at OpenRouter's base URL.
+Model strings use provider-prefixed format:
+  - "anthropic/claude-sonnet-4-6"
   - "anthropic/claude-haiku-4-5-20251001"
   - "perplexity/sonar-pro"
   - "openai/gpt-5.2-2025-12-11"
@@ -31,106 +28,42 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# LiteLLM import (lazy — allows tests to mock without installing)
+# Model prefix helper (canonical implementation in openrouter_client)
 # ---------------------------------------------------------------------------
 
-_litellm_available = False
-try:
-    import litellm
+from core.shared_tools.openrouter_client import _ensure_model_prefix  # noqa: E402
+from core.shared_tools.cost_tracker import track_llm_cost  # noqa: E402
 
-    _litellm_available = True
-except ImportError:
-    litellm = None  # type: ignore[assignment]
-    logger.debug("litellm not installed — llm_call will raise if invoked")
+# Backward-compatible alias
+_ensure_litellm_model = _ensure_model_prefix
 
 
 # ---------------------------------------------------------------------------
-# LangSmith callback integration
+# OpenRouter configuration
 # ---------------------------------------------------------------------------
 
 
-def _get_langsmith_callback() -> Optional[Any]:
-    """Return a LangSmith callback handler if configured, else None.
-
-    LangSmith integration is automatic when LANGSMITH_API_KEY is set.
-    LiteLLM picks up the callback and logs every call.
-    """
-    try:
-        from langsmith import Client  # noqa: F401
-
-        # LiteLLM auto-detects LangSmith when the env var is set
-        # and includes it in success/failure callbacks
-        return None  # LiteLLM handles this via litellm.success_callback
-    except ImportError:
-        return None
-
-
-def configure_litellm_callbacks() -> None:
-    """Configure LiteLLM: export API keys to os.environ + set LangSmith callbacks.
-
-    LiteLLM reads API keys from os.environ, but pydantic-settings loads them
-    into the Settings object without setting os.environ.  This bridge ensures
-    litellm can authenticate with every provider.
+def configure_openrouter() -> None:
+    """Validate OpenRouter API key and pre-warm the client.
 
     Should be called once at pipeline startup.
     """
-    if not _litellm_available:
-        return
-
-    import os
-
-    from core.config.settings import settings
-
-    # Bridge pydantic-settings → os.environ for LiteLLM
-    _KEY_MAP = {
-        "ANTHROPIC_API_KEY": settings.anthropic_api_key,
-        "OPENAI_API_KEY": settings.openai_api_key,
-        "PERPLEXITY_API_KEY": settings.perplexity_api_key,
-    }
-    for env_var, value in _KEY_MAP.items():
-        if value and not os.environ.get(env_var):
-            os.environ[env_var] = value
+    from core.shared_tools.openrouter_client import get_async_client
 
     try:
-        if os.environ.get("LANGSMITH_API_KEY"):
-            litellm.success_callback = ["langsmith"]  # type: ignore[union-attr]
-            litellm.failure_callback = ["langsmith"]  # type: ignore[union-attr]
-            logger.info("LiteLLM LangSmith callbacks configured")
-        else:
-            logger.debug("LANGSMITH_API_KEY not set — LangSmith callbacks skipped")
-    except Exception as exc:
-        logger.warning("Failed to configure LiteLLM callbacks: %s", exc)
+        get_async_client()
+        logger.info("OpenRouter client configured")
+    except RuntimeError as exc:
+        logger.warning("OpenRouter not configured: %s", exc)
+
+
+# Backward-compatible alias for existing call sites
+configure_litellm_callbacks = configure_openrouter
 
 
 # ---------------------------------------------------------------------------
 # Main LLM call function
 # ---------------------------------------------------------------------------
-
-
-def _ensure_litellm_model(model: str) -> str:
-    """Ensure a model string has a LiteLLM provider prefix.
-
-    LiteLLM requires provider-prefixed model strings for routing.
-    Auto-detects and prefixes known model families so callers can pass
-    either ``"claude-sonnet-4-5-20250929"`` or ``"anthropic/claude-sonnet-4-5-20250929"``.
-
-    Args:
-        model: Raw model string (may or may not have a provider prefix).
-
-    Returns:
-        Provider-prefixed model string suitable for LiteLLM.
-    """
-    if "/" in model:
-        return model  # Already prefixed
-    if model.startswith("claude-"):
-        return f"anthropic/{model}"
-    if model.startswith("sonar"):
-        return f"perplexity/{model}"
-    if model.startswith("gpt-") or model.startswith("o1") or model.startswith("o3"):
-        return f"openai/{model}"
-    if model.startswith("gemini-"):
-        return f"google/{model}"
-    return model  # Unknown — let LiteLLM route it
 
 
 async def llm_call(
@@ -145,16 +78,16 @@ async def llm_call(
     max_retries: int = 3,
     base_delay: float = 1.0,
 ) -> LLMResponse:
-    """Make a unified LLM call through LiteLLM with retry and tracing.
+    """Make a unified LLM call through OpenRouter with retry and tracing.
 
     Args:
-        model: LiteLLM model string (e.g. "anthropic/claude-sonnet-4-5-20250929").
+        model: Provider-prefixed model string (e.g. "anthropic/claude-sonnet-4-6").
         system: System prompt.
         user: User prompt.
         max_tokens: Maximum output tokens.
         temperature: Sampling temperature.
         response_format: Optional Pydantic model for structured output.
-        metadata: Optional metadata dict passed to LiteLLM (appears in traces).
+        metadata: Optional metadata dict (passed via extra_body for tracing).
         max_retries: Maximum retry attempts on transient failures.
         base_delay: Base delay in seconds for exponential backoff.
 
@@ -162,15 +95,13 @@ async def llm_call(
         LLMResponse with content, model, token counts, and finish reason.
 
     Raises:
-        RuntimeError: If litellm is not installed.
+        RuntimeError: If OpenRouter API key is not configured.
         Exception: If all retries exhausted.
     """
-    if not _litellm_available:
-        raise RuntimeError(
-            "litellm is not installed. Install it with: pip install litellm"
-        )
+    from core.shared_tools.openrouter_client import get_async_client
 
-    model = _ensure_litellm_model(model)
+    model = _ensure_model_prefix(model)
+    client = get_async_client()
 
     messages: List[Dict[str, str]] = [
         {"role": "system", "content": system},
@@ -185,7 +116,7 @@ async def llm_call(
     }
 
     if metadata:
-        kwargs["metadata"] = metadata
+        kwargs["extra_body"] = {"metadata": metadata}
 
     if response_format:
         kwargs["response_format"] = response_format
@@ -194,15 +125,29 @@ async def llm_call(
 
     for attempt in range(max_retries):
         try:
-            response = await litellm.acompletion(**kwargs)  # type: ignore[union-attr]
+            response = await client.chat.completions.create(**kwargs)
 
             # Extract response fields
-            choice = response.choices[0]  # type: ignore[index]
-            usage = response.usage  # type: ignore[union-attr]
+            choice = response.choices[0]
+            usage = response.usage
+
+            # Cost tracking (never raises)
+            _meta = metadata or {}
+            track_llm_cost(
+                model=response.model or model,
+                provider="openrouter",
+                pipeline=_meta.get("pipeline", ""),
+                pipeline_step=_meta.get("pipeline_step", ""),
+                prompt_tokens=usage.prompt_tokens if usage else 0,
+                completion_tokens=usage.completion_tokens if usage else 0,
+                company_slug=_meta.get("company_slug", ""),
+                call_site="core.content_engine.llm_client",
+                source="openrouter",
+            )
 
             return LLMResponse(
                 content=choice.message.content or "",
-                model=response.model or model,  # type: ignore[union-attr]
+                model=response.model or model,
                 input_tokens=usage.prompt_tokens if usage else 0,
                 output_tokens=usage.completion_tokens if usage else 0,
                 total_tokens=usage.total_tokens if usage else 0,
