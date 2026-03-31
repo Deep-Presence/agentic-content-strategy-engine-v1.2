@@ -33,6 +33,7 @@ from core.models.knowledge_base import (
     KnowledgeBaseInput,
     KnowledgeBaseOutput,
 )
+from core.config.settings import settings
 from core.research.knowledge_base.agents import (
     run_brand_perception_agent,
     run_company_overview_agent,
@@ -405,6 +406,7 @@ async def run_knowledge_base_pipeline(
     session_factory: Optional[Any] = None,
     run_id: Optional[Any] = None,
     company_id: Optional[Any] = None,
+    langsmith_project: Optional[str] = None,
 ) -> KnowledgeBaseOutput:
     """Run the full Knowledge Base pipeline.
 
@@ -421,9 +423,10 @@ async def run_knowledge_base_pipeline(
 
     # Tracing
     session_id = create_session(slug)
+    _ls_project = langsmith_project or settings.research_kb_project
     trace_span = create_trace(session_id, f"kb-pipeline/{slug}", input_data={
         "mode": mode, "target_docs": [d.value for d in target_docs],
-    })
+    }, project_name=_ls_project)
 
     # SSE: pipeline start
     _emit(event_bus, task_id, "pipeline_start", {"pipeline": "knowledge_base"})

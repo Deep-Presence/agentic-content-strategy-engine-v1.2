@@ -158,6 +158,7 @@ async def run_voice_style_guide_pipeline(
     session_factory: Optional[Any] = None,
     run_id: Optional[Any] = None,
     company_id: Optional[Any] = None,
+    langsmith_project: Optional[str] = None,
 ) -> VoiceStyleGuideOutput:
     """Run the Voice Style Guide pipeline.
 
@@ -177,9 +178,10 @@ async def run_voice_style_guide_pipeline(
 
     # Tracing
     session_id = create_session(slug)
+    _ls_project = langsmith_project or settings.voice_style_guide_langsmith_project
     trace_span = create_trace(session_id, f"vsg-pipeline/{slug}", input_data={
         "company": input_data.company_name, "max_authors": input_data.max_authors,
-    })
+    }, project_name=_ls_project)
 
     # SSE: pipeline start
     _emit(event_bus, task_id, "pipeline_start", {"pipeline": "voice_style_guide"})

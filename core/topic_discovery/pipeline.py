@@ -270,6 +270,7 @@ async def run_topic_discovery_pipeline(
     session_factory: Optional[Any] = None,
     run_id: Optional[Any] = None,
     company_id: Optional[Any] = None,
+    langsmith_project: Optional[str] = None,
 ) -> TopicDiscoveryOutput:
     """Run the Topic Discovery pipeline (Pipeline A: Discovery).
 
@@ -292,9 +293,10 @@ async def run_topic_discovery_pipeline(
 
     # Tracing
     session_id = create_session(slug)
+    _ls_project = langsmith_project or settings.topic_discovery_langsmith_project
     trace_span = create_trace(session_id, f"td-pipeline/{slug}", input_data={
         "company": input_data.company_name, "domain": input_data.domain,
-    }, tags=["topic-discovery", "pipeline-a"])
+    }, tags=["topic-discovery", "pipeline-a"], project_name=_ls_project)
 
     # SSE: pipeline start
     _emit(event_bus, task_id, "pipeline_start", {"pipeline": "topic_discovery"})
@@ -847,6 +849,7 @@ async def run_topic_expansion_pipeline(
     session_factory: Optional[Any] = None,
     run_id: Optional[Any] = None,
     company_id: Optional[Any] = None,
+    langsmith_project: Optional[str] = None,
 ) -> TopicExpansionOutput:
     """Run the Topic Expansion pipeline (Pipeline B).
 
@@ -868,11 +871,13 @@ async def run_topic_expansion_pipeline(
 
     configure_openrouter()
     session_id = create_session(f"td-expansion-{effective_slug}")
+    _ls_project = langsmith_project or settings.topic_discovery_langsmith_project
     trace_span = create_trace(
         session_id,
         f"td-expansion/{effective_slug}",
         input_data={"effective_slug": effective_slug, "subdomain_ids": input_data.subdomain_ids},
         tags=["topic-discovery", "expansion"],
+        project_name=_ls_project,
     )
 
     try:

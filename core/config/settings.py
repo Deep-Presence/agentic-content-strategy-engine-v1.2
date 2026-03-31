@@ -160,6 +160,10 @@ class Settings(BaseSettings):
     langsmith_use_hub: bool = False
     langsmith_hub_tag: str = "production"
     gap_analysis_langsmith_project: str = "gap-analysis"
+    audience_persona_langsmith_project: str = "audience-persona"
+    voice_style_guide_langsmith_project: str = "voice-style-guide"
+    topic_discovery_langsmith_project: str = "topic-discovery"
+    onboarding_langsmith_project: str = "onboarding"
 
     # --- Research Knowledge Base ---
     research_kb_project: str = "research-kb"
