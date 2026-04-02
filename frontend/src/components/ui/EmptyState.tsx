@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 import { LocusLogo } from './LocusLogo';
-import { Button } from './Button';
+import { Button } from './button';
 
 interface EmptyStateProps {
   title: string;

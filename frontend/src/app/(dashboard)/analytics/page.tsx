@@ -1,138 +1,79 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { TabBar } from '@/components/ui';
-import { getGapReport } from '@/data/gap-report';
-import { PerformanceTab } from './_components/PerformanceTab';
-import { ShareOfVoiceTab } from './_components/ShareOfVoiceTab';
-import { CitationsTab } from './_components/CitationsTab';
-import { CompetitorsTab } from './_components/CompetitorsTab';
-import { BrandHealthTab } from './_components/BrandHealthTab';
-
-const TABS = [
-  { id: 'performance', label: 'Performance', closable: false },
-  { id: 'sov', label: 'Share of Voice', closable: false },
-  { id: 'citations', label: 'Citations', closable: false },
-  { id: 'competitors', label: 'Competitors', closable: false },
-  { id: 'brand-health', label: 'Brand Health', closable: false },
-];
+import { useState, useCallback } from 'react';
+import { CitationFilterBar } from './_components/FilterBar';
+import { KPIStrip } from './_components/KPIStrip';
+import { CitationMomentum } from './_components/CitationMomentum';
+import { VisibilityBreakdown } from './_components/VisibilityBreakdown';
+import { CompetitorLeaderboard } from './_components/CompetitorLeaderboard';
+import { PlatformGrid } from './_components/PlatformGrid';
+import { CitationTable } from './_components/CitationTable';
+import { CitationDrawer } from './_components/CitationDrawer';
+import { RevenueProxy } from './_components/RevenueProxy';
+import { type CitationURL } from './_components/data';
 
 export default function AnalyticsPage() {
-  const report = useMemo(() => getGapReport(), []);
-  const [activeTab, setActiveTab] = useState('performance');
+  const [platform, setPlatform] = useState('All Platforms');
+  const [cluster, setCluster] = useState('All Clusters');
+  const [drawerUrl, setDrawerUrl] = useState<CitationURL | null>(null);
 
-  // Compute KPI values from real data
-  const companyCitedCount = report.queries.filter((q) => q.companyCited).length;
-  const citationPresence = ((companyCitedCount / report.summary.totalQueries) * 100).toFixed(1);
+  const handleRowClick = useCallback((url: CitationURL) => {
+    setDrawerUrl(url);
+  }, []);
+
+  const handleDrawerClose = useCallback(() => {
+    setDrawerUrl(null);
+  }, []);
 
   return (
-    <div className="space-y-4">
-      {/* Top KPI Row — Full Width, Big Numbers */}
-      <div className="w-full px-0">
-        <div className="grid grid-cols-5 bg-surface border border-border rounded-md overflow-hidden">
-          <KPICell
-            label="SOV %"
-            value="12.4%"
-            delta="+2.1%"
-            deltaType="positive"
-          />
-          <KPICell
-            label="Citation Presence"
-            value={`${citationPresence}%`}
-            delta="+4.2%"
-            deltaType="positive"
-            border
-          />
-          <KPICell
-            label="SPA Score"
-            value={report.summary.spaScore.toFixed(3)}
-            border
-          />
-          <KPICell
-            label="Queries Tracked"
-            value={String(report.summary.totalQueries)}
-            border
-          />
-          <KPICell
-            label="Published"
-            value="7"
-            delta="+3 this week"
-            deltaType="positive"
-            border
-          />
-        </div>
+    <div className="-m-4">
+      {/* Page Header */}
+      <div className="px-6 pt-4 pb-0">
+        <h1
+          className="text-[22px] font-semibold"
+          style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}
+        >
+          Citation Intelligence
+        </h1>
+        <p className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+          Track how your brand is cited across AI platforms
+        </p>
       </div>
 
-      {/* Tab Bar */}
-      <TabBar
-        tabs={TABS}
-        activeTab={activeTab}
-        onTabClick={setActiveTab}
+      {/* Global Filter Bar */}
+      <CitationFilterBar
+        platform={platform}
+        onPlatformChange={setPlatform}
+        cluster={cluster}
+        onClusterChange={setCluster}
       />
 
-      {/* Tab Content — NO global filter bar. Each chart has its own. */}
-      <div>
-        {activeTab === 'performance' && (
-          <PerformanceTab queries={report.queries} clusters={report.clusters} />
-        )}
-        {activeTab === 'sov' && (
-          <ShareOfVoiceTab queries={report.queries} />
-        )}
-        {activeTab === 'citations' && (
-          <CitationsTab queries={report.queries} />
-        )}
-        {activeTab === 'competitors' && (
-          <CompetitorsTab queries={report.queries} />
-        )}
-        {activeTab === 'brand-health' && (
-          <BrandHealthTab />
-        )}
-      </div>
-    </div>
-  );
-}
+      {/* Page Content */}
+      <div className="px-6 py-4 flex flex-col gap-4">
+        {/* KPI Strip — 6 cards */}
+        <KPIStrip />
 
-/* ── KPI Cell with proper sizing ────────────────────────────────── */
-function KPICell({
-  label,
-  value,
-  delta,
-  deltaType,
-  border,
-}: {
-  label: string;
-  value: string;
-  delta?: string;
-  deltaType?: 'positive' | 'negative';
-  border?: boolean;
-}) {
-  return (
-    <div
-      className={`p-4 min-h-[80px] flex flex-col justify-center ${
-        border ? 'border-l border-border' : ''
-      }`}
-    >
-      <p className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary leading-[1.4]">
-        {label}
-      </p>
-      <div className="flex items-baseline gap-2 mt-1">
-        <p className="font-display text-[28px] font-semibold tracking-[-0.02em] text-text-primary leading-none">
-          {value}
-        </p>
-        {delta && (
-          <p
-            className={`text-[12px] font-medium ${
-              deltaType === 'positive'
-                ? 'text-success'
-                : deltaType === 'negative'
-                  ? 'text-error'
-                  : 'text-text-tertiary'
-            }`}
-          >
-            {delta}
-          </p>
-        )}
+        {/* Section 1: Citation Momentum Hero */}
+        <CitationMomentum />
+
+        {/* Section 2: Two-column — Visibility (55%) + Leaderboard (45%) */}
+        <div className="grid gap-4" style={{ gridTemplateColumns: '55% 45%' }}>
+          <VisibilityBreakdown />
+          <CompetitorLeaderboard />
+        </div>
+
+        {/* Section 3: Platform Intelligence Grid */}
+        <PlatformGrid />
+
+        {/* Section 4: Citation URL Table */}
+        <CitationTable onRowClick={handleRowClick} />
+
+        {/* Section 5: Revenue Proxy */}
+        <RevenueProxy />
       </div>
+
+      {/* Side Drawer */}
+      <CitationDrawer url={drawerUrl} onClose={handleDrawerClose} />
     </div>
   );
 }

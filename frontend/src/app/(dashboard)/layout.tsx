@@ -47,12 +47,17 @@ export default function DashboardLayout({
         onClose={() => setSearchOpen(false)}
         results={[
           { id: '1', label: 'Home', description: 'Dashboard overview', href: '/' },
-          { id: '2', label: 'Analytics', description: 'Measurement dashboard', href: '/analytics' },
-          { id: '3', label: 'Content Studio', description: 'Content pipeline', href: '/content' },
-          { id: '4', label: 'Content Planner', description: 'Topic planning', href: '/planner' },
-          { id: '5', label: 'Brand Artifacts', description: 'KB, personas, voice', href: '/artifacts' },
-          { id: '6', label: 'Attribution', description: 'Revenue attribution', href: '/attribution' },
-          { id: '7', label: 'Settings', description: 'Configuration', href: '/settings' },
+          { id: '2', label: 'Citation Intelligence', description: 'AI citation tracking', href: '/analytics' },
+          { id: '3', label: 'Competitive Position', description: 'Competitor analysis', href: '/competitive-position' },
+          { id: '4', label: 'Prompt Tracking', description: 'Prompt monitoring', href: '/prompt-tracking' },
+          { id: '5', label: 'Content Performance', description: 'Content metrics', href: '/content-performance' },
+          { id: '6', label: 'Technical Readiness', description: 'Technical SEO audit', href: '/technical-readiness' },
+          { id: '7', label: 'Embedding Lab', description: 'Deep embedding analysis', href: '/embedding-lab' },
+          { id: '8', label: 'Content Planner', description: 'Topic planning', href: '/planner' },
+          { id: '9', label: 'Content Studio', description: 'Content pipeline', href: '/content' },
+          { id: '10', label: 'Brand Brain', description: 'Knowledge base & voice', href: '/artifacts' },
+          { id: '11', label: 'Documents', description: 'Document library', href: '/documents' },
+          { id: '12', label: 'Settings', description: 'Configuration', href: '/settings' },
         ]}
       />
     </div>

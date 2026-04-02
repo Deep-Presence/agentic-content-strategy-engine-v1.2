@@ -1,4 +1,4 @@
-export { Button } from './Button';
+export { Button } from './button';
 export { Input } from './Input';
 export { Card } from './Card';
 export { MetricCard } from './MetricCard';

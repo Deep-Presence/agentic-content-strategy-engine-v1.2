@@ -157,4 +157,80 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.6; }
   }
+
+  /* Brand Presence page animations */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideInRight {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+
+  /* Content Studio animations */
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  @keyframes progressPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.65; }
+  }
+
+  @keyframes cardMove {
+    0% { opacity: 0; transform: scale(0.95) translateY(-8px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  @keyframes typing {
+    0% { opacity: 0.3; }
+    50% { opacity: 1; }
+    100% { opacity: 0.3; }
+  }
+
+  /* BlockNote editor brand overrides */
+  .bn-container {
+    --bn-colors-editor-text: var(--text-primary);
+    --bn-colors-editor-background: var(--bg);
+    --bn-colors-menu-background: var(--surface-raised);
+    --bn-colors-menu-text: var(--text-primary);
+    --bn-colors-tooltip-background: var(--surface-raised);
+    --bn-colors-tooltip-text: var(--text-primary);
+    --bn-colors-hovered-background: var(--accent-subtle);
+    --bn-colors-selected-background: var(--accent-subtle);
+    --bn-colors-disabled-background: var(--border);
+    --bn-colors-disabled-text: var(--text-tertiary);
+    --bn-colors-shadow: none;
+    --bn-border-radius: 4px;
+    --bn-font-family: var(--font-body);
+    font-family: var(--font-body);
+  }
+
+  .bn-container [class*="blockOuter"] {
+    font-family: var(--font-body);
+  }
+
+  .bn-container code {
+    font-family: var(--font-mono);
+  }
+
+  [data-theme="dark"] .bn-container {
+    --bn-colors-editor-background: var(--surface);
+    --bn-colors-menu-background: var(--surface-raised);
+    --bn-colors-hovered-background: var(--accent-subtle);
+    --bn-colors-selected-background: var(--accent-subtle);
+  }
 }
