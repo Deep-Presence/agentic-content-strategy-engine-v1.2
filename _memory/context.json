@@ -1,7 +1,7 @@
 {
-  "sprint": "frontend-shared-components-integration-readiness",
-  "sprint_goal": "Frontend integration readiness audit + build shared components needed for page-by-page backend integration.",
-  "sprint_status": "COMPLETE — Full audit confirmed foundation ready. 3 shared components built: DateRangePicker (react-day-picker v9 + date-fns v4), BrandLogo (Google Favicon fallback chain), SlideDrawer (Framer Motion 50vw). Docs updated. Ready for page-by-page integration.",
+  "sprint": "frontend-brand-hub-integration",
+  "sprint_goal": "Integrate Brand Hub (/artifacts) frontend page with backend API — replace filesystem reads with real API calls, add version history dropdown, artifact upload modal.",
+  "sprint_status": "COMPLETE — Brand Hub fully integrated. Auth login/hydration fixes applied. Version dropdown and upload modal working. Build passing.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -13,7 +13,10 @@
     "DATABASE_URL is REQUIRED — no JSON fallback for TaskStore or AuthService",
     "REDIS_URL is REQUIRED — no in-memory fallback for EventBus or checkpointer",
     "Async Redis for hot paths (pipeline writes), sync Redis for locks + sync readers",
-    "Distributed locks are fail-closed when Redis is configured (no split-brain fallback)"
+    "Distributed locks are fail-closed when Redis is configured (no split-brain fallback)",
+    "CSP strict-dynamic disabled in dev (blocks Next.js HMR)",
+    "handleUnauthorized must skip redirect when on auth pages (prevents loop)",
+    "useSearchParams() requires Suspense boundary in Next.js 14 App Router"
   ],
   "active_branches": ["integration/front-back-2"],
   "environment_notes": [
@@ -22,21 +25,27 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "frontend/src/components/ui/DateRangePicker.tsx (NEW — react-day-picker v9 + date-fns v4, two-month calendar, presets)",
-    "frontend/src/components/ui/BrandLogo.tsx (NEW — Google Favicon → Clearbit → Logo.dev → text fallback)",
-    "frontend/src/components/ui/SlideDrawer.tsx (NEW — Framer Motion 50vw right-side panel, overlay, scroll lock)",
-    "frontend/src/components/ui/index.ts (UPDATED — exports 3 new shared components)",
-    "frontend/CLAUDE.md (UPDATED — tech stack + shared component docs)",
-    "frontend/brand-system.md (UPDATED — SlideDrawer, DateRangePicker, BrandLogo specs)"
+    "frontend/src/app/(dashboard)/artifacts/_lib/ (NEW — types, api, parsers, adapters, versions)",
+    "frontend/src/app/(dashboard)/artifacts/_hooks/ (NEW — useArtifactsData, usePersonaContent)",
+    "frontend/src/app/(dashboard)/artifacts/_components/VersionHistory.tsx (NEW — dropdown version selector)",
+    "frontend/src/app/(dashboard)/artifacts/_components/UploadModal.tsx (NEW — floating upload dialog)",
+    "frontend/src/app/(dashboard)/artifacts/_components/ArtifactsSkeleton.tsx (NEW — loading skeletons)",
+    "frontend/src/app/(dashboard)/artifacts/_components/ArtifactsClient.tsx (REWRITTEN — hooks, version switching, upload)",
+    "frontend/src/app/(dashboard)/artifacts/_components/HubView.tsx (UPDATED — kbHealth, dynamic freshness)",
+    "frontend/src/app/(dashboard)/artifacts/_components/PersonasListView.tsx (UPDATED — API persona type)",
+    "frontend/src/lib/api-client.ts (UPDATED — getText, doFetch refactor, 401 fix, logoutPromise reset)",
+    "frontend/src/middleware.ts (UPDATED — CSP disabled in dev)",
+    "frontend/src/app/(auth)/login/page.tsx (UPDATED — Suspense for useSearchParams)",
+    "api/routers/artifacts.py (UPDATED — audience_personas/voice_style_guide in VALID_TYPES, upload endpoint)"
   ],
   "test_count": 1360,
-  "phases_completed_count": 59,
+  "phases_completed_count": 61,
   "recent_phases": [
-    "frontend-shared-components-integration-readiness — Full integration audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer). Docs updated. Ready for page-by-page integration.",
+    "frontend-brand-hub-integration — Brand Hub (/artifacts) fully wired to backend API. KB, VSG, AP from real endpoints. Version history dropdown. Upload modal with sub-path routing. Auth login fixes (CSP, Suspense, 401 loop). Dead code data loaders removed.",
+    "frontend-shared-components-integration-readiness — Full integration audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer). Docs updated.",
     "frontend-auth-integration-security-hardening — Auth foundation + httpOnly cookie BFF proxy + strict CSP nonces. 20 new files.",
-    "redis-phase6-remove-fallbacks — Delete JSON TaskStore, EventBus, JsonAuthService, MemorySaver. DATABASE_URL+REDIS_URL mandatory. 12 steps, ~1300 lines removed, 1360 tests passing.",
-    "r2-blob-storage-phase5 — Reader-side StorageBackend migration: json_site_audit_data full refactor, content/brand/prompt services fixed, DI wiring, 447 tests verified",
-    "r2-blob-storage-phase3 — CachedStorageBackend, mtime removal, brand_data fix, list_dir caching (25 new tests)"
+    "redis-phase6-remove-fallbacks — Delete JSON TaskStore, EventBus, JsonAuthService, MemorySaver. DATABASE_URL+REDIS_URL mandatory.",
+    "r2-blob-storage-phase5 — Reader-side StorageBackend migration: json_site_audit_data full refactor, content/brand/prompt services fixed"
   ],
   "phases_remaining": [],
   "deferred_issues_location": ".claude/sprints/pending/backlog.md"

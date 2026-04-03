@@ -11,11 +11,12 @@ from __future__ import annotations
 import json
 import re
 from pathlib import PurePosixPath
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._-]")
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from api.auth.dependencies import require_auth
@@ -25,7 +26,7 @@ from core.storage.backends.base import StorageBackend
 
 router = APIRouter(prefix="/api/v1/artifacts", tags=["artifacts"])
 
-VALID_TYPES = {"company_context", "personas", "style_guides", "gap_analysis", "content", "knowledge_base"}
+VALID_TYPES = {"company_context", "personas", "style_guides", "gap_analysis", "content", "knowledge_base", "audience_personas", "voice_style_guide"}
 _EXCLUDED_DIRS = {"chroma_db", "_logs", ".DS_Store"}
 
 # Artifact types where files live directly in the type dir (not in slug subdirs)
@@ -259,3 +260,116 @@ def get_artifact_content(
         return HTMLResponse(content=content)
     else:
         return PlainTextResponse(content=content)
+
+
+# ── Upload ──────────────────────────────────────────────────────────
+
+_UPLOAD_ALLOWED_EXTENSIONS = {".md", ".txt", ".pdf"}
+_UPLOAD_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+# Artifact types that accept uploads (not flat types — those use different naming)
+_UPLOADABLE_TYPES = {"knowledge_base", "audience_personas", "voice_style_guide"}
+
+
+def _sanitize_filename(name: str) -> str:
+    """Sanitize a filename: collapse unsafe chars to hyphens, strip leading dots."""
+    name = name.strip()
+    name = _SAFE_FILENAME_RE.sub("-", name)
+    name = re.sub(r"-{2,}", "-", name)
+    name = name.strip("-.")
+    return name or "upload.md"
+
+
+def _resolve_collision(backend: StorageBackend, storage_key: str) -> str:
+    """If storage_key already exists, append _(1), _(2), etc. until unique."""
+    if not backend.exists(storage_key):
+        return storage_key
+
+    path = PurePosixPath(storage_key)
+    stem = path.stem
+    suffix = path.suffix
+    parent = str(path.parent)
+
+    for n in range(1, 100):
+        candidate = f"{parent}/{stem}_({n}){suffix}"
+        if not backend.exists(candidate):
+            return candidate
+
+    # Extremely unlikely — fall back to original (overwrite)
+    return storage_key
+
+
+@router.post("/{artifact_type}/{slug}/upload", status_code=201)
+async def upload_artifact(
+    artifact_type: str,
+    slug: str,
+    request: Request,
+    file: UploadFile = File(...),
+    sub_path: Optional[str] = Query(default=None, description="Sub-directory within artifact type, e.g. 'company_overview' or 'guide' or persona_id"),
+    backend: StorageBackend = Depends(get_storage_backend),
+    _user: UserProfile = Depends(require_auth),
+) -> Dict[str, Any]:
+    """Upload a replacement document to an artifact directory.
+
+    Stores at: {artifact_type}/{slug}/{sub_path}/{sanitized_filename}
+    If sub_path is not provided, stores at: {artifact_type}/{slug}/{sanitized_filename}
+    Name collisions resolved with _(1), _(2), etc.
+    """
+    if not _SLUG_PATTERN.match(slug):
+        raise HTTPException(status_code=400, detail="Invalid slug format")
+    if artifact_type not in _UPLOADABLE_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Upload not supported for '{artifact_type}'. Allowed: {sorted(_UPLOADABLE_TYPES)}",
+        )
+
+    # Tenant isolation
+    company_slug = _user_company_slug(request)
+    if not _slug_belongs_to_user(slug, company_slug):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Validate filename
+    original_name = file.filename or "upload.md"
+    safe_name = _sanitize_filename(original_name)
+    ext = PurePosixPath(safe_name).suffix.lower()
+    if ext not in _UPLOAD_ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported file type: {ext}. Allowed: {sorted(_UPLOAD_ALLOWED_EXTENSIONS)}",
+        )
+
+    # Read and validate size
+    content = await file.read()
+    if len(content) > _UPLOAD_MAX_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"File too large ({len(content)} bytes). Max: {_UPLOAD_MAX_BYTES} bytes.",
+        )
+
+    # Validate and sanitize sub_path
+    if sub_path:
+        if ".." in sub_path or sub_path.startswith("/"):
+            raise HTTPException(status_code=400, detail="Invalid sub_path")
+        sub_path = sub_path.strip("/")
+
+    # Construct storage key and resolve collisions
+    if sub_path:
+        storage_key = f"{artifact_type}/{slug}/{sub_path}/{safe_name}"
+    else:
+        storage_key = f"{artifact_type}/{slug}/{safe_name}"
+    final_key = _resolve_collision(backend, storage_key)
+
+    # Write via StorageBackend (R2 or local — transparent)
+    backend.write_bytes(final_key, content)
+
+    # Derive the stored filename (relative to {artifact_type}/{slug}/)
+    prefix = f"{artifact_type}/{slug}/"
+    stored_name = final_key[len(prefix):] if final_key.startswith(prefix) else _basename(final_key)
+
+    return {
+        "artifact_type": artifact_type,
+        "slug": slug,
+        "filename": stored_name,
+        "original_filename": original_name,
+        "size_bytes": len(content),
+        "storage_key": final_key,
+    }

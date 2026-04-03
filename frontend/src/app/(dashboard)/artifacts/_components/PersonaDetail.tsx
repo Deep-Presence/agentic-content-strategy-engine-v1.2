@@ -12,10 +12,16 @@ import {
   Upload,
 } from 'lucide-react';
 import type { Persona } from '@/types';
+import { VersionHistory } from './VersionHistory';
+import type { VersionEntry } from '../_lib/types';
 
 interface PersonaDetailProps {
   persona: Persona;
   onBack: () => void;
+  versions?: VersionEntry[];
+  activeFilePath?: string;
+  onSelectVersion?: (entry: VersionEntry) => void;
+  onUpload?: () => void;
 }
 
 // Color theme per section type
@@ -146,7 +152,7 @@ function ParsedContent({ content, sectionTitle }: { content: string; sectionTitl
   return <>{elements}</>;
 }
 
-export function PersonaDetail({ persona, onBack }: PersonaDetailProps) {
+export function PersonaDetail({ persona, onBack, versions, activeFilePath, onSelectVersion, onUpload }: PersonaDetailProps) {
   const [activeSection, setActiveSection] = useState<string>('section-0');
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -295,24 +301,25 @@ export function PersonaDetail({ persona, onBack }: PersonaDetailProps) {
           </div>
 
           {/* Version History */}
-          <div className="border border-border rounded-md bg-surface p-4">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-tertiary mb-3">Version History</div>
-            <div className="space-y-2">
+          {versions && versions.length > 0 && onSelectVersion ? (
+            <VersionHistory versions={versions} activeFilePath={activeFilePath} onSelectVersion={onSelectVersion} />
+          ) : (
+            <div className="border border-border rounded-md bg-surface p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-tertiary mb-3">Version History</div>
               <div className="px-2.5 py-2 rounded-md bg-accent-subtle border border-accent/20 text-[12px]">
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-text-primary">{persona.version}</span>
                   <Badge variant="info" className="!text-[8px] !h-[16px]">Current</Badge>
                 </div>
-                <div className="text-[11px] text-text-tertiary mt-0.5">Mar 24, 2026 &middot; Pipeline AI</div>
               </div>
             </div>
-            <button className="w-full mt-2 px-2.5 py-2 text-[12px] text-accent hover:bg-accent-subtle rounded-md transition-colors cursor-pointer text-center">
-              + Create New Version
-            </button>
-          </div>
+          )}
 
           {/* Upload */}
-          <div className="border-2 border-dashed border-border rounded-md p-4 text-center hover:border-border-strong transition-colors cursor-pointer">
+          <div
+            onClick={onUpload}
+            className="border-2 border-dashed border-border rounded-md p-4 text-center hover:border-border-strong transition-colors cursor-pointer"
+          >
             <Upload size={18} strokeWidth={1.5} className="text-text-tertiary mx-auto mb-1.5" />
             <p className="text-[11px] font-medium text-text-secondary">Upload replacement</p>
             <p className="text-[10px] text-text-tertiary">.md, .txt, .pdf</p>

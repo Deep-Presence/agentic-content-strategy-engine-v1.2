@@ -235,6 +235,13 @@
 - **Date added:** 2026-03-10
 - **Files affected:** `api/dependencies.py`
 
+### PB-94: Proper artifact version listing endpoints (replace client-side filename parsing)
+- **Source:** Frontend-backend artifacts integration, 2026-04-04
+- **Date added:** 2026-04-04
+- **Description:** Currently, version history in the Brand Hub is derived client-side by parsing filenames from `GET /api/v1/artifacts/{type}/{slug}` (which returns all files including manifests, JSON, etc.). Add dedicated endpoints that use `StorageBackend.list_dir()` to discover versions and return structured metadata (version number, date, word count). Endpoints needed: `GET /api/v1/knowledge-base/{slug}/{doc_type}/versions`, `GET /api/v1/voice-style-guide/{slug}/guide/versions`, `GET /api/v1/audience-persona/{slug}/{persona_id}/versions`. Each should return `{ versions: [{ version: int, last_updated: str|null, word_count: int }] }`.
+- **Files affected:** `core/research/knowledge_base/storage.py`, `core/research/voice_style_guide/storage.py`, `core/research/audience_persona/storage.py`, `core/services/kb_data.py`, `core/services/vsg_data.py`, `core/services/persona_data.py`, `api/routers/knowledge_base.py`, `api/routers/voice_style_guide.py`, `api/routers/audience_persona.py`
+- **Blocked by:** nothing
+
 ## Low Priority / Nice to Have
 
 ### PB-15: Test Playwright fallback on carta.com

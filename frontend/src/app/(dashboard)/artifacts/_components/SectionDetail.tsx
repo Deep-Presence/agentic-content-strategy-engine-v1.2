@@ -14,13 +14,8 @@ import {
   Edit3,
 } from 'lucide-react';
 import { MarkdownRenderer } from './MarkdownRenderer';
-
-interface VersionEntry {
-  version: string;
-  date: string;
-  by: string;
-  current: boolean;
-}
+import { VersionHistory } from './VersionHistory';
+import type { VersionEntry } from '../_lib/types';
 
 interface SectionDetailProps {
   title: string;
@@ -33,6 +28,9 @@ interface SectionDetailProps {
   onBack: () => void;
   breadcrumb: string[];
   versions?: VersionEntry[];
+  activeFilePath?: string;
+  onSelectVersion?: (entry: VersionEntry) => void;
+  onUpload?: () => void;
 }
 
 interface Heading { id: string; text: string; level: number; }
@@ -56,6 +54,9 @@ export function SectionDetail({
   onBack,
   breadcrumb,
   versions,
+  activeFilePath,
+  onSelectVersion,
+  onUpload,
 }: SectionDetailProps) {
   const [headings, setHeadings] = useState<Heading[]>([]);
   const [activeHeading, setActiveHeading] = useState<string>('');
@@ -63,10 +64,6 @@ export function SectionDetail({
   const [activeView, setActiveView] = useState<'structured' | 'raw'>('structured');
   const contentRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
-
-  const versionHistory: VersionEntry[] = versions || [
-    { version, date: lastUpdated, by: createdBy, current: true },
-  ];
 
   const handleHeadingsReady = useCallback((h: Heading[]) => {
     setHeadings(h);
@@ -224,28 +221,26 @@ export function SectionDetail({
           )}
 
           {/* Version History */}
-          <div className="border border-border rounded-md bg-surface p-4">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-tertiary mb-3">Version History</div>
-            <div className="space-y-2">
-              {versionHistory.map(v => (
-                <div key={v.version} className={`px-2.5 py-2 rounded-md text-[12px] ${
-                  v.current ? 'bg-accent-subtle border border-accent/20' : 'hover:bg-bg cursor-pointer border border-transparent'
-                }`}>
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium text-text-primary">{v.version}</span>
-                    {v.current && <Badge variant="info" className="!text-[8px] !h-[16px]">Current</Badge>}
-                  </div>
-                  <div className="text-[11px] text-text-tertiary mt-0.5">{v.date} &middot; {v.by}</div>
+          {versions && versions.length > 0 && onSelectVersion ? (
+            <VersionHistory versions={versions} activeFilePath={activeFilePath} onSelectVersion={onSelectVersion} />
+          ) : (
+            <div className="border border-border rounded-md bg-surface p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-tertiary mb-3">Version History</div>
+              <div className="px-2.5 py-2 rounded-md bg-accent-subtle border border-accent/20 text-[12px]">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-text-primary">{version}</span>
+                  <Badge variant="info" className="!text-[8px] !h-[16px]">Current</Badge>
                 </div>
-              ))}
+                <div className="text-[11px] text-text-tertiary mt-0.5">{lastUpdated} &middot; {createdBy}</div>
+              </div>
             </div>
-            <button className="w-full mt-2 px-2.5 py-2 text-[12px] text-accent hover:bg-accent-subtle rounded-md transition-colors cursor-pointer text-center">
-              + Create New Version
-            </button>
-          </div>
+          )}
 
           {/* Upload */}
-          <div className="border-2 border-dashed border-border rounded-md p-4 text-center hover:border-border-strong transition-colors cursor-pointer">
+          <div
+            onClick={onUpload}
+            className="border-2 border-dashed border-border rounded-md p-4 text-center hover:border-border-strong transition-colors cursor-pointer"
+          >
             <Upload size={18} strokeWidth={1.5} className="text-text-tertiary mx-auto mb-1.5" />
             <p className="text-[11px] font-medium text-text-secondary">Upload replacement</p>
             <p className="text-[10px] text-text-tertiary">.md, .txt, .pdf</p>

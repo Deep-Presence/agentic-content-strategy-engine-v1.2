@@ -58,7 +58,6 @@ function buildCSP(nonce: string): string {
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const nonce = generateNonce();
 
   // Auth validation
   const sessionCookie = request.cookies.get(AUTH_COOKIE);
@@ -67,8 +66,7 @@ export function middleware(request: NextRequest) {
   // Authenticated user on auth pages → redirect to /
   if (hasValidSession && AUTH_ROUTES.some((r) => pathname === r)) {
     const response = NextResponse.redirect(new URL('/', request.url));
-    response.headers.set('Content-Security-Policy', buildCSP(nonce));
-    response.headers.set('x-nonce', nonce);
+    applyCSP(response);
     return response;
   }
 
@@ -82,16 +80,22 @@ export function middleware(request: NextRequest) {
       loginUrl.searchParams.set('redirect', pathname);
     }
     const response = NextResponse.redirect(loginUrl);
-    response.headers.set('Content-Security-Policy', buildCSP(nonce));
-    response.headers.set('x-nonce', nonce);
+    applyCSP(response);
     return response;
   }
 
   // Pass through with CSP
   const response = NextResponse.next();
+  applyCSP(response);
+  return response;
+}
+
+function applyCSP(response: NextResponse): void {
+  // Skip CSP in development — strict-dynamic blocks Next.js HMR/hydration scripts
+  if (process.env.NODE_ENV === 'development') return;
+  const nonce = generateNonce();
   response.headers.set('Content-Security-Policy', buildCSP(nonce));
   response.headers.set('x-nonce', nonce);
-  return response;
 }
 
 export const config = {

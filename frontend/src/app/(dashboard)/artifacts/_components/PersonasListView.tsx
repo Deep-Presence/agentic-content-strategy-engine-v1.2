@@ -7,18 +7,26 @@ import {
   ChevronRight,
   Plus,
   Upload,
-  Users,
   MoreVertical,
   Edit3,
   Share2,
   Trash2,
 } from 'lucide-react';
-import type { Persona } from '@/types';
+import type { PersonaListItemAPI } from '../_lib/types';
 
 interface PersonasListViewProps {
-  personas: Persona[];
+  personas: PersonaListItemAPI[];
   onBack: () => void;
   onSelectPersona: (id: string) => void;
+}
+
+function formatDate(iso: string | null): string {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return '—';
+  }
 }
 
 export function PersonasListView({ personas, onBack, onSelectPersona }: PersonasListViewProps) {
@@ -26,8 +34,8 @@ export function PersonasListView({ personas, onBack, onSelectPersona }: Personas
   const [openMenu, setOpenMenu] = useState<string | null>(null);
 
   const filtered = personas.filter(p =>
-    p.name.toLowerCase().includes(search.toLowerCase()) ||
-    p.title.toLowerCase().includes(search.toLowerCase())
+    p.persona_name.toLowerCase().includes(search.toLowerCase()) ||
+    p.tagline.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -90,47 +98,47 @@ export function PersonasListView({ personas, onBack, onSelectPersona }: Personas
 
         {/* Rows */}
         {filtered.map(persona => (
-          <div key={persona.id} className="relative grid grid-cols-[1fr_140px_140px_100px_40px] gap-3 px-5 py-3.5 border-b border-border-subtle hover:bg-bg transition-colors group last:border-b-0">
+          <div key={persona.persona_id} className="relative grid grid-cols-[1fr_140px_140px_100px_40px] gap-3 px-5 py-3.5 border-b border-border-subtle hover:bg-bg transition-colors group last:border-b-0">
             {/* Name — clickable */}
             <button
-              onClick={() => onSelectPersona(persona.id)}
+              onClick={() => onSelectPersona(persona.persona_id)}
               className="flex items-center gap-3 min-w-0 text-left cursor-pointer"
             >
               <div className="w-8 h-8 rounded-full bg-accent-subtle flex items-center justify-center text-[13px] font-semibold text-accent flex-shrink-0">
-                {persona.name.charAt(0).toUpperCase()}
+                {persona.persona_name.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
                 <div className="text-[14px] font-medium text-text-primary truncate group-hover:text-accent transition-colors">
-                  {persona.name}
+                  {persona.persona_name}
                 </div>
-                <div className="text-[11px] text-text-tertiary truncate">{persona.title}</div>
+                <div className="text-[11px] text-text-tertiary truncate">{persona.tagline}</div>
               </div>
             </button>
 
             {/* Added By */}
-            <div className="flex items-center text-[13px] text-text-secondary">Pipeline AI</div>
+            <div className="flex items-center text-[13px] text-text-secondary capitalize">{persona.created_by}</div>
 
             {/* Updated */}
-            <div className="flex items-center text-[12px] text-text-tertiary">Mar 24, 2026</div>
+            <div className="flex items-center text-[12px] text-text-tertiary">{formatDate(persona.last_updated)}</div>
 
             {/* Version */}
-            <div className="flex items-center"><Badge variant="neutral">{persona.version}</Badge></div>
+            <div className="flex items-center"><Badge variant="neutral">v{persona.current_version}</Badge></div>
 
             {/* Actions Menu */}
             <div className="flex items-center justify-center relative">
               <button
-                onClick={() => setOpenMenu(openMenu === persona.id ? null : persona.id)}
+                onClick={() => setOpenMenu(openMenu === persona.persona_id ? null : persona.persona_id)}
                 className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-bg cursor-pointer transition-colors"
               >
                 <MoreVertical size={14} strokeWidth={1.5} className="text-text-tertiary" />
               </button>
 
-              {openMenu === persona.id && (
+              {openMenu === persona.persona_id && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setOpenMenu(null)} />
                   <div className="absolute right-0 top-8 z-20 w-[140px] bg-surface border border-border rounded-md py-1 shadow-sm">
                     <button
-                      onClick={() => { onSelectPersona(persona.id); setOpenMenu(null); }}
+                      onClick={() => { onSelectPersona(persona.persona_id); setOpenMenu(null); }}
                       className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-text-primary hover:bg-bg cursor-pointer"
                     >
                       <Edit3 size={12} strokeWidth={1.5} /> Edit

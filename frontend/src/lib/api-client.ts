@@ -35,14 +35,23 @@ let logoutPromise: Promise<void> | null = null;
 function handleUnauthorized(): Promise<void> {
   if (!logoutPromise) {
     logoutPromise = (async () => {
-      // Clear httpOnly cookie via BFF
       try {
-        await fetch('/api/auth/logout', { method: 'POST' });
-      } catch {
-        // Best-effort
-      }
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
+        // Clear httpOnly cookie via BFF
+        try {
+          await fetch('/api/auth/logout', { method: 'POST' });
+        } catch {
+          // Best-effort
+        }
+        // Don't redirect if already on an auth page (prevents reload loop)
+        if (typeof window !== 'undefined') {
+          const path = window.location.pathname;
+          if (path !== '/login' && path !== '/register' && path !== '/join') {
+            window.location.href = '/login';
+          }
+        }
+      } finally {
+        // Reset so future 401s (after re-login) can trigger again
+        logoutPromise = null;
       }
     })();
   }
@@ -59,7 +68,7 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+async function doFetch(path: string, options: RequestOptions = {}): Promise<Response> {
   const { method = 'GET', body, params, headers: customHeaders, signal } = options;
 
   // Build URL with query params — relative (same-origin)
@@ -114,7 +123,17 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     throw new ApiError(res.status, detail, code);
   }
 
+  return res;
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const res = await doFetch(path, options);
   return res.json() as Promise<T>;
+}
+
+async function requestText(path: string, options: RequestOptions = {}): Promise<string> {
+  const res = await doFetch(path, options);
+  return res.text();
 }
 
 // ── Convenience wrappers ─────────────────────────────────
@@ -122,6 +141,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 export const api = {
   get: <T>(path: string, params?: RequestOptions['params'], signal?: AbortSignal) =>
     request<T>(path, { method: 'GET', params, signal }),
+
+  getText: (path: string, params?: RequestOptions['params'], signal?: AbortSignal) =>
+    requestText(path, { method: 'GET', params, signal }),
 
   post: <T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>) =>
     request<T>(path, { method: 'POST', body, ...options }),

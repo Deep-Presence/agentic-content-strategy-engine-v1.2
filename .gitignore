@@ -39,6 +39,10 @@ artifacts/_auth/
 artifacts/_jobs/
 artifacts/
 
+# Un-ignore frontend artifacts route (it's a Next.js page, not pipeline output)
+!frontend/src/app/(dashboard)/artifacts/
+!frontend/src/app/(dashboard)/artifacts/**
+
 # Node
 node_modules/
 dashboard/node_modules/

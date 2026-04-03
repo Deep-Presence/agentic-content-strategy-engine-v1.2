@@ -1,6 +1,9 @@
+/**
+ * Pure parsing functions for Voice Style Guide markdown.
+ * Extracted from frontend/src/data/voice-guide.ts — no fs dependency.
+ */
+
 import type { VoiceGuide, LexiconItem } from '@/types';
-import fs from 'fs';
-import path from 'path';
 
 function parseFavorTerms(content: string): LexiconItem[] {
   const favorMatch = content.match(/\*\*FAVOR\*\*\n([\s\S]*?)(?=\n\*\*AVOID\*\*)/);
@@ -44,7 +47,6 @@ function parseAntiPatterns(content: string): string[] {
 function parseWorkedExamples(content: string): { title: string; before: string; after: string; explanation: string }[] {
   const examples: { title: string; before: string; after: string; explanation: string }[] = [];
 
-  // Parse Before/After pairs
   const baSection = content.match(/### B\. Before\/After Pairs([\s\S]*?)(?=### C\.|## Section|$)/);
   if (baSection) {
     const pairs = baSection[1].split(/\*\*Before\/After #\d+:/);
@@ -68,12 +70,10 @@ function parseWorkedExamples(content: string): { title: string; before: string; 
   return examples;
 }
 
-export function getVoiceGuide(): VoiceGuide | null {
-  const mdPath = path.join(process.cwd(), 'data/artifacts/voice_style_guide/lovable/guide/v1.md');
+export function parseVoiceGuideMarkdown(content: string): VoiceGuide | null {
+  if (!content) return null;
 
   try {
-    const content = fs.readFileSync(mdPath, 'utf-8');
-
     return {
       identity: content.match(/## Section 1: Voice Identity\n\n([\s\S]*?)(?=\n---)/)?.[1]?.trim() || content.slice(0, 500),
       registers: [
@@ -91,14 +91,5 @@ export function getVoiceGuide(): VoiceGuide | null {
     };
   } catch {
     return null;
-  }
-}
-
-export function getVoiceGuideMarkdown(): string {
-  const mdPath = path.join(process.cwd(), 'data/artifacts/voice_style_guide/lovable/guide/v1.md');
-  try {
-    return fs.readFileSync(mdPath, 'utf-8');
-  } catch {
-    return '';
   }
 }

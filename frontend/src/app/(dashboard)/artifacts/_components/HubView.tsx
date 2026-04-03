@@ -15,12 +15,14 @@ import {
   AlertTriangle,
   BookOpen,
 } from 'lucide-react';
-import type { KBDocument, Persona, VoiceGuide } from '@/types';
+import type { KBDocument, VoiceGuide } from '@/types';
+import type { PersonaListItemAPI, KBHealthResponseAPI } from '../_lib/types';
 
 interface HubViewProps {
   kbDocs: KBDocument[];
   voiceGuide: VoiceGuide | null;
-  personas: Persona[];
+  personas: PersonaListItemAPI[];
+  kbHealth: KBHealthResponseAPI | null;
   onNavigate: (id: string) => void;
   onRerun: () => void;
 }
@@ -43,9 +45,19 @@ interface CardItem {
   description: string;
   version?: string;
   meta?: string;
+  healthStatus?: string;
 }
 
-export function HubView({ kbDocs, voiceGuide, personas, onNavigate, onRerun }: HubViewProps) {
+function formatDate(iso: string | null): string {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return '—';
+  }
+}
+
+export function HubView({ kbDocs, voiceGuide, personas, kbHealth, onNavigate, onRerun }: HubViewProps) {
   // Build the flat card list from all data sources
   const cards: CardItem[] = [];
 
@@ -77,12 +89,14 @@ export function HubView({ kbDocs, voiceGuide, personas, onNavigate, onRerun }: H
 
   for (const kb of kbTypes) {
     const doc = kbDocs.find(d => d.type === kb.type);
+    const docHealth = kbHealth?.doc_health?.[kb.type];
     cards.push({
       id: kb.id,
       label: kb.label,
       description: kb.description,
       version: doc?.version,
       meta: doc ? `${doc.wordCount.toLocaleString()} words` : 'Not generated',
+      healthStatus: docHealth?.status,
     });
   }
 
@@ -103,6 +117,12 @@ export function HubView({ kbDocs, voiceGuide, personas, onNavigate, onRerun }: H
     meta: voiceGuide ? 'Full document' : 'Not generated',
   });
 
+  // Derive status from health
+  const staleDocs = kbHealth?.stale_docs ?? [];
+  const missingDocs = kbHealth?.missing_docs ?? [];
+  const hasStale = staleDocs.length > 0;
+  const hasMissing = missingDocs.length > 0;
+
   return (
     <div>
       {/* Page Header */}
@@ -118,7 +138,9 @@ export function HubView({ kbDocs, voiceGuide, personas, onNavigate, onRerun }: H
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 text-[12px] text-text-tertiary mr-2">
             <Clock size={13} strokeWidth={1.5} />
-            Last run: Mar 24, 2026
+            {kbHealth?.last_full_refresh
+              ? `Last run: ${formatDate(kbHealth.last_full_refresh)}`
+              : 'No runs yet'}
           </div>
           <Button variant="primary" onClick={onRerun}>
             <RefreshCw size={14} strokeWidth={1.5} className="mr-1.5" />
@@ -130,22 +152,29 @@ export function HubView({ kbDocs, voiceGuide, personas, onNavigate, onRerun }: H
       {/* Activity bar */}
       <div className="bg-surface border border-border rounded-md px-4 py-3 mb-6 flex items-center gap-4">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-success" />
-          <span className="text-[12px] font-medium text-text-primary">Pipeline Complete</span>
+          <div className={`w-2 h-2 rounded-full ${hasMissing ? 'bg-error' : hasStale ? 'bg-warning' : 'bg-success'}`} />
+          <span className="text-[12px] font-medium text-text-primary">
+            {hasMissing ? `${missingDocs.length} missing` : hasStale ? `${staleDocs.length} stale` : 'All Fresh'}
+          </span>
         </div>
         <div className="h-3 w-px bg-border" />
         <div className="flex items-center gap-4 text-[12px] text-text-secondary">
           <span>{kbDocs.length} KB docs</span>
-          <span>1 voice guide</span>
+          <span>{voiceGuide ? '1 voice guide' : 'No voice guide'}</span>
           <span>{personas.length} personas</span>
         </div>
-        <div className="h-3 w-px bg-border" />
-        <div className="flex items-center gap-1.5 text-[12px] text-text-tertiary">
-          <div className="w-5 h-5 rounded-full bg-accent-subtle flex items-center justify-center text-[9px] font-semibold text-accent">SK</div>
-          <span>Shank Keshri updated Brand Voice &middot; 2 days ago</span>
-        </div>
+        {kbHealth && (
+          <>
+            <div className="h-3 w-px bg-border" />
+            <div className="flex items-center gap-1.5 text-[12px] text-text-tertiary">
+              <span>Health score: <span className="font-mono font-medium text-text-primary">{Math.round(kbHealth.overall_score * 100)}%</span></span>
+            </div>
+          </>
+        )}
         <div className="ml-auto">
-          <Badge variant="success">All artifacts ready</Badge>
+          <Badge variant={hasMissing ? 'error' : hasStale ? 'warning' : 'success'}>
+            {hasMissing ? 'Incomplete' : hasStale ? 'Stale docs' : 'All artifacts ready'}
+          </Badge>
         </div>
       </div>
 
@@ -161,8 +190,17 @@ export function HubView({ kbDocs, voiceGuide, personas, onNavigate, onRerun }: H
               className="text-left group cursor-pointer"
             >
               <Card className="h-full transition-all duration-150 group-hover:border-border-strong !p-5">
-                <div className={`w-11 h-11 rounded-md ${config.bg} flex items-center justify-center mb-3`}>
-                  <span className={config.color}>{config.icon}</span>
+                <div className="flex items-start justify-between mb-3">
+                  <div className={`w-11 h-11 rounded-md ${config.bg} flex items-center justify-center`}>
+                    <span className={config.color}>{config.icon}</span>
+                  </div>
+                  {card.healthStatus && (
+                    <div className={`w-2 h-2 rounded-full mt-1 ${
+                      card.healthStatus === 'fresh' ? 'bg-success' :
+                      card.healthStatus === 'stale' ? 'bg-warning' :
+                      card.healthStatus === 'missing' ? 'bg-error' : 'bg-text-tertiary'
+                    }`} title={card.healthStatus} />
+                  )}
                 </div>
                 <div className="flex items-center gap-2 mb-1.5">
                   <h3 className="text-[15px] font-semibold text-text-primary">{card.label}</h3>
