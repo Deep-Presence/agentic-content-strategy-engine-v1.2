@@ -3,33 +3,95 @@
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
 import {
-  Home, BarChart3, FlaskConical, PenSquare, CalendarRange,
-  BookOpen, TrendingUp, RefreshCw, Settings, ChevronsLeft, ChevronsRight,
+  Settings,
+  ChevronsLeft,
+  ChevronsRight,
+  LayoutDashboard,
+  BarChart3,
+  Swords,
+  Radar,
+  TrendingUp,
+  ShieldCheck,
+  Globe,
+  FileText,
+  PenTool,
+  Brain,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { useSidebarStore } from '@/stores/sidebar';
-import { LocusLogo } from './LocusLogo';
 import { WorkspaceSelector } from './WorkspaceSelector';
+import { Avatar } from './Avatar';
 
-const navItems = [
-  { label: 'Home', href: '/', icon: Home, exact: true },
-  { label: 'Analytics', href: '/analytics', icon: BarChart3 },
-  { label: 'Deep Embedding Lab', href: '/analytics/lab', icon: FlaskConical },
-  { label: 'Content Studio', href: '/content', icon: PenSquare, exact: true },
-  { label: 'Synced Content', href: '/content/synced', icon: RefreshCw },
-  { label: 'Content Planner', href: '/planner', icon: CalendarRange },
-  { label: 'Brand Artifacts', href: '/artifacts', icon: BookOpen },
-  { label: 'Attribution', href: '/attribution', icon: TrendingUp },
+interface NavItem {
+  label: string;
+  href: string;
+  icon: LucideIcon;
+}
+
+interface NavSection {
+  header?: string;
+  items: NavItem[];
+}
+
+const navSections: NavSection[] = [
+  {
+    items: [
+      { label: 'Brand Summary', href: '/', icon: LayoutDashboard },
+    ],
+  },
+  {
+    header: 'Intelligence',
+    items: [
+      { label: 'Citation intelligence', href: '/analytics', icon: BarChart3 },
+      { label: 'Competitive position', href: '/competitive-position', icon: Swords },
+      { label: 'Prompt tracking', href: '/prompt-tracking', icon: Radar },
+    ],
+  },
+  {
+    header: 'Signals',
+    items: [
+      { label: 'Content performance', href: '/content-performance', icon: TrendingUp },
+      { label: 'Technical readiness', href: '/technical-readiness', icon: ShieldCheck },
+      { label: 'Embedding lab', href: '/embedding-lab', icon: Globe },
+    ],
+  },
+  {
+    header: 'Content',
+    items: [
+      { label: 'Content planner', href: '/planner', icon: FileText },
+      { label: 'Content studio', href: '/content-studio', icon: PenTool },
+    ],
+  },
+  {
+    header: 'Knowledge',
+    items: [
+      { label: 'Brand Brain', href: '/artifacts', icon: Brain },
+    ],
+  },
 ];
+
+const allNavHrefs = navSections.flatMap(s => s.items.map(i => i.href));
+
+function isNavActive(href: string, pathname: string): boolean {
+  if (href === '/') return pathname === '/';
+  const matches = pathname === href || pathname.startsWith(href + '/');
+  if (!matches) return false;
+  // Don't activate if a more specific sibling route also matches
+  return !allNavHrefs.some(other =>
+    other !== href &&
+    other.startsWith(href) &&
+    (pathname === other || pathname.startsWith(other + '/'))
+  );
+}
 
 export function Sidebar() {
   const { collapsed, toggle } = useSidebarStore();
   const pathname = usePathname();
   const [hovered, setHovered] = useState(false);
 
-  // Keyboard shortcut: Cmd+B or Ctrl+B to toggle
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'b' && (e.metaKey || e.ctrlKey)) {
@@ -50,7 +112,7 @@ export function Sidebar() {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Collapse/expand edge trigger — appears on hover */}
+      {/* Collapse/expand edge trigger */}
       <button
         onClick={toggle}
         className={cn(
@@ -68,71 +130,129 @@ export function Sidebar() {
         }
       </button>
 
-      {/* Logo + workspace area */}
+      {/* Logo */}
       <div className={cn(
-        'p-4',
-        collapsed && 'p-2 flex justify-center',
+        'flex items-center gap-2',
+        collapsed ? 'justify-center px-2 pt-3 pb-1' : 'px-4 pt-4 pb-2'
       )}>
-        {collapsed
-          ? <LocusLogo variant="symbol" size={24} />
-          : (
-            <div className="space-y-2">
-              <LocusLogo variant="compact" size={24} animated />
-              <WorkspaceSelector />
-            </div>
-          )
-        }
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="flex-shrink-0">
+          <rect width="24" height="24" rx="6" fill="var(--accent)" />
+          <text x="12" y="16" textAnchor="middle" fill="#fff" fontSize="11" fontWeight="700" fontFamily="JetBrains Mono, monospace">DP</text>
+        </svg>
+        {!collapsed && (
+          <span
+            className="text-[14px] font-semibold"
+            style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}
+          >
+            Deep Presence
+          </span>
+        )}
+      </div>
+
+      {/* Workspace selector */}
+      <div className={cn(collapsed ? 'px-2 pb-2' : 'px-3 pb-3')}>
+        <WorkspaceSelector collapsed={collapsed} />
       </div>
 
       {/* Separator */}
-      <div className={cn('border-t border-border', collapsed ? 'mx-2 my-2' : 'mx-3 my-2')} />
+      <div className={cn('border-t border-border', collapsed ? 'mx-2' : 'mx-3')} />
 
       {/* Nav */}
-      <nav className={cn('flex-1 space-y-1', collapsed ? 'px-1' : 'px-2')}>
-        {navItems.map((item) => {
-          const isActive = item.exact
-            ? pathname === item.href
-            : pathname === item.href || pathname.startsWith(item.href + '/');
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                'flex items-center rounded-sm transition-colors duration-100',
-                collapsed
-                  ? 'justify-center h-[34px] w-full'
-                  : 'gap-[8px] h-[34px] px-3 text-[13px] font-medium',
-                isActive
-                  ? 'bg-accent-subtle text-accent'
-                  : 'text-text-secondary hover:bg-bg hover:text-text-primary'
-              )}
-            >
-              <Icon size={collapsed ? 18 : 16} strokeWidth={1.5} className="flex-shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
-            </Link>
-          );
-        })}
+      <nav className={cn(
+        'flex-1 overflow-y-auto pt-2',
+        collapsed ? 'px-1' : 'px-2',
+      )}>
+        {navSections.map((section, sIdx) => (
+          <div key={sIdx} className={cn(sIdx === 0 ? 'mt-2 mb-2' : 'mt-4')}>
+            {section.header && !collapsed && (
+              <div className="px-2 mb-1 text-[10px] font-medium uppercase tracking-[0.06em] text-accent">
+                {section.header}
+              </div>
+            )}
+            {collapsed && section.header && (
+              <div className="border-t border-border mx-1 my-2" />
+            )}
+            <div className="space-y-0.5">
+              {section.items.map((item) => {
+                const active = isNavActive(item.href, pathname);
+                const isPrimary = item.href === '/' && !section.header;
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      'flex items-center rounded-sm transition-all duration-150',
+                      collapsed
+                        ? 'justify-center h-[30px] w-full'
+                        : isPrimary ? 'h-[34px] px-2 gap-2 text-[14px] font-semibold' : 'h-[30px] px-2 gap-2 text-[13px]',
+                      active
+                        ? isPrimary
+                          ? 'bg-accent-subtle text-accent font-semibold'
+                          : 'bg-accent-subtle text-accent font-medium'
+                        : isPrimary
+                          ? 'text-text-primary hover:bg-bg'
+                          : 'text-text-secondary hover:bg-bg hover:text-text-primary'
+                    )}
+                    style={active && isPrimary ? { borderLeft: '2px solid var(--accent)', paddingLeft: 6 } : undefined}
+                    title={collapsed ? item.label : undefined}
+                  >
+                    <Icon
+                      size={isPrimary ? 18 : 16}
+                      strokeWidth={1.5}
+                      className="flex-shrink-0"
+                      style={{
+                        color: active ? 'var(--accent)' : 'var(--text-secondary)',
+                        transition: 'color 150ms ease',
+                      }}
+                    />
+                    {!collapsed && <span>{item.label}</span>}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
-      {/* Bottom separator + Settings */}
-      <div className={cn('border-t border-border', collapsed ? 'mx-2 my-2' : 'mx-3 my-2')} />
-      <div className={cn('pb-3', collapsed ? 'px-1' : 'px-2')}>
+      {/* Bottom: Settings + User */}
+      <div className={cn('border-t border-border', collapsed ? 'px-1 py-2' : 'px-2 py-2')}>
         <Link
           href="/settings"
           className={cn(
             'flex items-center rounded-sm transition-colors duration-100',
             collapsed
-              ? 'justify-center h-[34px] w-full'
-              : 'gap-[8px] h-[34px] px-3 text-[13px] font-medium',
+              ? 'justify-center h-[30px] w-full'
+              : 'h-[30px] px-2 gap-2 text-[13px]',
             pathname === '/settings'
-              ? 'bg-accent-subtle text-accent'
+              ? 'bg-accent-subtle text-accent font-medium'
               : 'text-text-secondary hover:bg-bg hover:text-text-primary'
           )}
+          title={collapsed ? 'Settings' : undefined}
         >
-          <Settings size={collapsed ? 18 : 16} strokeWidth={1.5} className="flex-shrink-0" />
+          <Settings
+            size={16}
+            strokeWidth={1.5}
+            className="flex-shrink-0"
+            style={{
+              color: pathname === '/settings' ? 'var(--accent)' : 'var(--text-secondary)',
+              transition: 'color 150ms ease',
+            }}
+          />
           {!collapsed && <span>Settings</span>}
         </Link>
+
+        {!collapsed && (
+          <div className="flex items-center gap-2 mt-2 px-2 py-1">
+            <Avatar name="Shank Keshri" size="sm" />
+            <span className="text-[12px] text-text-secondary truncate">shank keshri</span>
+          </div>
+        )}
+        {collapsed && (
+          <div className="flex justify-center mt-1">
+            <Avatar name="Shank Keshri" size="sm" />
+          </div>
+        )}
       </div>
     </motion.aside>
   );

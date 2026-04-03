@@ -1,331 +1,327 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Button, Badge, TabBar, EmptyState, Skeleton, Toast } from '@/components/ui';
-import { BarChart3, Check, MessageSquare } from 'lucide-react';
-import { useAuthStore } from '@/stores/auth';
-import { useTaxonomy, useMatrix } from '@/lib/hooks/useTopicDiscovery';
-import { useTaskStream } from '@/lib/hooks/useTaskStream';
-import { apiPost } from '@/lib/api/client';
-import { TOPIC_DISCOVERY, CONTENT_ENGINE } from '@/lib/api/endpoints';
-import { TaxonomyTree } from './_components/TaxonomyTree';
-import { SubdomainDetail } from './_components/SubdomainDetail';
-import { AssignmentsView } from './_components/AssignmentsView';
-import { CoveragePanel } from './_components/CoveragePanel';
-import {
-  type SubdomainNode,
-  type CategoryNode,
-  type SortDimension,
-  type Assignment,
-} from './_components/topic-data';
+import { useState, useMemo, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Sparkles, Plus, RotateCcw, X } from 'lucide-react';
+import { ASSIGNMENTS, INITIAL_REJECTED, BRAND_PREFIX } from './_components/planner-data';
+import type { Assignment, RejectedItem } from './_components/planner-data';
+import { PriorityQueue } from './_components/PriorityQueue';
+import { ClusterExplorer } from './_components/ClusterExplorer';
+import { DetailDrawer } from './_components/DetailDrawer';
+import { CustomTopicModal } from './_components/CustomTopicModal';
+import { InitiativesSidebar } from './_components/InitiativesSidebar';
 
-type RightTab = 'detail' | 'assignments';
+type ViewMode = 'queue' | 'explorer' | 'rejected';
+type StageFilter = 'all' | 'TOFU' | 'MOFU' | 'BOFU';
+type PersonaFilter = 'all' | 'sf' | 'pm' | 'da' | 'te';
+type SourceFilter = 'all' | 'gap' | 'strategic' | 'custom';
+type IntentFilter = 'all' | 'Informational' | 'Commercial' | 'Navigational' | 'Transactional';
 
-export default function TopicDiscoveryPage() {
-  const slug = useAuthStore((s) => s.company?.slug);
-  const { data: taxonomyData, isLoading: taxLoading, refetch: refetchTaxonomy } = useTaxonomy(slug);
-  const { data: matrixData, refetch: refetchMatrix } = useMatrix(slug);
+interface Toast {
+  id: number;
+  message: string;
+  type: 'success' | 'error';
+}
 
-  const [selectedSub, setSelectedSub] = useState<SubdomainNode | null>(null);
-  const [selectedCat, setSelectedCat] = useState<CategoryNode | null>(null);
-  const [activeTab, setActiveTab] = useState<RightTab>('detail');
-  const [coverageOpen, setCoverageOpen] = useState(false);
-  const [sortDimension, setSortDimension] = useState<SortDimension>('return');
+export default function ContentPlannerPage() {
+  const [assignments, setAssignments] = useState<Assignment[]>(ASSIGNMENTS);
+  const [rejected, setRejected] = useState<RejectedItem[]>(INITIAL_REJECTED);
+  const [view, setView] = useState<ViewMode>('queue');
 
-  const companyName = useAuthStore((s) => s.company?.name) ?? '';
-  const companyDomain = useAuthStore((s) => s.company?.domain) ?? '';
+  // Filters
+  const [stageFilter, setStageFilter] = useState<StageFilter>('all');
+  const [personaFilter, setPersonaFilter] = useState<PersonaFilter>('all');
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
+  const [intentFilter, setIntentFilter] = useState<IntentFilter>('all');
 
-  // Pipeline B expansion state
-  const [expandingSubdomainId, setExpandingSubdomainId] = useState<string | null>(null);
-  const [expandTaskId, setExpandTaskId] = useState<string | null>(null);
-  const expandStream = useTaskStream(expandTaskId);
+  // UI state
+  const [drawerAssignment, setDrawerAssignment] = useState<Assignment | null>(null);
+  const [customTopicOpen, setCustomTopicOpen] = useState(false);
+  const [initiativesOpen, setInitiativesOpen] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const handleExpandTopics = useCallback(async (subdomainId: string) => {
-    if (!slug || !companyName || !companyDomain) return;
-    setExpandingSubdomainId(subdomainId);
-    try {
-      const res = await apiPost<{ run_id: string }>(TOPIC_DISCOVERY.expand, {
-        company_name: companyName,
-        domain: companyDomain,
-        subdomain_ids: [subdomainId],
-        auto_approve_checkpoints: [2],
-      });
-      setExpandTaskId(res.run_id);
-    } catch {
-      setExpandingSubdomainId(null);
-    }
-  }, [slug, companyName, companyDomain]);
-
-  // React to expansion task completion
-  useEffect(() => {
-    if (expandStream.status === 'completed') {
-      refetchMatrix();
-      refetchTaxonomy();
-      setExpandingSubdomainId(null);
-      setExpandTaskId(null);
-    } else if (expandStream.status === 'error') {
-      setExpandingSubdomainId(null);
-      setExpandTaskId(null);
-    }
-  }, [expandStream.status, refetchMatrix, refetchTaxonomy]);
-
-  // Content engine state
-  const [sendingAssignmentId, setSendingAssignmentId] = useState<string | null>(null);
-  const [contentTaskId, setContentTaskId] = useState<string | null>(null);
-  const [contentToast, setContentToast] = useState<{ open: boolean; variant: 'success' | 'error'; message: string }>({ open: false, variant: 'success', message: '' });
-  const contentStream = useTaskStream(contentTaskId);
-
-  const handleSendToContentEngine = useCallback(async (assignment: Assignment) => {
-    if (!slug || !companyName || !companyDomain) return;
-    setSendingAssignmentId(assignment.id);
-    try {
-      // Topic Discovery → Content pipeline handles brief creation internally.
-      // No pre-creation needed (avoids dual brief_id problem).
-      let pipelineStarted = false;
-      try {
-        const res = await apiPost<{ run_id: string }>(CONTENT_ENGINE.fromTopics, {
-          company_name: companyName,
-          domain: companyDomain,
-          effective_slug: slug,
-          topic_assignment_ids: [assignment.id],
-        });
-        setContentTaskId(res.run_id);
-        pipelineStarted = true;
-      } catch {
-        // Pipeline may fail (409 etc.)
-      }
-
-      setSendingAssignmentId(null);
-      setContentToast({
-        open: true,
-        variant: pipelineStarted ? 'success' : 'error',
-        message: pipelineStarted
-          ? 'Pipeline started. Topic will appear in Content Studio.'
-          : 'Failed to start pipeline.',
-      });
-    } catch (err: unknown) {
-      setSendingAssignmentId(null);
-      const message = err instanceof Error ? err.message : 'Failed to add topic.';
-      setContentToast({ open: true, variant: 'error', message });
-    }
-  }, [slug, companyName, companyDomain]);
-
-  useEffect(() => {
-    if (contentStream.status === 'completed') {
-      refetchMatrix();
-      setSendingAssignmentId(null);
-      setContentTaskId(null);
-    } else if (contentStream.status === 'error') {
-      setSendingAssignmentId(null);
-      setContentTaskId(null);
-      setContentToast({ open: true, variant: 'error', message: 'Content pipeline failed.' });
-    }
-  }, [contentStream.status, refetchMatrix]);
-
-  const taxonomyVersion = taxonomyData?.version ?? 0;
-
-  // Parse taxonomy root_nodes from API response (Dict[str, Any])
-  const categories = useMemo<CategoryNode[]>(() => {
-    if (!taxonomyData?.taxonomy) return [];
-    const tax = taxonomyData.taxonomy;
-    // The taxonomy response wraps root_nodes in the taxonomy dict
-    if (Array.isArray(tax.root_nodes)) return tax.root_nodes;
-    if (Array.isArray(tax)) return tax;
-    return [];
-  }, [taxonomyData]);
-
-  // Build assignment lookup by subdomain_id from matrix API
-  const assignmentsBySubdomain = useMemo(() => {
-    const map = new Map<string, Assignment[]>();
-    if (!matrixData?.matrix) return map;
-    const matrixObj = matrixData.matrix as { assignments?: Assignment[] };
-    const allAssignments: Assignment[] = matrixObj.assignments ?? [];
-    for (const a of allAssignments) {
-      if (!map.has(a.subdomain_id)) {
-        map.set(a.subdomain_id, []);
-      }
-      map.get(a.subdomain_id)!.push(a);
-    }
-    return map;
-  }, [matrixData]);
-
-  // Sync selectedSub with refreshed taxonomy data (e.g. after expansion updates expansion_status)
-  useEffect(() => {
-    if (!selectedSub || categories.length === 0) return;
-    for (const cat of categories) {
-      const found = cat.children.find((s) => s.id === selectedSub.id);
-      if (found) {
-        setSelectedSub(found);
-        setSelectedCat(cat);
-        break;
-      }
-    }
-  }, [categories]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleSelectSubdomain = useCallback(
-    (sub: SubdomainNode, cat: CategoryNode) => {
-      setSelectedSub(sub);
-      setSelectedCat(cat);
-      setActiveTab('detail');
-    },
-    []
-  );
-
-  const handleViewAssignments = useCallback(() => {
-    setActiveTab('assignments');
+  const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
   }, []);
 
-  // Get assignments for selected subdomain
-  const selectedAssignments = useMemo(() => {
-    if (!selectedSub) return [];
-    return assignmentsBySubdomain.get(selectedSub.id) ?? [];
-  }, [selectedSub, assignmentsBySubdomain]);
+  const filtered = useMemo(() => {
+    return assignments.filter(a => {
+      if (stageFilter !== 'all' && a.stage !== stageFilter) return false;
+      if (personaFilter !== 'all' && a.persona !== personaFilter) return false;
+      if (sourceFilter !== 'all' && a.source !== sourceFilter) return false;
+      if (intentFilter !== 'all' && a.intent !== intentFilter) return false;
+      return true;
+    });
+  }, [assignments, stageFilter, personaFilter, sourceFilter, intentFilter]);
 
-  const tabs = [
-    { id: 'detail', label: 'Subdomain Detail' },
-    {
-      id: 'assignments',
-      label: `Assignments (${selectedAssignments.length})`,
-    },
-  ];
+  const hasActiveFilters = stageFilter !== 'all' || personaFilter !== 'all' || sourceFilter !== 'all' || intentFilter !== 'all';
 
-  if (taxLoading) {
-    return (
-      <div className="flex flex-col h-full -m-4">
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
-          <Skeleton className="h-8 w-60 rounded-md" />
-        </div>
-        <div className="flex flex-1">
-          <div className="w-[380px] border-r border-border p-3">
-            <Skeleton className="h-full rounded-md" />
-          </div>
-          <div className="flex-1 p-4">
-            <Skeleton className="h-full rounded-md" />
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const clearFilters = () => {
+    setStageFilter('all');
+    setPersonaFilter('all');
+    setSourceFilter('all');
+    setIntentFilter('all');
+  };
 
-  if (categories.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <p className="text-[14px] text-text-secondary mb-2">No taxonomy data yet</p>
-        <p className="text-[12px] text-text-tertiary">Run the topic discovery pipeline to generate a taxonomy.</p>
-      </div>
-    );
-  }
+  const handleApprove = useCallback((ids: string[]) => {
+    setAssignments(prev => prev.filter(a => !ids.includes(a.id)));
+    setDrawerAssignment(null);
+    showToast(`✓ ${ids.length} topic${ids.length > 1 ? 's' : ''} approved → Content Studio`);
+  }, [showToast]);
+
+  const handleReject = useCallback((ids: string[]) => {
+    const toReject = assignments.filter(a => ids.includes(a.id));
+    const newRejected: RejectedItem[] = toReject.map(a => ({
+      id: a.id, title: a.title, cluster: a.cluster,
+      reason: 'Rejected by user', date: 'Mar 31', rejectedBy: 'shank keshri', stage: a.stage,
+    }));
+    setAssignments(prev => prev.filter(a => !ids.includes(a.id)));
+    setRejected(prev => [...newRejected, ...prev]);
+    setDrawerAssignment(null);
+    showToast(`✗ ${ids.length} topic${ids.length > 1 ? 's' : ''} rejected`);
+  }, [assignments, showToast]);
+
+  const handleRestore = useCallback((id: string) => {
+    const item = rejected.find(r => r.id === id);
+    if (!item) return;
+    const original = ASSIGNMENTS.find(a => a.id === id);
+    if (original) setAssignments(prev => [...prev, original]);
+    setRejected(prev => prev.filter(r => r.id !== id));
+    showToast(`✓ ${item.title.slice(0, 30)}... restored to queue`);
+  }, [rejected, showToast]);
+
+  const handleAddCustom = useCallback((assignment: Assignment) => {
+    setAssignments(prev => [...prev, assignment]);
+    showToast('✓ Custom topic added to Priority Queue');
+  }, [showToast]);
+
+  const handleInitiativeComplete = useCallback((count: number) => {
+    setInitiativesOpen(false);
+    setView('queue');
+    setSourceFilter('strategic');
+    showToast(`✓ ${count} topics generated from initiative`);
+  }, [showToast]);
+
+  const nextId = `${BRAND_PREFIX}-${String(assignments.length + rejected.length + 1).padStart(3, '0')}`;
+
+  const personaLabels: Record<string, string> = {
+    all: 'All', sf: 'Solo Founder', pm: 'Product Manager', da: 'Agency Owner', te: 'Technical Engineer',
+  };
 
   return (
-    <div className="flex flex-col h-full -m-4">
-      {/* Global Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
-        <div className="flex items-center gap-3">
-          <div>
-            <span className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary block">
-              Topic Discovery
-            </span>
-            <span className="text-[16px] font-semibold text-text-primary tracking-[-0.01em]">
-              {companyName} / Pipeline A + B
-            </span>
-          </div>
-
-          {selectedSub && activeTab === 'detail' && (
-            <Badge variant="warning">HITL-1 Pending</Badge>
-          )}
-          {selectedSub && activeTab === 'assignments' && (
-            <Badge variant="warning">HITL-2 Pending</Badge>
-          )}
-          <Badge variant="neutral">v{taxonomyVersion}</Badge>
-          <Badge variant="info">{taxonomyData?.total_subdomains ?? 0} subdomains</Badge>
+    <div className="flex flex-col h-full -m-4 overflow-hidden">
+      {/* Page Header */}
+      <div className="flex items-center justify-between px-6 pt-5 pb-2 shrink-0">
+        <div>
+          <h1 className="text-[24px] font-semibold text-text-primary tracking-[-0.02em]">Content Planner</h1>
+          <p className="text-[14px] text-text-secondary">Well-researched content recommendations ranked by citation potential</p>
         </div>
-
         <div className="flex items-center gap-2">
-          <Button
-            variant={coverageOpen ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => setCoverageOpen(!coverageOpen)}
+          <button
+            onClick={() => setInitiativesOpen(true)}
+            className="flex items-center gap-1.5 h-[32px] px-4 text-[13px] font-semibold rounded transition-colors duration-150"
+            style={{ background: 'rgba(147,51,234,0.08)', color: '#9333ea', border: '1px solid rgba(147,51,234,0.3)' }}
           >
-            <BarChart3 size={11} strokeWidth={1.5} className="mr-1" />
-            Coverage ({((taxonomyData?.coverage_score ?? 0) * 100).toFixed(0)}%)
-          </Button>
-          <Button variant="ghost" size="sm" className="bg-success-subtle text-success hover:bg-success/10">
-            <Check size={11} strokeWidth={1.5} className="mr-1" />
-            Approve
-          </Button>
-          <Button variant="secondary" size="sm">
-            <MessageSquare size={11} strokeWidth={1.5} className="mr-1" />
-            Request Changes
-          </Button>
+            <Sparkles size={14} /> Initiatives
+          </button>
+          <button
+            onClick={() => setCustomTopicOpen(true)}
+            className="flex items-center gap-1.5 h-[32px] px-4 text-[13px] font-semibold rounded transition-colors duration-150"
+            style={{ border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+          >
+            <Plus size={14} /> Custom Topic
+          </button>
         </div>
       </div>
 
-      {/* Coverage Panel */}
-      <CoveragePanel
-        open={coverageOpen}
-        coverageScore={taxonomyData?.coverage_score}
-        totalSubdomains={taxonomyData?.total_subdomains}
-      />
-
-      {/* Main Content: Tree + Right Panel */}
-      <div className="flex flex-1 min-h-0">
-        {/* Left: Taxonomy Tree */}
-        <div className="w-[380px] shrink-0 border-r border-border overflow-hidden">
-          <TaxonomyTree
-            selectedSubdomainId={selectedSub?.id ?? null}
-            onSelectSubdomain={handleSelectSubdomain}
-            sortDimension={sortDimension}
-            onSortChange={setSortDimension}
-            categories={categories}
-            assignmentsBySubdomain={assignmentsBySubdomain}
-          />
-        </div>
-
-        {/* Right: Detail or Assignments */}
-        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-          {selectedSub && selectedCat ? (
-            <>
-              <TabBar
-                tabs={tabs}
-                activeTab={activeTab}
-                onTabClick={(id) => setActiveTab(id as RightTab)}
-              />
-
-              {activeTab === 'detail' ? (
-                <SubdomainDetail
-                  subdomain={selectedSub}
-                  category={selectedCat}
-                  onViewAssignments={handleViewAssignments}
-                  assignments={selectedAssignments}
-                  scoring={undefined}
-                  companyName={companyName}
-                  onExpandTopics={handleExpandTopics}
-                  expandingSubdomainId={expandingSubdomainId}
-                />
-              ) : (
-                <AssignmentsView
-                  subdomain={selectedSub}
-                  assignments={selectedAssignments}
-                  onSendToContentEngine={handleSendToContentEngine}
-                  sendingAssignmentId={sendingAssignmentId}
-                />
-              )}
-            </>
-          ) : (
-            <EmptyState
-              title="Select a subdomain"
-              description="Click a subdomain in the taxonomy tree to view its detail, AEO scoring, and content assignments."
-            />
+      {/* Filter Bar */}
+      <div className="flex items-center h-10 px-6 shrink-0 gap-0 overflow-x-hidden" style={{ borderBottom: '1px solid var(--border)' }}>
+        <div className="flex items-center gap-0 flex-1">
+          {/* Stage */}
+          <div className="flex items-center gap-2 pr-3" style={{ borderRight: '1px solid var(--border)' }}>
+            <span className="text-[12px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Stage</span>
+            <select value={stageFilter} onChange={e => setStageFilter(e.target.value as StageFilter)}
+              className="h-[26px] px-2 text-[13px] rounded border bg-transparent text-text-primary cursor-pointer outline-none"
+              style={{ borderColor: 'var(--border)' }}>
+              <option value="all">All</option>
+              <option value="TOFU">TOFU</option>
+              <option value="MOFU">MOFU</option>
+              <option value="BOFU">BOFU</option>
+            </select>
+          </div>
+          {/* Persona */}
+          <div className="flex items-center gap-2 px-3" style={{ borderRight: '1px solid var(--border)' }}>
+            <span className="text-[12px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Persona</span>
+            <select value={personaFilter} onChange={e => setPersonaFilter(e.target.value as PersonaFilter)}
+              className="h-[26px] px-2 text-[13px] rounded border bg-transparent text-text-primary cursor-pointer outline-none"
+              style={{ borderColor: 'var(--border)' }}>
+              {Object.entries(personaLabels).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+            </select>
+          </div>
+          {/* Source */}
+          <div className="flex items-center gap-2 px-3" style={{ borderRight: '1px solid var(--border)' }}>
+            <span className="text-[12px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Source</span>
+            <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value as SourceFilter)}
+              className="h-[26px] px-2 text-[13px] rounded border bg-transparent text-text-primary cursor-pointer outline-none"
+              style={{ borderColor: 'var(--border)' }}>
+              <option value="all">All</option>
+              <option value="gap">Gap Analysis</option>
+              <option value="strategic">Strategic</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          {/* Intent (Fix 4) */}
+          <div className="flex items-center gap-2 px-3">
+            <span className="text-[12px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Intent</span>
+            <select value={intentFilter} onChange={e => setIntentFilter(e.target.value as IntentFilter)}
+              className="h-[26px] px-2 text-[13px] rounded border bg-transparent text-text-primary cursor-pointer outline-none"
+              style={{ borderColor: 'var(--border)' }}>
+              <option value="all">All</option>
+              <option value="Informational">Informational</option>
+              <option value="Commercial">Commercial</option>
+              <option value="Navigational">Navigational</option>
+              <option value="Transactional">Transactional</option>
+            </select>
+          </div>
+          {/* Clear */}
+          {hasActiveFilters && (
+            <button onClick={clearFilters} className="flex items-center gap-1 ml-3 text-[13px] text-text-secondary hover:text-text-primary transition-colors">
+              <X size={13} /> Clear
+            </button>
           )}
         </div>
+
+        {/* View Toggle */}
+        <div className="flex items-center rounded overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+          {([
+            { id: 'queue', label: 'Priority Queue' },
+            { id: 'explorer', label: 'Cluster Explorer' },
+            { id: 'rejected', label: `Rejected (${rejected.length})` },
+          ] as const).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setView(tab.id)}
+              className="h-[28px] px-3 text-[13px] font-medium transition-colors duration-150"
+              style={{
+                background: view === tab.id ? 'var(--accent)' : 'transparent',
+                color: view === tab.id ? 'white' : 'var(--text-secondary)',
+                borderRight: tab.id !== 'rejected' ? '1px solid var(--border)' : undefined,
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <Toast
-        open={contentToast.open}
-        onClose={() => setContentToast((t) => ({ ...t, open: false }))}
-        variant={contentToast.variant}
-        message={contentToast.message}
+      {/* Main Content */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {view === 'queue' && (
+          <PriorityQueue assignments={filtered} onRowClick={setDrawerAssignment} onApprove={handleApprove} onReject={handleReject} />
+        )}
+        {view === 'explorer' && (
+          <ClusterExplorer assignments={filtered} onRowClick={setDrawerAssignment} onApprove={handleApprove} onReject={handleReject} />
+        )}
+        {view === 'rejected' && (
+          <div className="flex-1 overflow-auto">
+            <div className="px-6 py-4">
+              {rejected.length > 0 ? (
+                <div className="space-y-3">
+                  {rejected.map((item, idx) => (
+                    <motion.div
+                      key={item.id}
+                      className="rounded-md p-4"
+                      style={{ border: '1px solid var(--border)' }}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.15, delay: idx * 0.04 }}
+                    >
+                      <div className="flex items-start gap-3">
+                        {/* Timeline dot */}
+                        <div className="flex flex-col items-center mt-1 shrink-0">
+                          <div className="w-2.5 h-2.5 rounded-full bg-error shrink-0" />
+                          {idx < rejected.length - 1 && <div className="w-px flex-1 mt-1" style={{ background: 'var(--border)', minHeight: 20 }} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-mono text-[12px] text-text-tertiary">{item.id}</span>
+                            {item.stage && (
+                              <span className={`inline-flex items-center px-1.5 py-px text-[10px] font-semibold uppercase border rounded-full ${
+                                item.stage === 'TOFU' ? 'bg-accent-subtle text-accent border-accent/30' :
+                                item.stage === 'MOFU' ? 'bg-warning-subtle text-warning border-warning/30' :
+                                'bg-success-subtle text-success border-success/30'
+                              }`}>{item.stage}</span>
+                            )}
+                            <span className="text-[11px] text-text-tertiary">{item.cluster}</span>
+                          </div>
+                          <p className="text-[14px] font-medium text-text-primary">{item.title}</p>
+                          <div className="flex items-center gap-2 mt-2 text-[12px] text-text-secondary">
+                            <span className="text-error font-medium">Rejected</span>
+                            <span className="text-text-tertiary">·</span>
+                            <span>{item.date}</span>
+                            <span className="text-text-tertiary">·</span>
+                            <span>by {item.rejectedBy}</span>
+                          </div>
+                          <p className="text-[12px] text-text-secondary mt-1 italic">&ldquo;{item.reason}&rdquo;</p>
+                        </div>
+                        <button
+                          onClick={() => handleRestore(item.id)}
+                          className="flex items-center gap-1 h-[28px] px-3 rounded text-[12px] font-medium text-text-secondary hover:text-accent hover:bg-accent-subtle border border-border transition-colors duration-150 shrink-0"
+                        >
+                          <RotateCcw size={11} /> Restore
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center py-16 text-[14px] text-text-secondary">
+                  No rejected items
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Detail Drawer */}
+      <DetailDrawer
+        assignment={drawerAssignment}
+        onClose={() => setDrawerAssignment(null)}
+        onApprove={(id) => handleApprove([id])}
+        onReject={(id) => handleReject([id])}
       />
+
+      {/* Custom Topic Modal */}
+      <CustomTopicModal open={customTopicOpen} onClose={() => setCustomTopicOpen(false)} onAdd={handleAddCustom} nextId={nextId} />
+
+      {/* Initiatives Sidebar */}
+      <InitiativesSidebar open={initiativesOpen} onClose={() => setInitiativesOpen(false)} onInitiativeComplete={handleInitiativeComplete} />
+
+      {/* Toasts */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[70] flex flex-col gap-2">
+        <AnimatePresence>
+          {toasts.map(toast => (
+            <motion.div
+              key={toast.id}
+              className="px-4 py-2.5 rounded-md text-[14px] font-medium whitespace-nowrap"
+              style={{
+                background: toast.type === 'success' ? 'var(--success-subtle)' : 'var(--error-subtle)',
+                border: `1px solid ${toast.type === 'success' ? 'rgba(52,178,123,0.3)' : 'rgba(229,72,77,0.3)'}`,
+                color: toast.type === 'success' ? 'var(--success)' : 'var(--error)',
+              }}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 12 }}
+              transition={{ duration: 0.2 }}
+            >
+              {toast.message}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

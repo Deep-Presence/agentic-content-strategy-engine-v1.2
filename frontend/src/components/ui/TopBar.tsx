@@ -3,18 +3,21 @@
 import { cn } from '@/lib/utils';
 import { Search, Bell, Sun, Moon } from 'lucide-react';
 import { usePathname } from 'next/navigation';
-import { Avatar } from './Avatar';
 import { useThemeStore } from '@/stores/theme';
+import { Avatar } from './Avatar';
 
 const routeLabels: Record<string, string> = {
-  '/': 'Home',
-  '/analytics': 'Analytics',
-  '/analytics/lab': 'Deep Embedding Lab',
+  '/': 'Brand Summary',
+  '/analytics': 'Citation Intelligence',
+  '/competitive-position': 'Competitive Position',
+  '/prompt-tracking': 'Prompt Tracking',
+  '/content-performance': 'Content Performance',
+  '/technical-readiness': 'Technical Readiness',
+  '/analytics/lab': 'Embedding Lab',
   '/content': 'Content Studio',
-  '/content/synced': 'Synced Content',
   '/planner': 'Content Planner',
-  '/artifacts': 'Brand Artifacts',
-  '/attribution': 'Attribution',
+  '/artifacts': 'Brand Brain',
+  '/documents': 'Documents',
   '/settings': 'Settings',
 };
 
@@ -29,7 +32,7 @@ export function TopBar({ onSearchClick, notificationCount = 0, className }: TopB
   const { mode, toggle: toggleTheme } = useThemeStore();
 
   const breadcrumbs = pathname.split('/').filter(Boolean);
-  const pageTitle = routeLabels[pathname] || breadcrumbs[breadcrumbs.length - 1] || 'Home';
+  const pageTitle = routeLabels[pathname] || breadcrumbs[breadcrumbs.length - 1] || 'Brand Presence';
 
   return (
     <header
@@ -66,6 +69,17 @@ export function TopBar({ onSearchClick, notificationCount = 0, className }: TopB
           </kbd>
         </button>
 
+        <button
+          onClick={toggleTheme}
+          className="p-1.5 rounded-sm text-text-tertiary hover:text-text-primary hover:bg-bg transition-colors cursor-pointer"
+          title={mode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+        >
+          {mode === 'light'
+            ? <Moon size={18} strokeWidth={1.5} />
+            : <Sun size={18} strokeWidth={1.5} />
+          }
+        </button>
+
         <button className="relative p-1.5 rounded-sm text-text-tertiary hover:text-text-primary hover:bg-bg transition-colors cursor-pointer">
           <Bell size={18} strokeWidth={1.5} />
           {notificationCount > 0 && (
@@ -73,14 +87,6 @@ export function TopBar({ onSearchClick, notificationCount = 0, className }: TopB
               {notificationCount > 9 ? '9+' : notificationCount}
             </span>
           )}
-        </button>
-
-        <button
-          onClick={toggleTheme}
-          className="p-1.5 rounded-sm text-text-tertiary hover:text-text-primary hover:bg-bg transition-colors cursor-pointer"
-          title={mode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-        >
-          {mode === 'light' ? <Moon size={16} strokeWidth={1.5} /> : <Sun size={16} strokeWidth={1.5} />}
         </button>
 
         <Avatar name="User" size="md" className="!w-[28px] !h-[28px] !text-[10px]" />

@@ -1,7 +1,7 @@
 'use client';
 
 import { StatusDot } from '@/components/ui';
-import { Database, BarChart3, Code2, Globe } from 'lucide-react';
+import { Database, BarChart3, Code2, Globe, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 
 interface IntegrationStatusItem {
@@ -55,7 +55,7 @@ export function IntegrationStatusCards() {
                     href="/settings?tab=integrations"
                     className="text-[12px] text-accent hover:underline flex-shrink-0"
                   >
-                    Connect →
+                    Connect <ChevronRight size={12} className="inline" />
                   </Link>
                 </div>
               ))}
