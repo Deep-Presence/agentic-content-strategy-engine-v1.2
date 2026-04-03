@@ -1,7 +1,7 @@
 {
-  "sprint": "redis-phase6-remove-fallbacks",
-  "sprint_goal": "Phase 6 — Remove Filesystem Fallbacks. Delete JSON TaskStore, in-memory EventBus, JsonAuthService, and MemorySaver fallback. Make DATABASE_URL + REDIS_URL mandatory for production.",
-  "sprint_status": "COMPLETE — 12-step plan fully executed. 6 files deleted (2 prod + 4 tests), 35+ files modified, 4 files created. 1360 tests passing, 0 failures. DATABASE_URL + REDIS_URL mandatory at startup.",
+  "sprint": "frontend-shared-components-integration-readiness",
+  "sprint_goal": "Frontend integration readiness audit + build shared components needed for page-by-page backend integration.",
+  "sprint_status": "COMPLETE — Full audit confirmed foundation ready. 3 shared components built: DateRangePicker (react-day-picker v9 + date-fns v4), BrandLogo (Google Favicon fallback chain), SlideDrawer (Framer Motion 50vw). Docs updated. Ready for page-by-page integration.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -15,28 +15,28 @@
     "Async Redis for hot paths (pipeline writes), sync Redis for locks + sync readers",
     "Distributed locks are fail-closed when Redis is configured (no split-brain fallback)"
   ],
-  "active_branches": ["feat/redis-integration"],
+  "active_branches": ["integration/front-back-2"],
   "environment_notes": [
     "Python 3.12", "async-first", "VS Code + Claude Code extension",
     "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, structlog >=24.1, redis[hiredis] >=5.2.0"
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "api/tasks/exceptions.py (NEW — permanent home for 4 exception classes)",
-    "api/tasks/event_bus.py (EventBus class removed, only Protocol + _format_sse remain)",
-    "api/app.py (DI fallbacks removed — RuntimeError on missing DATABASE_URL/REDIS_URL)",
-    "api/dependencies.py (JsonAuthService fallback removed — RuntimeError on missing DATABASE_URL)",
-    "core/checkpointer.py (MemorySaver fallback removed — RuntimeError on missing REDIS_URL)",
-    "tests/api/conftest.py (DbTaskStore(mock) + InMemoryEventBus + TestAuthService + asyncio proxy)"
+    "frontend/src/components/ui/DateRangePicker.tsx (NEW — react-day-picker v9 + date-fns v4, two-month calendar, presets)",
+    "frontend/src/components/ui/BrandLogo.tsx (NEW — Google Favicon → Clearbit → Logo.dev → text fallback)",
+    "frontend/src/components/ui/SlideDrawer.tsx (NEW — Framer Motion 50vw right-side panel, overlay, scroll lock)",
+    "frontend/src/components/ui/index.ts (UPDATED — exports 3 new shared components)",
+    "frontend/CLAUDE.md (UPDATED — tech stack + shared component docs)",
+    "frontend/brand-system.md (UPDATED — SlideDrawer, DateRangePicker, BrandLogo specs)"
   ],
   "test_count": 1360,
   "phases_completed_count": 59,
   "recent_phases": [
+    "frontend-shared-components-integration-readiness — Full integration audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer). Docs updated. Ready for page-by-page integration.",
+    "frontend-auth-integration-security-hardening — Auth foundation + httpOnly cookie BFF proxy + strict CSP nonces. 20 new files.",
     "redis-phase6-remove-fallbacks — Delete JSON TaskStore, EventBus, JsonAuthService, MemorySaver. DATABASE_URL+REDIS_URL mandatory. 12 steps, ~1300 lines removed, 1360 tests passing.",
     "r2-blob-storage-phase5 — Reader-side StorageBackend migration: json_site_audit_data full refactor, content/brand/prompt services fixed, DI wiring, 447 tests verified",
-    "r2-blob-storage-phase3 — CachedStorageBackend, mtime removal, brand_data fix, list_dir caching (25 new tests)",
-    "redis-codex-fixes-phase2 — 6 critical/high bug fixes: singleton race, socket leak, cache mismatch, cleanup clobber, semaphore renewal, exception broadening (17 new tests)",
-    "redis-session-5 — Distributed Semaphore, atomic Lua acquire, pipeline_semaphore(), 14 runners (11 new tests)"
+    "r2-blob-storage-phase3 — CachedStorageBackend, mtime removal, brand_data fix, list_dir caching (25 new tests)"
   ],
   "phases_remaining": [],
   "deferred_issues_location": ".claude/sprints/pending/backlog.md"

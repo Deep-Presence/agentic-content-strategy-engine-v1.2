@@ -23,3 +23,6 @@ export { ScoreGauge } from './ScoreGauge';
 export { Sparkline } from './Sparkline';
 export { LocusLogo } from './LocusLogo';
 export { WorkspaceSelector } from './WorkspaceSelector';
+export { DateRangePicker } from './DateRangePicker';
+export { BrandLogo } from './BrandLogo';
+export { SlideDrawer } from './SlideDrawer';

@@ -1,18 +1,41 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Button, Input } from '@/components/ui';
+import { useAuth } from '@/hooks/useAuth';
+import { ApiError } from '@/lib/api-client';
+import { AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { login } = useAuth();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    router.push('/');
+    setError(null);
+    setIsSubmitting(true);
+
+    try {
+      await login({ email, password });
+      const redirect = searchParams.get('redirect') || '/';
+      router.push(redirect);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.detail);
+      } else {
+        setError('Something went wrong. Please try again.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -35,6 +58,7 @@ export default function LoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             className="w-full h-[36px] text-[14px] px-3"
             required
+            disabled={isSubmitting}
           />
         </div>
         <div>
@@ -48,10 +72,17 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             className="w-full h-[36px] text-[14px] px-3"
             required
+            disabled={isSubmitting}
           />
         </div>
-        <Button variant="primary" className="w-full mt-4 h-[36px] text-[14px]" type="submit">
-          Sign In
+        {error && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-sm border border-error bg-error-subtle text-[13px] text-error">
+            <AlertCircle size={14} strokeWidth={1.5} className="flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+        <Button variant="primary" className="w-full mt-4 h-[36px] text-[14px]" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? 'Signing in...' : 'Sign In'}
         </Button>
       </form>
       <div className="mt-6 flex items-center justify-between text-[13px]">

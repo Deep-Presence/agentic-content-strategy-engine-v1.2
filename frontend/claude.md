@@ -28,6 +28,8 @@ This frontend is a **Next.js 14 App Router** application in production-grade dev
 | Charts (embedding alt) | Plotly.js | `react-plotly.js` — always dynamic import with `ssr: false` |
 | Drag & Drop | @dnd-kit | `@dnd-kit/core` + `@dnd-kit/sortable` + `@dnd-kit/utilities` |
 | Animation | Framer Motion | Page transitions, micro-interactions |
+| Date Picker | react-day-picker v9 | Calendar engine for DateRangePicker |
+| Date Utils | date-fns v4 | Formatting, preset math (Last 7d, This quarter) |
 | Markdown | react-markdown + remark-gfm | Artifact rendering |
 | Icons | lucide-react | 24px grid, 1.5px stroke |
 | State | Zustand | Sidebar, workspace, theme, notifications |
@@ -284,9 +286,10 @@ Every analytics page (Citation Intelligence, Competitive Position, Content Perfo
 
 ### Date Picker Requirements
 
-- **Proper calendar popup** — two-month calendar view side by side
+- **Use the shared `DateRangePicker` component** from `@/components/ui`
+- Two-month calendar view side by side (react-day-picker v9)
 - User clicks start date, then end date, range highlights between them
-- **NO preset buttons** (7d, 30d, 90d) — just the calendar
+- Presets sidebar (Last 7d, 30d, 90d, This month, This quarter) — customizable via `presets` prop, or pass `presets={[]}` to hide
 - **NO region filter** — not supported in pipeline yet
 - All charts on the page respond to the selected date range
 - Every chart shows **daily data points** within the selected range (not weekly aggregation)
@@ -353,12 +356,13 @@ All components in `/src/components/ui/`. Export from `/src/components/ui/index.t
 
 Button, Input, Card, MetricCard, KPIRow, Badge, StatusDot, Table, Sidebar, TopBar, TabBar, FilterBar, Modal, Dropdown, SearchCommand, EmptyState, Avatar, ProgressBar, Toggle, Skeleton, Toast, ScoreGauge, Sparkline, LocusLogo, WorkspaceSelector
 
-### Additional Shared Components (built by page agents as needed)
+### Additional Shared Components (built and available)
 
-- `BrandLogo` — Real favicon fetcher (see Section 8)
-- `SlideDrawer` — 50% width side drawer (see Section 10)
-- `GapBadge` — Semantic color-coded gap severity badge
-- `ShareOfVoiceBar` — Animated SOV progress bar
+- `DateRangePicker` — Two-month calendar with presets (react-day-picker v9 + date-fns). Props: `value`, `onChange`, `presets`, `minDate`, `maxDate`. Re-exports `DateRange` type.
+- `BrandLogo` — Real favicon fetcher with fallback chain: Google Favicon → Clearbit → Logo.dev → text initials. Props: `domain`, `size`, `fallbackText`. No `crossOrigin` (avoids CORS). See Section 8.
+- `SlideDrawer` — 50vw right-side drawer (Framer Motion). Props: `open`, `onClose`, `title`, `subtitle`, `width`. Escape to close, body scroll lock, semi-transparent overlay. See Section 10.
+- `GapBadge` — Semantic color-coded gap severity badge (build when first page needs it)
+- `ShareOfVoiceBar` — Animated SOV progress bar (build when first page needs it)
 
 **If a component you need already exists in `_components/` of another page, check if it should be promoted to shared. But never modify another agent's files — create your own version if needed.**
 

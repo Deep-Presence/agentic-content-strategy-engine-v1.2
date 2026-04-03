@@ -4,7 +4,9 @@ import { cn } from '@/lib/utils';
 import { Search, Bell, Sun, Moon } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { useThemeStore } from '@/stores/theme';
+import { useAuth } from '@/hooks/useAuth';
 import { Avatar } from './Avatar';
+import { Skeleton } from './Skeleton';
 
 const routeLabels: Record<string, string> = {
   '/': 'Brand Summary',
@@ -30,6 +32,7 @@ interface TopBarProps {
 export function TopBar({ onSearchClick, notificationCount = 0, className }: TopBarProps) {
   const pathname = usePathname();
   const { mode, toggle: toggleTheme } = useThemeStore();
+  const { user, fullName } = useAuth();
 
   const breadcrumbs = pathname.split('/').filter(Boolean);
   const pageTitle = routeLabels[pathname] || breadcrumbs[breadcrumbs.length - 1] || 'Brand Presence';
@@ -89,7 +92,11 @@ export function TopBar({ onSearchClick, notificationCount = 0, className }: TopB
           )}
         </button>
 
-        <Avatar name="User" size="md" className="!w-[28px] !h-[28px] !text-[10px]" />
+        {user ? (
+          <Avatar name={fullName} size="md" className="!w-[28px] !h-[28px] !text-[10px]" />
+        ) : (
+          <Skeleton className="h-[28px] w-[28px] rounded-full" />
+        )}
       </div>
     </header>
   );

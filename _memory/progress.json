@@ -1,6 +1,6 @@
 {
-  "current_sprint": "redis-phase6-remove-fallbacks",
-  "last_updated": "2026-03-27",
+  "current_sprint": "frontend-shared-components-integration-readiness",
+  "last_updated": "2026-04-03",
   "test_count": 1360,
   "completed_sprints_summary": {
     "total_tasks_completed": 40,
@@ -35,7 +35,9 @@
       {"sprint": "redis-codex-fixes-phase2", "date": "2026-03-27", "summary": "6 critical Redis bug fixes: checkpointer singleton race (retry on transient failure), close_redis() socket leak (error isolation), cache key mismatch (content invalidation never worked), stale cleanup clobber, semaphore renewal outside HITL (background renewal loop), _or_none exception broadening. 17 new tests."},
       {"sprint": "r2-blob-storage-phase3", "date": "2026-03-27", "summary": "R2 Blob Storage Redis Cache Layer — 4 changes: (3.1) Replace mtime sorting in json_site_audit_data with JSON timestamps, (3.2+3.4) CachedStorageBackend wrapper for read/list_dir Redis caching with write invalidation, (3.3) Fix brand_data_service ad-hoc LocalStorageBackend bypass. Pre-existing test_research_boundary.py broken import fixed. 25 new tests."},
       {"sprint": "r2-blob-storage-phase5", "date": "2026-03-27", "summary": "Phase 5 StorageBackend Migration — Reader-side services migrated from direct filesystem to StorageBackend. json_site_audit_data.py full refactor (7 sync helpers, list_dir replaces iterdir). content_data_service pipeline_state reads via StorageBackend. db_site_audit_data/db_content_data forward StorageBackend. prompt_library filesystem fallback replaced. All _resolve_storage() fallbacks now R2-aware via get_storage_backend() factory. DI wiring updated for site audit + prompt library. 447 tests verified across 9 affected suites."},
-      {"sprint": "redis-phase6-remove-fallbacks", "date": "2026-03-27", "summary": "Phase 6 Remove Filesystem Fallbacks — deleted JSON TaskStore (api/tasks/store.py), in-memory EventBus class, JsonAuthService (core/auth/json_service.py), MemorySaver fallback. DATABASE_URL + REDIS_URL now mandatory at startup. Exception classes relocated to api/tasks/exceptions.py. 12 routers + runner migrated EventBus→EventBusProtocol. 4 services migrated TaskStore→TaskStoreProtocol (fixed 2 core/→api/ violations). Test infra: InMemoryEventBus + TestAuthService in tests/_support/, conftest switched to DbTaskStore(mock) with asyncio proxy. ~66 tests deleted (JSON impl tests), ~30 test files updated. 1360 tests passing, ~1300 lines net removed."}
+      {"sprint": "redis-phase6-remove-fallbacks", "date": "2026-03-27", "summary": "Phase 6 Remove Filesystem Fallbacks — deleted JSON TaskStore (api/tasks/store.py), in-memory EventBus class, JsonAuthService (core/auth/json_service.py), MemorySaver fallback. DATABASE_URL + REDIS_URL now mandatory at startup. Exception classes relocated to api/tasks/exceptions.py. 12 routers + runner migrated EventBus→EventBusProtocol. 4 services migrated TaskStore→TaskStoreProtocol (fixed 2 core/→api/ violations). Test infra: InMemoryEventBus + TestAuthService in tests/_support/, conftest switched to DbTaskStore(mock) with asyncio proxy. ~66 tests deleted (JSON impl tests), ~30 test files updated. 1360 tests passing, ~1300 lines net removed."},
+      {"sprint": "frontend-auth-integration-security-hardening", "date": "2026-04-03", "summary": "Frontend auth integration + security hardening. Phase 1: Auth foundation (types, api-client, Zustand store, useAuth hook, AuthProvider, AuthGuard, RoleGate, middleware, 3 auth pages wired). Phase 2: Security hardening — httpOnly cookie BFF proxy (8 route handlers + catch-all proxy), strict CSP with per-request nonces (script-src nonce + strict-dynamic), token removed from localStorage. 20 new files, 10 modified. Bug fix: backend exp is ISO8601 string not Unix timestamp."},
+      {"sprint": "frontend-shared-components-integration-readiness", "date": "2026-04-03", "summary": "Frontend integration readiness audit + 3 shared components. Full BFF/auth/layout/config audit confirmed foundation ready for page-by-page integration. Built DateRangePicker (react-day-picker v9 + date-fns v4, two-month calendar, presets sidebar), BrandLogo (Google Favicon → Clearbit → Logo.dev → text fallback), SlideDrawer (Framer Motion 50vw right-side panel, overlay, scroll lock). Installed react-day-picker + date-fns. Updated CLAUDE.md + brand-system.md. 3 new files, 0 TS errors."}
     ]
   },
   "completed": [
@@ -258,7 +260,27 @@
       ]
     }
   ],
-  "in_progress": [],
+  "in_progress": [
+    {
+      "id": "T-frontend-shared-components",
+      "task": "Frontend integration readiness audit + 3 shared UI components: DateRangePicker (react-day-picker v9 + date-fns v4), BrandLogo (Google Favicon API fallback chain), SlideDrawer (Framer Motion 50vw). Installed 2 new deps. Updated CLAUDE.md + brand-system.md.",
+      "sprint": "frontend-shared-components-integration-readiness",
+      "status": "done",
+      "completed_at": "2026-04-03",
+      "tests_added": 0,
+      "files_created": [
+        "frontend/src/components/ui/DateRangePicker.tsx",
+        "frontend/src/components/ui/BrandLogo.tsx",
+        "frontend/src/components/ui/SlideDrawer.tsx"
+      ],
+      "files_modified": [
+        "frontend/src/components/ui/index.ts",
+        "frontend/package.json",
+        "frontend/CLAUDE.md",
+        "frontend/brand-system.md"
+      ]
+    }
+  ],
   "pending": [
     {
       "id": "T-async-13",

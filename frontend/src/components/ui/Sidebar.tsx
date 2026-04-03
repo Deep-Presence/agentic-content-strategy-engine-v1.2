@@ -16,14 +16,17 @@ import {
   FileText,
   PenTool,
   Brain,
+  LogOut,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { useSidebarStore } from '@/stores/sidebar';
+import { useAuth } from '@/hooks/useAuth';
 import { WorkspaceSelector } from './WorkspaceSelector';
 import { Avatar } from './Avatar';
+import { Skeleton } from './Skeleton';
 
 interface NavItem {
   label: string;
@@ -90,6 +93,8 @@ function isNavActive(href: string, pathname: string): boolean {
 export function Sidebar() {
   const { collapsed, toggle } = useSidebarStore();
   const pathname = usePathname();
+  const router = useRouter();
+  const { user, fullName, logout } = useAuth();
   const [hovered, setHovered] = useState(false);
 
   useEffect(() => {
@@ -244,13 +249,33 @@ export function Sidebar() {
 
         {!collapsed && (
           <div className="flex items-center gap-2 mt-2 px-2 py-1">
-            <Avatar name="Shank Keshri" size="sm" />
-            <span className="text-[12px] text-text-secondary truncate">shank keshri</span>
+            {user ? (
+              <>
+                <Avatar name={fullName} size="sm" />
+                <span className="text-[12px] text-text-secondary truncate flex-1">{fullName}</span>
+                <button
+                  onClick={() => { logout(); router.push('/login'); }}
+                  className="p-1 rounded-sm text-text-tertiary hover:text-text-primary hover:bg-bg transition-colors"
+                  title="Sign out"
+                >
+                  <LogOut size={14} strokeWidth={1.5} />
+                </button>
+              </>
+            ) : (
+              <>
+                <Skeleton className="h-6 w-6 rounded-full" />
+                <Skeleton className="h-3 w-20 rounded-sm" />
+              </>
+            )}
           </div>
         )}
         {collapsed && (
           <div className="flex justify-center mt-1">
-            <Avatar name="Shank Keshri" size="sm" />
+            {user ? (
+              <Avatar name={fullName} size="sm" />
+            ) : (
+              <Skeleton className="h-6 w-6 rounded-full" />
+            )}
           </div>
         )}
       </div>

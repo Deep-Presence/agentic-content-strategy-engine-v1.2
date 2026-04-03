@@ -2,28 +2,64 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Input, Badge } from '@/components/ui';
+import { Button, Input } from '@/components/ui';
+import { useAuth } from '@/hooks/useAuth';
+import { ApiError } from '@/lib/api-client';
+import { AlertCircle, KeyRound } from 'lucide-react';
 import Link from 'next/link';
 
 export default function JoinPage() {
   const router = useRouter();
+  const { join } = useAuth();
+
   const [step, setStep] = useState<'code' | 'details'>('code');
   const [inviteCode, setInviteCode] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [form, setForm] = useState({ fullName: '', email: '', password: '' });
+  const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '' });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const update = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
   const handleVerify = (e: React.FormEvent) => {
     e.preventDefault();
-    setCompanyName('Lovable');
+    setError(null);
+    if (!inviteCode.trim()) {
+      setError('Please enter an invite code.');
+      return;
+    }
     setStep('details');
   };
 
-  const handleJoin = (e: React.FormEvent) => {
+  const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
-    router.push('/');
+    setError(null);
+    setIsSubmitting(true);
+
+    try {
+      await join({
+        invite_code: inviteCode.trim(),
+        first_name: form.firstName,
+        last_name: form.lastName,
+        email: form.email,
+        password: form.password,
+      });
+      router.push('/');
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.detail);
+      } else {
+        setError('Something went wrong. Please try again.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const resetToStep1 = () => {
+    setStep('code');
+    setError(null);
+    setInviteCode('');
   };
 
   return (
@@ -43,13 +79,19 @@ export default function JoinPage() {
             </label>
             <Input
               type="text"
-              placeholder="XXXX-XXXX-XXXX"
+              placeholder="Enter your invite code"
               value={inviteCode}
               onChange={(e) => setInviteCode(e.target.value)}
               className="w-full h-[36px] text-[14px] px-3 font-mono tracking-wider"
               required
             />
           </div>
+          {error && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-sm border border-error bg-error-subtle text-[13px] text-error">
+              <AlertCircle size={14} strokeWidth={1.5} className="flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
           <Button variant="primary" className="w-full mt-4 h-[36px] text-[14px]" type="submit">
             Verify Code
           </Button>
@@ -58,24 +100,43 @@ export default function JoinPage() {
 
       {step === 'details' && (
         <form onSubmit={handleJoin} className="space-y-4">
-          <div className="bg-accent-subtle border border-accent rounded-md p-3 mb-1">
+          <div className="bg-accent-subtle border border-accent/30 rounded-sm p-3 mb-1">
             <div className="flex items-center gap-2">
-              <span className="text-[13px] text-text-primary font-medium">Joining:</span>
-              <Badge variant="info">{companyName}</Badge>
+              <KeyRound size={14} strokeWidth={1.5} className="text-accent flex-shrink-0" />
+              <span className="text-[13px] text-text-primary">
+                Using invite code: <span className="font-mono font-medium">{inviteCode}</span>
+              </span>
             </div>
           </div>
-          <div>
-            <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-              Full Name
-            </label>
-            <Input
-              type="text"
-              placeholder="Jane Smith"
-              value={form.fullName}
-              onChange={update('fullName')}
-              className="w-full h-[36px] text-[14px] px-3"
-              required
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                First Name
+              </label>
+              <Input
+                type="text"
+                placeholder="Jane"
+                value={form.firstName}
+                onChange={update('firstName')}
+                className="w-full h-[36px] text-[14px] px-3"
+                required
+                disabled={isSubmitting}
+              />
+            </div>
+            <div>
+              <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                Last Name
+              </label>
+              <Input
+                type="text"
+                placeholder="Smith"
+                value={form.lastName}
+                onChange={update('lastName')}
+                className="w-full h-[36px] text-[14px] px-3"
+                required
+                disabled={isSubmitting}
+              />
+            </div>
           </div>
           <div>
             <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
@@ -83,11 +144,12 @@ export default function JoinPage() {
             </label>
             <Input
               type="email"
-              placeholder="jane@lovable.dev"
+              placeholder="jane@company.com"
               value={form.email}
               onChange={update('email')}
               className="w-full h-[36px] text-[14px] px-3"
               required
+              disabled={isSubmitting}
             />
           </div>
           <div>
@@ -102,10 +164,27 @@ export default function JoinPage() {
               className="w-full h-[36px] text-[14px] px-3"
               required
               minLength={8}
+              maxLength={128}
+              disabled={isSubmitting}
             />
           </div>
-          <Button variant="primary" className="w-full mt-4 h-[36px] text-[14px]" type="submit">
-            Join Team
+          {error && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 px-3 py-2 rounded-sm border border-error bg-error-subtle text-[13px] text-error">
+                <AlertCircle size={14} strokeWidth={1.5} className="flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+              <button
+                type="button"
+                onClick={resetToStep1}
+                className="text-[13px] text-accent hover:text-accent-hover transition-colors text-left"
+              >
+                Try a different code
+              </button>
+            </div>
+          )}
+          <Button variant="primary" className="w-full mt-4 h-[36px] text-[14px]" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? 'Joining...' : 'Join Team'}
           </Button>
         </form>
       )}
