@@ -10,7 +10,7 @@ interface LeaderboardProps {
   hoverIdx: number | null;
 }
 
-function BrandLogo({ domain, size = 16 }: { domain: string; size?: number }) {
+function BrandLogo({ domain, size = 14 }: { domain: string; size?: number }) {
   return (
     <img
       src={`https://www.google.com/s2/favicons?domain=${domain}&sz=${size * 2}`}
@@ -46,6 +46,11 @@ export function CompetitiveLeaderboard({ data, viewConfig, hoverIdx }: Leaderboa
     }
     return entries;
   }, [dayData, viewConfig.key]);
+
+  const maxValue = useMemo(() => {
+    if (ranked.length === 0) return 1;
+    return Math.max(...ranked.map(r => r.value));
+  }, [ranked]);
 
   const formatValue = (v: number): string => {
     switch (viewConfig.key) {
@@ -85,92 +90,98 @@ export function CompetitiveLeaderboard({ data, viewConfig, hoverIdx }: Leaderboa
 
       {/* Rows — scrollable */}
       <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-      {ranked.map((entry, rank) => (
-        <div
-          key={entry.domain}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '8px 8px',
-            borderRadius: 'var(--radius-sm)',
-            background: entry.isYou ? 'var(--accent-subtle)' : 'transparent',
-            borderLeft: entry.isYou ? '3px solid var(--accent)' : '3px solid transparent',
-            borderBottom: rank < ranked.length - 1 ? '1px solid var(--border)' : 'none',
-            transition: 'all 180ms ease-out',
-            cursor: 'pointer',
-          }}
-          onMouseEnter={(e) => {
-            if (!entry.isYou) (e.currentTarget.style.background = 'var(--accent-subtle)');
-          }}
-          onMouseLeave={(e) => {
-            if (!entry.isYou) (e.currentTarget.style.background = 'transparent');
-          }}
-        >
-          {/* Rank */}
-          <span
+      {ranked.map((entry, rank) => {
+        const barPct = maxValue > 0 ? (entry.value / maxValue) * 100 : 0;
+        return (
+          <div
+            key={entry.domain}
             style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: 12,
-              color: 'var(--text-tertiary)',
-              width: 20,
-              textAlign: 'center',
-              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '0 8px',
+              height: 36,
+              borderRadius: 'var(--radius-sm)',
+              background: entry.isYou ? 'var(--accent-subtle)' : 'transparent',
+              borderLeft: entry.isYou ? '3px solid var(--accent)' : '3px solid transparent',
+              borderBottom: rank < ranked.length - 1 ? '1px solid var(--border)' : 'none',
+              transition: 'all 180ms ease-out',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              if (!entry.isYou) (e.currentTarget.style.background = 'var(--accent-subtle)');
+            }}
+            onMouseLeave={(e) => {
+              if (!entry.isYou) (e.currentTarget.style.background = 'transparent');
             }}
           >
-            {rank + 1}
-          </span>
+            <BrandLogo domain={entry.domain} size={14} />
 
-          <BrandLogo domain={entry.domain} size={16} />
-
-          {/* Name */}
-          <span
-            className="truncate"
-            style={{
-              flex: 1,
-              fontSize: 13,
-              fontWeight: entry.isYou ? 600 : 500,
-              color: entry.isYou ? 'var(--accent)' : 'var(--text-primary)',
-              fontFamily: 'var(--font-display)',
-            }}
-          >
-            {entry.name}
-          </span>
-
-          {/* YOU badge */}
-          {entry.isYou && (
+            {/* Name */}
             <span
+              className="truncate"
               style={{
-                fontSize: 9,
-                fontWeight: 600,
-                background: 'var(--accent)',
-                color: 'var(--text-on-accent)',
-                padding: '2px 6px',
-                borderRadius: 9999,
+                fontSize: 13,
+                fontWeight: entry.isYou ? 600 : 500,
+                color: entry.isYou ? 'var(--accent)' : 'var(--text-primary)',
                 fontFamily: 'var(--font-display)',
                 flexShrink: 0,
+                maxWidth: 80,
               }}
             >
-              YOU
+              {entry.name}
             </span>
-          )}
 
-          {/* Value */}
-          <span
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: 14,
-              fontWeight: entry.isYou ? 600 : 500,
-              color: entry.isYou ? 'var(--accent)' : 'var(--text-primary)',
-              flexShrink: 0,
-              minWidth: 44,
-              textAlign: 'right',
-            }}
-          >
-            {formatValue(entry.value)}
-          </span>
-        </div>
-      ))}
+            {/* YOU badge */}
+            {entry.isYou && (
+              <span
+                style={{
+                  fontSize: 8,
+                  fontWeight: 600,
+                  background: 'var(--accent)',
+                  color: 'var(--text-on-accent)',
+                  padding: '1px 5px',
+                  borderRadius: 9999,
+                  fontFamily: 'var(--font-display)',
+                  flexShrink: 0,
+                  lineHeight: '14px',
+                }}
+              >
+                YOU
+              </span>
+            )}
+
+            {/* Horizontal bar */}
+            <div style={{ flex: 1, height: 4, borderRadius: 9999, background: 'var(--border)', minWidth: 0 }}>
+              <div
+                style={{
+                  height: '100%',
+                  borderRadius: 9999,
+                  width: `${barPct}%`,
+                  background: entry.isYou ? 'var(--accent)' : 'var(--text-muted)',
+                  opacity: entry.isYou ? 1 : 0.3,
+                  transition: 'width 300ms ease',
+                }}
+              />
+            </div>
+
+            {/* Value */}
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 13,
+                fontWeight: 600,
+                color: entry.isYou ? 'var(--accent)' : 'var(--text-primary)',
+                flexShrink: 0,
+                minWidth: 44,
+                textAlign: 'right',
+              }}
+            >
+              {formatValue(entry.value)}
+            </span>
+          </div>
+        );
+      })}
       </div>
 
       {/* Date indicator on hover */}

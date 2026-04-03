@@ -1,18 +1,17 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Calendar } from 'lucide-react';
-import { KPIStrip } from './_components/KPIStrip';
-import { BattleChart } from './_components/BattleChart';
-import { WinRateBars } from './_components/WinRateBars';
-import { GapTrendChart } from './_components/GapTrendChart';
-import { ClusterAuthorityTable } from './_components/ClusterAuthority';
-import { DriftTracker } from './_components/DriftTracker';
-import { MostCitedURLs } from './_components/MostCitedURLs';
-import { SlideDrawer } from './_components/SlideDrawer';
+import { KPIStrip } from './_components/kpi-strip';
+import { PositionNarrative } from './_components/position-narrative';
+import { HeadToHeadChart } from './_components/head-to-head-chart';
+import { WinRateBars } from './_components/win-rate-bars';
+import { WinningLosing } from './_components/winning-losing';
+import { CitationsAtRisk } from './_components/citations-at-risk';
+import { WhosTakingCitations } from './_components/whos-taking-citations';
 import { clusterOptions, platformOptions } from './_components/data';
 
-// ─── Date Range Picker (proper two-month calendar) ──────────────────────────
+// ─── Date Range Picker ───────────────────���──────────────────────────────────
 
 function DateRangePicker({
   value,
@@ -25,6 +24,19 @@ function DateRangePicker({
   const [selecting, setSelecting] = useState<'start' | 'end'>('start');
   const [tempStart, setTempStart] = useState(value[0]);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+        setSelecting('start');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [isOpen]);
 
   const formatDisplay = (d: string) => {
     const date = new Date(d + 'T00:00:00');
@@ -39,8 +51,8 @@ function DateRangePicker({
     return days;
   };
 
-  const month1 = { year: 2026, month: 2 }; // March 2026
-  const month2 = { year: 2026, month: 3 }; // April 2026
+  const month1 = { year: 2026, month: 2 };
+  const month2 = { year: 2026, month: 3 };
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const dayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
@@ -72,7 +84,7 @@ function DateRangePicker({
     const days = getMonthDays(year, month);
     return (
       <div>
-        <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', textAlign: 'center', marginBottom: '8px' }}>
+        <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', textAlign: 'center', marginBottom: '8px', fontFamily: 'var(--font-display)' }}>
           {monthNames[month]} {year}
         </p>
         <div className="grid grid-cols-7 gap-0">
@@ -100,6 +112,7 @@ function DateRangePicker({
                   transition: 'background 0.15s',
                   background: isEnd ? 'var(--accent)' : inRange ? 'var(--accent-subtle)' : 'transparent',
                   color: isEnd ? 'var(--text-on-accent)' : 'var(--text-secondary)',
+                  fontFamily: 'var(--font-display)',
                 }}
               >
                 {day}
@@ -125,12 +138,12 @@ function DateRangePicker({
           fontSize: '12px',
           color: 'var(--text-primary)',
           cursor: 'pointer',
+          fontFamily: 'var(--font-display)',
         }}
       >
         <Calendar size={13} strokeWidth={1.5} style={{ color: 'var(--text-tertiary)' }} />
         <span>{formatDisplay(value[0])} – {formatDisplay(value[1])}</span>
       </button>
-
       {isOpen && (
         <div style={{
           position: 'absolute',
@@ -149,7 +162,9 @@ function DateRangePicker({
             {renderMonth(month2.year, month2.month)}
           </div>
           {selecting === 'end' && (
-            <p style={{ fontSize: '10px', color: 'var(--accent)', marginTop: '8px', textAlign: 'center' }}>Click end date</p>
+            <p style={{ fontSize: '10px', color: 'var(--accent)', marginTop: '8px', textAlign: 'center', fontFamily: 'var(--font-display)' }}>
+              Click end date
+            </p>
           )}
         </div>
       )}
@@ -157,34 +172,12 @@ function DateRangePicker({
   );
 }
 
-// ─── Main Page ───────────────────────────────────────────────────────────────
+// ─── Main Page ��─────────────────────────────────────────────────────────────
 
 export default function CompetitivePositionPage() {
-  // Filter state
   const [dateRange, setDateRange] = useState<[string, string]>(['2026-03-01', '2026-03-28']);
   const [cluster, setCluster] = useState('all');
   const [platform, setPlatform] = useState('all');
-
-  // Drawer state
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerType, setDrawerType] = useState<'competitor' | 'query' | null>(null);
-  const [drawerIdentifier, setDrawerIdentifier] = useState<string | null>(null);
-
-  const openCompetitorDrawer = useCallback((domain: string) => {
-    setDrawerType('competitor');
-    setDrawerIdentifier(domain);
-    setDrawerOpen(true);
-  }, []);
-
-  const openQueryDrawer = useCallback((query: string) => {
-    setDrawerType('query');
-    setDrawerIdentifier(query);
-    setDrawerOpen(true);
-  }, []);
-
-  const closeDrawer = useCallback(() => {
-    setDrawerOpen(false);
-  }, []);
 
   const clearFilters = () => {
     setDateRange(['2026-03-01', '2026-03-28']);
@@ -202,27 +195,30 @@ export default function CompetitivePositionPage() {
     color: 'var(--text-primary)',
     cursor: 'pointer',
     outline: 'none',
+    fontFamily: 'var(--font-display)',
   } as const;
 
   return (
     <div style={{ padding: '16px 24px' }}>
-      {/* Page Header — 0 gap to filter bar */}
+      {/* Page Header */}
       <div>
-        <h1 style={{
-          fontSize: '22px',
-          fontWeight: 600,
-          color: 'var(--text-primary)',
-          letterSpacing: '-0.02em',
-          fontFamily: 'var(--font-display)',
-        }}>
+        <h1
+          style={{
+            fontSize: '22px',
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+            letterSpacing: '-0.02em',
+            fontFamily: 'var(--font-display)',
+          }}
+        >
           Competitive Position
         </h1>
-        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-          Am I winning or losing, and against whom?
+        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px', fontFamily: 'var(--font-display)' }}>
+          Who you&apos;re beating, who you&apos;re losing to, and what to do about it
         </p>
       </div>
 
-      {/* Global Filter Bar — full-width toolbar, 44px, border-b only, no rounded corners, 0 gap from title */}
+      {/* Global Filter Bar */}
       <div
         className="flex items-center gap-3"
         style={{
@@ -236,23 +232,18 @@ export default function CompetitivePositionPage() {
         }}
       >
         <DateRangePicker value={dateRange} onChange={setDateRange} />
-
         <div style={{ height: '16px', width: '1px', background: 'var(--border)' }} />
-
         <select value={cluster} onChange={(e) => setCluster(e.target.value)} style={selectStyle}>
           {clusterOptions.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
-
         <div style={{ height: '16px', width: '1px', background: 'var(--border)' }} />
-
         <select value={platform} onChange={(e) => setPlatform(e.target.value)} style={selectStyle}>
           {platformOptions.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
-
         <button
           onClick={clearFilters}
           style={{
@@ -262,46 +253,44 @@ export default function CompetitivePositionPage() {
             background: 'none',
             border: 'none',
             cursor: 'pointer',
+            fontFamily: 'var(--font-display)',
           }}
         >
           × Clear
         </button>
       </div>
 
-      {/* Content sections — 16px gaps */}
+      {/* All Sections — 16px gaps */}
       <div className="flex flex-col" style={{ gap: '16px', marginTop: '16px' }}>
         {/* KPI Strip */}
         <KPIStrip />
 
-        {/* Section 1: Head-to-Head Daily Battle */}
-        <BattleChart />
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
 
-        {/* Section 2: Two-column — 55% left / 45% right */}
-        <div className="grid" style={{ gridTemplateColumns: '55fr 45fr', gap: '16px' }}>
-          <WinRateBars onCompetitorClick={openCompetitorDrawer} />
-          <GapTrendChart />
-        </div>
+        {/* Section 1: Position Narrative + Head-to-Head Chart */}
+        <PositionNarrative />
+        <HeadToHeadChart />
 
-        {/* Section 3: Competitor SOV by Cluster */}
-        <ClusterAuthorityTable onCompetitorClick={openCompetitorDrawer} />
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
 
-        {/* Section 4: Citation Drift Tracker */}
-        <DriftTracker
-          onQueryClick={openQueryDrawer}
-          onCompetitorClick={openCompetitorDrawer}
-        />
+        {/* Section 2: Win Rate Bars */}
+        <WinRateBars />
 
-        {/* Section 5: Most-Cited Competitor URLs */}
-        <MostCitedURLs onCompetitorClick={openCompetitorDrawer} />
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
+        {/* Section 3: Winning / Competitive / Losing */}
+        <WinningLosing />
+
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
+        {/* Section 4: Citations at Risk */}
+        <CitationsAtRisk />
+
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
+        {/* Section 5: Who's Taking Your Citations */}
+        <WhosTakingCitations />
       </div>
-
-      {/* Side Drawer */}
-      <SlideDrawer
-        isOpen={drawerOpen}
-        onClose={closeDrawer}
-        type={drawerType}
-        identifier={drawerIdentifier}
-      />
     </div>
   );
 }

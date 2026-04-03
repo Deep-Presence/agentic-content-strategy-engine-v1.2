@@ -66,6 +66,76 @@ const PLATFORM_INSIGHTS: Record<string, { positive: string; negative: string; av
   gemini: { positive: 'Growing coverage', negative: 'Lowest citation volume', avgRank: 3.2, coverage: 65 },
 };
 
+const PLATFORM_DRAWER_INSIGHTS: Record<string, { working: string[]; improve: string[] }> = {
+  chatgpt: { working: ['Best reach — 36.8% of citations', 'Strong branded query ranking', '78% coverage of tracked queries'], improve: ['Low security query coverage', 'Not citing your API docs', 'No FAQ sections on cited pages'] },
+  claude: { working: ['Highest accuracy citations', 'Best technical depth', 'Growing developer audience'], improve: ['Fewer total queries tracked', 'Low comparison content ranking', 'Missing enterprise use cases'] },
+  perplexity: { working: ['Fastest citation growth', 'Strong for comparison queries', 'Good source attribution'], improve: ['Inconsistent ranking positions', 'Limited branded query coverage', 'Few how-to citations'] },
+  google: { working: ['Best average rank (#2.1)', 'Strong snippet presence', 'Good query diversity'], improve: ['Limited query diversity', 'Low blog content citations', 'Weak competitor comparison coverage'] },
+  gemini: { working: ['Growing coverage steadily', 'Good technical documentation citations', 'Improving sentiment'], improve: ['Lowest citation volume overall', 'Poor branded query ranking', 'Limited content type diversity'] },
+};
+
+const PLATFORM_DRAWER_QUERIES: Record<string, { query: string; citations: number; rank: string }[]> = {
+  chatgpt: [
+    { query: 'AI app builder comparison', citations: 14, rank: '#1' },
+    { query: 'lovable vs cursor', citations: 9, rank: '#2' },
+    { query: 'best no-code AI platform', citations: 7, rank: '#1' },
+    { query: 'enterprise AI app builder', citations: 5, rank: 'Not cited' },
+    { query: 'vibe coding tools', citations: 4, rank: '#3' },
+  ],
+  claude: [
+    { query: 'AI code generation tools', citations: 11, rank: '#2' },
+    { query: 'lovable dev review', citations: 8, rank: '#1' },
+    { query: 'best app builder 2026', citations: 6, rank: '#3' },
+    { query: 'no-code vs low-code', citations: 4, rank: '#2' },
+    { query: 'AI development platforms', citations: 3, rank: 'Not cited' },
+  ],
+  perplexity: [
+    { query: 'lovable alternatives', citations: 10, rank: '#1' },
+    { query: 'AI app development', citations: 7, rank: '#2' },
+    { query: 'best coding AI tools', citations: 5, rank: '#3' },
+    { query: 'no-code AI builder review', citations: 4, rank: '#1' },
+    { query: 'enterprise software builder', citations: 3, rank: 'Not cited' },
+  ],
+  google: [
+    { query: 'AI app builder', citations: 12, rank: '#1' },
+    { query: 'lovable dev pricing', citations: 8, rank: '#1' },
+    { query: 'no-code platform comparison', citations: 6, rank: '#2' },
+    { query: 'AI development tools 2026', citations: 5, rank: '#2' },
+    { query: 'build app with AI', citations: 4, rank: '#3' },
+  ],
+  gemini: [
+    { query: 'AI code tools comparison', citations: 6, rank: '#3' },
+    { query: 'lovable vs bolt', citations: 5, rank: '#2' },
+    { query: 'best AI builders', citations: 4, rank: '#3' },
+    { query: 'no-code AI platform', citations: 3, rank: 'Not cited' },
+    { query: 'rapid app development AI', citations: 2, rank: '#4' },
+  ],
+};
+
+const PLATFORM_DRAWER_URLS: Record<string, { url: string; citations: number }[]> = {
+  chatgpt: [{ url: '/blog/ai-app-builder-comparison', citations: 23 }, { url: '/blog/lovable-vs-cursor', citations: 12 }, { url: '/docs/getting-started', citations: 8 }],
+  claude: [{ url: '/blog/ai-code-generation-guide', citations: 18 }, { url: '/blog/lovable-review-2026', citations: 11 }, { url: '/docs/api-reference', citations: 7 }],
+  perplexity: [{ url: '/blog/lovable-alternatives-2026', citations: 15 }, { url: '/blog/ai-app-development', citations: 10 }, { url: '/pricing', citations: 6 }],
+  google: [{ url: '/blog/ai-app-builder-comparison', citations: 20 }, { url: '/pricing', citations: 9 }, { url: '/blog/no-code-comparison', citations: 7 }],
+  gemini: [{ url: '/blog/ai-code-tools', citations: 10 }, { url: '/blog/lovable-vs-bolt', citations: 8 }, { url: '/docs/getting-started', citations: 5 }],
+};
+
+const PLATFORM_SCORES: Record<string, number> = {
+  chatgpt: 72,
+  claude: 65,
+  perplexity: 58,
+  google: 78,
+  gemini: 45,
+};
+
+const PLATFORM_STRENGTH: Record<string, string> = {
+  chatgpt: 'strongest',
+  claude: 'second strongest',
+  perplexity: 'third strongest',
+  google: 'top-performing',
+  gemini: 'weakest',
+};
+
 function computePlatformStats(data: DayData[]): Record<string, PlatformStat> {
   const stats: Record<string, PlatformStat> = {};
   const totalAllCitations = data.reduce((s, d) => s + d.citations, 0);
@@ -93,58 +163,200 @@ function computePlatformStats(data: DayData[]): Record<string, PlatformStat> {
 
 type SelectedPlatform = typeof PLATFORMS[number] | null;
 
-function PlatformDrawerContent({ platform, stat, data }: { platform: typeof PLATFORMS[number]; stat: PlatformStat; data: DayData[] }) {
+function DrawerSparkline({ values, color, width = '100%', height = 140 }: { values: number[]; color: string; width?: string | number; height?: number }) {
+  if (values.length < 2) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const svgWidth = 400;
+
+  const pathPoints = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * svgWidth;
+    const y = height - 4 - ((v - min) / range) * (height - 8);
+    return { x, y };
+  });
+
+  const linePath = pathPoints.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
+  const areaPath = `${linePath} L${svgWidth},${height} L0,${height} Z`;
+
   return (
-    <div className="space-y-5 pt-5">
-      {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+    <div style={{ width, height, borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg)' }}>
+      <svg width="100%" height={height} viewBox={`0 0 ${svgWidth} ${height}`} preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.15" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.01" />
+          </linearGradient>
+        </defs>
+        <path d={areaPath} fill="url(#sparkGrad)" />
+        <path d={linePath} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
+
+function PlatformDrawerContent({ platform, stat }: { platform: typeof PLATFORMS[number]; stat: PlatformStat }) {
+  const insights = PLATFORM_DRAWER_INSIGHTS[platform.key] || { working: [], improve: [] };
+  const queries = PLATFORM_DRAWER_QUERIES[platform.key] || [];
+  const urls = PLATFORM_DRAWER_URLS[platform.key] || [];
+  const score = PLATFORM_SCORES[platform.key] || 50;
+  const strength = PLATFORM_STRENGTH[platform.key] || 'moderate';
+  const citationPct = stat.sov.toFixed(1);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, paddingTop: 16 }}>
+      {/* 1. Narrative sentence */}
+      <p style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)', margin: 0, lineHeight: 1.5 }}>
+        {platform.name} is your <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{strength}</span> platform — {citationPct}% of all citations come from here.
+      </p>
+
+      {/* 2. Stat strip */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0,
+          padding: '10px 14px',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-md)',
+          background: 'var(--bg)',
+          flexWrap: 'wrap',
+        }}
+      >
         {[
-          { label: 'Citations', value: String(stat.totalCitations), color: platform.color },
-          { label: 'Share of Voice', value: `${stat.sov}%`, color: 'var(--accent)' },
-          { label: 'Avg Rank', value: String(stat.avgRank), color: stat.avgRank <= 2.5 ? 'var(--success)' : 'var(--warning)' },
-          { label: 'Coverage', value: `${stat.coverage}%`, color: stat.coverage >= 75 ? 'var(--success)' : 'var(--text-primary)' },
-        ].map(s => (
-          <div key={s.label} className="border border-border rounded-md" style={{ padding: '10px 12px', background: 'var(--bg)' }}>
-            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', fontFamily: 'var(--font-body)', marginBottom: 4 }}>
-              {s.label}
-            </div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 20, fontWeight: 600, color: s.color }}>
-              {s.value}
-            </div>
-          </div>
+          { label: String(stat.totalCitations), suffix: ' citations' },
+          { label: `${stat.sov}%`, suffix: ' SOV' },
+          { label: `#${stat.avgRank}`, suffix: ' avg rank' },
+          { label: `${stat.coverage}%`, suffix: ' coverage' },
+        ].map((item, i, arr) => (
+          <span key={item.suffix} style={{ display: 'inline-flex', alignItems: 'center', fontSize: 13, fontFamily: 'var(--font-display)' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>{item.label}</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{item.suffix}</span>
+            {i < arr.length - 1 && (
+              <span style={{ margin: '0 8px', color: 'var(--text-tertiary)' }}>&middot;</span>
+            )}
+          </span>
         ))}
       </div>
 
-      {/* Daily trend */}
+      {/* 3. Citation trend sparkline */}
       <div>
-        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', fontFamily: 'var(--font-body)', marginBottom: 8 }}>
-          Daily Citations (last 7 days)
+        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)', marginBottom: 8 }}>
+          Citation Trend
         </div>
-        <div className="space-y-1">
-          {data.slice(-7).map(d => (
-            <div key={d.dateShort} className="flex items-center justify-between" style={{ padding: '4px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-body)' }}>{d.dateShort}</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 500, color: platform.color }}>
-                {d[platform.key] as number}
+        <DrawerSparkline values={stat.sparklineData} color={platform.color} />
+      </div>
+
+      {/* 4. Two-column summary: What's Working / Where to Improve */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg)' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--success)', fontFamily: 'var(--font-display)', marginBottom: 8 }}>
+            What&apos;s Working
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {insights.working.map((item, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-display)', lineHeight: 1.4 }}>
+                <span style={{ color: 'var(--success)', flexShrink: 0 }}>&#10003;</span>
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg)' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--warning)', fontFamily: 'var(--font-display)', marginBottom: 8 }}>
+            Where to Improve
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {insights.improve.map((item, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-display)', lineHeight: 1.4 }}>
+                <span style={{ color: 'var(--warning)', flexShrink: 0 }}>&#10007;</span>
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* 5. Top queries table */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)', marginBottom: 8 }}>
+          Top Queries
+        </div>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+          {/* Header */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px', padding: '6px 12px', background: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)' }}>Query</span>
+            <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)', textAlign: 'right' }}>Citations</span>
+            <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)', textAlign: 'right' }}>Rank</span>
+          </div>
+          {queries.map((q, i) => (
+            <div
+              key={i}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 80px 80px',
+                padding: '6px 12px',
+                borderBottom: i < queries.length - 1 ? '1px solid var(--border)' : 'none',
+                background: 'var(--surface)',
+              }}
+            >
+              <span className="truncate" style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}>{q.query}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', textAlign: 'right' }}>{q.citations}</span>
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 500, textAlign: 'right',
+                color: q.rank === 'Not cited' ? 'var(--text-tertiary)' : q.rank === '#1' ? 'var(--success)' : 'var(--text-primary)',
+              }}>{q.rank}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 6. Top cited URLs */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)', marginBottom: 8 }}>
+          Top Cited URLs
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {urls.map((u, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg)' }}>
+              <span className="truncate" style={{ fontSize: 12, color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontWeight: 500, flex: 1, marginRight: 12 }}>{u.url}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>{u.citations} citations</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 7. Structural preferences */}
+      <div style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg)' }}>
+        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)', marginBottom: 8 }}>
+          Structural Preferences
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {[
+            { pref: 'Lists & bullet points', has: true },
+            { pref: 'Comparison tables', has: platform.key === 'chatgpt' || platform.key === 'perplexity' },
+            { pref: 'FAQ sections', has: platform.key === 'google' },
+            { pref: 'Technical depth', has: platform.key === 'claude' || platform.key === 'gemini' },
+            { pref: 'Source attribution', has: true },
+          ].map((item, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, fontFamily: 'var(--font-display)' }}>
+              <span style={{ color: 'var(--text-primary)' }}>{item.pref}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500, color: item.has ? 'var(--success)' : 'var(--text-tertiary)' }}>
+                {item.has ? 'Present' : 'Missing'}
               </span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Insights */}
-      <div className="border border-border rounded-md" style={{ padding: '10px 12px', background: 'var(--bg)' }}>
-        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', fontFamily: 'var(--font-body)', marginBottom: 8 }}>
-          Platform Insights
-        </div>
-        <div className="space-y-2">
-          <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-body)' }}>
-            <span style={{ color: 'var(--success)' }}>&#10003;</span> {stat.positive}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-body)' }}>
-            <span style={{ color: 'var(--warning)' }}>&#10007;</span> {stat.negative}
-          </div>
-        </div>
+      {/* 8. Overall score */}
+      <div style={{ padding: '16px 0', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
+        <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>
+          Your score for {platform.name}:
+        </span>
+        <span style={{ fontSize: 18, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--accent)', marginLeft: 8 }}>
+          {score}/100
+        </span>
       </div>
     </div>
   );
@@ -178,7 +390,7 @@ export function PlatformIntelligence({ data }: PlatformIntelligenceProps) {
               onClick={() => setSelectedPlatform(p)}
               className="border rounded-md transition-colors duration-150 hover:border-border-strong cursor-pointer"
               style={{
-                padding: 12,
+                padding: 16,
                 background: 'var(--surface)',
                 borderColor: 'var(--border)',
                 borderTopWidth: isTop ? 2 : 1,
@@ -242,7 +454,6 @@ export function PlatformIntelligence({ data }: PlatformIntelligenceProps) {
           <PlatformDrawerContent
             platform={selectedPlatform}
             stat={stats[selectedPlatform.key]}
-            data={data}
           />
         )}
       </SlideDrawer>

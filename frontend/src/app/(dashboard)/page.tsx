@@ -1,13 +1,13 @@
 'use client';
 
 import { useState, useMemo, useCallback } from 'react';
-import { Calendar, ChevronDown } from 'lucide-react';
+import { Calendar, ChevronDown, ChevronUp, ChevronRight, TrendingUp, TrendingDown } from 'lucide-react';
+import Link from 'next/link';
 import { generateDayData, VIEW_CONFIGS, type ViewType } from './_components/brand-presence/mock-data';
 import { PresenceChart } from './_components/brand-presence/PresenceChart';
 import { CompetitiveLeaderboard } from './_components/brand-presence/CompetitiveLeaderboard';
 import { InsightCards } from './_components/brand-presence/InsightCards';
 import { PlatformIntelligence } from './_components/brand-presence/PlatformIntelligence';
-import { CitationUrlsTable } from './_components/brand-presence/CitationUrlsTable';
 
 type DateRange = '7d' | '14d' | '28d';
 
@@ -17,15 +17,34 @@ const DATE_RANGES: { key: DateRange; label: string; days: number }[] = [
   { key: '28d', label: 'Mar 1, 2026 – Mar 28, 2026', days: 28 },
 ];
 
-export default function BrandPresencePage() {
+const TRAJECTORY = {
+  months: [
+    { label: 'Jan', score: 45 },
+    { label: 'Feb', score: 52 },
+    { label: 'Mar', score: 58 },
+    { label: 'Apr', score: 74 },
+  ],
+  avgGrowth: 7.2,
+  direction: 'gaining' as const,
+};
+
+const SCORE_BREAKDOWN = [
+  { name: 'Share of Voice', raw: 49.6, weight: 0.35, maxLabel: '100' },
+  { name: 'Citation Rate', raw: 67.0, weight: 0.25, maxLabel: '100' },
+  { name: 'Avg Position', raw: 67.5, weight: 0.20, maxLabel: '100' },
+  { name: 'Sentiment', raw: 72.0, weight: 0.10, maxLabel: '100' },
+  { name: 'Platform Coverage', raw: 100, weight: 0.10, maxLabel: '100' },
+];
+
+export default function BrandSummaryPage() {
   const fullData = useMemo(() => generateDayData(), []);
   const [activeView, setActiveView] = useState<ViewType>('presenceScore');
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [showCompetitors, setShowCompetitors] = useState(false);
   const [dateRange, setDateRange] = useState<DateRange>('28d');
   const [showDateDrop, setShowDateDrop] = useState(false);
+  const [showBreakdown, setShowBreakdown] = useState(false);
 
-  // Date filter controls which slice of data the chart uses
   const data = useMemo(() => {
     const range = DATE_RANGES.find(r => r.key === dateRange)!;
     return fullData.slice(-range.days);
@@ -35,7 +54,6 @@ export default function BrandPresencePage() {
   const latest = data[data.length - 1];
   const earliest = data[0];
 
-  // Hero display value (updates on hover)
   const displayDay = hoverIdx !== null ? data[hoverIdx] : latest;
   const heroValue = displayDay[viewConfig.dataKey] as number;
   const delta = viewConfig.deltaFormat(
@@ -47,49 +65,46 @@ export default function BrandPresencePage() {
     : ((latest[viewConfig.dataKey] as number) >= (earliest[viewConfig.dataKey] as number));
 
   const dateLabel = DATE_RANGES.find(r => r.key === dateRange)!.label;
+  const hoverDelta = hoverIdx !== null ? (data[hoverIdx][viewConfig.dataKey] as number) - (latest[viewConfig.dataKey] as number) : 0;
 
-  // KPI strip data — derived from filtered data
-  const kpis = useMemo(() => {
+  // Navigational KPI cards data
+  const navKpis = useMemo(() => {
     const l = data[data.length - 1];
     const e = data[0];
     const totalCitations = data.reduce((s, d) => s + d.citations, 0);
-    const totalMentions = data.reduce((s, d) => s + d.mentions, 0);
-    const citationRate = Math.round((totalCitations / (totalCitations + totalMentions)) * 100);
-    const earlySlice = data.slice(0, Math.max(1, Math.floor(data.length / 4)));
-    const earlyCitRate = Math.round(
-      (earlySlice.reduce((s, d) => s + d.citations, 0) /
-       earlySlice.reduce((s, d) => s + d.citations + d.mentions, 0)) * 100
-    );
 
     return [
       {
-        label: 'Presence Score',
-        value: String(Math.round(l.presenceScore)),
-        delta: `+${Math.round(l.presenceScore - e.presenceScore)} this period`,
-        positive: l.presenceScore >= e.presenceScore,
-        isPrimary: true,
-        viewKey: 'presenceScore' as ViewType,
-      },
-      {
         label: 'Share of Voice',
         value: `${l.sov.toFixed(1)}%`,
-        delta: `from ${e.sov.toFixed(1)}%`,
+        delta: `+${(l.sov - e.sov).toFixed(1)} this period`,
         positive: l.sov >= e.sov,
-        viewKey: 'sov' as ViewType,
-      },
-      {
-        label: 'Citation Rate',
-        value: `${citationRate}%`,
-        delta: `from ${earlyCitRate}%`,
-        positive: citationRate >= earlyCitRate,
-        viewKey: 'citations' as ViewType,
+        href: '/competitive-position',
+        linkLabel: 'Competitive Position',
       },
       {
         label: 'Avg Position',
         value: l.position.toFixed(1),
         delta: `from ${e.position.toFixed(1)}`,
         positive: l.position <= e.position,
-        viewKey: 'position' as ViewType,
+        href: '/competitive-position',
+        linkLabel: 'Competitive Position',
+      },
+      {
+        label: 'Total Citations',
+        value: String(totalCitations),
+        delta: `+${Math.round(totalCitations * 0.15)} this period`,
+        positive: true,
+        href: '/analytics',
+        linkLabel: 'Citation Intelligence',
+      },
+      {
+        label: 'Content Velocity',
+        value: '3.2/week',
+        delta: '2 published, 1 in review',
+        positive: true,
+        href: '/content-studio',
+        linkLabel: 'Content Studio',
       },
     ];
   }, [data]);
@@ -98,26 +113,31 @@ export default function BrandPresencePage() {
     setActiveView(viewKey);
   }, []);
 
+  // Presence score for hero
+  const presenceScore = Math.round(latest.presenceScore);
+  const presenceDelta = Math.round(latest.presenceScore - earliest.presenceScore);
+  const breakdownTotal = SCORE_BREAKDOWN.reduce((s, c) => s + c.raw * c.weight, 0);
+
   return (
     <div style={{ margin: '-16px' }}>
       {/* Page Header */}
       <div style={{ padding: '16px 24px 0' }}>
         <h1
           style={{
-            fontSize: 22,
+            fontSize: 26,
             fontWeight: 600,
             fontFamily: 'var(--font-display)',
             color: 'var(--text-primary)',
           }}
         >
-          Brand Presence
+          Brand Summary
         </h1>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>
-          Your brand&apos;s visibility and authority across AI engines
+          Your brand&apos;s overall health across AI engines — at a glance
         </p>
       </div>
 
-      {/* Global Filter Bar — 44px, matching Citation Intelligence */}
+      {/* Global Filter Bar */}
       <div
         style={{
           display: 'flex',
@@ -129,7 +149,6 @@ export default function BrandPresencePage() {
           background: 'var(--surface)',
         }}
       >
-        {/* Date Range Picker */}
         <div style={{ position: 'relative' }}>
           <button
             onClick={() => setShowDateDrop(!showDateDrop)}
@@ -236,45 +255,57 @@ export default function BrandPresencePage() {
       </div>
 
       {/* Page Content */}
-      <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 0 }}>
 
-        {/* KPI Strip — 4 cards */}
+        {/* Navigational KPI Cards — 4 cards */}
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(4, 1fr)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-md)',
+            gap: 12,
           }}
         >
-          {kpis.map((kpi, i) => (
-            <div
+          {navKpis.map((kpi) => (
+            <Link
               key={kpi.label}
-              onClick={() => handleKPIClick(kpi.viewKey)}
+              href={kpi.href}
               style={{
-                padding: 12,
+                position: 'relative',
+                padding: 14,
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 4,
-                borderLeft: i > 0 ? '1px solid var(--border)' : 'none',
-                background: activeView === kpi.viewKey ? 'var(--accent-subtle)' : 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--surface)',
                 cursor: 'pointer',
-                transition: 'background 150ms',
-                position: 'relative',
+                transition: 'all 150ms',
+                textDecoration: 'none',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'var(--accent)';
+                e.currentTarget.style.background = 'var(--accent-subtle)';
+                e.currentTarget.style.transform = 'translateY(-1px)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = 'var(--border)';
+                e.currentTarget.style.background = 'var(--surface)';
+                e.currentTarget.style.transform = 'translateY(0)';
               }}
             >
-              {kpi.isPrimary && (
-                <div style={{
+              <ChevronRight
+                size={14}
+                style={{
                   position: 'absolute',
-                  left: 0, top: 0, bottom: 0, width: 2,
-                  background: 'var(--accent)',
-                  borderRadius: '2px 0 0 2px',
-                }} />
-              )}
+                  top: 12,
+                  right: 12,
+                  color: 'var(--text-muted)',
+                }}
+              />
               <span
                 style={{
-                  fontSize: 11, fontWeight: 500, textTransform: 'uppercase',
-                  letterSpacing: '0.05em', color: 'var(--text-secondary)',
+                  fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                  letterSpacing: '0.06em', color: 'var(--text-secondary)',
                   fontFamily: 'var(--font-display)',
                 }}
               >
@@ -282,20 +313,18 @@ export default function BrandPresencePage() {
               </span>
               <span
                 style={{
-                  fontSize: 28, fontWeight: 600, lineHeight: 1,
+                  fontSize: 32, fontWeight: 600, lineHeight: 1,
                   fontFamily: 'var(--font-mono)', color: 'var(--text-primary)',
                 }}
               >
                 {kpi.value}
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  {kpi.positive ? (
-                    <path d="M5 2L8 6H2L5 2Z" fill="var(--success)" />
-                  ) : (
-                    <path d="M5 8L2 4H8L5 8Z" fill="var(--error)" />
-                  )}
-                </svg>
+                {kpi.positive ? (
+                  <TrendingUp size={12} style={{ color: 'var(--success)' }} />
+                ) : (
+                  <TrendingDown size={12} style={{ color: 'var(--error)' }} />
+                )}
                 <span
                   style={{
                     fontSize: 12, fontWeight: 500,
@@ -306,9 +335,11 @@ export default function BrandPresencePage() {
                   {kpi.delta}
                 </span>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
+
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
 
         {/* Chart + Leaderboard */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 16 }}>
@@ -327,40 +358,146 @@ export default function BrandPresencePage() {
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
                   <span
+                    onClick={() => {
+                      if (viewConfig.key === 'presenceScore' && hoverIdx === null) {
+                        setShowBreakdown(!showBreakdown);
+                      }
+                    }}
                     style={{
-                      fontFamily: 'var(--font-mono)', fontSize: 48, fontWeight: 600,
+                      fontFamily: 'var(--font-mono)', fontSize: 56, fontWeight: 700,
                       color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-0.03em',
+                      cursor: viewConfig.key === 'presenceScore' && hoverIdx === null ? 'pointer' : 'default',
                     }}
                   >
                     {viewConfig.format(heroValue)}
                   </span>
-                  <span style={{ fontSize: 14, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>
-                    {hoverIdx !== null ? data[hoverIdx]?.dateShort : viewConfig.label}
-                  </span>
-                  {hoverIdx === null && (
-                    <span
-                      style={{
-                        fontSize: 13, fontFamily: 'var(--font-mono)', fontWeight: 600,
-                        color: isPositive ? 'var(--success)' : 'var(--error)',
-                      }}
-                    >
-                      {delta}
-                    </span>
+                  {hoverIdx !== null ? (
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>
+                        {data[hoverIdx]?.dateShort}
+                      </span>
+                      <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 600, color: hoverDelta >= 0 ? 'var(--success)' : 'var(--error)' }}>
+                        ({hoverDelta >= 0 ? '+' : ''}{hoverDelta.toFixed(1)} from current)
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: 14, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>
+                        {viewConfig.label}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 18, fontFamily: 'var(--font-mono)', fontWeight: 600,
+                          color: isPositive ? 'var(--success)' : 'var(--error)',
+                        }}
+                      >
+                        {delta}
+                      </span>
+                    </>
                   )}
                 </div>
                 {viewConfig.key === 'presenceScore' && hoverIdx === null && (
-                  <span
-                    title="SOV (35%) + Citation Rate (25%) + Avg Position (20%) + Sentiment (10%) + Coverage (10%)"
+                  <button
+                    onClick={() => setShowBreakdown(!showBreakdown)}
                     style={{
-                      fontSize: 11, color: 'var(--text-tertiary)', cursor: 'help',
+                      fontSize: 11, color: 'var(--text-tertiary)', cursor: 'pointer',
                       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                      width: 16, height: 16, borderRadius: 9999, border: '1px solid var(--border)',
+                      gap: 4, background: 'none', border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-sm)', padding: '2px 8px',
                     }}
                   >
-                    ?
-                  </span>
+                    {showBreakdown ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                    <span>Breakdown</span>
+                  </button>
                 )}
               </div>
+
+              {/* Presence Score Breakdown — expandable */}
+              {showBreakdown && viewConfig.key === 'presenceScore' && hoverIdx === null && (
+                <div
+                  style={{
+                    padding: 14,
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--bg)',
+                    marginBottom: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                      letterSpacing: '0.06em', color: 'var(--text-secondary)',
+                      fontFamily: 'var(--font-display)', marginBottom: 10,
+                    }}
+                  >
+                    Score Breakdown
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {SCORE_BREAKDOWN.map((comp) => {
+                      const weighted = comp.raw * comp.weight;
+                      return (
+                        <div key={comp.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 13, color: 'var(--text-primary)', fontFamily: 'var(--font-display)', width: 130, flexShrink: 0 }}>
+                            {comp.name}
+                          </span>
+                          <div style={{ flex: 1, height: 8, borderRadius: 9999, background: 'var(--border)', position: 'relative' }}>
+                            <div
+                              style={{
+                                height: '100%',
+                                borderRadius: 9999,
+                                width: `${comp.raw}%`,
+                                background: 'var(--accent)',
+                                transition: 'width 300ms ease',
+                              }}
+                            />
+                          </div>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)', width: 80, textAlign: 'right', flexShrink: 0 }}>
+                            {comp.raw.toFixed(1)}/100
+                          </span>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-tertiary)', width: 40, textAlign: 'center', flexShrink: 0 }}>
+                            ×{(comp.weight * 100).toFixed(0)}%
+                          </span>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', width: 40, textAlign: 'right', flexShrink: 0 }}>
+                            = {weighted.toFixed(1)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <span style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: 'var(--text-secondary)' }}>
+                      TOTAL
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      = {breakdownTotal.toFixed(1)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* 3-Month Trajectory — below Presence Score */}
+              {viewConfig.key === 'presenceScore' && hoverIdx === null && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {TRAJECTORY.months.map((m, i) => (
+                      <span key={m.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 600, color: i === TRAJECTORY.months.length - 1 ? 'var(--accent)' : 'var(--text-primary)' }}>
+                          {m.score}
+                        </span>
+                        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)' }}>
+                          {m.label}
+                        </span>
+                        {i < TRAJECTORY.months.length - 1 && (
+                          <ChevronRight size={10} style={{ color: 'var(--text-tertiary)' }} />
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                  <span style={{ fontSize: 11, fontFamily: 'var(--font-display)', color: 'var(--success)' }}>
+                    Gaining {TRAJECTORY.avgGrowth} points per month on average
+                  </span>
+                </div>
+              )}
 
               {/* View toggles */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -369,7 +506,7 @@ export default function BrandPresencePage() {
                   return (
                     <button
                       key={vc.key}
-                      onClick={() => setActiveView(vc.key)}
+                      onClick={() => { setActiveView(vc.key); setShowBreakdown(false); }}
                       style={{
                         padding: '4px 10px', fontSize: 12, fontWeight: 500,
                         fontFamily: 'var(--font-display)',
@@ -397,7 +534,7 @@ export default function BrandPresencePage() {
               />
             </div>
 
-            {/* Competitor toggle — bordered button */}
+            {/* Competitor toggle */}
             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center' }}>
               <button
                 onClick={() => setShowCompetitors(!showCompetitors)}
@@ -428,6 +565,8 @@ export default function BrandPresencePage() {
           />
         </div>
 
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
         {/* Insight Cards */}
         <InsightCards
           data={data}
@@ -435,11 +574,10 @@ export default function BrandPresencePage() {
           onViewChange={setActiveView}
         />
 
+        <div style={{ height: 1, background: 'var(--border)', margin: '24px 0' }} />
+
         {/* Platform Intelligence */}
         <PlatformIntelligence data={data} />
-
-        {/* Citation URLs Table */}
-        <CitationUrlsTable />
       </div>
     </div>
   );

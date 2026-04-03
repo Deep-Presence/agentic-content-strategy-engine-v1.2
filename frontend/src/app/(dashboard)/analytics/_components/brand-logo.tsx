@@ -1,14 +1,6 @@
 'use client';
 
-export function BrandLogo({
-  domain,
-  size = 20,
-  className,
-}: {
-  domain: string;
-  size?: number;
-  className?: string;
-}) {
+export function BrandLogo({ domain, size = 20, className }: { domain: string; size?: number; className?: string }) {
   return (
     <img
       src={`https://www.google.com/s2/favicons?domain=${domain}&sz=${size * 2}`}

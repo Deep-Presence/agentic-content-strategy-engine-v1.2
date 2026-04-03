@@ -7,7 +7,7 @@ import { useThemeStore } from '@/stores/theme';
 import { Avatar } from './Avatar';
 
 const routeLabels: Record<string, string> = {
-  '/': 'Brand Presence',
+  '/': 'Brand Summary',
   '/analytics': 'Citation Intelligence',
   '/competitive-position': 'Competitive Position',
   '/prompt-tracking': 'Prompt Tracking',

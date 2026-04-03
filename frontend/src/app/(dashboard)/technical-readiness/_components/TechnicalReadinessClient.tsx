@@ -1,179 +1,188 @@
 'use client';
 
-import { useState } from 'react';
-import { GapGauge } from './GapGauge';
-import { DimensionSection } from './DimensionSection';
-import { BotAccessCard } from './BotAccessCard';
-import { SnippetDistribution } from './SnippetDistribution';
-import { BotCrawlChart } from './BotCrawlChart';
-import { PlatformPreference } from './PlatformPreference';
-import { FindingsTable } from './FindingsTable';
-import { KPI_DATA } from './tech-readiness-data';
+import { useState, useCallback } from 'react';
+import { Calendar, X } from 'lucide-react';
+import { GapStatement } from './GapStatement';
+import { PriorityFixes } from './PriorityFixes';
+import { DimensionBreakdown } from './DimensionBreakdown';
+import { BotAccess } from './BotAccess';
+import { PlatformPreferences } from './PlatformPreferences';
+import { BotCrawlActivity } from './BotCrawlActivity';
+import { SnippetReadiness } from './SnippetReadiness';
+import { SlideDrawer } from './SlideDrawer';
+import { DIMENSIONS } from './tech-readiness-data';
 
-const SEVERITY_OPTIONS = [
-  { value: 'all', label: 'All Severities' },
-  { value: 'critical', label: 'Critical' },
-  { value: 'high', label: 'High' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'low', label: 'Low' },
-];
-
-const DIMENSION_OPTIONS = [
-  { value: '', label: 'All Dimensions' },
-  { value: 'Crawlability', label: 'Crawlability' },
-  { value: 'Performance', label: 'Performance' },
-  { value: 'On-Page SEO', label: 'On-Page SEO' },
-  { value: 'Extractability', label: 'Extractability' },
-  { value: 'Schema Markup', label: 'Schema Markup' },
-  { value: 'E-E-A-T', label: 'E-E-A-T' },
-  { value: 'Freshness', label: 'Freshness' },
-  { value: 'Security', label: 'Security' },
-];
-
-function KPICard({ label, value, sub, accent }: { label: string; value: string | number; sub: string; accent: string }) {
-  return (
-    <div style={{ border: '1px solid var(--border)', background: 'var(--surface)', borderRadius: '6px', padding: '12px' }}>
-      <p style={{ fontSize: '11px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-        {label}
-      </p>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginTop: '4px' }}>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '28px', fontWeight: 600, color: 'var(--text-primary)' }}>
-          {value}
-        </span>
-      </div>
-      <p style={{ fontSize: '12px', fontWeight: 500, color: accent, marginTop: '2px' }}>
-        {sub}
-      </p>
-    </div>
-  );
-}
+type SeverityFilter = 'all' | 'critical' | 'high' | 'medium' | 'low';
 
 export function TechnicalReadinessClient() {
-  const [severityFilter, setSeverityFilter] = useState('all');
-  const [dimensionFilter, setDimensionFilter] = useState<string | null>(null);
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all');
+  const [dimensionFilter, setDimensionFilter] = useState<string>('all');
+  const [activeDimension, setActiveDimension] = useState<string | null>(null);
 
-  const hasActiveFilters = severityFilter !== 'all' || dimensionFilter !== null;
+  // Drawer state
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerTitle, setDrawerTitle] = useState('');
+  const [drawerType, setDrawerType] = useState<'pages' | 'dimension'>('pages');
+  const [drawerDimensionName, setDrawerDimensionName] = useState<string | undefined>();
+
+  const handleViewPages = useCallback((fixTitle: string) => {
+    setDrawerTitle(fixTitle);
+    setDrawerType('pages');
+    setDrawerDimensionName(undefined);
+    setDrawerOpen(true);
+  }, []);
+
+  const handleViewLowPages = useCallback(() => {
+    setDrawerTitle('Pages with readiness below 20');
+    setDrawerType('pages');
+    setDrawerDimensionName(undefined);
+    setDrawerOpen(true);
+  }, []);
+
+  const handleDimensionClick = useCallback((name: string | null) => {
+    setActiveDimension(name);
+  }, []);
 
   const clearFilters = () => {
     setSeverityFilter('all');
-    setDimensionFilter(null);
+    setDimensionFilter('all');
+    setActiveDimension(null);
   };
 
+  const hasActiveFilters = severityFilter !== 'all' || dimensionFilter !== 'all';
+
+  // Determine effective dimension filter (from filter bar or from clicking dimension table)
+  const effectiveDimensionFilter =
+    activeDimension || (dimensionFilter !== 'all' ? dimensionFilter : null);
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {/* Page Title */}
-      <div>
-        <h1 style={{ fontSize: '22px', fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}>
+    <div className="max-w-full px-6 py-5">
+      {/* Page Header */}
+      <div className="mb-4">
+        <h1
+          className="text-[22px] font-semibold"
+          style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}
+        >
           Technical Readiness
         </h1>
-        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-          Is your site technically ready for AI engines to discover and cite you?
+        <p
+          className="text-[13px]"
+          style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}
+        >
+          Is your site structured for AI engines to discover and cite you?
         </p>
       </div>
 
-      {/* Global Filter Bar — full-width toolbar, 44px, no rounded corners */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: '12px', height: '44px',
-        padding: '0 16px', borderBottom: '1px solid var(--border)',
-        margin: '0 -24px', paddingLeft: '24px', paddingRight: '24px',
-      }}>
-        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-          Mar 1, 2026 {'\u2013'} Mar 28, 2026
-        </span>
-        <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
+      {/* Filter Bar */}
+      <div
+        className="flex items-center gap-3 h-[44px] px-3 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] mb-4"
+      >
+        <div className="flex items-center gap-1.5">
+          <Calendar size={14} style={{ color: 'var(--text-tertiary)' }} />
+          <span
+            className="text-[13px]"
+            style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}
+          >
+            Mar 1, 2026 – Mar 28, 2026
+          </span>
+        </div>
+
+        <span className="w-px h-5 bg-[var(--border)]" />
+
         <select
           value={severityFilter}
-          onChange={(e) => setSeverityFilter(e.target.value)}
-          style={{
-            height: 30, padding: '0 8px', fontSize: '12px', color: 'var(--text-primary)',
-            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4,
-            cursor: 'pointer', outline: 'none',
-          }}
+          onChange={(e) => setSeverityFilter(e.target.value as SeverityFilter)}
+          className="h-[32px] px-2.5 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] text-[13px] outline-none cursor-pointer hover:border-[var(--border-strong)] transition-colors"
+          style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}
         >
-          {SEVERITY_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
+          <option value="all">All Severities</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
         </select>
-        <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
+
         <select
-          value={dimensionFilter || ''}
-          onChange={(e) => setDimensionFilter(e.target.value || null)}
-          style={{
-            height: 30, padding: '0 8px', fontSize: '12px', color: 'var(--text-primary)',
-            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4,
-            cursor: 'pointer', outline: 'none',
+          value={dimensionFilter}
+          onChange={(e) => {
+            setDimensionFilter(e.target.value);
+            setActiveDimension(e.target.value !== 'all' ? e.target.value : null);
           }}
+          className="h-[32px] px-2.5 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] text-[13px] outline-none cursor-pointer hover:border-[var(--border-strong)] transition-colors"
+          style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}
         >
-          {DIMENSION_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          <option value="all">All Dimensions</option>
+          {DIMENSIONS.map((d) => (
+            <option key={d.name} value={d.name}>{d.name}</option>
           ))}
         </select>
+
         {hasActiveFilters && (
           <button
+            className="flex items-center gap-1 text-[12px] font-medium hover:opacity-80 transition-opacity ml-auto"
+            style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}
             onClick={clearFilters}
-            style={{
-              marginLeft: 'auto', fontSize: '12px', color: 'var(--text-secondary)',
-              background: 'none', border: 'none', cursor: 'pointer',
-            }}
           >
-            {'\u00D7'} Clear
+            <X size={12} />
+            Clear
           </button>
         )}
       </div>
 
-      {/* KPI Strip — 6 cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px' }}>
-        <KPICard label="Site Health" value={KPI_DATA.siteHealth.value} sub={`/${KPI_DATA.siteHealth.max} \u2014 Grade ${KPI_DATA.siteHealth.grade}`} accent="var(--success)" />
-        <KPICard label="AEO Readiness" value={KPI_DATA.aeoReadiness.value} sub={`/${KPI_DATA.aeoReadiness.max} \u2014 THE GAP`} accent="var(--error)" />
-        <KPICard label="Snippet Readiness" value={KPI_DATA.snippetReadiness.value} sub={KPI_DATA.snippetReadiness.label} accent="var(--error)" />
-        <KPICard label="Question Headings" value={`${KPI_DATA.questionHeadings.value}%`} sub={`vs ${KPI_DATA.questionHeadings.target}% target`} accent="var(--warning)" />
-        <KPICard label="Critical Issues" value={KPI_DATA.criticalIssues.value} sub={KPI_DATA.criticalIssues.label} accent="var(--error)" />
-        {/* llms.txt — custom card with pill */}
-        <div style={{ border: '1px solid var(--border)', background: 'var(--surface)', borderRadius: '6px', padding: '12px' }}>
-          <p style={{ fontSize: '11px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-            llms.txt
-          </p>
-          <div style={{ marginTop: '4px' }}>
-            <span style={{
-              display: 'inline-block', fontSize: '12px', fontWeight: 600,
-              padding: '2px 8px', borderRadius: '4px',
-              background: '#E5484D', color: '#FFFFFF',
-            }}>
-              {KPI_DATA.llmsTxt.status}
-            </span>
-          </div>
-          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            {KPI_DATA.llmsTxt.label}
-          </p>
-        </div>
+      {/* Sections */}
+      <div className="flex flex-col gap-4">
+        {/* Section 1: Gap Statement */}
+        <GapStatement />
+
+        {/* Section 2: Priority Fixes */}
+        <PriorityFixes
+          dimensionFilter={effectiveDimensionFilter}
+          onViewPages={handleViewPages}
+        />
+
+        {/* Section 3: Dimension Breakdown */}
+        <DimensionBreakdown
+          activeDimension={activeDimension}
+          onDimensionClick={handleDimensionClick}
+        />
+
+        {/* Section 4: Bot Access */}
+        <BotAccess />
+
+        {/* Section 5: Platform Citation Preferences */}
+        <PlatformPreferences />
+
+        {/* Section 6: Bot Crawl Activity */}
+        <BotCrawlActivity />
+
+        {/* Section 7: Snippet Readiness Distribution */}
+        <SnippetReadiness onViewLowPages={handleViewLowPages} />
       </div>
 
-      {/* Section 1: Dual Gauge Hero */}
-      <GapGauge />
-
-      {/* Section 2: Dimension Radar + Table */}
-      <DimensionSection
-        selectedDimension={dimensionFilter}
-        onSelectDimension={setDimensionFilter}
+      {/* Slide Drawer */}
+      <SlideDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        title={drawerTitle}
+        type={drawerType}
+        dimensionName={drawerDimensionName}
       />
 
-      {/* Section 3: Bot Access + Snippet Distribution */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-        <BotAccessCard />
-        <SnippetDistribution />
-      </div>
-
-      {/* Section 4: Bot Crawl Activity */}
-      <BotCrawlChart />
-
-      {/* Section 5: Platform Citation Preferences */}
-      <PlatformPreference />
-
-      {/* Section 6: Findings Table */}
-      <FindingsTable
-        severityFilter={severityFilter}
-        dimensionFilter={dimensionFilter}
-      />
+      {/* Global Animations */}
+      <style jsx global>{`
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slideInRight {
+          from { transform: translateX(100%); }
+          to { transform: translateX(0); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 }

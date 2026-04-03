@@ -2,7 +2,22 @@
 
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
-import { Settings, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import {
+  Settings,
+  ChevronsLeft,
+  ChevronsRight,
+  LayoutDashboard,
+  BarChart3,
+  Swords,
+  Radar,
+  TrendingUp,
+  ShieldCheck,
+  Globe,
+  FileText,
+  PenTool,
+  Brain,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
@@ -10,44 +25,50 @@ import { useSidebarStore } from '@/stores/sidebar';
 import { WorkspaceSelector } from './WorkspaceSelector';
 import { Avatar } from './Avatar';
 
+interface NavItem {
+  label: string;
+  href: string;
+  icon: LucideIcon;
+}
+
 interface NavSection {
   header?: string;
-  items: { label: string; href: string }[];
+  items: NavItem[];
 }
 
 const navSections: NavSection[] = [
   {
     items: [
-      { label: 'Brand Presence', href: '/' },
+      { label: 'Brand Summary', href: '/', icon: LayoutDashboard },
     ],
   },
   {
     header: 'Intelligence',
     items: [
-      { label: 'Citation intelligence', href: '/analytics' },
-      { label: 'Competitive position', href: '/competitive-position' },
-      { label: 'Prompt tracking', href: '/prompt-tracking' },
+      { label: 'Citation intelligence', href: '/analytics', icon: BarChart3 },
+      { label: 'Competitive position', href: '/competitive-position', icon: Swords },
+      { label: 'Prompt tracking', href: '/prompt-tracking', icon: Radar },
     ],
   },
   {
     header: 'Signals',
     items: [
-      { label: 'Content performance', href: '/content-performance' },
-      { label: 'Technical readiness', href: '/technical-readiness' },
-      { label: 'Embedding lab', href: '/embedding-lab' },
+      { label: 'Content performance', href: '/content-performance', icon: TrendingUp },
+      { label: 'Technical readiness', href: '/technical-readiness', icon: ShieldCheck },
+      { label: 'Embedding lab', href: '/embedding-lab', icon: Globe },
     ],
   },
   {
     header: 'Content',
     items: [
-      { label: 'Content planner', href: '/planner' },
-      { label: 'Content studio', href: '/content-studio' },
+      { label: 'Content planner', href: '/planner', icon: FileText },
+      { label: 'Content studio', href: '/content-studio', icon: PenTool },
     ],
   },
   {
     header: 'Knowledge',
     items: [
-      { label: 'Brand artifact', href: '/artifacts' },
+      { label: 'Brand Brain', href: '/artifacts', icon: Brain },
     ],
   },
 ];
@@ -142,7 +163,7 @@ export function Sidebar() {
         collapsed ? 'px-1' : 'px-2',
       )}>
         {navSections.map((section, sIdx) => (
-          <div key={sIdx} className={cn(sIdx === 0 ? 'mt-2' : 'mt-4')}>
+          <div key={sIdx} className={cn(sIdx === 0 ? 'mt-2 mb-2' : 'mt-4')}>
             {section.header && !collapsed && (
               <div className="px-2 mb-1 text-[10px] font-medium uppercase tracking-[0.06em] text-accent">
                 {section.header}
@@ -155,27 +176,37 @@ export function Sidebar() {
               {section.items.map((item) => {
                 const active = isNavActive(item.href, pathname);
                 const isPrimary = item.href === '/' && !section.header;
+                const Icon = item.icon;
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      'flex items-center rounded-sm transition-colors duration-100',
+                      'flex items-center rounded-sm transition-all duration-150',
                       collapsed
-                        ? 'justify-center h-[30px] w-full text-[10px] font-medium'
-                        : isPrimary ? 'h-[34px] px-2 text-[13px] font-medium' : 'h-[30px] px-2 text-[13px]',
+                        ? 'justify-center h-[30px] w-full'
+                        : isPrimary ? 'h-[34px] px-2 gap-2 text-[14px] font-semibold' : 'h-[30px] px-2 gap-2 text-[13px]',
                       active
-                        ? 'bg-accent-subtle text-accent font-medium'
+                        ? isPrimary
+                          ? 'bg-accent-subtle text-accent font-semibold'
+                          : 'bg-accent-subtle text-accent font-medium'
                         : isPrimary
                           ? 'text-text-primary hover:bg-bg'
                           : 'text-text-secondary hover:bg-bg hover:text-text-primary'
                     )}
+                    style={active && isPrimary ? { borderLeft: '2px solid var(--accent)', paddingLeft: 6 } : undefined}
                     title={collapsed ? item.label : undefined}
                   >
-                    {collapsed
-                      ? <span>{item.label.charAt(0)}</span>
-                      : <span>{item.label}</span>
-                    }
+                    <Icon
+                      size={isPrimary ? 18 : 16}
+                      strokeWidth={1.5}
+                      className="flex-shrink-0"
+                      style={{
+                        color: active ? 'var(--accent)' : 'var(--text-secondary)',
+                        transition: 'color 150ms ease',
+                      }}
+                    />
+                    {!collapsed && <span>{item.label}</span>}
                   </Link>
                 );
               })}
@@ -192,17 +223,23 @@ export function Sidebar() {
             'flex items-center rounded-sm transition-colors duration-100',
             collapsed
               ? 'justify-center h-[30px] w-full'
-              : 'h-[30px] px-2 text-[13px]',
+              : 'h-[30px] px-2 gap-2 text-[13px]',
             pathname === '/settings'
               ? 'bg-accent-subtle text-accent font-medium'
               : 'text-text-secondary hover:bg-bg hover:text-text-primary'
           )}
           title={collapsed ? 'Settings' : undefined}
         >
-          {collapsed
-            ? <Settings size={16} strokeWidth={1.5} />
-            : <span>Settings</span>
-          }
+          <Settings
+            size={16}
+            strokeWidth={1.5}
+            className="flex-shrink-0"
+            style={{
+              color: pathname === '/settings' ? 'var(--accent)' : 'var(--text-secondary)',
+              transition: 'color 150ms ease',
+            }}
+          />
+          {!collapsed && <span>Settings</span>}
         </Link>
 
         {!collapsed && (

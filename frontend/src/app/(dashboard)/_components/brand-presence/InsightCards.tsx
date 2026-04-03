@@ -97,35 +97,25 @@ function StatBlock({ label, value, color }: { label: string; value: string; colo
   );
 }
 
-// ─── Card 1: Cited vs Mentioned ─────────────────────────────────────────
-function CitedVsMentioned({ data, active, onDrillDown }: { data: DayData[]; active: boolean; onDrillDown: () => void }) {
-  const totalCitations = data.reduce((sum, d) => sum + d.citations, 0);
-  const totalMentions = data.reduce((sum, d) => sum + d.mentions, 0);
-  const citedPct = Math.round((totalCitations / (totalCitations + totalMentions)) * 100);
-  const mentionedPct = 100 - citedPct;
-  const gap = mentionedPct - citedPct;
-  const gapQueries = Math.round(gap * 0.5);
-
+// ─── Card 1: Content Velocity ─────────────────────────────────────────
+function ContentVelocity({ onDrillDown }: { onDrillDown: () => void }) {
   return (
-    <CardShell active={active} accentColor="var(--warning)" onClick={onDrillDown}>
-      <OverlineLabel>Cited vs Mentioned</OverlineLabel>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 8 }}>
-        <div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 24, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1 }}>
-            {citedPct}%
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)', marginTop: 2 }}>Cited</div>
+    <CardShell onClick={onDrillDown}>
+      <OverlineLabel>Content Velocity</OverlineLabel>
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 28, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1 }}>
+          3.2/week
         </div>
-        <div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 24, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1 }}>
-            {mentionedPct}%
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)', marginTop: 2 }}>Mentioned</div>
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)', marginTop: 6 }}>
+          2 published, 1 in review
         </div>
       </div>
-      <div style={{ background: 'var(--warning-subtle)', padding: '4px 8px', borderRadius: 'var(--radius-sm)' }}>
-        <span style={{ fontSize: 11, color: 'var(--warning)', fontFamily: 'var(--font-display)' }}>
-          {gap}% gap — {gapQueries} queries mention without citing
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M5 2L8 6H2L5 2Z" fill="var(--success)" />
+        </svg>
+        <span style={{ fontSize: 11, color: 'var(--success)', fontFamily: 'var(--font-display)' }}>
+          +0.4/week vs last month
         </span>
       </div>
     </CardShell>
@@ -212,7 +202,7 @@ function CitationSentiment({ data, onDrillDown }: { data: DayData[]; onDrillDown
               {s.label}
             </span>
             <div style={{ flex: 1, height: 5, borderRadius: 9999, background: 'var(--border)' }}>
-              <div style={{ height: '100%', borderRadius: 9999, width: `${s.pct}%`, background: s.color }} />
+              <div style={{ height: '100%', borderRadius: 9999, width: `${s.pct}%`, minWidth: 20, background: s.color }} />
             </div>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-primary)', fontWeight: 500, flexShrink: 0, width: 32, textAlign: 'right' }}>
               {s.pct}%
@@ -228,28 +218,41 @@ function CitationSentiment({ data, onDrillDown }: { data: DayData[]; onDrillDown
 }
 
 // ─── Drill-down drawer content ──────────────────────────────────────────
-function CitedMentionedDetail({ data }: { data: DayData[] }) {
-  const totalCitations = data.reduce((sum, d) => sum + d.citations, 0);
-  const totalMentions = data.reduce((sum, d) => sum + d.mentions, 0);
-  const citedPct = Math.round((totalCitations / (totalCitations + totalMentions)) * 100);
+function ContentVelocityDetail() {
+  const recentContent = [
+    { title: 'AI App Builder Comparison Guide', status: 'Published', date: 'Mar 25', citations: 12 },
+    { title: 'Lovable vs Cursor: Honest Review', status: 'Published', date: 'Mar 21', citations: 8 },
+    { title: 'Enterprise Deployment Best Practices', status: 'In Review', date: 'Mar 27', citations: 0 },
+    { title: 'Security in AI-Generated Apps', status: 'Published', date: 'Mar 18', citations: 6 },
+    { title: 'Non-Technical Founder\'s Guide', status: 'Draft', date: 'Mar 28', citations: 0 },
+  ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 16 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-        <StatBlock label="Total Citations" value={String(totalCitations)} color="var(--success)" />
-        <StatBlock label="Total Mentions" value={String(totalMentions)} />
-        <StatBlock label="Citation Rate" value={`${citedPct}%`} color="var(--accent)" />
+        <StatBlock label="Weekly Rate" value="3.2" color="var(--accent)" />
+        <StatBlock label="Published" value="2" color="var(--success)" />
+        <StatBlock label="In Review" value="1" />
       </div>
       <div>
-        <OverlineLabel>Daily Breakdown (last 7 days)</OverlineLabel>
+        <OverlineLabel>Recent Content</OverlineLabel>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {data.slice(-7).map(d => (
-            <div key={d.dateShort} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>{d.dateShort}</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--success)' }}>{d.citations} cited</span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-tertiary)' }}>{d.mentions} mentioned</span>
+          {recentContent.map(item => (
+            <div key={item.title} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}>{item.title}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)' }}>{item.date}</span>
               </div>
+              <span
+                style={{
+                  fontSize: 10, fontWeight: 600, fontFamily: 'var(--font-display)',
+                  padding: '2px 6px', borderRadius: 9999,
+                  background: item.status === 'Published' ? 'var(--success-subtle)' : item.status === 'In Review' ? 'var(--warning-subtle)' : 'var(--accent-subtle)',
+                  color: item.status === 'Published' ? 'var(--success)' : item.status === 'In Review' ? 'var(--warning)' : 'var(--accent)',
+                }}
+              >
+                {item.status}
+              </span>
             </div>
           ))}
         </div>
@@ -354,13 +357,13 @@ function SentimentDetail({ data }: { data: DayData[] }) {
   );
 }
 
-type DrawerType = 'cited' | 'platforms' | 'content' | 'sentiment' | null;
+type DrawerType = 'velocity' | 'platforms' | 'content' | 'sentiment' | null;
 
 export function InsightCards({ data, activeView, onViewChange }: InsightCardsProps) {
   const [openDrawer, setOpenDrawer] = useState<DrawerType>(null);
 
   const drawerConfig: Record<Exclude<DrawerType, null>, { title: string; subtitle: string }> = {
-    cited: { title: 'Cited vs Mentioned', subtitle: 'Citation and mention analysis across all queries' },
+    velocity: { title: 'Content Velocity', subtitle: 'Content production rate and publishing cadence' },
     platforms: { title: 'Platform Breakdown', subtitle: 'Citation distribution across AI platforms' },
     content: { title: 'Top Cited Content', subtitle: 'All URLs ranked by citation count' },
     sentiment: { title: 'Citation Sentiment', subtitle: 'Sentiment analysis of AI-generated responses' },
@@ -369,11 +372,7 @@ export function InsightCards({ data, activeView, onViewChange }: InsightCardsPro
   return (
     <>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-        <CitedVsMentioned
-          data={data}
-          active={activeView === 'citations' || activeView === 'mentions'}
-          onDrillDown={() => setOpenDrawer('cited')}
-        />
+        <ContentVelocity onDrillDown={() => setOpenDrawer('velocity')} />
         <PlatformBreakdown data={data} onDrillDown={() => setOpenDrawer('platforms')} />
         <TopCitedContent onDrillDown={() => setOpenDrawer('content')} />
         <CitationSentiment data={data} onDrillDown={() => setOpenDrawer('sentiment')} />
@@ -385,7 +384,7 @@ export function InsightCards({ data, activeView, onViewChange }: InsightCardsPro
         title={openDrawer ? drawerConfig[openDrawer].title : ''}
         subtitle={openDrawer ? drawerConfig[openDrawer].subtitle : ''}
       >
-        {openDrawer === 'cited' && <CitedMentionedDetail data={data} />}
+        {openDrawer === 'velocity' && <ContentVelocityDetail />}
         {openDrawer === 'platforms' && <PlatformDetail data={data} />}
         {openDrawer === 'content' && <TopContentDetail />}
         {openDrawer === 'sentiment' && <SentimentDetail data={data} />}

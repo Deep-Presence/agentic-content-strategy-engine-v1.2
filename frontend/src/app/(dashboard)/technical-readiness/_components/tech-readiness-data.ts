@@ -1,36 +1,144 @@
-// ─── KPI Data ────────────────────────────────────────────────────────────────
+// ─── Gap Statement ──────────────────────────────────────────────────────────
 
-export const KPI_DATA = {
-  siteHealth: { value: 95, max: 100, grade: 'A' },
-  aeoReadiness: { value: 38.7, max: 100, grade: 'F' },
-  snippetReadiness: { value: 38.7, label: '/100 avg across pages' },
-  questionHeadings: { value: 14.8, target: 30, label: '% vs 30% target' },
-  criticalIssues: { value: 7, label: 'findings blocking citation' },
-  llmsTxt: { status: 'Missing', label: 'not implemented' },
+export const GAP_DATA = {
+  siteHealth: { score: 95, label: 'Fast load times, clean code, strong security' },
+  aiCitationReady: { score: 38.7, label: 'Missing: question headings, FAQ sections, comparison tables, llms.txt' },
+  narrative: {
+    title: 'THE GAP',
+    body: 'Your site is healthy — but AI engines can\'t extract useful answers from it.',
+    focus: 'question headings, FAQ sections, comparison tables, and llms.txt',
+    estimate: '65+',
+  },
 };
 
-// ─── Dimensions ──────────────────────────────────────────────────────────────
+// ─── Priority Fixes ─────────────────────────────────────────────────────────
+
+export type Severity = 'critical' | 'high' | 'medium' | 'low';
+export type Effort = 'low' | 'medium' | 'high';
+
+export interface PriorityFix {
+  rank: number;
+  severity: Severity;
+  title: string;
+  current: string;
+  target: string;
+  why: string;
+  impact: string;
+  effort: Effort;
+  pages: number;
+  dimension: string;
+}
+
+export const PRIORITY_FIXES: PriorityFix[] = [
+  {
+    rank: 1,
+    severity: 'critical',
+    title: 'Add question headings to 62 pages',
+    current: '14.8% of pages have question headings',
+    target: '30%+ (what top-cited content looks like)',
+    why: 'AI engines extract answers from question-heading pairs. Pages without question headings are essentially invisible to AI citation.',
+    impact: '+15-20% citation rate',
+    effort: 'medium',
+    pages: 62,
+    dimension: 'Extractability',
+  },
+  {
+    rank: 2,
+    severity: 'critical',
+    title: 'Rephrase 30%+ of headings as questions',
+    current: 'Only 14.8% of headings are question-format',
+    target: '30%+ question headings across all content',
+    why: 'AI engines are trained to match questions to answers. Question-format headings dramatically increase the chance your content becomes a cited answer.',
+    impact: '+12-15% citation rate',
+    effort: 'medium',
+    pages: 200,
+    dimension: 'Extractability',
+  },
+  {
+    rank: 3,
+    severity: 'high',
+    title: 'Create llms.txt file',
+    current: 'Missing — not implemented',
+    target: 'Present at /llms.txt with citation guidance',
+    why: "llms.txt tells AI engines how to reference your content. It's the robots.txt equivalent for AI citation. Without it, engines decide on their own how (or whether) to cite you.",
+    impact: '+5-8% citation rate',
+    effort: 'low',
+    pages: 1,
+    dimension: 'Crawlability',
+  },
+  {
+    rank: 4,
+    severity: 'high',
+    title: 'Add FAQ schema to pages with FAQ content',
+    current: '0 pages have FAQ schema markup',
+    target: 'All pages with FAQ sections should have FAQPage schema',
+    why: 'FAQ schema helps AI engines identify question-answer pairs in your content. Pages with FAQ schema are 2.3x more likely to be cited with a direct link.',
+    impact: '+8-12% citation rate',
+    effort: 'low',
+    pages: 28,
+    dimension: 'Schema Markup',
+  },
+  {
+    rank: 5,
+    severity: 'high',
+    title: 'Add Article/BlogPosting schema to blog posts',
+    current: '28 blog posts missing structured data',
+    target: 'Every blog post has Article or BlogPosting JSON-LD',
+    why: "Structured data helps AI engines understand your content's authorship, publication date, and topic. Missing schema = missing context.",
+    impact: '+5-8% citation rate',
+    effort: 'low',
+    pages: 28,
+    dimension: 'Schema Markup',
+  },
+  {
+    rank: 6,
+    severity: 'high',
+    title: 'Fix pages with no H1 heading',
+    current: '7 pages have no H1 tag',
+    target: 'Exactly one H1 per page describing the main topic',
+    why: 'AI engines use H1 as the primary signal for what a page is about. Missing H1 means the engine has to guess — and often guesses wrong.',
+    impact: '+3-5% for affected pages',
+    effort: 'low',
+    pages: 7,
+    dimension: 'On-Page SEO',
+  },
+  {
+    rank: 7,
+    severity: 'medium',
+    title: 'Shorten titles over 60 characters',
+    current: '87 pages have titles exceeding 60 characters',
+    target: 'All titles under 60 characters for clean AI citation',
+    why: 'When AI engines cite your content, they often use the page title. Long titles get truncated, making citations less clickable.',
+    impact: '+2-3% click-through on citations',
+    effort: 'low',
+    pages: 87,
+    dimension: 'On-Page SEO',
+  },
+];
+
+// ─── Dimensions ─────────────────────────────────────────────────────────────
 
 export interface Dimension {
   name: string;
   score: number;
   weight: string;
   findings: number;
-  status: 'pass' | 'warn' | 'fail';
+  status: 'pass' | 'warning' | 'fail';
+  explanation: string;
 }
 
 export const DIMENSIONS: Dimension[] = [
-  { name: 'Crawlability', score: 100, weight: '20%', findings: 4, status: 'pass' },
-  { name: 'Performance', score: 88, weight: '10%', findings: 899, status: 'warn' },
-  { name: 'On-Page SEO', score: 84, weight: '15%', findings: 458, status: 'warn' },
-  { name: 'Extractability', score: 95, weight: '20%', findings: 377, status: 'pass' },
-  { name: 'Schema Markup', score: 98, weight: '10%', findings: 228, status: 'pass' },
-  { name: 'E-E-A-T', score: 100, weight: '15%', findings: 28, status: 'pass' },
-  { name: 'Freshness', score: 100, weight: '5%', findings: 41, status: 'pass' },
-  { name: 'Security', score: 97, weight: '5%', findings: 600, status: 'pass' },
+  { name: 'Crawlability', score: 100, weight: '20%', findings: 4, status: 'pass', explanation: 'AI bots can access all your pages' },
+  { name: 'Performance', score: 88, weight: '10%', findings: 899, status: 'warning', explanation: 'Pages load fast enough for AI crawlers' },
+  { name: 'On-Page SEO', score: 84, weight: '15%', findings: 458, status: 'warning', explanation: 'Some pages missing meta descriptions and H1 tags' },
+  { name: 'Extractability', score: 95, weight: '20%', findings: 377, status: 'pass', explanation: 'AI engines CAN extract content — but structure is weak' },
+  { name: 'Schema Markup', score: 98, weight: '10%', findings: 228, status: 'pass', explanation: 'Your structured data helps engines understand content' },
+  { name: 'E-E-A-T', score: 100, weight: '15%', findings: 28, status: 'pass', explanation: 'Your authority signals are strong' },
+  { name: 'Freshness', score: 100, weight: '5%', findings: 41, status: 'pass', explanation: 'Content is regularly updated' },
+  { name: 'Security', score: 97, weight: '5%', findings: 600, status: 'pass', explanation: 'HTTPS everywhere' },
 ];
 
-// ─── Bot Access ──────────────────────────────────────────────────────────────
+// ─── Bot Access ─────────────────────────────────────────────────────────────
 
 export interface BotAccessEntry {
   name: string;
@@ -38,40 +146,101 @@ export interface BotAccessEntry {
   domain: string;
   status: 'allowed' | 'blocked';
   robotsTxt: boolean;
+  lastCrawl: string;
 }
 
 export const BOT_ACCESS: BotAccessEntry[] = [
-  { name: 'GPTBot', company: 'OpenAI', domain: 'openai.com', status: 'allowed', robotsTxt: true },
-  { name: 'ClaudeBot', company: 'Anthropic', domain: 'anthropic.com', status: 'allowed', robotsTxt: true },
-  { name: 'PerplexityBot', company: 'Perplexity', domain: 'perplexity.ai', status: 'allowed', robotsTxt: true },
-  { name: 'Google-Extended', company: 'Google', domain: 'google.com', status: 'allowed', robotsTxt: true },
-  { name: 'CCBot', company: 'Common Crawl', domain: 'commoncrawl.org', status: 'allowed', robotsTxt: true },
+  { name: 'GPTBot', company: 'OpenAI', domain: 'openai.com', status: 'allowed', robotsTxt: true, lastCrawl: '2h ago' },
+  { name: 'ClaudeBot', company: 'Anthropic', domain: 'anthropic.com', status: 'allowed', robotsTxt: true, lastCrawl: '4h ago' },
+  { name: 'PerplexityBot', company: 'Perplexity', domain: 'perplexity.ai', status: 'allowed', robotsTxt: true, lastCrawl: '1h ago' },
+  { name: 'Google-Extended', company: 'Google', domain: 'google.com', status: 'allowed', robotsTxt: true, lastCrawl: '6h ago' },
+  { name: 'CCBot', company: 'Common Crawl', domain: 'commoncrawl.org', status: 'allowed', robotsTxt: true, lastCrawl: '12h ago' },
 ];
 
-export const SITE_FILES = {
-  robotsTxt: true,
-  llmsTxt: false,
-  sitemap: { found: true, urls: 847 },
-};
+export const CRITICAL_FILES = [
+  { name: 'robots.txt', present: true, description: 'Allows all AI bots' },
+  { name: 'llms.txt', present: false, description: "AI engines don't know how to cite you properly" },
+  { name: 'Sitemap', present: true, description: '847 URLs indexed' },
+];
 
-// ─── Snippet Distribution ────────────────────────────────────────────────────
+// ─── Platform Citation Preferences ──────────────────────────────────────────
 
-export interface SnippetBand {
-  range: string;
-  count: number;
-  label: string;
-  color: string;
+export type EngineKey = 'chatgpt' | 'claude' | 'perplexity' | 'google_ai' | 'gemini';
+
+export interface EnginePreferences {
+  name: string;
+  domain: string;
+  preferences: Record<string, number>;
+  yourScores: Record<string, number>;
+  overallScore: number;
+  summary: string;
 }
 
-export const SNIPPET_DISTRIBUTION: SnippetBand[] = [
-  { range: '0-20', count: 62, label: 'Uncitable', color: '#E5484D' },
-  { range: '21-40', count: 45, label: 'Poor', color: '#E87C3F' },
-  { range: '41-60', count: 38, label: 'Fair', color: '#F5A623' },
-  { range: '61-80', count: 32, label: 'Good', color: '#6CB8D2' },
-  { range: '81-100', count: 23, label: 'Excellent', color: '#34B27B' },
+export const SIGNAL_KEYS = ['faq', 'tables', 'headers', 'wordCount', 'lists', 'schema', 'citations', 'readingLevel'] as const;
+
+export const SIGNAL_LABELS: Record<string, string> = {
+  faq: 'FAQ Sections',
+  tables: 'Tables',
+  headers: 'Headers',
+  wordCount: 'Word Count',
+  lists: 'Lists',
+  schema: 'Schema',
+  citations: 'Citations',
+  readingLevel: 'Reading Level',
+};
+
+export const ENGINE_PREFERENCES: Record<EngineKey, EnginePreferences> = {
+  chatgpt: {
+    name: 'ChatGPT',
+    domain: 'openai.com',
+    preferences: { faq: 72, tables: 65, headers: 88, wordCount: 78, lists: 70, schema: 45, citations: 82, readingLevel: 60 },
+    yourScores: { faq: 65, tables: 45, headers: 82, wordCount: 70, lists: 60, schema: 35, citations: 78, readingLevel: 90 },
+    overallScore: 68,
+    summary: 'ChatGPT favors content with FAQ sections (72% of top-cited content has them) and external citations (82%). Your content scores well on headers (82%) and reading level, but needs more FAQ sections (you: 65%, target: 72%) and comparison tables (you: 45%, target: 65%).',
+  },
+  claude: {
+    name: 'Claude',
+    domain: 'anthropic.com',
+    preferences: { faq: 55, tables: 70, headers: 82, wordCount: 85, lists: 65, schema: 40, citations: 90, readingLevel: 55 },
+    yourScores: { faq: 65, tables: 45, headers: 82, wordCount: 70, lists: 60, schema: 35, citations: 78, readingLevel: 90 },
+    overallScore: 71,
+    summary: "Claude heavily weights external citations (90%) and word count (85%). Your citation game is decent (78%) but your content is shorter than Claude prefers (you: 70%, target: 85%). Claude also values comparison tables highly.",
+  },
+  perplexity: {
+    name: 'Perplexity',
+    domain: 'perplexity.ai',
+    preferences: { faq: 68, tables: 60, headers: 75, wordCount: 72, lists: 80, schema: 55, citations: 88, readingLevel: 65 },
+    yourScores: { faq: 65, tables: 45, headers: 82, wordCount: 70, lists: 60, schema: 35, citations: 78, readingLevel: 90 },
+    overallScore: 65,
+    summary: "Perplexity prefers well-structured content with lots of lists (80%) and external citations (88%). Your list usage is below target (60% vs 80%). Perplexity also values schema markup more than other engines.",
+  },
+  google_ai: {
+    name: 'Google AI',
+    domain: 'google.com',
+    preferences: { faq: 80, tables: 75, headers: 90, wordCount: 70, lists: 60, schema: 85, citations: 75, readingLevel: 70 },
+    yourScores: { faq: 65, tables: 45, headers: 82, wordCount: 70, lists: 60, schema: 35, citations: 78, readingLevel: 90 },
+    overallScore: 62,
+    summary: "Google AI strongly prefers schema markup (85%) and FAQ sections (80%). Your schema implementation is weak (35% vs 85% target) — this is your biggest gap on Google AI. Adding FAQ schema alone could significantly improve your Google AI citations.",
+  },
+  gemini: {
+    name: 'Gemini',
+    domain: 'gemini.google.com',
+    preferences: { faq: 60, tables: 55, headers: 78, wordCount: 80, lists: 72, schema: 50, citations: 70, readingLevel: 68 },
+    yourScores: { faq: 65, tables: 45, headers: 82, wordCount: 70, lists: 60, schema: 35, citations: 78, readingLevel: 90 },
+    overallScore: 70,
+    summary: "Gemini values word count (80%) and lists (72%) more than FAQ sections. Your content is slightly shorter than Gemini prefers. Gemini is your fastest-growing engine — first citations on 3 new pages this month.",
+  },
+};
+
+export const ENGINE_LIST: { key: EngineKey; name: string; domain: string }[] = [
+  { key: 'chatgpt', name: 'ChatGPT', domain: 'openai.com' },
+  { key: 'claude', name: 'Claude', domain: 'anthropic.com' },
+  { key: 'perplexity', name: 'Perplexity', domain: 'perplexity.ai' },
+  { key: 'google_ai', name: 'Google AI', domain: 'google.com' },
+  { key: 'gemini', name: 'Gemini', domain: 'gemini.google.com' },
 ];
 
-// ─── Bot Crawl Activity (28 days) ────────────────────────────────────────────
+// ─── Bot Crawl Activity (28 days) ───────────────────────────────────────────
 
 function seedRandom(seed: number) {
   return () => {
@@ -94,9 +263,9 @@ export const BOT_CRAWL_DATA = Array.from({ length: 28 }, (_, i) => ({
 export const BOT_COLORS: Record<string, string> = {
   GPTBot: '#10A37F',
   ClaudeBot: '#D4A574',
-  PerplexityBot: '#20B8CD',
-  'Google-Extended': '#4285F4',
-  Gemini: '#886FBF',
+  PerplexityBot: '#4A90D9',
+  'Google-Extended': '#34A853',
+  Gemini: '#8E75B2',
 };
 
 export const BOT_DOMAINS: Record<string, string> = {
@@ -108,400 +277,62 @@ export const BOT_DOMAINS: Record<string, string> = {
 };
 
 export const CRAWL_SUMMARY = {
-  totals: { GPTBot: '8,400', ClaudeBot: '7,900', PerplexityBot: '7,200', 'Google-Extended': '8,800', Gemini: '5,600' } as Record<string, string>,
-  lastCrawl: { GPTBot: '2h ago', ClaudeBot: '4h ago', PerplexityBot: '1h ago', 'Google-Extended': '6h ago', Gemini: '12h ago' } as Record<string, string>,
+  totals: {
+    GPTBot: '8,400',
+    ClaudeBot: '7,900',
+    PerplexityBot: '7,200',
+    'Google-Extended': '8,800',
+    Gemini: '5,600',
+  } as Record<string, string>,
+  lastCrawl: {
+    GPTBot: '2h ago',
+    ClaudeBot: '4h ago',
+    PerplexityBot: '1h ago',
+    'Google-Extended': '6h ago',
+    Gemini: '12h ago',
+  } as Record<string, string>,
 };
 
 export const BOT_KEYS = ['GPTBot', 'ClaudeBot', 'PerplexityBot', 'Google-Extended', 'Gemini'] as const;
 
-// ─── Platform Citation Preferences ───────────────────────────────────────────
+// ─── Snippet Readiness Distribution ─────────────────────────────────────────
 
-export type PlatformKey = 'chatgpt' | 'claude' | 'perplexity' | 'google_ai' | 'gemini';
-
-export interface PlatformMeta {
-  key: PlatformKey;
+export interface SnippetBand {
+  range: string;
+  count: number;
   label: string;
-  domain: string;
   color: string;
 }
 
-export const PLATFORMS: PlatformMeta[] = [
-  { key: 'chatgpt', label: 'ChatGPT', domain: 'openai.com', color: '#10A37F' },
-  { key: 'claude', label: 'Claude', domain: 'anthropic.com', color: '#D4A574' },
-  { key: 'perplexity', label: 'Perplexity', domain: 'perplexity.ai', color: '#20B8CD' },
-  { key: 'google_ai', label: 'Google AI', domain: 'google.com', color: '#4285F4' },
-  { key: 'gemini', label: 'Gemini', domain: 'gemini.google.com', color: '#886FBF' },
+export const SNIPPET_DISTRIBUTION: SnippetBand[] = [
+  { range: '0-20', count: 62, label: 'Virtually uncitable', color: '#E5484D' },
+  { range: '21-40', count: 45, label: 'Needs significant work', color: '#F5A623' },
+  { range: '41-60', count: 38, label: 'Room to improve', color: '#F5A623' },
+  { range: '61-80', count: 32, label: 'Good, minor improvements', color: '#5BA4C4' },
+  { range: '81-100', count: 23, label: 'Citation-ready', color: '#34B27B' },
 ];
 
-export interface PreferenceSignal {
-  signal: string;
-  value: number;
-}
+// ─── Affected Pages (for drawers) ───────────────────────────────────────────
 
-export const PLATFORM_PREFERENCES: Record<PlatformKey, PreferenceSignal[]> = {
-  chatgpt: [
-    { signal: 'FAQ Sections', value: 72 },
-    { signal: 'Tables', value: 65 },
-    { signal: 'Headers', value: 88 },
-    { signal: 'Word Count', value: 78 },
-    { signal: 'Lists', value: 70 },
-    { signal: 'Schema', value: 45 },
-    { signal: 'Citations', value: 82 },
-    { signal: 'Reading Level', value: 60 },
-  ],
-  claude: [
-    { signal: 'FAQ Sections', value: 55 },
-    { signal: 'Tables', value: 48 },
-    { signal: 'Headers', value: 92 },
-    { signal: 'Word Count', value: 85 },
-    { signal: 'Lists', value: 58 },
-    { signal: 'Schema', value: 35 },
-    { signal: 'Citations', value: 90 },
-    { signal: 'Reading Level', value: 75 },
-  ],
-  perplexity: [
-    { signal: 'FAQ Sections', value: 80 },
-    { signal: 'Tables', value: 72 },
-    { signal: 'Headers', value: 78 },
-    { signal: 'Word Count', value: 65 },
-    { signal: 'Lists', value: 82 },
-    { signal: 'Schema', value: 55 },
-    { signal: 'Citations', value: 88 },
-    { signal: 'Reading Level', value: 70 },
-  ],
-  google_ai: [
-    { signal: 'FAQ Sections', value: 68 },
-    { signal: 'Tables', value: 58 },
-    { signal: 'Headers', value: 85 },
-    { signal: 'Word Count', value: 72 },
-    { signal: 'Lists', value: 65 },
-    { signal: 'Schema', value: 78 },
-    { signal: 'Citations', value: 75 },
-    { signal: 'Reading Level', value: 82 },
-  ],
-  gemini: [
-    { signal: 'FAQ Sections', value: 62 },
-    { signal: 'Tables', value: 55 },
-    { signal: 'Headers', value: 80 },
-    { signal: 'Word Count', value: 88 },
-    { signal: 'Lists', value: 60 },
-    { signal: 'Schema', value: 42 },
-    { signal: 'Citations', value: 85 },
-    { signal: 'Reading Level', value: 68 },
-  ],
-};
-
-export const PLATFORM_INSIGHTS: Record<PlatformKey, string> = {
-  chatgpt: "ChatGPT favors content with strong header hierarchy (88%) and external citations (82%). Your content's FAQ rate (20%) is well below ChatGPT's preference (72%).",
-  claude: "Claude heavily weights word count (85%) and external citations (90%). It's less concerned with Schema markup (35%). Focus on depth and sourcing.",
-  perplexity: "Perplexity strongly prefers external citations (88%) and list formatting (82%). FAQ sections (80%) are also highly valued. It rewards well-structured, reference-heavy content.",
-  google_ai: "Google AI Mode weights Schema markup (78%) highest among all platforms. Headers (85%) and reading level accessibility (82%) are also key drivers.",
-  gemini: "Gemini prioritizes word count depth (88%) and external citations (85%). It's the least Schema-dependent platform (42%). Long-form, well-cited content wins.",
-};
-
-// ─── Findings ────────────────────────────────────────────────────────────────
-
-export interface Finding {
-  id: string;
-  severity: 'critical' | 'high' | 'medium' | 'low';
+export interface AffectedPage {
+  url: string;
   title: string;
-  dimension: string;
-  affectedPages: number;
-  fix: string;
-  impact: 'critical' | 'high' | 'medium' | 'low';
-  description: string;
-  pages: { url: string; score?: number }[];
-  steps: string[];
-  impactPoints: number;
+  score: number;
+  missing: string[];
+  published: string;
 }
 
-const AFFECTED_PAGES_SNIPPET: { url: string; score: number }[] = [
-  { url: '/blog/getting-started', score: 12 },
-  { url: '/docs/api-reference', score: 18 },
-  { url: '/blog/changelog-march', score: 8 },
-  { url: '/docs/deployment', score: 22 },
-  { url: '/blog/team-update', score: 15 },
-  { url: '/docs/authentication', score: 19 },
-  { url: '/blog/vibe-coding-intro', score: 11 },
-  { url: '/docs/webhooks', score: 20 },
-  { url: '/blog/ai-trends-2026', score: 14 },
-  { url: '/docs/database-setup', score: 16 },
-];
-
-export const FINDINGS: Finding[] = [
-  {
-    id: 'f1',
-    severity: 'critical',
-    title: 'AEO snippet readiness < 25/100',
-    dimension: 'Extractability',
-    affectedPages: 62,
-    fix: 'Add question headings + direct answers',
-    impact: 'critical',
-    description: 'These 62 pages have snippet readiness scores so low that AI engines cannot extract useful answers from them. Without extractable content, your pages are invisible to citation engines.',
-    pages: AFFECTED_PAGES_SNIPPET,
-    steps: [
-      'Add question-format H2 headings that match user queries\n   Example: "How does AI handle patient phone calls?"',
-      'Follow each question heading with a direct 2-3 sentence answer\n   The first sentence should directly answer the question.',
-      'Add FAQ sections with 3-5 common questions per page\n   Use <details> or dedicated FAQ blocks.',
-      'Include comparison tables where relevant\n   Side-by-side feature comparisons increase citation likelihood.',
-      'Add key takeaways section at top or bottom\n   Summarize the 3-5 most important points.',
-      'Ensure external citations link to authoritative sources\n   Reference studies, documentation, or industry reports.',
-    ],
-    impactPoints: 12,
-  },
-  {
-    id: 'f2',
-    severity: 'critical',
-    title: 'Question-heading ratio < 30%',
-    dimension: 'Extractability',
-    affectedPages: 200,
-    fix: 'Rephrase 30%+ headings as questions',
-    impact: 'critical',
-    description: 'Only 14.8% of headings across your site are phrased as questions. AI engines strongly prefer question-answer format for citations. This is the single largest gap in your AEO readiness.',
-    pages: [
-      { url: '/docs/api-reference' },
-      { url: '/blog/getting-started' },
-      { url: '/features/overview' },
-      { url: '/docs/deployment' },
-      { url: '/blog/best-practices' },
-      { url: '/docs/authentication' },
-      { url: '/features/collaboration' },
-      { url: '/blog/product-roadmap' },
-      { url: '/docs/database-setup' },
-      { url: '/blog/ai-trends-2026' },
-    ],
-    steps: [
-      'Identify declarative headings that could be rephrased as questions',
-      'Convert "Installation Guide" \u2192 "How do I install Lovable?"',
-      'Convert "API Authentication" \u2192 "How does API authentication work?"',
-      'Ensure the paragraph immediately following answers the question directly',
-      'Target at least 30% of all H2/H3 headings as questions',
-    ],
-    impactPoints: 8,
-  },
-  {
-    id: 'f3',
-    severity: 'high',
-    title: 'Page has no H1 heading',
-    dimension: 'On-Page SEO',
-    affectedPages: 7,
-    fix: 'Add exactly one H1 tag per page',
-    impact: 'high',
-    description: 'These 7 pages are missing an H1 heading entirely. Without an H1, AI engines cannot identify the primary topic of the page, reducing citation likelihood.',
-    pages: [
-      { url: '/blog/getting-started' },
-      { url: '/docs/api-reference' },
-      { url: '/blog/changelog-march' },
-      { url: '/features/collaboration' },
-      { url: '/pricing/enterprise' },
-    ],
-    steps: [
-      'Audit each page to identify the primary topic',
-      'Add a single, descriptive H1 tag at the top of the content area',
-      'Ensure the H1 contains the primary keyword or question the page answers',
-      'Verify no page has more than one H1 tag',
-    ],
-    impactPoints: 2,
-  },
-  {
-    id: 'f4',
-    severity: 'high',
-    title: 'Missing Article/BlogPosting schema',
-    dimension: 'Schema Markup',
-    affectedPages: 28,
-    fix: 'Add JSON-LD with headline, author, date',
-    impact: 'high',
-    description: 'Blog posts and articles are missing structured data markup. Adding Article or BlogPosting schema helps AI engines understand content type, authorship, and recency.',
-    pages: [
-      { url: '/blog/getting-started' },
-      { url: '/blog/changelog-march' },
-      { url: '/blog/team-update' },
-      { url: '/blog/product-roadmap' },
-      { url: '/blog/case-study-acme' },
-    ],
-    steps: [
-      'Add JSON-LD script tags with Article or BlogPosting schema to each blog page',
-      'Include headline, author, datePublished, and dateModified fields',
-      'Add publisher information with logo',
-      'Validate with Google Rich Results Test',
-    ],
-    impactPoints: 3,
-  },
-  {
-    id: 'f5',
-    severity: 'high',
-    title: 'Title too long (>60 chars)',
-    dimension: 'On-Page SEO',
-    affectedPages: 87,
-    fix: 'Shorten to 60 characters',
-    impact: 'medium',
-    description: 'Pages with titles longer than 60 characters get truncated in AI engine responses, reducing clarity and citation quality.',
-    pages: [
-      { url: '/docs/getting-started-with-lovable-platform-complete-guide' },
-      { url: '/blog/how-to-build-production-apps-with-ai-comprehensive' },
-      { url: '/features/real-time-collaboration-and-team-management' },
-    ],
-    steps: [
-      'Audit all pages with titles exceeding 60 characters',
-      'Rewrite titles to be concise yet descriptive within 60 characters',
-      'Front-load the most important keywords',
-      'Test truncation in search results preview tools',
-    ],
-    impactPoints: 1,
-  },
-  {
-    id: 'f6',
-    severity: 'high',
-    title: 'Images missing alt text',
-    dimension: 'On-Page SEO',
-    affectedPages: 45,
-    fix: 'Add descriptive alt text',
-    impact: 'medium',
-    description: 'Images without alt text reduce page accessibility and prevent AI engines from understanding visual content context.',
-    pages: [
-      { url: '/features/editor' },
-      { url: '/blog/product-launch' },
-      { url: '/docs/components' },
-    ],
-    steps: [
-      'Identify all images missing alt attributes',
-      'Write descriptive alt text that explains the image content',
-      'Include relevant keywords naturally in alt text',
-      'Avoid generic text like "image" or "screenshot"',
-    ],
-    impactPoints: 1,
-  },
-  {
-    id: 'f7',
-    severity: 'medium',
-    title: 'Meta description too short (<120)',
-    dimension: 'On-Page SEO',
-    affectedPages: 84,
-    fix: 'Expand to 120-160 characters',
-    impact: 'low',
-    description: 'Short meta descriptions provide insufficient context for AI engines to understand page content and relevance.',
-    pages: [
-      { url: '/features/editor' },
-      { url: '/pricing' },
-      { url: '/docs/quickstart' },
-    ],
-    steps: [
-      'Review all pages with meta descriptions under 120 characters',
-      'Expand descriptions to 120-160 characters',
-      'Include the primary keyword and a clear value proposition',
-      'Make each description unique and specific to the page',
-    ],
-    impactPoints: 1,
-  },
-  {
-    id: 'f8',
-    severity: 'medium',
-    title: 'No FAQ schema on pages with FAQ content',
-    dimension: 'Schema Markup',
-    affectedPages: 15,
-    fix: 'Add FAQPage JSON-LD',
-    impact: 'medium',
-    description: 'Pages that contain FAQ-style content lack FAQPage structured data, missing an opportunity for rich results and AI citations.',
-    pages: [
-      { url: '/docs/faq' },
-      { url: '/pricing' },
-      { url: '/support/common-questions' },
-    ],
-    steps: [
-      'Identify all pages containing Q&A formatted content',
-      'Add FAQPage JSON-LD schema with question/answer pairs',
-      'Ensure questions match actual heading text',
-      'Validate with Google Rich Results Test',
-    ],
-    impactPoints: 2,
-  },
-  {
-    id: 'f9',
-    severity: 'medium',
-    title: 'Internal link depth > 3 clicks',
-    dimension: 'Crawlability',
-    affectedPages: 34,
-    fix: 'Flatten site structure',
-    impact: 'low',
-    description: 'Pages buried more than 3 clicks deep from the homepage are less likely to be crawled by AI bots.',
-    pages: [
-      { url: '/docs/advanced/plugins/custom-auth' },
-      { url: '/docs/guides/migration/v1-to-v2' },
-      { url: '/blog/archive/2024/january/update' },
-    ],
-    steps: [
-      'Map current site architecture to identify deep pages',
-      'Add internal links from higher-level pages to deep content',
-      'Create hub pages that link to related deep content',
-      'Ensure all important pages are reachable within 3 clicks from homepage',
-    ],
-    impactPoints: 1,
-  },
-  {
-    id: 'f10',
-    severity: 'medium',
-    title: 'Avg HTML size > 200KB',
-    dimension: 'Performance',
-    affectedPages: 23,
-    fix: 'Remove unused scripts/styles',
-    impact: 'low',
-    description: 'Large HTML payloads slow down AI bot crawling and may cause incomplete page parsing.',
-    pages: [
-      { url: '/features/overview' },
-      { url: '/docs/components' },
-      { url: '/blog/comprehensive-guide' },
-    ],
-    steps: [
-      'Audit pages with HTML size exceeding 200KB',
-      'Remove unused CSS and JavaScript from page bundles',
-      'Defer non-critical scripts',
-      'Minify inline styles and scripts',
-      'Consider lazy loading below-the-fold content',
-    ],
-    impactPoints: 1,
-  },
-  {
-    id: 'f11',
-    severity: 'low',
-    title: 'No llms.txt file present',
-    dimension: 'Crawlability',
-    affectedPages: 1,
-    fix: 'Create llms.txt with citation guidance',
-    impact: 'medium',
-    description: 'Your site lacks an llms.txt file. This emerging standard lets you communicate citation preferences directly to AI engines.',
-    pages: [
-      { url: '/ (root)' },
-    ],
-    steps: [
-      'Create an llms.txt file in the root directory',
-      'Include your brand name and preferred citation format',
-      'List key pages you want AI engines to prioritize',
-      'Add context about your expertise areas',
-      'Reference the llms.txt specification for format guidelines',
-    ],
-    impactPoints: 1,
-  },
-  {
-    id: 'f12',
-    severity: 'low',
-    title: 'External resources > 50 per page',
-    dimension: 'Performance',
-    affectedPages: 18,
-    fix: 'Reduce third-party scripts',
-    impact: 'low',
-    description: 'Pages loading more than 50 external resources create dependency on third-party availability and slow bot crawling.',
-    pages: [
-      { url: '/features/overview' },
-      { url: '/blog/product-launch' },
-      { url: '/pricing' },
-    ],
-    steps: [
-      'Audit external resource usage with Chrome DevTools Network tab',
-      'Identify and remove unused third-party scripts',
-      'Consolidate analytics and tracking scripts',
-      'Self-host critical external resources where possible',
-      'Use async/defer attributes for remaining external scripts',
-    ],
-    impactPoints: 1,
-  },
+export const AFFECTED_PAGES: AffectedPage[] = [
+  { url: '/blog/security-ai-apps', title: 'Security in AI-Generated Applications', score: 12, missing: ['question headings', 'FAQ'], published: 'Jan 14, 2026' },
+  { url: '/blog/rbac-ai-apps', title: 'RBAC in AI-Generated Applications', score: 15, missing: ['question headings', 'FAQ', 'schema'], published: 'Jan 23, 2026' },
+  { url: '/docs/api-reference', title: 'API Reference Documentation', score: 18, missing: ['question headings'], published: 'Jan 17, 2026' },
+  { url: '/blog/vibe-coding-intro', title: 'Introduction to Vibe Coding', score: 11, missing: ['question headings', 'FAQ'], published: 'Feb 3, 2026' },
+  { url: '/docs/deployment', title: 'Deployment Guide', score: 22, missing: ['FAQ', 'schema'], published: 'Feb 10, 2026' },
+  { url: '/blog/ai-trends-2026', title: 'AI Trends to Watch in 2026', score: 14, missing: ['question headings', 'comparison tables'], published: 'Jan 28, 2026' },
+  { url: '/docs/authentication', title: 'Authentication Setup', score: 19, missing: ['question headings', 'FAQ'], published: 'Feb 5, 2026' },
+  { url: '/blog/team-update', title: 'Team Update — Q1 2026', score: 8, missing: ['question headings', 'FAQ', 'schema'], published: 'Mar 1, 2026' },
+  { url: '/docs/webhooks', title: 'Webhooks Integration', score: 20, missing: ['question headings'], published: 'Feb 15, 2026' },
+  { url: '/docs/database-setup', title: 'Database Setup Guide', score: 16, missing: ['question headings', 'FAQ'], published: 'Jan 20, 2026' },
+  { url: '/blog/getting-started', title: 'Getting Started with Lovable', score: 12, missing: ['question headings', 'FAQ', 'schema'], published: 'Jan 10, 2026' },
+  { url: '/blog/changelog-march', title: 'March 2026 Changelog', score: 8, missing: ['question headings', 'FAQ'], published: 'Mar 5, 2026' },
 ];

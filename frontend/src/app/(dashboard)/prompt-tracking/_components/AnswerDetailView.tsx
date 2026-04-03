@@ -2,6 +2,7 @@
 
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import type { Platform } from '@/types';
 import type { AnswerHistoryRow } from './prompt-data';
 import { PLATFORM_INFO, getAnswerHistory } from './prompt-data';
@@ -87,7 +88,7 @@ export function AnswerDetailView({ promptText, promptId, answer, onBack }: Answe
           onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
           onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
         >
-          ← Back
+          <ArrowLeft size={12} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Back
         </button>
 
         {/* Overline */}

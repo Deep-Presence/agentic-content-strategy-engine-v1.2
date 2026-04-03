@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import { ArrowRight } from 'lucide-react';
 import { MetricCard } from '@/components/ui';
 import type { Platform } from '@/types';
 import { PlatformFilter } from './_components/PlatformFilter';
@@ -57,7 +58,7 @@ export default function AttributionPage() {
           Demo data shown. Connect your CRM and analytics to see real attribution.
         </span>
         <a href="/settings?tab=integrations" className="text-[13px] text-accent hover:underline font-medium">
-          Connect Integrations →
+          Connect Integrations <ArrowRight size={12} className="inline" />
         </a>
       </div>
 

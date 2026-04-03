@@ -2,28 +2,33 @@
 
 import type { ContentCard } from './types';
 
+const OVERLINE: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 600,
+  textTransform: 'uppercase',
+  letterSpacing: '0.06em',
+  color: 'var(--text-tertiary)',
+  marginBottom: 8,
+};
+
 function QueueSidebar({ card }: { card: ContentCard }) {
   return (
     <div className="p-4 space-y-4">
-      <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)' }}>
-        Opportunity Summary
-      </div>
+      <div style={OVERLINE}>Opportunity Summary</div>
 
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Gap score</span>
-          <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--error)' }}>
-            ~{Math.round(card.gap * 100)}
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Priority</span>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--warning)' }}>{card.priority}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Read time</span>
-          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>{card.readTime} min</span>
-        </div>
+        {[
+          { label: 'Gap score', value: `~${Math.round(card.gap * 100)}`, color: 'var(--error)', mono: true },
+          { label: 'Priority', value: card.priority, color: 'var(--warning)', mono: false },
+          { label: 'Read time', value: `${card.readTime} min`, color: 'var(--text-primary)', mono: true },
+        ].map((item) => (
+          <div key={item.label} className="flex items-center justify-between">
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{item.label}</span>
+            <span style={{ fontSize: 12, fontFamily: item.mono ? 'var(--font-mono)' : undefined, fontWeight: 600, color: item.color }}>
+              {item.value}
+            </span>
+          </div>
+        ))}
         <div className="flex items-center justify-between">
           <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Competitor</span>
           <div className="flex items-center gap-1">
@@ -40,9 +45,7 @@ function QueueSidebar({ card }: { card: ContentCard }) {
       </div>
 
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 8 }}>
-          Why this topic
-        </div>
+        <div style={OVERLINE}>Why this topic</div>
         <ul className="space-y-2">
           <li style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
             Competitors cited 3x more — significant gap opportunity
@@ -66,20 +69,10 @@ function BriefSidebar({ card }: { card: ContentCard }) {
   return (
     <div className="p-4 space-y-4">
       <div>
-        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 8 }}>
-          Brief Outline
-        </div>
+        <div style={OVERLINE}>Brief Outline</div>
         <ol className="space-y-1" style={{ paddingLeft: 16 }}>
           {brief.sections.map((section, i) => (
-            <li
-              key={i}
-              style={{
-                fontSize: 12,
-                color: 'var(--text-primary)',
-                lineHeight: 1.6,
-                cursor: 'pointer',
-              }}
-            >
+            <li key={i} style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.6, cursor: 'pointer' }}>
               {section}
             </li>
           ))}
@@ -87,19 +80,13 @@ function BriefSidebar({ card }: { card: ContentCard }) {
       </div>
 
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 8 }}>
-          Sources Across AI Engines
-        </div>
+        <div style={OVERLINE}>Sources Across AI Engines</div>
         <div className="space-y-2">
           {brief.sources.map((source) => (
             <div
               key={source.domain}
               className="flex items-center gap-2 p-2"
-              style={{
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-sm)',
-                background: 'var(--bg)',
-              }}
+              style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)' }}
             >
               <img
                 src={`https://www.google.com/s2/favicons?domain=${source.domain}&sz=32`}
@@ -112,17 +99,11 @@ function BriefSidebar({ card }: { card: ContentCard }) {
                 <div className="truncate" style={{ fontSize: 11, color: 'var(--text-primary)' }}>{source.name}</div>
                 <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>{source.domain}</div>
               </div>
-              <span
-                style={{
-                  fontSize: 9,
-                  fontWeight: 600,
-                  fontFamily: 'var(--font-mono)',
-                  padding: '1px 5px',
-                  borderRadius: 'var(--radius-full)',
-                  background: 'var(--accent-subtle)',
-                  color: 'var(--accent)',
-                }}
-              >
+              <span style={{
+                fontSize: 9, fontWeight: 600, fontFamily: 'var(--font-mono)',
+                padding: '1px 5px', borderRadius: 'var(--radius-full)',
+                background: 'var(--accent-subtle)', color: 'var(--accent)',
+              }}>
                 {source.engines} engines
               </span>
             </div>
@@ -131,14 +112,10 @@ function BriefSidebar({ card }: { card: ContentCard }) {
       </div>
 
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 8 }}>
-          Why We Picked This
-        </div>
+        <div style={OVERLINE}>Why We Picked This</div>
         <ul className="space-y-2">
           {brief.reasons.map((reason, i) => (
-            <li key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-              {reason}
-            </li>
+            <li key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{reason}</li>
           ))}
         </ul>
       </div>
@@ -152,40 +129,46 @@ function ArticleSidebar({ card, activeSection, onSectionClick }: {
   onSectionClick: (index: number) => void;
 }) {
   const sections = card.articleContent?.sections || [];
+  const totalWords = sections.reduce((sum, s) => sum + s.words, 0);
 
   return (
     <div className="p-4">
-      <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 8 }}>
-        Sections
+      <div className="flex items-center justify-between mb-2">
+        <div style={OVERLINE}>Sections</div>
+        <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>
+          {totalWords.toLocaleString()}w total
+        </span>
       </div>
       <div className="space-y-0.5">
-        {sections.map((section, i) => (
-          <button
-            key={i}
-            onClick={() => onSectionClick(i)}
-            className="w-full text-left"
-            style={{
-              padding: '6px 10px',
-              fontSize: 12,
-              color: activeSection === i ? 'var(--text-primary)' : 'var(--text-secondary)',
-              fontWeight: activeSection === i ? 500 : 400,
-              background: activeSection === i ? 'var(--accent-subtle)' : 'transparent',
-              borderLeft: activeSection === i ? '2px solid var(--accent)' : '2px solid transparent',
-              borderRadius: '0 var(--radius-sm) var(--radius-sm) 0',
-              cursor: 'pointer',
-              border: 'none',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              transition: 'all 0.15s',
-            }}
-          >
-            <span className="truncate" style={{ marginRight: 8 }}>{section.heading}</span>
-            <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', flexShrink: 0 }}>
-              {section.words}w
-            </span>
-          </button>
-        ))}
+        {sections.map((section, i) => {
+          const isActive = activeSection === i;
+          return (
+            <button
+              key={i}
+              onClick={() => onSectionClick(i)}
+              className="w-full text-left flex items-center justify-between"
+              style={{
+                padding: '7px 10px',
+                fontSize: 12,
+                color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
+                fontWeight: isActive ? 500 : 400,
+                background: isActive ? 'var(--accent-subtle)' : 'transparent',
+                borderLeft: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+                borderTop: 'none',
+                borderRight: 'none',
+                borderBottom: 'none',
+                borderRadius: '0 var(--radius-sm) var(--radius-sm) 0',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+            >
+              <span className="truncate" style={{ marginRight: 8 }}>{section.heading}</span>
+              <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', flexShrink: 0 }}>
+                {section.words}w
+              </span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -195,54 +178,131 @@ function AgentSidebar({ card }: { card: ContentCard }) {
   const progress = card.agentProgress;
   if (!progress) return null;
 
+  const stageOrder = ['planning', 'brief_generation', 'writing', 'evaluating'];
+  const currentIdx = stageOrder.indexOf(card.stage);
+
   const stages = [
-    { label: 'Planning', done: ['writing', 'evaluating', 'brief_generation'].includes(card.stage) || progress.pct > 0 },
-    { label: 'Brief generation', done: ['writing', 'evaluating'].includes(card.stage) || (card.stage === 'brief_generation' && progress.pct === 100) },
-    { label: 'Writing', done: card.stage === 'evaluating' || (card.stage === 'writing' && progress.pct === 100) },
-    { label: 'Evaluation', done: card.stage === 'evaluating' && progress.pct === 100 },
+    { key: 'planning', label: 'Planning', desc: 'Query analysis' },
+    { key: 'brief_generation', label: 'Brief generation', desc: 'Exemplar research' },
+    { key: 'writing', label: 'Writing', desc: 'Content creation' },
+    { key: 'evaluating', label: 'Evaluation', desc: 'Quality scoring' },
   ];
 
   return (
     <div className="p-4 space-y-4">
-      <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 8 }}>
-        Agent Progress
-      </div>
-
-      <div className="space-y-2">
-        {stages.map((stage) => (
-          <div key={stage.label} className="flex items-center gap-2">
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: '50%',
-                border: stage.done ? 'none' : '1px solid var(--border)',
-                background: stage.done ? 'var(--success)' : 'transparent',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 8,
-                color: '#fff',
-                flexShrink: 0,
-              }}
-            >
-              {stage.done && '\u2713'}
-            </span>
-            <span style={{ fontSize: 12, color: stage.done ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
-              {stage.label}
-            </span>
+      {/* Progress summary */}
+      <div>
+        <div style={OVERLINE}>Current Stage</div>
+        <div className="flex items-center gap-2 mb-2">
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: 'var(--warning)',
+              animation: 'pulse 1.5s ease-in-out infinite',
+            }}
+          />
+          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+            {card.stageLabel}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex-1" style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{
+              width: `${progress.pct}%`,
+              height: '100%',
+              borderRadius: 2,
+              background: progress.pct > 80 ? 'var(--success)' : progress.pct >= 50 ? 'var(--accent)' : 'var(--warning)',
+              animation: 'progressPulse 2.5s ease-in-out infinite',
+              transition: 'width 0.6s ease',
+            }} />
           </div>
-        ))}
+          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
+            {progress.pct}%
+          </span>
+        </div>
+        {progress.wordsCurrent !== undefined && (
+          <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', marginTop: 4 }}>
+            {progress.wordsCurrent.toLocaleString()} / {progress.wordsTarget?.toLocaleString()} words
+          </div>
+        )}
       </div>
 
+      {/* Pipeline stages */}
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-        <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>
-          Current Task
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--warning)', animation: 'typing 1.8s ease-in-out infinite' }}>
-          {progress.currentTask}
+        <div style={OVERLINE}>Pipeline</div>
+        <div className="space-y-1">
+          {stages.map((stage, i) => {
+            const idx = stageOrder.indexOf(stage.key);
+            const done = idx < currentIdx;
+            const active = idx === currentIdx;
+
+            return (
+              <div key={stage.key} className="flex items-center gap-2 py-1.5">
+                <span style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: '50%',
+                  background: done ? 'var(--success)' : active ? 'var(--warning)' : 'var(--border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 9,
+                  fontWeight: 600,
+                  color: done || active ? '#fff' : 'var(--text-tertiary)',
+                  flexShrink: 0,
+                  animation: active ? 'pulse 2s ease-in-out infinite' : undefined,
+                }}>
+                  {done ? '\u2713' : i + 1}
+                </span>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: active ? 500 : 400, color: done || active ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                    {stage.label}
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--text-tertiary)' }}>{stage.desc}</div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
+
+      {/* Current task */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        <div style={OVERLINE}>Current Task</div>
+        <div className="flex items-start gap-2">
+          <span style={{
+            width: 4, height: 4, borderRadius: '50%', background: 'var(--warning)',
+            marginTop: 5, flexShrink: 0,
+            animation: 'pulse 1.5s ease-in-out infinite',
+          }} />
+          <div style={{ fontSize: 11, color: 'var(--text-primary)', animation: 'typing 1.8s ease-in-out infinite', lineHeight: 1.5 }}>
+            {progress.currentTask}
+          </div>
+        </div>
+      </div>
+
+      {/* Stats */}
+      {progress.sectionsComplete !== undefined && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div style={OVERLINE}>Stats</div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="p-2" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)' }}>
+              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 2 }}>Sections</div>
+              <div style={{ fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {progress.sectionsComplete}/{progress.sectionsTotal}
+              </div>
+            </div>
+            <div className="p-2" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)' }}>
+              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 2 }}>Words</div>
+              <div style={{ fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                {(progress.wordsCurrent || 0).toLocaleString()}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

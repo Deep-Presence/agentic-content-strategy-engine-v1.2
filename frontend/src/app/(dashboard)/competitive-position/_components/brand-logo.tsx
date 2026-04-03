@@ -16,7 +16,7 @@ export function BrandLogo({
       width={size}
       height={size}
       className={className}
-      style={{ borderRadius: 4 }}
+      style={{ borderRadius: 4, flexShrink: 0 }}
       onError={(e) => {
         const target = e.target as HTMLImageElement;
         if (!target.dataset.fallback) {
