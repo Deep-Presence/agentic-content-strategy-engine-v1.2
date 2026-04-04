@@ -171,6 +171,7 @@ class Settings(BaseSettings):
     research_kb_company_overview_model: str = "sonar-deep-research"
     research_kb_customer_reviews_model: str = "sonar-deep-research"
     research_kb_competitor_scanner_model: str = "sonar-deep-research"
+    research_kb_competitor_extractor_model: str = "anthropic/claude-haiku-4.5"
     research_kb_weakness_analyst_model: str = "sonar-deep-research"
     # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
     research_kb_brand_perception_model: str = "claude-sonnet-4-6"
@@ -259,6 +260,15 @@ class Settings(BaseSettings):
 
     # --- CMS Integration ---
     cms_fernet_key: str | None = None  # Fernet symmetric encryption key for CMS credentials
+
+    # --- Google Analytics (GA4) Integration ---
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = None
+    google_oauth_redirect_uri: str = "https://app.deeppresence.ai/api/v1/analytics/google/callback"
+    ga4_sync_lookback_days: int = 7
+    ai_referral_sources: str = "chatgpt.com:openai,chat.openai.com:openai,perplexity.ai:perplexity,gemini.google.com:google,copilot.microsoft.com:microsoft,claude.ai:anthropic,you.com:you,phind.com:phind"
+    google_oauth_frontend_settings_url: str = "https://app.deeppresence.ai/settings/integrations"
+    ga4_sync_api_key: str = ""  # API key for cron-triggered /sync-all endpoint
 
     # --- Cloudflare R2 (S3-compatible) ---
     r2_account_id: str | None = None

@@ -869,8 +869,16 @@ async def get_cms_service(
             CMSPublishRecordRepository,
             CMSSyncedPostRepository,
         )
+        from core.db.repositories.content_inventory_repo import (
+            ContentInventoryRepository,
+        )
         from core.db.repositories.content_repo import ContentRepository
         from core.services.cms_service import CMSService
+        from core.services.content_inventory_service import ContentInventoryService
+
+        inventory_svc = ContentInventoryService(
+            inventory_repo=ContentInventoryRepository(session),
+        )
 
         svc = CMSService(
             connection_repo=CMSConnectionRepository(session),
@@ -879,6 +887,71 @@ async def get_cms_service(
             storage=get_storage_backend(request),
             fernet_key=settings.cms_fernet_key,
             content_repo=ContentRepository(session),
+            inventory_service=inventory_svc,
+        )
+        yield svc
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+# ── GA4 Analytics Service ─────────────────────────────────────────────
+
+
+async def get_ga4_analytics_service(
+    request: Request,
+) -> AsyncGenerator[Any, None]:
+    """Return the GA4AnalyticsService with proper DB session lifecycle.
+
+    GA4 requires DB (encrypted OAuth tokens in Postgres).
+    No JSON fallback — raises 503 if DATABASE_URL or fernet key not set.
+    Tests bypass DI via ``app.state.ga4_analytics_service`` pre-built override.
+    """
+    # 1. Pre-built override (tests set app.state.ga4_analytics_service)
+    service = getattr(request.app.state, "ga4_analytics_service", None)
+    if service is not None:
+        yield service
+        return
+
+    # 2. Require DB
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(
+            status_code=503,
+            detail="GA4 analytics requires database — set DATABASE_URL",
+        )
+
+    from core.config.settings import settings
+
+    fernet_key = settings.cms_fernet_key
+    if not fernet_key:
+        raise HTTPException(
+            status_code=503,
+            detail="GA4 analytics requires CMS_FERNET_KEY to be set",
+        )
+
+    session = sf()
+    try:
+        from core.analytics.service import GA4AnalyticsService
+        from core.db.repositories.analytics_repo import (
+            AnalyticsConnectionRepository,
+            GA4ConversionEventRepository,
+            GA4TrafficDataRepository,
+        )
+
+        svc = GA4AnalyticsService(
+            connection_repo=AnalyticsConnectionRepository(session),
+            traffic_repo=GA4TrafficDataRepository(session),
+            conversion_repo=GA4ConversionEventRepository(session),
+            fernet_key=fernet_key,
+            client_id=settings.google_oauth_client_id or "",
+            client_secret=settings.google_oauth_client_secret or "",
+            redirect_uri=settings.google_oauth_redirect_uri,
+            ai_referral_sources=settings.ai_referral_sources,
+            lookback_days=settings.ga4_sync_lookback_days,
         )
         yield svc
         await session.commit()

@@ -189,6 +189,19 @@ class CMSPublishAction(str, Enum):
     refresh = "refresh"
 
 
+# ── Analytics Integration ────────────────────────────────────────────
+class AnalyticsProvider(str, Enum):
+    ga4 = "ga4"
+
+
+class AnalyticsSyncStatus(str, Enum):
+    pending = "pending"
+    in_progress = "in_progress"
+    success = "success"
+    failed = "failed"
+    auth_revoked = "auth_revoked"
+
+
 # ── Content Inventory ────────────────────────────────────────────────
 class ContentIngestionSource(str, Enum):
     """How a content inventory record was discovered."""

@@ -539,6 +539,25 @@ async def run_site_audit_task(
                     pipeline_run_id=run_id,
                 )
 
+                # 3. Hydrate content inventory (non-blocking)
+                from core.content_inventory.hydration import (
+                    hydrate_content_inventory_from_site_audit,
+                )
+
+                inventory_result = await hydrate_content_inventory_from_site_audit(
+                    session_factory, company_id,
+                    scope.effective_slug, run_id, audit_result,
+                )
+                if inventory_result:
+                    logger.info(
+                        "content_inventory.hydrated",
+                        extra={
+                            "task_id": task_id,
+                            "upserted": inventory_result.get("upserted", 0),
+                            "skipped": inventory_result.get("skipped", 0),
+                        },
+                    )
+
                 result = {
                     "audit_id": audit_result.audit_id,
                     "domain": audit_result.domain,
@@ -1831,14 +1850,35 @@ async def run_daily_tracker_task(
             )
             from core.models.daily_tracker import RunStatus
 
-            # 3. Pre-generate run_id and create daily_run record BEFORE
+            # 3. Resolve competitors: explicit request > KB auto-resolve > none.
+            #    Done BEFORE config persistence so audit trail includes actual list used.
+            resolved_competitors = getattr(request, "competitors", None)
+            if not resolved_competitors:
+                try:
+                    from core.research.knowledge_base.extraction import resolve_competitors_from_kb
+                    from core.storage import get_storage_backend
+
+                    kb_competitors = await asyncio.to_thread(
+                        resolve_competitors_from_kb, company_slug, get_storage_backend(),
+                    )
+                    if kb_competitors:
+                        resolved_competitors = kb_competitors
+                        logger.info(
+                            "Auto-resolved %d competitors from KB for %s: %s",
+                            len(kb_competitors), company_slug,
+                            ", ".join(kb_competitors[:5]),
+                        )
+                except Exception:
+                    logger.warning("KB competitor auto-resolution failed", exc_info=True)
+
+            # 4. Pre-generate run_id and create daily_run record BEFORE
             #    orchestration for in-flight visibility in GET /runs.
             daily_run_id = str(uuid.uuid4())
             config = {
                 "engines": getattr(request, "engines", None),
                 "prompt_ids": getattr(request, "prompt_ids", None),
                 "brand": getattr(request, "brand", None),
-                "competitors": getattr(request, "competitors", None),
+                "competitors": resolved_competitors,
             }
             await create_daily_run_record(
                 session_factory, company_slug, daily_run_id, config,
@@ -1866,7 +1906,7 @@ async def run_daily_tracker_task(
                 prompt_ids=[p.id for p in all_prompts] if all_prompts else None,
                 engines=getattr(request, "engines", None),
                 brand=getattr(request, "brand", None),
-                competitors=getattr(request, "competitors", None),
+                competitors=resolved_competitors,
                 concurrency=getattr(request, "concurrency", 6),
                 run_id=daily_run_id,
             )
@@ -2075,14 +2115,33 @@ async def run_cms_sync_task(
             )
             from core.services.cms_service import CMSService
 
+            # Build inventory service for content inventory hydration
+            inventory_svc = None
+            try:
+                from core.db.repositories.content_inventory_repo import (
+                    ContentInventoryRepository,
+                )
+                from core.services.content_inventory_service import (
+                    ContentInventoryService,
+                )
+            except ImportError:
+                ContentInventoryRepository = None  # type: ignore[assignment,misc]
+                ContentInventoryService = None  # type: ignore[assignment,misc]
+
             session = session_factory()
             try:
+                if ContentInventoryRepository is not None:
+                    inventory_svc = ContentInventoryService(
+                        inventory_repo=ContentInventoryRepository(session),
+                    )
+
                 svc = CMSService(
                     connection_repo=CMSConnectionRepository(session),
                     publish_repo=CMSPublishRecordRepository(session),
                     synced_post_repo=CMSSyncedPostRepository(session),
                     storage=storage,
                     fernet_key=fernet_key,
+                    inventory_service=inventory_svc,
                 )
 
                 connection = await svc.get_connection(company_slug, tenant_id)
@@ -2121,5 +2180,94 @@ async def run_cms_sync_task(
         except Exception:
             pass
         task_store.release_slug_lock(f"cms_sync:{company_slug}")
+        task_store.remove_task_handle(task_id)
+        clear_context()
+
+
+async def run_ga4_sync_task(
+    task_id: str,
+    company_slug: str,
+    tenant_id: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBusProtocol,
+    session_factory: Any,
+    fernet_key: str,
+    lookback_days: int = 7,
+    start_date_override: str | None = None,
+    end_date_override: str | None = None,
+) -> None:
+    """Background task wrapper for GA4 data sync.
+
+    Creates its own DB session and GA4AnalyticsService instance (the DI session
+    from the router is closed by the time the background task runs).
+    """
+    bind_context(task_id=task_id, pipeline_name="ga4_sync", company_slug=company_slug)
+    task_store.update_task(task_id, status=TaskStatus.RUNNING, current_step="sync")
+    event_bus.publish(task_id, "pipeline_start", {"pipeline": "ga4_sync"})
+
+    try:
+        async with task_store.pipeline_semaphore(task_id):
+            from core.analytics.service import GA4AnalyticsService
+            from core.config.settings import settings
+            from core.db.repositories.analytics_repo import (
+                AnalyticsConnectionRepository,
+                GA4ConversionEventRepository,
+                GA4TrafficDataRepository,
+            )
+
+            session = session_factory()
+            try:
+                svc = GA4AnalyticsService(
+                    connection_repo=AnalyticsConnectionRepository(session),
+                    traffic_repo=GA4TrafficDataRepository(session),
+                    conversion_repo=GA4ConversionEventRepository(session),
+                    fernet_key=fernet_key,
+                    client_id=settings.google_oauth_client_id or "",
+                    client_secret=settings.google_oauth_client_secret or "",
+                    redirect_uri=settings.google_oauth_redirect_uri,
+                    ai_referral_sources=settings.ai_referral_sources,
+                    lookback_days=lookback_days,
+                )
+
+                result = await svc.sync_data(
+                    company_slug=company_slug,
+                    tenant_id=tenant_id,
+                    start_date_override=start_date_override,
+                    end_date_override=end_date_override,
+                )
+                await session.commit()
+
+                task_store.update_task(
+                    task_id,
+                    status=TaskStatus.COMPLETED,
+                    result=result.model_dump(),
+                )
+                event_bus.publish(
+                    task_id, "completed",
+                    {"pipeline": "ga4_sync", **result.model_dump()},
+                )
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+
+    except asyncio.CancelledError:
+        logger.info("GA4 sync task %s cancelled", task_id)
+    except Exception as exc:
+        logger.exception("GA4 sync task %s failed: %s", task_id, exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:ga4:{company_slug}:*")
+        except Exception:
+            pass
+        task_store.release_slug_lock(f"ga4_sync:{company_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
