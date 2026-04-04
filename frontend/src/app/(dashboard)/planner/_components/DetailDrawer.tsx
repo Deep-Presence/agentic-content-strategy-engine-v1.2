@@ -131,9 +131,13 @@ export function DetailDrawer({ assignment, onClose, onApprove, onReject }: Detai
                   <span className="font-mono text-[12px] text-text-secondary">{assignment.id}</span>
                   <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.05em] border rounded-full ${sourceStyles[assignment.source]}`}>{sourceLabels[assignment.source]}</span>
                   <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-semibold uppercase border rounded-full ${stageStyles[assignment.stage]}`}>{assignment.stage}</span>
-                  <span className="inline-flex items-center px-2 py-0.5 text-[11px] font-semibold uppercase border border-border text-text-secondary rounded-full">{assignment.format}</span>
+                  {assignment.format && (
+                    <span className="inline-flex items-center px-2 py-0.5 text-[11px] font-semibold uppercase border border-border text-text-secondary rounded-full">{assignment.format}</span>
+                  )}
                   <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-medium border rounded-full ${intentStyles[assignment.intent]}`}>{assignment.intent}</span>
-                  <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-semibold uppercase border rounded-full ${effortStyles[assignment.effort]}`}>{assignment.effort} effort</span>
+                  {assignment.effort && (
+                    <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-semibold uppercase border rounded-full ${effortStyles[assignment.effort]}`}>{assignment.effort} effort</span>
+                  )}
                 </div>
                 {assignment.initiative && (
                   <span className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 text-[11px] font-semibold uppercase bg-[rgba(147,51,234,0.08)] text-[#9333ea] border border-[rgba(147,51,234,0.3)] rounded-full">
@@ -145,14 +149,20 @@ export function DetailDrawer({ assignment, onClose, onApprove, onReject }: Detai
               <div className="px-5 py-5">
                 {/* ─── Why We Recommend ─── */}
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-secondary mb-3">Why We Recommend This</h3>
-                <div className="grid grid-cols-3 gap-2">
-                  {assignment.reasons.map((r, i) => (
-                    <div key={i} className="p-3 rounded-md" style={{ border: '1px solid var(--border)', borderTop: '2px solid var(--warning)', background: 'var(--surface)' }}>
-                      <p className="text-[13px] font-semibold text-text-primary leading-snug">{r.title}</p>
-                      <p className="text-[12px] text-text-secondary leading-[1.5] mt-1">{r.text}</p>
-                    </div>
-                  ))}
-                </div>
+                {assignment.reasons.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {assignment.reasons.map((r, i) => (
+                      <div key={i} className="p-3 rounded-md" style={{ border: '1px solid var(--border)', borderTop: '2px solid var(--warning)', background: 'var(--surface)' }}>
+                        <p className="text-[13px] font-semibold text-text-primary leading-snug">{r.title}</p>
+                        <p className="text-[12px] text-text-secondary leading-[1.5] mt-1">{r.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-md text-[13px] text-text-secondary" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                    Analysis pending
+                  </div>
+                )}
 
                 {/* ─── Competitors ─── */}
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-secondary mt-6 mb-3">Who Currently Owns This Space</h3>
@@ -182,7 +192,7 @@ export function DetailDrawer({ assignment, onClose, onApprove, onReject }: Detai
                       <Flag size={14} className="text-success" />
                       <span className="text-[13px] font-semibold text-success">New Territory — No Competition</span>
                     </div>
-                    <p className="text-[12px] text-text-secondary mt-1">No authoritative content exists for this topic. First-mover opportunity.</p>
+                    <p className="text-[12px] text-text-secondary mt-1">No competitor data yet. First-mover opportunity.</p>
                   </div>
                 )}
 
@@ -212,38 +222,46 @@ export function DetailDrawer({ assignment, onClose, onApprove, onReject }: Detai
 
                 {/* ─── Queries ─── */}
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-secondary mt-6 mb-3">
-                  Queries This Content Would Answer ({assignment.relatedQueries.length} queries, {assignment.relatedQueries.reduce((sum, q) => sum + q.fanouts, 0)} total fanouts)
+                  Queries This Content Would Answer{assignment.relatedQueries.length > 0 ? ` (${assignment.relatedQueries.length} queries, ${assignment.relatedQueries.reduce((sum, q) => sum + q.fanouts, 0)} total fanouts)` : ''}
                 </h3>
-                <div className="rounded-md overflow-hidden" style={{ border: '1px solid var(--border)' }}>
-                  <table className="w-full">
-                    <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                        <th className="text-left text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary px-3 py-2">Query</th>
-                        <th className="text-right text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary px-3 py-2 w-16">Fanouts</th>
-                        <th className="text-right text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary px-3 py-2 w-28">Intent</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {assignment.relatedQueries.map((q, i) => (
-                        <tr key={i} style={{ borderBottom: i < assignment.relatedQueries.length - 1 ? '1px solid var(--border)' : undefined }}>
-                          <td className="text-[13px] text-text-primary px-3 py-2">&ldquo;{q.query}&rdquo;</td>
-                          <td className="text-right font-mono text-[13px] text-text-primary px-3 py-2">{q.fanouts}</td>
-                          <td className="text-right px-3 py-2">
-                            <span className="inline-flex items-center px-2 py-0.5 text-[11px] font-medium border border-border text-text-secondary rounded-full">{q.intent}</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="text-[12px] text-text-secondary mt-2">
-                  These queries are tracked in <a href="/prompt-tracking" className="text-accent hover:underline">Prompt Tracking</a> after publishing
-                </p>
+                {assignment.relatedQueries.length > 0 ? (
+                  <>
+                    <div className="rounded-md overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+                      <table className="w-full">
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                            <th className="text-left text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary px-3 py-2">Query</th>
+                            <th className="text-right text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary px-3 py-2 w-16">Fanouts</th>
+                            <th className="text-right text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary px-3 py-2 w-28">Intent</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {assignment.relatedQueries.map((q, i) => (
+                            <tr key={i} style={{ borderBottom: i < assignment.relatedQueries.length - 1 ? '1px solid var(--border)' : undefined }}>
+                              <td className="text-[13px] text-text-primary px-3 py-2">&ldquo;{q.query}&rdquo;</td>
+                              <td className="text-right font-mono text-[13px] text-text-primary px-3 py-2">{q.fanouts}</td>
+                              <td className="text-right px-3 py-2">
+                                <span className="inline-flex items-center px-2 py-0.5 text-[11px] font-medium border border-border text-text-secondary rounded-full">{q.intent}</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-[12px] text-text-secondary mt-2">
+                      These queries are tracked in <a href="/prompt-tracking" className="text-accent hover:underline">Prompt Tracking</a> after publishing
+                    </p>
+                  </>
+                ) : (
+                  <div className="p-3 rounded-md text-[13px] text-text-secondary" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                    No queries tracked yet
+                  </div>
+                )}
 
                 {/* ─── Activity ─── */}
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-secondary mt-6 mb-3">Activity</h3>
                 <div className="space-y-2.5">
-                  {assignment.activityLog.map((entry, i) => (
+                  {(assignment.activityLog.length > 0 ? assignment.activityLog : [{ action: 'Created by pipeline', date: assignment.createdAt, by: 'System' }]).map((entry, i) => (
                     <div key={i} className="flex items-center gap-2.5">
                       {entry.by === 'System' ? (
                         <div className="flex items-center justify-center w-5 h-5 rounded-full shrink-0" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border)' }}>

@@ -4,10 +4,11 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight, Check, X } from 'lucide-react';
 import type { Assignment, Cluster } from './planner-data';
-import { CLUSTERS, getAssignmentsForSubcluster } from './planner-data';
+import { getAssignmentsForSubcluster } from './planner-data';
 
 interface ClusterExplorerProps {
   assignments: Assignment[];
+  clusters: Cluster[];
   onRowClick: (assignment: Assignment) => void;
   onApprove: (ids: string[]) => void;
   onReject: (ids: string[]) => void;
@@ -44,7 +45,7 @@ const intentStyles: Record<string, string> = {
 // Grid for cluster explorer table rows
 const CE_GRID = '56px 1fr 84px 52px 80px 50px 80px 50px 48px';
 
-export function ClusterExplorer({ assignments, onRowClick, onApprove, onReject }: ClusterExplorerProps) {
+export function ClusterExplorer({ assignments, clusters, onRowClick, onApprove, onReject }: ClusterExplorerProps) {
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set(['cl1']));
   const [selectedSubcluster, setSelectedSubcluster] = useState<string | null>('sc1');
   const [sortBy, setSortBy] = useState<SortOption>('score');
@@ -55,7 +56,7 @@ export function ClusterExplorer({ assignments, onRowClick, onApprove, onReject }
 
   const subclusterAssignments = useMemo(() => {
     if (!selectedSubcluster) return [];
-    const list = getAssignmentsForSubcluster(assignments, selectedSubcluster);
+    const list = getAssignmentsForSubcluster(assignments, selectedSubcluster, clusters);
     return [...list].sort((a, b) => {
       switch (sortBy) {
         case 'score': return b.priorityScore - a.priorityScore;
@@ -63,14 +64,14 @@ export function ClusterExplorer({ assignments, onRowClick, onApprove, onReject }
         case 'opportunity': return b.citationOpp - a.citationOpp;
       }
     });
-  }, [assignments, selectedSubcluster, sortBy]);
+  }, [assignments, selectedSubcluster, sortBy, clusters]);
 
-  const selectedCluster = CLUSTERS.find(c => c.subclusters.some(sc => sc.id === selectedSubcluster));
+  const selectedCluster = clusters.find(c => c.subclusters.some(sc => sc.id === selectedSubcluster));
   const selectedSC = selectedCluster?.subclusters.find(sc => sc.id === selectedSubcluster);
   const avgCitOpp = subclusterAssignments.length > 0 ? subclusterAssignments.reduce((s, a) => s + a.citationOpp, 0) / subclusterAssignments.length : 0;
   const totalCitations = subclusterAssignments.reduce((s, a) => s + a.estCitations, 0);
 
-  function getSubclusterCount(scId: string): number { return getAssignmentsForSubcluster(assignments, scId).length; }
+  function getSubclusterCount(scId: string): number { return getAssignmentsForSubcluster(assignments, scId, clusters).length; }
   function getClusterCount(cluster: Cluster): number { return cluster.subclusters.reduce((sum, sc) => sum + getSubclusterCount(sc.id), 0); }
 
   return (
@@ -78,7 +79,7 @@ export function ClusterExplorer({ assignments, onRowClick, onApprove, onReject }
       {/* Left Panel */}
       <div className="w-[230px] shrink-0 overflow-y-auto" style={{ borderRight: '1px solid var(--border)' }}>
         <div className="py-2">
-          {CLUSTERS.map(cluster => {
+          {clusters.map(cluster => {
             const isExpanded = expandedClusters.has(cluster.id);
             return (
               <div key={cluster.id}>

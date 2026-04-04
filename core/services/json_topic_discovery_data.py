@@ -82,6 +82,7 @@ class JsonTopicDiscoveryDataService:
         buyer_stage: Optional[str] = None,
         intent_type: Optional[str] = None,
         persona_id: Optional[str] = None,
+        status: Optional[str] = None,
         page: int = 1,
         page_size: int = 50,
     ) -> dict:
@@ -100,6 +101,8 @@ class JsonTopicDiscoveryDataService:
                 assignments = [a for a in assignments if getattr(a, "intent_type", None) == intent_type]
             if persona_id:
                 assignments = [a for a in assignments if getattr(a, "persona_id", "") == persona_id]
+            if status:
+                assignments = [a for a in assignments if getattr(a, "status", None) == status]
 
             total = len(assignments)
             start = (page - 1) * page_size
@@ -116,6 +119,59 @@ class JsonTopicDiscoveryDataService:
                 "page_size": page_size,
             }
         return await asyncio.to_thread(_read)
+
+    async def update_assignment_status(
+        self,
+        effective_slug: str,
+        assignment_id: str,
+        status: str,
+    ) -> Optional[dict]:
+        def _update():
+            storage = self._storage(effective_slug)
+            matrix = storage.get_latest_matrix()
+            if matrix is None:
+                return None
+
+            for assignment in matrix.assignments:
+                if assignment.id == assignment_id:
+                    from core.models.topic_discovery import TopicAssignmentStatus
+                    assignment.status = TopicAssignmentStatus(status)
+                    # Write back the updated matrix at the same version
+                    storage.write_matrix(matrix, version=matrix.version)
+                    return assignment.model_dump(mode="json")
+            return None
+        return await asyncio.to_thread(_update)
+
+    async def create_assignment(
+        self,
+        effective_slug: str,
+        assignment_data: dict,
+    ) -> dict:
+        def _create():
+            from core.models.topic_discovery import TopicAssignment
+
+            storage = self._storage(effective_slug)
+            matrix = storage.get_latest_matrix()
+            if matrix is None:
+                # Cannot create assignment without an existing matrix
+                raise ValueError("No matrix found for this slug. Run topic discovery first.")
+
+            new_assignment = TopicAssignment(
+                topic_text=assignment_data.get("topic_text", ""),
+                subdomain_id=assignment_data.get("subdomain_id", ""),
+                subdomain_name=assignment_data.get("subdomain_name", ""),
+                buyer_stage=assignment_data.get("buyer_stage", "tofu"),
+                intent_type=assignment_data.get("intent_type", "informational"),
+                persona_id=assignment_data.get("persona_id", ""),
+                persona_name=assignment_data.get("persona_name", ""),
+                priority_score=assignment_data.get("priority_score", 0.5),
+                is_manually_added=True,
+            )
+            matrix.assignments.append(new_assignment)
+            matrix.total_assignments = len(matrix.assignments)
+            storage.write_matrix(matrix, version=matrix.version)
+            return new_assignment.model_dump(mode="json")
+        return await asyncio.to_thread(_create)
 
     async def get_scored_subdomains(
         self,

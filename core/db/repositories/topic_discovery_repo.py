@@ -363,6 +363,7 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
         buyer_stage: BuyerStage | None = None,
         intent_type: IntentType | None = None,
         persona_id: str | None = None,
+        status: TopicAssignmentStatus | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> Tuple[Sequence[TopicAssignmentModel], int]:
@@ -376,6 +377,8 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
             base = base.where(TopicAssignmentModel.intent_type == intent_type)
         if persona_id is not None:
             base = base.where(TopicAssignmentModel.persona_id == persona_id)
+        if status is not None:
+            base = base.where(TopicAssignmentModel.status == status)
 
         # Count
         count_stmt = select(func.count()).select_from(base.subquery())

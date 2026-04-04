@@ -173,7 +173,7 @@ export function PriorityQueue({ assignments, onRowClick, onApprove, onReject }: 
               <span className={`inline-flex items-center px-1.5 py-px text-[10px] font-medium border rounded-full whitespace-nowrap ${intentStyles[a.intent]}`}>{a.intent}</span>
             </div>
             <div className="px-1">
-              <span className={`inline-flex items-center px-1.5 py-px text-[10px] font-medium border rounded-full whitespace-nowrap ${formatStyles}`}>{a.format}</span>
+              <span className={`inline-flex items-center px-1.5 py-px text-[10px] font-medium border rounded-full whitespace-nowrap ${formatStyles}`}>{a.format ?? '\u2014'}</span>
             </div>
             <div className="px-1 text-right">
               <span className="font-mono text-[13px] font-semibold text-accent">~{a.estCitations}</span>

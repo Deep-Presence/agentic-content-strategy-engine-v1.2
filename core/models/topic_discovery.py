@@ -92,6 +92,8 @@ class TopicAssignmentStatus(str, Enum):
     """Lifecycle status of a single topic assignment."""
 
     not_started = "not_started"
+    approved = "approved"
+    rejected = "rejected"
     in_gap_analysis = "in_gap_analysis"
     content_produced = "content_produced"
     published = "published"

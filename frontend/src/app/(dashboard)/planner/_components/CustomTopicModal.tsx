@@ -3,14 +3,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Check, Upload, FileText } from 'lucide-react';
-import { CLUSTERS, BRAND_PREFIX } from './planner-data';
-import type { Assignment } from './planner-data';
+import { BRAND_PREFIX } from './planner-data';
+import type { Assignment, Cluster } from './planner-data';
+import type { CreateCustomAssignmentData } from '../_hooks/usePlannerData';
 
 interface CustomTopicModalProps {
   open: boolean;
   onClose: () => void;
-  onAdd: (assignment: Assignment) => void;
+  onAdd: (data: CreateCustomAssignmentData) => void;
   nextId: string;
+  clusters: Cluster[];
 }
 
 interface UploadedFile {
@@ -36,7 +38,7 @@ const RESEARCH_STEPS = [
   'Generating recommendation',
 ];
 
-export function CustomTopicModal({ open, onClose, onAdd, nextId }: CustomTopicModalProps) {
+export function CustomTopicModal({ open, onClose, onAdd, nextId, clusters }: CustomTopicModalProps) {
   const [step, setStep] = useState(1);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -79,28 +81,18 @@ export function CustomTopicModal({ open, onClose, onAdd, nextId }: CustomTopicMo
   }, [step]);
 
   const handleAdd = () => {
-    const selectedCluster = CLUSTERS.find(c => c.id === cluster);
-    const subcluster = selectedCluster?.subclusters[0]?.name || 'General';
-    const newAssignment: Assignment = {
-      id: nextId, title,
-      cluster: selectedCluster?.name || 'Uncategorized', subcluster, stage, intent, format,
-      source: 'custom', personaScores: { sf: 65, pm: 60, da: 55, te: 50 }, persona,
-      estCitations: resultEstCit, citationOpp: resultCitOpp / 100,
-      priorityScore: 0.55 + Math.random() * 0.2, effort: 'medium', estDays: 4,
-      competitors: [{ domain: 'bolt.new', title: 'Related Content', url: 'bolt.new/blog/related', words: 1800, faq: false, tables: false, rank: 1 }],
-      reasons: [
-        { title: 'Custom topic insight', text: 'Manually identified topic addresses a specific content gap in your strategy.' },
-        { title: 'Citation potential', text: `Estimated ${resultCitOpp}% citation opportunity based on competitive analysis.` },
-        { title: 'Audience alignment', text: `Strong alignment with ${PERSONAS.find(p => p.id === persona)?.label} persona.` },
-      ],
-      relatedQueries: [{ query: title.toLowerCase().slice(0, 40), fanouts: 4, intent: intent === 'Informational' || intent === 'Commercial' ? intent : 'Informational' }],
-      createdAt: 'Mar 31, 2026',
-      activityLog: [
-        { action: 'Manually added by user', date: 'Mar 31, 2026', by: 'User' },
-        { action: 'AI enrichment completed', date: 'Mar 31, 2026', by: 'System' },
-      ],
+    const selectedCluster = clusters.find(c => c.id === cluster);
+    const subdomainName = selectedCluster?.subclusters[0]?.name || undefined;
+    const data: CreateCustomAssignmentData = {
+      topic_text: title,
+      subdomain_name: subdomainName,
+      buyer_stage: stage.toLowerCase(),
+      intent_type: intent.toLowerCase(),
+      persona_id: persona,
+      persona_name: PERSONAS.find(p => p.id === persona)?.label,
+      priority_score: resultCitOpp / 100,
     };
-    onAdd(newAssignment);
+    onAdd(data);
     handleClose();
   };
 
@@ -198,7 +190,7 @@ export function CustomTopicModal({ open, onClose, onAdd, nextId }: CustomTopicMo
                       className="w-full h-[34px] px-3 text-[14px] rounded border bg-transparent text-text-primary cursor-pointer focus:border-accent outline-none"
                       style={{ borderColor: 'var(--border)' }}>
                       <option value="">Select cluster...</option>
-                      {CLUSTERS.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      {clusters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                       <option value="new">+ New cluster</option>
                     </select>
                   </div>

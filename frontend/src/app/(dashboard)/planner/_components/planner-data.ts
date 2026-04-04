@@ -30,7 +30,7 @@ export interface Assignment {
   subcluster: string;
   stage: 'TOFU' | 'MOFU' | 'BOFU';
   intent: 'Informational' | 'Commercial' | 'Navigational' | 'Transactional';
-  format: 'Guide' | 'Comparison' | 'Tutorial' | 'Listicle' | 'Case Study';
+  format?: 'Guide' | 'Comparison' | 'Tutorial' | 'Listicle' | 'Case Study' | null;
   source: 'gap' | 'strategic' | 'custom';
   initiative?: string;
   personaScores: { sf: number; pm: number; da: number; te: number };
@@ -38,8 +38,8 @@ export interface Assignment {
   estCitations: number;
   citationOpp: number;
   priorityScore: number;
-  effort: 'low' | 'medium' | 'high';
-  estDays: number;
+  effort?: 'low' | 'medium' | 'high' | null;
+  estDays?: number | null;
   competitors: Competitor[];
   reasons: Array<{ title: string; text: string }>;
   relatedQueries: RelatedQuery[];
@@ -72,43 +72,6 @@ export interface RejectedItem {
   stage?: 'TOFU' | 'MOFU' | 'BOFU';
 }
 
-// ─── Clusters ────────────────────────────────────────────
-
-export const CLUSTERS: Cluster[] = [
-  {
-    id: 'cl1', name: 'Competitive Landscape', subclusters: [
-      { id: 'sc1', name: 'Platform Comparisons', citOpp: 0.85 },
-      { id: 'sc2', name: 'Pricing & Value', citOpp: 0.82 },
-    ],
-  },
-  {
-    id: 'cl2', name: 'Platform Capabilities', subclusters: [
-      { id: 'sc3', name: 'Database & Backend Integration', citOpp: 0.78 },
-      { id: 'sc4', name: 'UI/UX Generation', citOpp: 0.71 },
-      { id: 'sc5', name: 'Code Generation Quality', citOpp: 0.76 },
-    ],
-  },
-  {
-    id: 'cl3', name: 'Security & Compliance', subclusters: [
-      { id: 'sc6', name: 'Data Privacy & GDPR', citOpp: 0.68 },
-      { id: 'sc7', name: 'SOC 2 & Enterprise Security', citOpp: 0.65 },
-    ],
-  },
-  {
-    id: 'cl4', name: 'Developer Experience', subclusters: [
-      { id: 'sc8', name: 'API Integration Patterns', citOpp: 0.74 },
-      { id: 'sc9', name: 'Code Export & Customization', citOpp: 0.70 },
-      { id: 'sc10', name: 'Developer Documentation', citOpp: 0.66 },
-    ],
-  },
-  {
-    id: 'cl5', name: 'Deployment & Operations', subclusters: [
-      { id: 'sc11', name: 'CI/CD & Hosting', citOpp: 0.72 },
-      { id: 'sc12', name: 'Scaling & Performance', citOpp: 0.61 },
-    ],
-  },
-];
-
 // ─── Strategic Initiatives ───────────────────────────────
 
 export const INITIATIVES: Initiative[] = [
@@ -130,7 +93,7 @@ export const INITIATIVES: Initiative[] = [
   },
 ];
 
-// ─── 10 Assignments ──────────────────────────────────────
+// ─── Mock Assignments (used ONLY by InitiativesSidebar) ──
 
 export const ASSIGNMENTS: Assignment[] = [
   {
@@ -513,8 +476,8 @@ export const PERSONA_MAP: Record<string, { short: string; full: string }> = {
 
 // ─── Helpers ─────────────────────────────────────────────
 
-export function getClusterForSubcluster(subclusterName: string): string | undefined {
-  for (const c of CLUSTERS) {
+export function getClusterForSubcluster(subclusterName: string, clusters: Cluster[]): string | undefined {
+  for (const c of clusters) {
     for (const sc of c.subclusters) {
       if (sc.name === subclusterName) return c.name;
     }
@@ -522,15 +485,19 @@ export function getClusterForSubcluster(subclusterName: string): string | undefi
   return undefined;
 }
 
-export function getAssignmentsForSubcluster(assignments: Assignment[], subclusterId: string): Assignment[] {
-  const cluster = CLUSTERS.find(c => c.subclusters.some(sc => sc.id === subclusterId));
+export function getAssignmentsForSubcluster(
+  assignments: Assignment[],
+  subclusterId: string,
+  clusters: Cluster[],
+): Assignment[] {
+  const cluster = clusters.find(c => c.subclusters.some(sc => sc.id === subclusterId));
   const subcluster = cluster?.subclusters.find(sc => sc.id === subclusterId);
   if (!subcluster) return [];
   return assignments.filter(a => a.subcluster === subcluster.name);
 }
 
-export function getAssignmentsForCluster(assignments: Assignment[], clusterId: string): Assignment[] {
-  const cluster = CLUSTERS.find(c => c.id === clusterId);
+export function getAssignmentsForCluster(assignments: Assignment[], clusterId: string, clusters: Cluster[]): Assignment[] {
+  const cluster = clusters.find(c => c.id === clusterId);
   if (!cluster) return [];
   const subNames = cluster.subclusters.map(sc => sc.name);
   return assignments.filter(a => subNames.includes(a.subcluster));

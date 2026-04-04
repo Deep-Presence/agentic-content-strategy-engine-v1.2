@@ -153,6 +153,8 @@ class RelevanceCell(str, Enum):
 
 class TopicAssignmentStatus(str, Enum):
     not_started = "not_started"
+    approved = "approved"
+    rejected = "rejected"
     in_gap_analysis = "in_gap_analysis"
     content_produced = "content_produced"
     published = "published"

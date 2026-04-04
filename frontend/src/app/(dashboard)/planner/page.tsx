@@ -3,8 +3,10 @@
 import { useState, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, Plus, RotateCcw, X } from 'lucide-react';
-import { ASSIGNMENTS, INITIAL_REJECTED, BRAND_PREFIX } from './_components/planner-data';
+import { BRAND_PREFIX } from './_components/planner-data';
 import type { Assignment, RejectedItem } from './_components/planner-data';
+import { usePlannerData } from './_hooks/usePlannerData';
+import type { CreateCustomAssignmentData } from './_hooks/usePlannerData';
 import { PriorityQueue } from './_components/PriorityQueue';
 import { ClusterExplorer } from './_components/ClusterExplorer';
 import { DetailDrawer } from './_components/DetailDrawer';
@@ -24,8 +26,9 @@ interface Toast {
 }
 
 export default function ContentPlannerPage() {
-  const [assignments, setAssignments] = useState<Assignment[]>(ASSIGNMENTS);
-  const [rejected, setRejected] = useState<RejectedItem[]>(INITIAL_REJECTED);
+  const plannerData = usePlannerData();
+  const { assignments, rejected, clusters, isLoading, isEmpty, error, refetch } = plannerData;
+
   const [view, setView] = useState<ViewMode>('queue');
 
   // Filters
@@ -65,37 +68,45 @@ export default function ContentPlannerPage() {
     setIntentFilter('all');
   };
 
-  const handleApprove = useCallback((ids: string[]) => {
-    setAssignments(prev => prev.filter(a => !ids.includes(a.id)));
-    setDrawerAssignment(null);
+  const handleApprove = useCallback(async (ids: string[]) => {
     showToast(`✓ ${ids.length} topic${ids.length > 1 ? 's' : ''} approved → Content Studio`);
-  }, [showToast]);
-
-  const handleReject = useCallback((ids: string[]) => {
-    const toReject = assignments.filter(a => ids.includes(a.id));
-    const newRejected: RejectedItem[] = toReject.map(a => ({
-      id: a.id, title: a.title, cluster: a.cluster,
-      reason: 'Rejected by user', date: 'Mar 31', rejectedBy: 'shank keshri', stage: a.stage,
-    }));
-    setAssignments(prev => prev.filter(a => !ids.includes(a.id)));
-    setRejected(prev => [...newRejected, ...prev]);
     setDrawerAssignment(null);
-    showToast(`✗ ${ids.length} topic${ids.length > 1 ? 's' : ''} rejected`);
-  }, [assignments, showToast]);
+    try {
+      await plannerData.approveAssignments(ids);
+    } catch {
+      showToast('Failed to update status', 'error');
+    }
+  }, [plannerData, showToast]);
 
-  const handleRestore = useCallback((id: string) => {
+  const handleReject = useCallback(async (ids: string[]) => {
+    showToast(`✗ ${ids.length} topic${ids.length > 1 ? 's' : ''} rejected`);
+    setDrawerAssignment(null);
+    try {
+      await plannerData.rejectAssignments(ids);
+    } catch {
+      showToast('Failed to update status', 'error');
+    }
+  }, [plannerData, showToast]);
+
+  const handleRestore = useCallback(async (id: string) => {
     const item = rejected.find(r => r.id === id);
     if (!item) return;
-    const original = ASSIGNMENTS.find(a => a.id === id);
-    if (original) setAssignments(prev => [...prev, original]);
-    setRejected(prev => prev.filter(r => r.id !== id));
     showToast(`✓ ${item.title.slice(0, 30)}... restored to queue`);
-  }, [rejected, showToast]);
+    try {
+      await plannerData.restoreAssignment(id);
+    } catch {
+      showToast('Failed to restore assignment', 'error');
+    }
+  }, [plannerData, rejected, showToast]);
 
-  const handleAddCustom = useCallback((assignment: Assignment) => {
-    setAssignments(prev => [...prev, assignment]);
+  const handleAddCustom = useCallback(async (data: CreateCustomAssignmentData) => {
     showToast('✓ Custom topic added to Priority Queue');
-  }, [showToast]);
+    try {
+      await plannerData.createAssignment(data);
+    } catch {
+      showToast('Failed to create topic', 'error');
+    }
+  }, [plannerData, showToast]);
 
   const handleInitiativeComplete = useCallback((count: number) => {
     setInitiativesOpen(false);
@@ -218,13 +229,30 @@ export default function ContentPlannerPage() {
 
       {/* Main Content */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {view === 'queue' && (
+        {isLoading && (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-[14px] text-text-secondary">Loading topic data...</div>
+          </div>
+        )}
+        {isEmpty && !isLoading && (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3">
+            <div className="text-[18px] font-semibold text-text-primary">No Topic Discovery Data</div>
+            <div className="text-[14px] text-text-secondary">Run Topic Discovery to generate content recommendations.</div>
+          </div>
+        )}
+        {error && !isLoading && (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3">
+            <div className="text-[14px] text-error">{error}</div>
+            <button onClick={refetch} className="text-[13px] text-accent hover:underline">Try again</button>
+          </div>
+        )}
+        {!isLoading && !isEmpty && !error && view === 'queue' && (
           <PriorityQueue assignments={filtered} onRowClick={setDrawerAssignment} onApprove={handleApprove} onReject={handleReject} />
         )}
-        {view === 'explorer' && (
-          <ClusterExplorer assignments={filtered} onRowClick={setDrawerAssignment} onApprove={handleApprove} onReject={handleReject} />
+        {!isLoading && !isEmpty && !error && view === 'explorer' && (
+          <ClusterExplorer assignments={filtered} clusters={clusters} onRowClick={setDrawerAssignment} onApprove={handleApprove} onReject={handleReject} />
         )}
-        {view === 'rejected' && (
+        {!isLoading && !isEmpty && !error && view === 'rejected' && (
           <div className="flex-1 overflow-auto">
             <div className="px-6 py-4">
               {rejected.length > 0 ? (
@@ -295,7 +323,7 @@ export default function ContentPlannerPage() {
       />
 
       {/* Custom Topic Modal */}
-      <CustomTopicModal open={customTopicOpen} onClose={() => setCustomTopicOpen(false)} onAdd={handleAddCustom} nextId={nextId} />
+      <CustomTopicModal open={customTopicOpen} onClose={() => setCustomTopicOpen(false)} onAdd={handleAddCustom} nextId={nextId} clusters={clusters} />
 
       {/* Initiatives Sidebar */}
       <InitiativesSidebar open={initiativesOpen} onClose={() => setInitiativesOpen(false)} onInitiativeComplete={handleInitiativeComplete} />

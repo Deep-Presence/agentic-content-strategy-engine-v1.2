@@ -14,6 +14,11 @@ from api.dependencies import get_artifacts_root, get_auth_service, get_event_bus
 from api.schemas.common import PipelineRunResponse, TaskResponse
 from api.schemas.topic_discovery import (
     ApprovalResponseTD,
+    AssignmentListResponse,
+    AssignmentStatusUpdateRequest,
+    AssignmentStatusUpdateResponse,
+    CreateCustomAssignmentRequest,
+    DiscoverySummaryResponse,
     ExpansionStatusResponse,
     MatrixApprovalRequest,
     MatrixReadResponse,
@@ -675,3 +680,131 @@ async def get_expansion_status(
         expanded_ids=expanded_ids,
         available_for_expansion=available,
     )
+
+
+# ── Endpoint 11: GET /{slug}/summary ──────────────────────────────────
+
+
+@router.get("/{slug}/summary")
+async def get_discovery_summary(
+    slug: str,
+    http_request: Request,
+    _user: UserProfile = Depends(require_auth),
+    td_svc=Depends(get_td_data_service),
+) -> DiscoverySummaryResponse:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    summary = await td_svc.get_discovery_summary(slug)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="No discovery found")
+
+    return DiscoverySummaryResponse(**summary)
+
+
+# ── Endpoint 12: GET /{slug}/assignments ──────────────────────────────
+
+
+@router.get("/{slug}/assignments")
+async def list_assignments(
+    slug: str,
+    http_request: Request,
+    buyer_stage: Optional[str] = None,
+    intent_type: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    _user: UserProfile = Depends(require_auth),
+    td_svc=Depends(get_td_data_service),
+) -> AssignmentListResponse:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = await td_svc.list_assignments(
+        slug,
+        buyer_stage=buyer_stage,
+        intent_type=intent_type,
+        persona_id=persona_id,
+        status=status,
+        page=page,
+        page_size=page_size,
+    )
+
+    return AssignmentListResponse(slug=slug, **result)
+
+
+# ── Endpoint 13: PATCH /{slug}/assignments/{assignment_id} ───────────
+
+
+@router.patch("/{slug}/assignments/{assignment_id}")
+async def update_assignment_status(
+    slug: str,
+    assignment_id: str,
+    body: AssignmentStatusUpdateRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    td_svc=Depends(get_td_data_service),
+) -> AssignmentStatusUpdateResponse:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = await td_svc.update_assignment_status(slug, assignment_id, body.status)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    return AssignmentStatusUpdateResponse(
+        assignment_id=assignment_id,
+        status=body.status,
+        message=f"Assignment status updated to {body.status}",
+    )
+
+
+# ── Endpoint 14: POST /{slug}/assignments ─────────────────────────────
+
+
+@router.post("/{slug}/assignments", status_code=201)
+async def create_custom_assignment(
+    slug: str,
+    body: CreateCustomAssignmentRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    td_svc=Depends(get_td_data_service),
+) -> Dict[str, Any]:
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        result = await td_svc.create_assignment(
+            slug,
+            assignment_data={
+                "topic_text": body.topic_text,
+                "subdomain_id": body.subdomain_id or "",
+                "subdomain_name": body.subdomain_name or "",
+                "buyer_stage": body.buyer_stage.value,
+                "intent_type": body.intent_type.value,
+                "persona_id": body.persona_id or "",
+                "persona_name": body.persona_name or "",
+                "priority_score": body.priority_score,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return result

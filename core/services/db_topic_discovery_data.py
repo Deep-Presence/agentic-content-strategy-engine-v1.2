@@ -151,6 +151,7 @@ class DbTopicDiscoveryDataService:
         buyer_stage: Optional[str] = None,
         intent_type: Optional[str] = None,
         persona_id: Optional[str] = None,
+        status: Optional[str] = None,
         page: int = 1,
         page_size: int = 50,
     ) -> dict:
@@ -161,6 +162,7 @@ class DbTopicDiscoveryDataService:
         # Map string filters to DB enums
         bs_enum = None
         it_enum = None
+        status_enum = None
         if buyer_stage:
             from core.db.enums import BuyerStage
             try:
@@ -173,12 +175,19 @@ class DbTopicDiscoveryDataService:
                 it_enum = IntentType(intent_type)
             except ValueError:
                 pass
+        if status:
+            from core.db.enums import TopicAssignmentStatus
+            try:
+                status_enum = TopicAssignmentStatus(status)
+            except ValueError:
+                pass
 
         items, total = await self._assignment_repo.list_paginated(
             discovery.id,
             buyer_stage=bs_enum,
             intent_type=it_enum,
             persona_id=persona_id,
+            status=status_enum,
             page=page,
             page_size=page_size,
         )
@@ -197,6 +206,8 @@ class DbTopicDiscoveryDataService:
                 "persona_name": r.persona_name,
                 "subdomain_id": r.subdomain_id_text,
                 "subdomain_name": r.subdomain_name,
+                "is_manually_added": r.is_manually_added,
+                "metadata": r.metadata_json or {},
             }
             for r in items
         ]
@@ -206,6 +217,81 @@ class DbTopicDiscoveryDataService:
             "total": total,
             "page": page,
             "page_size": page_size,
+        }
+
+    async def update_assignment_status(
+        self,
+        effective_slug: str,
+        assignment_id: str,
+        status: str,
+    ) -> Optional[dict]:
+        discovery = await self._td_repo.get_by_effective_slug(effective_slug)
+        if discovery is None:
+            return None
+
+        from core.db.enums import TopicAssignmentStatus
+        try:
+            status_enum = TopicAssignmentStatus(status)
+        except ValueError:
+            return None
+
+        updated = await self._assignment_repo.update_assignment_status(
+            assignment_id, status_enum,
+        )
+        if updated is None:
+            return None
+
+        return {
+            "id": str(updated.id),
+            "status": updated.status.value if updated.status else status,
+            "topic_text": updated.topic_text,
+        }
+
+    async def create_assignment(
+        self,
+        effective_slug: str,
+        assignment_data: dict,
+    ) -> dict:
+        discovery = await self._td_repo.get_by_effective_slug(effective_slug)
+        if discovery is None:
+            raise ValueError("No discovery found for this slug.")
+
+        from core.db.models.topic_discovery import TopicAssignmentModel
+        from core.db.enums import BuyerStage, IntentType, TopicAssignmentStatus
+
+        import uuid as _uuid
+
+        model = TopicAssignmentModel(
+            id=_uuid.uuid4(),
+            discovery_id=discovery.id,
+            matrix_version=discovery.matrix_version or 1,
+            topic_text=assignment_data.get("topic_text", ""),
+            subdomain_id_text=assignment_data.get("subdomain_id", ""),
+            subdomain_name=assignment_data.get("subdomain_name", ""),
+            buyer_stage=BuyerStage(assignment_data.get("buyer_stage", "tofu")),
+            intent_type=IntentType(assignment_data.get("intent_type", "informational")),
+            persona_id=assignment_data.get("persona_id", ""),
+            persona_name=assignment_data.get("persona_name", ""),
+            priority_score=assignment_data.get("priority_score", 0.5),
+            status=TopicAssignmentStatus.not_started,
+            is_manually_added=True,
+        )
+
+        created = await self._assignment_repo.bulk_create([model])
+        row = created[0]
+
+        return {
+            "id": str(row.id),
+            "topic_text": row.topic_text,
+            "buyer_stage": row.buyer_stage.value if row.buyer_stage else "tofu",
+            "intent_type": row.intent_type.value if row.intent_type else "informational",
+            "persona_id": row.persona_id,
+            "persona_name": row.persona_name,
+            "priority_score": row.priority_score,
+            "status": row.status.value if row.status else "not_started",
+            "is_manually_added": True,
+            "subdomain_id": row.subdomain_id_text or "",
+            "subdomain_name": row.subdomain_name or "",
         }
 
     async def get_scored_subdomains(

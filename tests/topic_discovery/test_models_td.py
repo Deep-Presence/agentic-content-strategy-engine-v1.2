@@ -70,8 +70,8 @@ class TestEnums:
         assert RelevanceCell.irrelevant.value == "irrelevant"
 
     def test_topic_assignment_status_values(self):
-        assert len(TopicAssignmentStatus) == 4
-        expected = {"not_started", "in_gap_analysis", "content_produced", "published"}
+        assert len(TopicAssignmentStatus) == 6
+        expected = {"not_started", "approved", "rejected", "in_gap_analysis", "content_produced", "published"}
         assert {s.value for s in TopicAssignmentStatus} == expected
 
 
