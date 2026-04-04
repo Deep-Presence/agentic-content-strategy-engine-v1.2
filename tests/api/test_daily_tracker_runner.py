@@ -116,6 +116,7 @@ def _apply_common_patches(
     mock_orch = AsyncMock()
     mock_orch.execute_daily_run = AsyncMock(return_value=result)
     mock_orch._fetch_prompts = AsyncMock(return_value=[])  # pre-fetch returns empty
+    mock_orch._fetch_prompts_with_fanouts = AsyncMock(return_value=([], {}))  # (prompts, fanout_map)
     mock_orch_cls = MagicMock(return_value=mock_orch)
     stack.enter_context(patch(_P_ORCH, mock_orch_cls))
     stack.enter_context(patch(_P_PROMPT_REPO, MagicMock()))

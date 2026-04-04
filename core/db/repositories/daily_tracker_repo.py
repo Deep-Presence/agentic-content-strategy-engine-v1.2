@@ -43,6 +43,7 @@ class TrackedPromptRepository(SQLAlchemyRepository[TrackedPromptModel]):
         category: str | None = None,
         tags: list[str] | None = None,
         search_text: str | None = None,
+        parent_only: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> Sequence[TrackedPromptModel]:
@@ -78,6 +79,8 @@ class TrackedPromptRepository(SQLAlchemyRepository[TrackedPromptModel]):
                 stmt = stmt.where(
                     TrackedPromptModel.tags.op("@>")(f'["{tag}"]')
                 )
+        if parent_only:
+            stmt = stmt.where(TrackedPromptModel.parent_prompt_id.is_(None))
         if search_text:
             stmt = stmt.where(
                 TrackedPromptModel.text.ilike(f"%{search_text}%")
@@ -197,6 +200,82 @@ class TrackedPromptRepository(SQLAlchemyRepository[TrackedPromptModel]):
         )
         result = await self._session.execute(stmt)
         return result.scalar_one() > 0
+
+    # -- Fanout query methods --
+
+    async def list_by_parent(
+        self,
+        parent_prompt_id: _uuid.UUID,
+        *,
+        active_only: bool = True,
+    ) -> Sequence[TrackedPromptModel]:
+        """Fetch fanout children of a parent prompt.
+
+        Args:
+            parent_prompt_id: The parent prompt UUID.
+            active_only: If True, only return active fanouts.
+
+        Returns:
+            Sequence of fanout TrackedPromptModel rows.
+        """
+        stmt = select(TrackedPromptModel).where(
+            TrackedPromptModel.parent_prompt_id == parent_prompt_id
+        )
+        if active_only:
+            stmt = stmt.where(TrackedPromptModel.active.is_(True))
+        stmt = stmt.order_by(TrackedPromptModel.created_at.asc())
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def count_fanouts(
+        self, parent_prompt_id: _uuid.UUID
+    ) -> int:
+        """Count active fanouts for a parent prompt.
+
+        Args:
+            parent_prompt_id: The parent prompt UUID.
+
+        Returns:
+            Number of active fanout children.
+        """
+        stmt = (
+            select(func.count())
+            .select_from(TrackedPromptModel)
+            .where(
+                and_(
+                    TrackedPromptModel.parent_prompt_id == parent_prompt_id,
+                    TrackedPromptModel.active.is_(True),
+                )
+            )
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one()
+
+    async def delete_unpinned_fanouts(
+        self, parent_prompt_id: _uuid.UUID
+    ) -> int:
+        """Delete non-pinned fanouts for a parent (used by regeneration).
+
+        Args:
+            parent_prompt_id: The parent prompt UUID.
+
+        Returns:
+            Number of deleted rows.
+        """
+        from sqlalchemy import delete as sa_delete
+
+        stmt = (
+            sa_delete(TrackedPromptModel)
+            .where(
+                and_(
+                    TrackedPromptModel.parent_prompt_id == parent_prompt_id,
+                    TrackedPromptModel.pinned.is_(False),
+                )
+            )
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return result.rowcount  # type: ignore[return-value]
 
 
 class DailyRunRepository(SQLAlchemyRepository[DailyRunModel]):
@@ -343,3 +422,64 @@ class DailyRunResponseRepository(SQLAlchemyRepository[DailyRunResponseModel]):
             instances.append(instance)
         await self._session.flush()
         return instances
+
+    # -- Fanout analytics helpers --
+
+    async def get_observation_counts(
+        self, parent_prompt_id: _uuid.UUID
+    ) -> dict[_uuid.UUID, int]:
+        """Count responses per fanout prompt for a parent.
+
+        Used by the QUERY FANOUTS section to show observation counts.
+
+        Args:
+            parent_prompt_id: The parent prompt UUID.
+
+        Returns:
+            Dict mapping fanout prompt_id to response count.
+        """
+        stmt = (
+            select(
+                DailyRunResponseModel.prompt_id,
+                func.count().label("cnt"),
+            )
+            .where(
+                DailyRunResponseModel.parent_prompt_id == parent_prompt_id
+            )
+            .group_by(DailyRunResponseModel.prompt_id)
+        )
+        result = await self._session.execute(stmt)
+        return {row.prompt_id: row.cnt for row in result}
+
+    async def cleanup_old_response_text(
+        self, retention_days: int = 30
+    ) -> int:
+        """Clear response_text for responses older than retention_days.
+
+        Sets response_text to empty string (column is NOT NULL).
+        Preserves all metric columns for trend analytics.
+
+        Args:
+            retention_days: Days to retain response text (default 30).
+
+        Returns:
+            Number of rows updated.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        from sqlalchemy import update as sa_update
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        stmt = (
+            sa_update(DailyRunResponseModel)
+            .where(
+                and_(
+                    DailyRunResponseModel.created_at < cutoff,
+                    DailyRunResponseModel.response_text != "",
+                )
+            )
+            .values(response_text="")
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return result.rowcount  # type: ignore[return-value]

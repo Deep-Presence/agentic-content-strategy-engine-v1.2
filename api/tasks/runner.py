@@ -1855,24 +1855,24 @@ async def run_daily_tracker_task(
                     mention_detector=MentionDetector(),
                 )
 
-                # Pre-load prompts within the session scope
-                prompts = await orchestrator._fetch_prompts(
+                # Pre-load prompts (parents + fanouts) within session scope
+                all_prompts, fanout_map = await orchestrator._fetch_prompts_with_fanouts(
                     company_slug,
                     getattr(request, "prompt_ids", None),
                 )
 
-            # 5. Execute orchestrator WITHOUT holding a DB connection.
-            #    Pass pre-generated run_id so result.run_id matches the
-            #    daily_runs row created above.
             result = await orchestrator.execute_daily_run(
                 company_id=company_slug,
-                prompt_ids=[p.id for p in prompts] if prompts else None,
+                prompt_ids=[p.id for p in all_prompts] if all_prompts else None,
                 engines=getattr(request, "engines", None),
                 brand=getattr(request, "brand", None),
                 competitors=getattr(request, "competitors", None),
                 concurrency=getattr(request, "concurrency", 6),
                 run_id=daily_run_id,
             )
+
+            # Attach fanout parent map for persistence layer
+            result._fanout_parent_map = fanout_map  # type: ignore[attr-defined]
 
             mention_analyses: list[Any] = getattr(result, "_mention_analyses", [])
 
@@ -1929,6 +1929,110 @@ async def run_daily_tracker_task(
         if daily_run_id and session_factory:
             from core.daily_tracker.persistence import mark_daily_run_failed as _mark_dt_failed
             await _mark_dt_failed(session_factory, daily_run_id)
+        clear_context()
+
+
+# ── Query fanout generation runner ──────────────────────────────────
+
+
+async def run_fanout_generation_task(
+    task_id: str,
+    parent_prompt_id: str,
+    company_slug: str,
+    brand_name: str,
+    brand_category: str,
+    competitors: list[str],
+    task_store: TaskStoreProtocol,
+    event_bus: EventBusProtocol,
+) -> None:
+    """Background task: generate fanout queries for a parent prompt.
+
+    Calls ``QueryFanoutService.generate_fanout()`` to produce query
+    variants via OpenRouter, then persists them as child rows in
+    ``tracked_prompts`` via ``PromptLibraryService.create_fanout_queries()``.
+
+    Args:
+        task_id: Task UUID created by the router.
+        parent_prompt_id: UUID string of the parent prompt.
+        company_slug: Company slug string.
+        brand_name: Brand name for fanout context.
+        brand_category: Brand category string.
+        competitors: List of competitor names.
+        task_store: Task persistence store.
+        event_bus: SSE event bus for real-time progress streaming.
+    """
+    session_factory: Any = None
+    bind_context(task_id=task_id, pipeline_name="fanout_generation", company_slug=company_slug)
+    try:
+        session_factory, _, _ = await _resolve_db_context(
+            company_slug, company_slug,
+        )
+        if session_factory is None:
+            raise RuntimeError("Fanout generation requires DATABASE_URL")
+
+        event_bus.publish(task_id, "fanout_start", {
+            "parent_prompt_id": parent_prompt_id,
+        })
+
+        from core.config.settings import settings
+        from core.daily_tracker.query_fanout import QueryFanoutService
+        from core.daily_tracker.prompt_library import PromptLibraryService
+        from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
+
+        # Fetch parent prompt text first
+        async with session_factory() as session:
+            repo = TrackedPromptRepository(session)
+            parent_orm = await repo.get_by_id(parent_prompt_id)
+            if parent_orm is None:
+                raise ValueError(f"Parent prompt {parent_prompt_id} not found")
+            parent_text = parent_orm.text
+
+        # Generate fanout queries via LLM (single call)
+        fanout_service = QueryFanoutService(
+            model=settings.daily_tracker_fanout_model,
+            temperature=settings.daily_tracker_fanout_temperature,
+        )
+        gen_result = await fanout_service.generate_fanout(
+            parent_text=parent_text,
+            brand_name=brand_name,
+            brand_category=brand_category,
+            competitors=competitors,
+            target_count=settings.daily_tracker_fanout_target_count,
+        )
+
+        # Persist fanout queries as tracked_prompts children
+        async with session_factory() as session:
+            repo = TrackedPromptRepository(session)
+            prompt_service = PromptLibraryService(prompt_repo=repo)
+            created = await prompt_service.create_fanout_queries(
+                parent_prompt_id=parent_prompt_id,
+                company_id=company_slug,
+                queries=gen_result.queries,
+            )
+            await session.commit()
+
+        task_store.update_task(
+            task_id, status=TaskStatus.COMPLETED,
+            result={
+                "parent_prompt_id": parent_prompt_id,
+                "fanout_count": len(created),
+                "model_used": gen_result.model_used,
+            },
+        )
+        event_bus.publish(task_id, "fanout_complete", {
+            "parent_prompt_id": parent_prompt_id,
+            "fanout_count": len(created),
+        })
+
+    except Exception as exc:
+        logger.exception("Fanout generation failed: %s", exc)
+        task_store.update_task(
+            task_id, status=TaskStatus.FAILED, error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        await task_store.flush_terminal(task_id)
+        task_store.remove_task_handle(task_id)
         clear_context()
 
 

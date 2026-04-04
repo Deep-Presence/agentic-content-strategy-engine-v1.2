@@ -77,6 +77,10 @@ class CreatePromptRequest(BaseModel):
     text: str
     category: str | None = None
     tags: list[str] = Field(default_factory=list)
+    generate_fanout: bool = True
+    brand_name: str | None = None
+    brand_category: str | None = None
+    competitors: list[str] | None = None
 
 
 class UpdatePromptRequest(BaseModel):
@@ -155,17 +159,31 @@ class RunListResponse(BaseModel):
 # ── Prompt Library Endpoints ─────────────────────────────────────────
 
 
+class CreatePromptResponse(BaseModel):
+    """Response for prompt creation with optional fanout task."""
+
+    prompt: TrackedPrompt
+    fanout_task_id: str | None = None
+
+
 @router.post("/prompts", status_code=201)
 async def create_prompt(
     body: CreatePromptRequest,
     request: Request,
     _user: UserProfile = Depends(require_role("member", "superuser")),
     prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
-) -> TrackedPrompt:
-    """Create a new tracked prompt for the authenticated company."""
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
+) -> CreatePromptResponse:
+    """Create a new tracked prompt for the authenticated company.
+
+    When ``generate_fanout=True`` (default), launches a background task
+    to generate query fanout variants via LLM.  Returns the parent prompt
+    immediately with a ``fanout_task_id`` for tracking.
+    """
     company_id = _get_company_id(request)
     try:
-        return await prompt_service.create_prompt(
+        prompt = await prompt_service.create_prompt(
             company_id=company_id,
             text=body.text,
             category=body.category,
@@ -173,6 +191,33 @@ async def create_prompt(
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+    fanout_task_id: str | None = None
+
+    if body.generate_fanout and body.brand_name:
+        from api.routers._helpers import create_task_durable
+        from api.tasks.runner import run_fanout_generation_task
+
+        task = await create_task_durable(
+            task_store, "fanout_generation", company_id
+        )
+        fanout_task_id = task.task_id
+
+        handle = asyncio.create_task(
+            run_fanout_generation_task(
+                task_id=task.task_id,
+                parent_prompt_id=prompt.id,
+                company_slug=company_id,
+                brand_name=body.brand_name,
+                brand_category=body.brand_category or "",
+                competitors=body.competitors or [],
+                task_store=task_store,
+                event_bus=event_bus,
+            )
+        )
+        task_store.register_task_handle(task.task_id, handle)
+
+    return CreatePromptResponse(prompt=prompt, fanout_task_id=fanout_task_id)
 
 
 @router.get("/prompts")
@@ -185,10 +230,15 @@ async def list_prompts(
     active: bool | None = Query(None),
     search: str | None = Query(None),
     tags: list[str] | None = Query(None),
+    include_fanouts: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> PromptListResponse:
-    """List tracked prompts with optional filters."""
+    """List tracked prompts with optional filters.
+
+    By default excludes fanout children (``include_fanouts=False``).
+    The main prompt tracking list should only show parent prompts.
+    """
     company_id = _get_company_id(request)
 
     filters = PromptLibraryFilter(
@@ -200,6 +250,11 @@ async def list_prompts(
     )
 
     prompts = await prompt_service.list_prompts(company_id, filters=filters)
+
+    # Filter out fanouts unless explicitly requested
+    if not include_fanouts:
+        prompts = [p for p in prompts if p.parent_prompt_id is None]
+
     return PromptListResponse(prompts=prompts, total=len(prompts))
 
 
@@ -306,6 +361,382 @@ async def bulk_create_prompts(
     company_id = _get_company_id(request)
     prompt_dicts = [p.model_dump(mode="json") for p in body.prompts]
     return await prompt_service.bulk_create(company_id, prompt_dicts)
+
+
+# ── Fanout Query Endpoints ──────────────────────────────────────────
+
+
+class FanoutQueryResponse(BaseModel):
+    """Response for a single fanout query."""
+
+    id: str
+    parent_prompt_id: str
+    axis: str
+    query_text: str
+    reasoning: str = ""
+    pinned: bool = False
+    active: bool = True
+    observation_count: int = 0
+    created_at: datetime | None = None
+
+
+class FanoutListResponse(BaseModel):
+    """Response for listing fanout queries."""
+
+    parent_prompt_id: str
+    parent_text: str
+    fanouts: list[FanoutQueryResponse]
+    total: int
+
+
+class AddFanoutRequest(BaseModel):
+    """Request body for manually adding a fanout query."""
+
+    query_text: str
+    axis: str = "manual"
+    reasoning: str = ""
+
+
+class RegenerateFanoutRequest(BaseModel):
+    """Request body for regenerating fanout queries."""
+
+    brand_name: str | None = None
+    brand_category: str | None = None
+    competitors: list[str] | None = None
+    target_count: int = Field(default=15, ge=6, le=24)
+
+
+class AnswerRecord(BaseModel):
+    """A single response record for answer history."""
+
+    id: str
+    run_id: str
+    engine: str
+    response_text: str
+    brand_mentioned: bool = False
+    brand_mention_count: int = 0
+    competitor_mentions: dict[str, int] = Field(default_factory=dict)
+    citations: list[str] = Field(default_factory=list)
+    citation_rank: int | None = None
+    created_at: datetime | None = None
+
+
+class AnswerHistoryResponse(BaseModel):
+    """Paginated answer history for a parent prompt."""
+
+    prompt_id: str
+    responses: list[AnswerRecord]
+    total: int
+
+
+@router.get("/prompts/{prompt_id}/fanouts")
+async def list_fanouts(
+    prompt_id: str,
+    request: Request,
+    _user: UserProfile = Depends(require_auth),
+    prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+) -> FanoutListResponse:
+    """List fanout queries for a parent prompt with observation counts."""
+    _get_company_id(request)
+
+    parent = await prompt_service.get_prompt(prompt_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+
+    fanouts = await prompt_service.list_fanout_queries(prompt_id)
+
+    # Get observation counts from response data
+    sf = getattr(request.app.state, "db_session_factory", None)
+    obs_counts: dict[str, int] = {}
+    if sf:
+        try:
+            from core.db.repositories.daily_tracker_repo import DailyRunResponseRepository
+
+            async with sf() as session:
+                repo = DailyRunResponseRepository(session)
+                raw_counts = await repo.get_observation_counts(
+                    _uuid.UUID(prompt_id)
+                )
+                obs_counts = {str(k): v for k, v in raw_counts.items()}
+        except Exception:
+            logger.warning("Failed to fetch observation counts", exc_info=True)
+
+    fanout_responses = [
+        FanoutQueryResponse(
+            id=f.id,
+            parent_prompt_id=f.parent_prompt_id or prompt_id,
+            axis=f.fanout_axis or "",
+            query_text=f.text,
+            reasoning=(f.source_metadata or {}).get("reasoning", ""),
+            pinned=f.pinned,
+            active=f.active,
+            observation_count=obs_counts.get(f.id, 0),
+            created_at=f.created_at,
+        )
+        for f in fanouts
+    ]
+
+    return FanoutListResponse(
+        parent_prompt_id=prompt_id,
+        parent_text=parent.text,
+        fanouts=fanout_responses,
+        total=len(fanout_responses),
+    )
+
+
+@router.post("/prompts/{prompt_id}/fanouts", status_code=201)
+async def add_fanout(
+    prompt_id: str,
+    body: AddFanoutRequest,
+    request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+) -> TrackedPrompt:
+    """Manually add a fanout query to a parent prompt."""
+    company_id = _get_company_id(request)
+
+    parent = await prompt_service.get_prompt(prompt_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+
+    from core.models.daily_tracker import FanoutQuery
+
+    created = await prompt_service.create_fanout_queries(
+        parent_prompt_id=prompt_id,
+        company_id=company_id,
+        queries=[
+            FanoutQuery(
+                axis=body.axis,
+                query_text=body.query_text,
+                reasoning=body.reasoning,
+            )
+        ],
+    )
+    if not created:
+        raise HTTPException(
+            status_code=409, detail="Fanout query already exists"
+        )
+    return created[0]
+
+
+@router.post("/prompts/{prompt_id}/fanouts/regenerate", status_code=202)
+async def regenerate_fanouts(
+    prompt_id: str,
+    body: RegenerateFanoutRequest,
+    request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
+    prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+) -> dict[str, str]:
+    """Regenerate fanout queries for a parent prompt (background task).
+
+    Deletes non-pinned fanouts, generates fresh ones via LLM.
+    Pinned fanouts are preserved.
+    """
+    company_id = _get_company_id(request)
+
+    parent = await prompt_service.get_prompt(prompt_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+
+    if not body.brand_name:
+        raise HTTPException(
+            status_code=400, detail="brand_name is required for regeneration"
+        )
+
+    from api.routers._helpers import create_task_durable
+    from api.tasks.runner import run_fanout_generation_task
+
+    task = await create_task_durable(
+        task_store, "fanout_generation", company_id
+    )
+
+    handle = asyncio.create_task(
+        run_fanout_generation_task(
+            task_id=task.task_id,
+            parent_prompt_id=prompt_id,
+            company_slug=company_id,
+            brand_name=body.brand_name,
+            brand_category=body.brand_category or "",
+            competitors=body.competitors or [],
+            task_store=task_store,
+            event_bus=event_bus,
+        )
+    )
+    task_store.register_task_handle(task.task_id, handle)
+
+    return {"task_id": task.task_id, "status": "running"}
+
+
+@router.delete("/prompts/{prompt_id}/fanouts/{fanout_id}", status_code=204)
+async def delete_fanout(
+    prompt_id: str,
+    fanout_id: str,
+    request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+) -> None:
+    """Delete a specific fanout query."""
+    _get_company_id(request)
+    deleted = await prompt_service.delete_prompt(fanout_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Fanout not found")
+
+
+@router.patch("/prompts/{prompt_id}/fanouts/{fanout_id}/pin")
+async def toggle_pin(
+    prompt_id: str,
+    fanout_id: str,
+    request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+) -> TrackedPrompt:
+    """Toggle the pinned status of a fanout query."""
+    _get_company_id(request)
+    fanout = await prompt_service.get_prompt(fanout_id)
+    if fanout is None:
+        raise HTTPException(status_code=404, detail="Fanout not found")
+
+    if fanout.pinned:
+        return await prompt_service.unpin_fanout(fanout_id)
+    return await prompt_service.pin_fanout(fanout_id)
+
+
+@router.patch("/prompts/{prompt_id}/fanouts/{fanout_id}/toggle")
+async def toggle_fanout_active(
+    prompt_id: str,
+    fanout_id: str,
+    body: ToggleActiveRequest,
+    request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    prompt_service: PromptLibraryService = Depends(get_prompt_library_service),
+) -> TrackedPrompt:
+    """Toggle the active status of a fanout query."""
+    _get_company_id(request)
+    try:
+        return await prompt_service.toggle_prompt(fanout_id, body.active)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+# ── Answer History Endpoint ─────────────────────────────────────────
+
+
+@router.get("/prompts/{prompt_id}/answers")
+async def get_answer_history(
+    prompt_id: str,
+    request: Request,
+    _user: UserProfile = Depends(require_auth),
+    engine: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> AnswerHistoryResponse:
+    """Get response history for a parent prompt (NOT fanout responses).
+
+    Returns only the parent prompt's own AI responses with mention
+    analysis data, ordered by date descending.
+    """
+    _get_company_id(request)
+
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        return AnswerHistoryResponse(prompt_id=prompt_id, responses=[], total=0)
+
+    try:
+        from datetime import timedelta
+        from core.db.models.daily_tracker import DailyRunResponseModel
+        from sqlalchemy import and_, func, select
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        prompt_uuid = _uuid.UUID(prompt_id)
+
+        async with sf() as session:
+            # Base filter: responses for this prompt_id that are NOT
+            # fanout responses (parent_prompt_id IS NULL).
+            base_filter = and_(
+                DailyRunResponseModel.prompt_id == prompt_uuid,
+                DailyRunResponseModel.parent_prompt_id.is_(None),
+                DailyRunResponseModel.created_at >= cutoff,
+                DailyRunResponseModel.response_text != "",
+            )
+            if engine:
+                base_filter = and_(
+                    base_filter,
+                    DailyRunResponseModel.engine == engine,
+                )
+
+            # Count total
+            count_q = (
+                select(func.count())
+                .select_from(DailyRunResponseModel)
+                .where(base_filter)
+            )
+            total = (await session.execute(count_q)).scalar() or 0
+
+            # Fetch page
+            q = (
+                select(DailyRunResponseModel)
+                .where(base_filter)
+                .order_by(DailyRunResponseModel.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            rows = (await session.execute(q)).scalars().all()
+
+            responses = [
+                AnswerRecord(
+                    id=str(row.id),
+                    run_id=str(row.run_id),
+                    engine=row.engine,
+                    response_text=row.response_text,
+                    brand_mentioned=row.brand_mentioned,
+                    brand_mention_count=row.brand_mention_count,
+                    competitor_mentions=row.competitor_mentions or {},
+                    citations=row.citations or [],
+                    citation_rank=row.citation_rank,
+                    created_at=row.created_at,
+                )
+                for row in rows
+            ]
+
+            return AnswerHistoryResponse(
+                prompt_id=prompt_id,
+                responses=responses,
+                total=total,
+            )
+    except Exception:
+        logger.warning("get_answer_history failed for %s", prompt_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch answer history")
+
+
+# ── Cleanup Endpoint ────────────────────────────────────────────────
+
+
+@router.post("/admin/cleanup")
+async def trigger_cleanup(
+    request: Request,
+    _user: UserProfile = Depends(require_role("superuser")),
+    retention_days: int = Query(30, ge=7, le=365),
+) -> dict[str, Any]:
+    """Clear old response text for data retention (superuser-only).
+
+    Sets ``response_text = ''`` for responses older than
+    ``retention_days``.  Preserves all metric columns for trend analytics.
+    """
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    from core.daily_tracker.cleanup import cleanup_old_response_text
+
+    rows_updated = await cleanup_old_response_text(sf, retention_days)
+    return {
+        "status": "completed",
+        "rows_updated": rows_updated,
+        "retention_days": retention_days,
+    }
 
 
 # ── Run Management Endpoints ─────────────────────────────────────────

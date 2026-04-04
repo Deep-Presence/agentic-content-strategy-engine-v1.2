@@ -212,6 +212,50 @@ class DailyTrackerOrchestrator:
         # This method exists for protocol compliance only.
         return {"run_id": run_id, "status": "unknown", "message": "Use DB lookup"}
 
+    async def _fetch_prompts_with_fanouts(
+        self,
+        company_id: str,
+        prompt_ids: list[str] | None,
+    ) -> tuple[list[TrackedPrompt], dict[str, str]]:
+        """Fetch parent prompts and their active fanout children.
+
+        For "all active" runs (prompt_ids=None), the service already
+        returns all active prompts (parents + fanouts) in one query.
+        We build the fanout→parent map from the returned data.
+
+        For specific prompt_ids runs, we explicitly expand each parent
+        by fetching its fanout children.
+
+        Args:
+            company_id: Company identifier.
+            prompt_ids: Optional specific parent prompt IDs.
+
+        Returns:
+            Tuple of (all_prompts_to_run, fanout_to_parent_map).
+            fanout_to_parent_map maps fanout prompt ID → parent prompt ID.
+        """
+        parents = await self._fetch_prompts(company_id, prompt_ids)
+        fanout_parent_map: dict[str, str] = {}
+
+        if prompt_ids:
+            # Specific prompts: explicitly expand each parent's fanouts
+            all_prompts = list(parents)
+            for parent in parents:
+                if parent.parent_prompt_id is None:
+                    fanouts = await self._prompts.list_fanout_queries(parent.id)
+                    for f in fanouts:
+                        fanout_parent_map[f.id] = parent.id
+                    all_prompts.extend(fanouts)
+        else:
+            # All active: service returns parents + fanouts in one query.
+            # Build the map from the returned data.
+            all_prompts = parents
+            for p in all_prompts:
+                if p.parent_prompt_id is not None:
+                    fanout_parent_map[p.id] = p.parent_prompt_id
+
+        return all_prompts, fanout_parent_map
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------

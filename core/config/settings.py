@@ -212,6 +212,12 @@ class Settings(BaseSettings):
     # Unified S2 model (hierarchy + scoring + persona affinity)
     topic_discovery_unified_s2_model: str = "anthropic/claude-sonnet-4-6"
 
+    # --- Daily Tracker — Fanout Generation ---
+    daily_tracker_fanout_model: str = "anthropic/claude-sonnet-4-6"
+    daily_tracker_fanout_target_count: int = 15
+    daily_tracker_fanout_temperature: float = 0.3
+    daily_tracker_response_retention_days: int = 30
+
     # --- CPS Model (Citation Signal Predictor) ---
     cps_enabled: bool = True
     cps_target_weight: float = 0.5
