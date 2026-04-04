@@ -267,6 +267,8 @@ async def get_enriched_prompts(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     days: int = Query(7, ge=1, le=90),
+    start_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Overrides days when paired with end_date."),
+    end_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Overrides days when paired with start_date."),
     category: str | None = Query(None),
     search: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
@@ -281,6 +283,7 @@ async def get_enriched_prompts(
     Query params:
         days: Period length (default 7).  Delta compares current period vs
               the previous equal-length period.
+        start_date/end_date: Explicit date range (overrides days).
         category: Filter by prompt category.
         search: Text search on prompt text.
         limit/offset: Pagination.
@@ -292,33 +295,51 @@ async def get_enriched_prompts(
 
     company_id = _get_company_id(request)
 
+    # Compute time windows — explicit dates take precedence over days
+    today = date.today()
+    if start_date and end_date:
+        try:
+            sd = date.fromisoformat(start_date)
+            ed = date.fromisoformat(end_date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="start_date and end_date must be YYYY-MM-DD")
+        if sd >= ed:
+            raise HTTPException(status_code=422, detail="start_date must be before end_date")
+        span = (ed - sd).days + 1
+        if span > 90:
+            raise HTTPException(status_code=422, detail="Date range cannot exceed 90 days")
+        days = span
+        current_start_dt = datetime.combine(sd, datetime.min.time(), tzinfo=timezone.utc)
+        current_end_dt = datetime.combine(ed + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+        period_start_str = str(sd)
+        period_end_str = str(ed)
+    else:
+        current_end_dt = datetime.combine(
+            today + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc,
+        )
+        current_start_dt = datetime.combine(
+            today - timedelta(days=days - 1), datetime.min.time(), tzinfo=timezone.utc,
+        )
+        period_start_str = str(current_start_dt.date())
+        period_end_str = str(today)
+
+    prev_end_dt = current_start_dt
+    prev_start_dt = prev_end_dt - timedelta(days=days)
+
     # Redis cache check
-    cache_key = f"cache:prompt_enriched:{company_id}:{days}"
+    cache_key = f"cache:prompt_enriched:{company_id}:{period_start_str}:{period_end_str}"
     cached = await asyncio.to_thread(cache_get, cache_key)
     if cached is not None and not category and not search:
         resp = EnrichedPromptListResponse.model_validate(cached)
         sliced = resp.prompts[offset : offset + limit]
         return resp.model_copy(update={"prompts": sliced}).model_dump(mode="json")
 
-    # Compute time windows
-    today = date.today()
-    current_end_dt = datetime.combine(
-        today + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc,
-    )
-    current_start_dt = datetime.combine(
-        today - timedelta(days=days - 1), datetime.min.time(), tzinfo=timezone.utc,
-    )
-    prev_end_dt = current_start_dt
-    prev_start_dt = datetime.combine(
-        today - timedelta(days=2 * days - 1), datetime.min.time(), tzinfo=timezone.utc,
-    )
-
     sf = getattr(request.app.state, "db_session_factory", None)
     if sf is None:
         return EnrichedPromptListResponse(
             period_days=days,
-            period_start=str(current_start_dt.date()),
-            period_end=str(today),
+            period_start=period_start_str,
+            period_end=period_end_str,
         ).model_dump(mode="json")
 
     try:
@@ -384,8 +405,8 @@ async def get_enriched_prompts(
                 prompts=page,
                 total=total,
                 period_days=days,
-                period_start=str(current_start_dt.date()),
-                period_end=str(today),
+                period_start=period_start_str,
+                period_end=period_end_str,
             )
 
             # Cache unfiltered result
@@ -778,6 +799,8 @@ async def get_answer_history(
     _user: UserProfile = Depends(require_auth),
     engine: str | None = Query(None),
     days: int = Query(30, ge=1, le=365),
+    start_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Overrides days when paired with end_date."),
+    end_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Overrides days when paired with start_date."),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> AnswerHistoryResponse:
@@ -793,22 +816,35 @@ async def get_answer_history(
         return AnswerHistoryResponse(prompt_id=prompt_id, responses=[], total=0)
 
     try:
-        from datetime import timedelta
+        from datetime import date, timedelta
         from core.db.models.daily_tracker import DailyRunResponseModel
         from sqlalchemy import and_, func, select
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        if start_date and end_date:
+            try:
+                sd = date.fromisoformat(start_date)
+                ed = date.fromisoformat(end_date)
+            except ValueError:
+                raise HTTPException(status_code=422, detail="start_date and end_date must be YYYY-MM-DD")
+            cutoff = datetime.combine(sd, datetime.min.time(), tzinfo=timezone.utc)
+            upper = datetime.combine(ed + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+        else:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            upper = None
         prompt_uuid = _uuid.UUID(prompt_id)
 
         async with sf() as session:
             # Base filter: responses for this prompt_id that are NOT
             # fanout responses (parent_prompt_id IS NULL).
-            base_filter = and_(
+            conditions = [
                 DailyRunResponseModel.prompt_id == prompt_uuid,
                 DailyRunResponseModel.parent_prompt_id.is_(None),
                 DailyRunResponseModel.created_at >= cutoff,
                 DailyRunResponseModel.response_text != "",
-            )
+            ]
+            if upper is not None:
+                conditions.append(DailyRunResponseModel.created_at < upper)
+            base_filter = and_(*conditions)
             if engine:
                 base_filter = and_(
                     base_filter,
@@ -868,6 +904,8 @@ async def get_prompt_analytics(
     request: Request,
     _user: UserProfile = Depends(require_auth),
     days: int = Query(30, ge=1, le=365),
+    start_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Overrides days when paired with end_date."),
+    end_date: str | None = Query(None, description="ISO date (YYYY-MM-DD). Overrides days when paired with start_date."),
 ) -> dict[str, Any]:
     """Per-prompt scoped analytics for the drawer.
 
@@ -892,18 +930,38 @@ async def get_prompt_analytics(
         ).model_dump(mode="json")
 
     try:
-        from datetime import timedelta
+        from datetime import date, timedelta
 
         from core.db.repositories.daily_tracker_repo import DailyRunResponseRepository
+
+        # Resolve time window
+        if start_date and end_date:
+            try:
+                sd = date.fromisoformat(start_date)
+                ed = date.fromisoformat(end_date)
+            except ValueError:
+                raise HTTPException(status_code=422, detail="start_date and end_date must be YYYY-MM-DD")
+            span = (ed - sd).days + 1
+            days = span
+            current_start = datetime.combine(sd, datetime.min.time(), tzinfo=timezone.utc)
+            current_end = datetime.combine(ed + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+            prev_end = current_start
+            prev_start = prev_end - timedelta(days=span)
+        else:
+            current_end = datetime.now(timezone.utc)
+            current_start = current_end - timedelta(days=days)
+            prev_end = current_start
+            prev_start = prev_end - timedelta(days=days)
 
         prompt_uuid = _uuid.UUID(prompt_id)
 
         async with sf() as session:
             repo = DailyRunResponseRepository(session)
 
-            # Single query: fetch 2x window, split into current + prev
+            # Fetch responses covering current + previous period
+            total_span = (current_end - prev_start).days
             all_rows = await repo.get_responses_for_prompt(
-                prompt_id=prompt_uuid, days=2 * days,
+                prompt_id=prompt_uuid, days=total_span,
             )
 
             if not all_rows:
@@ -911,9 +969,8 @@ async def get_prompt_analytics(
                     prompt_id=prompt_id, period_days=days,
                 ).model_dump(mode="json")
 
-            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-            rows = [r for r in all_rows if r.created_at and r.created_at >= cutoff]
-            prev_only = [r for r in all_rows if r.created_at and r.created_at < cutoff]
+            rows = [r for r in all_rows if r.created_at and r.created_at >= current_start]
+            prev_only = [r for r in all_rows if r.created_at and r.created_at < current_start and r.created_at >= prev_start]
 
             if not rows:
                 return PromptAnalyticsResponse(

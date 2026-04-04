@@ -4,51 +4,38 @@ import { cn } from '@/lib/utils';
 import { useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import type { Platform } from '@/types';
-import type { AnswerHistoryRow } from './prompt-data';
-import { PLATFORM_INFO, getAnswerHistory } from './prompt-data';
+import type { AnswerHistoryRow } from '../_lib/types';
+import { PLATFORM_MAP } from '../_lib/adapters';
+import { BrandLogo } from '@/components/ui';
 
 interface AnswerDetailViewProps {
   promptText: string;
   promptId: string;
   answer: AnswerHistoryRow;
+  answerHistory: AnswerHistoryRow[];
+  brandName: string;
   onBack: () => void;
 }
 
-function Favicon({ domain, size = 16 }: { domain: string; size?: number }) {
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={`https://www.google.com/s2/favicons?domain=${domain}&sz=${size * 2}`}
-      alt={domain}
-      width={size}
-      height={size}
-      style={{ borderRadius: 3, flexShrink: 0 }}
-      onError={(e) => {
-        const target = e.target as HTMLImageElement;
-        if (!target.dataset.fallback) {
-          target.dataset.fallback = '1';
-          target.src = `https://logo.clearbit.com/${domain}`;
-        }
-      }}
-    />
-  );
-}
-
-export function AnswerDetailView({ promptText, promptId, answer, onBack }: AnswerDetailViewProps) {
+export function AnswerDetailView({ promptText, promptId, answer, answerHistory, brandName, onBack }: AnswerDetailViewProps) {
   const [activePlatform, setActivePlatform] = useState<Platform>(answer.platform);
 
-  // Get all answers for this date to allow platform switching
-  const allAnswers = getAnswerHistory(promptId);
+  // Use the answerHistory prop directly instead of fetching from mock data
+  const allAnswers = answerHistory;
   const sameDateAnswers = allAnswers.filter((a) => a.date === answer.date);
   const currentAnswer = sameDateAnswers.find((a) => a.platform === activePlatform) || answer;
 
   const platforms: Platform[] = ['chatgpt', 'perplexity', 'google_ai_overview', 'gemini'];
 
-  // Highlight "Lovable" in answer text with spec-exact teal background
-  function renderAnswer(text: string): React.ReactNode {
-    const parts = text.split(/(\*\*Lovable\*\*|Lovable)/gi);
+  // Derive the brand's own citation domain from mentionedBrands (checked === true)
+  const brandCitationDomain = currentAnswer.mentionedBrands.find((b) => b.checked)?.domain ?? '';
+
+  // Highlight brand name in answer text with spec-exact teal background
+  function renderAnswer(text: string, brand: string): React.ReactNode {
+    const escaped = brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = text.split(new RegExp(`(\\*\\*${escaped}\\*\\*|${escaped})`, 'gi'));
     return parts.map((part, i) => {
-      if (part === '**Lovable**' || part === 'Lovable') {
+      if (part.replace(/\*\*/g, '').toLowerCase() === brand.toLowerCase()) {
         return (
           <span
             key={i}
@@ -59,7 +46,7 @@ export function AnswerDetailView({ promptText, promptId, answer, onBack }: Answe
               borderRadius: 2,
             }}
           >
-            Lovable
+            {brand}
           </span>
         );
       }
@@ -102,7 +89,7 @@ export function AnswerDetailView({ promptText, promptId, answer, onBack }: Answe
         {/* Platform tabs: real favicon + name, selected = accent bottom border */}
         <div style={{ display: 'flex', gap: 0, marginTop: 12, borderBottom: '1px solid var(--border)' }}>
           {platforms.map((p) => {
-            const info = PLATFORM_INFO[p];
+            const info = PLATFORM_MAP[p];
             const isActive = activePlatform === p;
             return (
               <button
@@ -124,7 +111,7 @@ export function AnswerDetailView({ promptText, promptId, answer, onBack }: Answe
                   transition: 'color 0.12s',
                 }}
               >
-                <Favicon domain={info.domain} size={14} />
+                <BrandLogo domain={info.domain} size={14} />
                 {info.label}
               </button>
             );
@@ -152,7 +139,7 @@ export function AnswerDetailView({ promptText, promptId, answer, onBack }: Answe
               background: 'var(--success-subtle)', color: 'var(--success)',
               padding: '4px 10px', borderRadius: 'var(--radius-full)',
             }}>
-              ✅ Lovable is mentioned
+              ✅ {brandName} is mentioned
             </span>
           ) : (
             <span style={{
@@ -160,7 +147,7 @@ export function AnswerDetailView({ promptText, promptId, answer, onBack }: Answe
               fontSize: 13,
               color: 'var(--text-secondary)',
             }}>
-              ✗ Lovable is not mentioned
+              ✗ {brandName} is not mentioned
             </span>
           )}
           {currentAnswer.cited ? (
@@ -170,7 +157,7 @@ export function AnswerDetailView({ promptText, promptId, answer, onBack }: Answe
               background: 'var(--success-subtle)', color: 'var(--success)',
               padding: '4px 10px', borderRadius: 'var(--radius-full)',
             }}>
-              ✅ Lovable is cited
+              ✅ {brandName} is cited
             </span>
           ) : (
             <span style={{
@@ -178,7 +165,7 @@ export function AnswerDetailView({ promptText, promptId, answer, onBack }: Answe
               fontSize: 13,
               color: 'var(--text-secondary)',
             }}>
-              ✗ Lovable is not cited
+              ✗ {brandName} is not cited
             </span>
           )}
         </div>
@@ -205,7 +192,7 @@ export function AnswerDetailView({ promptText, promptId, answer, onBack }: Answe
                     color: 'var(--text-primary)',
                   }}
                 >
-                  <Favicon domain={brand.domain} size={12} />
+                  <BrandLogo domain={brand.domain} size={12} />
                   {brand.name}
                   {brand.checked && <span style={{ color: 'var(--success)', fontSize: 12, marginLeft: 2 }}>✓</span>}
                 </span>
@@ -224,21 +211,21 @@ export function AnswerDetailView({ promptText, promptId, answer, onBack }: Answe
               {currentAnswer.citations.map((domain, i) => (
                 <span
                   key={`${domain}-${i}`}
-                  className={cn(domain === 'lovable.dev' && 'font-medium')}
+                  className={cn(domain === brandCitationDomain && 'font-medium')}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 5,
                     height: 28,
                     padding: '0 8px',
-                    border: `1px solid ${domain === 'lovable.dev' ? 'var(--accent)' : 'var(--border)'}`,
+                    border: `1px solid ${domain === brandCitationDomain ? 'var(--accent)' : 'var(--border)'}`,
                     borderRadius: 'var(--radius-sm)',
                     fontSize: 11,
                     color: 'var(--text-primary)',
-                    background: domain === 'lovable.dev' ? 'var(--accent-subtle)' : 'transparent',
+                    background: domain === brandCitationDomain ? 'var(--accent-subtle)' : 'transparent',
                   }}
                 >
-                  <Favicon domain={domain} size={12} />
+                  <BrandLogo domain={domain} size={12} />
                   {domain}
                 </span>
               ))}
@@ -256,9 +243,15 @@ export function AnswerDetailView({ promptText, promptId, answer, onBack }: Answe
             borderRadius: 'var(--radius-md)',
             padding: 16,
           }}>
-            <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)', whiteSpace: 'pre-line' }}>
-              {renderAnswer(currentAnswer.fullAnswer)}
-            </div>
+            {currentAnswer.fullAnswer ? (
+              <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)', whiteSpace: 'pre-line' }}>
+                {renderAnswer(currentAnswer.fullAnswer, brandName)}
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                Response text no longer available (older than 30 days)
+              </div>
+            )}
           </div>
         </div>
       </div>

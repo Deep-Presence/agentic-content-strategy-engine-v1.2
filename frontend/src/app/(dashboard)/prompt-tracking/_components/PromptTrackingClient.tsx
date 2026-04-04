@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Search,
   ArrowUpDown,
@@ -10,10 +10,12 @@ import {
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
-import { Sparkline } from '@/components/ui';
-import { PROMPTS, TOPICS } from './prompt-data';
-import type { PromptRow } from './prompt-data';
-import { SlideDrawer } from './SlideDrawer';
+import { Sparkline, SlideDrawer, DateRangePicker } from '@/components/ui';
+import type { DateRange } from '@/components/ui/DateRangePicker';
+import { subDays, format } from 'date-fns';
+import { usePromptTrackingData } from '../_hooks/usePromptTrackingData';
+import type { PromptRow, Topic } from '../_lib/types';
+import { PromptTableSkeleton } from './PromptTrackingSkeleton';
 import { PromptDetailDrawer } from './PromptDetailDrawer';
 
 // === Helpers ===
@@ -65,25 +67,51 @@ export function PromptTrackingClient() {
   const [topicFilter, setTopicFilter] = useState('all');
   const [selectedPrompt, setSelectedPrompt] = useState<PromptRow | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
-  const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set(TOPICS.map((t) => t.name)));
+  const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set());
+
+  const [dateRange, setDateRange] = useState<DateRange | undefined>({
+    from: subDays(new Date(), 6),
+    to: new Date(),
+  });
+
+  // Debounced search: 300ms delay
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const dateParams = useMemo(() => {
+    if (dateRange?.from && dateRange?.to) {
+      return {
+        start_date: format(dateRange.from, 'yyyy-MM-dd'),
+        end_date: format(dateRange.to, 'yyyy-MM-dd'),
+      };
+    }
+    return { days: 7 };
+  }, [dateRange]);
+
+  const { prompts, topics, total, periodStart, periodEnd, isLoading, error, refetch } = usePromptTrackingData(
+    dateParams,
+    topicFilter === 'all' ? undefined : topicFilter,
+    debouncedSearch || undefined,
+  );
+
+  // Auto-expand all topics when data loads
+  useEffect(() => {
+    if (topics.length > 0) {
+      setExpandedTopics(new Set(topics.map((t) => t.name)));
+    }
+  }, [topics]);
 
   const showToast = () => {
     setToastVisible(true);
     setTimeout(() => setToastVisible(false), 2000);
   };
 
-  const uniqueTopics = useMemo(() => Array.from(new Set(PROMPTS.map((p) => p.topic))), []);
-
-  // Filter and sort
-  const filteredPrompts = useMemo(() => {
-    let list = [...PROMPTS];
-    if (search) {
-      const q = search.toLowerCase();
-      list = list.filter((p) => p.text.toLowerCase().includes(q));
-    }
-    if (topicFilter !== 'all') {
-      list = list.filter((p) => p.topic === topicFilter);
-    }
+  // Client-side sorting only (search and topic filtering are server-side)
+  const sortedPrompts = useMemo(() => {
+    const list = [...prompts];
     list.sort((a, b) => {
       const aVal = a[sortKey];
       const bVal = b[sortKey];
@@ -93,7 +121,7 @@ export function PromptTrackingClient() {
       return sortDir === 'asc' ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
     });
     return list;
-  }, [search, topicFilter, sortKey, sortDir]);
+  }, [prompts, sortKey, sortDir]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -152,9 +180,7 @@ export function PromptTrackingClient() {
         borderBottom: '1px solid var(--border)',
       }}>
         {/* Date range */}
-        <span style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-          📅 Mar 20, 2026 – Mar 26, 2026
-        </span>
+        <DateRangePicker value={dateRange} onChange={setDateRange} />
 
         {/* Divider */}
         <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
@@ -176,7 +202,7 @@ export function PromptTrackingClient() {
           }}
         >
           <option value="all">All Topics</option>
-          {uniqueTopics.map((t) => <option key={t} value={t}>{t}</option>)}
+          {topics.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
         </select>
 
         {/* Clear */}
@@ -287,58 +313,84 @@ export function PromptTrackingClient() {
         </div>
       </div>
 
+      {/* Loading state */}
+      {isLoading && prompts.length === 0 && <PromptTableSkeleton />}
+
+      {/* Error state */}
+      {error && prompts.length === 0 && (
+        <div style={{ padding: 40, textAlign: 'center' }}>
+          <p style={{ fontSize: 14, color: 'var(--error)', marginBottom: 12 }}>{error}</p>
+          <button onClick={refetch} style={{ fontSize: 13, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 'var(--radius-sm)', padding: '6px 16px', cursor: 'pointer' }}>
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!isLoading && !error && prompts.length === 0 && (
+        <div style={{ padding: 60, textAlign: 'center' }}>
+          <p style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>No prompts tracked yet</p>
+          <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>Add your first prompt to start monitoring AI visibility.</p>
+        </div>
+      )}
+
       {/* Table */}
-      <div style={{ border: '1px solid var(--border)', borderTop: 'none' }}>
-        {view === 'prompt' ? (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th onClick={() => handleSort('text')} className="cursor-pointer" style={{ ...thStyle, width: '35%' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Prompt <SortIcon column="text" /></span>
-                </th>
-                <th onClick={() => handleSort('topic')} className="cursor-pointer" style={{ ...thStyle, width: '15%' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Topic <SortIcon column="topic" /></span>
-                </th>
-                <th style={{ ...thStyle, width: '10%' }}>Tags</th>
-                <th onClick={() => handleSort('queryFanouts')} className="cursor-pointer" style={{ ...thStyle, width: '8%' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Fanouts <SortIcon column="queryFanouts" /></span>
-                </th>
-                <th style={{ ...thStyle, width: '10%' }}>Volume</th>
-                <th onClick={() => handleSort('mentionRate')} className="cursor-pointer" style={{ ...thStyle, width: '11%' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Mention Rate <SortIcon column="mentionRate" /></span>
-                </th>
-                <th onClick={() => handleSort('citationRate')} className="cursor-pointer" style={{ ...thStyle, width: '11%' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Citation Rate <SortIcon column="citationRate" /></span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredPrompts.map((p) => (
-                <PromptTableRow key={p.id} prompt={p} onClick={() => setSelectedPrompt(p)} />
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <TopicGroupedView
-            prompts={filteredPrompts}
-            handleSort={handleSort}
-            SortIcon={SortIcon}
-            thStyle={thStyle}
-            expandedTopics={expandedTopics}
-            toggleTopicExpand={toggleTopicExpand}
-            onRowClick={setSelectedPrompt}
-          />
-        )}
-      </div>
+      {prompts.length > 0 && (
+        <div style={{ border: '1px solid var(--border)', borderTop: 'none' }}>
+          {view === 'prompt' ? (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th onClick={() => handleSort('text')} className="cursor-pointer" style={{ ...thStyle, width: '35%' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Prompt <SortIcon column="text" /></span>
+                  </th>
+                  <th onClick={() => handleSort('topic')} className="cursor-pointer" style={{ ...thStyle, width: '15%' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Topic <SortIcon column="topic" /></span>
+                  </th>
+                  <th style={{ ...thStyle, width: '10%' }}>Tags</th>
+                  <th onClick={() => handleSort('queryFanouts')} className="cursor-pointer" style={{ ...thStyle, width: '8%' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Fanouts <SortIcon column="queryFanouts" /></span>
+                  </th>
+                  <th style={{ ...thStyle, width: '10%' }}>Volume</th>
+                  <th onClick={() => handleSort('mentionRate')} className="cursor-pointer" style={{ ...thStyle, width: '11%' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Mention Rate <SortIcon column="mentionRate" /></span>
+                  </th>
+                  <th onClick={() => handleSort('citationRate')} className="cursor-pointer" style={{ ...thStyle, width: '11%' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>Citation Rate <SortIcon column="citationRate" /></span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedPrompts.map((p) => (
+                  <PromptTableRow key={p.id} prompt={p} onClick={() => setSelectedPrompt(p)} />
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <TopicGroupedView
+              prompts={sortedPrompts}
+              topics={topics}
+              handleSort={handleSort}
+              SortIcon={SortIcon}
+              thStyle={thStyle}
+              expandedTopics={expandedTopics}
+              toggleTopicExpand={toggleTopicExpand}
+              onRowClick={setSelectedPrompt}
+            />
+          )}
+        </div>
+      )}
 
       {/* Footer: 11px */}
-      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 8 }}>
-        {filteredPrompts.length} of {PROMPTS.length} prompts
-      </div>
+      {prompts.length > 0 && (
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 8 }}>
+          {sortedPrompts.length} of {total} prompts
+        </div>
+      )}
 
       {/* Drawer */}
       <SlideDrawer open={!!selectedPrompt} onClose={() => setSelectedPrompt(null)}>
-        {selectedPrompt && <PromptDetailDrawer prompt={selectedPrompt} />}
+        {selectedPrompt && <PromptDetailDrawer prompt={selectedPrompt} dateParams={dateParams} />}
       </SlideDrawer>
 
       <ComingSoonToast visible={toastVisible} />
@@ -448,6 +500,7 @@ function PromptTableRow({ prompt: p, onClick }: { prompt: PromptRow; onClick: ()
 
 function TopicGroupedView({
   prompts,
+  topics,
   handleSort,
   SortIcon,
   thStyle,
@@ -456,6 +509,7 @@ function TopicGroupedView({
   onRowClick,
 }: {
   prompts: PromptRow[];
+  topics: Topic[];
   handleSort: (key: SortKey) => void;
   SortIcon: React.ComponentType<{ column: SortKey }>;
   thStyle: React.CSSProperties;
@@ -500,7 +554,7 @@ function TopicGroupedView({
       </table>
 
       {/* Topic groups with colored left border */}
-      {TOPICS.filter((t) => topicGroups[t.name]).map((topic) => {
+      {topics.filter((t) => topicGroups[t.name]).map((topic) => {
         const groupPrompts = topicGroups[topic.name];
         const isExpanded = expandedTopics.has(topic.name);
 

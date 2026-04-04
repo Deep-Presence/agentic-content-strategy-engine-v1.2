@@ -1,38 +1,18 @@
 'use client';
 
 import { ChevronDown, ChevronRight, User } from 'lucide-react';
-import { useState, useMemo } from 'react';
-import type { PromptRow, AnswerHistoryRow } from './prompt-data';
-import {
-  getCompetitorMentions,
-  getPlatformMentionRates,
-  getQueryFanouts,
-  getAnswerHistory,
-} from './prompt-data';
+import { useState, useMemo, useEffect } from 'react';
+import { useAuth } from '@/hooks/useAuth';
+import { BrandLogo } from '@/components/ui';
+import type { PromptRow, AnswerHistoryRow } from '../_lib/types';
+import { usePromptDetailData } from '../_hooks/usePromptDetailData';
+import { PromptDrawerSkeleton } from './PromptTrackingSkeleton';
 import { AnswerDetailView } from './AnswerDetailView';
 
 interface PromptDetailDrawerProps {
   prompt: PromptRow;
-}
-
-function Favicon({ domain, size = 16 }: { domain: string; size?: number }) {
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={`https://www.google.com/s2/favicons?domain=${domain}&sz=${size * 2}`}
-      alt={domain}
-      width={size}
-      height={size}
-      style={{ borderRadius: 3, flexShrink: 0 }}
-      onError={(e) => {
-        const target = e.target as HTMLImageElement;
-        if (!target.dataset.fallback) {
-          target.dataset.fallback = '1';
-          target.src = `https://logo.clearbit.com/${domain}`;
-        }
-      }}
-    />
-  );
+  /** Date parameters forwarded from the parent filter bar. */
+  dateParams?: { start_date?: string; end_date?: string; days?: number };
 }
 
 function DeltaText({ value }: { value: number }) {
@@ -45,35 +25,44 @@ function DeltaText({ value }: { value: number }) {
   );
 }
 
-export function PromptDetailDrawer({ prompt }: PromptDetailDrawerProps) {
+export function PromptDetailDrawer({ prompt, dateParams }: PromptDetailDrawerProps) {
+  const { companyName } = useAuth();
+  const brandName = companyName || 'Your Brand';
   const [selectedAnswer, setSelectedAnswer] = useState<AnswerHistoryRow | null>(null);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
 
-  const competitors = useMemo(() => getCompetitorMentions(prompt.id), [prompt.id]);
-  const platformRates = useMemo(() => getPlatformMentionRates(prompt.id), [prompt.id]);
-  const fanouts = useMemo(() => getQueryFanouts(prompt.id), [prompt.id]);
-  const answerHistory = useMemo(() => getAnswerHistory(prompt.id), [prompt.id]);
+  const {
+    competitors,
+    platformRates,
+    fanouts,
+    answerHistory,
+    analyticsLoading,
+    fanoutsLoading,
+    answersLoading,
+  } = usePromptDetailData(prompt.id, dateParams ?? { days: 30 });
 
   // Group answers by date
   const answersByDate = useMemo(() => {
     const groups: Record<string, AnswerHistoryRow[]> = {};
     for (const a of answerHistory) {
-      if (!groups[a.date]) groups[a.date] = [];
-      groups[a.date].push(a);
+      // Group by date portion only (before the " · " time separator)
+      const dateKey = a.date.split(' · ')[0] || a.date;
+      if (!groups[dateKey]) groups[dateKey] = [];
+      groups[dateKey].push(a);
     }
     return groups;
   }, [answerHistory]);
 
   const dateKeys = Object.keys(answersByDate);
 
-  // Auto-expand first two dates on mount
-  useState(() => {
+  // Auto-expand first two dates when answer data loads
+  useEffect(() => {
     if (dateKeys.length >= 2) {
       setExpandedDates(new Set([dateKeys[0], dateKeys[1]]));
     } else if (dateKeys.length === 1) {
       setExpandedDates(new Set([dateKeys[0]]));
     }
-  });
+  }, [answerHistory.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleDate = (date: string) => {
     setExpandedDates((prev) => {
@@ -91,10 +80,15 @@ export function PromptDetailDrawer({ prompt }: PromptDetailDrawerProps) {
         promptText={prompt.text}
         promptId={prompt.id}
         answer={selectedAnswer}
+        answerHistory={answerHistory}
+        brandName={brandName}
         onBack={() => setSelectedAnswer(null)}
       />
     );
   }
+
+  // Show skeleton when all sections are still loading
+  const allLoading = analyticsLoading && fanoutsLoading && answersLoading;
 
   const youEntry = competitors.find((c) => c.isYou);
   const youRank = youEntry?.rank ?? 0;
@@ -143,6 +137,9 @@ export function PromptDetailDrawer({ prompt }: PromptDetailDrawerProps) {
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
+        {allLoading ? (
+          <div style={{ padding: '12px 16px' }}><PromptDrawerSkeleton /></div>
+        ) : (<>
         {/* Section A: Mention Rate by Competitor — two columns */}
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: 10 }}>
@@ -182,7 +179,7 @@ export function PromptDetailDrawer({ prompt }: PromptDetailDrawerProps) {
                       <td style={{ padding: '5px 0' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', width: 14, textAlign: 'right' }}>{c.rank}.</span>
-                          <Favicon domain={c.domain} size={16} />
+                          <BrandLogo domain={c.domain} size={16} />
                           <span style={{ fontSize: 12, fontWeight: c.isYou ? 600 : 400, color: c.isYou ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
                             {c.brand}
                           </span>
@@ -219,7 +216,7 @@ export function PromptDetailDrawer({ prompt }: PromptDetailDrawerProps) {
                   <div key={p.platform}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <Favicon domain={p.domain} size={16} />
+                        <BrandLogo domain={p.domain} size={16} />
                         <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{p.label}</span>
                       </div>
                       <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontWeight: 500 }}>
@@ -356,7 +353,7 @@ export function PromptDetailDrawer({ prompt }: PromptDetailDrawerProps) {
                       {a.persona}
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text-secondary)' }}>
-                      <Favicon domain={a.platformDomain} size={14} />
+                      <BrandLogo domain={a.platformDomain} size={14} />
                       {a.platformLabel}
                     </span>
                     <span style={{
@@ -384,7 +381,7 @@ export function PromptDetailDrawer({ prompt }: PromptDetailDrawerProps) {
                     <div style={{ display: 'flex', alignItems: 'center' }}>
                       {a.competitorDomains.slice(0, 3).map((d, i) => (
                         <span key={d} style={{ marginLeft: i > 0 ? -2 : 0, position: 'relative', zIndex: 3 - i }}>
-                          <Favicon domain={d} size={14} />
+                          <BrandLogo domain={d} size={14} />
                         </span>
                       ))}
                       {a.competitorDomains.length > 3 && (
@@ -399,6 +396,7 @@ export function PromptDetailDrawer({ prompt }: PromptDetailDrawerProps) {
             );
           })}
         </div>
+        </>)}
       </div>
     </div>
   );

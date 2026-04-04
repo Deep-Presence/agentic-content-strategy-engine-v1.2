@@ -1,5 +1,5 @@
 {
-  "current_sprint": "prompt-tracking-enriched",
+  "current_sprint": "prompt-tracking-frontend-integration",
   "last_updated": "2026-04-04",
   "test_count": 1885,
   "completed_sprints_summary": {
@@ -42,10 +42,48 @@
       {"sprint": "frontend-shared-components-integration-readiness", "date": "2026-04-03", "summary": "Integration readiness audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer)."},
       {"sprint": "frontend-brand-hub-integration", "date": "2026-04-04", "summary": "Brand Hub (/artifacts) fully integrated with backend API. KB, VSG, AP fetched from real endpoints. Version history dropdown. Upload modal. Auth login fixes. Dead code data loaders removed."},
       {"sprint": "query-fanout-data-retention", "date": "2026-04-04", "summary": "Query fanout generation (OpenRouter/Claude Sonnet, 6 intent axes, 12-18 variants per prompt). Self-referential FK on tracked_prompts. 30-day response text cleanup. 9 new API endpoints (fanout CRUD, answer history, cleanup). 394 DT tests passing."},
-      {"sprint": "prompt-tracking-enriched", "date": "2026-04-04", "summary": "Prompt tracking backend data layer — enriched prompt list (per-prompt mentionRate/citationRate/delta/sparkline/fanoutCount), per-prompt drawer analytics, 3 foundation bug fixes (N+1 query, days filter, _row_to_dict), 3 new composite indexes, 2 new endpoints, 6 new Pydantic models. 414 DT tests passing (20 new)."}
+      {"sprint": "prompt-tracking-enriched", "date": "2026-04-04", "summary": "Prompt tracking backend data layer — enriched prompt list (per-prompt mentionRate/citationRate/delta/sparkline/fanoutCount), per-prompt drawer analytics, 3 foundation bug fixes (N+1 query, days filter, _row_to_dict), 3 new composite indexes, 2 new endpoints, 6 new Pydantic models. 414 DT tests passing (20 new)."},
+      {"sprint": "prompt-tracking-frontend-integration", "date": "2026-04-04", "summary": "Prompt Tracking frontend-backend integration — 4-layer pattern (types/api/adapters/hooks). 8 new frontend files, 3 refactored components, 2 deleted mock files. Backend: start_date/end_date params on 3 endpoints. PB-95 (tenant isolation) added to backlog. 67 DT tests passing. Build clean."}
     ]
   },
   "completed": [
+    {
+      "id": "T-prompt-tracking-frontend-integration",
+      "task": "Prompt Tracking page frontend-backend integration — replace all mock data with real API calls, 4-layer pattern, date range params, loading/error/empty states",
+      "sprint": "prompt-tracking-frontend-integration",
+      "status": "done",
+      "completed_at": "2026-04-04",
+      "tests_added": 0,
+      "files_created": [
+        "frontend/src/app/(dashboard)/prompt-tracking/_lib/types.ts",
+        "frontend/src/app/(dashboard)/prompt-tracking/_lib/api.ts",
+        "frontend/src/app/(dashboard)/prompt-tracking/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/prompt-tracking/_hooks/usePromptTrackingData.ts",
+        "frontend/src/app/(dashboard)/prompt-tracking/_hooks/usePromptDetailData.ts",
+        "frontend/src/app/(dashboard)/prompt-tracking/_components/PromptTrackingSkeleton.tsx"
+      ],
+      "files_modified": [
+        "api/routers/daily_tracker.py",
+        "frontend/src/app/(dashboard)/prompt-tracking/_components/PromptTrackingClient.tsx",
+        "frontend/src/app/(dashboard)/prompt-tracking/_components/PromptDetailDrawer.tsx",
+        "frontend/src/app/(dashboard)/prompt-tracking/_components/AnswerDetailView.tsx",
+        ".claude/sprints/pending/backlog.md"
+      ],
+      "files_deleted": [
+        "frontend/src/app/(dashboard)/prompt-tracking/_components/prompt-data.ts",
+        "frontend/src/app/(dashboard)/prompt-tracking/_components/SlideDrawer.tsx"
+      ],
+      "details": {
+        "phase0_backend": "Added optional start_date/end_date query params to 3 endpoints: /prompts/enriched, /prompts/{id}/analytics, /prompts/{id}/answers. Backward-compatible with existing days param.",
+        "phase1_types": "9 API types (snake_case mirrors of backend Pydantic models) + 6 frontend display types (camelCase).",
+        "phase2_api": "4 fetch functions with AbortSignal: fetchEnrichedPrompts, fetchPromptAnalytics, fetchPromptFanouts, fetchPromptAnswers.",
+        "phase3_adapters": "5 adapter functions + 5 constant maps (ENGINE_TO_PLATFORM, PLATFORM_MAP, CATEGORY_DISPLAY_MAP, KNOWN_BRAND_DOMAINS, FALLBACK_COLORS). deriveTopics utility.",
+        "phase4_hooks": "usePromptTrackingData (main table, AbortController, debounced search), usePromptDetailData (drawer, 3 parallel fetches, per-section loading/error).",
+        "phase5_skeletons": "PromptTableSkeleton (8 shimmer rows), PromptDrawerSkeleton (3 section shimmers).",
+        "phase6_refactor": "PromptTrackingClient: DateRangePicker, hook, loading/error/empty states. PromptDetailDrawer: usePromptDetailData hook, shared BrandLogo, skeleton. AnswerDetailView: props-based, dynamic brandName, null fullAnswer handling.",
+        "backlog": "PB-95 [CRITICAL] — Tenant isolation gap on per-prompt endpoints (analytics, answers, fanouts). Added to .claude/sprints/pending/backlog.md."
+      }
+    },
     {
       "id": "T-prompt-tracking-enriched",
       "task": "Prompt tracking backend data layer — enriched prompt list with per-prompt metrics, per-prompt drawer analytics endpoint, foundation bug fixes, composite indexes",

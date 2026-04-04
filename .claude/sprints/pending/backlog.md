@@ -1,11 +1,17 @@
 # Pending Backlog
 
 > **Last synced:** 2026-03-26 (merge feat/front-back → feat/redis-integration)
-> **Total open items:** 30
+> **Total open items:** 31
 
 ## Critical (Fix Before Production)
 
-(All critical items resolved — none remaining.)
+### PB-95: Tenant isolation gap on per-prompt daily tracker endpoints
+- **Source:** Codex review of prompt-tracking integration plan
+- **Date added:** 2026-04-04
+- **Description:** `GET /prompts/{id}/analytics`, `GET /prompts/{id}/answers`, and `GET /prompts/{id}/fanouts` look up by UUID only — no `company_id` JOIN. A user who obtains another tenant's prompt UUID can read their analytics/answers. Low probability (UUIDs are v4, unguessable) but high impact (data leak across tenants).
+- **Fix:** Add `company_id` filter to repo queries (`get_responses_for_prompt`, per-prompt analytics path, `list_by_parent`). Thread `company_id` from auth middleware through router → repo.
+- **Files affected:** `core/db/repositories/daily_tracker_repo.py`, `api/routers/daily_tracker.py`
+- **Blocked by:** nothing
 
 ## High Priority
 

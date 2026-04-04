@@ -1,7 +1,7 @@
 {
-  "sprint": "prompt-tracking-enriched",
-  "sprint_goal": "Close all data gaps between frontend Prompt Tracking page and backend Daily Tracker — enriched prompt list with per-prompt metrics, per-prompt drawer analytics, foundation bug fixes.",
-  "sprint_status": "COMPLETE — 2 new endpoints (GET /prompts/enriched, GET /prompts/{id}/analytics), 3 foundation bug fixes, 3 composite indexes, 6 new Pydantic models, Redis cache. 414 DT tests passing (20 new).",
+  "sprint": "prompt-tracking-frontend-integration",
+  "sprint_goal": "Complete frontend-backend integration of the Prompt Tracking page (/prompt-tracking) — replace all mock data with real API calls following the 4-layer pattern (types/api/adapters/hooks).",
+  "sprint_status": "COMPLETE — 8 new frontend files, 3 refactored components, 2 deleted mock files. Backend: start_date/end_date on 3 endpoints. 67 DT tests passing. Build clean (0 TS errors).",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -29,23 +29,24 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/db/migrations/versions/0024_fanout_queries.py (renumbered from 0023 — parent_prompt_id FK, fanout_axis, pinned)",
-    "core/db/migrations/versions/0025_prompt_tracking_indexes.py (NEW — 3 composite indexes for per-prompt analytics)",
-    "api/dependencies.py (UPDATED — fixed N+1 query, days filter, _row_to_dict with timestamp/parent_prompt_id/run_id)",
-    "core/db/repositories/daily_tracker_repo.py (UPDATED — 4 new methods: get_responses_by_company, get_responses_for_prompt, get_prompt_metrics_batch, get_daily_volume_batch)",
-    "core/models/daily_tracker.py (UPDATED — 6 new models: EnrichedPrompt, EnrichedPromptListResponse, PerPromptPlatformMetrics, PromptAnalyticsResponse. CompetitorMetrics gained rank + mention_delta)",
-    "api/routers/daily_tracker.py (UPDATED — 2 new endpoints: GET /prompts/enriched, GET /prompts/{id}/analytics. AnswerRecord gained persona field. Route ordering fixed for /prompts/enriched before /prompts/{prompt_id})",
-    "api/tasks/runner.py (UPDATED — cache invalidation for prompt_enriched after daily run completes)",
-    "tests/daily_tracker/test_prompt_tracking_enriched.py (NEW — 20 tests covering all phases)"
+    "api/routers/daily_tracker.py (UPDATED — added start_date/end_date optional query params to /prompts/enriched, /prompts/{id}/analytics, /prompts/{id}/answers)",
+    "frontend/src/app/(dashboard)/prompt-tracking/_lib/types.ts (NEW — 9 API types + 6 frontend display types)",
+    "frontend/src/app/(dashboard)/prompt-tracking/_lib/api.ts (NEW — 4 fetch functions with AbortSignal)",
+    "frontend/src/app/(dashboard)/prompt-tracking/_lib/adapters.ts (NEW — 5 adapters + 5 constant maps)",
+    "frontend/src/app/(dashboard)/prompt-tracking/_hooks/usePromptTrackingData.ts (NEW — main table data hook)",
+    "frontend/src/app/(dashboard)/prompt-tracking/_hooks/usePromptDetailData.ts (NEW — drawer data hook, per-section loading)",
+    "frontend/src/app/(dashboard)/prompt-tracking/_components/PromptTrackingClient.tsx (REFACTORED — hook, DateRangePicker, loading/error/empty states)",
+    "frontend/src/app/(dashboard)/prompt-tracking/_components/PromptDetailDrawer.tsx (REFACTORED — usePromptDetailData hook, shared BrandLogo, skeleton loading)",
+    "frontend/src/app/(dashboard)/prompt-tracking/_components/AnswerDetailView.tsx (REFACTORED — props-based, dynamic brandName, null fullAnswer handling)"
   ],
   "test_count": 1885,
-  "phases_completed_count": 64,
+  "phases_completed_count": 65,
   "recent_phases": [
+    "prompt-tracking-frontend-integration — Prompt Tracking page fully integrated with backend API. 4-layer pattern (types/api/adapters/hooks). 8 new files, 3 refactored, 2 deleted. Backend: start_date/end_date on 3 endpoints. PB-95 (tenant isolation) flagged CRITICAL. 67 DT tests passing. Build clean.",
     "prompt-tracking-enriched — Prompt tracking backend data layer. 2 new endpoints (enriched list + per-prompt analytics). 3 foundation bug fixes (N+1, days, _row_to_dict). 3 composite indexes. 6 new Pydantic models. Redis cache. 414 DT tests (20 new).",
     "query-fanout-data-retention — Query fanout generation (OpenRouter/Claude Sonnet, 6 intent axes). Self-ref FK on tracked_prompts. 9 new API endpoints. 30-day response text cleanup. 394 DT tests passing.",
     "frontend-brand-hub-integration — Brand Hub (/artifacts) fully wired to backend API. KB, VSG, AP from real endpoints. Version history dropdown. Upload modal with sub-path routing. Auth login fixes (CSP, Suspense, 401 loop). Dead code data loaders removed.",
-    "frontend-shared-components-integration-readiness — Full integration audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer). Docs updated.",
-    "frontend-auth-integration-security-hardening — Auth foundation + httpOnly cookie BFF proxy + strict CSP nonces. 20 new files."
+    "frontend-shared-components-integration-readiness — Full integration audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer). Docs updated."
   ],
   "phases_remaining": [
     "openrouter-phase3 — Embeddings: Point embedding clients at OpenRouter",
