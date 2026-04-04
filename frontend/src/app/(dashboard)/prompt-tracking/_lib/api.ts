@@ -89,3 +89,87 @@ export function fetchPromptAnswers(
     signal,
   );
 }
+
+// ── Create Prompt ───────────────────────────────────────────────
+
+export interface CreatePromptPayload {
+  text: string;
+  category?: string;
+  tags?: string[];
+  generate_fanout?: boolean;
+  brand_name?: string;
+  brand_category?: string;
+  competitors?: string[];
+}
+
+export interface CreatePromptResponseAPI {
+  prompt: {
+    id: string;
+    text: string;
+    category: string | null;
+    tags: string[];
+    active: boolean;
+    created_at: string;
+  };
+  fanout_task_id: string | null;
+}
+
+export function createPrompt(
+  payload: CreatePromptPayload,
+): Promise<CreatePromptResponseAPI> {
+  return api.post<CreatePromptResponseAPI>(
+    '/api/v1/daily-tracker/prompts',
+    payload,
+  );
+}
+
+// ── Trigger Daily Run ───────────────────────────────────────────
+
+export interface TriggerRunPayload {
+  engines?: string[];
+  prompt_ids?: string[];
+  brand?: string;
+  competitors?: string[];
+  concurrency?: number;
+}
+
+export interface TriggerRunResponseAPI {
+  run_id: string;
+  pipeline: string;
+  company_slug: string;
+  status: string;
+  created_at: string;
+}
+
+export function triggerDailyRun(
+  payload: TriggerRunPayload = {},
+): Promise<TriggerRunResponseAPI> {
+  return api.post<TriggerRunResponseAPI>(
+    '/api/v1/daily-tracker/runs',
+    payload,
+  );
+}
+
+// ── Run Status ──────────────────────────────────────────────────
+
+export interface RunStatusResponseAPI {
+  run_id: string;
+  company_id: string;
+  status: string;
+  prompt_count: number;
+  engine_count: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+}
+
+export function fetchRunStatus(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<RunStatusResponseAPI> {
+  return api.get<RunStatusResponseAPI>(
+    `/api/v1/daily-tracker/runs/${runId}`,
+    undefined,
+    signal,
+  );
+}

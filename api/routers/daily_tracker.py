@@ -192,6 +192,16 @@ async def create_prompt(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
+    # Invalidate enriched prompt cache so the new prompt appears immediately
+    from core.cache import cache_delete_pattern
+    from core.redis import get_sync_redis_or_none
+
+    _rc = get_sync_redis_or_none()
+    if _rc:
+        await asyncio.to_thread(
+            cache_delete_pattern, _rc, f"cache:prompt_enriched:{company_id}:*"
+        )
+
     fanout_task_id: str | None = None
 
     if body.generate_fanout and body.brand_name:
@@ -199,7 +209,8 @@ async def create_prompt(
         from api.tasks.runner import run_fanout_generation_task
 
         task = await create_task_durable(
-            task_store, "fanout_generation", company_id
+            task_store, "fanout_generation", company_id,
+            allow_parallel=True,
         )
         fanout_task_id = task.task_id
 
@@ -292,6 +303,9 @@ async def get_enriched_prompts(
 
     from core.cache import cache_get, cache_set
     from core.models.daily_tracker import EnrichedPrompt, EnrichedPromptListResponse
+    from core.redis import get_sync_redis_or_none
+
+    _rc = get_sync_redis_or_none()
 
     company_id = _get_company_id(request)
 
@@ -328,7 +342,7 @@ async def get_enriched_prompts(
 
     # Redis cache check
     cache_key = f"cache:prompt_enriched:{company_id}:{period_start_str}:{period_end_str}"
-    cached = await asyncio.to_thread(cache_get, cache_key)
+    cached = await asyncio.to_thread(cache_get, _rc, cache_key) if _rc else None
     if cached is not None and not category and not search:
         resp = EnrichedPromptListResponse.model_validate(cached)
         sliced = resp.prompts[offset : offset + limit]
@@ -412,12 +426,14 @@ async def get_enriched_prompts(
             # Cache unfiltered result
             if not category and not search:
                 full_result = result.model_copy(update={"prompts": enriched})
-                await asyncio.to_thread(
-                    cache_set,
-                    cache_key,
-                    full_result.model_dump(mode="json"),
-                    ttl=300,
-                )
+                if _rc:
+                    await asyncio.to_thread(
+                        cache_set,
+                        _rc,
+                        cache_key,
+                        full_result.model_dump(mode="json"),
+                        ttl=300,
+                    )
 
             return result.model_dump(mode="json")
 
@@ -718,7 +734,8 @@ async def regenerate_fanouts(
     from api.tasks.runner import run_fanout_generation_task
 
     task = await create_task_durable(
-        task_store, "fanout_generation", company_id
+        task_store, "fanout_generation", company_id,
+        allow_parallel=True,
     )
 
     handle = asyncio.create_task(

@@ -1,11 +1,15 @@
 'use client';
 
-import { ChevronDown, ChevronRight, User } from 'lucide-react';
-import { useState, useMemo, useEffect } from 'react';
+import { ChevronDown, ChevronRight, User, Loader2 } from 'lucide-react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { BrandLogo } from '@/components/ui';
+import { createSSEConnection } from '@/lib/api-client';
 import type { PromptRow, AnswerHistoryRow } from '../_lib/types';
 import { usePromptDetailData } from '../_hooks/usePromptDetailData';
+import { fetchPromptFanouts } from '../_lib/api';
+import { toQueryFanout } from '../_lib/adapters';
+import type { QueryFanout } from '../_lib/types';
 import { PromptDrawerSkeleton } from './PromptTrackingSkeleton';
 import { AnswerDetailView } from './AnswerDetailView';
 
@@ -13,6 +17,10 @@ interface PromptDetailDrawerProps {
   prompt: PromptRow;
   /** Date parameters forwarded from the parent filter bar. */
   dateParams?: { start_date?: string; end_date?: string; days?: number };
+  /** Active fanout generation task ID (null if none). */
+  fanoutTaskId?: string | null;
+  /** Called when fanout generation completes. */
+  onFanoutComplete?: () => void;
 }
 
 function DeltaText({ value }: { value: number }) {
@@ -25,21 +33,59 @@ function DeltaText({ value }: { value: number }) {
   );
 }
 
-export function PromptDetailDrawer({ prompt, dateParams }: PromptDetailDrawerProps) {
+export function PromptDetailDrawer({ prompt, dateParams, fanoutTaskId, onFanoutComplete }: PromptDetailDrawerProps) {
   const { companyName } = useAuth();
   const brandName = companyName || 'Your Brand';
   const [selectedAnswer, setSelectedAnswer] = useState<AnswerHistoryRow | null>(null);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
+  const [fanoutGenerating, setFanoutGenerating] = useState(!!fanoutTaskId);
+  const [liveFanouts, setLiveFanouts] = useState<QueryFanout[] | null>(null);
 
   const {
     competitors,
     platformRates,
-    fanouts,
+    fanouts: hookFanouts,
     answerHistory,
     analyticsLoading,
     fanoutsLoading,
     answersLoading,
   } = usePromptDetailData(prompt.id, dateParams ?? { days: 30 });
+
+  // Use live fanouts (post-SSE refresh) if available, else hook data
+  const fanouts = liveFanouts ?? hookFanouts;
+
+  // SSE subscription for fanout generation progress
+  useEffect(() => {
+    if (!fanoutTaskId) {
+      setFanoutGenerating(false);
+      return;
+    }
+
+    setFanoutGenerating(true);
+
+    // Subscribe to SSE events for the fanout task
+    // The SSE endpoint requires a stream token — use polling fallback instead
+    let cancelled = false;
+    const pollInterval = setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const resp = await fetchPromptFanouts(prompt.id);
+        if (resp.fanouts.length > 0) {
+          setLiveFanouts(resp.fanouts.map(toQueryFanout));
+          setFanoutGenerating(false);
+          onFanoutComplete?.();
+          clearInterval(pollInterval);
+        }
+      } catch {
+        // Ignore polling errors
+      }
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(pollInterval);
+    };
+  }, [fanoutTaskId, prompt.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Group answers by date
   const answersByDate = useMemo(() => {
@@ -242,25 +288,73 @@ export function PromptDetailDrawer({ prompt, dateParams }: PromptDetailDrawerPro
 
         {/* Section B: Query Fanouts */}
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: 8 }}>
-            Query Fanouts ({fanouts.length})
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>
+              Query Fanouts ({fanouts.length})
+            </span>
+            {fanoutGenerating && (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: 'var(--accent)',
+                  padding: '2px 8px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'var(--accent-subtle)',
+                }}
+              >
+                <Loader2
+                  size={12}
+                  strokeWidth={2}
+                  className="animate-spin"
+                  style={{ color: 'var(--accent)' }}
+                />
+                Generating query fanouts
+              </span>
+            )}
           </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={{ fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', textAlign: 'left', padding: '4px 0' }}>Query</th>
-                <th style={{ fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', textAlign: 'right', padding: '4px 0', width: 90 }}>Observations</th>
-              </tr>
-            </thead>
-            <tbody>
-              {fanouts.map((f, i) => (
-                <tr key={i} style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                  <td style={{ fontSize: 12, color: 'var(--text-primary)', padding: '5px 0' }}>{f.query}</td>
-                  <td style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', textAlign: 'right', padding: '5px 0' }}>{f.observations}</td>
-                </tr>
+
+          {/* Generating shimmer rows */}
+          {fanoutGenerating && fanouts.length === 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="animate-pulse"
+                  style={{
+                    height: 18,
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--surface-raised)',
+                    width: `${85 - i * 8}%`,
+                    animationDelay: `${i * 120}ms`,
+                  }}
+                />
               ))}
-            </tbody>
-          </table>
+            </div>
+          )}
+
+          {/* Actual fanout table */}
+          {fanouts.length > 0 && (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={{ fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', textAlign: 'left', padding: '4px 0' }}>Query</th>
+                  <th style={{ fontSize: 11, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', textAlign: 'right', padding: '4px 0', width: 90 }}>Observations</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fanouts.map((f, i) => (
+                  <tr key={i} style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                    <td style={{ fontSize: 12, color: 'var(--text-primary)', padding: '5px 0' }}>{f.query}</td>
+                    <td style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', textAlign: 'right', padding: '5px 0' }}>{f.observations}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* Section C: Answer History */}

@@ -9,14 +9,21 @@ import {
   ArrowDown,
   ChevronDown,
   ChevronRight,
+  Play,
+  Loader2,
 } from 'lucide-react';
 import { Sparkline, SlideDrawer, DateRangePicker } from '@/components/ui';
 import type { DateRange } from '@/components/ui/DateRangePicker';
 import { subDays, format } from 'date-fns';
 import { usePromptTrackingData } from '../_hooks/usePromptTrackingData';
+import { triggerDailyRun, fetchRunStatus } from '../_lib/api';
+import { ApiError } from '@/lib/api-client';
+import { useAuth } from '@/hooks/useAuth';
+import { useRef, useCallback } from 'react';
 import type { PromptRow, Topic } from '../_lib/types';
 import { PromptTableSkeleton } from './PromptTrackingSkeleton';
 import { PromptDetailDrawer } from './PromptDetailDrawer';
+import { AddPromptModal } from './AddPromptModal';
 
 // === Helpers ===
 
@@ -30,12 +37,28 @@ function DeltaValue({ value }: { value: number }) {
   );
 }
 
+/** Live elapsed-time counter. */
+function ElapsedTimer({ startedAt }: { startedAt: number }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [startedAt]);
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  return (
+    <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+      {mins > 0 ? `${mins}m ${secs}s` : `${secs}s`}
+    </span>
+  );
+}
+
 type SortKey = 'text' | 'topic' | 'queryFanouts' | 'mentionRate' | 'citationRate';
 type SortDir = 'asc' | 'desc';
 
 // === Toast ===
 
-function ComingSoonToast({ visible }: { visible: boolean }) {
+function ActionToast({ visible, message }: { visible: boolean; message: string }) {
   return (
     <div
       className={cn(
@@ -52,7 +75,7 @@ function ComingSoonToast({ visible }: { visible: boolean }) {
         color: 'var(--text-primary)',
       }}
     >
-      Coming soon
+      {message}
     </div>
   );
 }
@@ -67,6 +90,36 @@ export function PromptTrackingClient() {
   const [topicFilter, setTopicFilter] = useState('all');
   const [selectedPrompt, setSelectedPrompt] = useState<PromptRow | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('Coming soon');
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  // Track active fanout generation tasks: promptId → taskId
+  const [fanoutTasks, setFanoutTasks] = useState<Record<string, string>>({});
+  const [pipelineStatus, setPipelineStatus] = useState<
+    | { state: 'idle' }
+    | { state: 'starting' }
+    | { state: 'running'; runId: string; startedAt: number; promptCount: number; engineCount: number }
+    | { state: 'completed'; promptCount: number; engineCount: number }
+    | { state: 'failed'; error: string }
+  >(() => {
+    // Recover active run from localStorage on mount
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('dp:activeRunId');
+      if (saved) {
+        try {
+          const { runId, startedAt } = JSON.parse(saved);
+          return { state: 'running' as const, runId, startedAt, promptCount: 0, engineCount: 0 };
+        } catch { /* ignore corrupt data */ }
+      }
+    }
+    return { state: 'idle' as const };
+  });
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [autoRunEnabled, setAutoRunEnabled] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('dp:autoRunDaily') === 'true';
+    }
+    return false;
+  });
   const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set());
 
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
@@ -97,6 +150,102 @@ export function PromptTrackingClient() {
     debouncedSearch || undefined,
   );
 
+  const { companyName } = useAuth();
+
+  /** Start polling a run until it completes or fails. */
+  const startPolling = useCallback((runId: string) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await fetchRunStatus(runId);
+        if (status.status === 'completed') {
+          if (pollRef.current) clearInterval(pollRef.current);
+          localStorage.removeItem('dp:activeRunId');
+          setPipelineStatus({
+            state: 'completed',
+            promptCount: status.prompt_count,
+            engineCount: status.engine_count,
+          });
+          refetch();
+          setTimeout(() => setPipelineStatus({ state: 'idle' }), 6000);
+        } else if (status.status === 'failed') {
+          if (pollRef.current) clearInterval(pollRef.current);
+          localStorage.removeItem('dp:activeRunId');
+          setPipelineStatus({ state: 'failed', error: status.error || 'Run failed' });
+          setTimeout(() => setPipelineStatus({ state: 'idle' }), 8000);
+        } else {
+          setPipelineStatus((prev) =>
+            prev.state === 'running'
+              ? { ...prev, promptCount: status.prompt_count, engineCount: status.engine_count }
+              : prev,
+          );
+        }
+      } catch {
+        // Polling error — keep trying
+      }
+    }, 5000);
+  }, [refetch]);
+
+  // On mount: if we recovered an active run from localStorage, resume polling
+  useEffect(() => {
+    if (pipelineStatus.state === 'running' && pipelineStatus.runId) {
+      // Check immediately, then poll
+      fetchRunStatus(pipelineStatus.runId).then((status) => {
+        if (status.status === 'completed') {
+          localStorage.removeItem('dp:activeRunId');
+          setPipelineStatus({
+            state: 'completed',
+            promptCount: status.prompt_count,
+            engineCount: status.engine_count,
+          });
+          refetch();
+          setTimeout(() => setPipelineStatus({ state: 'idle' }), 6000);
+        } else if (status.status === 'failed') {
+          localStorage.removeItem('dp:activeRunId');
+          setPipelineStatus({ state: 'failed', error: status.error || 'Run failed' });
+          setTimeout(() => setPipelineStatus({ state: 'idle' }), 8000);
+        } else {
+          startPolling(pipelineStatus.runId);
+        }
+      }).catch(() => {
+        // If status fetch fails, still start polling
+        startPolling(pipelineStatus.runId);
+      });
+    }
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleRunAll = async () => {
+    if (pipelineStatus.state === 'starting' || pipelineStatus.state === 'running' || prompts.length === 0) return;
+    setPipelineStatus({ state: 'starting' });
+    try {
+      const result = await triggerDailyRun({
+        brand: companyName || undefined,
+      });
+      const startedAt = Date.now();
+      localStorage.setItem('dp:activeRunId', JSON.stringify({ runId: result.run_id, startedAt }));
+      setPipelineStatus({
+        state: 'running',
+        runId: result.run_id,
+        startedAt,
+        promptCount: 0,
+        engineCount: 0,
+      });
+      startPolling(result.run_id);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.detail : 'Failed to start run';
+      setPipelineStatus({ state: 'failed', error: msg });
+      setTimeout(() => setPipelineStatus({ state: 'idle' }), 5000);
+    }
+  };
+
+  const handleAutoRunToggle = (checked: boolean) => {
+    setAutoRunEnabled(checked);
+    localStorage.setItem('dp:autoRunDaily', String(checked));
+  };
+
   // Auto-expand all topics when data loads
   useEffect(() => {
     if (topics.length > 0) {
@@ -104,7 +253,8 @@ export function PromptTrackingClient() {
     }
   }, [topics]);
 
-  const showToast = () => {
+  const showToast = (msg = 'Coming soon') => {
+    setToastMessage(msg);
     setToastVisible(true);
     setTimeout(() => setToastVisible(false), 2000);
   };
@@ -211,7 +361,6 @@ export function PromptTrackingClient() {
             onClick={clearFilters}
             className="cursor-pointer"
             style={{
-              marginLeft: 'auto',
               fontSize: 12,
               color: 'var(--text-secondary)',
               background: 'none',
@@ -222,6 +371,62 @@ export function PromptTrackingClient() {
             × Clear
           </button>
         )}
+
+        {/* Right-aligned: auto-run toggle + run button */}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* Auto-run checkbox */}
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12,
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={autoRunEnabled}
+              onChange={(e) => handleAutoRunToggle(e.target.checked)}
+              style={{ width: 13, height: 13, accentColor: 'var(--accent)' }}
+            />
+            Auto-run daily
+          </label>
+
+          {/* Divider */}
+          <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
+
+          {/* Run All button */}
+          <button
+            onClick={handleRunAll}
+            disabled={pipelineStatus.state === 'starting' || pipelineStatus.state === 'running' || prompts.length === 0}
+            className="cursor-pointer"
+            style={{
+              height: 28,
+              padding: '0 12px',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--accent)',
+              background: pipelineStatus.state === 'running' || pipelineStatus.state === 'starting' ? 'var(--accent-subtle)' : 'transparent',
+              color: 'var(--accent)',
+              fontSize: 12,
+              fontWeight: 500,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              opacity: prompts.length === 0 ? 0.5 : 1,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {pipelineStatus.state === 'starting' || pipelineStatus.state === 'running' ? (
+              <Loader2 size={12} strokeWidth={2} className="animate-spin" />
+            ) : (
+              <Play size={11} strokeWidth={2} />
+            )}
+            {pipelineStatus.state === 'starting' ? 'Starting...' : pipelineStatus.state === 'running' ? 'Running...' : 'Run All Prompts'}
+          </button>
+        </div>
       </div>
 
       {/* Sub-nav bar: tabs left, search+actions right, 44px, border-bottom */}
@@ -281,7 +486,7 @@ export function PromptTrackingClient() {
           </div>
 
           <button
-            onClick={showToast}
+            onClick={() => showToast()}
             className="cursor-pointer"
             style={{
               fontSize: 12,
@@ -295,7 +500,7 @@ export function PromptTrackingClient() {
           </button>
 
           <button
-            onClick={showToast}
+            onClick={() => setAddModalOpen(true)}
             className="cursor-pointer"
             style={{
               height: 28,
@@ -312,6 +517,113 @@ export function PromptTrackingClient() {
           </button>
         </div>
       </div>
+
+      {/* Pipeline run status banner */}
+      {pipelineStatus.state !== 'idle' && (
+        <div
+          style={{
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '10px 12px',
+            borderBottom: '1px solid var(--border)',
+            background: pipelineStatus.state === 'failed'
+              ? 'rgba(229, 72, 77, 0.06)'
+              : pipelineStatus.state === 'completed'
+                ? 'rgba(52, 178, 123, 0.06)'
+                : 'var(--accent-subtle)',
+            fontSize: 13,
+            transition: 'all 0.3s ease',
+          }}
+        >
+          {/* Icon / spinner */}
+          {(pipelineStatus.state === 'starting' || pipelineStatus.state === 'running') && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Loader2 size={15} strokeWidth={2} className="animate-spin" style={{ color: 'var(--accent)' }} />
+              <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
+                {pipelineStatus.state === 'starting'
+                  ? 'Starting pipeline...'
+                  : 'Running prompts across AI engines'}
+              </span>
+              {pipelineStatus.state === 'running' && (
+                <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                  {pipelineStatus.promptCount > 0
+                    ? `${pipelineStatus.promptCount} prompts × ${pipelineStatus.engineCount} engines`
+                    : 'Initializing...'}
+                </span>
+              )}
+              {/* Elapsed time */}
+              {pipelineStatus.state === 'running' && <ElapsedTimer startedAt={pipelineStatus.startedAt} />}
+            </div>
+          )}
+          {pipelineStatus.state === 'completed' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 15 }}>&#10003;</span>
+              <span style={{ color: 'var(--success)', fontWeight: 500 }}>
+                Run complete — {pipelineStatus.promptCount} prompts checked across {pipelineStatus.engineCount} engines
+              </span>
+            </div>
+          )}
+          {pipelineStatus.state === 'failed' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 15, color: 'var(--error)' }}>&#10007;</span>
+              <span style={{ color: 'var(--error)', fontWeight: 500 }}>
+                Run failed: {pipelineStatus.error}
+              </span>
+            </div>
+          )}
+
+          {/* Dismiss button */}
+          {(pipelineStatus.state === 'completed' || pipelineStatus.state === 'failed') && (
+            <button
+              onClick={() => { localStorage.removeItem('dp:activeRunId'); setPipelineStatus({ state: 'idle' }); }}
+              className="cursor-pointer"
+              style={{
+                marginLeft: 'auto',
+                fontSize: 11,
+                color: 'var(--text-secondary)',
+                background: 'none',
+                border: 'none',
+                padding: 0,
+              }}
+            >
+              Dismiss
+            </button>
+          )}
+
+          {/* Animated indeterminate progress bar */}
+          {(pipelineStatus.state === 'starting' || pipelineStatus.state === 'running') && (
+            <div
+              style={{
+                position: 'absolute',
+                left: 0,
+                bottom: 0,
+                height: 2,
+                width: '100%',
+                background: 'var(--border)',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: '35%',
+                  background: 'var(--accent)',
+                  borderRadius: 1,
+                  animation: 'indeterminate 1.6s ease-in-out infinite',
+                }}
+              />
+              <style>{`
+                @keyframes indeterminate {
+                  0% { transform: translateX(-100%); }
+                  100% { transform: translateX(380%); }
+                }
+              `}</style>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Loading state */}
       {isLoading && prompts.length === 0 && <PromptTableSkeleton />}
@@ -390,10 +702,34 @@ export function PromptTrackingClient() {
 
       {/* Drawer */}
       <SlideDrawer open={!!selectedPrompt} onClose={() => setSelectedPrompt(null)}>
-        {selectedPrompt && <PromptDetailDrawer prompt={selectedPrompt} dateParams={dateParams} />}
+        {selectedPrompt && (
+          <PromptDetailDrawer
+            prompt={selectedPrompt}
+            dateParams={dateParams}
+            fanoutTaskId={fanoutTasks[selectedPrompt.id] ?? null}
+            onFanoutComplete={() => {
+              setFanoutTasks((prev) => {
+                const next = { ...prev };
+                delete next[selectedPrompt.id];
+                return next;
+              });
+            }}
+          />
+        )}
       </SlideDrawer>
 
-      <ComingSoonToast visible={toastVisible} />
+      <AddPromptModal
+        open={addModalOpen}
+        onClose={() => setAddModalOpen(false)}
+        onCreated={(promptId, fanoutTaskId) => {
+          if (fanoutTaskId) {
+            setFanoutTasks((prev) => ({ ...prev, [promptId]: fanoutTaskId }));
+          }
+          refetch();
+        }}
+      />
+
+      <ActionToast visible={toastVisible} message={toastMessage} />
     </div>
   );
 }
