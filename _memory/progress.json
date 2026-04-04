@@ -1,7 +1,7 @@
 {
-  "current_sprint": "frontend-brand-hub-integration",
+  "current_sprint": "prompt-tracking-enriched",
   "last_updated": "2026-04-04",
-  "test_count": 1865,
+  "test_count": 1885,
   "completed_sprints_summary": {
     "total_tasks_completed": 43,
     "sprints": [
@@ -40,10 +40,68 @@
       {"sprint": "openrouter-phase2", "date": "2026-03-30", "summary": "OpenRouter Phase 2 — Migrate 4 direct SDK calls. 8 source + 3 test files. 1865 tests passing."},
       {"sprint": "frontend-auth-integration-security-hardening", "date": "2026-04-03", "summary": "Frontend auth integration + security hardening. BFF proxy, httpOnly cookies, CSP nonces, 20 new files."},
       {"sprint": "frontend-shared-components-integration-readiness", "date": "2026-04-03", "summary": "Integration readiness audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer)."},
-      {"sprint": "frontend-brand-hub-integration", "date": "2026-04-04", "summary": "Brand Hub (/artifacts) fully integrated with backend API. KB, VSG, AP fetched from real endpoints. Version history dropdown. Upload modal. Auth login fixes. Dead code data loaders removed."}
+      {"sprint": "frontend-brand-hub-integration", "date": "2026-04-04", "summary": "Brand Hub (/artifacts) fully integrated with backend API. KB, VSG, AP fetched from real endpoints. Version history dropdown. Upload modal. Auth login fixes. Dead code data loaders removed."},
+      {"sprint": "query-fanout-data-retention", "date": "2026-04-04", "summary": "Query fanout generation (OpenRouter/Claude Sonnet, 6 intent axes, 12-18 variants per prompt). Self-referential FK on tracked_prompts. 30-day response text cleanup. 9 new API endpoints (fanout CRUD, answer history, cleanup). 394 DT tests passing."},
+      {"sprint": "prompt-tracking-enriched", "date": "2026-04-04", "summary": "Prompt tracking backend data layer — enriched prompt list (per-prompt mentionRate/citationRate/delta/sparkline/fanoutCount), per-prompt drawer analytics, 3 foundation bug fixes (N+1 query, days filter, _row_to_dict), 3 new composite indexes, 2 new endpoints, 6 new Pydantic models. 414 DT tests passing (20 new)."}
     ]
   },
   "completed": [
+    {
+      "id": "T-prompt-tracking-enriched",
+      "task": "Prompt tracking backend data layer — enriched prompt list with per-prompt metrics, per-prompt drawer analytics endpoint, foundation bug fixes, composite indexes",
+      "sprint": "prompt-tracking-enriched",
+      "status": "done",
+      "completed_at": "2026-04-04",
+      "tests_added": 20,
+      "files_created": [
+        "core/db/migrations/versions/0025_prompt_tracking_indexes.py",
+        "tests/daily_tracker/test_prompt_tracking_enriched.py"
+      ],
+      "files_modified": [
+        "api/dependencies.py",
+        "api/routers/daily_tracker.py",
+        "api/tasks/runner.py",
+        "core/db/repositories/daily_tracker_repo.py",
+        "core/models/daily_tracker.py",
+        "core/db/migrations/versions/0024_fanout_queries.py"
+      ],
+      "details": {
+        "phase0_foundation": "Fixed N+1 query in _DbResponseDataProvider (100 queries -> 1 JOIN), fixed days param silently ignored, fixed _row_to_dict missing timestamp/parent_prompt_id/run_id. New get_responses_by_company() repo method.",
+        "phase1_enriched_list": "GET /prompts/enriched — CTE-based SQL with COALESCE(parent_prompt_id, prompt_id) fanout rollup. Auto period-over-period deltas. Zero-filled sparkline. Redis cache (5min TTL) with invalidation on run completion.",
+        "phase2_drawer_analytics": "GET /prompts/{id}/analytics — single DB query returns competitor breakdown + platform breakdown. Existing analytics endpoints untouched.",
+        "phase3_answer_history": "Added persona field to AnswerRecord schema (default 'Default').",
+        "migration_renumber": "Renumbered fanout_queries migration 0023->0024 (0023_llm_cost_events already applied). New indexes migration is 0025."
+      }
+    },
+    {
+      "id": "T-query-fanout-data-retention",
+      "task": "Query fanout generation + data retention for daily tracker — LLM-based intent-axis expansion, self-referential FK, fanout CRUD, answer history endpoint, 30-day cleanup",
+      "sprint": "query-fanout-data-retention",
+      "status": "done",
+      "completed_at": "2026-04-04",
+      "tests_added": 0,
+      "tests_updated": 3,
+      "files_created": [
+        "core/db/migrations/versions/0024_fanout_queries.py",
+        "core/daily_tracker/query_fanout.py",
+        "core/daily_tracker/cleanup.py"
+      ],
+      "files_modified": [
+        "core/db/models/daily_tracker.py",
+        "core/models/daily_tracker.py",
+        "core/db/repositories/daily_tracker_repo.py",
+        "core/daily_tracker/prompt_library.py",
+        "core/daily_tracker/protocols.py",
+        "core/daily_tracker/orchestrator.py",
+        "core/daily_tracker/persistence.py",
+        "core/config/settings.py",
+        "api/routers/daily_tracker.py",
+        "api/tasks/runner.py",
+        "tests/api/test_daily_tracker_runner.py",
+        "tests/daily_tracker/test_api_endpoints.py",
+        "tests/daily_tracker/test_models.py"
+      ]
+    },
     {
       "id": "T-frontend-brand-hub-integration",
       "task": "Brand Hub (/artifacts) API integration — replace filesystem reads with API calls, add version dropdown, upload modal, auth fixes",

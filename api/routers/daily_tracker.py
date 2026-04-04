@@ -258,6 +258,153 @@ async def list_prompts(
     return PromptListResponse(prompts=prompts, total=len(prompts))
 
 
+# ── Enriched Prompt List (Phase 1) ─────────────────────────────────
+# MUST be registered BEFORE /prompts/{prompt_id} to avoid path capture.
+
+
+@router.get("/prompts/enriched")
+async def get_enriched_prompts(
+    request: Request,
+    _user: UserProfile = Depends(require_auth),
+    days: int = Query(7, ge=1, le=90),
+    category: str | None = Query(None),
+    search: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    """Return prompts with per-prompt aggregated metrics for the main table.
+
+    Metrics include mention_rate, citation_rate, period-over-period deltas,
+    daily volume sparkline, and fanout counts.  Fanout responses are rolled
+    up into the parent prompt via ``COALESCE(parent_prompt_id, prompt_id)``.
+
+    Query params:
+        days: Period length (default 7).  Delta compares current period vs
+              the previous equal-length period.
+        category: Filter by prompt category.
+        search: Text search on prompt text.
+        limit/offset: Pagination.
+    """
+    from datetime import date, timedelta
+
+    from core.cache import cache_get, cache_set
+    from core.models.daily_tracker import EnrichedPrompt, EnrichedPromptListResponse
+
+    company_id = _get_company_id(request)
+
+    # Redis cache check
+    cache_key = f"cache:prompt_enriched:{company_id}:{days}"
+    cached = await asyncio.to_thread(cache_get, cache_key)
+    if cached is not None and not category and not search:
+        resp = EnrichedPromptListResponse.model_validate(cached)
+        sliced = resp.prompts[offset : offset + limit]
+        return resp.model_copy(update={"prompts": sliced}).model_dump(mode="json")
+
+    # Compute time windows
+    today = date.today()
+    current_end_dt = datetime.combine(
+        today + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc,
+    )
+    current_start_dt = datetime.combine(
+        today - timedelta(days=days - 1), datetime.min.time(), tzinfo=timezone.utc,
+    )
+    prev_end_dt = current_start_dt
+    prev_start_dt = datetime.combine(
+        today - timedelta(days=2 * days - 1), datetime.min.time(), tzinfo=timezone.utc,
+    )
+
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        return EnrichedPromptListResponse(
+            period_days=days,
+            period_start=str(current_start_dt.date()),
+            period_end=str(today),
+        ).model_dump(mode="json")
+
+    try:
+        from core.db.repositories.daily_tracker_repo import DailyRunResponseRepository
+
+        async with sf() as session:
+            repo = DailyRunResponseRepository(session)
+
+            rows = await repo.get_prompt_metrics_batch(
+                company_id=company_id,
+                current_start=current_start_dt,
+                current_end=current_end_dt,
+                prev_start=prev_start_dt,
+                prev_end=prev_end_dt,
+            )
+
+            volume_map = await repo.get_daily_volume_batch(
+                company_id=company_id,
+                start=current_start_dt,
+                end=current_end_dt,
+            )
+
+            # Build zero-filled date range for sparkline
+            date_range = [
+                str(today - timedelta(days=days - 1 - i))
+                for i in range(days)
+            ]
+
+            enriched: list[EnrichedPrompt] = []
+            for row in rows:
+                pid = row.id
+                vol_data = volume_map.get(pid, {})
+                volume = [vol_data.get(d, 0) for d in date_range]
+
+                if category and row.category != category:
+                    continue
+                if search and search.lower() not in (row.text or "").lower():
+                    continue
+
+                enriched.append(
+                    EnrichedPrompt(
+                        id=str(pid),
+                        text=row.text or "",
+                        category=row.category,
+                        tags=row.tags or [],
+                        source=row.source or "manual",
+                        active=row.active,
+                        created_at=row.created_at,
+                        mention_rate=round(float(row.mention_rate or 0), 4),
+                        mention_delta=round(float(row.mention_delta or 0), 4),
+                        citation_rate=round(float(row.citation_rate or 0), 4),
+                        citation_delta=round(float(row.citation_delta or 0), 4),
+                        daily_volume=volume,
+                        fanout_count=int(row.fanout_count or 0),
+                        total_responses=int(row.total_responses or 0),
+                    )
+                )
+
+            total = len(enriched)
+            page = enriched[offset : offset + limit]
+
+            result = EnrichedPromptListResponse(
+                prompts=page,
+                total=total,
+                period_days=days,
+                period_start=str(current_start_dt.date()),
+                period_end=str(today),
+            )
+
+            # Cache unfiltered result
+            if not category and not search:
+                full_result = result.model_copy(update={"prompts": enriched})
+                await asyncio.to_thread(
+                    cache_set,
+                    cache_key,
+                    full_result.model_dump(mode="json"),
+                    ttl=300,
+                )
+
+            return result.model_dump(mode="json")
+
+    except Exception:
+        logger.warning("get_enriched_prompts failed for %s", company_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch enriched prompts")
+
+
 @router.get("/prompts/{prompt_id}")
 async def get_prompt(
     prompt_id: str,
@@ -418,6 +565,7 @@ class AnswerRecord(BaseModel):
     competitor_mentions: dict[str, int] = Field(default_factory=dict)
     citations: list[str] = Field(default_factory=list)
     citation_rank: int | None = None
+    persona: str = "Default"
     created_at: datetime | None = None
 
 
@@ -709,6 +857,147 @@ async def get_answer_history(
     except Exception:
         logger.warning("get_answer_history failed for %s", prompt_id, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch answer history")
+
+
+# ── Per-Prompt Analytics (Phase 2 — Drawer) ────────────────────────
+
+
+@router.get("/prompts/{prompt_id}/analytics")
+async def get_prompt_analytics(
+    prompt_id: str,
+    request: Request,
+    _user: UserProfile = Depends(require_auth),
+    days: int = Query(30, ge=1, le=365),
+) -> dict[str, Any]:
+    """Per-prompt scoped analytics for the drawer.
+
+    Returns competitor breakdown and platform breakdown in a single
+    response, computed from one DB query.  Fanout responses are included
+    via the ``parent_prompt_id`` denormalization.
+
+    Frontend fires this in parallel with ``/fanouts`` and ``/answers``.
+    """
+    from core.models.daily_tracker import (
+        CompetitorMetrics,
+        PerPromptPlatformMetrics,
+        PromptAnalyticsResponse,
+    )
+
+    company_id = _get_company_id(request)
+
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        return PromptAnalyticsResponse(
+            prompt_id=prompt_id, period_days=days
+        ).model_dump(mode="json")
+
+    try:
+        from datetime import timedelta
+
+        from core.db.repositories.daily_tracker_repo import DailyRunResponseRepository
+
+        prompt_uuid = _uuid.UUID(prompt_id)
+
+        async with sf() as session:
+            repo = DailyRunResponseRepository(session)
+
+            # Single query: fetch 2x window, split into current + prev
+            all_rows = await repo.get_responses_for_prompt(
+                prompt_id=prompt_uuid, days=2 * days,
+            )
+
+            if not all_rows:
+                return PromptAnalyticsResponse(
+                    prompt_id=prompt_id, period_days=days,
+                ).model_dump(mode="json")
+
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            rows = [r for r in all_rows if r.created_at and r.created_at >= cutoff]
+            prev_only = [r for r in all_rows if r.created_at and r.created_at < cutoff]
+
+            if not rows:
+                return PromptAnalyticsResponse(
+                    prompt_id=prompt_id, period_days=days,
+                ).model_dump(mode="json")
+
+            # -- Overall metrics --
+            total = len(rows)
+            mentioned = sum(1 for r in rows if r.brand_mentioned)
+            cited = sum(1 for r in rows if r.citations)
+            mention_rate = mentioned / total if total else 0.0
+            citation_rate = cited / total if total else 0.0
+
+            # -- Platform breakdown --
+            engine_data: dict[str, dict[str, int]] = {}
+            for r in rows:
+                ed = engine_data.setdefault(r.engine, {"responses": 0, "mentions": 0})
+                ed["responses"] += 1
+                if r.brand_mentioned:
+                    ed["mentions"] += 1
+
+            platforms = [
+                PerPromptPlatformMetrics(
+                    engine=eng,
+                    response_count=d["responses"],
+                    mention_count=d["mentions"],
+                    mention_rate=(
+                        round(d["mentions"] / d["responses"], 4)
+                        if d["responses"] else 0.0
+                    ),
+                )
+                for eng, d in sorted(engine_data.items())
+            ]
+
+            # -- Competitor breakdown (current period) --
+            comp_mentions: dict[str, int] = {}
+            comp_response_count: dict[str, int] = {}
+            for r in rows:
+                for name, count in (r.competitor_mentions or {}).items():
+                    c = int(count) if not isinstance(count, bool) else (1 if count else 0)
+                    comp_mentions[name] = comp_mentions.get(name, 0) + c
+                    if c > 0:
+                        comp_response_count[name] = comp_response_count.get(name, 0) + 1
+
+            # Previous period competitor rates
+            prev_comp_rate: dict[str, float] = {}
+            prev_total = len(prev_only)
+            if prev_total:
+                prev_comp_resp: dict[str, int] = {}
+                for r in prev_only:
+                    for name, count in (r.competitor_mentions or {}).items():
+                        c = int(count) if not isinstance(count, bool) else (1 if count else 0)
+                        if c > 0:
+                            prev_comp_resp[name] = prev_comp_resp.get(name, 0) + 1
+                for name, cnt in prev_comp_resp.items():
+                    prev_comp_rate[name] = cnt / prev_total
+
+            competitors_list = []
+            for name, mc in sorted(comp_mentions.items(), key=lambda x: -x[1]):
+                cur_rate = comp_response_count.get(name, 0) / total if total else 0.0
+                delta = cur_rate - prev_comp_rate.get(name, 0.0)
+                competitors_list.append(
+                    CompetitorMetrics(
+                        name=name,
+                        mention_rate=round(cur_rate, 4),
+                        mention_count=mc,
+                        mention_delta=round(delta, 4),
+                    )
+                )
+            for i, comp in enumerate(competitors_list, 1):
+                comp.rank = i
+
+            return PromptAnalyticsResponse(
+                prompt_id=prompt_id,
+                period_days=days,
+                mention_rate=round(mention_rate, 4),
+                citation_rate=round(citation_rate, 4),
+                competitors=competitors_list,
+                platforms=platforms,
+            ).model_dump(mode="json")
+
+    except Exception:
+        logger.warning("get_prompt_analytics failed for %s", prompt_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch prompt analytics")
 
 
 # ── Cleanup Endpoint ────────────────────────────────────────────────

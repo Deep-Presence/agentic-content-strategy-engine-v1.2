@@ -1,5 +1,25 @@
 [
   {
+    "id": "D-PROMPT-TRACKING-ENRICHED",
+    "timestamp": "2026-04-04",
+    "task": "Prompt Tracking Backend Data Layer — close all gaps between frontend and backend",
+    "decision": "SQL aggregation + Redis cache (not materialized views or pre-computed stats table)",
+    "rationale": "At current scale (<500K responses/company), CTE-based SQL with proper indexes is sub-50ms. Redis cache (5min TTL) handles repeated reads. Materialized stats table is future upgrade path when a single company exceeds 500K responses.",
+    "alternatives_considered": [
+      "Materialized view — full refresh every time, no incremental updates, harder in Alembic",
+      "Pre-computed prompt_daily_stats table — adds write-time complexity, premature at current scale",
+      "On-the-fly without cache — O(n) on every page load, unacceptable at scale"
+    ],
+    "sub_decisions": [
+      "Fanout responses roll up into parent via COALESCE(parent_prompt_id, prompt_id)",
+      "Delta = auto period-over-period (days=7 compares last 7d vs prior 7d)",
+      "Drawer uses 1 new focused endpoint (GET /prompts/{id}/analytics) + 2 existing (fanouts + answers) fired in parallel",
+      "Existing company-wide analytics endpoints stay completely untouched — no prompt_id param pollution",
+      "Migration renumbered: fanout_queries 0023->0024, indexes 0025 (0023_llm_cost_events already applied in DB)"
+    ],
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-OPENROUTER-PHASE2",
     "timestamp": "2026-03-30",
     "task": "Phase 2 — OpenRouter Migration (Direct SDK calls → OpenAI SDK pointed at OpenRouter)",
@@ -881,6 +901,46 @@
       "Pure stdlib dictConfig + JSON formatter + ContextVar filter (more code, less battle-tested, reinventing structlog)"
     ],
     "outcome": "22 new tests, 2 new files, 13 modified files. All 1063 API tests passing with zero regressions. Codex-reviewed (6 findings incorporated).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-FANOUT-SELF-REF-FK",
+    "timestamp": "2026-04-04",
+    "task": "Query Fanout — Schema design for fanout query variants",
+    "approach": "Self-referential FK on tracked_prompts (parent_prompt_id → tracked_prompts.id ON DELETE CASCADE)",
+    "rationale": "Fanout queries are conceptually just 'more prompts' with a parent link. Reusing tracked_prompts avoids breaking daily_run_responses FK, PlatformRunnerService, and MentionDetector — all prompt-agnostic. Filtering is a one-clause addition (WHERE parent_prompt_id IS NULL). Alternative (separate query_fanouts table) would require polymorphic FKs or response table duplication.",
+    "alternatives_rejected": [
+      "Separate query_fanouts table — breaks daily_run_responses.prompt_id FK, requires separate repo + model + runner changes, polymorphic FK complexity"
+    ],
+    "outcome": "Migration 0023 adds parent_prompt_id FK, fanout_axis, pinned to tracked_prompts. Denormalized parent_prompt_id on daily_run_responses for analytics. 394 DT tests passing.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-FANOUT-BACKGROUND-TASK",
+    "timestamp": "2026-04-04",
+    "task": "Query Fanout — Generation timing (inline vs background)",
+    "approach": "Background task via TaskStore. POST /prompts returns 201 immediately with fanout_task_id. LLM generation runs async.",
+    "rationale": "Aryan chose background task over inline (2-4s blocking). Prompt creation is instant, fanouts appear after SSE completion. Frontend can poll or listen for fanout_complete event.",
+    "alternatives_rejected": [
+      "Inline LLM call during POST /prompts — simpler but blocks prompt creation for 2-4s"
+    ],
+    "outcome": "run_fanout_generation_task() added to runner.py. POST /prompts returns CreatePromptResponse with optional fanout_task_id.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CLEANUP-BOTH-MODES",
+    "timestamp": "2026-04-04",
+    "task": "Data Retention — Cleanup trigger mechanism",
+    "approach": "Both automatic (daily cron) + manual (POST /admin/cleanup superuser endpoint)",
+    "rationale": "Aryan chose both modes. API endpoint for ad-hoc runs, daily cron for zero-maintenance automated cleanup. Uses SET response_text = '' (not NULL, column is NOT NULL). Preserves all metric columns for trend analytics.",
+    "alternatives_rejected": [
+      "Manual API trigger only — requires remembering to run it",
+      "Automatic daily cron only — no ad-hoc flexibility"
+    ],
+    "outcome": "cleanup.py module + POST /admin/cleanup endpoint. cleanup_old_response_text() function shared by both triggers.",
     "reversible": true,
     "approved_by": "Aryan"
   }

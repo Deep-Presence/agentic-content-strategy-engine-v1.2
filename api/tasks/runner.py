@@ -1929,6 +1929,14 @@ async def run_daily_tracker_task(
         if daily_run_id and session_factory:
             from core.daily_tracker.persistence import mark_daily_run_failed as _mark_dt_failed
             await _mark_dt_failed(session_factory, daily_run_id)
+        # Invalidate enriched prompt cache after run completes
+        try:
+            from core.cache import cache_delete_pattern
+            await asyncio.to_thread(
+                cache_delete_pattern, f"cache:prompt_enriched:{company_slug}:*"
+            )
+        except Exception:
+            logger.debug("Cache invalidation skipped (Redis unavailable)")
         clear_context()
 
 

@@ -1,7 +1,7 @@
 {
-  "sprint": "frontend-brand-hub-integration",
-  "sprint_goal": "Integrate Brand Hub (/artifacts) frontend page with backend API — replace filesystem reads with real API calls, add version history dropdown, artifact upload modal.",
-  "sprint_status": "COMPLETE — Brand Hub fully integrated. Auth login/hydration fixes applied. Version dropdown and upload modal working. Build passing.",
+  "sprint": "prompt-tracking-enriched",
+  "sprint_goal": "Close all data gaps between frontend Prompt Tracking page and backend Daily Tracker — enriched prompt list with per-prompt metrics, per-prompt drawer analytics, foundation bug fixes.",
+  "sprint_status": "COMPLETE — 2 new endpoints (GET /prompts/enriched, GET /prompts/{id}/analytics), 3 foundation bug fixes, 3 composite indexes, 6 new Pydantic models, Redis cache. 414 DT tests passing (20 new).",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -29,34 +29,23 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "frontend/src/app/(dashboard)/artifacts/_lib/ (NEW — types, api, parsers, adapters, versions)",
-    "frontend/src/app/(dashboard)/artifacts/_hooks/ (NEW — useArtifactsData, usePersonaContent)",
-    "frontend/src/app/(dashboard)/artifacts/_components/VersionHistory.tsx (NEW — dropdown version selector)",
-    "frontend/src/app/(dashboard)/artifacts/_components/UploadModal.tsx (NEW — floating upload dialog)",
-    "frontend/src/app/(dashboard)/artifacts/_components/ArtifactsSkeleton.tsx (NEW — loading skeletons)",
-    "frontend/src/app/(dashboard)/artifacts/_components/ArtifactsClient.tsx (REWRITTEN — hooks, version switching, upload)",
-    "frontend/src/app/(dashboard)/artifacts/_components/HubView.tsx (UPDATED — kbHealth, dynamic freshness)",
-    "frontend/src/app/(dashboard)/artifacts/_components/PersonasListView.tsx (UPDATED — API persona type)",
-    "frontend/src/lib/api-client.ts (UPDATED — getText, doFetch refactor, 401 fix, logoutPromise reset)",
-    "frontend/src/middleware.ts (UPDATED — CSP disabled in dev)",
-    "frontend/src/app/(auth)/login/page.tsx (UPDATED — Suspense for useSearchParams)",
-    "api/routers/artifacts.py (UPDATED — audience_personas/voice_style_guide in VALID_TYPES, upload endpoint)",
-    "core/shared_tools/openrouter_client.py (+_ensure_model_prefix() moved here from llm_client.py)",
-    "core/content_engine/planner.py (Phase 2 — AsyncAnthropic → get_async_client(), response shape converted)",
-    "core/research/audience_persona/agents.py (Phase 2 — google.genai → get_async_client(), _get_gemini_api_key() removed)",
-    "core/gap_analysis/steps/s8_generate_report.py (Phase 2 — responses.create → chat.completions.create)",
-    "core/gap_analysis/engines/perplexity.py (Phase 2 — AsyncPerplexity → get_async_client(), dual citation extraction)",
-    "core/gap_analysis/steps/s3_search_platforms.py (Phase 2 — Perplexity client = singleton, no exit-stack)",
-    "core/config/settings.py (3 model defaults prefixed: anthropic/claude-opus-4-6, google/gemini-3-flash-preview, openai/gpt-5.2-2025-12-11)"
+    "core/db/migrations/versions/0024_fanout_queries.py (renumbered from 0023 — parent_prompt_id FK, fanout_axis, pinned)",
+    "core/db/migrations/versions/0025_prompt_tracking_indexes.py (NEW — 3 composite indexes for per-prompt analytics)",
+    "api/dependencies.py (UPDATED — fixed N+1 query, days filter, _row_to_dict with timestamp/parent_prompt_id/run_id)",
+    "core/db/repositories/daily_tracker_repo.py (UPDATED — 4 new methods: get_responses_by_company, get_responses_for_prompt, get_prompt_metrics_batch, get_daily_volume_batch)",
+    "core/models/daily_tracker.py (UPDATED — 6 new models: EnrichedPrompt, EnrichedPromptListResponse, PerPromptPlatformMetrics, PromptAnalyticsResponse. CompetitorMetrics gained rank + mention_delta)",
+    "api/routers/daily_tracker.py (UPDATED — 2 new endpoints: GET /prompts/enriched, GET /prompts/{id}/analytics. AnswerRecord gained persona field. Route ordering fixed for /prompts/enriched before /prompts/{prompt_id})",
+    "api/tasks/runner.py (UPDATED — cache invalidation for prompt_enriched after daily run completes)",
+    "tests/daily_tracker/test_prompt_tracking_enriched.py (NEW — 20 tests covering all phases)"
   ],
-  "test_count": 1865,
-  "phases_completed_count": 62,
+  "test_count": 1885,
+  "phases_completed_count": 64,
   "recent_phases": [
+    "prompt-tracking-enriched — Prompt tracking backend data layer. 2 new endpoints (enriched list + per-prompt analytics). 3 foundation bug fixes (N+1, days, _row_to_dict). 3 composite indexes. 6 new Pydantic models. Redis cache. 414 DT tests (20 new).",
+    "query-fanout-data-retention — Query fanout generation (OpenRouter/Claude Sonnet, 6 intent axes). Self-ref FK on tracked_prompts. 9 new API endpoints. 30-day response text cleanup. 394 DT tests passing.",
     "frontend-brand-hub-integration — Brand Hub (/artifacts) fully wired to backend API. KB, VSG, AP from real endpoints. Version history dropdown. Upload modal with sub-path routing. Auth login fixes (CSP, Suspense, 401 loop). Dead code data loaders removed.",
     "frontend-shared-components-integration-readiness — Full integration audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer). Docs updated.",
-    "frontend-auth-integration-security-hardening — Auth foundation + httpOnly cookie BFF proxy + strict CSP nonces. 20 new files.",
-    "openrouter-phase2 — OpenRouter migration: 4 direct SDK calls (CE-0 planner, AP-1 suggester, GA-S8 report, GA Perplexity engine). 8 source + 3 test files. 1865 tests passing.",
-    "openrouter-phase1 — OpenRouter migration: 3 wrappers (llm_call, _run_completion, perplexity_client.research) + VSG-3. ~32 call sites, 18 files, 386 tests passing."
+    "frontend-auth-integration-security-hardening — Auth foundation + httpOnly cookie BFF proxy + strict CSP nonces. 20 new files."
   ],
   "phases_remaining": [
     "openrouter-phase3 — Embeddings: Point embedding clients at OpenRouter",

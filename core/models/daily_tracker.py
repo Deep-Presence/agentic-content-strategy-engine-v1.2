@@ -186,6 +186,67 @@ class CompetitorMetrics(BaseModel):
     mention_rate: float = 0.0
     mention_count: int = 0
     share_of_voice: float = 0.0
+    rank: int = 0
+    mention_delta: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Enriched Prompt Models (Phase 1 — prompt tracking table)
+# ---------------------------------------------------------------------------
+
+
+class EnrichedPrompt(BaseModel):
+    """TrackedPrompt + computed per-prompt metrics for the main table."""
+
+    id: str = ""
+    text: str = ""
+    category: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    source: PromptSource = PromptSource.MANUAL
+    active: bool = True
+    created_at: datetime | None = None
+    mention_rate: float = 0.0
+    mention_delta: float = 0.0
+    citation_rate: float = 0.0
+    citation_delta: float = 0.0
+    daily_volume: list[int] = Field(default_factory=list)
+    fanout_count: int = 0
+    total_responses: int = 0
+
+
+class EnrichedPromptListResponse(BaseModel):
+    """Response for GET /prompts/enriched."""
+
+    prompts: list[EnrichedPrompt] = Field(default_factory=list)
+    total: int = 0
+    period_days: int = 7
+    period_start: str = ""
+    period_end: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Per-Prompt Analytics Models (Phase 2 — drawer)
+# ---------------------------------------------------------------------------
+
+
+class PerPromptPlatformMetrics(BaseModel):
+    """Per-engine breakdown for a single prompt's analytics drawer."""
+
+    engine: str = ""
+    response_count: int = 0
+    mention_count: int = 0
+    mention_rate: float = 0.0
+
+
+class PromptAnalyticsResponse(BaseModel):
+    """Response for GET /prompts/{id}/analytics."""
+
+    prompt_id: str = ""
+    period_days: int = 30
+    mention_rate: float = 0.0
+    citation_rate: float = 0.0
+    competitors: list[CompetitorMetrics] = Field(default_factory=list)
+    platforms: list[PerPromptPlatformMetrics] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

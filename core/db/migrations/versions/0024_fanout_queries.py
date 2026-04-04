@@ -4,8 +4,8 @@ Adds self-referential parent_prompt_id FK to tracked_prompts for fanout
 query variants, plus denormalized parent_prompt_id on daily_run_responses
 for efficient analytics aggregation.
 
-Revision ID: 0023
-Revises: 0022
+Revision ID: 0024
+Revises: 0023
 Create Date: 2026-04-04
 """
 from __future__ import annotations
@@ -14,8 +14,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 
-revision: str = "0023"
-down_revision: str = "0022"
+revision: str = "0024"
+down_revision: str = "0023"
 branch_labels: str | None = None
 depends_on: str | None = None
 

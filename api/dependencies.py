@@ -799,21 +799,25 @@ class _DbResponseDataProvider:
     async def get_responses_for_company(
         self, company_id: str, *, days: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch responses for a company's recent runs."""
-        runs = await self._run_repo.list_runs(company_id, limit=100)
-        all_responses: list[dict[str, Any]] = []
-        for run in runs:
-            rows = await self._response_repo.get_responses_by_run(run.id)
-            all_responses.extend(self._row_to_dict(r) for r in rows)
-        return all_responses
+        """Fetch responses for a company, optionally limited to N days.
+
+        Uses a single JOIN query instead of N+1 (one per run).
+        """
+        rows = await self._response_repo.get_responses_by_company(
+            company_id, days=days,
+        )
+        return [self._row_to_dict(r) for r in rows]
 
     @staticmethod
     def _row_to_dict(row: Any) -> dict[str, Any]:
         """Convert an ORM DailyRunResponseModel to a response dict."""
         return {
             "prompt_id": str(row.prompt_id),
+            "parent_prompt_id": str(row.parent_prompt_id) if row.parent_prompt_id else None,
+            "run_id": str(row.run_id),
             "engine": row.engine,
             "response_text": row.response_text,
+            "timestamp": row.created_at.isoformat() if row.created_at else None,
             "mention_analysis": {
                 "brand_mentioned": row.brand_mentioned,
                 "brand_mention_count": row.brand_mention_count,

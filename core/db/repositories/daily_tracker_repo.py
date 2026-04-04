@@ -15,7 +15,11 @@ from __future__ import annotations
 import uuid as _uuid
 from typing import Sequence
 
-from sqlalchemy import and_, func, select
+from datetime import datetime, timedelta, timezone
+
+import sqlalchemy as sa
+from sqlalchemy import Row, and_, case, cast, func, literal_column, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db.models.daily_tracker import (
@@ -450,6 +454,313 @@ class DailyRunResponseRepository(SQLAlchemyRepository[DailyRunResponseModel]):
         )
         result = await self._session.execute(stmt)
         return {row.prompt_id: row.cnt for row in result}
+
+    async def get_responses_by_company(
+        self,
+        company_id: str,
+        *,
+        days: int | None = None,
+    ) -> Sequence[DailyRunResponseModel]:
+        """Fetch all responses for a company via a single JOIN through daily_runs.
+
+        Replaces the N+1 pattern of listing runs then querying each.
+
+        Args:
+            company_id: Company identifier (matches daily_runs.company_id).
+            days: Optional time window — only include responses created within
+                the last *days* days.  ``None`` returns all.
+
+        Returns:
+            Responses ordered by created_at descending.
+        """
+        stmt = (
+            select(DailyRunResponseModel)
+            .join(
+                DailyRunModel,
+                DailyRunResponseModel.run_id == DailyRunModel.id,
+            )
+            .where(DailyRunModel.company_id == company_id)
+        )
+        if days is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            stmt = stmt.where(DailyRunResponseModel.created_at >= cutoff)
+        stmt = stmt.order_by(DailyRunResponseModel.created_at.desc())
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_responses_for_prompt(
+        self,
+        prompt_id: _uuid.UUID,
+        *,
+        days: int = 30,
+    ) -> Sequence[DailyRunResponseModel]:
+        """Fetch responses scoped to a single prompt **plus** its fanout children.
+
+        Uses the OR condition on ``prompt_id`` / ``parent_prompt_id`` to
+        aggregate the full topic scope.  Leverages composite indexes
+        ``ix_responses_prompt_created`` and ``ix_responses_parent_created``.
+
+        Args:
+            prompt_id: The parent prompt UUID.
+            days: Time window (default 30 days).
+
+        Returns:
+            Responses ordered by created_at descending.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        stmt = (
+            select(DailyRunResponseModel)
+            .where(
+                and_(
+                    or_(
+                        DailyRunResponseModel.prompt_id == prompt_id,
+                        DailyRunResponseModel.parent_prompt_id == prompt_id,
+                    ),
+                    DailyRunResponseModel.created_at >= cutoff,
+                )
+            )
+            .order_by(DailyRunResponseModel.created_at.desc())
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    # -- Enriched prompt list helpers (Phase 1) --
+
+    async def get_prompt_metrics_batch(
+        self,
+        company_id: str,
+        current_start: datetime,
+        current_end: datetime,
+        prev_start: datetime,
+        prev_end: datetime,
+    ) -> list[Row]:
+        """Return per-parent-prompt aggregated metrics across two time windows.
+
+        Uses ``COALESCE(parent_prompt_id, prompt_id)`` to roll up fanout
+        responses into their parent prompt.  Two CTE windows provide
+        current-period rates and previous-period rates (for delta computation).
+
+        Args:
+            company_id: Company identifier.
+            current_start: Start of current period (inclusive).
+            current_end: End of current period (exclusive).
+            prev_start: Start of comparison period (inclusive).
+            prev_end: End of comparison period (exclusive).
+
+        Returns:
+            List of Row objects with columns: id, text, category, tags,
+            source, active, created_at, mention_rate, citation_rate,
+            mention_delta, citation_delta, fanout_count, total_responses.
+        """
+        # Expression that maps both parent + fanout responses to the root prompt
+        root_id = func.coalesce(
+            DailyRunResponseModel.parent_prompt_id,
+            DailyRunResponseModel.prompt_id,
+        ).label("root_id")
+
+        # -- CTE: current period metrics --
+        current_base = (
+            select(
+                root_id,
+                func.count().label("total"),
+                func.count()
+                .filter(DailyRunResponseModel.brand_mentioned.is_(True))
+                .label("mentioned"),
+                func.count()
+                .filter(
+                    func.jsonb_array_length(
+                        cast(DailyRunResponseModel.citations, JSONB)
+                    )
+                    > 0
+                )
+                .label("cited"),
+            )
+            .join(DailyRunModel, DailyRunResponseModel.run_id == DailyRunModel.id)
+            .where(
+                and_(
+                    DailyRunModel.company_id == company_id,
+                    DailyRunResponseModel.created_at >= current_start,
+                    DailyRunResponseModel.created_at < current_end,
+                )
+            )
+            .group_by(
+                func.coalesce(
+                    DailyRunResponseModel.parent_prompt_id,
+                    DailyRunResponseModel.prompt_id,
+                )
+            )
+        ).cte("current_metrics")
+
+        # -- CTE: previous period metrics --
+        prev_root_id = func.coalesce(
+            DailyRunResponseModel.parent_prompt_id,
+            DailyRunResponseModel.prompt_id,
+        ).label("root_id")
+
+        prev_base = (
+            select(
+                prev_root_id,
+                func.count().label("total"),
+                func.count()
+                .filter(DailyRunResponseModel.brand_mentioned.is_(True))
+                .label("mentioned"),
+                func.count()
+                .filter(
+                    func.jsonb_array_length(
+                        cast(DailyRunResponseModel.citations, JSONB)
+                    )
+                    > 0
+                )
+                .label("cited"),
+            )
+            .join(DailyRunModel, DailyRunResponseModel.run_id == DailyRunModel.id)
+            .where(
+                and_(
+                    DailyRunModel.company_id == company_id,
+                    DailyRunResponseModel.created_at >= prev_start,
+                    DailyRunResponseModel.created_at < prev_end,
+                )
+            )
+            .group_by(
+                func.coalesce(
+                    DailyRunResponseModel.parent_prompt_id,
+                    DailyRunResponseModel.prompt_id,
+                )
+            )
+        ).cte("prev_metrics")
+
+        # -- Subquery: fanout counts --
+        fc = (
+            select(
+                TrackedPromptModel.parent_prompt_id.label("parent_id"),
+                func.count().label("cnt"),
+            )
+            .where(
+                and_(
+                    TrackedPromptModel.company_id == company_id,
+                    TrackedPromptModel.parent_prompt_id.isnot(None),
+                    TrackedPromptModel.active.is_(True),
+                )
+            )
+            .group_by(TrackedPromptModel.parent_prompt_id)
+        ).subquery("fc")
+
+        # -- Computed rate expressions --
+        cm = current_base
+        pm = prev_base
+
+        def _safe_rate(mentioned_col, total_col):
+            """mentioned / total, defaulting to 0 when total is 0."""
+            return case(
+                (total_col > 0, cast(mentioned_col, sa.Float) / cast(total_col, sa.Float)),
+                else_=literal_column("0.0"),
+            )
+
+        cur_mention_rate = _safe_rate(cm.c.mentioned, cm.c.total)
+        cur_citation_rate = _safe_rate(cm.c.cited, cm.c.total)
+        prev_mention_rate = _safe_rate(pm.c.mentioned, pm.c.total)
+        prev_citation_rate = _safe_rate(pm.c.cited, pm.c.total)
+
+        stmt = (
+            select(
+                TrackedPromptModel.id,
+                TrackedPromptModel.text,
+                TrackedPromptModel.category,
+                TrackedPromptModel.tags,
+                TrackedPromptModel.source,
+                TrackedPromptModel.active,
+                TrackedPromptModel.created_at,
+                func.coalesce(cur_mention_rate, 0).label("mention_rate"),
+                func.coalesce(cur_citation_rate, 0).label("citation_rate"),
+                (func.coalesce(cur_mention_rate, 0) - func.coalesce(prev_mention_rate, 0)).label(
+                    "mention_delta"
+                ),
+                (func.coalesce(cur_citation_rate, 0) - func.coalesce(prev_citation_rate, 0)).label(
+                    "citation_delta"
+                ),
+                func.coalesce(fc.c.cnt, 0).label("fanout_count"),
+                func.coalesce(cm.c.total, 0).label("total_responses"),
+            )
+            .outerjoin(cm, cm.c.root_id == TrackedPromptModel.id)
+            .outerjoin(pm, pm.c.root_id == TrackedPromptModel.id)
+            .outerjoin(fc, fc.c.parent_id == TrackedPromptModel.id)
+            .where(
+                and_(
+                    TrackedPromptModel.company_id == company_id,
+                    TrackedPromptModel.parent_prompt_id.is_(None),
+                    TrackedPromptModel.active.is_(True),
+                )
+            )
+            .order_by(TrackedPromptModel.created_at.desc())
+        )
+
+        result = await self._session.execute(stmt)
+        return list(result.all())
+
+    async def get_daily_volume_batch(
+        self,
+        company_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> dict[_uuid.UUID, dict[str, int]]:
+        """Return daily response counts per parent prompt for sparkline data.
+
+        Args:
+            company_id: Company identifier.
+            start: Start of period (inclusive).
+            end: End of period (exclusive).
+
+        Returns:
+            Nested dict: ``{prompt_uuid: {"2026-04-01": 5, "2026-04-02": 3, ...}}``.
+            Callers are responsible for zero-filling missing dates.
+        """
+        root_id = func.coalesce(
+            DailyRunResponseModel.parent_prompt_id,
+            DailyRunResponseModel.prompt_id,
+        ).label("root_id")
+
+        day_col = cast(
+            func.date_trunc("day", DailyRunResponseModel.created_at),
+            sa.Date,
+        ).label("day")
+
+        stmt = (
+            select(
+                root_id,
+                day_col,
+                func.count().label("cnt"),
+            )
+            .join(DailyRunModel, DailyRunResponseModel.run_id == DailyRunModel.id)
+            .where(
+                and_(
+                    DailyRunModel.company_id == company_id,
+                    DailyRunResponseModel.created_at >= start,
+                    DailyRunResponseModel.created_at < end,
+                )
+            )
+            .group_by(
+                func.coalesce(
+                    DailyRunResponseModel.parent_prompt_id,
+                    DailyRunResponseModel.prompt_id,
+                ),
+                day_col,
+            )
+            .order_by(
+                func.coalesce(
+                    DailyRunResponseModel.parent_prompt_id,
+                    DailyRunResponseModel.prompt_id,
+                ),
+                day_col,
+            )
+        )
+
+        result = await self._session.execute(stmt)
+        volume: dict[_uuid.UUID, dict[str, int]] = {}
+        for row in result:
+            pid = row.root_id
+            day_str = str(row.day)
+            volume.setdefault(pid, {})[day_str] = row.cnt
+        return volume
 
     async def cleanup_old_response_text(
         self, retention_days: int = 30
