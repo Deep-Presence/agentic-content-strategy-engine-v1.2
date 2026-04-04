@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Edit3,
   RefreshCw,
+  Loader2,
   Download,
   Clock,
   Check,
@@ -22,6 +23,8 @@ interface PersonaDetailProps {
   activeFilePath?: string;
   onSelectVersion?: (entry: VersionEntry) => void;
   onUpload?: () => void;
+  onRegenerate?: () => void;
+  isRegenerating?: boolean;
 }
 
 // Color theme per section type
@@ -152,7 +155,7 @@ function ParsedContent({ content, sectionTitle }: { content: string; sectionTitl
   return <>{elements}</>;
 }
 
-export function PersonaDetail({ persona, onBack, versions, activeFilePath, onSelectVersion, onUpload }: PersonaDetailProps) {
+export function PersonaDetail({ persona, onBack, versions, activeFilePath, onSelectVersion, onUpload, onRegenerate, isRegenerating }: PersonaDetailProps) {
   const [activeSection, setActiveSection] = useState<string>('section-0');
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -246,9 +249,17 @@ export function PersonaDetail({ persona, onBack, versions, activeFilePath, onSel
             <Edit3 size={13} strokeWidth={1.5} className="mr-1.5" />
             Edit
           </Button>
-          <Button variant="secondary">
-            <RefreshCw size={13} strokeWidth={1.5} className="mr-1.5" />
-            Re-generate
+          <Button
+            variant="secondary"
+            onClick={onRegenerate}
+            disabled={isRegenerating}
+          >
+            {isRegenerating ? (
+              <Loader2 size={13} strokeWidth={1.5} className="mr-1.5 animate-spin" />
+            ) : (
+              <RefreshCw size={13} strokeWidth={1.5} className="mr-1.5" />
+            )}
+            {isRegenerating ? 'Regenerating...' : 'Re-generate'}
           </Button>
         </div>
       </div>

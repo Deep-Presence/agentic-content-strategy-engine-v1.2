@@ -6,6 +6,7 @@ import {
   Users,
   Palette,
   RefreshCw,
+  Loader2,
   ChevronRight,
   Clock,
   Building2,
@@ -25,6 +26,7 @@ interface HubViewProps {
   kbHealth: KBHealthResponseAPI | null;
   onNavigate: (id: string) => void;
   onRerun: () => void;
+  isRerunning?: boolean;
 }
 
 const CARD_CONFIG: Record<string, { icon: React.ReactNode; color: string; bg: string }> = {
@@ -57,7 +59,7 @@ function formatDate(iso: string | null): string {
   }
 }
 
-export function HubView({ kbDocs, voiceGuide, personas, kbHealth, onNavigate, onRerun }: HubViewProps) {
+export function HubView({ kbDocs, voiceGuide, personas, kbHealth, onNavigate, onRerun, isRerunning }: HubViewProps) {
   // Build the flat card list from all data sources
   const cards: CardItem[] = [];
 
@@ -142,9 +144,13 @@ export function HubView({ kbDocs, voiceGuide, personas, kbHealth, onNavigate, on
               ? `Last run: ${formatDate(kbHealth.last_full_refresh)}`
               : 'No runs yet'}
           </div>
-          <Button variant="primary" onClick={onRerun}>
-            <RefreshCw size={14} strokeWidth={1.5} className="mr-1.5" />
-            Re-run Pipeline
+          <Button variant="primary" onClick={onRerun} disabled={isRerunning}>
+            {isRerunning ? (
+              <Loader2 size={14} strokeWidth={1.5} className="mr-1.5 animate-spin" />
+            ) : (
+              <RefreshCw size={14} strokeWidth={1.5} className="mr-1.5" />
+            )}
+            {isRerunning ? 'Running...' : 'Re-run Pipeline'}
           </Button>
         </div>
       </div>

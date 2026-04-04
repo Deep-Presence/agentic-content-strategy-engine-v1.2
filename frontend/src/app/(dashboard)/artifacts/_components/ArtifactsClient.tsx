@@ -20,6 +20,13 @@ import { HubSkeleton, DetailSkeleton } from './ArtifactsSkeleton';
 import { UploadModal } from './UploadModal';
 import { Card, Button } from '@/components/ui';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { ApiError } from '@/lib/api-client';
+import {
+  regenerateKnowledgeBase,
+  regenerateAudiencePersonas,
+  regenerateVoiceStyleGuide,
+  regenerateResearchOrchestrator,
+} from '../_lib/api';
 import type { KBDocType } from '../_lib/types';
 
 const TYPE_LABELS: Record<string, string> = {
@@ -54,11 +61,15 @@ function PersonaDetailLoader({
   versions,
   onBack,
   onUpload,
+  onRegenerate,
+  isRegenerating,
 }: {
   persona: PersonaListItemAPI;
   versions: VersionEntry[];
   onBack: () => void;
   onUpload?: () => void;
+  onRegenerate?: () => void;
+  isRegenerating?: boolean;
 }) {
   const { companySlug } = useAuth();
   const [activeVersion, setActiveVersion] = useState(persona.current_version);
@@ -96,6 +107,8 @@ function PersonaDetailLoader({
       activeFilePath={activeFilePath}
       onSelectVersion={handleVersionSelect}
       onUpload={onUpload}
+      onRegenerate={onRegenerate}
+      isRegenerating={isRegenerating}
     />
   );
 }
@@ -104,7 +117,7 @@ function PersonaDetailLoader({
 
 export function ArtifactsClient() {
   const router = useRouter();
-  const { companySlug } = useAuth();
+  const { companySlug, companyName, companyDomain } = useAuth();
   const {
     kbDocs, voiceGuide, voiceGuideRaw, personas, kbHealth,
     kbFileList, vsgFileList, personaFileList,
@@ -135,6 +148,54 @@ export function ArtifactsClient() {
     setUploadSubPath(subPath);
     setUploadModalOpen(true);
   }, []);
+
+  // Pipeline regeneration state
+  const [regenerating, setRegenerating] = useState<'kb' | 'ap' | 'vsg' | 'research' | null>(null);
+
+  const handleRegenerateKB = useCallback(async () => {
+    if (regenerating || !companyName || !companyDomain) return;
+    setRegenerating('kb');
+    try {
+      await regenerateKnowledgeBase(companyName, companyDomain);
+      // Pipeline runs in background — poll via refetch after a delay
+      setTimeout(() => { refetch(); setRegenerating(null); }, 3000);
+    } catch {
+      setRegenerating(null);
+    }
+  }, [regenerating, companyName, companyDomain, refetch]);
+
+  const handleRegenerateAP = useCallback(async () => {
+    if (regenerating || !companyName || !companyDomain) return;
+    setRegenerating('ap');
+    try {
+      await regenerateAudiencePersonas(companyName, companyDomain);
+      setTimeout(() => { refetch(); setRegenerating(null); }, 3000);
+    } catch {
+      setRegenerating(null);
+    }
+  }, [regenerating, companyName, companyDomain, refetch]);
+
+  const handleRegenerateVSG = useCallback(async () => {
+    if (regenerating || !companyName || !companyDomain) return;
+    setRegenerating('vsg');
+    try {
+      await regenerateVoiceStyleGuide(companyName, companyDomain);
+      setTimeout(() => { refetch(); setRegenerating(null); }, 3000);
+    } catch {
+      setRegenerating(null);
+    }
+  }, [regenerating, companyName, companyDomain, refetch]);
+
+  const handleRerunPipeline = useCallback(async () => {
+    if (regenerating || !companyName || !companyDomain) return;
+    setRegenerating('research');
+    try {
+      await regenerateResearchOrchestrator(companyName, companyDomain);
+      setTimeout(() => { refetch(); setRegenerating(null); }, 3000);
+    } catch {
+      setRegenerating(null);
+    }
+  }, [regenerating, companyName, companyDomain, refetch]);
 
   const goToHub = () => {
     setCurrentView('hub');
@@ -250,7 +311,8 @@ export function ArtifactsClient() {
           personas={personas}
           kbHealth={kbHealth}
           onNavigate={handleNavigate}
-          onRerun={() => router.push('/onboarding')}
+          onRerun={handleRerunPipeline}
+          isRerunning={regenerating === 'research'}
         />
       )}
 
@@ -269,6 +331,8 @@ export function ArtifactsClient() {
           activeFilePath={activeKBFilePath}
           onSelectVersion={handleKBVersionSelect}
           onUpload={() => handleOpenUpload('knowledge_base', selectedDocType ?? undefined)}
+          onRegenerate={handleRegenerateKB}
+          isRegenerating={regenerating === 'kb'}
         />
       )}
 
@@ -281,6 +345,8 @@ export function ArtifactsClient() {
           activeFilePath={activeVSGFilePath}
           onSelectVersion={handleVSGVersionSelect}
           onUpload={() => handleOpenUpload('voice_style_guide', 'guide')}
+          onRegenerate={handleRegenerateVSG}
+          isRegenerating={regenerating === 'vsg'}
         />
       )}
 
@@ -299,6 +365,8 @@ export function ArtifactsClient() {
           activeFilePath={activeVSGFilePath}
           onSelectVersion={handleVSGVersionSelect}
           onUpload={() => handleOpenUpload('voice_style_guide', 'guide')}
+          onRegenerate={handleRegenerateVSG}
+          isRegenerating={regenerating === 'vsg'}
         />
       )}
 
@@ -316,6 +384,8 @@ export function ArtifactsClient() {
           versions={personaVersions}
           onBack={() => { setCurrentView('audience_personas'); setSelectedPersonaId(null); }}
           onUpload={() => handleOpenUpload('audience_personas', selectedPersona?.persona_id)}
+          onRegenerate={handleRegenerateAP}
+          isRegenerating={regenerating === 'ap'}
         />
       )}
 

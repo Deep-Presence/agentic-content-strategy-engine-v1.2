@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Check,
   RefreshCw,
+  Loader2,
   Download,
   Upload,
   Clock,
@@ -29,9 +30,11 @@ interface VoiceGuideViewProps {
   activeFilePath?: string;
   onSelectVersion?: (entry: VersionEntry) => void;
   onUpload?: () => void;
+  onRegenerate?: () => void;
+  isRegenerating?: boolean;
 }
 
-export function VoiceGuideView({ voiceGuide, markdown, onBack, versions, activeFilePath, onSelectVersion, onUpload }: VoiceGuideViewProps) {
+export function VoiceGuideView({ voiceGuide, markdown, onBack, versions, activeFilePath, onSelectVersion, onUpload, onRegenerate, isRegenerating }: VoiceGuideViewProps) {
   const [activeRegister, setActiveRegister] = useState<string>(
     voiceGuide.registers[0]?.name || 'tactical'
   );
@@ -124,9 +127,17 @@ export function VoiceGuideView({ voiceGuide, markdown, onBack, versions, activeF
             <Download size={13} strokeWidth={1.5} className="mr-1.5" />
             Download
           </Button>
-          <Button variant="secondary">
-            <RefreshCw size={13} strokeWidth={1.5} className="mr-1.5" />
-            Re-generate
+          <Button
+            variant="secondary"
+            onClick={onRegenerate}
+            disabled={isRegenerating}
+          >
+            {isRegenerating ? (
+              <Loader2 size={13} strokeWidth={1.5} className="mr-1.5 animate-spin" />
+            ) : (
+              <RefreshCw size={13} strokeWidth={1.5} className="mr-1.5" />
+            )}
+            {isRegenerating ? 'Regenerating...' : 'Re-generate'}
           </Button>
         </div>
       </div>

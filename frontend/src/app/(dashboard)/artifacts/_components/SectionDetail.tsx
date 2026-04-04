@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Clock,
   RefreshCw,
+  Loader2,
   Download,
   Upload,
   Edit3,
@@ -31,6 +32,8 @@ interface SectionDetailProps {
   activeFilePath?: string;
   onSelectVersion?: (entry: VersionEntry) => void;
   onUpload?: () => void;
+  onRegenerate?: () => void;
+  isRegenerating?: boolean;
 }
 
 interface Heading { id: string; text: string; level: number; }
@@ -57,6 +60,8 @@ export function SectionDetail({
   activeFilePath,
   onSelectVersion,
   onUpload,
+  onRegenerate,
+  isRegenerating,
 }: SectionDetailProps) {
   const [headings, setHeadings] = useState<Heading[]>([]);
   const [activeHeading, setActiveHeading] = useState<string>('');
@@ -180,9 +185,17 @@ export function SectionDetail({
             <Download size={13} strokeWidth={1.5} className="mr-1" />
             Download
           </Button>
-          <Button variant="secondary">
-            <RefreshCw size={13} strokeWidth={1.5} className="mr-1" />
-            Re-generate
+          <Button
+            variant="secondary"
+            onClick={onRegenerate}
+            disabled={isRegenerating}
+          >
+            {isRegenerating ? (
+              <Loader2 size={13} strokeWidth={1.5} className="mr-1 animate-spin" />
+            ) : (
+              <RefreshCw size={13} strokeWidth={1.5} className="mr-1" />
+            )}
+            {isRegenerating ? 'Regenerating...' : 'Re-generate'}
           </Button>
         </div>
       </div>

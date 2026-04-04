@@ -91,6 +91,82 @@ export function fetchPersonaContent(
   );
 }
 
+// ── Pipeline Regeneration (auto-approved) ──────────────
+
+export interface PipelineStartResponse {
+  run_id: string;
+  pipeline: string;
+  company_slug: string;
+  status: string;
+  created_at: string;
+}
+
+export function regenerateKnowledgeBase(
+  companyName: string,
+  domain: string,
+): Promise<PipelineStartResponse> {
+  return api.post<PipelineStartResponse>(
+    '/api/v1/knowledge-base/start',
+    {
+      company_name: companyName,
+      domain,
+      mode: 'full',
+      force_rerun: true,
+      auto_approve_checkpoints: [1, 2, 3],
+    },
+  );
+}
+
+export function regenerateAudiencePersonas(
+  companyName: string,
+  domain: string,
+): Promise<PipelineStartResponse> {
+  return api.post<PipelineStartResponse>(
+    '/api/v1/audience-persona/start',
+    {
+      company_name: companyName,
+      domain,
+      force_rerun: true,
+      auto_approve_checkpoints: [1, 2],
+    },
+  );
+}
+
+export function regenerateResearchOrchestrator(
+  companyName: string,
+  domain: string,
+): Promise<PipelineStartResponse> {
+  return api.post<PipelineStartResponse>(
+    '/api/v1/research/start',
+    {
+      company_name: companyName,
+      domain,
+      force_rerun: true,
+      auto_approve: {
+        kb: [1, 2, 3],
+        ap: [1, 2],
+        vsg: [1],
+      },
+      pipelines: ['kb', 'ap', 'vsg'],
+    },
+  );
+}
+
+export function regenerateVoiceStyleGuide(
+  companyName: string,
+  domain: string,
+): Promise<PipelineStartResponse> {
+  return api.post<PipelineStartResponse>(
+    '/api/v1/voice-style-guide/start',
+    {
+      company_name: companyName,
+      domain,
+      force_rerun: true,
+      auto_approve_checkpoints: [1],
+    },
+  );
+}
+
 // ── Upload ──────────────────────────────────────────────
 
 export interface UploadArtifactResponse {
