@@ -542,7 +542,7 @@ class TestCountTreeStats:
 # ── LLM Agent Functions (mocked) ────────────────────────────────────────
 
 def _make_mock_response(content: str):
-    """Create a mock LiteLLM response."""
+    """Create a mock OpenAI chat completion response."""
     mock_response = MagicMock()
     mock_choice = MagicMock()
     mock_choice.message.content = content
@@ -551,11 +551,33 @@ def _make_mock_response(content: str):
     return mock_response
 
 
+class _LiteLLMCompat:
+    """Shim so existing tests can keep using ``mock_litellm.acompletion = AsyncMock(...)``."""
+
+    def __init__(self, mock_client: MagicMock):
+        self._client = mock_client
+
+    @property
+    def acompletion(self):
+        return self._client.chat.completions.create
+
+    @acompletion.setter
+    def acompletion(self, value):
+        self._client.chat.completions.create = value
+
+
 @pytest.fixture
 def mock_litellm():
-    """Patch litellm.acompletion to return controlled responses."""
-    with patch("core.topic_discovery.agents.litellm") as mock:
-        yield mock
+    """Patch OpenRouter async client so tests control LLM responses.
+
+    Yields a shim with ``.acompletion`` property that maps to
+    ``client.chat.completions.create`` — backward-compatible with all
+    existing test code that does ``mock_litellm.acompletion = AsyncMock(...)``.
+    """
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock()
+    with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client):
+        yield _LiteLLMCompat(mock_client)
 
 
 class TestSourceABrainstorm:
@@ -656,7 +678,7 @@ class TestSourceCDeepResearch:
         with patch(
             "core.research.tools.perplexity_client"
         ) as mock_pplx:
-            mock_pplx.research = MagicMock(return_value=response_json)
+            mock_pplx.research = MagicMock(return_value=(response_json, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
             result = await run_source_c_deep_research(
                 "Ramp is a fintech company", "Competitor data", "fintech",
                 timeout_s=10.0,
@@ -713,7 +735,7 @@ class TestSourceCDeepResearch:
         with patch(
             "core.research.tools.perplexity_client"
         ) as mock_pplx:
-            mock_pplx.research = MagicMock(return_value=raw_with_citations)
+            mock_pplx.research = MagicMock(return_value=(raw_with_citations, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}))
             result = await run_source_c_deep_research(
                 "Company context", "", "cybersecurity", timeout_s=10.0,
             )
@@ -1751,3 +1773,93 @@ class TestDedupMergesPersonaIds:
         assert len(result.kept) == 2
         assert result.kept[0].persona_ids == ["david"]
         assert result.kept[1].persona_ids == ["marcus"]
+
+
+# ── _run_completion cost tracking ───────────────────────────────────────
+
+
+def _make_mock_response_with_usage(content: str, prompt_tokens: int = 50, completion_tokens: int = 100):
+    """Create a mock OpenAI response with usage data for cost tracking tests."""
+    mock_response = MagicMock()
+    mock_choice = MagicMock()
+    mock_choice.message.content = content
+    mock_choice.finish_reason = "stop"
+    mock_response.choices = [mock_choice]
+    mock_response.usage = MagicMock(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+    return mock_response
+
+
+class TestRunCompletionCostTracking:
+    """Verify track_llm_cost() is called inside _run_completion()."""
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_on_success(self):
+        from core.topic_discovery.agents import _run_completion
+
+        mock_resp = _make_mock_response_with_usage('{"ok": true}', 50, 100)
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+        meta = {
+            "pipeline": "topic_discovery",
+            "pipeline_step": "source_a",
+            "company_slug": "test-co",
+        }
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            await _run_completion(
+                model="anthropic/claude-sonnet-4-6",
+                messages=[{"role": "user", "content": "hi"}],
+                timeout_s=10.0,
+                metadata=meta,
+            )
+        mock_track.assert_called_once()
+        kw = mock_track.call_args[1]
+        assert kw["model"] == "anthropic/claude-sonnet-4-6"
+        assert kw["provider"] == "openrouter"
+        assert kw["pipeline"] == "topic_discovery"
+        assert kw["pipeline_step"] == "source_a"
+        assert kw["prompt_tokens"] == 50
+        assert kw["completion_tokens"] == 100
+        assert kw["company_slug"] == "test-co"
+        assert kw["source"] == "openrouter"
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_with_no_metadata(self):
+        from core.topic_discovery.agents import _run_completion
+
+        mock_resp = _make_mock_response_with_usage('{"ok": true}')
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            await _run_completion(
+                model="test-model",
+                messages=[{"role": "user", "content": "hi"}],
+                timeout_s=10.0,
+            )
+        kw = mock_track.call_args[1]
+        assert kw["pipeline"] == ""
+        assert kw["pipeline_step"] == ""
+        assert kw["company_slug"] == ""
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_with_missing_usage(self):
+        from core.topic_discovery.agents import _run_completion
+
+        mock_resp = _make_mock_response('{"ok": true}')
+        mock_resp.usage = None  # explicitly no usage
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("core.shared_tools.openrouter_client.get_async_client", return_value=mock_client), \
+             patch("core.shared_tools.cost_tracker.track_llm_cost") as mock_track:
+            await _run_completion(
+                model="test-model",
+                messages=[{"role": "user", "content": "hi"}],
+                timeout_s=10.0,
+            )
+        kw = mock_track.call_args[1]
+        assert kw["prompt_tokens"] == 0
+        assert kw["completion_tokens"] == 0

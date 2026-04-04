@@ -5,7 +5,7 @@
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
-    "LiteLLM wraps all LLM calls in content engine workers/judges/agents",
+    "OpenRouter via openai SDK (AsyncOpenAI/OpenAI with base_url override, max_retries=0)",
     "LangGraph >=1.0 interrupt model: check __interrupt__ in result dict, not GraphInterrupt exception",
     "Double-underscore separator for effective slugs: {company}__{product}",
     "Default-deny middleware — all routes protected unless explicitly whitelisted",
@@ -16,12 +16,16 @@
     "Distributed locks are fail-closed when Redis is configured (no split-brain fallback)",
     "CSP strict-dynamic disabled in dev (blocks Next.js HMR)",
     "handleUnauthorized must skip redirect when on auth pages (prevents loop)",
-    "useSearchParams() requires Suspense boundary in Next.js 14 App Router"
+    "useSearchParams() requires Suspense boundary in Next.js 14 App Router",
+    "OPENROUTER_API_KEY is REQUIRED for Content Engine, Topic Discovery, Perplexity research, CE-0 Planner, AP-1 Suggester, GA-S8 Report, GA Perplexity Engine",
+    "VSG-1 author discovery stays on litellm (Anthropic web_search_20250305 tool not supported by OpenRouter)",
+    "Gap analysis engines (Claude/Gemini/OpenAI) stay on native SDKs (web search / grounding / reasoning not supported by OpenRouter)",
+    "GA Perplexity engine NOW on OpenRouter (Phase 2) — AsyncPerplexity no longer used"
   ],
   "active_branches": ["integration/front-back-2"],
   "environment_notes": [
     "Python 3.12", "async-first", "VS Code + Claude Code extension",
-    "Key deps: LangGraph >=1.0, langsmith >=0.2, litellm >=1.50, sqlalchemy[asyncio] >=2.0.30, structlog >=24.1, redis[hiredis] >=5.2.0"
+    "Key deps: LangGraph >=0.2, langsmith >=0.2, litellm >=1.50 (VSG-1 only), openai >=2.0 (OpenRouter + native), sqlalchemy[asyncio] >=2.0.30, structlog >=24.1, redis[hiredis] >=5.2.0, perplexityai >=0.2 (GA engine only)"
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
@@ -36,17 +40,28 @@
     "frontend/src/lib/api-client.ts (UPDATED — getText, doFetch refactor, 401 fix, logoutPromise reset)",
     "frontend/src/middleware.ts (UPDATED — CSP disabled in dev)",
     "frontend/src/app/(auth)/login/page.tsx (UPDATED — Suspense for useSearchParams)",
-    "api/routers/artifacts.py (UPDATED — audience_personas/voice_style_guide in VALID_TYPES, upload endpoint)"
+    "api/routers/artifacts.py (UPDATED — audience_personas/voice_style_guide in VALID_TYPES, upload endpoint)",
+    "core/shared_tools/openrouter_client.py (+_ensure_model_prefix() moved here from llm_client.py)",
+    "core/content_engine/planner.py (Phase 2 — AsyncAnthropic → get_async_client(), response shape converted)",
+    "core/research/audience_persona/agents.py (Phase 2 — google.genai → get_async_client(), _get_gemini_api_key() removed)",
+    "core/gap_analysis/steps/s8_generate_report.py (Phase 2 — responses.create → chat.completions.create)",
+    "core/gap_analysis/engines/perplexity.py (Phase 2 — AsyncPerplexity → get_async_client(), dual citation extraction)",
+    "core/gap_analysis/steps/s3_search_platforms.py (Phase 2 — Perplexity client = singleton, no exit-stack)",
+    "core/config/settings.py (3 model defaults prefixed: anthropic/claude-opus-4-6, google/gemini-3-flash-preview, openai/gpt-5.2-2025-12-11)"
   ],
-  "test_count": 1360,
-  "phases_completed_count": 61,
+  "test_count": 1865,
+  "phases_completed_count": 62,
   "recent_phases": [
     "frontend-brand-hub-integration — Brand Hub (/artifacts) fully wired to backend API. KB, VSG, AP from real endpoints. Version history dropdown. Upload modal with sub-path routing. Auth login fixes (CSP, Suspense, 401 loop). Dead code data loaders removed.",
     "frontend-shared-components-integration-readiness — Full integration audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer). Docs updated.",
     "frontend-auth-integration-security-hardening — Auth foundation + httpOnly cookie BFF proxy + strict CSP nonces. 20 new files.",
-    "redis-phase6-remove-fallbacks — Delete JSON TaskStore, EventBus, JsonAuthService, MemorySaver. DATABASE_URL+REDIS_URL mandatory.",
-    "r2-blob-storage-phase5 — Reader-side StorageBackend migration: json_site_audit_data full refactor, content/brand/prompt services fixed"
+    "openrouter-phase2 — OpenRouter migration: 4 direct SDK calls (CE-0 planner, AP-1 suggester, GA-S8 report, GA Perplexity engine). 8 source + 3 test files. 1865 tests passing.",
+    "openrouter-phase1 — OpenRouter migration: 3 wrappers (llm_call, _run_completion, perplexity_client.research) + VSG-3. ~32 call sites, 18 files, 386 tests passing."
   ],
-  "phases_remaining": [],
+  "phases_remaining": [
+    "openrouter-phase3 — Embeddings: Point embedding clients at OpenRouter",
+    "openrouter-phase4 — Cost tracking for native calls: track_llm_cost() wrapper for ~16 non-migrated sites",
+    "openrouter-phase5 (optional) — LangChain adapter: KB Synthesis + Reddit HIL via ChatOpenAI(base_url=openrouter)"
+  ],
   "deferred_issues_location": ".claude/sprints/pending/backlog.md"
 }

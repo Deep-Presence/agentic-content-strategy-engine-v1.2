@@ -8,8 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from openai import AsyncOpenAI
-
 from core.models.gap_analysis import (
     AnalysisResult,
     ClusterContentSpec,
@@ -25,18 +23,39 @@ from core.storage.backends.base import StorageBackend
 logger = logging.getLogger(__name__)
 
 
-async def _call_openai(prompt: str, model: str) -> str:
-    api_key = settings.openai_api_key
-    if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. Add it to .env.local to enable report generation."
-        )
-    client = AsyncOpenAI(api_key=api_key)
-    response = await client.responses.create(
-        model=model,
-        input=prompt,
+async def _call_openai(prompt: str, model: str) -> tuple[str, dict[str, int]]:
+    from core.shared_tools.openrouter_client import get_async_client, _ensure_model_prefix
+    from core.shared_tools.cost_tracker import track_llm_cost
+
+    client = get_async_client()
+    response = await client.chat.completions.create(
+        model=_ensure_model_prefix(model),
+        messages=[{"role": "user", "content": prompt}],
+        extra_body={"metadata": {"pipeline": "gap_analysis", "step": "s8_report"}},
     )
-    return getattr(response, "output_text", None) or ""
+
+    # Extract usage
+    _usage = getattr(response, "usage", None)
+    usage_dict: dict[str, int] = {
+        "prompt_tokens": getattr(_usage, "prompt_tokens", 0) or 0,
+        "completion_tokens": getattr(_usage, "completion_tokens", 0) or 0,
+        "total_tokens": (getattr(_usage, "prompt_tokens", 0) or 0)
+        + (getattr(_usage, "completion_tokens", 0) or 0),
+    }
+
+    # Cost tracking (never raises)
+    track_llm_cost(
+        model=model,
+        provider="openrouter",
+        pipeline="gap_analysis",
+        pipeline_step="s8_report",
+        prompt_tokens=usage_dict["prompt_tokens"],
+        completion_tokens=usage_dict["completion_tokens"],
+        call_site="core.gap_analysis.steps.s8_generate_report",
+        source="openrouter",
+    )
+
+    return response.choices[0].message.content or "", usage_dict
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
@@ -375,14 +394,14 @@ async def generate_gap_report(
     llm_prompt = _build_llm_summary_prompt(analysis)
     try:
         t0 = time.monotonic()
-        llm_response = await _call_openai(llm_prompt, model_name)
+        llm_response, _s8_usage = await _call_openai(llm_prompt, model_name)
         llm_payload = _extract_json(llm_response)
         executive_summary = llm_payload.get("executive_summary", "")
         recommendations = llm_payload.get("recommendations", [])
         elapsed = time.monotonic() - t0
         logger.info("S8 LLM summary: model=%s, elapsed=%.1fs, recommendations=%d", model_name, elapsed, len(recommendations))
         if trace_span:
-            log_generation(trace_span, "s8-executive-summary", model_name, llm_prompt[:500], llm_response[:500], usage=None,
+            log_generation(trace_span, "s8-executive-summary", model_name, llm_prompt[:500], llm_response[:500], usage=_s8_usage,
                            metadata={"pipeline": "gap_analysis", "pipeline_step": "s8_report", "provider": "openai", "model": model_name,
                                      "company_slug": company_slug})
     except Exception as exc:

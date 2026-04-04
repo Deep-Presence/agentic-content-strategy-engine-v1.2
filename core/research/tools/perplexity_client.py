@@ -1,33 +1,37 @@
 """
-Perplexity Deep Research client.
+Perplexity Deep Research client via OpenRouter.
 
-Uses sonar-deep-research for comprehensive web-grounded research with citations.
-See https://docs.perplexity.ai/docs/getting-started/overview
+Uses OpenRouter to route to Perplexity sonar-deep-research for comprehensive
+web-grounded research with citations.
+
+The sync OpenAI client is used because all callers wrap this in asyncio.to_thread().
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
+
+import openai
 
 from core.config.settings import settings
 
 
 def _client(timeout_s: float = 300.0):
-    """Lazy import to avoid top-level dependency failure.
+    """Create a sync OpenAI client pointed at OpenRouter.
 
     Args:
         timeout_s: HTTP-level timeout in seconds. Ensures the underlying
             thread terminates when asyncio.wait_for cancels the coroutine.
     """
-    from perplexity import Perplexity
-
-    api_key = settings.perplexity_api_key
+    api_key = settings.openrouter_api_key
     if not api_key:
         raise RuntimeError(
-            "PERPLEXITY_API_KEY is not set. Get your key at https://perplexity.ai/account/api"
+            "OPENROUTER_API_KEY is not set. "
+            "Get your key at https://openrouter.ai/settings/keys"
         )
-    try:
-        return Perplexity(api_key=api_key, timeout=timeout_s)
-    except TypeError:
-        # SDK version doesn't support timeout param — fall back gracefully
-        return Perplexity(api_key=api_key)
+    return openai.OpenAI(
+        base_url=settings.openrouter_base_url,
+        api_key=api_key,
+        timeout=timeout_s,
+        max_retries=0,
+    )
 
 
 def research(
@@ -38,10 +42,13 @@ def research(
     include_answer: bool = True,
     timeout_s: float = 300.0,
     model: Optional[str] = None,
+    pipeline: str = "",
+    pipeline_step: str = "",
+    company_slug: str = "",
     **kwargs: Any,
-) -> str:
+) -> Tuple[str, Dict[str, int]]:
     """
-    Deep web research using Perplexity sonar-deep-research model.
+    Deep web research using Perplexity sonar-deep-research model via OpenRouter.
 
     Conducts autonomous multi-step retrieval, synthesis, and reasoning.
     Returns research text with inline citations [1], [2], etc.
@@ -53,37 +60,68 @@ def research(
     client = _client(timeout_s=timeout_s)
     model = model or settings.perplexity_deep_research_model
 
+    # Ensure provider prefix for OpenRouter routing
+    if "/" not in model and model.startswith("sonar"):
+        model = f"perplexity/{model}"
+
     try:
         completion = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": query}],
-            stream=False,
         )
-    except Exception as e:
-        msg = str(e)
-        if "401" in msg or "Authorization" in msg or "invalid" in msg.lower():
-            raise RuntimeError(
-                "Perplexity API key invalid or expired. "
-                "Check PERPLEXITY_API_KEY at https://perplexity.ai/account/api"
-            ) from e
-        if "429" in msg or "rate limit" in msg.lower() or "quota" in msg.lower():
-            raise RuntimeError(
-                "Perplexity API rate limit or quota exceeded. "
-                "Check usage at https://perplexity.ai/account/api"
-            ) from e
-        raise
+    except openai.AuthenticationError as e:
+        raise RuntimeError(
+            "OpenRouter API key invalid or expired. "
+            "Check OPENROUTER_API_KEY at https://openrouter.ai/settings/keys"
+        ) from e
+    except openai.RateLimitError as e:
+        raise RuntimeError(
+            "OpenRouter rate limit or quota exceeded. "
+            "Check usage at https://openrouter.ai/settings/keys"
+        ) from e
+
+    # Extract usage from response
+    _usage = getattr(completion, "usage", None)
+    usage_dict: Dict[str, int] = {
+        "prompt_tokens": getattr(_usage, "prompt_tokens", 0) or 0,
+        "completion_tokens": getattr(_usage, "completion_tokens", 0) or 0,
+        "total_tokens": (getattr(_usage, "prompt_tokens", 0) or 0)
+        + (getattr(_usage, "completion_tokens", 0) or 0),
+    }
+
+    # Cost tracking (never raises)
+    from core.shared_tools.cost_tracker import track_llm_cost
+
+    track_llm_cost(
+        model=model,
+        provider="openrouter",
+        pipeline=pipeline,
+        pipeline_step=pipeline_step,
+        prompt_tokens=usage_dict["prompt_tokens"],
+        completion_tokens=usage_dict["completion_tokens"],
+        company_slug=company_slug,
+        call_site="core.research.tools.perplexity_client",
+        source="openrouter",
+    )
 
     content = ""
     if completion.choices:
         msg = completion.choices[0].message
         content = getattr(msg, "content", None) or ""
 
+    # Extract citations — OpenRouter passes through Perplexity's citations field.
+    # The openai SDK stores unknown response fields in model_extra.
     citations = getattr(completion, "citations", None)
+    if not citations:
+        extra = getattr(completion, "model_extra", None)
+        if isinstance(extra, dict):
+            citations = extra.get("citations")
+
     if citations and isinstance(citations, list):
         cited = "\n\nSources:\n" + "\n".join(f"[{i+1}] {c}" for i, c in enumerate(citations))
         content = (content or "").rstrip() + "\n" + cited
 
-    return content or ""
+    return content or "", usage_dict
 
 
 def search(
@@ -94,8 +132,11 @@ def search(
     include_answer: bool = True,
     timeout_s: float = 300.0,
     model: Optional[str] = None,
+    pipeline: str = "",
+    pipeline_step: str = "",
+    company_slug: str = "",
     **kwargs: Any,
-) -> str:
+) -> Tuple[str, Dict[str, int]]:
     """Alias for research (Perplexity Deep Research covers both search and deep research)."""
     return research(
         query=query,
@@ -105,5 +146,8 @@ def search(
         include_answer=include_answer,
         timeout_s=timeout_s,
         model=model,
+        pipeline=pipeline,
+        pipeline_step=pipeline_step,
+        company_slug=company_slug,
         **kwargs,
     )

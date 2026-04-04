@@ -38,7 +38,7 @@ from core.content_engine.graph_v13 import (
     build_topic_approval_graph,
     run_hitl_checkpoint,
 )
-from core.content_engine.llm_client import configure_litellm_callbacks
+from core.content_engine.llm_client import configure_openrouter
 from core.content_engine.state_helpers import (
     _cleanup_pipeline_state,
     _cleanup_pipeline_state_async,
@@ -711,8 +711,8 @@ async def run_content_generation_v13(
     """
     start_time = time.time()
 
-    # Configure LiteLLM callbacks for LangSmith
-    configure_litellm_callbacks()
+    # Configure OpenRouter client
+    configure_openrouter()
 
     slug = _resolve_slug(input_data)
     artifact_dir = _ensure_artifact_dir(slug)

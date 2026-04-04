@@ -176,6 +176,7 @@ class PlatformRunnerService:
         engine: SearchEngine,
         engine_name: str,
         semaphore: asyncio.Semaphore,
+        trace_span: Any = None,
     ) -> PlatformResponse:
         """Run a single prompt on a single engine with semaphore control.
 
@@ -200,6 +201,29 @@ class PlatformRunnerService:
                     query_id=prompt.id,
                 )
                 elapsed_ms = (time.monotonic() - start_ms) * 1000
+
+                # LangSmith tracing — log per-prompt engine call
+                if trace_span and (result.prompt_tokens or result.completion_tokens):
+                    from core.shared_tools.tracing import log_generation
+
+                    log_generation(
+                        trace_span,
+                        f"dt-{engine_name}/{prompt.id}",
+                        getattr(engine, "model", "") or "",
+                        (prompt.text or "")[:2000],
+                        (result.response_text or "")[:2000],
+                        metadata={
+                            "pipeline": "daily_tracker",
+                            "pipeline_step": f"platform_runner_{engine_name}",
+                            "provider": engine_name,
+                            "model": getattr(engine, "model", "") or "",
+                        },
+                        usage={
+                            "prompt_tokens": result.prompt_tokens,
+                            "completion_tokens": result.completion_tokens,
+                            "total_tokens": result.prompt_tokens + result.completion_tokens,
+                        },
+                    )
 
                 return PlatformResponse(
                     prompt_id=prompt.id,

@@ -24,10 +24,11 @@ class TestAsyncCallOpenAI:
         assert inspect.iscoroutinefunction(_call_openai)
 
     @pytest.mark.asyncio
-    async def test_returns_text_response(self):
-        """Should return the output_text from the async OpenAI response."""
+    async def test_returns_text_and_usage_tuple(self):
+        """Should return (text, (prompt_tokens, completion_tokens)) tuple."""
         mock_response = MagicMock()
         mock_response.output_text = "test response text"
+        mock_response.usage = MagicMock(input_tokens=100, output_tokens=50)
 
         mock_client_instance = AsyncMock()
         mock_client_instance.responses.create = AsyncMock(return_value=mock_response)
@@ -40,9 +41,10 @@ class TestAsyncCallOpenAI:
         ) as mock_settings:
             mock_settings.openai_api_key = "test-key"
             from core.gap_analysis.steps.s2_generate_queries import _call_openai
-            result = await _call_openai("test prompt", "gpt-4o")
+            text, usage = await _call_openai("test prompt", "gpt-4o")
 
-        assert result == "test response text"
+        assert text == "test response text"
+        assert usage == (100, 50)
 
 
 class TestAsyncDeduplicateQueries:
@@ -169,7 +171,7 @@ class TestAsyncGenerateQueries:
         ), patch(
             "core.gap_analysis.steps.s2_generate_queries._call_openai",
             new_callable=AsyncMock,
-            return_value=mock_llm_response,
+            return_value=(mock_llm_response, (100, 50)),
         ), patch(
             "core.gap_analysis.steps.s2_generate_queries._deduplicate_queries",
             new_callable=AsyncMock,

@@ -1,9 +1,9 @@
 {
   "current_sprint": "frontend-brand-hub-integration",
   "last_updated": "2026-04-04",
-  "test_count": 1360,
+  "test_count": 1865,
   "completed_sprints_summary": {
-    "total_tasks_completed": 42,
+    "total_tasks_completed": 43,
     "sprints": [
       {"sprint": "v3-async", "date": "2026-02-15", "summary": "Async pipeline conversion (12 tasks), Playwright CF bypass, content engine v1.0"},
       {"sprint": "v3-signals", "date": "2026-02-18", "summary": "Structural Signal Overhaul — S4 dual-soup, ~45 signals, GapContentBrief, 3-tier output"},
@@ -36,9 +36,11 @@
       {"sprint": "r2-blob-storage-phase3", "date": "2026-03-27", "summary": "R2 Blob Storage Redis Cache Layer — CachedStorageBackend, mtime removal. 25 new tests."},
       {"sprint": "r2-blob-storage-phase5", "date": "2026-03-27", "summary": "Phase 5 StorageBackend Migration — Reader-side services migrated from direct filesystem."},
       {"sprint": "redis-phase6-remove-fallbacks", "date": "2026-03-27", "summary": "Phase 6 Remove Filesystem Fallbacks — deleted JSON TaskStore, EventBus, JsonAuthService. ~1300 lines removed."},
+      {"sprint": "openrouter-phase1", "date": "2026-03-29", "summary": "OpenRouter Phase 1 — Migrate 3 LLM wrappers to OpenRouter. ~32 call sites, 18 files, 386 tests passing."},
+      {"sprint": "openrouter-phase2", "date": "2026-03-30", "summary": "OpenRouter Phase 2 — Migrate 4 direct SDK calls. 8 source + 3 test files. 1865 tests passing."},
       {"sprint": "frontend-auth-integration-security-hardening", "date": "2026-04-03", "summary": "Frontend auth integration + security hardening. BFF proxy, httpOnly cookies, CSP nonces, 20 new files."},
       {"sprint": "frontend-shared-components-integration-readiness", "date": "2026-04-03", "summary": "Integration readiness audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer)."},
-      {"sprint": "frontend-brand-hub-integration", "date": "2026-04-04", "summary": "Brand Hub (/artifacts) fully integrated with backend API. KB, VSG, AP fetched from real endpoints. Version history dropdown. Upload modal with sub-path routing. Auth login fixes (CSP dev disable, Suspense hydration, 401 loop fix). Dead code data loaders removed. New upload endpoint in artifacts router. 8 new frontend files, 5 modified, 8 deleted."}
+      {"sprint": "frontend-brand-hub-integration", "date": "2026-04-04", "summary": "Brand Hub (/artifacts) fully integrated with backend API. KB, VSG, AP fetched from real endpoints. Version history dropdown. Upload modal. Auth login fixes. Dead code data loaders removed."}
     ]
   },
   "completed": [
@@ -84,6 +86,63 @@
         "frontend/src/app/(dashboard)/artifacts/_components/VoiceGuideView.tsx",
         "frontend/src/app/(dashboard)/artifacts/_components/PersonaDetail.tsx",
         "api/routers/artifacts.py"
+      ]
+    },
+    {
+      "id": "T-openrouter-phase2",
+      "task": "OpenRouter Phase 2 — Migrate 4 direct SDK call sites to OpenRouter",
+      "sprint": "openrouter-phase2",
+      "status": "done",
+      "completed_at": "2026-03-30",
+      "tests_added": 0,
+      "tests_updated": 15,
+      "tests_deleted": 4,
+      "files_modified": [
+        "core/shared_tools/openrouter_client.py",
+        "core/content_engine/llm_client.py",
+        "core/content_engine/planner.py",
+        "core/research/audience_persona/agents.py",
+        "core/gap_analysis/steps/s8_generate_report.py",
+        "core/gap_analysis/engines/perplexity.py",
+        "core/gap_analysis/steps/s3_search_platforms.py",
+        "core/config/settings.py",
+        "tests/content_engine/conftest.py",
+        "tests/gap_analysis/steps/test_s8_generate_report.py",
+        "tests/research/audience_persona/test_agents_ap.py"
+      ]
+    },
+    {
+      "id": "T-openrouter-phase1",
+      "task": "OpenRouter Phase 1 — Migrate 3 centralized LLM wrappers to OpenRouter",
+      "sprint": "openrouter-phase1",
+      "status": "done",
+      "completed_at": "2026-03-29",
+      "tests_added": 26,
+      "tests_updated": 30,
+      "files_created": [
+        "core/shared_tools/openrouter_client.py",
+        "tests/shared_tools/test_openrouter_client.py",
+        "tests/config/test_settings_openrouter.py"
+      ],
+      "files_modified": [
+        "core/config/settings.py",
+        "core/content_engine/llm_client.py",
+        "core/content_engine/pipeline_v13.py",
+        "core/topic_discovery/agents.py",
+        "core/topic_discovery/pipeline.py",
+        "core/research/tools/perplexity_client.py",
+        "core/research/voice_style_guide/agents.py",
+        "core/research/voice_style_guide/pipeline.py",
+        "scripts/run_td_rescore.py",
+        ".env.example",
+        "tests/content_engine/test_llm_client.py",
+        "tests/content_engine/test_pipeline_v13.py",
+        "tests/topic_discovery/test_agents_td.py",
+        "tests/topic_discovery/test_pipeline_td.py",
+        "tests/topic_discovery/test_expansion_pipeline_td.py",
+        "tests/research/tools/test_perplexity_client.py",
+        "tests/research/voice_style_guide/test_agents_vsg.py",
+        "tests/research/voice_style_guide/test_pipeline_vsg.py"
       ]
     }
   ],

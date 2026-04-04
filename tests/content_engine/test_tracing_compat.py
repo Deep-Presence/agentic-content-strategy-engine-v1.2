@@ -204,10 +204,13 @@ class TestLogGenerationCompat:
         with patch("core.shared_tools.tracing._is_enabled", return_value=True):
             log_generation(
                 parent, "gen", "model-x",
-                model_parameters={"temperature": 0.7},
+                model_parameters={"temperature": 0.7, "max_tokens": 4096},
             )
         call_kwargs = parent.create_child.call_args.kwargs
-        assert call_kwargs["extra"]["metadata"]["model_parameters"] == {"temperature": 0.7}
+        meta = call_kwargs["extra"]["metadata"]
+        # model_parameters are now unpacked into ls_ prefixed keys
+        assert meta["ls_temperature"] == 0.7
+        assert meta["ls_max_tokens"] == 4096
 
     def test_any_type_input_output_accepted(self):
         """input_text and output_text accept Any type (Langfuse passed dicts)."""
