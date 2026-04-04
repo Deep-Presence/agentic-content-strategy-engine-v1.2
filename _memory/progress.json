@@ -44,10 +44,42 @@
       {"sprint": "query-fanout-data-retention", "date": "2026-04-04", "summary": "Query fanout generation (OpenRouter/Claude Sonnet, 6 intent axes, 12-18 variants per prompt). Self-referential FK on tracked_prompts. 30-day response text cleanup. 9 new API endpoints (fanout CRUD, answer history, cleanup). 394 DT tests passing."},
       {"sprint": "prompt-tracking-enriched", "date": "2026-04-04", "summary": "Prompt tracking backend data layer — enriched prompt list (per-prompt mentionRate/citationRate/delta/sparkline/fanoutCount), per-prompt drawer analytics, 3 foundation bug fixes (N+1 query, days filter, _row_to_dict), 3 new composite indexes, 2 new endpoints, 6 new Pydantic models. 414 DT tests passing (20 new)."},
       {"sprint": "prompt-tracking-frontend-integration", "date": "2026-04-04", "summary": "Prompt Tracking frontend-backend integration — 4-layer pattern (types/api/adapters/hooks). 8 new frontend files, 3 refactored components, 2 deleted mock files. Backend: start_date/end_date params on 3 endpoints. PB-95 (tenant isolation) added to backlog. 67 DT tests passing. Build clean."},
-      {"sprint": "content-inventory-phase1", "date": "2026-04-04", "summary": "Content Inventory Phase 1 Foundation — universal CMS-agnostic content registry. ContentInventoryModel (26 cols, pgvector embedding), Alembic 0026, ContentInventoryRepository (upsert/bulk/similarity/pagination), ContentInventoryService (5 ingestion + 3 similarity methods), URL normalization, 3 Pydantic DTOs, DI wiring, CMS FK. 67 new tests (39 unit + 14 service + 14 DB). 1623 existing tests passing."}
+      {"sprint": "content-inventory-phase1", "date": "2026-04-04", "summary": "Content Inventory Phase 1 Foundation — universal CMS-agnostic content registry. ContentInventoryModel (26 cols, pgvector embedding), Alembic 0026, ContentInventoryRepository (upsert/bulk/similarity/pagination), ContentInventoryService (5 ingestion + 3 similarity methods), URL normalization, 3 Pydantic DTOs, DI wiring, CMS FK. 67 new tests (39 unit + 14 service + 14 DB). 1623 existing tests passing."},
+      {"sprint": "prompt-tracking-frontend-integration-extended", "date": "2026-04-04", "summary": "Prompt Tracking full frontend integration + Brand Hub regeneration. Add Prompt modal (POST /prompts), Run All Prompts (POST /runs with persistent status banner, localStorage, polling), fanout generation animation (shimmer + polling), auto-run daily checkbox. Brand Hub: Re-generate buttons wired for KB/AP/VSG (auto-approve), Re-run Pipeline button calls Research Orchestrator (KB→AP→VSG DAG, auto-approve all). Two-pass competitor extraction: Haiku extracts structured JSON from KB markdown, daily tracker auto-resolves competitors from KB sidecar. PB-95 (tenant isolation) CRITICAL. 16 new extraction tests. Model fix (claude-haiku-4.5). LangSmith tracing on extraction. 683 tests passing."},
+      {"sprint": "settings-page-integration", "date": "2026-04-04", "summary": "Settings page (/settings) frontend-backend integration. Team tab: real API (member list, role updates superuser-gated, invite code generation). Integrations tab: WordPress CMS connect/disconnect via modal form, GA4 Analytics full OAuth flow (authorize → Google consent → BFF callback → property selection → sync → disconnect w/ purge). BFF callback route bypasses catch-all proxy auth. api.del() enhanced with params. Role mapping layer (superuser↔Admin, member↔Editor, viewer↔Viewer). Models/Billing/Notifications tabs remain dummy. 8 new files, 3 modified. TypeScript clean, build clean."}
     ]
   },
   "completed": [
+    {
+      "id": "T-settings-page-integration",
+      "task": "Settings page (/settings) frontend-backend integration — Team tab (real API), Integrations tab (WordPress CMS + GA4 OAuth), BFF callback route, role mapping",
+      "sprint": "settings-page-integration",
+      "status": "done",
+      "completed_at": "2026-04-04",
+      "tests_added": 0,
+      "files_created": [
+        "frontend/src/app/(dashboard)/settings/_lib/types.ts",
+        "frontend/src/app/(dashboard)/settings/_lib/api.ts",
+        "frontend/src/app/(dashboard)/settings/_lib/role-map.ts",
+        "frontend/src/app/(dashboard)/settings/_hooks/useTeamData.ts",
+        "frontend/src/app/(dashboard)/settings/_hooks/useIntegrationsData.ts",
+        "frontend/src/app/(dashboard)/settings/_components/WordPressConnectModal.tsx",
+        "frontend/src/app/(dashboard)/settings/_components/GA4ConnectFlow.tsx",
+        "frontend/src/app/api/v1/analytics/google/callback/route.ts"
+      ],
+      "files_modified": [
+        "frontend/src/lib/api-client.ts",
+        "frontend/src/app/(dashboard)/settings/_components/TeamTab.tsx",
+        "frontend/src/app/(dashboard)/settings/_components/IntegrationsTab.tsx"
+      ],
+      "details": {
+        "team_tab": "Real API: member list from /companies/{slug}/settings/team, role updates (superuser only), invite code generation via /auth/invite. Role mapping: superuser↔Admin, member↔Editor, viewer↔Viewer.",
+        "integrations_tab": "WordPress: connect modal (site_url + username + api_key), connection info display, disconnect. GA4: full OAuth flow (authorize → Google consent → BFF callback → property select → sync). 5 other integrations show Coming Soon.",
+        "bff_callback": "Dedicated public BFF route at app/api/v1/analytics/google/callback/route.ts — bypasses catch-all proxy auth, uses redirect:manual to intercept backend 307, extracts Location header.",
+        "api_client": "api.del() enhanced with optional params arg for DELETE with query strings.",
+        "dummy_tabs": "Models, Billing, Notifications tabs unchanged (no backend endpoints exist)."
+      }
+    },
     {
       "id": "T-content-inventory-phase1",
       "task": "Content Inventory Phase 1 Foundation — DB schema, ORM model, repository, service, DI wiring, URL normalization, Pydantic DTOs, Alembic migration, CMS FK",

@@ -274,3 +274,37 @@ class CMSSyncedPostRepository(SQLAlchemyRepository[CMSSyncedPostModel]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    async def batch_link_inventory_ids(
+        self,
+        connection_id: _uuid.UUID,
+        pairs: list[tuple[_uuid.UUID, Any]],
+    ) -> int:
+        """Batch update content_inventory_id FK on synced posts.
+
+        Args:
+            connection_id: The CMS connection these posts belong to.
+            pairs: List of ``(content_inventory_id, cms_post_id_str)`` tuples.
+
+        Returns:
+            Number of rows updated.
+        """
+        if not pairs:
+            return 0
+
+        count = 0
+        for inventory_id, cms_post_id in pairs:
+            if cms_post_id is None:
+                continue
+            stmt = (
+                update(CMSSyncedPostModel)
+                .where(
+                    CMSSyncedPostModel.connection_id == connection_id,
+                    CMSSyncedPostModel.cms_post_id == str(cms_post_id),
+                )
+                .values(content_inventory_id=inventory_id)
+            )
+            result = await self._session.execute(stmt)
+            count += result.rowcount
+        await self._session.flush()
+        return count

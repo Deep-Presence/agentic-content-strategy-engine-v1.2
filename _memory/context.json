@@ -1,7 +1,7 @@
 {
-  "sprint": "content-inventory-phase1",
-  "sprint_goal": "Content Inventory Phase 1 Foundation — universal CMS-agnostic content registry. DB schema, ORM model, repository, service, DI wiring.",
-  "sprint_status": "COMPLETE — 7 new files, 4 modified. 67 new tests (39 unit + 14 service + 14 DB). 1623 existing tests passing, 0 regressions.",
+  "sprint": "prompt-tracking-frontend-integration-extended",
+  "sprint_goal": "Complete prompt tracking frontend integration + Brand Hub regeneration wiring + two-pass competitor extraction from KB pipeline.",
+  "sprint_status": "COMPLETE — Prompt Tracking: Add Prompt modal, Run All with persistent status banner, fanout animation, auto-run toggle. Brand Hub: Re-generate (KB/AP/VSG) + Re-run Pipeline (Research Orchestrator). Competitor extraction: Haiku 2-pass, JSON sidecar, daily tracker auto-resolves. 16 new tests, 683 total passing.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -29,23 +29,30 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/content_inventory/url_utils.py (NEW — aggressive URL normalization for cross-source dedup)",
-    "core/content_inventory/models.py (NEW — CrawledPageData, CannibalizationMatch, ExistingCoverageResult DTOs)",
-    "core/db/models/content_inventory.py (NEW — ContentInventoryModel, 26 columns, pgvector, dedup constraint)",
-    "core/db/migrations/versions/0026_content_inventory.py (NEW — table + HNSW + CMS FK)",
-    "core/db/repositories/content_inventory_repo.py (NEW — 8 methods: upsert, bulk, similarity, pagination)",
-    "core/services/content_inventory_service.py (NEW — 8 methods: ingestion, embedding, cannibalization, coverage)",
-    "api/dependencies.py (UPDATED — get_content_inventory_service() DI wiring)",
-    "core/db/models/cms.py (UPDATED — content_inventory_id FK on CMSSyncedPostModel)"
+    "frontend/src/app/(dashboard)/settings/_lib/api.ts (NEW — 12 API wrappers for team, CMS, GA4)",
+    "frontend/src/app/(dashboard)/settings/_lib/types.ts (NEW — backend schema mirrors + display types)",
+    "frontend/src/app/(dashboard)/settings/_lib/role-map.ts (NEW — backend↔frontend role mapping)",
+    "frontend/src/app/(dashboard)/settings/_hooks/useTeamData.ts (NEW — team fetch + mutations hook)",
+    "frontend/src/app/(dashboard)/settings/_hooks/useIntegrationsData.ts (NEW — CMS + GA4 state hook)",
+    "frontend/src/app/(dashboard)/settings/_components/TeamTab.tsx (REWRITTEN — real API, role-gated)",
+    "frontend/src/app/(dashboard)/settings/_components/IntegrationsTab.tsx (REWRITTEN — WordPress + GA4 + Coming Soon)",
+    "frontend/src/app/(dashboard)/settings/_components/WordPressConnectModal.tsx (NEW — credential form modal)",
+    "frontend/src/app/(dashboard)/settings/_components/GA4ConnectFlow.tsx (NEW — 3-state OAuth flow)",
+    "frontend/src/app/api/v1/analytics/google/callback/route.ts (NEW — public BFF OAuth callback)",
+    "frontend/src/lib/api-client.ts (UPDATED — api.del() accepts optional params)",
+    "frontend/src/app/(dashboard)/prompt-tracking/_components/PromptTrackingClient.tsx (UPDATED — Add Prompt modal, Run All with status banner)",
+    "frontend/src/app/(dashboard)/artifacts/_components/ArtifactsClient.tsx (UPDATED — Re-generate handlers for KB/AP/VSG)",
+    "core/research/knowledge_base/pipeline.py (UPDATED — concurrent competitor extraction, LangSmith tracing)",
+    "api/tasks/runner.py (UPDATED — daily tracker auto-resolves competitors from KB)"
   ],
-  "test_count": 1690,
-  "phases_completed_count": 66,
+  "test_count": 1706,
+  "phases_completed_count": 67,
   "recent_phases": [
-    "content-inventory-phase1 — Content Inventory Phase 1 Foundation. Universal CMS-agnostic content registry. ContentInventoryModel (26 cols, pgvector), Alembic 0026, repo (8 methods), service (8 methods), URL normalization, DTOs, DI, CMS FK. 67 new tests. 1623 existing passing.",
-    "prompt-tracking-frontend-integration — Prompt Tracking page fully integrated with backend API. 4-layer pattern (types/api/adapters/hooks). 8 new files, 3 refactored, 2 deleted. Backend: start_date/end_date on 3 endpoints. PB-95 (tenant isolation) flagged CRITICAL. 67 DT tests passing. Build clean.",
-    "prompt-tracking-enriched — Prompt tracking backend data layer. 2 new endpoints (enriched list + per-prompt analytics). 3 foundation bug fixes (N+1, days, _row_to_dict). 3 composite indexes. 6 new Pydantic models. Redis cache. 414 DT tests (20 new).",
-    "query-fanout-data-retention — Query fanout generation (OpenRouter/Claude Sonnet, 6 intent axes). Self-ref FK on tracked_prompts. 9 new API endpoints. 30-day response text cleanup. 394 DT tests passing.",
-    "frontend-brand-hub-integration — Brand Hub (/artifacts) fully wired to backend API. KB, VSG, AP from real endpoints. Version history dropdown. Upload modal with sub-path routing. Auth login fixes (CSP, Suspense, 401 loop). Dead code data loaders removed."
+    "settings-page-integration — Settings page (/settings) frontend-backend integration. Team tab: real API (member list, role updates, invite codes). Integrations: WordPress CMS connect/disconnect + GA4 full OAuth flow (BFF callback route, property selection, sync). Role mapping layer. api.del() enhanced. 8 new files, 3 modified. Build clean.",
+    "prompt-tracking-frontend-integration-extended — Full prompt tracking integration + Brand Hub regeneration + competitor extraction. Add Prompt modal, Run All Prompts, fanout animation. Brand Hub: Re-generate + Re-run Pipeline. Two-pass competitor extraction. PB-95 CRITICAL. 16 new tests.",
+    "content-inventory-phase1 — Content Inventory Phase 1 Foundation. Universal CMS-agnostic content registry. ContentInventoryModel (26 cols, pgvector), Alembic 0026, repo (8 methods), service (8 methods), URL normalization. 67 new tests.",
+    "prompt-tracking-frontend-integration — Prompt Tracking page fully integrated with backend API. 4-layer pattern (types/api/adapters/hooks). 8 new files. PB-95 (tenant isolation) flagged CRITICAL.",
+    "prompt-tracking-enriched — Prompt tracking backend data layer. 2 new endpoints. 3 foundation bug fixes. 3 composite indexes. 6 new Pydantic models. Redis cache. 414 DT tests."
   ],
   "phases_remaining": [
     "openrouter-phase3 — Embeddings: Point embedding clients at OpenRouter",

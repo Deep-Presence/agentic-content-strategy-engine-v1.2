@@ -57,6 +57,7 @@ class CMSService:
         storage: StorageBackend,
         fernet_key: str,
         content_repo: ContentRepository | None = None,
+        inventory_service: Any | None = None,
     ) -> None:
         self._connection_repo = connection_repo
         self._publish_repo = publish_repo
@@ -64,6 +65,7 @@ class CMSService:
         self._storage = storage
         self._fernet_key = fernet_key
         self._content_repo = content_repo
+        self._inventory_service = inventory_service
 
     # ── Connect Flow ──────────────────────────────────────────────
 
@@ -215,6 +217,27 @@ class CMSService:
                 is_stale=is_stale,
                 staleness_days=staleness_days,
             )
+
+        # Hydrate content inventory (non-blocking, savepoint-isolated)
+        if self._inventory_service is not None:
+            try:
+                # Use a nested savepoint so DB errors don't poison the session
+                async with self._synced_post_repo._session.begin_nested():
+                    pairs = await self._inventory_service.ingest_from_cms_sync(
+                        company_id=connection.company_id,
+                        effective_slug=company_slug,
+                        cms_posts=all_posts,
+                    )
+                    if pairs:
+                        await self._synced_post_repo.batch_link_inventory_ids(
+                            connection_id=connection.id,
+                            pairs=pairs,
+                        )
+            except Exception:
+                logger.warning(
+                    "content_inventory.cms_sync_failed",
+                    exc_info=True,
+                )
 
         # Update connection sync metadata
         await self._connection_repo.update_sync_metadata(

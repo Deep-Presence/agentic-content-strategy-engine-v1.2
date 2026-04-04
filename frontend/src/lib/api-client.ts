@@ -154,8 +154,8 @@ export const api = {
   patch: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PATCH', body }),
 
-  del: <T>(path: string) =>
-    request<T>(path, { method: 'DELETE' }),
+  del: <T>(path: string, params?: RequestOptions['params']) =>
+    request<T>(path, { method: 'DELETE', params }),
 };
 
 // ── Auth API (via BFF routes) ────────────────────────────

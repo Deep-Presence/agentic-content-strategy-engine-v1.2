@@ -164,7 +164,11 @@ class ContentInventoryService:
                 published_at=getattr(post, "published_at", None),
                 content_modified_at=getattr(post, "modified_at", None),
             )
-            post_id = getattr(post, "id", None) or getattr(post, "cms_post_id", None)
+            post_id = (
+                getattr(post, "cms_id", None)
+                or getattr(post, "cms_post_id", None)
+                or getattr(post, "id", None)
+            )
             pairs.append((model.id, post_id))
 
         _logger.info(

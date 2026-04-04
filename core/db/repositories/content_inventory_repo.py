@@ -357,7 +357,10 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
                 .group_by(ContentInventoryModel.ingestion_source)
             )
         ).all()
-        by_source = {str(row[0]): row[1] for row in source_rows}
+        by_source = {
+            (row[0].value if hasattr(row[0], "value") else str(row[0])): row[1]
+            for row in source_rows
+        }
 
         # Avg word count
         avg_wc = (

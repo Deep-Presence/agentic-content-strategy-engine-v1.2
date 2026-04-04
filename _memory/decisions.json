@@ -1,5 +1,21 @@
 [
   {
+    "id": "D-SETTINGS-PAGE-INTEGRATION",
+    "timestamp": "2026-04-04",
+    "task": "Settings page frontend-backend integration — Team tab, Integrations tab (WordPress + GA4)",
+    "decision": "Role mapping via dedicated role-map.ts (superuser↔Admin, member↔Editor, viewer↔Viewer). GA4 OAuth callback gets dedicated BFF route (bypasses catch-all auth). api.del() enhanced with optional params. Invite flow is code-only (no email). Other 5 integrations shown as Coming Soon. Company Profile tab not added.",
+    "rationale": "Role mapping in a dedicated file keeps it testable and avoids string literals in components. GA4 callback must bypass auth because Google's redirect won't carry our httpOnly cookie — Next.js route specificity ensures the dedicated route matches before the catch-all. api.del() params needed for purge_data query string on GA4 disconnect. Backend invite API generates codes (no email infrastructure), so frontend displays code for manual sharing. Company Profile backend endpoints exist but weren't requested — fast follow-up.",
+    "alternatives_considered": [
+      "Inline role mapping in components — rejected: scatters string literals, not reusable",
+      "Modify catch-all proxy to allowlist GA4 callback — rejected: less clean, adds complexity to shared code",
+      "Optimistic role updates — rejected: roles are security-sensitive, server-confirmed state is safer",
+      "Add Company Profile tab — deferred: backend ready but not explicitly requested"
+    ],
+    "impact": "8 new files, 3 modified. No backend changes. TypeScript clean, build clean.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-CONTENT-INVENTORY-PHASE1",
     "timestamp": "2026-04-04",
     "task": "Content Inventory Phase 1 Foundation — universal content registry for cannibalization detection",
