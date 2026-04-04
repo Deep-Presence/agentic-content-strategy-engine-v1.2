@@ -187,3 +187,13 @@ class CMSPublishAction(str, Enum):
     create = "create"
     update = "update"
     refresh = "refresh"
+
+
+# ── Content Inventory ────────────────────────────────────────────────
+class ContentIngestionSource(str, Enum):
+    """How a content inventory record was discovered."""
+    site_audit_crawl = "site_audit_crawl"
+    cms_sync = "cms_sync"
+    csv_import = "csv_import"
+    content_engine = "content_engine"
+    manual = "manual"

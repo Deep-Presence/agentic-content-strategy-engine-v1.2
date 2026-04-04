@@ -1,5 +1,20 @@
 [
   {
+    "id": "D-CONTENT-INVENTORY-PHASE1",
+    "timestamp": "2026-04-04",
+    "task": "Content Inventory Phase 1 Foundation — universal content registry for cannibalization detection",
+    "decision": "Single content_inventory table with pgvector embedding, URL-based dedup, multi-source ingestion via ContentIngestionSource enum. CMS FK via nullable content_inventory_id on cms_synced_posts (SET NULL). DB-only service (no JSON fallback).",
+    "rationale": "All pipelines need a common ground truth about existing content. URL normalization (aggressive: strip query params, force https, strip www.) enables cross-source dedup. pgvector embeddings enable semantic similarity for cannibalization detection. CMS stays as enrichment layer on top of universal registry.",
+    "alternatives_considered": [
+      "Extend cms_synced_posts — rejected: CMS-specific lifecycle fields (staleness, refresh queue) don't belong in universal registry, and clients without CMS would have no content context",
+      "Separate embedding table — rejected: page-level embedding is 1:1 with inventory row, not worth the JOIN overhead",
+      "Protocol + Json + Db pattern — rejected: content inventory has no filesystem representation, DB-only is correct"
+    ],
+    "impact": "7 new files, 4 modified, migration 0026. No pipeline changes (Phase 2+). 67 new tests, 0 regressions.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-PROMPT-TRACKING-ENRICHED",
     "timestamp": "2026-04-04",
     "task": "Prompt Tracking Backend Data Layer — close all gaps between frontend and backend",

@@ -1,7 +1,7 @@
 {
-  "current_sprint": "prompt-tracking-frontend-integration",
+  "current_sprint": "content-inventory-phase1",
   "last_updated": "2026-04-04",
-  "test_count": 1885,
+  "test_count": 1690,
   "completed_sprints_summary": {
     "total_tasks_completed": 43,
     "sprints": [
@@ -43,10 +43,49 @@
       {"sprint": "frontend-brand-hub-integration", "date": "2026-04-04", "summary": "Brand Hub (/artifacts) fully integrated with backend API. KB, VSG, AP fetched from real endpoints. Version history dropdown. Upload modal. Auth login fixes. Dead code data loaders removed."},
       {"sprint": "query-fanout-data-retention", "date": "2026-04-04", "summary": "Query fanout generation (OpenRouter/Claude Sonnet, 6 intent axes, 12-18 variants per prompt). Self-referential FK on tracked_prompts. 30-day response text cleanup. 9 new API endpoints (fanout CRUD, answer history, cleanup). 394 DT tests passing."},
       {"sprint": "prompt-tracking-enriched", "date": "2026-04-04", "summary": "Prompt tracking backend data layer — enriched prompt list (per-prompt mentionRate/citationRate/delta/sparkline/fanoutCount), per-prompt drawer analytics, 3 foundation bug fixes (N+1 query, days filter, _row_to_dict), 3 new composite indexes, 2 new endpoints, 6 new Pydantic models. 414 DT tests passing (20 new)."},
-      {"sprint": "prompt-tracking-frontend-integration", "date": "2026-04-04", "summary": "Prompt Tracking frontend-backend integration — 4-layer pattern (types/api/adapters/hooks). 8 new frontend files, 3 refactored components, 2 deleted mock files. Backend: start_date/end_date params on 3 endpoints. PB-95 (tenant isolation) added to backlog. 67 DT tests passing. Build clean."}
+      {"sprint": "prompt-tracking-frontend-integration", "date": "2026-04-04", "summary": "Prompt Tracking frontend-backend integration — 4-layer pattern (types/api/adapters/hooks). 8 new frontend files, 3 refactored components, 2 deleted mock files. Backend: start_date/end_date params on 3 endpoints. PB-95 (tenant isolation) added to backlog. 67 DT tests passing. Build clean."},
+      {"sprint": "content-inventory-phase1", "date": "2026-04-04", "summary": "Content Inventory Phase 1 Foundation — universal CMS-agnostic content registry. ContentInventoryModel (26 cols, pgvector embedding), Alembic 0026, ContentInventoryRepository (upsert/bulk/similarity/pagination), ContentInventoryService (5 ingestion + 3 similarity methods), URL normalization, 3 Pydantic DTOs, DI wiring, CMS FK. 67 new tests (39 unit + 14 service + 14 DB). 1623 existing tests passing."}
     ]
   },
   "completed": [
+    {
+      "id": "T-content-inventory-phase1",
+      "task": "Content Inventory Phase 1 Foundation — DB schema, ORM model, repository, service, DI wiring, URL normalization, Pydantic DTOs, Alembic migration, CMS FK",
+      "sprint": "content-inventory-phase1",
+      "status": "done",
+      "completed_at": "2026-04-04",
+      "tests_added": 67,
+      "files_created": [
+        "core/content_inventory/__init__.py",
+        "core/content_inventory/url_utils.py",
+        "core/content_inventory/models.py",
+        "core/db/models/content_inventory.py",
+        "core/db/migrations/versions/0026_content_inventory.py",
+        "core/db/repositories/content_inventory_repo.py",
+        "core/services/content_inventory_service.py",
+        "tests/unit/test_content_inventory_url_utils.py",
+        "tests/unit/test_content_inventory_models.py",
+        "tests/unit/test_content_inventory_enums.py",
+        "tests/db/test_content_inventory_repo.py",
+        "tests/services/test_content_inventory_service.py"
+      ],
+      "files_modified": [
+        "core/db/enums.py",
+        "core/db/models/__init__.py",
+        "core/db/models/cms.py",
+        "api/dependencies.py"
+      ],
+      "details": {
+        "enum": "ContentIngestionSource (5 values: site_audit_crawl, cms_sync, csv_import, content_engine, manual)",
+        "model": "ContentInventoryModel — 26 columns, Vector(1536) nullable embedding, UniqueConstraint(company_id, url_normalized), 4 indexes + HNSW",
+        "migration": "0026 — table + enum + HNSW + cms_synced_posts.content_inventory_id FK (SET NULL)",
+        "url_utils": "normalize_url() — more aggressive than site audit (strips query params, forces https, strips www.)",
+        "dtos": "CrawledPageData, CannibalizationMatch, ExistingCoverageResult",
+        "repo": "8 methods: upsert_page, bulk_upsert_from_crawl, update_embeddings_batch, find_similar, get_pages_missing_embeddings, get_by_company, get_stats, delete_by_company",
+        "service": "8 methods: ingest_from_site_audit, ingest_from_cms_sync, ingest_from_csv, register_published_content, generate_embeddings_for_company, check_cannibalization, check_cannibalization_batch, find_existing_coverage",
+        "di": "get_content_inventory_service() — DB-only, no JSON fallback, follows get_cms_service() pattern"
+      }
+    },
     {
       "id": "T-prompt-tracking-frontend-integration",
       "task": "Prompt Tracking page frontend-backend integration — replace all mock data with real API calls, 4-layer pattern, date range params, loading/error/empty states",
@@ -242,7 +281,14 @@
       ]
     }
   ],
-  "in_progress": [],
+  "in_progress": [
+    {
+      "id": "T-content-inventory-phase2",
+      "task": "Content Inventory Phase 2 — Ingestion Wiring (Site Audit, CMS Sync, API router, schemas)",
+      "sprint": "content-inventory-phase2",
+      "status": "pending"
+    }
+  ],
   "pending": [
     {
       "id": "T-async-13",

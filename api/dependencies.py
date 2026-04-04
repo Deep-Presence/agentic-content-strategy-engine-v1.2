@@ -887,3 +887,48 @@ async def get_cms_service(
         raise
     finally:
         await session.close()
+
+
+# ── Content Inventory Service ─────────────────────────────────────────
+
+
+async def get_content_inventory_service(
+    request: Request,
+) -> AsyncGenerator[Any, None]:
+    """Return the Content Inventory service with proper DB session lifecycle.
+
+    Content Inventory requires DB (all data in Postgres + pgvector).
+    No JSON fallback — raises 503 if DATABASE_URL not set.
+    Tests bypass DI via ``app.state.content_inventory_service`` override.
+    """
+    # 1. Pre-built override (tests set app.state.content_inventory_service)
+    service = getattr(request.app.state, "content_inventory_service", None)
+    if service is not None:
+        yield service
+        return
+
+    # 2. Require DB
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Content Inventory requires database — set DATABASE_URL",
+        )
+
+    session = sf()
+    try:
+        from core.db.repositories.content_inventory_repo import (
+            ContentInventoryRepository,
+        )
+        from core.services.content_inventory_service import ContentInventoryService
+
+        svc = ContentInventoryService(
+            inventory_repo=ContentInventoryRepository(session),
+        )
+        yield svc
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()

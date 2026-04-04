@@ -1,7 +1,7 @@
 {
-  "sprint": "prompt-tracking-frontend-integration",
-  "sprint_goal": "Complete frontend-backend integration of the Prompt Tracking page (/prompt-tracking) — replace all mock data with real API calls following the 4-layer pattern (types/api/adapters/hooks).",
-  "sprint_status": "COMPLETE — 8 new frontend files, 3 refactored components, 2 deleted mock files. Backend: start_date/end_date on 3 endpoints. 67 DT tests passing. Build clean (0 TS errors).",
+  "sprint": "content-inventory-phase1",
+  "sprint_goal": "Content Inventory Phase 1 Foundation — universal CMS-agnostic content registry. DB schema, ORM model, repository, service, DI wiring.",
+  "sprint_status": "COMPLETE — 7 new files, 4 modified. 67 new tests (39 unit + 14 service + 14 DB). 1623 existing tests passing, 0 regressions.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -29,24 +29,23 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "api/routers/daily_tracker.py (UPDATED — added start_date/end_date optional query params to /prompts/enriched, /prompts/{id}/analytics, /prompts/{id}/answers)",
-    "frontend/src/app/(dashboard)/prompt-tracking/_lib/types.ts (NEW — 9 API types + 6 frontend display types)",
-    "frontend/src/app/(dashboard)/prompt-tracking/_lib/api.ts (NEW — 4 fetch functions with AbortSignal)",
-    "frontend/src/app/(dashboard)/prompt-tracking/_lib/adapters.ts (NEW — 5 adapters + 5 constant maps)",
-    "frontend/src/app/(dashboard)/prompt-tracking/_hooks/usePromptTrackingData.ts (NEW — main table data hook)",
-    "frontend/src/app/(dashboard)/prompt-tracking/_hooks/usePromptDetailData.ts (NEW — drawer data hook, per-section loading)",
-    "frontend/src/app/(dashboard)/prompt-tracking/_components/PromptTrackingClient.tsx (REFACTORED — hook, DateRangePicker, loading/error/empty states)",
-    "frontend/src/app/(dashboard)/prompt-tracking/_components/PromptDetailDrawer.tsx (REFACTORED — usePromptDetailData hook, shared BrandLogo, skeleton loading)",
-    "frontend/src/app/(dashboard)/prompt-tracking/_components/AnswerDetailView.tsx (REFACTORED — props-based, dynamic brandName, null fullAnswer handling)"
+    "core/content_inventory/url_utils.py (NEW — aggressive URL normalization for cross-source dedup)",
+    "core/content_inventory/models.py (NEW — CrawledPageData, CannibalizationMatch, ExistingCoverageResult DTOs)",
+    "core/db/models/content_inventory.py (NEW — ContentInventoryModel, 26 columns, pgvector, dedup constraint)",
+    "core/db/migrations/versions/0026_content_inventory.py (NEW — table + HNSW + CMS FK)",
+    "core/db/repositories/content_inventory_repo.py (NEW — 8 methods: upsert, bulk, similarity, pagination)",
+    "core/services/content_inventory_service.py (NEW — 8 methods: ingestion, embedding, cannibalization, coverage)",
+    "api/dependencies.py (UPDATED — get_content_inventory_service() DI wiring)",
+    "core/db/models/cms.py (UPDATED — content_inventory_id FK on CMSSyncedPostModel)"
   ],
-  "test_count": 1885,
-  "phases_completed_count": 65,
+  "test_count": 1690,
+  "phases_completed_count": 66,
   "recent_phases": [
+    "content-inventory-phase1 — Content Inventory Phase 1 Foundation. Universal CMS-agnostic content registry. ContentInventoryModel (26 cols, pgvector), Alembic 0026, repo (8 methods), service (8 methods), URL normalization, DTOs, DI, CMS FK. 67 new tests. 1623 existing passing.",
     "prompt-tracking-frontend-integration — Prompt Tracking page fully integrated with backend API. 4-layer pattern (types/api/adapters/hooks). 8 new files, 3 refactored, 2 deleted. Backend: start_date/end_date on 3 endpoints. PB-95 (tenant isolation) flagged CRITICAL. 67 DT tests passing. Build clean.",
     "prompt-tracking-enriched — Prompt tracking backend data layer. 2 new endpoints (enriched list + per-prompt analytics). 3 foundation bug fixes (N+1, days, _row_to_dict). 3 composite indexes. 6 new Pydantic models. Redis cache. 414 DT tests (20 new).",
     "query-fanout-data-retention — Query fanout generation (OpenRouter/Claude Sonnet, 6 intent axes). Self-ref FK on tracked_prompts. 9 new API endpoints. 30-day response text cleanup. 394 DT tests passing.",
-    "frontend-brand-hub-integration — Brand Hub (/artifacts) fully wired to backend API. KB, VSG, AP from real endpoints. Version history dropdown. Upload modal with sub-path routing. Auth login fixes (CSP, Suspense, 401 loop). Dead code data loaders removed.",
-    "frontend-shared-components-integration-readiness — Full integration audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer). Docs updated."
+    "frontend-brand-hub-integration — Brand Hub (/artifacts) fully wired to backend API. KB, VSG, AP from real endpoints. Version history dropdown. Upload modal with sub-path routing. Auth login fixes (CSP, Suspense, 401 loop). Dead code data loaders removed."
   ],
   "phases_remaining": [
     "openrouter-phase3 — Embeddings: Point embedding clients at OpenRouter",
