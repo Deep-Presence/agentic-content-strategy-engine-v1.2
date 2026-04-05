@@ -22,6 +22,7 @@ class CrawledPageData(BaseModel):
     has_schema_markup: bool = False
     heading_count: int = 0
     content_type_detected: str = ""
+    structural_signals: dict | None = None
     sitemap_lastmod: str | None = None
 
 

@@ -5,10 +5,15 @@ Injected via FastAPI dependency (DB-only, no JSON fallback).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid as _uuid
 from datetime import datetime
 from typing import Any
+
+from core.gap_analysis.steps.s4_enrich_citations import (
+    compute_structural_signals as _compute_structural_signals,
+)
 
 from core.content_inventory.models import (
     CannibalizationMatch,
@@ -48,11 +53,13 @@ class ContentInventoryService:
         pipeline_run_id: _uuid.UUID,
         discovery_output: Any,
         page_results: list[Any],
+        html_map: dict[str, str] | None = None,
     ) -> dict[str, int]:
         """Extract page metadata from site audit results, bulk upsert.
 
         *discovery_output*: ``S1DiscoveryOutput`` (pages_with_html, sitemap_lastmod_map)
         *page_results*: list of ``PageAuditResult``
+        *html_map*: optional {url: html} for computing structural signals.
 
         Returns {"upserted": N, "skipped": N}
         """
@@ -94,6 +101,28 @@ class ContentInventoryService:
 
             # Content type heuristic from URL
             content_type = _classify_content_type(url)
+            word_count = getattr(pr, "word_count", 0) or 0
+            heading_count = len(getattr(pr, "headings", []))
+
+            # Compute rich structural signals when HTML is available
+            structural_signals_dict = None
+            if html_map and html_map.get(url):
+                try:
+                    _paragraphs, signals = await asyncio.to_thread(
+                        _compute_structural_signals, html_map[url]
+                    )
+                    structural_signals_dict = signals.model_dump(
+                        mode="json", exclude={"per_paragraph_word_counts"}
+                    )
+                    # Override legacy columns from richer signals
+                    has_faq = signals.has_faq_section
+                    heading_count = signals.header_count
+                    word_count = signals.word_count or word_count
+                    content_type = signals.content_type or content_type
+                except Exception:
+                    _logger.debug(
+                        "structural_signals failed for %s", url, exc_info=True,
+                    )
 
             crawled.append(
                 CrawledPageData(
@@ -102,11 +131,12 @@ class ContentInventoryService:
                     h1_text=getattr(pr, "h1_text", "") or "",
                     meta_description=getattr(pr, "meta_description", "") or "",
                     content_preview=(getattr(pr, "meta_description", "") or "")[:500],
-                    word_count=getattr(pr, "word_count", 0) or 0,
+                    word_count=word_count,
                     has_faq_section=has_faq,
                     has_schema_markup=has_schema,
-                    heading_count=len(getattr(pr, "headings", [])),
+                    heading_count=heading_count,
                     content_type_detected=content_type,
+                    structural_signals=structural_signals_dict,
                     sitemap_lastmod=sitemap_lastmod_map.get(url),
                 )
             )

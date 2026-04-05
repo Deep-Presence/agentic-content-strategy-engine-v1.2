@@ -10,7 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.content_inventory.hydration import hydrate_content_inventory_from_site_audit
+from core.content_inventory.hydration import (
+    hydrate_content_inventory_from_site_audit,
+)
+from core.content_inventory.models import CrawledPageData
 
 
 def _make_audit_result(*, page_results=None, status="completed"):
@@ -208,3 +211,93 @@ class TestHydrationErrorIsolation:
             )
 
         assert result is None
+
+
+class TestHydrationWithHtmlMap:
+    """Hydration passes html_map to service for structural signal computation."""
+
+    @pytest.mark.asyncio
+    async def test_html_map_forwarded_to_service(self):
+        """When html_map is provided, it's passed through to ingest_from_site_audit."""
+        pages = [_make_page_result()]
+        audit_result = _make_audit_result(page_results=pages)
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.commit = AsyncMock()
+
+        mock_sf = MagicMock()
+        mock_sf.return_value = mock_session
+
+        mock_repo_cls = MagicMock()
+        mock_svc_cls = MagicMock()
+        mock_svc_instance = MagicMock()
+        mock_svc_instance.ingest_from_site_audit = AsyncMock(
+            return_value={"upserted": 1, "skipped": 0}
+        )
+        mock_svc_cls.return_value = mock_svc_instance
+
+        html_map = {"https://example.com/page": "<html><body><p>Content</p></body></html>"}
+
+        with patch(
+            "core.db.repositories.content_inventory_repo.ContentInventoryRepository",
+            mock_repo_cls,
+        ), patch(
+            "core.services.content_inventory_service.ContentInventoryService",
+            mock_svc_cls,
+        ):
+            result = await hydrate_content_inventory_from_site_audit(
+                session_factory=mock_sf,
+                company_id=uuid.uuid4(),
+                effective_slug="test-co",
+                pipeline_run_id=uuid.uuid4(),
+                audit_result=audit_result,
+                html_map=html_map,
+            )
+
+        assert result is not None
+        # Verify html_map was forwarded to the service
+        call_kwargs = mock_svc_instance.ingest_from_site_audit.call_args.kwargs
+        assert call_kwargs["html_map"] is html_map
+
+    @pytest.mark.asyncio
+    async def test_none_html_map_backward_compat(self):
+        """When html_map is omitted (None), service gets None — no signals computed."""
+        pages = [_make_page_result()]
+        audit_result = _make_audit_result(page_results=pages)
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session.commit = AsyncMock()
+
+        mock_sf = MagicMock()
+        mock_sf.return_value = mock_session
+
+        mock_svc_cls = MagicMock()
+        mock_svc_instance = MagicMock()
+        mock_svc_instance.ingest_from_site_audit = AsyncMock(
+            return_value={"upserted": 1, "skipped": 0}
+        )
+        mock_svc_cls.return_value = mock_svc_instance
+
+        with patch(
+            "core.db.repositories.content_inventory_repo.ContentInventoryRepository",
+            MagicMock(),
+        ), patch(
+            "core.services.content_inventory_service.ContentInventoryService",
+            mock_svc_cls,
+        ):
+            result = await hydrate_content_inventory_from_site_audit(
+                session_factory=mock_sf,
+                company_id=uuid.uuid4(),
+                effective_slug="test-co",
+                pipeline_run_id=uuid.uuid4(),
+                audit_result=audit_result,
+                # html_map not passed — defaults to None
+            )
+
+        assert result is not None
+        call_kwargs = mock_svc_instance.ingest_from_site_audit.call_args.kwargs
+        assert call_kwargs["html_map"] is None

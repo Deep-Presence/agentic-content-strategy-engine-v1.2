@@ -210,6 +210,7 @@ class AnalyticsSyncStatus(str, Enum):
 class ContentIngestionSource(str, Enum):
     """How a content inventory record was discovered."""
     site_audit_crawl = "site_audit_crawl"
+    gap_analysis_crawl = "gap_analysis_crawl"
     cms_sync = "cms_sync"
     csv_import = "csv_import"
     content_engine = "content_engine"

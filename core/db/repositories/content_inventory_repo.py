@@ -51,6 +51,7 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
         has_schema_markup: bool = False,
         heading_count: int = 0,
         content_type_detected: str = "",
+        structural_signals: dict | None = None,
     ) -> ContentInventoryModel:
         """Insert or update a content inventory record.
 
@@ -85,6 +86,7 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
             "has_schema_markup": has_schema_markup,
             "heading_count": heading_count,
             "content_type_detected": content_type_detected,
+            "structural_signals": structural_signals,
             "created_at": now,
             "updated_at": now,
         }
@@ -111,6 +113,7 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
             "has_schema_markup": stmt.excluded.has_schema_markup,
             "heading_count": stmt.excluded.heading_count,
             "content_type_detected": stmt.excluded.content_type_detected,
+            "structural_signals": stmt.excluded.structural_signals,
             "effective_slug": stmt.excluded.effective_slug,
             "updated_at": stmt.excluded.updated_at,
         }
@@ -142,6 +145,7 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
         effective_slug: str,
         ingestion_run_id: _uuid.UUID,
         pages: list[Any],
+        ingestion_source: ContentIngestionSource = ContentIngestionSource.site_audit_crawl,
     ) -> int:
         """Batch upsert from site audit crawl. Returns upsert count.
 
@@ -185,7 +189,8 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
                     "has_schema_markup": getattr(page, "has_schema_markup", False),
                     "heading_count": getattr(page, "heading_count", 0) or 0,
                     "content_type_detected": getattr(page, "content_type_detected", "") or "",
-                    "ingestion_source": ContentIngestionSource.site_audit_crawl.value,
+                    "structural_signals": getattr(page, "structural_signals", None),
+                    "ingestion_source": ingestion_source.value,
                     "ingestion_run_id": ingestion_run_id,
                     "last_crawled_at": now,
                     "content_modified_at": content_modified_at,
@@ -210,6 +215,7 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
                 "has_schema_markup": stmt.excluded.has_schema_markup,
                 "heading_count": stmt.excluded.heading_count,
                 "content_type_detected": stmt.excluded.content_type_detected,
+                "structural_signals": stmt.excluded.structural_signals,
                 "ingestion_source": stmt.excluded.ingestion_source,
                 "ingestion_run_id": stmt.excluded.ingestion_run_id,
                 "last_crawled_at": stmt.excluded.last_crawled_at,

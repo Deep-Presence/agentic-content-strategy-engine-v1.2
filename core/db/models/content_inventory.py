@@ -163,6 +163,13 @@ class ContentInventoryModel(UUIDPKMixin, TimestampMixin, Base):
         comment="blog_post, landing_page, docs, glossary, etc.",
     )
 
+    # ── Rich structural signals (from compute_structural_signals) ─
+    structural_signals: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Full StructuralSignals from compute_structural_signals(). 45-field Pydantic model serialized.",
+    )
+
     # ── Cannibalization analysis ──────────────────────────────────
     cannibalization_cluster_id: Mapped[str] = mapped_column(
         String(255),

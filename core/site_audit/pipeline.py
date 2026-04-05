@@ -90,6 +90,7 @@ async def run_site_audit(
     on_progress: Optional[Callable[[str], None]] = None,
     skip_steps: Optional[list[int]] = None,
     output_dir: Optional[Path] = None,
+    _html_map_out: Optional[dict[str, str]] = None,
 ) -> SiteAuditResult:
     """Run the full site audit pipeline and return a :class:`SiteAuditResult`.
 
@@ -177,6 +178,11 @@ async def run_site_audit(
                     status="failed",
                     error_message=f"Discovery step failed: {exc}",
                 )
+
+    # Surface raw HTML for content inventory structural signal extraction
+    if _html_map_out is not None and discovery.pages_with_html:
+        for url, html in discovery.pages_with_html:
+            _html_map_out[url] = html
 
     # ── Step 2: Analyze pages ───────────────────────────────────────────
     page_results: list[PageAuditResult] = []

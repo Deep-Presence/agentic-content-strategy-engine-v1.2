@@ -409,6 +409,37 @@ async def run_gap_pipeline_task(
                 run_id=run_id,
                 company_id=company_id,
             )
+
+            # Hydrate content inventory from S1 crawl (non-blocking)
+            # Only when S1 actually ran — skipped S1 reuses stale artifacts
+            if not (1 in (request.skip_steps or [])):
+                try:
+                    from core.content_inventory.hydration import (
+                        hydrate_content_inventory_from_gap_analysis,
+                    )
+
+                    ga_prefix = f"gap_analysis/{scope.effective_slug}"
+                    inventory_result = await hydrate_content_inventory_from_gap_analysis(
+                        session_factory, company_id,
+                        scope.effective_slug, run_id,
+                        storage=_storage,
+                        ga_prefix=ga_prefix,
+                    )
+                    if inventory_result:
+                        logger.info(
+                            "content_inventory.gap_analysis_hydrated",
+                            extra={
+                                "task_id": task_id,
+                                "upserted": inventory_result.get("upserted", 0),
+                            },
+                        )
+                except Exception:
+                    logger.warning(
+                        "content_inventory.gap_analysis_hydration_failed",
+                        extra={"task_id": task_id},
+                        exc_info=True,
+                    )
+
             result = {
                 "report_md": report.report_md or None,
                 "report_json": report.report_json,
@@ -516,7 +547,8 @@ async def run_site_audit_task(
                     check_ai_bot_access=getattr(request, "check_ai_bot_access", True),
                 )
 
-                audit_result = await run_site_audit(input_data)
+                html_map: dict[str, str] = {}
+                audit_result = await run_site_audit(input_data, _html_map_out=html_map)
 
                 # 1. Persist audit_result.json (filesystem-first)
                 out_dir = (
@@ -547,7 +579,9 @@ async def run_site_audit_task(
                 inventory_result = await hydrate_content_inventory_from_site_audit(
                     session_factory, company_id,
                     scope.effective_slug, run_id, audit_result,
+                    html_map=html_map,
                 )
+                del html_map  # Free ~20MB of raw HTML
                 if inventory_result:
                     logger.info(
                         "content_inventory.hydrated",
