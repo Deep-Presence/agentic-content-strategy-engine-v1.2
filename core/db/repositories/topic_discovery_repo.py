@@ -316,21 +316,21 @@ class SubdomainNodeRepository(SQLAlchemyRepository[SubdomainNodeModel]):
         - 'not_expanded', 'failed': always claimable
         - 'expanded': claimable when allow_re_expand=True (user explicitly
           selected this subdomain for re-expansion)
-        - 'expanding': claimable only if stale (>2 hours, likely crashed worker)
+        - 'expanding': claimable only if stale (>20 min, likely crashed worker)
 
         Returns True if claimed, False if already claimed by another worker.
         """
         import datetime as dt_mod
 
         nid = _uuid.UUID(str(node_id)) if isinstance(node_id, str) else node_id
-        two_hours_ago = datetime.now(timezone.utc) - dt_mod.timedelta(hours=2)
+        stale_cutoff = datetime.now(timezone.utc) - dt_mod.timedelta(minutes=20)
 
         # Build eligible statuses
         eligible = ["not_expanded", "failed"]
         if allow_re_expand:
             eligible.append("expanded")
 
-        # Claim if: eligible status, OR expanding but stale (>2h or no timestamp)
+        # Claim if: eligible status, OR expanding but stale (>15min or no timestamp)
         stmt = (
             update(SubdomainNodeModel)
             .where(
@@ -340,7 +340,7 @@ class SubdomainNodeRepository(SQLAlchemyRepository[SubdomainNodeModel]):
                     (SubdomainNodeModel.expansion_status == "expanding")
                     & (
                         (SubdomainNodeModel.updated_at.is_(None))
-                        | (SubdomainNodeModel.updated_at < two_hours_ago)
+                        | (SubdomainNodeModel.updated_at < stale_cutoff)
                     )
                 ),
             )
@@ -432,9 +432,9 @@ class SubdomainNodeRepository(SQLAlchemyRepository[SubdomainNodeModel]):
         return result.scalars().all()
 
     async def reset_stale_expanding(
-        self, taxonomy_id: _uuid.UUID, stale_hours: int = 2,
+        self, taxonomy_id: _uuid.UUID, stale_minutes: int = 20,
     ) -> int:
-        """Reset nodes stuck in 'expanding' status for longer than stale_hours.
+        """Reset nodes stuck in 'expanding' status for longer than stale_minutes.
 
         Called during expansion pipeline preflight to recover from crashes.
         Returns count of nodes reset.
@@ -442,7 +442,7 @@ class SubdomainNodeRepository(SQLAlchemyRepository[SubdomainNodeModel]):
         import datetime as dt_mod
 
         tid = _uuid.UUID(str(taxonomy_id)) if isinstance(taxonomy_id, str) else taxonomy_id
-        cutoff = datetime.now(timezone.utc) - dt_mod.timedelta(hours=stale_hours)
+        cutoff = datetime.now(timezone.utc) - dt_mod.timedelta(minutes=stale_minutes)
 
         stmt = (
             update(SubdomainNodeModel)
