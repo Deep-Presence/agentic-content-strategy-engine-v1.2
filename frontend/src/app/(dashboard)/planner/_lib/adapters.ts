@@ -65,6 +65,7 @@ export function buildClusters(rootNodes: SubdomainNodeAPI[]): Cluster[] {
       name: child.name,
       description: child.description ?? '',
       citOpp: child.priority_score,
+      personaAffinity: child.persona_affinity ?? {},
     })),
   }));
 }

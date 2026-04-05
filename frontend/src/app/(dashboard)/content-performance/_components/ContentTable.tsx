@@ -2,10 +2,10 @@
 
 import { useState, useMemo } from 'react';
 import { ChevronRight, ArrowUpDown } from 'lucide-react';
-import type { ContentPiece, PlatformCitations, LifecycleStage } from './data';
-import { LIFECYCLE_CONFIG, PLATFORM_LIST, formatTraffic } from './data';
+import type { ContentPiece, PlatformCitations } from './data';
+import { PLATFORM_LIST, formatTraffic } from './data';
 
-type SortKey = 'title' | 'citations' | 'cps' | 'velocity' | 'traffic' | 'structuralScore' | 'freshnessDays' | 'lifecycle' | 'cannibalization' | 'aiReferrals';
+type SortKey = 'title' | 'velocity' | 'traffic' | 'structuralScore' | 'freshnessDays' | 'aiReferrals';
 type SortDir = 'asc' | 'desc';
 
 interface ContentTableProps {
@@ -20,27 +20,6 @@ function getFreshnessLabel(days: number): { label: string; bg: string; text: str
   return { label: 'Stale', bg: '#E5484D', text: '#FFFFFF' };
 }
 
-function getLifecycleStyle(lc: LifecycleStage): { bg: string; text: string } {
-  switch (lc) {
-    case 'growing': return { bg: 'var(--accent)', text: '#FFFFFF' };
-    case 'peaking': return { bg: '#F5A623', text: '#11181C' };
-    case 'stable': return { bg: 'rgba(104,112,118,0.2)', text: 'var(--text-primary)' };
-    case 'declining': return { bg: '#E87C3F', text: '#FFFFFF' };
-    case 'stale': return { bg: '#E5484D', text: '#FFFFFF' };
-  }
-}
-
-function getCPSColor(cps: number): string {
-  if (cps >= 0.6) return 'var(--success)';
-  if (cps >= 0.45) return '#F5A623';
-  return '#E5484D';
-}
-
-function getCitationColor(c: number): string {
-  if (c >= 40) return 'var(--success)';
-  if (c >= 20) return '#F5A623';
-  return 'var(--text-primary)';
-}
 
 function getStructuralBarColor(score: number): string {
   if (score >= 70) return 'var(--success)';
@@ -71,7 +50,7 @@ function PlatformDots({ platforms }: { platforms: PlatformCitations }) {
 }
 
 export function ContentTable({ pieces, onRowClick, searchQuery }: ContentTableProps) {
-  const [sortKey, setSortKey] = useState<SortKey>('citations');
+  const [sortKey, setSortKey] = useState<SortKey>('aiReferrals');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   const handleSort = (key: SortKey) => {
@@ -99,16 +78,12 @@ export function ContentTable({ pieces, onRowClick, searchQuery }: ContentTablePr
   }, [filtered, sortKey, sortDir]);
 
   const cols: { key: SortKey; label: string; w: string }[] = [
-    { key: 'title', label: 'Page', w: '22%' },
-    { key: 'citations', label: 'Citations', w: '6%' },
-    { key: 'cps', label: 'CPS', w: '6%' },
-    { key: 'velocity', label: 'Velocity', w: '6%' },
-    { key: 'traffic', label: 'Traffic', w: '7%' },
-    { key: 'structuralScore', label: 'Structural', w: '6%' },
-    { key: 'freshnessDays', label: 'Freshness', w: '7%' },
-    { key: 'lifecycle', label: 'Lifecycle', w: '7%' },
-    { key: 'cannibalization', label: 'Cannibal.', w: '5%' },
-    { key: 'aiReferrals', label: 'AI Referrals', w: '7%' },
+    { key: 'title', label: 'Page', w: '28%' },
+    { key: 'velocity', label: 'Velocity', w: '8%' },
+    { key: 'traffic', label: 'Traffic', w: '9%' },
+    { key: 'structuralScore', label: 'Structural', w: '8%' },
+    { key: 'freshnessDays', label: 'Freshness', w: '9%' },
+    { key: 'aiReferrals', label: 'AI Referrals', w: '9%' },
   ];
 
   return (
@@ -142,8 +117,6 @@ export function ContentTable({ pieces, onRowClick, searchQuery }: ContentTablePr
           <tbody>
             {sorted.map((piece) => {
               const freshness = getFreshnessLabel(piece.freshnessDays);
-              const lcConfig = LIFECYCLE_CONFIG[piece.lifecycle];
-              const lcStyle = getLifecycleStyle(piece.lifecycle);
               const velocityArrow = piece.velocityTrend === 'up' ? '\u2191' : piece.velocityTrend === 'down' ? '\u2193' : '\u2014';
               const rowBg =
                 piece.lifecycle === 'stale' ? 'rgba(229, 72, 77, 0.04)' :
@@ -166,18 +139,6 @@ export function ContentTable({ pieces, onRowClick, searchQuery }: ContentTablePr
                     <div style={{ fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
                       {truncUrl}
                     </div>
-                  </td>
-                  {/* Citations */}
-                  <td style={{ padding: '6px 8px' }}>
-                    <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', fontWeight: 500, color: getCitationColor(piece.citations) }}>
-                      {piece.citations}
-                    </span>
-                  </td>
-                  {/* CPS */}
-                  <td style={{ padding: '6px 8px' }}>
-                    <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', fontWeight: 500, color: getCPSColor(piece.cps) }}>
-                      {piece.cps.toFixed(3)}
-                    </span>
                   </td>
                   {/* Velocity */}
                   <td style={{ padding: '6px 8px' }}>
@@ -202,16 +163,6 @@ export function ContentTable({ pieces, onRowClick, searchQuery }: ContentTablePr
                   {/* Freshness */}
                   <td style={{ padding: '6px 8px' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', height: 20, padding: '0 8px', borderRadius: 10, fontSize: 11, fontWeight: 500, background: freshness.bg, color: freshness.text }}>{freshness.label}</span>
-                  </td>
-                  {/* Lifecycle */}
-                  <td style={{ padding: '6px 8px' }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, height: 20, padding: '0 8px', borderRadius: 10, fontSize: 11, fontWeight: 500, background: lcStyle.bg, color: lcStyle.text }}>{lcConfig.icon} {lcConfig.label}</span>
-                  </td>
-                  {/* Cannibalization */}
-                  <td style={{ padding: '6px 8px' }}>
-                    <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', fontWeight: 500, color: piece.cannibalization > 0 ? '#F5A623' : 'var(--text-tertiary)' }}>
-                      {piece.cannibalization > 0 ? piece.cannibalization : '\u2014'}
-                    </span>
                   </td>
                   {/* AI Referrals */}
                   <td style={{ padding: '6px 8px' }}>

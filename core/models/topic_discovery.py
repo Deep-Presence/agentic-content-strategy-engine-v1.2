@@ -331,6 +331,8 @@ class TopicAssignment(BaseModel):
     # Persona identity (replaces anonymous "Persona N" labels)
     persona_id: str = ""
     persona_name: str = ""
+    # Per-assignment persona affinity: {persona_id: 0.0-1.0 score}
+    persona_affinity: Dict[str, float] = Field(default_factory=dict)
 
 
 class TopicAssignmentMatrix(BaseModel):

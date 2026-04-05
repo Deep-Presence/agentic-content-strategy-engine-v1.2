@@ -187,33 +187,56 @@ export function DetailDrawer({ assignment, onClose, onApprove, onReject }: Detai
                   </div>
                 )}
 
-                {/* ─── Persona Affinity ─── */}
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-secondary mt-6 mb-3">Persona Affinity</h3>
-                {Object.keys(assignment.personaScores).length > 0 ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    {Object.entries(assignment.personaScores).map(([key, score]) => {
-                      const isPrimary = assignment.persona === key;
-                      return (
-                        <div key={key} className="p-2.5 rounded-md" style={{
-                          border: isPrimary ? '1px solid var(--accent)' : '1px solid var(--border)',
-                          background: isPrimary ? 'var(--accent-subtle)' : 'var(--surface)',
-                        }}>
-                          <div className="flex items-center justify-between">
-                            <span className="font-mono text-[15px] font-semibold text-text-primary">{score}%</span>
-                            <div className="w-12 h-[3px] rounded-full bg-border overflow-hidden">
-                              <motion.div className="h-full rounded-full bg-accent" initial={{ width: 0 }} animate={{ width: `${score}%` }}
-                                transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }} />
-                            </div>
+                {/* ─── Target Persona ─── */}
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-secondary mt-6 mb-3">Target Persona</h3>
+                {assignment.persona ? (
+                  <div className="rounded-md overflow-hidden" style={{ border: '1px solid var(--accent)' }}>
+                    {/* Persona header */}
+                    <div className="flex items-center gap-3 px-4 py-3" style={{ background: 'var(--accent-subtle)', borderBottom: '1px solid var(--accent)' }}>
+                      <UserAvatar name={formatPersonaName(assignment.persona)} size={32} />
+                      <div>
+                        <p className="text-[14px] font-semibold text-text-primary">{formatPersonaName(assignment.persona)}</p>
+                        <span className="text-[11px] font-semibold text-accent uppercase">Primary audience for this content</span>
+                      </div>
+                    </div>
+                    {/* Reasons */}
+                    <div className="px-4 py-3 space-y-2.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Why this persona</p>
+                      {(() => {
+                        const personaReasons: Array<{ icon: string; text: string }> = [];
+                        // Stage alignment
+                        if (assignment.stage === 'BOFU') {
+                          personaReasons.push({ icon: '🎯', text: `Decision-stage content directly addresses ${formatPersonaName(assignment.persona)}'s buying criteria and vendor evaluation needs` });
+                        } else if (assignment.stage === 'MOFU') {
+                          personaReasons.push({ icon: '🔍', text: `Consideration-stage content helps ${formatPersonaName(assignment.persona)} evaluate approaches and build selection criteria` });
+                        } else {
+                          personaReasons.push({ icon: '💡', text: `Educational content builds awareness and trust with ${formatPersonaName(assignment.persona)} around this topic` });
+                        }
+                        // Intent alignment
+                        if (assignment.intent === 'Commercial') {
+                          personaReasons.push({ icon: '📊', text: `Commercial intent matches ${formatPersonaName(assignment.persona)}'s active comparison and evaluation behavior` });
+                        } else if (assignment.intent === 'Informational') {
+                          personaReasons.push({ icon: '📚', text: `Informational intent aligns with ${formatPersonaName(assignment.persona)}'s knowledge-seeking and research patterns` });
+                        } else if (assignment.intent === 'Transactional') {
+                          personaReasons.push({ icon: '⚡', text: `Action-oriented content enables ${formatPersonaName(assignment.persona)} to take immediate next steps` });
+                        }
+                        // Affinity score
+                        const affinityScore = assignment.personaScores[assignment.persona];
+                        if (affinityScore != null && affinityScore > 0) {
+                          personaReasons.push({ icon: '📈', text: `${affinityScore}% subdomain affinity — this topic area strongly resonates with ${formatPersonaName(assignment.persona)}'s professional concerns` });
+                        }
+                        return personaReasons.map((r, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <span className="text-[13px] shrink-0 mt-px">{r.icon}</span>
+                            <p className="text-[13px] text-text-secondary leading-relaxed">{r.text}</p>
                           </div>
-                          <p className="text-[12px] font-medium text-text-primary mt-0.5">{formatPersonaName(key)}</p>
-                          {isPrimary && <span className="text-[11px] font-semibold text-accent uppercase">Primary target</span>}
-                        </div>
-                      );
-                    })}
+                        ));
+                      })()}
+                    </div>
                   </div>
                 ) : (
                   <div className="p-3 rounded-md text-[13px] text-text-secondary" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
-                    No persona affinity data available
+                    No target persona assigned
                   </div>
                 )}
 

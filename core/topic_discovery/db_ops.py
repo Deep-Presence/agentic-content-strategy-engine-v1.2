@@ -25,7 +25,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from core.models.topic_discovery import (
     PersonaAffinityIndex,
     ScoredSubdomainList,
+    SubdomainNode,
     TaxonomyTree,
+    TopicAssignment,
     TopicAssignmentMatrix,
     TopicDiscoveryManifest,
     TopicDiscoveryStatus,
@@ -362,9 +364,12 @@ async def db_read_taxonomy(
     """Read a TaxonomyTree from the DB.
 
     If version is None, returns the latest (highest version).
+    If tree_json is NULL (invalidated during expansion), falls back to
+    reconstructing the tree from flat subdomain_nodes rows.
     Returns None if no taxonomy exists.
     """
     from core.db.repositories.topic_discovery_repo import (
+        SubdomainNodeRepository,
         TaxonomyTreeRepository,
         TopicDiscoveryRepository,
     )
@@ -378,10 +383,66 @@ async def db_read_taxonomy(
         tax_repo = TaxonomyTreeRepository(session)
         tax_model = await tax_repo.get_by_discovery(discovery.id, version=version)
 
-    if tax_model is None or tax_model.tree_json is None:
-        return None
+        if tax_model is None:
+            return None
 
-    return TaxonomyTree.model_validate(tax_model.tree_json)
+        # Fast path: tree_json is available (not invalidated)
+        if tax_model.tree_json is not None:
+            return TaxonomyTree.model_validate(tax_model.tree_json)
+
+        # Slow path: tree_json is NULL (stale from expansion writes).
+        # Reconstruct from flat subdomain_nodes rows.
+        logger.info(
+            "db_read_taxonomy: tree_json is NULL for taxonomy %s, "
+            "rebuilding from flat nodes", tax_model.id,
+        )
+        node_repo = SubdomainNodeRepository(session)
+        flat_nodes = await node_repo.get_all_for_taxonomy(tax_model.id)
+
+    if not flat_nodes:
+        # Taxonomy row exists but has no nodes — return empty tree
+        return TaxonomyTree(
+            id=str(tax_model.id),
+            domain_name=discovery.domain_name or "",
+            version=tax_model.version,
+            status=TopicDiscoveryStatus(tax_model.status.value),
+        )
+
+    # Convert ORM models to dicts and build tree
+    node_dicts = []
+    for n in flat_nodes:
+        node_dicts.append({
+            "id": str(n.id),
+            "name": n.name,
+            "description": n.description or "",
+            "depth": n.depth,
+            "source_provenance": n.source_provenance or {},
+            "confidence": n.confidence or 0.0,
+            "is_manually_added": n.is_manually_added,
+            "sort_order": n.sort_order,
+            "metadata": n.metadata_json or {},
+            "priority_score": n.priority_score or 0.0,
+            "priority_factors": n.priority_factors or {},
+            "persona_affinity": n.persona_affinity_json or {},
+            "expansion_status": n.expansion_status or "not_expanded",
+            "parent_id": str(n.parent_id) if n.parent_id else None,
+            "children": [],
+        })
+
+    root_nodes = _build_tree_from_flat_nodes(node_dicts)
+
+    return TaxonomyTree(
+        id=str(tax_model.id),
+        domain_name=discovery.domain_name or "",
+        version=tax_model.version,
+        status=TopicDiscoveryStatus(tax_model.status.value),
+        root_nodes=[SubdomainNode.model_validate(r) for r in root_nodes],
+        total_subdomains=len(flat_nodes),
+        max_depth=max((n.depth for n in flat_nodes), default=0),
+        coverage_score=tax_model.coverage_score or 0.0,
+        chao1_estimate=tax_model.chao1_estimate or 0.0,
+        capture_recapture_est=tax_model.capture_recapture_est or {},
+    )
 
 
 # ── 7. db_write_scoring ─────────────────────────────────────────────────
@@ -688,6 +749,11 @@ async def db_write_matrix(
                 persona_name=getattr(a, "persona_name", None),
                 subdomain_id_text=raw_subdomain_id,
                 subdomain_name=getattr(a, "subdomain_name", None),
+                persona_affinity_json=(
+                    getattr(a, "persona_affinity", None)
+                    if isinstance(getattr(a, "persona_affinity", None), dict)
+                    else None
+                ),
             ))
 
         if models:
@@ -783,6 +849,7 @@ async def db_read_latest_matrix(
             metadata=row.metadata_json or {},
             persona_id=row.persona_id or "",
             persona_name=row.persona_name or "",
+            persona_affinity=getattr(row, "persona_affinity_json", None) or {},
         ))
 
         # Aggregate statistics
@@ -832,3 +899,325 @@ async def db_get_discovery_id(
     if discovery is None:
         return None
     return discovery.id
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ADDITIVE UPSERT FUNCTIONS — Pipeline B per-subdomain writes
+# ═══════════════════════════════════════════════════════════════════════
+
+
+# ── 14. db_write_assignments_for_subdomain ─────────────────────────────
+
+
+async def db_write_assignments_for_subdomain(
+    session_factory: async_sessionmaker,
+    discovery_id: _uuid.UUID,
+    subdomain_node_id: _uuid.UUID,
+    assignments: List["TopicAssignment"],
+    matrix_version: int,
+    expansion_batch_id: _uuid.UUID,
+) -> int:
+    """Replace assignments for ONE subdomain atomically.
+
+    Steps:
+    1. DELETE existing assignments for this (discovery, subdomain, version)
+       — preserves assignments with status in_gap_analysis/content_produced/published
+       to avoid breaking content_pieces FK references.
+    2. Bulk INSERT new assignments with expansion_batch_id.
+
+    Returns count of assignments written.
+    """
+    from core.db.enums import (
+        AudienceSegmentType as DBAudienceSegmentType,
+        BuyerStage as DBBuyerStage,
+        IntentType as DBIntentType,
+        RelevanceCell as DBRelevanceCell,
+        TopicAssignmentStatus as DBTopicAssignmentStatus,
+    )
+    from core.db.models.topic_discovery import TopicAssignmentModel
+    from core.db.repositories.topic_discovery_repo import TopicAssignmentRepository
+
+    # Statuses that indicate the assignment was consumed downstream —
+    # deleting them would orphan content_pieces.topic_assignment_id (SET NULL).
+    preserve_statuses = [
+        DBTopicAssignmentStatus.in_gap_analysis,
+        DBTopicAssignmentStatus.content_produced,
+        DBTopicAssignmentStatus.published,
+    ]
+
+    async with session_factory() as session:
+        assign_repo = TopicAssignmentRepository(session)
+
+        # 1. Delete old assignments (only not_started / approved / rejected)
+        await assign_repo.delete_by_subdomain(
+            discovery_id,
+            subdomain_node_id,
+            matrix_version=matrix_version,
+            preserve_statuses=preserve_statuses,
+        )
+
+        # 2. Map Pydantic → DB models and bulk insert
+        models = []
+        for a in assignments:
+            try:
+                a_uuid = _uuid.UUID(a.id)
+            except (ValueError, AttributeError):
+                a_uuid = _uuid.uuid4()
+
+            models.append(TopicAssignmentModel(
+                id=a_uuid,
+                discovery_id=discovery_id,
+                matrix_version=matrix_version,
+                subdomain_node_id=subdomain_node_id,
+                topic_text=a.topic_text,
+                buyer_stage=DBBuyerStage(a.buyer_stage.value),
+                intent_type=DBIntentType(a.intent_type.value),
+                audience_segment=a.audience_segment,
+                audience_segment_type=DBAudienceSegmentType(
+                    a.audience_segment_type.value
+                ),
+                relevance=DBRelevanceCell(a.relevance.value),
+                priority_score=a.priority_score,
+                priority_factors=(
+                    a.priority_factors if isinstance(a.priority_factors, dict) else {}
+                ),
+                status=DBTopicAssignmentStatus(a.status.value),
+                is_manually_added=getattr(a, "is_manually_added", False),
+                metadata_json=(
+                    getattr(a, "metadata", None)
+                    if isinstance(getattr(a, "metadata", None), dict) else {}
+                ),
+                persona_id=getattr(a, "persona_id", None),
+                persona_name=getattr(a, "persona_name", None),
+                subdomain_id_text=getattr(a, "subdomain_id", None),
+                subdomain_name=getattr(a, "subdomain_name", None),
+                persona_affinity_json=(
+                    getattr(a, "persona_affinity", None)
+                    if isinstance(getattr(a, "persona_affinity", None), dict) else None
+                ),
+                expansion_batch_id=expansion_batch_id,
+            ))
+
+        if models:
+            await assign_repo.insert_for_subdomain(models)
+
+        await session.commit()
+
+    logger.info(
+        "db_write_assignments_for_subdomain: %d assignments for subdomain %s "
+        "(discovery %s, matrix_v%d, batch %s)",
+        len(models), subdomain_node_id, discovery_id, matrix_version,
+        expansion_batch_id,
+    )
+    return len(models)
+
+
+# ── 15. db_claim_subdomain_for_expansion ───────────────────────────────
+
+
+async def db_claim_subdomain_for_expansion(
+    session_factory: async_sessionmaker,
+    node_id: _uuid.UUID,
+) -> bool:
+    """Atomically claim a subdomain for expansion.
+
+    Uses optimistic concurrency: only claims nodes in 'not_expanded',
+    'failed', or stale 'expanding' state. Returns True if claimed.
+    """
+    from core.db.repositories.topic_discovery_repo import SubdomainNodeRepository
+
+    async with session_factory() as session:
+        repo = SubdomainNodeRepository(session)
+        claimed = await repo.claim_for_expansion(node_id)
+        await session.commit()
+
+    if claimed:
+        logger.debug("db_claim_subdomain_for_expansion: claimed %s", node_id)
+    return claimed
+
+
+# ── 16. db_mark_subdomain_expanded ─────────────────────────────────────
+
+
+async def db_mark_subdomain_expanded(
+    session_factory: async_sessionmaker,
+    node_id: _uuid.UUID,
+    success: bool,
+) -> None:
+    """Mark a subdomain as 'expanded' or 'failed'."""
+    from core.db.repositories.topic_discovery_repo import SubdomainNodeRepository
+
+    async with session_factory() as session:
+        repo = SubdomainNodeRepository(session)
+        await repo.mark_expanded(node_id, success)
+        await session.commit()
+
+    logger.debug(
+        "db_mark_subdomain_expanded: %s → %s",
+        node_id, "expanded" if success else "failed",
+    )
+
+
+# ── 17. db_rebuild_tree_json ───────────────────────────────────────────
+
+
+def _build_tree_from_flat_nodes(
+    flat_nodes: List[dict],
+) -> List[dict]:
+    """Reconstruct a recursive tree structure from flat node dicts.
+
+    Each dict must have 'id', 'parent_id', and other SubdomainNode fields.
+    Returns the root nodes with nested 'children' lists.
+    """
+    by_id: dict = {}
+    roots: List[dict] = []
+
+    # First pass: create all node dicts with empty children
+    for node in flat_nodes:
+        node_dict = dict(node)
+        node_dict["children"] = []
+        by_id[str(node_dict["id"])] = node_dict
+
+    # Second pass: link children to parents
+    for node_dict in by_id.values():
+        parent_id = node_dict.get("parent_id")
+        if parent_id and str(parent_id) in by_id:
+            by_id[str(parent_id)]["children"].append(node_dict)
+        else:
+            roots.append(node_dict)
+
+    return roots
+
+
+async def db_rebuild_tree_json(
+    session_factory: async_sessionmaker,
+    discovery_id: _uuid.UUID,
+    taxonomy_version: int,
+) -> Optional[dict]:
+    """Rebuild tree_json JSONB from flat subdomain_nodes.
+
+    1. Tries to acquire pg_try_advisory_xact_lock to prevent concurrent rebuilds.
+    2. Reads all nodes ordered by depth, sort_order.
+    3. Reconstructs parent-child tree in Python.
+    4. Serializes and updates taxonomy_trees.tree_json.
+
+    Called ONCE after a batch of expansions completes.
+    If advisory lock is not acquired, returns None (rebuild skipped).
+    """
+    from core.db.repositories.topic_discovery_repo import (
+        SubdomainNodeRepository,
+        TaxonomyTreeRepository,
+        TopicDiscoveryRepository,
+    )
+    from sqlalchemy import text as sa_text
+
+    async with session_factory() as session:
+        # Resolve taxonomy_id
+        tax_repo = TaxonomyTreeRepository(session)
+        disc_repo = TopicDiscoveryRepository(session)
+
+        discovery = await disc_repo.get_by_id(discovery_id)
+        if discovery is None:
+            return None
+
+        taxonomy = await tax_repo.get_by_discovery(
+            discovery_id, version=taxonomy_version,
+        )
+        if taxonomy is None:
+            return None
+
+        taxonomy_id = taxonomy.id
+
+        # Try advisory lock (hash of taxonomy_id string)
+        lock_result = await session.execute(
+            sa_text("SELECT pg_try_advisory_xact_lock(hashtext(:tid))"),
+            {"tid": str(taxonomy_id)},
+        )
+        acquired = lock_result.scalar()
+        if not acquired:
+            logger.info(
+                "db_rebuild_tree_json: advisory lock not acquired for taxonomy %s, "
+                "skipping rebuild (another worker is rebuilding)",
+                taxonomy_id,
+            )
+            return None
+
+        # Read all flat nodes
+        node_repo = SubdomainNodeRepository(session)
+        flat_nodes = await node_repo.get_all_for_taxonomy(taxonomy_id)
+
+        # Convert ORM models to dicts for tree building
+        node_dicts = []
+        for n in flat_nodes:
+            node_dicts.append({
+                "id": str(n.id),
+                "name": n.name,
+                "description": n.description or "",
+                "depth": n.depth,
+                "source_provenance": n.source_provenance or {},
+                "confidence": n.confidence or 0.0,
+                "is_manually_added": n.is_manually_added,
+                "sort_order": n.sort_order,
+                "metadata": n.metadata_json or {},
+                "priority_score": n.priority_score or 0.0,
+                "priority_factors": n.priority_factors or {},
+                "persona_affinity": n.persona_affinity_json or {},
+                "expansion_status": n.expansion_status or "not_expanded",
+                "parent_id": str(n.parent_id) if n.parent_id else None,
+                "children": [],
+            })
+
+        # Build recursive tree
+        root_nodes = _build_tree_from_flat_nodes(node_dicts)
+
+        # Build full tree_json matching TaxonomyTree Pydantic schema
+        tree_json = {
+            "id": str(taxonomy.id),
+            "domain_name": discovery.domain_name or "",
+            "version": taxonomy.version,
+            "status": taxonomy.status.value if hasattr(taxonomy.status, "value") else str(taxonomy.status),
+            "root_nodes": root_nodes,
+            "total_subdomains": len(flat_nodes),
+            "max_depth": max((n.depth for n in flat_nodes), default=0),
+            "coverage_score": taxonomy.coverage_score or 0.0,
+            "chao1_estimate": taxonomy.chao1_estimate or 0.0,
+            "capture_recapture_est": taxonomy.capture_recapture_est or {},
+        }
+
+        # Update tree_json on taxonomy row
+        await tax_repo.update_tree_json(taxonomy_id, tree_json)
+        await session.commit()
+
+    logger.info(
+        "db_rebuild_tree_json: rebuilt tree_json for taxonomy %s (%d nodes)",
+        taxonomy_id, len(flat_nodes),
+    )
+    return tree_json
+
+
+# ── 18. db_reset_stale_expanding ───────────────────────────────────────
+
+
+async def db_reset_stale_expanding(
+    session_factory: async_sessionmaker,
+    taxonomy_id: _uuid.UUID,
+    stale_hours: int = 2,
+) -> int:
+    """Reset subdomain nodes stuck in 'expanding' state for longer than stale_hours.
+
+    Called during expansion pipeline preflight to recover from crashes.
+    Returns count of nodes reset to 'not_expanded'.
+    """
+    from core.db.repositories.topic_discovery_repo import SubdomainNodeRepository
+
+    async with session_factory() as session:
+        repo = SubdomainNodeRepository(session)
+        count = await repo.reset_stale_expanding(taxonomy_id, stale_hours)
+        await session.commit()
+
+    if count > 0:
+        logger.warning(
+            "db_reset_stale_expanding: reset %d stale 'expanding' nodes "
+            "for taxonomy %s", count, taxonomy_id,
+        )
+    return count

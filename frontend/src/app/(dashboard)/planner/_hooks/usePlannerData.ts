@@ -14,6 +14,7 @@ import {
   updateAssignmentStatus,
   createCustomAssignment,
   expandSubdomain as expandSubdomainApi,
+  fetchTaskStatus,
 } from '../_lib/api';
 import { adaptAssignments, buildTaxonomyMap, buildClusters, adaptRejectedItem } from '../_lib/adapters';
 
@@ -39,6 +40,8 @@ export interface PlannerData {
   isLoading: boolean;
   error: string | null;
   isEmpty: boolean;
+  /** True when a topic expansion is running and being polled */
+  isExpanding: boolean;
   refetch: () => void;
   approveAssignments: (ids: string[]) => Promise<void>;
   rejectAssignments: (ids: string[]) => Promise<void>;
@@ -60,6 +63,7 @@ export function usePlannerData(): PlannerData {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isEmpty, setIsEmpty] = useState(false);
+  const [isExpanding, setIsExpanding] = useState(false);
 
   // Keep taxonomy root nodes in a ref for adapter use in mutations
   const rootNodesRef = useRef<SubdomainNodeAPI[]>([]);
@@ -383,6 +387,10 @@ export function usePlannerData(): PlannerData {
     [companySlug],
   );
 
+  // Track multiple concurrent expansion polls (one per subdomain)
+  const expansionPollsRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+  const [expandingCount, setExpandingCount] = useState(0);
+
   const expandSubdomain = useCallback(
     async (subdomainId: string): Promise<{ runId: string }> => {
       if (!companyName || !companyDomain) {
@@ -392,10 +400,50 @@ export function usePlannerData(): PlannerData {
         auto_approve_checkpoints: [2],
         taxonomy_version: summary?.taxonomy_version,
       });
-      return { runId: result.run_id };
+
+      const taskId = result.run_id;
+      setExpandingCount((c) => c + 1);
+      setIsExpanding(true);
+
+      // Start polling for THIS task's completion
+      const interval = setInterval(async () => {
+        try {
+          const status = await fetchTaskStatus(taskId);
+          if (status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
+            // Stop polling this task
+            const polls = expansionPollsRef.current;
+            const iv = polls.get(taskId);
+            if (iv) { clearInterval(iv); polls.delete(taskId); }
+
+            setExpandingCount((c) => {
+              const next = c - 1;
+              if (next <= 0) setIsExpanding(false);
+              return Math.max(0, next);
+            });
+
+            // Auto-refetch on completion (any task finishing triggers refresh)
+            if (status.status === 'completed') {
+              refetch();
+            }
+          }
+        } catch {
+          // Ignore polling errors — will retry on next interval
+        }
+      }, 5000);
+
+      expansionPollsRef.current.set(taskId, interval);
+      return { runId: taskId };
     },
-    [companyName, companyDomain, summary?.taxonomy_version],
+    [companyName, companyDomain, summary?.taxonomy_version, refetch],
   );
+
+  // Cleanup all polls on unmount
+  useEffect(() => {
+    return () => {
+      expansionPollsRef.current.forEach((iv) => clearInterval(iv));
+      expansionPollsRef.current.clear();
+    };
+  }, []);
 
   // ── Return ────────────────────────────────────────────
 
@@ -408,6 +456,7 @@ export function usePlannerData(): PlannerData {
     isLoading,
     error,
     isEmpty,
+    isExpanding,
     refetch,
     approveAssignments,
     rejectAssignments,

@@ -149,6 +149,8 @@ class SubdomainNodeModel(UUIDPKMixin, Base):
     __table_args__ = (
         Index("ix_subdomain_nodes_taxonomy", "taxonomy_id"),
         Index("ix_subdomain_nodes_parent", "parent_id"),
+        # Partial unique indexes created in migration 0031 via raw SQL
+        # (not representable as declarative constraints due to WHERE clauses).
     )
 
     taxonomy_id: Mapped[_uuid.UUID] = mapped_column(
@@ -186,6 +188,9 @@ class SubdomainNodeModel(UUIDPKMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, onupdate=func.now(),
+    )
 
 
 # ── Topic Assignments ───────────────────────────────────────────────────
@@ -199,6 +204,11 @@ class TopicAssignmentModel(UUIDPKMixin, Base):
         Index("ix_topic_assignments_discovery", "discovery_id"),
         Index("ix_topic_assignments_subdomain", "subdomain_node_id"),
         Index("ix_topic_assignments_persona", "persona_id"),
+        Index(
+            "ix_topic_assignments_subdomain_version",
+            "discovery_id", "subdomain_node_id", "matrix_version",
+        ),
+        Index("ix_topic_assignments_batch", "expansion_batch_id"),
     )
 
     discovery_id: Mapped[_uuid.UUID] = mapped_column(
@@ -254,6 +264,12 @@ class TopicAssignmentModel(UUIDPKMixin, Base):
     persona_name: Mapped[str | None] = mapped_column(String, nullable=True)
     subdomain_id_text: Mapped[str | None] = mapped_column(String, nullable=True)
     subdomain_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    persona_affinity_json: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True,
+    )
+    expansion_batch_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -46,10 +46,18 @@ export interface Assignment {
   priorityFactors: Record<string, number>;
 }
 
+export interface Subcluster {
+  id: string;
+  name: string;
+  description: string;
+  citOpp: number;
+  personaAffinity: Record<string, number>;
+}
+
 export interface Cluster {
   id: string;
   name: string;
-  subclusters: Array<{ id: string; name: string; description: string; citOpp: number }>;
+  subclusters: Subcluster[];
 }
 
 export interface Initiative {

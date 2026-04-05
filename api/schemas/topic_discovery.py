@@ -306,3 +306,36 @@ class CreateCustomAssignmentRequest(BaseModel):
     persona_id: Optional[str] = None
     persona_name: Optional[str] = None
     priority_score: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Tree CRUD: Node operations
+# ---------------------------------------------------------------------------
+
+
+class UpdateNodeRequest(BaseModel):
+    """PATCH /{slug}/nodes/{node_id} — update a single taxonomy node."""
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+    parent_id: Optional[str] = None
+
+
+class CreateNodeRequest(BaseModel):
+    """POST /{slug}/nodes — add a new taxonomy node."""
+
+    name: str = Field(..., min_length=1)
+    description: str = ""
+    parent_id: Optional[str] = None
+
+
+class NodeResponse(BaseModel):
+    """Response for node CRUD operations."""
+
+    id: str
+    name: str
+    description: str = ""
+    parent_id: Optional[str] = None
+    depth: int = 0
+    expansion_status: str = "not_expanded"
+    message: str = ""

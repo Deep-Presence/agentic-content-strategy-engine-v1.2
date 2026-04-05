@@ -182,7 +182,7 @@ export function ClusterExplorer({ assignments, clusters, onRowClick, onApprove, 
             )}
 
             {/* Stats */}
-            <div className="grid grid-cols-3 gap-3 mb-5 mt-4">
+            <div className="grid grid-cols-3 gap-3 mb-3 mt-4">
               <div className="px-3 py-2.5 rounded-md" style={{ border: '1px solid var(--border)' }}>
                 <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Topics</span>
                 <p className="font-mono text-[22px] font-semibold text-text-primary mt-0.5">{subclusterAssignments.length}</p>
@@ -196,6 +196,40 @@ export function ClusterExplorer({ assignments, clusters, onRowClick, onApprove, 
                 <p className="font-mono text-[22px] font-semibold text-text-primary mt-0.5">{Math.round(avgScore * 100)}</p>
               </div>
             </div>
+
+            {/* Persona Affinity */}
+            {selectedSC.personaAffinity && Object.keys(selectedSC.personaAffinity).length > 0 && (
+              <div className="px-3 py-2.5 rounded-md mb-5" style={{ border: '1px solid var(--border)' }}>
+                <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Persona Affinity</span>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {Object.entries(selectedSC.personaAffinity)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([personaId, score]) => (
+                      <div
+                        key={personaId}
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px]"
+                        style={{
+                          border: '1px solid var(--border)',
+                          background: score >= 0.6 ? 'var(--accent-subtle)' : 'var(--surface)',
+                          color: score >= 0.6 ? 'var(--accent)' : 'var(--text-secondary)',
+                        }}
+                      >
+                        <span className="font-medium capitalize">{personaId}</span>
+                        <span className="font-mono text-[10px]" style={{ opacity: 0.8 }}>{Math.round(score * 100)}%</span>
+                        <div className="w-[32px] h-[3px] rounded-full bg-[var(--border)] overflow-hidden">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${Math.round(score * 100)}%`,
+                              background: score >= 0.6 ? 'var(--accent)' : 'var(--text-tertiary)',
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
 
             {/* Table header */}
             {subclusterAssignments.length > 0 ? (

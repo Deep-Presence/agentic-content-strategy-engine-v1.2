@@ -1546,7 +1546,8 @@ async def run_topic_expansion_pipeline_task(
         event_bus.publish(task_id, "failed", {"error": str(exc)})
     finally:
         await task_store.flush_terminal(task_id)
-        task_store.release_slug_lock(f"topic_expansion:{scope.effective_slug}")
+        # No slug lock to release — topic expansion uses allow_parallel=True.
+        # Per-subdomain concurrency is handled by db_claim_subdomain_for_expansion().
         task_store.remove_task_handle(task_id)
         clear_context()
 

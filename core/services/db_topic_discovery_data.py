@@ -378,3 +378,113 @@ class DbTopicDiscoveryDataService:
                 for e in entries
             }),
         }
+
+    # ── Tree CRUD operations ──────────────────────────────────────────
+
+    async def update_node(
+        self,
+        effective_slug: str,
+        node_id: str,
+        **kwargs,
+    ) -> Optional[dict]:
+        """Update a single taxonomy node's attributes."""
+        import uuid as _uuid
+
+        if self._node_repo is None:
+            return None
+
+        try:
+            nid = _uuid.UUID(node_id)
+        except ValueError:
+            return None
+
+        result = await self._node_repo.update_node(nid, **kwargs)
+        if result is None:
+            return None
+
+        return {
+            "id": str(result.id),
+            "name": result.name,
+            "description": result.description or "",
+            "parent_id": str(result.parent_id) if result.parent_id else None,
+            "depth": result.depth,
+            "expansion_status": result.expansion_status or "not_expanded",
+        }
+
+    async def delete_node(
+        self,
+        effective_slug: str,
+        node_id: str,
+        *,
+        reparent_children: bool = True,
+    ) -> bool:
+        """Delete a single taxonomy node. Reparents children by default."""
+        import uuid as _uuid
+
+        if self._node_repo is None:
+            return False
+
+        try:
+            nid = _uuid.UUID(node_id)
+        except ValueError:
+            return False
+
+        return await self._node_repo.delete_single_node(
+            nid, reparent_children=reparent_children,
+        )
+
+    async def create_node(
+        self,
+        effective_slug: str,
+        *,
+        name: str,
+        description: str = "",
+        parent_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Add a new manually-added taxonomy node."""
+        import uuid as _uuid
+        from core.db.models.topic_discovery import SubdomainNodeModel
+
+        if self._node_repo is None:
+            return None
+
+        # Resolve taxonomy_id
+        discovery = await self._td_repo.get_by_effective_slug(effective_slug)
+        if discovery is None:
+            return None
+
+        taxonomy = await self._taxonomy_repo.get_by_discovery(discovery.id)
+        if taxonomy is None:
+            return None
+
+        parent_uuid = None
+        depth = 0
+        if parent_id:
+            try:
+                parent_uuid = _uuid.UUID(parent_id)
+                parent_node = await self._node_repo.get_by_id(parent_uuid)
+                if parent_node:
+                    depth = parent_node.depth + 1
+            except ValueError:
+                pass
+
+        node = SubdomainNodeModel(
+            taxonomy_id=taxonomy.id,
+            parent_id=parent_uuid,
+            name=name,
+            description=description,
+            depth=depth,
+            is_manually_added=True,
+            expansion_status="not_expanded",
+        )
+        self._node_repo._session.add(node)
+        await self._node_repo._session.flush()
+
+        return {
+            "id": str(node.id),
+            "name": node.name,
+            "description": node.description or "",
+            "parent_id": str(node.parent_id) if node.parent_id else None,
+            "depth": node.depth,
+            "expansion_status": "not_expanded",
+        }

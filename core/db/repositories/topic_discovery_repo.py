@@ -15,9 +15,11 @@ Six table-specific repositories:
 from __future__ import annotations
 
 import uuid as _uuid
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 
-from sqlalchemy import delete, func, select
+from datetime import datetime, timezone
+
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db.enums import (
@@ -227,6 +229,30 @@ class TaxonomyTreeRepository(SQLAlchemyRepository[TaxonomyTreeModel]):
         await self._session.flush()
         return taxonomy
 
+    async def invalidate_tree_json(self, taxonomy_id: _uuid.UUID) -> None:
+        """Set tree_json to NULL to mark the cached snapshot as stale."""
+        tid = _uuid.UUID(str(taxonomy_id)) if isinstance(taxonomy_id, str) else taxonomy_id
+        stmt = (
+            update(TaxonomyTreeModel)
+            .where(TaxonomyTreeModel.id == tid)
+            .values(tree_json=None)
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
+    async def update_tree_json(
+        self, taxonomy_id: _uuid.UUID, tree_json: dict,
+    ) -> None:
+        """Update tree_json with a rebuilt snapshot."""
+        tid = _uuid.UUID(str(taxonomy_id)) if isinstance(taxonomy_id, str) else taxonomy_id
+        stmt = (
+            update(TaxonomyTreeModel)
+            .where(TaxonomyTreeModel.id == tid)
+            .values(tree_json=tree_json)
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
 
 class SubdomainNodeRepository(SQLAlchemyRepository[SubdomainNodeModel]):
     """Repository for subdomain_nodes table."""
@@ -274,6 +300,159 @@ class SubdomainNodeRepository(SQLAlchemyRepository[SubdomainNodeModel]):
         """Delete all nodes for a taxonomy. Returns deleted count."""
         stmt = delete(SubdomainNodeModel).where(
             SubdomainNodeModel.taxonomy_id == taxonomy_id
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return result.rowcount
+
+    async def claim_for_expansion(
+        self, node_id: _uuid.UUID, *, allow_re_expand: bool = True,
+    ) -> bool:
+        """Atomically claim a subdomain for expansion via optimistic concurrency.
+
+        Sets expansion_status='expanding' if the node is in an eligible state.
+
+        Eligible states:
+        - 'not_expanded', 'failed': always claimable
+        - 'expanded': claimable when allow_re_expand=True (user explicitly
+          selected this subdomain for re-expansion)
+        - 'expanding': claimable only if stale (>2 hours, likely crashed worker)
+
+        Returns True if claimed, False if already claimed by another worker.
+        """
+        import datetime as dt_mod
+
+        nid = _uuid.UUID(str(node_id)) if isinstance(node_id, str) else node_id
+        two_hours_ago = datetime.now(timezone.utc) - dt_mod.timedelta(hours=2)
+
+        # Build eligible statuses
+        eligible = ["not_expanded", "failed"]
+        if allow_re_expand:
+            eligible.append("expanded")
+
+        # Claim if: eligible status, OR expanding but stale (>2h or no timestamp)
+        stmt = (
+            update(SubdomainNodeModel)
+            .where(
+                SubdomainNodeModel.id == nid,
+                SubdomainNodeModel.expansion_status.in_(eligible)
+                | (
+                    (SubdomainNodeModel.expansion_status == "expanding")
+                    & (
+                        (SubdomainNodeModel.updated_at.is_(None))
+                        | (SubdomainNodeModel.updated_at < two_hours_ago)
+                    )
+                ),
+            )
+            .values(
+                expansion_status="expanding",
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return result.rowcount > 0
+
+    async def mark_expanded(
+        self, node_id: _uuid.UUID, success: bool,
+    ) -> None:
+        """Set expansion_status to 'expanded' or 'failed'."""
+        nid = _uuid.UUID(str(node_id)) if isinstance(node_id, str) else node_id
+        new_status = "expanded" if success else "failed"
+        stmt = (
+            update(SubdomainNodeModel)
+            .where(SubdomainNodeModel.id == nid)
+            .values(
+                expansion_status=new_status,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
+    async def update_node(
+        self, node_id: _uuid.UUID, **kwargs,
+    ) -> Optional[SubdomainNodeModel]:
+        """Update a single node's attributes (name, description, parent_id, etc.)."""
+        return await self.update(node_id, **kwargs)
+
+    async def delete_single_node(
+        self, node_id: _uuid.UUID, *, reparent_children: bool = True,
+    ) -> bool:
+        """Delete a single node. If reparent_children=True, reassign children
+        to the deleted node's parent_id BEFORE deleting (CASCADE safety)."""
+        nid = _uuid.UUID(str(node_id)) if isinstance(node_id, str) else node_id
+        node = await self.get_by_id(nid)
+        if node is None:
+            return False
+
+        if reparent_children:
+            # Reparent children BEFORE delete to avoid CASCADE deletion
+            reparent_stmt = (
+                update(SubdomainNodeModel)
+                .where(SubdomainNodeModel.parent_id == nid)
+                .values(parent_id=node.parent_id)
+            )
+            await self._session.execute(reparent_stmt)
+            await self._session.flush()
+
+        del_stmt = delete(SubdomainNodeModel).where(
+            SubdomainNodeModel.id == nid
+        )
+        await self._session.execute(del_stmt)
+        await self._session.flush()
+        return True
+
+    async def get_by_ids(
+        self, node_ids: List[_uuid.UUID],
+    ) -> Sequence[SubdomainNodeModel]:
+        """Fetch specific nodes by a list of IDs."""
+        if not node_ids:
+            return []
+        stmt = select(SubdomainNodeModel).where(
+            SubdomainNodeModel.id.in_(node_ids)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_all_for_taxonomy(
+        self, taxonomy_id: _uuid.UUID,
+    ) -> Sequence[SubdomainNodeModel]:
+        """Get all nodes for a taxonomy, ordered by depth then sort_order.
+
+        Used for tree reconstruction from flat rows.
+        """
+        tid = _uuid.UUID(str(taxonomy_id)) if isinstance(taxonomy_id, str) else taxonomy_id
+        stmt = (
+            select(SubdomainNodeModel)
+            .where(SubdomainNodeModel.taxonomy_id == tid)
+            .order_by(SubdomainNodeModel.depth, SubdomainNodeModel.sort_order)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def reset_stale_expanding(
+        self, taxonomy_id: _uuid.UUID, stale_hours: int = 2,
+    ) -> int:
+        """Reset nodes stuck in 'expanding' status for longer than stale_hours.
+
+        Called during expansion pipeline preflight to recover from crashes.
+        Returns count of nodes reset.
+        """
+        import datetime as dt_mod
+
+        tid = _uuid.UUID(str(taxonomy_id)) if isinstance(taxonomy_id, str) else taxonomy_id
+        cutoff = datetime.now(timezone.utc) - dt_mod.timedelta(hours=stale_hours)
+
+        stmt = (
+            update(SubdomainNodeModel)
+            .where(
+                SubdomainNodeModel.taxonomy_id == tid,
+                SubdomainNodeModel.expansion_status == "expanding",
+                (SubdomainNodeModel.updated_at.is_(None))
+                | (SubdomainNodeModel.updated_at < cutoff),
+            )
+            .values(expansion_status="not_expanded")
         )
         result = await self._session.execute(stmt)
         await self._session.flush()
@@ -355,6 +534,51 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
         result = await self._session.execute(stmt)
         await self._session.flush()
         return result.rowcount
+
+    async def delete_by_subdomain(
+        self,
+        discovery_id: _uuid.UUID,
+        subdomain_node_id: _uuid.UUID,
+        *,
+        matrix_version: int | None = None,
+        preserve_statuses: Sequence[TopicAssignmentStatus] | None = None,
+    ) -> int:
+        """Delete assignments for a SINGLE subdomain.
+
+        When preserve_statuses is set (e.g. [in_gap_analysis, content_produced,
+        published]), assignments in those states are kept to avoid breaking
+        content_pieces.topic_assignment_id FK references.
+
+        Returns count of deleted rows.
+        """
+        stmt = delete(TopicAssignmentModel).where(
+            TopicAssignmentModel.discovery_id == discovery_id,
+            TopicAssignmentModel.subdomain_node_id == subdomain_node_id,
+        )
+        if matrix_version is not None:
+            stmt = stmt.where(
+                TopicAssignmentModel.matrix_version == matrix_version
+            )
+        if preserve_statuses:
+            stmt = stmt.where(
+                TopicAssignmentModel.status.notin_(preserve_statuses)
+            )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return result.rowcount
+
+    async def insert_for_subdomain(
+        self, assignments: List[TopicAssignmentModel],
+    ) -> int:
+        """Bulk insert assignments for one subdomain's expansion output.
+
+        Returns count of assignments inserted.
+        """
+        if not assignments:
+            return 0
+        self._session.add_all(assignments)
+        await self._session.flush()
+        return len(assignments)
 
     async def list_paginated(
         self,

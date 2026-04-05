@@ -18,6 +18,9 @@ from api.schemas.topic_discovery import (
     AssignmentStatusUpdateRequest,
     AssignmentStatusUpdateResponse,
     CreateCustomAssignmentRequest,
+    CreateNodeRequest,
+    NodeResponse,
+    UpdateNodeRequest,
     DiscoverySummaryResponse,
     ExpansionStatusResponse,
     MatrixApprovalRequest,
@@ -577,7 +580,13 @@ async def start_topic_expansion(
             detail="Topic discovery has not been completed yet. Run Pipeline A first.",
         )
 
-    task = await create_task_durable(task_store, "topic_expansion", slug, product_slug=body.product_slug)
+    # allow_parallel=True: multiple subdomains can expand concurrently.
+    # Per-subdomain safety is handled by db_claim_subdomain_for_expansion()
+    # (optimistic DB lock), not by the Redis slug lock.
+    task = await create_task_durable(
+        task_store, "topic_expansion", slug,
+        product_slug=body.product_slug, allow_parallel=True,
+    )
 
     handle = asyncio.create_task(
         run_topic_expansion_pipeline_task(
@@ -805,3 +814,128 @@ async def create_custom_assignment(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tree CRUD: Node operations (editable tree)
+# ═══════════════════════════════════════════════════════════════════���═══
+
+
+# ── Endpoint 16: PATCH /{slug}/nodes/{node_id} ────────────────────────
+
+
+@router.patch("/{slug}/nodes/{node_id}")
+async def update_node(
+    slug: str,
+    node_id: str,
+    body: UpdateNodeRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    td_svc=Depends(get_td_data_service),
+) -> NodeResponse:
+    """Update a single taxonomy node's attributes (name, description, parent_id)."""
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    kwargs = {}
+    if body.name is not None:
+        kwargs["name"] = body.name
+    if body.description is not None:
+        kwargs["description"] = body.description
+    if body.parent_id is not None:
+        import uuid as _uuid
+        try:
+            kwargs["parent_id"] = _uuid.UUID(body.parent_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid parent_id UUID")
+
+    if not kwargs:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    result = await td_svc.update_node(slug, node_id, **kwargs)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    return NodeResponse(
+        id=str(result["id"]),
+        name=result.get("name", ""),
+        description=result.get("description", ""),
+        parent_id=str(result["parent_id"]) if result.get("parent_id") else None,
+        depth=result.get("depth", 0),
+        expansion_status=result.get("expansion_status", "not_expanded"),
+        message="Node updated",
+    )
+
+
+# ── Endpoint 17: DELETE /{slug}/nodes/{node_id} ──────────────────────
+
+
+@router.delete("/{slug}/nodes/{node_id}")
+async def delete_node(
+    slug: str,
+    node_id: str,
+    http_request: Request,
+    reparent_children: bool = True,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    td_svc=Depends(get_td_data_service),
+) -> NodeResponse:
+    """Delete a single taxonomy node. Children are reparented by default."""
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    deleted = await td_svc.delete_node(slug, node_id, reparent_children=reparent_children)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    return NodeResponse(
+        id=node_id,
+        name="",
+        message="Node deleted" + (" (children reparented)" if reparent_children else ""),
+    )
+
+
+# ── Endpoint 18: POST /{slug}/nodes ──────────────────────────────────
+
+
+@router.post("/{slug}/nodes", status_code=201)
+async def create_node(
+    slug: str,
+    body: CreateNodeRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    td_svc=Depends(get_td_data_service),
+) -> NodeResponse:
+    """Add a new taxonomy node (manual addition)."""
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        slug != user_company_slug
+        and not slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = await td_svc.create_node(
+        slug,
+        name=body.name,
+        description=body.description,
+        parent_id=body.parent_id,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Discovery not found for slug")
+
+    return NodeResponse(
+        id=str(result["id"]),
+        name=result.get("name", ""),
+        description=result.get("description", ""),
+        parent_id=str(result["parent_id"]) if result.get("parent_id") else None,
+        depth=result.get("depth", 0),
+        expansion_status="not_expanded",
+        message="Node created",
+    )

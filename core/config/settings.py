@@ -206,7 +206,12 @@ class Settings(BaseSettings):
     topic_discovery_persona_affinity_weights: str = (
         '{"provenance": 0.6, "embedding": 0.4}'
     )
-    topic_discovery_max_subdomains_to_expand: int = 10
+    topic_discovery_max_subdomains_to_expand: int = 20
+    # Pipeline B expansion retry/resilience
+    topic_discovery_expansion_max_retries: int = 2
+    topic_discovery_expansion_retry_base_delay_s: float = 2.0
+    topic_discovery_expansion_db_max_retries: int = 3
+    topic_discovery_expansion_circuit_breaker_threshold: int = 5
     # Source C: Perplexity deep research for competitive content landscape
     topic_discovery_source_c_model: str = "perplexity/sonar-deep-research"
     topic_discovery_source_c_timeout_s: float = 900.0

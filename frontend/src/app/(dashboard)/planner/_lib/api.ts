@@ -127,3 +127,25 @@ export function expandSubdomain(
     },
   );
 }
+
+// ── Task Status Polling ────────────────────────────────
+
+export interface TaskStatusAPI {
+  task_id: string;
+  pipeline: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  current_step?: string;
+  error?: string;
+  created_at: string;
+}
+
+export function fetchTaskStatus(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<TaskStatusAPI> {
+  return api.get<TaskStatusAPI>(
+    `/api/v1/tasks/${taskId}`,
+    undefined,
+    signal,
+  );
+}

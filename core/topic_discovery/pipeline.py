@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
-import uuid
+import uuid as _uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -102,6 +103,12 @@ from core.topic_discovery.db_ops import (
     db_write_matrix,
     db_read_latest_matrix,
     db_get_discovery_id,
+    # Additive upsert functions (Pipeline B per-subdomain writes)
+    db_write_assignments_for_subdomain,
+    db_claim_subdomain_for_expansion,
+    db_mark_subdomain_expanded,
+    db_rebuild_tree_json,
+    db_reset_stale_expanding,
 )
 
 logger = logging.getLogger(__name__)
@@ -612,7 +619,7 @@ async def run_topic_discovery_pipeline(
 
             hitl1_result = await run_td_hitl_checkpoint(
                 taxonomy_review_graph, hitl1_state,
-                thread_id=f"td-hitl-1-{slug}-{uuid.uuid4().hex[:8]}",
+                thread_id=f"td-hitl-1-{slug}-{_uuid.uuid4().hex[:8]}",
                 task_store=task_store, event_bus=event_bus, task_id=task_id,
                 stage_name="td_taxonomy_review",
                 parent_span=hitl1_span,
@@ -967,95 +974,7 @@ async def run_topic_expansion_pipeline(
         if persona_filter and persona_filter in persona_mds_by_id:
             expansion_persona_ctx = persona_mds_by_id[persona_filter][:500]
 
-        # Expand each selected subdomain
-        all_assignments: List[TopicAssignment] = []
-        semaphore = asyncio.Semaphore(settings.topic_discovery_max_concurrent_sources)
-        expanded_ids: set = set()
-        failed_ids: set = set()
-
-        async def _expand_subdomain(
-            sd_id: str, sd_name: str, sd_desc: str,
-        ) -> List[TopicAssignment]:
-            async with semaphore:
-                assignments = await run_subdomain_expansion(
-                    subdomain_name=sd_name,
-                    subdomain_description=sd_desc,
-                    buyer_stages=buyer_stages,
-                    intent_types=intent_types,
-                    audience_segments=audience_segments,
-                    company_context=company_md,
-                    persona_context=expansion_persona_ctx,
-                    timeout_s=settings.topic_discovery_expansion_timeout_s,
-                    parent_span=s3_span,
-                    company_slug=company_slug,
-                )
-            for a in assignments:
-                a.subdomain_id = sd_id
-            return assignments
-
-        expansion_tasks = [
-            _expand_subdomain(sid, sname, sdesc)
-            for sid, sname, sdesc in selected_tuples
-        ]
-        expansion_results = await asyncio.gather(
-            *expansion_tasks, return_exceptions=True,
-        )
-
-        for i, res in enumerate(expansion_results):
-            sd_id = selected_tuples[i][0]
-            if isinstance(res, Exception):
-                logger.warning(
-                    "TD-Expansion/%s: expansion failed for '%s': %s(%s)",
-                    effective_slug, selected_tuples[i][1],
-                    type(res).__name__, res,
-                )
-                failed_ids.add(sd_id)
-            else:
-                all_assignments.extend(res)
-                expanded_ids.add(sd_id)
-
-        # Compute topic priority scores
-        score_lookup: Dict[str, Any] = {}
-        if scored_subdomains:
-            for sc in scored_subdomains.scores:
-                score_lookup[sc.subdomain_id] = sc
-
-        for assignment in all_assignments:
-            sd_score = score_lookup.get(assignment.subdomain_id)
-            if sd_score:
-                priority, factors = compute_topic_priority(
-                    assignment.buyer_stage.value,
-                    assignment.intent_type.value,
-                    sd_score.composite_score,
-                )
-                assignment.priority_score = priority
-                assignment.priority_factors = factors
-
-        # ── Merge with previous matrix (re-entrant accumulation) ──
-        # Keep assignments from subdomains NOT touched in this run;
-        # only successful expansions replace previous assignments.
-        previous_matrix = await db_read_latest_matrix(session_factory, effective_slug)
-        if previous_matrix and previous_matrix.assignments:
-            previous_kept = [
-                a for a in previous_matrix.assignments
-                if a.subdomain_id not in expanded_ids
-            ]
-            all_assignments = previous_kept + all_assignments
-
-        # Build matrix
-        distributions = _compute_distributions(all_assignments)
-        matrix = TopicAssignmentMatrix(
-            status=TopicDiscoveryStatus.draft,
-            assignments=all_assignments,
-            total_assignments=len(all_assignments),
-            total_relevant_cells=len(all_assignments),
-            total_irrelevant_cells=0,
-            buyer_stage_distribution=distributions["buyer_stage"],
-            intent_distribution=distributions["intent"],
-            audience_distribution=distributions["audience"],
-        )
-
-        # Resolve discovery_id for DB writes
+        # ── Resolve discovery_id BEFORE the expansion loop ──
         discovery_id: Optional[Any] = None
         try:
             from core.topic_discovery.persistence import persist_td_discovery
@@ -1068,20 +987,264 @@ async def run_topic_expansion_pipeline(
         except Exception:
             logger.warning("TD-Expansion persist_td_discovery failed, continuing", exc_info=True)
 
-        # Update expansion_status on taxonomy nodes
+        # Resolve current matrix_version (additive writes use same version)
+        mat_version = manifest.matrix_version or 1
+
+        # Resolve taxonomy_id for stale-expanding reset
+        taxonomy_db_id: Optional[Any] = None
+        if session_factory is not None and discovery_id is not None:
+            try:
+                from core.db.repositories.topic_discovery_repo import TaxonomyTreeRepository
+                async with session_factory() as _sess:
+                    _tax_repo = TaxonomyTreeRepository(_sess)
+                    _tax_row = await _tax_repo.get_by_discovery(discovery_id, version=tax_version)
+                    taxonomy_db_id = _tax_row.id if _tax_row else None
+            except Exception:
+                logger.debug("TD-Expansion: could not resolve taxonomy_db_id, skipping stale reset")
+
+        # Reset stale 'expanding' nodes from previous crashed runs
+        if taxonomy_db_id is not None:
+            try:
+                await db_reset_stale_expanding(session_factory, taxonomy_db_id)
+            except Exception:
+                logger.debug("TD-Expansion: stale reset failed, continuing")
+
+        # Generate expansion batch ID for this run
+        expansion_batch_id = _uuid.uuid4()
+
+        # Build score lookup for topic priority computation
+        score_lookup: Dict[str, Any] = {}
+        if scored_subdomains:
+            for sc in scored_subdomains.scores:
+                score_lookup[sc.subdomain_id] = sc
+
+        # Build subdomain affinity lookup for per-assignment persona affinity
+        subdomain_affinity_map: Dict[str, Dict[str, float]] = {}
+        if persona_affinity and persona_affinity.persona_entries:
+            for pid, entries in persona_affinity.persona_entries.items():
+                for entry in entries:
+                    if entry.subdomain_id not in subdomain_affinity_map:
+                        subdomain_affinity_map[entry.subdomain_id] = {}
+                    subdomain_affinity_map[entry.subdomain_id][pid] = entry.affinity_score
+
+        # ── Per-subdomain expansion + persist loop ──
+        # Uses semaphore-gated create_task instead of asyncio.gather
+        # to support circuit breaker (stop launching new tasks on N failures).
+        semaphore = asyncio.Semaphore(settings.topic_discovery_max_concurrent_sources)
+        expanded_ids: set = set()
+        failed_ids: set = set()
+        all_new_assignments: List[TopicAssignment] = []  # in-memory accumulator
+        total_assignments_written = 0
+        consecutive_failures = 0
+        circuit_open = False
+        cb_threshold = settings.topic_discovery_expansion_circuit_breaker_threshold
+
+        async def _expand_and_persist_subdomain(
+            sd_id: str, sd_name: str, sd_desc: str,
+        ) -> Tuple[str, int, Optional[Exception], List[TopicAssignment]]:
+            """Expand a single subdomain and persist results atomically.
+
+            Returns (subdomain_id, count, error_or_none, assignments).
+            Never raises — captures all exceptions as the error tuple element.
+            """
+            nonlocal consecutive_failures, circuit_open
+            try:
+                return await _expand_and_persist_subdomain_inner(sd_id, sd_name, sd_desc)
+            except Exception as exc:
+                return sd_id, 0, exc, []
+
+        async def _expand_and_persist_subdomain_inner(
+            sd_id: str, sd_name: str, sd_desc: str,
+        ) -> Tuple[str, int, Optional[Exception], List[TopicAssignment]]:
+            nonlocal consecutive_failures, circuit_open
+
+            # Circuit breaker check — skip if tripped
+            if circuit_open:
+                return sd_id, 0, RuntimeError("Circuit breaker open — skipped"), []
+
+            # Parse subdomain ID as UUID (graceful if non-UUID in tests)
+            try:
+                sd_uuid = _uuid.UUID(sd_id)
+            except (ValueError, AttributeError):
+                sd_uuid = None
+
+            # 1. Claim subdomain for expansion
+            if session_factory is not None and discovery_id is not None and sd_uuid is not None:
+                claimed = await db_claim_subdomain_for_expansion(session_factory, sd_uuid)
+                if not claimed:
+                    logger.info(
+                        "TD-Expansion/%s: subdomain '%s' already claimed, skipping",
+                        effective_slug, sd_name,
+                    )
+                    return sd_id, 0, None, []
+
+            # 2. LLM call with retry + exponential backoff
+            assignments: List[TopicAssignment] = []
+            max_retries = settings.topic_discovery_expansion_max_retries
+            retry_delay = settings.topic_discovery_expansion_retry_base_delay_s
+
+            async with semaphore:
+                for attempt in range(max_retries + 1):
+                    try:
+                        assignments = await run_subdomain_expansion(
+                            subdomain_name=sd_name,
+                            subdomain_description=sd_desc,
+                            buyer_stages=buyer_stages,
+                            intent_types=intent_types,
+                            audience_segments=audience_segments,
+                            company_context=company_md,
+                            persona_context=expansion_persona_ctx,
+                            timeout_s=settings.topic_discovery_expansion_timeout_s,
+                            parent_span=s3_span,
+                            company_slug=company_slug,
+                        )
+                        break
+                    except Exception as llm_exc:
+                        if attempt == max_retries:
+                            raise
+                        delay = retry_delay * (2 ** attempt) + random.uniform(0, retry_delay)
+                        logger.warning(
+                            "TD-Expansion/%s: LLM retry %d/%d for '%s': %s",
+                            effective_slug, attempt + 1, max_retries, sd_name, llm_exc,
+                        )
+                        await asyncio.sleep(delay)
+
+            # 3. Set subdomain_id and compute priority scores
+            for a in assignments:
+                a.subdomain_id = sd_id
+                a.subdomain_name = sd_name
+                sd_score = score_lookup.get(sd_id)
+                if sd_score:
+                    priority, factors = compute_topic_priority(
+                        a.buyer_stage.value,
+                        a.intent_type.value,
+                        sd_score.composite_score,
+                    )
+                    a.priority_score = priority
+                    a.priority_factors = factors
+
+            # 4. Compute per-assignment persona affinity
+            sd_affinity = subdomain_affinity_map.get(sd_id, {})
+            if persona_entries:
+                from core.topic_discovery.scoring import compute_assignment_persona_affinity
+                for a in assignments:
+                    a.persona_affinity = compute_assignment_persona_affinity(
+                        a.buyer_stage.value,
+                        a.persona_id,
+                        sd_affinity,
+                        persona_entries,
+                    )
+
+            # 5. Persist assignments to DB (per-subdomain atomic write)
+            count = len(assignments)
+            if session_factory is not None and discovery_id is not None and sd_uuid is not None and assignments:
+                db_retries = settings.topic_discovery_expansion_db_max_retries
+                for db_attempt in range(db_retries + 1):
+                    try:
+                        count = await db_write_assignments_for_subdomain(
+                            session_factory, discovery_id, sd_uuid,
+                            assignments, mat_version, expansion_batch_id,
+                        )
+                        break
+                    except Exception as db_exc:
+                        if db_attempt == db_retries:
+                            raise
+                        logger.warning(
+                            "TD-Expansion/%s: DB retry %d/%d for '%s': %s",
+                            effective_slug, db_attempt + 1, db_retries, sd_name, db_exc,
+                        )
+                        await asyncio.sleep(0.5 * (2 ** db_attempt))
+
+            # 6. Mark subdomain as expanded
+            if session_factory is not None and discovery_id is not None and sd_uuid is not None:
+                await db_mark_subdomain_expanded(session_factory, sd_uuid, success=True)
+
+            # Reset consecutive failure count on success
+            consecutive_failures = 0
+            return sd_id, count, None, assignments
+
+        # Launch tasks with semaphore-gated loop (not asyncio.gather)
+        pending_tasks: List[asyncio.Task] = []
+        for sid, sname, sdesc in selected_tuples:
+            if circuit_open:
+                failed_ids.add(sid)
+                continue
+            task = asyncio.create_task(
+                _expand_and_persist_subdomain(sid, sname, sdesc),
+            )
+            pending_tasks.append(task)
+
+        # Await all tasks and collect results
+        for task in pending_tasks:
+            try:
+                sd_id, count, err, task_assignments = await task
+                if err is not None:
+                    logger.warning(
+                        "TD-Expansion/%s: expansion failed for '%s': %s",
+                        effective_slug, sd_id, err,
+                    )
+                    failed_ids.add(sd_id)
+                    consecutive_failures += 1
+                    if consecutive_failures >= cb_threshold:
+                        circuit_open = True
+                        logger.error(
+                            "TD-Expansion/%s: circuit breaker OPEN after %d consecutive failures",
+                            effective_slug, consecutive_failures,
+                        )
+                    # Mark as failed in DB
+                    if session_factory is not None and discovery_id is not None:
+                        try:
+                            _fail_uuid = _uuid.UUID(sd_id)
+                            await db_mark_subdomain_expanded(
+                                session_factory, _fail_uuid, success=False,
+                            )
+                        except (ValueError, Exception):
+                            pass
+                else:
+                    expanded_ids.add(sd_id)
+                    total_assignments_written += count
+                    all_new_assignments.extend(task_assignments)
+            except Exception as exc:
+                # Task raised an exception
+                logger.warning(
+                    "TD-Expansion/%s: task exception: %s",
+                    effective_slug, exc,
+                )
+                consecutive_failures += 1
+                if consecutive_failures >= cb_threshold:
+                    circuit_open = True
+
+        # ── Update in-memory taxonomy nodes for tree_json rebuild ──
         _update_expansion_status(taxonomy.root_nodes, expanded_ids, failed_ids)
 
-        # FK-safe ordering: write taxonomy (subdomain nodes) BEFORE matrix
-        # (assignments) so that FK references in topic_assignments are valid.
-        if session_factory is not None and discovery_id is not None:
-            await db_write_taxonomy(
-                session_factory, discovery_id, taxonomy, version=taxonomy.version,
-            )
-            mat_version = await db_write_matrix(
-                session_factory, discovery_id, matrix, version=0,
-            )
-        else:
-            mat_version = matrix.version
+        # ── Rebuild tree_json after batch completes ──
+        if session_factory is not None and discovery_id is not None and taxonomy_db_id is not None:
+            await db_rebuild_tree_json(session_factory, discovery_id, tax_version)
+
+        # ── Build combined matrix for HITL-2 ──
+        # Read existing assignments from DB, then merge with new expansions.
+        # In production, per-subdomain writes already accumulated in DB;
+        # the merge here handles the case where DB writes were skipped
+        # (non-UUID test IDs, no session_factory, etc.).
+        db_matrix = await db_read_latest_matrix(session_factory, effective_slug)
+        db_assignments = db_matrix.assignments if db_matrix and db_matrix.assignments else []
+
+        # Merge: keep DB assignments for non-expanded subdomains,
+        # use in-memory assignments for subdomains expanded in this run.
+        kept_from_db = [a for a in db_assignments if a.subdomain_id not in expanded_ids]
+        all_assignments = kept_from_db + all_new_assignments
+
+        distributions = _compute_distributions(all_assignments)
+        matrix = TopicAssignmentMatrix(
+            status=TopicDiscoveryStatus.draft,
+            assignments=all_assignments,
+            total_assignments=len(all_assignments),
+            total_relevant_cells=len(all_assignments),
+            total_irrelevant_cells=0,
+            buyer_stage_distribution=distributions["buyer_stage"],
+            intent_distribution=distributions["intent"],
+            audience_distribution=distributions["audience"],
+        )
 
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": 3,
@@ -1116,7 +1279,7 @@ async def run_topic_expansion_pipeline(
 
         hitl2_result = await run_td_hitl_checkpoint(
             matrix_review_graph, hitl2_state,
-            thread_id=f"td-hitl-2-{slug}-{uuid.uuid4().hex[:8]}",
+            thread_id=f"td-hitl-2-{slug}-{_uuid.uuid4().hex[:8]}",
             task_store=task_store, event_bus=event_bus, task_id=task_id,
             stage_name="td_matrix_review",
             parent_span=hitl2_span,
