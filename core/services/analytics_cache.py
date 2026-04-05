@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 GA4_CONNECTION_TTL = 1800   # 30 min  — connection metadata is stable
 GA4_PROPERTIES_TTL = 3600   # 1 hour  — properties rarely change
+GA4_PERF_TABLE_TTL = 300    # 5 min   — table data changes on sync only
+GA4_PERF_DETAIL_TTL = 300   # 5 min   — detail data changes on sync only
+GA4_VELOCITY_TTL = 600      # 10 min  — velocity is a derived metric
 
 
 # ── Key builders ─────────────────────────────────────────────────────
@@ -105,6 +108,104 @@ def invalidate_ga4_properties(
     if redis is None:
         return
     cache_delete(redis, ga4_properties_key(company_slug, tenant_id))
+
+
+# ── Bulk invalidation ────────────────────────────────────────────────
+
+
+# ── Content performance cache ───────────────────────────────────────
+
+
+def ga4_perf_table_key(
+    company_slug: str, tenant_id: str, days: int,
+) -> str:
+    return f"cache:ga4:{company_slug}:perf_table:{tenant_id}:{days}"
+
+
+def ga4_perf_detail_key(
+    company_slug: str, tenant_id: str, inventory_id: str, days: int,
+) -> str:
+    return f"cache:ga4:{company_slug}:perf_detail:{tenant_id}:{inventory_id}:{days}"
+
+
+def ga4_velocity_key(
+    company_slug: str, tenant_id: str, days: int,
+) -> str:
+    return f"cache:ga4:{company_slug}:velocity:{tenant_id}:{days}"
+
+
+def get_cached_perf_table(
+    company_slug: str, tenant_id: str, days: int,
+) -> Optional[dict[str, Any]]:
+    """Return cached content performance table or None on miss."""
+    redis = get_sync_redis_or_none()
+    if redis is None:
+        return None
+    return cache_get(redis, ga4_perf_table_key(company_slug, tenant_id, days))
+
+
+def set_cached_perf_table(
+    company_slug: str, tenant_id: str, days: int, data: dict[str, Any],
+) -> None:
+    """Cache content performance table response."""
+    redis = get_sync_redis_or_none()
+    if redis is None:
+        return
+    cache_set(
+        redis, ga4_perf_table_key(company_slug, tenant_id, days),
+        data, ttl=GA4_PERF_TABLE_TTL,
+    )
+
+
+def get_cached_perf_detail(
+    company_slug: str, tenant_id: str, inventory_id: str, days: int,
+) -> Optional[dict[str, Any]]:
+    """Return cached content detail or None on miss."""
+    redis = get_sync_redis_or_none()
+    if redis is None:
+        return None
+    return cache_get(
+        redis,
+        ga4_perf_detail_key(company_slug, tenant_id, inventory_id, days),
+    )
+
+
+def set_cached_perf_detail(
+    company_slug: str, tenant_id: str, inventory_id: str, days: int,
+    data: dict[str, Any],
+) -> None:
+    """Cache content detail response."""
+    redis = get_sync_redis_or_none()
+    if redis is None:
+        return
+    cache_set(
+        redis,
+        ga4_perf_detail_key(company_slug, tenant_id, inventory_id, days),
+        data, ttl=GA4_PERF_DETAIL_TTL,
+    )
+
+
+def get_cached_velocity(
+    company_slug: str, tenant_id: str, days: int,
+) -> Optional[dict[str, Any]]:
+    """Return cached velocity insights or None on miss."""
+    redis = get_sync_redis_or_none()
+    if redis is None:
+        return None
+    return cache_get(redis, ga4_velocity_key(company_slug, tenant_id, days))
+
+
+def set_cached_velocity(
+    company_slug: str, tenant_id: str, days: int, data: dict[str, Any],
+) -> None:
+    """Cache velocity insights response."""
+    redis = get_sync_redis_or_none()
+    if redis is None:
+        return
+    cache_set(
+        redis, ga4_velocity_key(company_slug, tenant_id, days),
+        data, ttl=GA4_VELOCITY_TTL,
+    )
 
 
 # ── Bulk invalidation ────────────────────────────────────────────────

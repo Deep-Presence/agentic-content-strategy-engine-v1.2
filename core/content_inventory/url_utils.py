@@ -74,3 +74,47 @@ def normalize_url(url: str) -> str:
         return result
     except Exception:
         return url
+
+
+def extract_url_path(url: str) -> str:
+    """Extract and normalize the path component from a full URL.
+
+    Used to match ``content_inventory.url_normalized`` (full URL) against
+    ``ga4_traffic_data.landing_page_url`` (path-only from GA4's
+    ``landingPage`` dimension).
+
+    Returns lowercase path with trailing slash stripped (unless root ``/``).
+
+    Examples::
+
+        >>> extract_url_path("https://example.com/Blog/Post")
+        '/blog/post'
+
+        >>> extract_url_path("https://example.com/")
+        '/'
+
+        >>> extract_url_path("/already-a-path/")
+        '/already-a-path'
+
+        >>> extract_url_path("")
+        '/'
+    """
+    if not url or not url.strip():
+        return "/"
+
+    url = url.strip()
+
+    try:
+        parsed = urlparse(url)
+        path = parsed.path.lower()
+
+        if not path:
+            return "/"
+
+        # Strip trailing slash unless root
+        if path != "/" and path.endswith("/"):
+            path = path.rstrip("/")
+
+        return path
+    except Exception:
+        return "/"

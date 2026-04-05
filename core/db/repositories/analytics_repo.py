@@ -367,6 +367,162 @@ class GA4TrafficDataRepository(
         await self._session.flush()
         return result.rowcount
 
+    # ── Per-page aggregation queries ────────────────────────────────
+
+    async def get_per_page_aggregates(
+        self,
+        company_id: _uuid.UUID | str,
+        start_date: date,
+        end_date: date,
+    ) -> Sequence[Any]:
+        """Return per-landing-page traffic aggregates for a date range.
+
+        Each row contains: landing_page_url, total_sessions, total_pageviews,
+        ai_sessions.
+        """
+        from sqlalchemy import func, literal
+
+        cid = (
+            _uuid.UUID(str(company_id))
+            if isinstance(company_id, str)
+            else company_id
+        )
+        T = GA4TrafficDataModel
+        ai_sessions_expr = func.sum(
+            case((T.is_ai_referral.is_(True), T.sessions), else_=literal(0))
+        )
+        stmt = (
+            select(
+                T.landing_page_url,
+                func.sum(T.sessions).label("total_sessions"),
+                func.sum(T.screen_page_views).label("total_pageviews"),
+                ai_sessions_expr.label("ai_sessions"),
+            )
+            .where(
+                T.company_id == cid,
+                T.date >= start_date,
+                T.date <= end_date,
+            )
+            .group_by(T.landing_page_url)
+        )
+        result = await self._session.execute(stmt)
+        return result.all()
+
+    async def get_daily_timeseries(
+        self,
+        company_id: _uuid.UUID | str,
+        landing_page_url: str,
+        start_date: date,
+        end_date: date,
+    ) -> Sequence[Any]:
+        """Return daily traffic aggregates for a single landing page.
+
+        Each row contains: date, sessions, pageviews, ai_sessions.
+        """
+        from sqlalchemy import func, literal
+
+        cid = (
+            _uuid.UUID(str(company_id))
+            if isinstance(company_id, str)
+            else company_id
+        )
+        T = GA4TrafficDataModel
+        ai_sessions_expr = func.sum(
+            case((T.is_ai_referral.is_(True), T.sessions), else_=literal(0))
+        )
+        stmt = (
+            select(
+                T.date,
+                func.sum(T.sessions).label("sessions"),
+                func.sum(T.screen_page_views).label("pageviews"),
+                ai_sessions_expr.label("ai_sessions"),
+            )
+            .where(
+                T.company_id == cid,
+                T.landing_page_url == landing_page_url,
+                T.date >= start_date,
+                T.date <= end_date,
+            )
+            .group_by(T.date)
+            .order_by(T.date.asc())
+        )
+        result = await self._session.execute(stmt)
+        return result.all()
+
+    async def get_source_breakdown(
+        self,
+        company_id: _uuid.UUID | str,
+        landing_page_url: str,
+        start_date: date,
+        end_date: date,
+    ) -> Sequence[Any]:
+        """Return per-source session breakdown for a single landing page.
+
+        Each row contains: source, medium, is_ai_referral, ai_platform, sessions.
+        """
+        from sqlalchemy import func
+
+        cid = (
+            _uuid.UUID(str(company_id))
+            if isinstance(company_id, str)
+            else company_id
+        )
+        T = GA4TrafficDataModel
+        stmt = (
+            select(
+                T.source,
+                T.medium,
+                T.is_ai_referral,
+                T.ai_platform,
+                func.sum(T.sessions).label("sessions"),
+            )
+            .where(
+                T.company_id == cid,
+                T.landing_page_url == landing_page_url,
+                T.date >= start_date,
+                T.date <= end_date,
+            )
+            .group_by(T.source, T.medium, T.is_ai_referral, T.ai_platform)
+        )
+        result = await self._session.execute(stmt)
+        return result.all()
+
+    async def get_ai_platform_breakdown(
+        self,
+        company_id: _uuid.UUID | str,
+        landing_page_url: str,
+        start_date: date,
+        end_date: date,
+    ) -> Sequence[Any]:
+        """Return per-AI-platform session breakdown for a single landing page.
+
+        Each row contains: ai_platform, sessions.
+        """
+        from sqlalchemy import func
+
+        cid = (
+            _uuid.UUID(str(company_id))
+            if isinstance(company_id, str)
+            else company_id
+        )
+        T = GA4TrafficDataModel
+        stmt = (
+            select(
+                T.ai_platform,
+                func.sum(T.sessions).label("sessions"),
+            )
+            .where(
+                T.company_id == cid,
+                T.landing_page_url == landing_page_url,
+                T.is_ai_referral.is_(True),
+                T.date >= start_date,
+                T.date <= end_date,
+            )
+            .group_by(T.ai_platform)
+        )
+        result = await self._session.execute(stmt)
+        return result.all()
+
 
 # ── GA4ConversionEventRepository ─────────────────────────────────────
 

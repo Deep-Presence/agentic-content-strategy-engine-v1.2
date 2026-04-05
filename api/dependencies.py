@@ -1003,3 +1003,52 @@ async def get_content_inventory_service(
         raise
     finally:
         await session.close()
+
+
+# ── Content Performance Service ──────────────────────────────────────
+
+
+async def get_content_performance_service(
+    request: Request,
+) -> AsyncGenerator[Any, None]:
+    """Return the Content Performance service with proper DB session lifecycle.
+
+    Joins content_inventory + ga4_traffic_data for per-page analytics.
+    DB-only (both tables in Postgres) — raises 503 if DATABASE_URL not set.
+    Tests bypass DI via ``app.state.content_performance_service`` override.
+    """
+    # 1. Pre-built override (tests set app.state.content_performance_service)
+    service = getattr(request.app.state, "content_performance_service", None)
+    if service is not None:
+        yield service
+        return
+
+    # 2. Require DB
+    sf = getattr(request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Content performance requires database — set DATABASE_URL",
+        )
+
+    session = sf()
+    try:
+        from core.db.repositories.analytics_repo import GA4TrafficDataRepository
+        from core.db.repositories.content_inventory_repo import (
+            ContentInventoryRepository,
+        )
+        from core.services.content_performance_service import (
+            ContentPerformanceService,
+        )
+
+        svc = ContentPerformanceService(
+            traffic_repo=GA4TrafficDataRepository(session),
+            inventory_repo=ContentInventoryRepository(session),
+        )
+        yield svc
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
