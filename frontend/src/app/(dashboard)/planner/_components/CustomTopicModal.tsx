@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Check, Upload, FileText } from 'lucide-react';
-import { BRAND_PREFIX } from './planner-data';
 import type { Assignment, Cluster } from './planner-data';
 import type { CreateCustomAssignmentData } from '../_hooks/usePlannerData';
 

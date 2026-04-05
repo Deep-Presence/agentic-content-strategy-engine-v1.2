@@ -1,7 +1,7 @@
 {
-  "current_sprint": "content-inventory-phase1",
-  "last_updated": "2026-04-04",
-  "test_count": 1690,
+  "current_sprint": "td-db-only-migration",
+  "last_updated": "2026-04-05",
+  "test_count": 1588,
   "completed_sprints_summary": {
     "total_tasks_completed": 43,
     "sprints": [
@@ -46,7 +46,9 @@
       {"sprint": "prompt-tracking-frontend-integration", "date": "2026-04-04", "summary": "Prompt Tracking frontend-backend integration — 4-layer pattern (types/api/adapters/hooks). 8 new frontend files, 3 refactored components, 2 deleted mock files. Backend: start_date/end_date params on 3 endpoints. PB-95 (tenant isolation) added to backlog. 67 DT tests passing. Build clean."},
       {"sprint": "content-inventory-phase1", "date": "2026-04-04", "summary": "Content Inventory Phase 1 Foundation — universal CMS-agnostic content registry. ContentInventoryModel (26 cols, pgvector embedding), Alembic 0026, ContentInventoryRepository (upsert/bulk/similarity/pagination), ContentInventoryService (5 ingestion + 3 similarity methods), URL normalization, 3 Pydantic DTOs, DI wiring, CMS FK. 67 new tests (39 unit + 14 service + 14 DB). 1623 existing tests passing."},
       {"sprint": "prompt-tracking-frontend-integration-extended", "date": "2026-04-04", "summary": "Prompt Tracking full frontend integration + Brand Hub regeneration. Add Prompt modal (POST /prompts), Run All Prompts (POST /runs with persistent status banner, localStorage, polling), fanout generation animation (shimmer + polling), auto-run daily checkbox. Brand Hub: Re-generate buttons wired for KB/AP/VSG (auto-approve), Re-run Pipeline button calls Research Orchestrator (KB→AP→VSG DAG, auto-approve all). Two-pass competitor extraction: Haiku extracts structured JSON from KB markdown, daily tracker auto-resolves competitors from KB sidecar. PB-95 (tenant isolation) CRITICAL. 16 new extraction tests. Model fix (claude-haiku-4.5). LangSmith tracing on extraction. 683 tests passing."},
-      {"sprint": "settings-page-integration", "date": "2026-04-04", "summary": "Settings page (/settings) frontend-backend integration. Team tab: real API (member list, role updates superuser-gated, invite code generation). Integrations tab: WordPress CMS connect/disconnect via modal form, GA4 Analytics full OAuth flow (authorize → Google consent → BFF callback → property selection → sync → disconnect w/ purge). BFF callback route bypasses catch-all proxy auth. api.del() enhanced with params. Role mapping layer (superuser↔Admin, member↔Editor, viewer↔Viewer). Models/Billing/Notifications tabs remain dummy. 8 new files, 3 modified. TypeScript clean, build clean."}
+      {"sprint": "settings-page-integration", "date": "2026-04-04", "summary": "Settings page (/settings) frontend-backend integration. Team tab: real API (member list, role updates superuser-gated, invite code generation). Integrations tab: WordPress CMS connect/disconnect via modal form, GA4 Analytics full OAuth flow (authorize → Google consent → BFF callback → property selection → sync → disconnect w/ purge). BFF callback route bypasses catch-all proxy auth. api.del() enhanced with params. Role mapping layer (superuser↔Admin, member↔Editor, viewer↔Viewer). Models/Billing/Notifications tabs remain dummy. 8 new files, 3 modified. TypeScript clean, build clean."},
+      {"sprint": "planner-integration", "date": "2026-04-04", "summary": "Content Planner (/planner) frontend-backend integration. 4 new backend endpoints (summary, assignments CRUD, custom create). TopicAssignmentStatus enum expanded (approved/rejected). Frontend: _lib/ (types, api, adapters) + usePlannerData hook + component updates. Initiatives sidebar stays dummy. 59 new tests. GA4 OAuth redirect fix. GA4 disconnect reconnect bug fix (active_only=False). Expand Topic button on Cluster Explorer."},
+      {"sprint": "td-db-only-migration", "date": "2026-04-05", "summary": "Eliminate JSON filesystem from Topic Discovery pipelines — DB-only storage. New db_ops.py (13 async functions replacing TopicDiscoveryStorage). Pipeline A & B rewritten. DbTopicDiscoveryDataService JSON fallback removed. TD→Content orchestrator reads from DB. Router/guard uses DB queries. pipeline_state.json writes conditional on Redis. Migration 0029 (scoring_json, persona_affinity_index_json). 1588 tests passing."}
     ]
   },
   "completed": [
@@ -313,14 +315,7 @@
       ]
     }
   ],
-  "in_progress": [
-    {
-      "id": "T-content-inventory-phase2",
-      "task": "Content Inventory Phase 2 — Ingestion Wiring (Site Audit, CMS Sync, API router, schemas)",
-      "sprint": "content-inventory-phase2",
-      "status": "pending"
-    }
-  ],
+  "in_progress": [],
   "pending": [
     {
       "id": "T-async-13",

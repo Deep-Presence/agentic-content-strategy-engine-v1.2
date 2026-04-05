@@ -39,7 +39,6 @@ from core.auth.utils.domain import derive_slug
 from core.models.organization import UserProfile
 from core.audit import log_hitl_decision, log_pipeline_launch
 from core.services.task_store import ApprovalWindowError, TaskStoreProtocol
-from core.topic_discovery.storage import TopicDiscoveryStorage
 
 logger = logging.getLogger(__name__)
 
@@ -73,20 +72,14 @@ def _validate_approval_window(
         )
 
 
-def _td_should_guard(
-    artifacts_root: Path,
+async def _td_should_guard_db(
+    session_factory: Any,
     effective_slug: str,
-    *,
-    backend: Optional[Any] = None,
 ) -> tuple[bool, Optional[str]]:
-    """Check whether the TD guard should block a new run.
+    """Check whether the TD guard should block a new run via DB."""
+    from core.topic_discovery.db_ops import db_read_manifest
 
-    Guard blocks when an approved taxonomy + matrix already exist.
-    """
-    kw = {"backend": backend} if backend else {}
-    storage = TopicDiscoveryStorage(artifacts_root, effective_slug, **kw)
-    manifest = storage.read_manifest()
-
+    manifest = await db_read_manifest(session_factory, effective_slug)
     if manifest.taxonomy_version > 0:
         from core.models.topic_discovery import TopicDiscoveryStatus
 
@@ -125,11 +118,13 @@ async def start_topic_discovery(
             detail="Cannot start pipeline for another company",
         )
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
-    _sb = getattr(http_request.app.state, "storage_backend", None)
 
     # Guard: check if discovery already exists
     if not body.force_rerun:
-        should_guard, message = _td_should_guard(artifacts_root, effective_slug, backend=_sb)
+        sf = getattr(http_request.app.state, "db_session_factory", None)
+        if sf is None:
+            raise HTTPException(status_code=503, detail="Database not available")
+        should_guard, message = await _td_should_guard_db(sf, effective_slug)
         if should_guard:
             response.status_code = 200
             await log_pipeline_launch(
@@ -538,6 +533,7 @@ async def get_persona_affinity(
     return PersonaAffinityResponse(
         slug=slug,
         persona_entries=affinity.get("persona_entries", {}),
+        persona_metadata=affinity.get("persona_metadata", {}),
         total_personas=affinity.get("total_personas", 0),
         total_subdomains=affinity.get("total_subdomains", 0),
     )
@@ -570,10 +566,11 @@ async def start_topic_expansion(
     effective_slug = f"{slug}__{body.product_slug}" if body.product_slug else slug
 
     # Pre-check: discovery must have completed
-    _sb = getattr(http_request.app.state, "storage_backend", None)
-    kw = {"backend": _sb} if _sb else {}
-    storage = TopicDiscoveryStorage(artifacts_root, effective_slug, **kw)
-    manifest = storage.read_manifest()
+    sf = getattr(http_request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    from core.topic_discovery.db_ops import db_read_manifest
+    manifest = await db_read_manifest(sf, effective_slug)
     if manifest.taxonomy_version == 0:
         raise HTTPException(
             status_code=409,
@@ -636,7 +633,6 @@ async def get_expansion_status(
     slug: str,
     http_request: Request,
     _user: UserProfile = Depends(require_auth),
-    artifacts_root: Path = Depends(get_artifacts_root),
 ) -> ExpansionStatusResponse:
     user_company_slug = getattr(http_request.state, "company_slug", None)
     if not user_company_slug or (
@@ -645,10 +641,11 @@ async def get_expansion_status(
     ):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    _sb = getattr(http_request.app.state, "storage_backend", None)
-    kw = {"backend": _sb} if _sb else {}
-    storage = TopicDiscoveryStorage(artifacts_root, slug, **kw)
-    taxonomy = storage.get_latest_taxonomy()
+    sf = getattr(http_request.app.state, "db_session_factory", None)
+    if sf is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    from core.topic_discovery.db_ops import db_read_taxonomy
+    taxonomy = await db_read_taxonomy(sf, slug)
     if taxonomy is None:
         raise HTTPException(status_code=404, detail="No taxonomy found")
 

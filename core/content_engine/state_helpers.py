@@ -50,7 +50,8 @@ def _write_pipeline_state(
     When *redis_client* and *effective_slug* are provided, writes to both
     Redis Hash AND file for fallback resilience.
     """
-    # Try Redis (when configured) — best-effort, does NOT skip file write
+    # Try Redis (when configured) — primary state store
+    redis_succeeded = False
     if redis_client is not None and effective_slug:
         try:
             from core.content_engine.state_redis import write_pipeline_state_redis
@@ -58,13 +59,16 @@ def _write_pipeline_state(
             write_pipeline_state_redis(
                 redis_client, effective_slug, brief_ids, phase, task_id=task_id
             )
+            redis_succeeded = True
         except Exception:
             logger.warning(
-                "Redis pipeline state write failed — file write still proceeds",
+                "Redis pipeline state write failed — falling back to file",
                 exc_info=True,
             )
 
-    # File write (ALWAYS runs — ensures fallback is never stale)
+    # File write — only when Redis is unavailable (fallback for dev/no-Redis)
+    if redis_succeeded:
+        return
     state_path = artifact_dir / "pipeline_state.json"
     existing: Dict[str, Any] = {}
     if state_path.is_file():
@@ -106,20 +110,23 @@ def _cleanup_pipeline_state(
     first. Falls back to file on Redis failure. On error paths, cleans BOTH
     Redis and file to prevent stale data resurrection.
     """
-    # Try Redis cleanup (when configured)
+    # Try Redis cleanup (when configured) — primary state store
+    redis_succeeded = False
     if redis_client is not None and effective_slug:
         try:
             from core.content_engine.state_redis import cleanup_pipeline_state_redis
 
             cleanup_pipeline_state_redis(redis_client, effective_slug, brief_ids)
-            # Also clean file to prevent stale data if Redis reads fail later
+            redis_succeeded = True
         except Exception:
             logger.warning(
                 "Redis pipeline state cleanup failed — falling back to file",
                 exc_info=True,
             )
 
-    # File-based cleanup (always runs as safety net)
+    # File-based cleanup — only when Redis is unavailable (fallback for dev/no-Redis)
+    if redis_succeeded:
+        return
     state_path = artifact_dir / "pipeline_state.json"
     if not state_path.is_file():
         return

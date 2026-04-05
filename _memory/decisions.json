@@ -1,5 +1,35 @@
 [
   {
+    "id": "D-TD-DB-ONLY-MIGRATION",
+    "timestamp": "2026-04-05",
+    "task": "Eliminate JSON filesystem from Topic Discovery pipelines — DB-only storage",
+    "decision": "Create core/topic_discovery/db_ops.py with 13 async functions that replace TopicDiscoveryStorage for pipeline use. Each function opens its own session, commits, and raises on failure (no graceful degradation). Pipeline A & B rewritten to use db_ops exclusively. DbTopicDiscoveryDataService JSON fallback removed. DI raises 503 without DB. TD→Content orchestrator reads from DB. Router guard queries DB. pipeline_state.json writes conditional on Redis. New migration 0029 adds scoring_json + persona_affinity_index_json JSONB columns.",
+    "rationale": "The JSON/DB UUID mismatch caused production bugs: expansion pipeline read taxonomy from JSON files (with one set of UUIDs), while the DB subdomain_nodes table had different UUIDs. Assignments generated from JSON IDs failed FK constraints on insert. Making DB the sole source of truth eliminates the mismatch permanently. Content markdown stays in blob storage — only metadata moves to DB.",
+    "alternatives_considered": [
+      "Name-based fallback resolution (band-aid) — rejected: not scalable, name collisions possible, per-ID DB round-trip in pipeline hot path",
+      "Sync JSON→DB IDs on persist — rejected: complex, error-prone, still two sources of truth",
+      "Delete TopicDiscoveryStorage entirely — deferred: class kept for backward compat and tests, just not used in pipeline hot paths"
+    ],
+    "impact": "2 new files, 8 modified production files, 7 modified test files. Migration 0029. 1588 tests passing (0 failures). Fixes PB-93 for Topic Discovery.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-PLANNER-INTEGRATION",
+    "timestamp": "2026-04-04",
+    "task": "Content Planner page frontend-backend integration with Topic Discovery",
+    "decision": "4 new backend endpoints (GET summary, GET assignments, PATCH status, POST create). Frontend adapter pattern (types/api/adapters/hooks). TopicAssignmentStatus enum expanded with approved/rejected. Optimistic updates for approve/reject. Initiatives sidebar stays dummy. Expand Topic button triggers Pipeline B.",
+    "rationale": "Content Planner was 100% mock data. The adapter pattern (same as Brand Hub) transforms backend TopicAssignment shapes to frontend Assignment types without changing component props. Status-based rejection (not separate list) simplifies the data model. Client-side filtering matches current UX (matrix <200 items). Codex review incorporated: tenant ownership chain on PATCH, UUID transition, expanded test coverage.",
+    "alternatives_considered": [
+      "Server-side filtering — rejected: matrix typically <200 assignments, client-side is faster UX",
+      "metadata.planner_decision instead of enum expansion — rejected: enum enables clean DB filtering (WHERE status = 'approved')",
+      "Separate rejected items table — rejected: status field on existing assignment is simpler"
+    ],
+    "impact": "9 backend files changed, 3 new files. 10 frontend files changed, 4 new files. 59 new backend tests. Migration 0028. GA4 OAuth redirect fix (3 files). GA4 reconnect bug fix (2 files).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-SETTINGS-PAGE-INTEGRATION",
     "timestamp": "2026-04-04",
     "task": "Settings page frontend-backend integration — Team tab, Integrations tab (WordPress + GA4)",

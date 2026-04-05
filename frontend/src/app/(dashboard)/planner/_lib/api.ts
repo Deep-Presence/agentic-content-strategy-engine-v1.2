@@ -9,6 +9,7 @@ import type {
   AssignmentStatusUpdateResponseAPI,
   DiscoverySummaryResponseAPI,
   PersonaAffinityResponseAPI,
+  PipelineRunResponseAPI,
   TaxonomyReadResponseAPI,
   TopicAssignmentAPI,
 } from './types';
@@ -101,5 +102,28 @@ export function createCustomAssignment(
   return api.post<TopicAssignmentAPI>(
     `/api/v1/topic-discovery/${slug}/assignments`,
     data,
+  );
+}
+
+// ── Topic Expansion (Pipeline B) ───────────────────────
+
+export function expandSubdomain(
+  companyName: string,
+  domain: string,
+  subdomainIds: string[],
+  options?: {
+    auto_approve_checkpoints?: number[];
+    taxonomy_version?: number;
+  },
+): Promise<PipelineRunResponseAPI> {
+  return api.post<PipelineRunResponseAPI>(
+    '/api/v1/topic-discovery/expand',
+    {
+      company_name: companyName,
+      domain,
+      subdomain_ids: subdomainIds,
+      auto_approve_checkpoints: options?.auto_approve_checkpoints ?? [2],
+      taxonomy_version: options?.taxonomy_version,
+    },
   );
 }

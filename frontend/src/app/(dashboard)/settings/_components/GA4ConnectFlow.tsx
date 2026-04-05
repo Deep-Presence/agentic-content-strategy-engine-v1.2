@@ -84,28 +84,70 @@ export function GA4ConnectFlow({
         </div>
 
         {properties.length === 0 ? (
-          <Button variant="secondary" size="sm" onClick={onLoadProperties}>
-            Load Properties
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={onLoadProperties}>
+              Load Properties
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={async () => {
+                setIsDisconnecting(true);
+                try {
+                  await onDisconnect(false);
+                  setToast({ open: true, message: 'Disconnected', variant: 'success' });
+                } catch {
+                  setToast({ open: true, message: 'Failed to disconnect', variant: 'error' });
+                } finally {
+                  setIsDisconnecting(false);
+                }
+              }}
+              disabled={isDisconnecting}
+            >
+              <Unplug size={13} strokeWidth={1.5} className="mr-1.5" />
+              {isDisconnecting ? 'Disconnecting...' : 'Disconnect'}
+            </Button>
+          </div>
         ) : (
-          <div className="flex items-end gap-2">
-            <div className="relative flex-1">
-              <select
-                value={selectedPropertyId}
-                onChange={(e) => setSelectedPropertyId(e.target.value)}
-                className="w-full h-[34px] px-3 pr-8 rounded-sm border border-border bg-surface text-[13px] text-text-primary outline-none cursor-pointer hover:border-border-strong transition-colors appearance-none"
-              >
-                <option value="">Select a property...</option>
-                {properties.map((p) => (
-                  <option key={p.property_id} value={p.property_id}>
-                    {p.display_name} ({p.account_display_name})
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} strokeWidth={1.5} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-text-tertiary" />
+          <div className="space-y-2">
+            <div className="flex items-end gap-2">
+              <div className="relative flex-1">
+                <select
+                  value={selectedPropertyId}
+                  onChange={(e) => setSelectedPropertyId(e.target.value)}
+                  className="w-full h-[34px] px-3 pr-8 rounded-sm border border-border bg-surface text-[13px] text-text-primary outline-none cursor-pointer hover:border-border-strong transition-colors appearance-none"
+                >
+                  <option value="">Select a property...</option>
+                  {properties.map((p) => (
+                    <option key={p.property_id} value={p.property_id}>
+                      {p.display_name} ({p.account_display_name})
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={14} strokeWidth={1.5} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-text-tertiary" />
+              </div>
+              <Button size="sm" onClick={handleSelectProperty} disabled={!selectedPropertyId || isSaving}>
+                {isSaving ? 'Saving...' : 'Save'}
+              </Button>
             </div>
-            <Button size="sm" onClick={handleSelectProperty} disabled={!selectedPropertyId || isSaving}>
-              {isSaving ? 'Saving...' : 'Save'}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={async () => {
+                setIsDisconnecting(true);
+                try {
+                  await onDisconnect(false);
+                  setToast({ open: true, message: 'Disconnected', variant: 'success' });
+                } catch {
+                  setToast({ open: true, message: 'Failed to disconnect', variant: 'error' });
+                } finally {
+                  setIsDisconnecting(false);
+                }
+              }}
+              disabled={isDisconnecting}
+            >
+              <Unplug size={13} strokeWidth={1.5} className="mr-1.5" />
+              {isDisconnecting ? 'Disconnecting...' : 'Disconnect'}
             </Button>
           </div>
         )}

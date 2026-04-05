@@ -406,6 +406,10 @@ class PersonaAffinityIndex(BaseModel):
     persona_entries: Dict[str, List[PersonaSubdomainEntry]] = Field(
         default_factory=dict
     )
+    persona_metadata: Dict[str, Dict[str, str]] = Field(
+        default_factory=dict,
+        description="persona_id → {persona_name, career_role}",
+    )
     total_personas: int = 0
     total_subdomains: int = 0
     created_at: str = Field(default_factory=_utcnow)

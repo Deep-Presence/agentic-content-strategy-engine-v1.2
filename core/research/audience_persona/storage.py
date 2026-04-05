@@ -138,6 +138,7 @@ class PersonaStorage:
         kind: str = "secondary",
         created_by: str = "agent",
         tagline: str = "",
+        career_role: str = "",
         status: str = "fresh",
     ) -> int:
         """Write a new persona profile version and update the manifest.
@@ -173,6 +174,7 @@ class PersonaStorage:
             persona_id=persona_id,
             persona_name=persona_name,
             tagline=tagline,
+            career_role=career_role,
             kind=kind,
             current_version=next_version,
             last_updated=now,

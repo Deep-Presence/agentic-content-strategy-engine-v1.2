@@ -1,13 +1,10 @@
 """DbTopicDiscoveryDataService — Postgres-backed implementation of TopicDiscoveryDataServiceProtocol.
 
-Uses TD-specific repositories for all queries.  Falls back to filesystem
-via JsonTopicDiscoveryDataService only when DB data is missing (e.g. tree_json
-is NULL, or no persona affinity rows exist).
+Uses TD-specific repositories for all queries.  No JSON filesystem fallback.
 """
 from __future__ import annotations
 
 from collections import defaultdict
-from pathlib import Path
 from typing import Optional
 
 from core.db.repositories.topic_discovery_repo import (
@@ -24,7 +21,7 @@ class DbTopicDiscoveryDataService:
     """Postgres-backed TD data service.
 
     Metadata + content queries from DB via repos.
-    Falls back to JSON service when DB data is incomplete.
+    Returns None when DB data is missing (no filesystem fallback).
     """
 
     def __init__(
@@ -32,31 +29,17 @@ class DbTopicDiscoveryDataService:
         td_repo: TopicDiscoveryRepository,
         taxonomy_repo: TaxonomyTreeRepository,
         assignment_repo: TopicAssignmentRepository,
-        artifacts_root: Path,
         *,
         node_repo: Optional[SubdomainNodeRepository] = None,
         source_result_repo: Optional[SourceResultRepository] = None,
         persona_affinity_repo: Optional[PersonaAffinityRepository] = None,
-        backend: Optional["StorageBackend"] = None,
     ) -> None:
-        from core.storage.backends import LocalStorageBackend
-
         self._td_repo = td_repo
         self._taxonomy_repo = taxonomy_repo
         self._assignment_repo = assignment_repo
         self._node_repo = node_repo
         self._source_result_repo = source_result_repo
         self._persona_affinity_repo = persona_affinity_repo
-        self._artifacts_root = artifacts_root
-        self._backend = backend or LocalStorageBackend(artifacts_root)
-
-    def _json_fallback(self):
-        """Lazy-construct a JsonTopicDiscoveryDataService for fallback."""
-        from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
-
-        return JsonTopicDiscoveryDataService(
-            self._artifacts_root, backend=self._backend,
-        )
 
     async def get_discovery_summary(self, effective_slug: str) -> Optional[dict]:
         row = await self._td_repo.get_by_effective_slug(effective_slug)
@@ -92,10 +75,7 @@ class DbTopicDiscoveryDataService:
         if tax is not None and tax.tree_json is not None:
             return tax.tree_json
 
-        # Fallback to JSON if tree_json is NULL
-        return await self._json_fallback().get_taxonomy(
-            effective_slug, version=version,
-        )
+        return None
 
     async def get_matrix(
         self,
@@ -111,10 +91,7 @@ class DbTopicDiscoveryDataService:
             discovery.id, matrix_version=version,
         )
         if not items:
-            # Fallback to JSON
-            return await self._json_fallback().get_matrix(
-                effective_slug, version=version,
-            )
+            return None
 
         assignments = []
         for r in items:
@@ -301,9 +278,7 @@ class DbTopicDiscoveryDataService:
         version: Optional[int] = None,
     ) -> Optional[dict]:
         if self._node_repo is None:
-            return await self._json_fallback().get_scored_subdomains(
-                effective_slug, version=version,
-            )
+            return None
 
         discovery = await self._td_repo.get_by_effective_slug(effective_slug)
         if discovery is None:
@@ -313,22 +288,16 @@ class DbTopicDiscoveryDataService:
             discovery.id, version=version,
         )
         if tax is None:
-            return await self._json_fallback().get_scored_subdomains(
-                effective_slug, version=version,
-            )
+            return None
 
         nodes = await self._node_repo.get_by_taxonomy(tax.id)
         if not nodes:
-            return await self._json_fallback().get_scored_subdomains(
-                effective_slug, version=version,
-            )
+            return None
 
         # Check if any node has scoring data
         has_scoring = any(n.priority_score is not None for n in nodes)
         if not has_scoring:
-            return await self._json_fallback().get_scored_subdomains(
-                effective_slug, version=version,
-            )
+            return None
 
         scores = []
         for rank, n in enumerate(
@@ -362,9 +331,7 @@ class DbTopicDiscoveryDataService:
         persona_id: Optional[str] = None,
     ) -> Optional[dict]:
         if self._persona_affinity_repo is None:
-            return await self._json_fallback().get_persona_affinity(
-                effective_slug, persona_id=persona_id,
-            )
+            return None
 
         discovery = await self._td_repo.get_by_effective_slug(effective_slug)
         if discovery is None:
@@ -380,12 +347,11 @@ class DbTopicDiscoveryDataService:
             )
 
         if not rows:
-            return await self._json_fallback().get_persona_affinity(
-                effective_slug, persona_id=persona_id,
-            )
+            return None
 
-        # Group by persona_id
+        # Group by persona_id and collect metadata
         persona_entries: dict = defaultdict(list)
+        persona_metadata: dict = {}
         for r in rows:
             persona_entries[r.persona_id].append({
                 "subdomain_id": r.subdomain_id_str or str(r.subdomain_node_id or ""),
@@ -394,10 +360,17 @@ class DbTopicDiscoveryDataService:
                 "provenance": r.provenance,
                 "pain_points": r.pain_points or [],
             })
+            # First occurrence per persona_id populates metadata
+            if r.persona_id not in persona_metadata:
+                persona_metadata[r.persona_id] = {
+                    "persona_name": r.persona_name or "",
+                    "career_role": getattr(r, "career_role", "") or "",
+                }
 
         return {
             "version": discovery.persona_affinity_version or 1,
             "persona_entries": dict(persona_entries),
+            "persona_metadata": persona_metadata,
             "total_personas": len(persona_entries),
             "total_subdomains": len({
                 e["subdomain_id"]

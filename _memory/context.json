@@ -1,7 +1,7 @@
 {
-  "sprint": "prompt-tracking-frontend-integration-extended",
-  "sprint_goal": "Complete prompt tracking frontend integration + Brand Hub regeneration wiring + two-pass competitor extraction from KB pipeline.",
-  "sprint_status": "COMPLETE — Prompt Tracking: Add Prompt modal, Run All with persistent status banner, fanout animation, auto-run toggle. Brand Hub: Re-generate (KB/AP/VSG) + Re-run Pipeline (Research Orchestrator). Competitor extraction: Haiku 2-pass, JSON sidecar, daily tracker auto-resolves. 16 new tests, 683 total passing.",
+  "sprint": "td-db-only-migration",
+  "sprint_goal": "Eliminate JSON filesystem from Topic Discovery and Content Engine pipelines. Make Postgres the sole source of truth. Fix UUID mismatch between JSON files and DB subdomain_nodes.",
+  "sprint_status": "COMPLETE — db_ops.py (13 async functions), Pipeline A & B rewritten, DbTopicDiscoveryDataService JSON fallback removed, TD→Content orchestrator DB reads, router/guard DB queries, pipeline_state.json conditional on Redis. Migration 0029. 1588 tests passing.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -10,8 +10,10 @@
     "Double-underscore separator for effective slugs: {company}__{product}",
     "Default-deny middleware — all routes protected unless explicitly whitelisted",
     "core/ cannot import from api/ — shared code goes in core/shared_tools/",
-    "DATABASE_URL is REQUIRED — no JSON fallback for TaskStore or AuthService",
+    "DATABASE_URL is REQUIRED — no JSON fallback for TaskStore, AuthService, or Topic Discovery",
     "REDIS_URL is REQUIRED — no in-memory fallback for EventBus or checkpointer",
+    "Topic Discovery pipeline is DB-only — TopicDiscoveryStorage no longer used in pipeline hot paths",
+    "pipeline_state.json only written when Redis is unavailable (Redis is primary CE state store)",
     "Async Redis for hot paths (pipeline writes), sync Redis for locks + sync readers",
     "Distributed locks are fail-closed when Redis is configured (no split-brain fallback)",
     "CSP strict-dynamic disabled in dev (blocks Next.js HMR)",
@@ -29,6 +31,14 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
+    "core/topic_discovery/db_ops.py (NEW — 13 async DB functions replacing TopicDiscoveryStorage in pipeline)",
+    "core/topic_discovery/pipeline.py (REWRITTEN — all storage.* calls replaced with db_ops.*)",
+    "core/services/db_topic_discovery_data.py (UPDATED — JSON fallback removed)",
+    "core/orchestration/td_content_orchestrator.py (UPDATED — DB reads instead of JSON)",
+    "api/routers/topic_discovery.py (UPDATED — guard/expansion reads from DB)",
+    "api/dependencies.py (UPDATED — no JsonTopicDiscoveryDataService fallback)",
+    "core/content_engine/state_helpers.py (UPDATED — pipeline_state.json conditional on Redis)",
+    "core/db/migrations/versions/0029_td_db_primary.py (NEW — scoring_json, persona_affinity_index_json)",
     "frontend/src/app/(dashboard)/settings/_lib/api.ts (NEW — 12 API wrappers for team, CMS, GA4)",
     "frontend/src/app/(dashboard)/settings/_lib/types.ts (NEW — backend schema mirrors + display types)",
     "frontend/src/app/(dashboard)/settings/_lib/role-map.ts (NEW — backend↔frontend role mapping)",
@@ -45,14 +55,14 @@
     "core/research/knowledge_base/pipeline.py (UPDATED — concurrent competitor extraction, LangSmith tracing)",
     "api/tasks/runner.py (UPDATED — daily tracker auto-resolves competitors from KB)"
   ],
-  "test_count": 1706,
+  "test_count": 1588,
   "phases_completed_count": 67,
   "recent_phases": [
-    "settings-page-integration — Settings page (/settings) frontend-backend integration. Team tab: real API (member list, role updates, invite codes). Integrations: WordPress CMS connect/disconnect + GA4 full OAuth flow (BFF callback route, property selection, sync). Role mapping layer. api.del() enhanced. 8 new files, 3 modified. Build clean.",
-    "prompt-tracking-frontend-integration-extended — Full prompt tracking integration + Brand Hub regeneration + competitor extraction. Add Prompt modal, Run All Prompts, fanout animation. Brand Hub: Re-generate + Re-run Pipeline. Two-pass competitor extraction. PB-95 CRITICAL. 16 new tests.",
-    "content-inventory-phase1 — Content Inventory Phase 1 Foundation. Universal CMS-agnostic content registry. ContentInventoryModel (26 cols, pgvector), Alembic 0026, repo (8 methods), service (8 methods), URL normalization. 67 new tests.",
-    "prompt-tracking-frontend-integration — Prompt Tracking page fully integrated with backend API. 4-layer pattern (types/api/adapters/hooks). 8 new files. PB-95 (tenant isolation) flagged CRITICAL.",
-    "prompt-tracking-enriched — Prompt tracking backend data layer. 2 new endpoints. 3 foundation bug fixes. 3 composite indexes. 6 new Pydantic models. Redis cache. 414 DT tests."
+    "td-db-only-migration — Eliminate JSON filesystem from TD pipelines. New db_ops.py, Pipeline A & B rewritten, JSON fallback removed from data services + DI + orchestrator + router. pipeline_state.json conditional on Redis. Migration 0029. 1588 tests passing.",
+    "planner-integration — Content Planner (/planner) frontend-backend integration. 4 new endpoints, TopicAssignmentStatus enum expanded, frontend _lib/ + hook. Expand Topic button. GA4 OAuth fix. 59 new tests.",
+    "settings-page-integration — Settings page (/settings) frontend-backend integration. Team + Integrations tabs. 8 new files. Build clean.",
+    "content-inventory-phase1 — Content Inventory Phase 1 Foundation. Universal content registry. 67 new tests.",
+    "prompt-tracking-frontend-integration-extended — Full prompt tracking integration + Brand Hub regeneration + competitor extraction. 16 new tests."
   ],
   "phases_remaining": [
     "openrouter-phase3 — Embeddings: Point embedding clients at OpenRouter",

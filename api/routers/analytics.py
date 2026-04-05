@@ -87,6 +87,12 @@ async def authorize(
     return AuthorizeResponse(authorization_url=url)
 
 
+def _append_param(url: str, param: str) -> str:
+    """Append a query parameter using & if the URL already has a query string."""
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}{param}"
+
+
 @router.get("/callback", include_in_schema=False)
 async def oauth_callback(
     http_request: Request,
@@ -105,7 +111,7 @@ async def oauth_callback(
     base_url = settings.google_oauth_frontend_settings_url
 
     if state_payload is None:
-        return RedirectResponse(url=f"{base_url}?error=invalid_state")
+        return RedirectResponse(url=_append_param(base_url, "error=invalid_state"))
 
     company_slug = state_payload["company_slug"]
     raw_return_url = state_payload.get("return_url") or ""
@@ -124,7 +130,7 @@ async def oauth_callback(
     # Resolve company_id from slug
     company = await auth_service.get_company_by_slug(company_slug)
     if company is None:
-        return RedirectResponse(url=f"{return_url}?error=company_not_found")
+        return RedirectResponse(url=_append_param(return_url, "error=company_not_found"))
 
     try:
         await ga4_service.exchange_code_and_store(
@@ -135,12 +141,12 @@ async def oauth_callback(
         )
     except Exception as exc:
         logger.exception("OAuth callback failed for %s: %s", company_slug, exc)
-        return RedirectResponse(url=f"{return_url}?error=oauth_failed")
+        return RedirectResponse(url=_append_param(return_url, "error=oauth_failed"))
 
     # Invalidate cached connection info (reconnect scenario)
     await asyncio.to_thread(invalidate_ga4_connection, company_slug, company_slug)
 
-    return RedirectResponse(url=f"{return_url}?analytics_connected=true")
+    return RedirectResponse(url=_append_param(return_url, "analytics_connected=true"))
 
 
 @router.get("/connection", response_model=Optional[ConnectionResponse])

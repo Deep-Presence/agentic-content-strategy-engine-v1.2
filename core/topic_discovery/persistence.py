@@ -473,7 +473,11 @@ async def persist_td_persona_affinity(
 
             models = []
             persona_entries = getattr(affinity_index, "persona_entries", {})
+            persona_meta = getattr(affinity_index, "persona_metadata", {}) or {}
             for persona_id, entries in persona_entries.items():
+                meta = persona_meta.get(persona_id, {})
+                p_name = meta.get("persona_name") or None
+                p_role = meta.get("career_role") or None
                 for entry in entries:
                     # Try to resolve subdomain UUID for FK linkage
                     subdomain_node_uuid = None
@@ -490,7 +494,8 @@ async def persist_td_persona_affinity(
                         discovery_id=discovery_id,
                         subdomain_node_id=subdomain_node_uuid,
                         persona_id=persona_id,
-                        persona_name=None,
+                        persona_name=p_name,
+                        career_role=p_role,
                         subdomain_id_str=raw_sub_id,
                         subdomain_name=getattr(entry, "subdomain_name", None),
                         affinity_score=getattr(entry, "affinity_score", 0.0),

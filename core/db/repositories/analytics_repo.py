@@ -67,17 +67,24 @@ class AnalyticsConnectionRepository(
         self,
         company_slug: str,
         tenant_id: str,
+        *,
+        active_only: bool = True,
     ) -> Optional[AnalyticsConnectionModel]:
-        """Return active connection by company_slug + tenant_id."""
+        """Return connection by company_slug + tenant_id.
+
+        By default returns only active connections.  Pass ``active_only=False``
+        to also find deactivated rows (needed for reconnect/upsert flows).
+        """
         stmt = (
             select(AnalyticsConnectionModel)
             .where(
                 AnalyticsConnectionModel.company_slug == company_slug,
                 AnalyticsConnectionModel.tenant_id == tenant_id,
-                AnalyticsConnectionModel.is_active.is_(True),
             )
-            .limit(1)
         )
+        if active_only:
+            stmt = stmt.where(AnalyticsConnectionModel.is_active.is_(True))
+        stmt = stmt.limit(1)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 

@@ -36,7 +36,7 @@ from core.models.topic_discovery import (
     TopicAssignmentStatus,
 )
 from core.research.audience_persona.storage import PersonaStorage
-from core.topic_discovery.storage import TopicDiscoveryStorage
+from core.topic_discovery.db_ops import db_read_latest_matrix, db_read_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -51,37 +51,30 @@ def _derive_slug(company_name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", company_name.lower()).strip("-")
 
 
-def _update_assignment_statuses(
-    td_storage: TopicDiscoveryStorage,
-    matrix: TopicAssignmentMatrix,
+async def _update_assignment_statuses_db(
+    session_factory: async_sessionmaker,
     assignment_ids: List[str],
     new_status: TopicAssignmentStatus,
 ) -> None:
-    """Update assignment statuses in the filesystem matrix and write a new version."""
-    target_ids = set(assignment_ids)
-    updated = False
-    for a in matrix.assignments:
-        if a.id in target_ids and a.status != new_status:
-            a.status = new_status
-            updated = True
-    if updated:
-        td_storage.write_matrix(matrix)
-        logger.info(
-            "Updated %d assignments → %s (filesystem)",
-            len(assignment_ids), new_status.value,
-        )
+    """Update assignment statuses in the database."""
+    from core.topic_discovery.persistence import persist_td_assignment_status_batch
+    await persist_td_assignment_status_batch(session_factory, assignment_ids, new_status.value)
+    logger.info("Updated %d assignments → %s (DB)", len(assignment_ids), new_status.value)
 
 
-def _validate_preflight(
+async def _validate_preflight_db(
+    session_factory: async_sessionmaker,
     effective_slug: str,
     topic_assignment_ids: List[str],
-) -> None:
-    """Strict preflight: validate prerequisites exist before proceeding.
+) -> TopicAssignmentMatrix:
+    """Validate prerequisites using DB reads.
 
     Checks:
       1. Company context file exists and is non-empty
       2. At least 1 persona artifact exists
-      3. TD matrix exists and contains the requested assignment IDs
+      3. TD matrix exists in DB and contains the requested assignment IDs
+
+    Returns the matrix on success.
     """
     # 1. Company context
     ctx_path = _PROJECT_ROOT / "artifacts" / "company_context" / f"{effective_slug}.md"
@@ -102,22 +95,18 @@ def _validate_preflight(
             "Run the Audience Persona pipeline first."
         )
 
-    # 3. TD matrix with requested IDs
-    td_storage = TopicDiscoveryStorage(
-        artifacts_root=_PROJECT_ROOT / "artifacts", slug=effective_slug,
-    )
-    matrix = td_storage.get_latest_matrix()
+    # 3. TD matrix from DB with requested IDs
+    manifest = await db_read_manifest(session_factory, effective_slug)
+    if manifest.matrix_version == 0:
+        raise TDContentPipelineError(f"No matrix found for '{effective_slug}'")
+    matrix = await db_read_latest_matrix(session_factory, effective_slug)
     if matrix is None:
-        raise TDContentPipelineError(
-            f"No Topic Discovery matrix found for slug '{effective_slug}'. "
-            "Run Topic Discovery first."
-        )
+        raise TDContentPipelineError(f"Matrix read returned None for '{effective_slug}'")
     existing_ids = {a.id for a in matrix.assignments}
     missing = set(topic_assignment_ids) - existing_ids
     if missing:
-        raise TDContentPipelineError(
-            f"Topic assignment IDs not found in matrix: {missing}"
-        )
+        raise TDContentPipelineError(f"Assignment IDs not found in matrix: {missing}")
+    return matrix
 
 
 async def run_td_to_content_pipeline(
@@ -135,7 +124,7 @@ async def run_td_to_content_pipeline(
     task_id: Optional[str] = None,
     task_store: Optional[Any] = None,
     event_bus: Optional[Any] = None,
-    session_factory: Optional[async_sessionmaker] = None,
+    session_factory: async_sessionmaker = None,  # type: ignore[assignment]
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
 ) -> ContentGenerationOutput:
@@ -176,19 +165,18 @@ async def run_td_to_content_pipeline(
     ga_run_id = run_id or uuid.uuid4()
     platforms = platforms or ["perplexity", "openai", "gemini", "claude"]
 
+    if session_factory is None:
+        raise TDContentPipelineError("session_factory is required for TD→Content orchestration")
+
     logger.info(
         "TD→Content orchestrator: slug=%s, %d topics, run_id=%s",
         effective_slug, len(topic_assignment_ids), ga_run_id,
     )
 
-    # Step 1: Preflight
-    _validate_preflight(effective_slug, topic_assignment_ids)
+    # Step 1: Preflight (DB-backed) — also returns the matrix
+    matrix = await _validate_preflight_db(session_factory, effective_slug, topic_assignment_ids)
 
     # Step 2: Load assignments, filter excluded combos
-    td_storage = TopicDiscoveryStorage(
-        artifacts_root=_PROJECT_ROOT / "artifacts", slug=effective_slug,
-    )
-    matrix = td_storage.get_latest_matrix()
     requested_ids = set(topic_assignment_ids)
     all_assignments = [a for a in matrix.assignments if a.id in requested_ids]
 
@@ -215,16 +203,11 @@ async def run_td_to_content_pipeline(
         len(valid_assignments), len(topic_assignment_ids),
     )
 
-    # Step 2b: Update assignment status → in_gap_analysis (filesystem + DB)
+    # Step 2b: Update assignment status → in_gap_analysis (DB)
     valid_ids = [a.id for a in valid_assignments]
-    _update_assignment_statuses(
-        td_storage, matrix, valid_ids, TopicAssignmentStatus.in_gap_analysis,
+    await _update_assignment_statuses_db(
+        session_factory, valid_ids, TopicAssignmentStatus.in_gap_analysis,
     )
-    if session_factory:
-        from core.topic_discovery.persistence import persist_td_assignment_status_batch
-        await persist_td_assignment_status_batch(
-            session_factory, valid_ids, "in_gap_analysis",
-        )
 
     # Step 3: Build GapAnalysisInput and run scoped GA
     company_context_path = f"artifacts/company_context/{effective_slug}.md"
@@ -298,15 +281,10 @@ async def run_td_to_content_pipeline(
         company_id=company_id,
     )
 
-    # Step 5: Update assignment status → content_produced (filesystem + DB)
-    _update_assignment_statuses(
-        td_storage, matrix, valid_ids, TopicAssignmentStatus.content_produced,
+    # Step 5: Update assignment status → content_produced (DB)
+    await _update_assignment_statuses_db(
+        session_factory, valid_ids, TopicAssignmentStatus.content_produced,
     )
-    if session_factory:
-        from core.topic_discovery.persistence import persist_td_assignment_status_batch
-        await persist_td_assignment_status_batch(
-            session_factory, valid_ids, "content_produced",
-        )
 
     total_elapsed = time.monotonic() - pipeline_start
     logger.info(

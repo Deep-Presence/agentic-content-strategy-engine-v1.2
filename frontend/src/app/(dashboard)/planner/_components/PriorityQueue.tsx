@@ -12,25 +12,6 @@ interface PriorityQueueProps {
   onReject: (ids: string[]) => void;
 }
 
-function BrandLogo({ domain, size = 14 }: { domain: string; size?: number }) {
-  return (
-    <img
-      src={`https://www.google.com/s2/favicons?domain=${domain}&sz=${size * 2}`}
-      alt={domain}
-      width={size}
-      height={size}
-      style={{ borderRadius: 3, flexShrink: 0 }}
-      onError={(e) => {
-        const target = e.target as HTMLImageElement;
-        if (!target.dataset.fallback) {
-          target.dataset.fallback = '1';
-          target.src = `https://logo.clearbit.com/${domain}`;
-        }
-      }}
-    />
-  );
-}
-
 function UserAvatar({ name, size = 22 }: { name: string; size?: number }) {
   const initials = name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
   return (
@@ -41,19 +22,12 @@ function UserAvatar({ name, size = 22 }: { name: string; size?: number }) {
   );
 }
 
-type SortKey = 'score' | 'citations';
+type SortKey = 'score' | 'opportunity';
 type SortDir = 'asc' | 'desc';
 
-// 10 columns: checkbox, rank, title, source, stage, intent, format, citations, competitor, score
-// Wider gaps: source 88, stage 56, intent 90, format 76, cit 56, competitor 96, score 48
-const GRID_COLS = '32px 28px 1fr 88px 56px 90px 76px 56px 96px 48px';
+// 9 columns: checkbox, rank, title, stage, intent, format, opp%, keyword, score
+const GRID_COLS = '32px 28px 1fr 56px 90px 76px 56px 120px 48px';
 
-const sourceStyles: Record<string, string> = {
-  gap: 'bg-accent-subtle text-accent border-accent/30',
-  strategic: 'bg-[rgba(147,51,234,0.08)] text-[#9333ea] border-[rgba(147,51,234,0.3)]',
-  custom: 'bg-[var(--surface)] text-text-secondary border-border',
-};
-const sourceLabels: Record<string, string> = { gap: 'Gap Analysis', strategic: 'Strategic', custom: 'Custom' };
 const stageStyles: Record<string, string> = {
   TOFU: 'bg-accent-subtle text-accent border-accent/30',
   MOFU: 'bg-warning-subtle text-warning border-warning/30',
@@ -75,8 +49,8 @@ export function PriorityQueue({ assignments, onRowClick, onApprove, onReject }: 
   const sorted = useMemo(() => {
     const list = [...assignments];
     list.sort((a, b) => {
-      const va = sortKey === 'score' ? a.priorityScore : a.estCitations;
-      const vb = sortKey === 'score' ? b.priorityScore : b.estCitations;
+      const va = sortKey === 'score' ? a.priorityScore : a.citationOpp;
+      const vb = sortKey === 'score' ? b.priorityScore : b.citationOpp;
       return sortDir === 'desc' ? vb - va : va - vb;
     });
     return list;
@@ -128,15 +102,14 @@ export function PriorityQueue({ assignments, onRowClick, onApprove, onReject }: 
           <div className="px-1"><input type="checkbox" checked={allSelected} onChange={toggleAll} className="w-3.5 h-3.5 rounded accent-accent cursor-pointer" /></div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">#</div>
           <div className="px-2 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Title</div>
-          <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Source</div>
           <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Stage</div>
           <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Intent</div>
           <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Format</div>
-          <div className={`px-1 text-right text-[11px] font-semibold uppercase tracking-[0.05em] cursor-pointer select-none transition-colors ${sortKey === 'citations' ? 'text-accent' : 'text-text-tertiary'}`}
-            onClick={() => toggleSort('citations')}>
-            <span className="inline-flex items-center gap-0.5">Cit. <SortIcon col="citations" /></span>
+          <div className={`px-1 text-right text-[11px] font-semibold uppercase tracking-[0.05em] cursor-pointer select-none transition-colors ${sortKey === 'opportunity' ? 'text-accent' : 'text-text-tertiary'}`}
+            onClick={() => toggleSort('opportunity')}>
+            <span className="inline-flex items-center gap-0.5">Opp. <SortIcon col="opportunity" /></span>
           </div>
-          <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Competitor</div>
+          <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-tertiary">Keyword</div>
           <div className={`px-1 text-right text-[11px] font-semibold uppercase tracking-[0.05em] cursor-pointer select-none transition-colors ${sortKey === 'score' ? 'text-accent' : 'text-text-tertiary'}`}
             onClick={() => toggleSort('score')}>
             <span className="inline-flex items-center gap-0.5">Score <SortIcon col="score" /></span>
@@ -158,13 +131,8 @@ export function PriorityQueue({ assignments, onRowClick, onApprove, onReject }: 
             <div className="px-2 min-w-0 overflow-hidden">
               <div className="text-[13px] font-medium text-text-primary truncate">{a.title}</div>
               <div className="text-[11px] text-text-secondary truncate">
-                <span className="font-mono">{a.id}</span><span className="text-text-tertiary mx-1">·</span><span>{a.cluster}</span>
+                <span className="font-mono">{a.displayId}</span><span className="text-text-tertiary mx-1">·</span><span>{a.cluster}</span>
               </div>
-            </div>
-            <div className="px-1">
-              <span className={`inline-flex items-center px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.04em] border rounded-full whitespace-nowrap ${sourceStyles[a.source]}`}>
-                {sourceLabels[a.source]}
-              </span>
             </div>
             <div className="px-1">
               <span className={`inline-flex items-center px-1.5 py-px text-[10px] font-semibold uppercase border rounded-full ${stageStyles[a.stage]}`}>{a.stage}</span>
@@ -176,16 +144,13 @@ export function PriorityQueue({ assignments, onRowClick, onApprove, onReject }: 
               <span className={`inline-flex items-center px-1.5 py-px text-[10px] font-medium border rounded-full whitespace-nowrap ${formatStyles}`}>{a.format ?? '\u2014'}</span>
             </div>
             <div className="px-1 text-right">
-              <span className="font-mono text-[13px] font-semibold text-accent">~{a.estCitations}</span>
+              <span className="font-mono text-[13px] font-semibold text-accent">{Math.round(a.citationOpp * 100)}%</span>
             </div>
             <div className="px-1 overflow-hidden">
-              {a.competitors.length > 0 ? (
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <BrandLogo domain={a.competitors[0].domain} size={14} />
-                  <span className="text-[11px] text-text-secondary truncate">{a.competitors[0].domain}</span>
-                </div>
+              {a.targetKeywords.primary ? (
+                <span className="text-[11px] text-text-secondary truncate block">{a.targetKeywords.primary}</span>
               ) : (
-                <span className="text-[11px] text-success font-medium whitespace-nowrap">New territory</span>
+                <span className="text-[11px] text-text-tertiary">&mdash;</span>
               )}
             </div>
             <div className="px-1 text-right">

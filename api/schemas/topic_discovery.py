@@ -188,6 +188,7 @@ class PersonaAffinityResponse(BaseModel):
 
     slug: str = ""
     persona_entries: Dict[str, Any] = Field(default_factory=dict)
+    persona_metadata: Dict[str, Any] = Field(default_factory=dict)
     total_personas: int = 0
     total_subdomains: int = 0
 

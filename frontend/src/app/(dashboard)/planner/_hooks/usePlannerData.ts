@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { ApiError } from '@/lib/api-client';
 import type { Assignment, Cluster, RejectedItem } from '../_components/planner-data';
+import { deriveCompanyPrefix, formatDisplayId, formatPersonaName } from '../_components/planner-data';
 import type { DiscoverySummaryResponseAPI, SubdomainNodeAPI } from '../_lib/types';
 import {
   fetchDiscoverySummary,
@@ -12,6 +13,7 @@ import {
   fetchPersonaAffinity,
   updateAssignmentStatus,
   createCustomAssignment,
+  expandSubdomain as expandSubdomainApi,
 } from '../_lib/api';
 import { adaptAssignments, buildTaxonomyMap, buildClusters, adaptRejectedItem } from '../_lib/adapters';
 
@@ -32,6 +34,8 @@ export interface PlannerData {
   rejected: RejectedItem[];
   clusters: Cluster[];
   summary: DiscoverySummaryResponseAPI | null;
+  /** Dynamic persona_id → display name map (built from API data) */
+  personaNames: Record<string, string>;
   isLoading: boolean;
   error: string | null;
   isEmpty: boolean;
@@ -40,17 +44,19 @@ export interface PlannerData {
   rejectAssignments: (ids: string[]) => Promise<void>;
   restoreAssignment: (id: string) => Promise<void>;
   createAssignment: (data: CreateCustomAssignmentData) => Promise<void>;
+  expandSubdomain: (subdomainId: string) => Promise<{ runId: string }>;
 }
 
 // ── Hook ────────────────────────────────────────────────
 
 export function usePlannerData(): PlannerData {
-  const { companySlug, isInitialized } = useAuth();
+  const { companySlug, companyName, companyDomain, isInitialized } = useAuth();
 
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [rejected, setRejected] = useState<RejectedItem[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [summary, setSummary] = useState<DiscoverySummaryResponseAPI | null>(null);
+  const [personaNames, setPersonaNames] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isEmpty, setIsEmpty] = useState(false);
@@ -60,6 +66,9 @@ export function usePlannerData(): PlannerData {
   const abortRef = useRef<AbortController | null>(null);
 
   // ── Load data ───────────────────────────────────────
+
+  // Derive prefix once from companyName (stable across loadData calls)
+  const prefixRef = useRef('DP');
 
   const loadData = useCallback(async (slug: string) => {
     abortRef.current?.abort();
@@ -117,6 +126,27 @@ export function usePlannerData(): PlannerData {
 
       const adapted = adaptAssignments(allItems, rootNodes, personaEntries, matrixCreatedAt);
 
+      // Build dynamic persona name map from persona_metadata + affinity keys
+      const pNames: Record<string, string> = {};
+      const pMeta = affinityData?.persona_metadata ?? {};
+      for (const pid of Object.keys(personaEntries)) {
+        const meta = pMeta[pid];
+        if (meta?.persona_name && meta?.career_role) {
+          pNames[pid] = `${meta.persona_name} — ${meta.career_role}`;
+        } else if (meta?.persona_name) {
+          pNames[pid] = meta.persona_name;
+        } else {
+          pNames[pid] = formatPersonaName(pid);
+        }
+      }
+      // Also pick up names from assignments (in case affinity data is missing)
+      for (const item of allItems) {
+        if (item.persona_id && item.persona_name && !pNames[item.persona_id]) {
+          pNames[item.persona_id] = item.persona_name;
+        }
+      }
+      setPersonaNames(pNames);
+
       // Split into active vs rejected
       const taxonomyMap = buildTaxonomyMap(rootNodes);
       const active: Assignment[] = [];
@@ -128,6 +158,15 @@ export function usePlannerData(): PlannerData {
         } else {
           active.push(adapted[i]);
         }
+      }
+
+      // Assign human-readable displayIds: sort by createdAt, then sequential
+      const prefix = prefixRef.current;
+      const sortedActive = [...active].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const idLookup = new Map<string, string>();
+      sortedActive.forEach((a, i) => idLookup.set(a.id, formatDisplayId(prefix, i + 1)));
+      for (const a of active) {
+        a.displayId = idLookup.get(a.id) ?? a.id;
       }
 
       setAssignments(active);
@@ -168,11 +207,12 @@ export function usePlannerData(): PlannerData {
 
   useEffect(() => {
     if (!isInitialized || !companySlug) return;
+    if (companyName) prefixRef.current = deriveCompanyPrefix(companyName);
     loadData(companySlug);
     return () => {
       abortRef.current?.abort();
     };
-  }, [isInitialized, companySlug, loadData]);
+  }, [isInitialized, companySlug, companyName, loadData]);
 
   const refetch = useCallback(() => {
     if (companySlug) loadData(companySlug);
@@ -258,28 +298,32 @@ export function usePlannerData(): PlannerData {
       // Create a minimal Assignment for the restored item
       const restored: Assignment = {
         id: item.id,
+        displayId: formatDisplayId(prefixRef.current, assignments.length + 1),
         title: item.title,
+        description: '',
         cluster: item.cluster,
         subcluster: '',
         stage: item.stage ?? 'TOFU',
         intent: 'Informational',
-        format: null as unknown as Assignment['format'],
+        format: null,
         source: 'gap',
         initiative: undefined,
-        personaScores: { sf: 0, pm: 0, da: 0, te: 0 },
+        personaScores: {},
         persona: '',
-        estCitations: 0,
         citationOpp: 0,
         priorityScore: 0,
-        effort: null as unknown as Assignment['effort'],
-        estDays: null as unknown as Assignment['estDays'],
-        competitors: [],
+        effort: null,
+        estDays: null,
+        wordCount: null,
+        contentFormat: null,
+        targetKeywords: { primary: '', secondary: [] },
         reasons: [],
         relatedQueries: [],
         createdAt: new Date().toISOString(),
         activityLog: [
           { action: 'Restored from rejected', date: new Date().toISOString(), by: 'User' },
         ],
+        priorityFactors: {},
       };
       setAssignments((prev) => [...prev, restored]);
 
@@ -305,34 +349,52 @@ export function usePlannerData(): PlannerData {
       const taxonomyMap = buildTaxonomyMap(rootNodesRef.current);
       const newAssignment: Assignment = {
         id: created.id,
+        displayId: formatDisplayId(prefixRef.current, assignments.length + rejected.length + 1),
         title: created.topic_text,
+        description: '',
         cluster: taxonomyMap.get(created.subdomain_id)?.clusterName ?? 'Uncategorized',
         subcluster: created.subdomain_name,
         stage: created.buyer_stage.toUpperCase() as 'TOFU' | 'MOFU' | 'BOFU',
         intent: (created.intent_type.charAt(0).toUpperCase() +
           created.intent_type.slice(1)) as Assignment['intent'],
-        format: null as unknown as Assignment['format'],
+        format: null,
         source: 'custom',
         initiative: undefined,
-        personaScores: { sf: 0, pm: 0, da: 0, te: 0 },
+        personaScores: {},
         persona: created.persona_id,
-        estCitations: Math.round(created.priority_score * 25),
         citationOpp: created.priority_score,
         priorityScore: created.priority_score,
-        effort: null as unknown as Assignment['effort'],
-        estDays: null as unknown as Assignment['estDays'],
-        competitors: [],
+        effort: null,
+        estDays: null,
+        wordCount: null,
+        contentFormat: null,
+        targetKeywords: { primary: '', secondary: [] },
         reasons: [],
         relatedQueries: [],
         createdAt: new Date().toISOString(),
         activityLog: [
           { action: 'Manually created', date: new Date().toISOString(), by: 'User' },
         ],
+        priorityFactors: {},
       };
 
       setAssignments((prev) => [newAssignment, ...prev]);
     },
     [companySlug],
+  );
+
+  const expandSubdomain = useCallback(
+    async (subdomainId: string): Promise<{ runId: string }> => {
+      if (!companyName || !companyDomain) {
+        throw new Error('Company info not available. Please try again.');
+      }
+      const result = await expandSubdomainApi(companyName, companyDomain, [subdomainId], {
+        auto_approve_checkpoints: [2],
+        taxonomy_version: summary?.taxonomy_version,
+      });
+      return { runId: result.run_id };
+    },
+    [companyName, companyDomain, summary?.taxonomy_version],
   );
 
   // ── Return ────────────────────────────────────────────
@@ -342,6 +404,7 @@ export function usePlannerData(): PlannerData {
     rejected,
     clusters,
     summary,
+    personaNames,
     isLoading,
     error,
     isEmpty,
@@ -350,5 +413,6 @@ export function usePlannerData(): PlannerData {
     rejectAssignments,
     restoreAssignment,
     createAssignment,
+    expandSubdomain,
   };
 }

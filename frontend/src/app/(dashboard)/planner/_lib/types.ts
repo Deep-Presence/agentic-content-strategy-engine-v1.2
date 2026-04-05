@@ -88,9 +88,15 @@ export interface PersonaSubdomainEntryAPI {
   pain_points: string[];
 }
 
+export interface PersonaMetadataAPI {
+  persona_name: string;
+  career_role: string;
+}
+
 export interface PersonaAffinityResponseAPI {
   slug: string;
   persona_entries: Record<string, PersonaSubdomainEntryAPI[]>;
+  persona_metadata?: Record<string, PersonaMetadataAPI>;
   total_personas: number;
   total_subdomains: number;
 }
@@ -101,4 +107,18 @@ export interface AssignmentStatusUpdateResponseAPI {
   assignment_id: string;
   status: string;
   message: string;
+}
+
+// ── Pipeline Run ───────────────────────────────────────
+
+export interface PipelineRunResponseAPI {
+  run_id: string;
+  pipeline: string;
+  company_slug: string;
+  product_slug: string | null;
+  effective_slug: string | null;
+  status: string;
+  created_at: string;
+  already_exists: boolean;
+  message: string | null;
 }

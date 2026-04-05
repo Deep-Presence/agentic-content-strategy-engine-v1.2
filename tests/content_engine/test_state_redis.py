@@ -330,10 +330,10 @@ class TestReadFallback:
 
 
 class TestWritePipelineStateIntegration:
-    def test_uses_redis_and_writes_file(
+    def test_uses_redis_skips_file(
         self, tmp_path: Path, mock_sync_redis: MagicMock
     ) -> None:
-        """Calls write_pipeline_state_redis AND writes file (dual-write)."""
+        """Calls write_pipeline_state_redis; file NOT written when Redis succeeds."""
         from core.content_engine.state_helpers import _write_pipeline_state
 
         _write_pipeline_state(
@@ -345,8 +345,8 @@ class TestWritePipelineStateIntegration:
 
         # Redis pipeline was used
         mock_sync_redis.pipeline.assert_called_once()
-        # File ALSO written (dual-write for fallback resilience)
-        assert (tmp_path / "pipeline_state.json").exists()
+        # File NOT written when Redis succeeds (Redis is primary store)
+        assert not (tmp_path / "pipeline_state.json").exists()
 
     def test_falls_back_to_file_when_redis_raises(
         self, tmp_path: Path, mock_sync_redis: MagicMock
@@ -400,8 +400,8 @@ class TestCleanupPipelineStateIntegration:
     def test_uses_redis_when_client_and_slug_provided(
         self, tmp_path: Path, mock_sync_redis: MagicMock
     ) -> None:
-        """Calls cleanup_pipeline_state_redis + file cleanup."""
-        # Create a file to verify file cleanup also runs
+        """Calls cleanup_pipeline_state_redis; skips file cleanup when Redis succeeds."""
+        # Create a file — should NOT be cleaned when Redis succeeds
         state_path = tmp_path / "pipeline_state.json"
         state_path.write_text(json.dumps({"brief-001": "generating"}))
 
@@ -415,8 +415,8 @@ class TestCleanupPipelineStateIntegration:
 
         # Redis HDEL was called
         mock_sync_redis.hdel.assert_called_once()
-        # File was also cleaned (dual cleanup for safety)
-        assert not state_path.exists()
+        # File NOT cleaned when Redis succeeds (Redis is primary store)
+        assert state_path.exists()
 
     def test_falls_back_to_file_when_redis_raises(
         self, tmp_path: Path, mock_sync_redis: MagicMock

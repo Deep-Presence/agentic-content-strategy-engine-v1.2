@@ -146,8 +146,10 @@ class GA4AnalyticsService:
         access_enc = self._encrypt_token(token_set.access_token)
         refresh_enc = self._encrypt_token(token_set.refresh_token)
 
-        # Check for existing connection (re-auth scenario)
-        existing = await self._conn_repo.get_by_company_slug(company_slug, tenant_id)
+        # Check for existing connection (re-auth or reconnect scenario)
+        existing = await self._conn_repo.get_by_company_slug(
+            company_slug, tenant_id, active_only=False,
+        )
 
         if existing:
             await self._conn_repo.update_tokens(

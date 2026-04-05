@@ -267,7 +267,7 @@ class Settings(BaseSettings):
     google_oauth_redirect_uri: str = "https://app.deeppresence.ai/api/v1/analytics/google/callback"
     ga4_sync_lookback_days: int = 7
     ai_referral_sources: str = "chatgpt.com:openai,chat.openai.com:openai,perplexity.ai:perplexity,gemini.google.com:google,copilot.microsoft.com:microsoft,claude.ai:anthropic,you.com:you,phind.com:phind"
-    google_oauth_frontend_settings_url: str = "https://app.deeppresence.ai/settings/integrations"
+    google_oauth_frontend_settings_url: str = "https://app.deeppresence.ai/settings?tab=integrations"
     ga4_sync_api_key: str = ""  # API key for cron-triggered /sync-all endpoint
 
     # --- Cloudflare R2 (S3-compatible) ---

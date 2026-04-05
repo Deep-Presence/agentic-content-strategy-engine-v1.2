@@ -88,7 +88,21 @@ from core.topic_discovery.scoring import (
     compute_subdomain_scores,
     compute_topic_priority,
 )
-from core.topic_discovery.storage import TopicDiscoveryStorage
+from core.topic_discovery.db_ops import (
+    db_read_manifest,
+    db_write_manifest,
+    db_write_source_results,
+    db_write_coverage,
+    db_write_taxonomy,
+    db_read_taxonomy,
+    db_write_scoring,
+    db_read_scoring,
+    db_write_persona_affinity,
+    db_read_persona_affinity,
+    db_write_matrix,
+    db_read_latest_matrix,
+    db_get_discovery_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -210,8 +224,8 @@ def _load_persona_entries(
     backend: Any,
     effective_slug: str,
     company_slug: Optional[str] = None,
-) -> List[Tuple[str, str]]:
-    """Load (persona_id, persona_name) tuples from persona manifest.
+) -> List[Tuple[str, str, str]]:
+    """Load (persona_id, persona_name, career_role) tuples from persona manifest.
 
     Falls back from effective_slug to company_slug.
     Returns list of tuples for active (fresh/stale) personas.
@@ -227,18 +241,32 @@ def _load_persona_entries(
     else:
         return []
 
-    entries: List[Tuple[str, str]] = []
+    entries: List[Tuple[str, str, str]] = []
     for pid, entry in manifest.personas.items():
         if entry.status in ("fresh", "stale"):
-            entries.append((pid, entry.persona_name or pid))
+            entries.append((
+                pid,
+                entry.persona_name or pid,
+                getattr(entry, "career_role", "") or "",
+            ))
     return entries
 
 
 def _build_persona_name_to_id(
-    entries: List[Tuple[str, str]],
+    entries: List[Tuple[str, str, str]],
 ) -> Dict[str, str]:
     """Build persona_name → persona_id mapping from entries."""
-    return {name: pid for pid, name in entries}
+    return {name: pid for pid, name, _role in entries}
+
+
+def _build_persona_metadata(
+    entries: List[Tuple[str, str, str]],
+) -> Dict[str, Dict[str, str]]:
+    """Build persona_id → {persona_name, career_role} metadata lookup."""
+    return {
+        pid: {"persona_name": name, "career_role": role}
+        for pid, name, role in entries
+    }
 
 
 def _compute_distributions(
@@ -282,7 +310,6 @@ async def run_topic_discovery_pipeline(
     slug = _resolve_slug(input_data)
     company_slug = slug
     effective_slug = _resolve_effective_slug(input_data)
-    storage = TopicDiscoveryStorage(root, effective_slug)
     auto_approve_cps = set(input_data.auto_approve_checkpoints)
     max_rounds = input_data.max_expansion_rounds or settings.topic_discovery_max_expansion_rounds
     dedup_threshold = input_data.dedup_threshold or settings.topic_discovery_dedup_threshold
@@ -464,20 +491,11 @@ async def run_topic_discovery_pipeline(
                 "error": source_d_result.error,
             })
 
-            # Write raw source results to storage
-            for sr in source_results:
-                await asyncio.to_thread(storage.write_source_result, sr.source, sr)
-
-            # ── DB: Persist source results ──
-            try:
-                from core.topic_discovery.persistence import persist_td_source_results
-
-                await persist_td_source_results(
-                    session_factory, run_id, company_id,
-                    discovery_id, source_results,
+            # Write source results to DB
+            if session_factory is not None and discovery_id is not None:
+                await db_write_source_results(
+                    session_factory, discovery_id, source_results, version=1,
                 )
-            except Exception:
-                logger.warning("TD persist_td_source_results failed, continuing", exc_info=True)
 
             _emit(event_bus, task_id, "td_phase_complete", {"phase": 1})
             end_span(s1_span, output={
@@ -525,7 +543,7 @@ async def run_topic_discovery_pipeline(
             coverage = compute_all_coverage_metrics(
                 source_results, dedup_result=dedup_result,
             )
-            await asyncio.to_thread(storage.write_coverage, coverage)
+            # NOTE: coverage DB write is deferred until after taxonomy write (needs taxonomy_db_id)
 
             # Log coverage metrics
             coverage_span = create_span(s2_span, "td-s2-coverage")
@@ -538,7 +556,7 @@ async def run_topic_discovery_pipeline(
             # Unified S2: hierarchy + priority scoring + persona affinity
             deduped_names = [c.name for c in deduped if c.name]
             persona_profiles_for_s2: List[Tuple[str, str]] = []
-            for (pid, _pname), md in zip(persona_entries, persona_mds):
+            for (pid, _pname, _role), md in zip(persona_entries, persona_mds):
                 persona_profiles_for_s2.append((pid, md))
             taxonomy = await run_unified_hierarchy_and_scoring(
                 subdomains=deduped_names,
@@ -555,8 +573,15 @@ async def run_topic_discovery_pipeline(
             taxonomy.chao1_estimate = coverage.chao1_lower_bound
             taxonomy.capture_recapture_est = coverage.model_dump(mode="json")
 
-            # Write taxonomy
-            tax_version = await asyncio.to_thread(storage.write_taxonomy, taxonomy)
+            # Write taxonomy to DB
+            if session_factory is not None and discovery_id is not None:
+                taxonomy_db_id, tax_version = await db_write_taxonomy(
+                    session_factory, discovery_id, taxonomy, version=0,
+                )
+                # Now write coverage (needs taxonomy_db_id)
+                await db_write_coverage(session_factory, taxonomy_db_id, coverage)
+            else:
+                tax_version = taxonomy.version
 
             _emit(event_bus, task_id, "td_phase_complete", {
                 "phase": 2,
@@ -609,9 +634,10 @@ async def run_topic_discovery_pipeline(
                     )
                     # H3: Explicitly approve the last-generated taxonomy
                     taxonomy.status = TopicDiscoveryStatus.approved
-                    tax_version = await asyncio.to_thread(
-                        storage.write_taxonomy, taxonomy,
-                    )
+                    if session_factory is not None and discovery_id is not None:
+                        taxonomy_db_id, tax_version = await db_write_taxonomy(
+                            session_factory, discovery_id, taxonomy, version=tax_version,
+                        )
                     break
                 logger.info(
                     "TD/%s: taxonomy retry %d/%d (feedback: %s)",
@@ -625,25 +651,15 @@ async def run_topic_discovery_pipeline(
                 if approved_tax_raw:
                     taxonomy = TaxonomyTree.model_validate(approved_tax_raw)
                     taxonomy.status = TopicDiscoveryStatus.approved
-                    tax_version = await asyncio.to_thread(
-                        storage.write_taxonomy, taxonomy,
-                    )
+                    if session_factory is not None and discovery_id is not None:
+                        taxonomy_db_id, tax_version = await db_write_taxonomy(
+                            session_factory, discovery_id, taxonomy, version=tax_version,
+                        )
                 break
 
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": "hitl_1", "decision": decision,
         })
-
-        # ── DB: Persist approved taxonomy ──
-        try:
-            from core.topic_discovery.persistence import persist_td_taxonomy
-
-            taxonomy_db_id = await persist_td_taxonomy(
-                session_factory, run_id, company_id,
-                discovery_id, taxonomy, tax_version,
-            )
-        except Exception:
-            logger.warning("TD persist_td_taxonomy failed, continuing", exc_info=True)
 
         # =============================================================
         # Phase 2.5: Post-Processing — Source Confidence Blend (trial)
@@ -670,53 +686,25 @@ async def run_topic_discovery_pipeline(
 
         # Build ScoredSubdomainList from taxonomy (Pipeline B compatibility)
         scored_subdomains = build_scored_subdomain_list_from_taxonomy(taxonomy)
-        scoring_version = await asyncio.to_thread(
-            storage.write_scoring, scored_subdomains
-        )
 
         # Build PersonaAffinityIndex from taxonomy (Pipeline B compatibility)
         persona_affinity = build_persona_affinity_index_from_taxonomy(taxonomy)
-        affinity_version = await asyncio.to_thread(
-            storage.write_persona_affinity, persona_affinity
-        )
+        persona_affinity.persona_metadata = _build_persona_metadata(persona_entries)
 
-        # Re-persist taxonomy with blended priority_score
-        await asyncio.to_thread(
-            storage.write_taxonomy, taxonomy, taxonomy.version
-        )
-
-        # ── DB: Re-persist taxonomy with scoring data on nodes ──
-        try:
-            from core.topic_discovery.persistence import persist_td_taxonomy as _re_persist_tax
-
-            await _re_persist_tax(
-                session_factory, run_id, company_id,
-                discovery_id, taxonomy, tax_version,
+        # Persist scoring, affinity, and re-persist taxonomy with blended scores
+        if session_factory is not None and discovery_id is not None:
+            scoring_version = await db_write_scoring(
+                session_factory, discovery_id, scored_subdomains,
             )
-        except Exception:
-            logger.warning("TD re-persist_td_taxonomy (post-scoring) failed, continuing", exc_info=True)
-
-        # ── DB: Persist persona affinity index ──
-        try:
-            from core.topic_discovery.persistence import persist_td_persona_affinity
-
-            await persist_td_persona_affinity(
-                session_factory, run_id, company_id,
-                discovery_id, persona_affinity, affinity_version,
+            affinity_version = await db_write_persona_affinity(
+                session_factory, discovery_id, persona_affinity, version=1,
             )
-        except Exception:
-            logger.warning("TD persist_td_persona_affinity failed, continuing", exc_info=True)
-
-        # ── DB: Persist scoring + affinity version metadata ──
-        try:
-            from core.topic_discovery.persistence import persist_td_scoring_metadata
-
-            await persist_td_scoring_metadata(
-                session_factory, discovery_id,
-                scoring_version, affinity_version,
+            await db_write_taxonomy(
+                session_factory, discovery_id, taxonomy, version=taxonomy.version,
             )
-        except Exception:
-            logger.warning("TD persist_td_scoring_metadata failed, continuing", exc_info=True)
+        else:
+            scoring_version = scored_subdomains.version
+            affinity_version = 1
 
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": "2.5",
@@ -734,7 +722,10 @@ async def run_topic_discovery_pipeline(
         _emit(event_bus, task_id, "td_phase_start", {"phase": "finalize", "stage": "discovery_finalize"})
         _update_task(task_store, task_id, current_step="finalize_discovery")
 
-        manifest = await asyncio.to_thread(storage.read_manifest)
+        if session_factory is not None and discovery_id is not None:
+            manifest = await db_read_manifest(session_factory, effective_slug)
+        else:
+            manifest = TopicDiscoveryManifest(slug=company_slug, effective_slug=effective_slug)
         manifest.slug = company_slug
         manifest.effective_slug = effective_slug
         manifest.company_name = input_data.company_name
@@ -747,31 +738,9 @@ async def run_topic_discovery_pipeline(
         manifest.last_updated = datetime.now(timezone.utc).isoformat()
         manifest.discovery_completed_at = datetime.now(timezone.utc).isoformat()
         manifest.source_results_written = [sr.source.value for sr in source_results]
-        await asyncio.to_thread(storage.write_manifest, manifest)
 
-        # ── DB Persistence (fire-and-forget) ──
-        try:
-            from core.topic_discovery.persistence import persist_td_status_update
-
-            await persist_td_status_update(session_factory, discovery_id, "discovery_complete")
-        except Exception:
-            logger.warning("TD persist_td_status_update failed, continuing", exc_info=True)
-
-        # ── DB: Persist manifest metadata ──
-        try:
-            if session_factory is not None and discovery_id is not None:
-                from core.db.repositories.topic_discovery_repo import TopicDiscoveryRepository
-
-                async with session_factory() as _msess:
-                    _mrepo = TopicDiscoveryRepository(_msess)
-                    await _mrepo.update(discovery_id, manifest_json={
-                        "source_results_written": manifest.source_results_written,
-                        "expanded_subdomain_ids": getattr(manifest, "expanded_subdomain_ids", []),
-                        "last_expansion_task_id": getattr(manifest, "last_expansion_task_id", None),
-                    })
-                    await _msess.commit()
-        except Exception:
-            logger.warning("TD manifest_json DB persist failed, continuing", exc_info=True)
+        if session_factory is not None and discovery_id is not None:
+            await db_write_manifest(session_factory, discovery_id, manifest)
 
         try:
             from core.research.persistence import persist_pipeline_run_complete
@@ -888,8 +857,7 @@ async def run_topic_expansion_pipeline(
         _emit(event_bus, task_id, "td_phase_start", {"phase": "preflight", "stage": "expansion_preflight"})
         _update_task(task_store, task_id, current_step="expansion_preflight")
 
-        storage = TopicDiscoveryStorage(root, effective_slug)
-        manifest = await asyncio.to_thread(storage.read_manifest)
+        manifest = await db_read_manifest(session_factory, effective_slug)
 
         if manifest.taxonomy_version == 0 or manifest.scoring_version == 0:
             raise RuntimeError(
@@ -899,17 +867,13 @@ async def run_topic_expansion_pipeline(
 
         # Load taxonomy
         tax_version = input_data.taxonomy_version or manifest.taxonomy_version
-        taxonomy = await asyncio.to_thread(storage.read_taxonomy, tax_version)
+        taxonomy = await db_read_taxonomy(session_factory, effective_slug, version=tax_version)
         if taxonomy is None:
             raise RuntimeError(f"Taxonomy v{tax_version} not found for '{effective_slug}'.")
 
         # Load scored subdomains + persona affinity
-        scored_subdomains = await asyncio.to_thread(
-            storage.read_scoring, manifest.scoring_version,
-        )
-        persona_affinity = await asyncio.to_thread(
-            storage.read_persona_affinity, manifest.persona_affinity_version,
-        )
+        scored_subdomains = await db_read_scoring(session_factory, effective_slug)
+        persona_affinity = await db_read_persona_affinity(session_factory, effective_slug)
 
         # Load company context + persona profiles (needed for expansion prompts)
         domain = input_data.domain or f"{company_slug}.com"
@@ -931,7 +895,7 @@ async def run_topic_expansion_pipeline(
         persona_entries = _load_persona_entries(backend, effective_slug, company_slug)
         persona_mds_by_id: Dict[str, str] = {}
         if persona_entries and persona_mds:
-            for idx, (pid, _pname) in enumerate(persona_entries):
+            for idx, (pid, _pname, _role) in enumerate(persona_entries):
                 if idx < len(persona_mds):
                     persona_mds_by_id[pid] = persona_mds[idx]
 
@@ -977,7 +941,9 @@ async def run_topic_expansion_pipeline(
 
         buyer_stages = [s.value for s in BuyerStage]
         intent_types = [t.value for t in IntentType]
-        audience_segments: List[Tuple[str, str]] = persona_entries or [("general", "General")]
+        audience_segments: List[Tuple[str, str]] = [
+            (pid, pname) for pid, pname, _role in persona_entries
+        ] if persona_entries else [("general", "General")]
 
         # Filter to selected subdomains
         selected_set = set(selected_subdomain_ids)
@@ -1068,7 +1034,7 @@ async def run_topic_expansion_pipeline(
         # ── Merge with previous matrix (re-entrant accumulation) ──
         # Keep assignments from subdomains NOT touched in this run;
         # only successful expansions replace previous assignments.
-        previous_matrix = await asyncio.to_thread(storage.get_latest_matrix)
+        previous_matrix = await db_read_latest_matrix(session_factory, effective_slug)
         if previous_matrix and previous_matrix.assignments:
             previous_kept = [
                 a for a in previous_matrix.assignments
@@ -1089,11 +1055,33 @@ async def run_topic_expansion_pipeline(
             audience_distribution=distributions["audience"],
         )
 
-        mat_version = await asyncio.to_thread(storage.write_matrix, matrix)
+        # Resolve discovery_id for DB writes
+        discovery_id: Optional[Any] = None
+        try:
+            from core.topic_discovery.persistence import persist_td_discovery
+
+            discovery_id = await persist_td_discovery(
+                session_factory, run_id, company_id,
+                effective_slug, domain,
+                pipeline_run_id=run_id,
+            )
+        except Exception:
+            logger.warning("TD-Expansion persist_td_discovery failed, continuing", exc_info=True)
 
         # Update expansion_status on taxonomy nodes
         _update_expansion_status(taxonomy.root_nodes, expanded_ids, failed_ids)
-        await asyncio.to_thread(storage.write_taxonomy, taxonomy, taxonomy.version)
+
+        # FK-safe ordering: write taxonomy (subdomain nodes) BEFORE matrix
+        # (assignments) so that FK references in topic_assignments are valid.
+        if session_factory is not None and discovery_id is not None:
+            await db_write_taxonomy(
+                session_factory, discovery_id, taxonomy, version=taxonomy.version,
+            )
+            mat_version = await db_write_matrix(
+                session_factory, discovery_id, matrix, version=0,
+            )
+        else:
+            mat_version = matrix.version
 
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": 3,
@@ -1141,32 +1129,14 @@ async def run_topic_expansion_pipeline(
         if approved_mat_raw:
             matrix = TopicAssignmentMatrix.model_validate(approved_mat_raw)
             matrix.status = TopicDiscoveryStatus.approved
-            mat_version = await asyncio.to_thread(storage.write_matrix, matrix)
+            if session_factory is not None and discovery_id is not None:
+                mat_version = await db_write_matrix(
+                    session_factory, discovery_id, matrix, version=mat_version,
+                )
 
         _emit(event_bus, task_id, "td_phase_complete", {
             "phase": "hitl_2", "decision": mat_decision,
         })
-
-        # ── DB: Persist approved assignments ──
-        discovery_id: Optional[Any] = None
-        taxonomy_db_id: Optional[Any] = None
-        try:
-            from core.topic_discovery.persistence import (
-                persist_td_assignments,
-                persist_td_discovery,
-            )
-
-            discovery_id = await persist_td_discovery(
-                session_factory, run_id, company_id,
-                effective_slug, domain,
-            )
-            await persist_td_assignments(
-                session_factory, run_id, company_id,
-                discovery_id, matrix, mat_version,
-                taxonomy_id=taxonomy_db_id,
-            )
-        except Exception:
-            logger.warning("TD-Expansion persist failed, continuing", exc_info=True)
 
         # =============================================================
         # Finalize
@@ -1175,7 +1145,10 @@ async def run_topic_expansion_pipeline(
         _emit(event_bus, task_id, "td_phase_start", {"phase": "finalize", "stage": "expansion_finalize"})
         _update_task(task_store, task_id, current_step="finalize_expansion")
 
-        manifest = await asyncio.to_thread(storage.read_manifest)
+        if session_factory is not None and discovery_id is not None:
+            manifest = await db_read_manifest(session_factory, effective_slug)
+        else:
+            manifest = TopicDiscoveryManifest(slug=company_slug, effective_slug=effective_slug)
         manifest.status = TopicDiscoveryStatus.approved
         manifest.matrix_version = mat_version
         manifest.last_updated = datetime.now(timezone.utc).isoformat()
@@ -1184,14 +1157,9 @@ async def run_topic_expansion_pipeline(
         existing_expanded = set(manifest.expanded_subdomain_ids)
         existing_expanded.update(expanded_ids)
         manifest.expanded_subdomain_ids = sorted(existing_expanded)
-        await asyncio.to_thread(storage.write_manifest, manifest)
 
-        try:
-            from core.topic_discovery.persistence import persist_td_status_update
-
-            await persist_td_status_update(session_factory, discovery_id, "approved")
-        except Exception:
-            logger.warning("TD-Expansion persist_td_status_update failed", exc_info=True)
+        if session_factory is not None and discovery_id is not None:
+            await db_write_manifest(session_factory, discovery_id, manifest)
 
         output = TopicExpansionOutput(
             slug=company_slug,

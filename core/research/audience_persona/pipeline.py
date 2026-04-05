@@ -412,6 +412,7 @@ async def run_audience_persona_pipeline(
                                 kind=kind,
                                 created_by=brief.source,
                                 tagline=brief.tagline,
+                                career_role=brief.career_role,
                             )
 
                     _emit(event_bus, task_id, "ap_agent_complete", {
@@ -501,6 +502,7 @@ async def run_audience_persona_pipeline(
                             kind=kind,
                             created_by=brief.source,
                             tagline=brief.tagline,
+                            career_role=brief.career_role,
                         )
 
             # Handle rejections

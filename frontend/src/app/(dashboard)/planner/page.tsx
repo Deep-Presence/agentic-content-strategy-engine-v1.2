@@ -3,7 +3,8 @@
 import { useState, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, Plus, RotateCcw, X } from 'lucide-react';
-import { BRAND_PREFIX } from './_components/planner-data';
+import { useAuth } from '@/hooks/useAuth';
+import { deriveCompanyPrefix, formatDisplayId } from './_components/planner-data';
 import type { Assignment, RejectedItem } from './_components/planner-data';
 import { usePlannerData } from './_hooks/usePlannerData';
 import type { CreateCustomAssignmentData } from './_hooks/usePlannerData';
@@ -15,7 +16,7 @@ import { InitiativesSidebar } from './_components/InitiativesSidebar';
 
 type ViewMode = 'queue' | 'explorer' | 'rejected';
 type StageFilter = 'all' | 'TOFU' | 'MOFU' | 'BOFU';
-type PersonaFilter = 'all' | 'sf' | 'pm' | 'da' | 'te';
+type PersonaFilter = string; // 'all' or any dynamic persona_id
 type SourceFilter = 'all' | 'gap' | 'strategic' | 'custom';
 type IntentFilter = 'all' | 'Informational' | 'Commercial' | 'Navigational' | 'Transactional';
 
@@ -26,8 +27,9 @@ interface Toast {
 }
 
 export default function ContentPlannerPage() {
+  const { companyName } = useAuth();
   const plannerData = usePlannerData();
-  const { assignments, rejected, clusters, isLoading, isEmpty, error, refetch } = plannerData;
+  const { assignments, rejected, clusters, personaNames, isLoading, isEmpty, error, refetch } = plannerData;
 
   const [view, setView] = useState<ViewMode>('queue');
 
@@ -115,11 +117,10 @@ export default function ContentPlannerPage() {
     showToast(`✓ ${count} topics generated from initiative`);
   }, [showToast]);
 
-  const nextId = `${BRAND_PREFIX}-${String(assignments.length + rejected.length + 1).padStart(3, '0')}`;
+  const prefix = deriveCompanyPrefix(companyName || '');
+  const nextId = formatDisplayId(prefix, assignments.length + rejected.length + 1);
 
-  const personaLabels: Record<string, string> = {
-    all: 'All', sf: 'Solo Founder', pm: 'Product Manager', da: 'Agency Owner', te: 'Technical Engineer',
-  };
+  const personaLabels: Record<string, string> = { all: 'All', ...personaNames };
 
   return (
     <div className="flex flex-col h-full -m-4 overflow-hidden">
@@ -250,7 +251,7 @@ export default function ContentPlannerPage() {
           <PriorityQueue assignments={filtered} onRowClick={setDrawerAssignment} onApprove={handleApprove} onReject={handleReject} />
         )}
         {!isLoading && !isEmpty && !error && view === 'explorer' && (
-          <ClusterExplorer assignments={filtered} clusters={clusters} onRowClick={setDrawerAssignment} onApprove={handleApprove} onReject={handleReject} />
+          <ClusterExplorer assignments={filtered} clusters={clusters} onRowClick={setDrawerAssignment} onApprove={handleApprove} onReject={handleReject} onExpandSubdomain={plannerData.expandSubdomain} />
         )}
         {!isLoading && !isEmpty && !error && view === 'rejected' && (
           <div className="flex-1 overflow-auto">

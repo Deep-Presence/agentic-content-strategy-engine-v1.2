@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-03-26 (merge feat/front-back → feat/redis-integration)
-> **Total open items:** 31
+> **Last synced:** 2026-04-05 (td-db-only-migration + planner-integration)
+> **Total open items:** 30
 
 ## Critical (Fix Before Production)
 
@@ -88,17 +88,15 @@
 - **Root cause:** v1.3 dispatcher writes `linked.md` and `fact_checked.md` but the GET `/briefs/{id}/{stage}` endpoint only recognizes legacy stage names (outline, draft, enriched, formatted, eval_history, final).
 - **Fix:** Add `linked` and `fact_checked` to `_VALID_STAGES`/`_STAGE_FILES`.
 
-### PB-93: Systematic audit — DbService ↔ filesystem state disconnect
+### PB-93: Systematic audit — DbService ↔ filesystem state disconnect [PARTIALLY RESOLVED]
 - **Source:** Kanban-Pipeline Sync sprint, 2026-03-20
 - **Date added:** 2026-03-20
-- **Files affected:** `core/services/db_content_data.py` (fixed for `get_briefs`), potentially other DbService methods
-- **Root cause:** The "filesystem-first, DB-additive" architecture means pipelines write real-time state to JSON artifacts, but DbService implementations query Postgres, which is only updated at coarser granularity.
-- **Fixed so far:** `DbContentDataService.get_briefs()` now overlays `pipeline_state.json`.
+- **Resolved for TD (2026-04-05):** Topic Discovery pipeline fully migrated to DB-only via `core/topic_discovery/db_ops.py`. No JSON filesystem reads/writes in TD pipeline hot paths. `DbTopicDiscoveryDataService` JSON fallback removed. UUID mismatch permanently fixed.
+- **Resolved for CE state (2026-04-05):** `pipeline_state.json` writes now conditional on Redis — only written when Redis is unavailable.
 - **Remaining work:**
-  1. Audit ALL other DbService methods for similar disconnects
-  2. Audit `DbTaskStore` for any filesystem-state dependencies
-  3. When migrating to Redis-backed TaskStore/state, replace `pipeline_state.json` with Redis pub/sub
-  4. Consider writing pipeline status updates to both JSON AND DB simultaneously as an interim fix
+  1. Content Engine v1.3 metadata (`blueprints.json`, `planner_selections.json`, `run_metadata_v13.json`) still filesystem-first — partially mitigated by `pipeline_runs.config` JSONB but not primary path
+  2. `DbContentDataService` still reads stage artifacts from StorageBackend (by design — markdown content stays in blob storage)
+  3. Gap Analysis pipeline still uses filesystem-first pattern (not yet migrated)
 
 ### PB-86: Pre-existing test failure — test_persistence.py mock doesn't support await
 - **Source:** Discovered during Kanban-Pipeline Sync sprint, 2026-03-20

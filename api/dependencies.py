@@ -22,7 +22,6 @@ from core.services.json_gap_data import JsonGapDataService
 from core.services.json_kb_data import JsonKBDataService
 from core.services.json_persona_data import JsonPersonaDataService
 from core.services.json_site_audit_data import JsonSiteAuditDataService
-from core.services.json_topic_discovery_data import JsonTopicDiscoveryDataService
 from core.services.json_vsg_data import JsonVSGDataService
 from core.services.kb_data import KBDataServiceProtocol
 from core.services.persona_data import PersonaDataServiceProtocol
@@ -596,11 +595,9 @@ def _build_db_td_data_service(request: Request, session: Any) -> TopicDiscoveryD
             td_repo=TopicDiscoveryRepository(session),
             taxonomy_repo=TaxonomyTreeRepository(session),
             assignment_repo=TopicAssignmentRepository(session),
-            artifacts_root=request.app.state.artifacts_root,
             node_repo=SubdomainNodeRepository(session),
             source_result_repo=SourceResultRepository(session),
             persona_affinity_repo=PersonaAffinityRepository(session),
-            backend=getattr(request.app.state, "storage_backend", None),
         )
     except Exception:
         _logger.debug("Failed to build DbTopicDiscoveryDataService", exc_info=True)
@@ -612,37 +609,38 @@ async def get_td_data_service(
 ) -> AsyncGenerator[TopicDiscoveryDataServiceProtocol, None]:
     """Return the TD data service with proper DB session lifecycle.
 
-    Priority: pre-built override → DbTopicDiscoveryDataService (DATABASE_URL) →
-    JsonTopicDiscoveryDataService.
+    Priority: pre-built override → DbTopicDiscoveryDataService (DATABASE_URL).
+    Raises 503 when database is unavailable (no JSON fallback).
     """
     service = getattr(request.app.state, "td_data_service", None)
     if service is not None:
         yield service
         return
     sf = getattr(request.app.state, "db_session_factory", None)
-    if sf is not None:
-        session = sf()
-        try:
-            db_service = _build_db_td_data_service(request, session)
-            if db_service is not None:
-                yield db_service
-                await session.commit()
-            else:
-                await session.close()
-                yield JsonTopicDiscoveryDataService(
-                    artifacts_root=request.app.state.artifacts_root,
-                    backend=getattr(request.app.state, "storage_backend", None),
-                )
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-        return
-    yield JsonTopicDiscoveryDataService(
-        artifacts_root=request.app.state.artifacts_root,
-        backend=getattr(request.app.state, "storage_backend", None),
-    )
+    if sf is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Topic discovery data service unavailable (requires DATABASE_URL)",
+        )
+    session = sf()
+    try:
+        db_service = _build_db_td_data_service(request, session)
+        if db_service is not None:
+            yield db_service
+            await session.commit()
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to construct topic discovery data service",
+            )
+    except HTTPException:
+        await session.close()
+        raise
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
 
 # ── Daily Tracker dependencies ───────────────────────────────────────

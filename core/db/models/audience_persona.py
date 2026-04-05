@@ -97,6 +97,7 @@ class PersonaProfileModel(UUIDPKMixin, Base):
     persona_id: Mapped[str] = mapped_column(String, nullable=False)
     persona_name: Mapped[str] = mapped_column(String, nullable=False)
     tagline: Mapped[str | None] = mapped_column(String, nullable=True)
+    career_role: Mapped[str | None] = mapped_column(String, nullable=True)
     kind: Mapped[str | None] = mapped_column(String, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[str | None] = mapped_column(String, nullable=True)

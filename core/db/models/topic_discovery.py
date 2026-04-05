@@ -84,6 +84,8 @@ class TopicDiscoveryModel(UUIDPKMixin, Base):
         Integer, nullable=False, default=0, server_default="0",
     )
     manifest_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    scoring_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    persona_affinity_index_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     discovered_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -325,6 +327,7 @@ class PersonaAffinityModel(UUIDPKMixin, Base):
     )
     persona_id: Mapped[str] = mapped_column(String, nullable=False)
     persona_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    career_role: Mapped[str | None] = mapped_column(String, nullable=True)
     subdomain_id_str: Mapped[str | None] = mapped_column(String, nullable=True)
     subdomain_name: Mapped[str | None] = mapped_column(String, nullable=True)
     affinity_score: Mapped[float] = mapped_column(

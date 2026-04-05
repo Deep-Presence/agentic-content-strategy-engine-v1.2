@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Check, Upload, FileText, ChevronDown, ChevronRight, Pencil, Eye } from 'lucide-react';
-import { INITIATIVES, PERSONA_MAP, ASSIGNMENTS } from './planner-data';
+import { INITIATIVES, formatPersonaName, ASSIGNMENTS } from './planner-data';
 import type { Initiative } from './planner-data';
 
 interface InitiativesSidebarProps {
@@ -201,7 +201,7 @@ export function InitiativesSidebar({ open, onClose, onInitiativeComplete }: Init
                           <div className="flex flex-wrap gap-1 mt-2">
                             {init.personas.map(pid => (
                               <span key={pid} className="inline-flex items-center px-2 py-0.5 text-[11px] font-medium rounded-full bg-[rgba(147,51,234,0.08)] text-[#9333ea] border border-[rgba(147,51,234,0.3)]">
-                                {PERSONA_MAP[pid]?.full || pid}
+                                {formatPersonaName(pid)}
                               </span>
                             ))}
                           </div>
@@ -231,10 +231,10 @@ export function InitiativesSidebar({ open, onClose, onInitiativeComplete }: Init
                                 {initAssignments.length > 0 ? initAssignments.map((a, i) => (
                                   <div key={a.id} className="flex items-center gap-2 px-3 py-2 text-[12px]"
                                     style={{ borderBottom: i < initAssignments.length - 1 ? '1px solid var(--border)' : undefined, background: 'var(--surface)' }}>
-                                    <span className="font-mono text-[11px] text-text-tertiary shrink-0">{a.id}</span>
+                                    <span className="font-mono text-[11px] text-text-tertiary shrink-0">{a.displayId}</span>
                                     <span className="text-text-primary flex-1 truncate">{a.title}</span>
                                     <span className={`inline-flex items-center px-1.5 py-px text-[10px] font-semibold uppercase border rounded-full ${stageStyles[a.stage]}`}>{a.stage}</span>
-                                    <span className="font-mono text-[11px] text-accent">~{a.estCitations}</span>
+                                    <span className="font-mono text-[11px] text-accent">{Math.round(a.citationOpp * 100)}%</span>
                                   </div>
                                 )) : (
                                   <div className="px-3 py-3 text-[12px] text-text-tertiary" style={{ background: 'var(--surface)' }}>No assignments yet</div>
