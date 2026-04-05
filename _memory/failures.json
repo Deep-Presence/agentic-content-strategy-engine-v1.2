@@ -90,6 +90,24 @@
     "files_affected": ["tests/api/test_site_audit.py"]
   },
   {
+    "id": "F14",
+    "timestamp": "2026-04-05",
+    "what_broke": "Subdomain stuck in 'expanding' status after server hot-reload killed expansion task mid-flight. Subsequent expansion attempts got 'already claimed, skipping'.",
+    "root_cause": "db_claim_subdomain_for_expansion initially only allowed 'not_expanded' and 'failed' statuses. A node claimed as 'expanding' before the server restart stayed stuck because the stale threshold was 2 hours — too long for a ~4 minute task. Also, 'expanded' status was not claimable, blocking intentional re-expansion.",
+    "fix_applied": "1. Added 'expanded' to eligible statuses (allow_re_expand=True default). 2. Reduced stale threshold from 2 hours to 20 minutes. 3. Pipeline preflight calls db_reset_stale_expanding() to recover from crashes.",
+    "lesson": "Stale lock thresholds must be proportional to expected task duration (20min for a 4min task, not 2 hours). Always allow re-expansion of already-expanded nodes when user explicitly selects them.",
+    "files_affected": ["core/db/repositories/topic_discovery_repo.py", "core/topic_discovery/pipeline.py"]
+  },
+  {
+    "id": "F15",
+    "timestamp": "2026-04-05",
+    "what_broke": "Topic expansion produced scores=0 for all assignments. Frontend showed 0 in the Score column.",
+    "root_cause": "scoring_json column on topic_discoveries was NULL (never backfilled after migration 0029 added it). Pipeline B reads scores from db_read_scoring() → scoring_json. When NULL, score_lookup is empty and compute_topic_priority() never runs.",
+    "fix_applied": "Backfilled scoring_json from existing per-node priority_score/priority_factors columns. Also fixed db_write_matrix() and db_read_latest_matrix() to preserve persona_affinity_json through HITL-2 re-write cycle.",
+    "lesson": "When adding a new JSONB column to store data that previously lived in per-row columns, always backfill existing data in the migration or a post-migration script. The pipeline reads from the JSONB, not the per-row columns.",
+    "files_affected": ["core/topic_discovery/db_ops.py"]
+  },
+  {
     "id": "F13",
     "timestamp": "2026-03-22",
     "what_broke": "test_revise_loops_back_to_agent (PB-39) — intermittent ~15% failure rate after langgraph-checkpoint-redis install",

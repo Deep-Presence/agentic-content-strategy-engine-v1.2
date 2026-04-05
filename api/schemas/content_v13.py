@@ -212,6 +212,53 @@ class TopicContentStartRequest(BaseModel):
         return v
 
 
+class TopicContentProductionRequest(BaseModel):
+    """Start content production from pre-computed topic-scoped GA results.
+
+    Phase 2 of the two-phase TD → GA → CE pipeline. The user has reviewed
+    the GA results and clicked "Start Production" in the Content Studio.
+    """
+
+    company_name: str
+    domain: str
+    effective_slug: str
+    topic_assignment_ids: List[str] = Field(min_length=1, max_length=20)
+    ga_run_id: str  # UUID of the completed topic-scoped GA run
+
+    @field_validator("topic_assignment_ids")
+    @classmethod
+    def _validate_topic_ids_prod(cls, v: List[str]) -> List[str]:
+        import uuid as _uuid
+
+        for tid in v:
+            try:
+                _uuid.UUID(tid)
+            except ValueError:
+                raise ValueError(
+                    f"Each topic_assignment_id must be a valid UUID, got: {tid!r}"
+                )
+        return v
+
+    @field_validator("ga_run_id")
+    @classmethod
+    def _validate_ga_run_id(cls, v: str) -> str:
+        import uuid as _uuid
+
+        try:
+            _uuid.UUID(v)
+        except ValueError:
+            raise ValueError(f"ga_run_id must be a valid UUID, got: {v!r}")
+        return v
+
+    # Product scope
+    product_slug: Optional[str] = None
+    product_name: Optional[str] = None
+    product_description: Optional[str] = None
+
+    # Options
+    auto_approve: bool = False
+
+
 class TopicContentStatusItem(BaseModel):
     """Per-assignment status in a topic content run."""
 

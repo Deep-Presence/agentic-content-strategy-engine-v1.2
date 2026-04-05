@@ -1,16 +1,41 @@
+// ---------------------------------------------------------------------------
+// Backend-aligned status enum (mirrors core/models/pipeline_status.py)
+// ---------------------------------------------------------------------------
+
+export type BriefPipelineStatus =
+  | 'suggested'
+  | 'gap_analysis_pending'
+  | 'gap_analysis'
+  | 'gap_analysis_complete'
+  | 'briefing'
+  | 'brief_review'
+  | 'pending_brief_approval'
+  | 'approved'
+  | 'outlining'
+  | 'drafting'
+  | 'linking'
+  | 'enriching'
+  | 'evaluating'
+  | 'revising'
+  | 'review'
+  | 'pending_content_approval'
+  | 'completed'
+  | 'published'
+  | 'rejected'
+  | 'failed';
+
+// ---------------------------------------------------------------------------
+// Kanban columns (derived from status via status-adapter)
+// ---------------------------------------------------------------------------
+
+export type KanbanColumn = 'triage' | 'agent' | 'human' | 'done';
+
+// ---------------------------------------------------------------------------
+// Content metadata types
+// ---------------------------------------------------------------------------
+
 export type ContentType = 'HOW_TO' | 'COMPARISON' | 'GUIDE' | 'LONG_BLOG' | 'PILLAR_PAGE';
 export type Priority = 'P0' | 'P1' | 'P2';
-export type Column = 'queue' | 'human' | 'agent';
-
-export type ContentStage =
-  | 'queue'
-  | 'planning'
-  | 'brief_generation'
-  | 'brief_review'
-  | 'writing'
-  | 'evaluating'
-  | 'article_review'
-  | 'published';
 
 export interface AgentProgress {
   pct: number;
@@ -19,6 +44,9 @@ export interface AgentProgress {
   wordsTarget?: number;
   sectionsComplete?: number;
   sectionsTotal?: number;
+  gaStepName?: string;
+  gaStepNum?: number;
+  gaTotalSteps?: number;
 }
 
 export interface BriefSource {
@@ -89,6 +117,10 @@ export interface ContentMetadata {
   tags: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Content card — column & label derived from status via status-adapter
+// ---------------------------------------------------------------------------
+
 export interface ContentCard {
   id: string;
   title: string;
@@ -99,14 +131,39 @@ export interface ContentCard {
   priority: Priority;
   readTime: number;
   competitor: string;
-  column: Column;
-  stage: ContentStage;
-  stageLabel: string;
+
+  /** Raw backend BriefPipelineStatus — single source of truth for card state */
+  status: BriefPipelineStatus;
+
+  /** Pipeline task_id for SSE subscription + HITL API calls */
+  taskId?: string;
+
+  /** Topic assignment ID from planner (for GA-phase cards) */
+  topicAssignmentId?: string;
+  /** Buyer stage from planner (TOFU/MOFU/BOFU) */
+  buyerStage?: string;
+  /** Origin: manual entry, planner approval, or autonomous pipeline */
+  source?: 'manual' | 'planner' | 'autonomous';
+  /** Gap analysis run ID (set after GA completes, used to start CE) */
+  gaRunId?: string;
+  /** Effective slug scope (company or company__product, used in startProduction) */
+  effectiveSlug?: string;
+
+  /** Backend cycle/session identifier */
+  cycleId?: string;
+  targetWordCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+
   agentProgress?: AgentProgress;
   briefContent?: BriefContent;
   articleContent?: ArticleContent;
   metadata?: ContentMetadata;
 }
+
+// ---------------------------------------------------------------------------
+// Cycle (time-based content grouping)
+// ---------------------------------------------------------------------------
 
 export interface Cycle {
   id: string;

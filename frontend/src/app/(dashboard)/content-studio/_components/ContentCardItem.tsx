@@ -2,6 +2,7 @@
 
 import { Clock } from 'lucide-react';
 import type { ContentCard } from './types';
+import { getColumn, getDisplay } from '../_lib/status-adapter';
 
 const TYPE_LABELS: Record<string, string> = {
   HOW_TO: 'HOW-TO',
@@ -18,14 +19,19 @@ function progressColor(pct: number) {
 }
 
 function leftBorderColor(card: ContentCard) {
-  if (card.column === 'queue') return 'var(--text-tertiary)';
-  if (card.stage === 'brief_review') return 'var(--warning)';
-  if (card.stage === 'article_review') return 'var(--accent)';
+  const display = getDisplay(card.status);
+  if (display.badgeVariant === 'neutral') return 'var(--text-tertiary)';
+  if (display.badgeVariant === 'teal') return 'var(--accent)';
+  if (display.badgeVariant === 'amber') return 'var(--warning)';
+  if (display.badgeVariant === 'success') return 'var(--success)';
+  if (display.badgeVariant === 'error') return 'var(--error)';
   return 'var(--border)';
 }
 
 export function ContentCardItem({ card, onClick }: { card: ContentCard; onClick: () => void }) {
   const gapDisplay = Math.round(card.gap * 100);
+  const column = getColumn(card.status);
+  const display = getDisplay(card.status);
 
   return (
     <div
@@ -127,8 +133,8 @@ export function ContentCardItem({ card, onClick }: { card: ContentCard; onClick:
         </span>
       </div>
 
-      {/* Agent progress (agent column) */}
-      {card.column === 'agent' && card.agentProgress && (
+      {/* GA-phase: active analysis progress */}
+      {card.status === 'gap_analysis' && card.agentProgress && (
         <div className="mt-3">
           <div className="flex items-center justify-between">
             <span
@@ -139,7 +145,77 @@ export function ContentCardItem({ card, onClick }: { card: ContentCard; onClick:
                 animation: 'typing 1.8s ease-in-out infinite',
               }}
             >
-              {card.stageLabel}
+              {display.label}
+            </span>
+            <div className="flex items-center gap-1">
+              {card.agentProgress.gaStepName && (
+                <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>
+                  {card.agentProgress.gaStepNum}/{card.agentProgress.gaTotalSteps}
+                </span>
+              )}
+              <span
+                style={{
+                  fontSize: 10,
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--text-tertiary)',
+                }}
+              >
+                {card.agentProgress.pct}%
+              </span>
+            </div>
+          </div>
+          <div
+            className="mt-1"
+            style={{
+              width: '100%',
+              height: 4,
+              background: 'var(--border)',
+              borderRadius: 2,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${card.agentProgress.pct}%`,
+                height: '100%',
+                borderRadius: 2,
+                background: progressColor(card.agentProgress.pct),
+                animation: 'progressPulse 2.5s ease-in-out infinite',
+                transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* GA-phase: analysis complete */}
+      {card.status === 'gap_analysis_complete' && (
+        <div className="flex items-center gap-1.5 mt-3">
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block' }} />
+          <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 500 }}>Analysis ready</span>
+        </div>
+      )}
+
+      {/* GA-phase: pending */}
+      {card.status === 'gap_analysis_pending' && (
+        <div className="flex items-center gap-1.5 mt-3">
+          <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Queued for analysis...</span>
+        </div>
+      )}
+
+      {/* Agent progress (agent column with active processing) */}
+      {display.isAgentActive && card.status !== 'gap_analysis' && card.agentProgress && (
+        <div className="mt-3">
+          <div className="flex items-center justify-between">
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 500,
+                color: 'var(--warning)',
+                animation: 'typing 1.8s ease-in-out infinite',
+              }}
+            >
+              {display.label}
             </span>
             <span
               style={{
@@ -192,25 +268,48 @@ export function ContentCardItem({ card, onClick }: { card: ContentCard; onClick:
         </div>
       )}
 
+      {/* Non-active agent card (approved/queued, failed) — exclude GA statuses */}
+      {column === 'agent' && !display.isAgentActive && card.status !== 'gap_analysis' && (
+        <div className="flex items-center gap-1.5 mt-3">
+          <span
+            style={{
+              fontSize: 11,
+              color: display.badgeVariant === 'error' ? 'var(--error)' : 'var(--warning)',
+            }}
+          >
+            {display.label}
+          </span>
+        </div>
+      )}
+
       {/* Human review indicator */}
-      {card.column === 'human' && (
+      {column === 'human' && (
         <div className="flex items-center gap-1.5 mt-3">
           <span
             style={{
               width: 6,
               height: 6,
               borderRadius: '50%',
-              background: card.stage === 'brief_review' ? 'var(--warning)' : 'var(--accent)',
+              background: 'var(--accent)',
               display: 'inline-block',
             }}
           />
+          <span style={{ fontSize: 11, color: 'var(--accent)' }}>
+            {display.label}
+          </span>
+        </div>
+      )}
+
+      {/* Done column indicator */}
+      {column === 'done' && (
+        <div className="flex items-center gap-1.5 mt-3">
           <span
             style={{
               fontSize: 11,
-              color: card.stage === 'brief_review' ? 'var(--warning)' : 'var(--accent)',
+              color: display.badgeVariant === 'error' ? 'var(--error)' : 'var(--success)',
             }}
           >
-            {card.stageLabel}
+            {display.label}
           </span>
         </div>
       )}

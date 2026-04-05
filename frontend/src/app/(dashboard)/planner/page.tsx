@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, Plus, RotateCcw, X } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { startFromTopicsPipeline } from './_lib/api';
 import { deriveCompanyPrefix, formatDisplayId } from './_components/planner-data';
 import type { Assignment, RejectedItem } from './_components/planner-data';
 import { usePlannerData } from './_hooks/usePlannerData';
@@ -27,7 +28,7 @@ interface Toast {
 }
 
 export default function ContentPlannerPage() {
-  const { companyName } = useAuth();
+  const { companyName, companySlug, companyDomain } = useAuth();
   const plannerData = usePlannerData();
   const { assignments, rejected, clusters, personaNames, isLoading, isEmpty, error, refetch } = plannerData;
 
@@ -71,14 +72,30 @@ export default function ContentPlannerPage() {
   };
 
   const handleApprove = useCallback(async (ids: string[]) => {
-    showToast(`✓ ${ids.length} topic${ids.length > 1 ? 's' : ''} approved → Content Studio`);
     setDrawerAssignment(null);
     try {
       await plannerData.approveAssignments(ids);
+
+      // Launch GA pipeline for Content Studio
+      if (companySlug) {
+        try {
+          await startFromTopicsPipeline(
+            companyName || '',
+            companyDomain || '',
+            companySlug,
+            ids,
+          );
+        } catch (pipelineErr) {
+          // GA launch failure should not block approval
+          console.error('GA pipeline launch failed:', pipelineErr);
+        }
+      }
+
+      showToast(`✓ ${ids.length} topic${ids.length > 1 ? 's' : ''} sent to Content Studio`);
     } catch {
       showToast('Failed to update status', 'error');
     }
-  }, [plannerData, showToast]);
+  }, [plannerData, companySlug, companyName, companyDomain, showToast]);
 
   const handleReject = useCallback(async (ids: string[]) => {
     showToast(`✗ ${ids.length} topic${ids.length > 1 ? 's' : ''} rejected`);

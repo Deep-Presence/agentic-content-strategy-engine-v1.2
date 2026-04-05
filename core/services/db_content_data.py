@@ -89,7 +89,20 @@ class DbContentDataService:
     async def get_briefs(
         self, effective_slug: str,
     ) -> ContentBriefListResponse:
-        """List content pieces from the DB (including pre-pipeline planned briefs)."""
+        """List content pieces from the DB (including pre-pipeline planned briefs).
+
+        Also merges GA-phase cards from Redis (topic assignments undergoing
+        gap analysis that don't yet have DB content_pieces rows).
+        """
+        # ── Load GA-phase cards from Redis FIRST (before early-return) ──
+        ga_cards: List[ContentBriefListItem] = []
+        try:
+            ga_cards = await self._load_ga_phase_cards(effective_slug)
+        except Exception:
+            logger.warning(
+                "GA-phase card load failed for %s", effective_slug, exc_info=True,
+            )
+
         # Resolve run_id for cycle_id display (may be None for pre-pipeline briefs)
         run_id = await self._resolve_run_id(effective_slug)
 
@@ -98,8 +111,11 @@ class DbContentDataService:
         if not pieces and run_id:
             # Fallback: try run-scoped query for backward compat
             pieces = await self._content_repo.list_by_run(run_id)
-        if not pieces:
+        if not pieces and not ga_cards:
             return ContentBriefListResponse(briefs=[], total=0)
+        if not pieces:
+            # Only GA-phase cards exist — return them
+            return ContentBriefListResponse(briefs=ga_cards, total=len(ga_cards))
 
         # Load gap analysis data for sidebar enrichment via StorageBackend
         # Derive base company slug from effective_slug for gap analysis lookup
@@ -209,7 +225,53 @@ class DbContentDataService:
                 ),
             ))
 
-        return ContentBriefListResponse(briefs=items, total=len(items))
+        # Prepend GA-phase cards (Queue column) before DB brief cards
+        all_items = ga_cards + items
+        return ContentBriefListResponse(briefs=all_items, total=len(all_items))
+
+    # ── GA-phase card loader ─────────────────────────────────────────
+
+    async def _load_ga_phase_cards(
+        self, effective_slug: str,
+    ) -> List[ContentBriefListItem]:
+        """Load GA-phase topic assignment cards from Redis.
+
+        These are cards for topics undergoing gap analysis that don't yet
+        have content_pieces DB rows. They appear in the Content Studio Queue.
+        """
+        from core.config.settings import settings as _cfg
+
+        if not (_cfg.redis_pipeline_state and _cfg.redis_url):
+            return []
+
+        from core.redis import get_redis_or_none
+        from core.content_engine.state_redis import read_ga_phase_cards_async
+
+        rc = get_redis_or_none()
+        if rc is None:
+            return []
+
+        raw_cards = await read_ga_phase_cards_async(rc, effective_slug)
+        if not raw_cards:
+            return []
+
+        items: List[ContentBriefListItem] = []
+        for card in raw_cards:
+            items.append(ContentBriefListItem(
+                id=card["id"],  # ta-{uuid}
+                title=card.get("title", ""),
+                status=card["status"],
+                content_type="blog",  # default, will be determined by Brief Builder later
+                cluster=card.get("cluster", ""),
+                task_id=card.get("task_id"),
+                priority_score=card.get("priority_score", 0.0),
+                topic_assignment_id=card.get("topic_assignment_id"),
+                buyer_stage=card.get("buyer_stage"),
+                source="planner",
+                ga_run_id=card.get("ga_run_id"),
+                effective_slug=effective_slug,
+            ))
+        return items
 
     # ── Brief Detail (DB-backed) ─────────────────────────────────────
 

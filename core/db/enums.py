@@ -31,6 +31,7 @@ class PipelineType(str, Enum):
     voice_style_guide = "voice_style_guide"
     onboarding = "onboarding"
     daily_tracker = "daily_tracker"
+    td_gap_analysis = "td_gap_analysis"
 
 
 class PipelineStatus(str, Enum):
@@ -156,6 +157,7 @@ class TopicAssignmentStatus(str, Enum):
     approved = "approved"
     rejected = "rejected"
     in_gap_analysis = "in_gap_analysis"
+    gap_analysis_complete = "gap_analysis_complete"
     content_produced = "content_produced"
     published = "published"
 

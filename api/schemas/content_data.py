@@ -36,9 +36,11 @@ class ContentBriefListItem(BaseModel):
     title: str = ""
     status: str = "suggested"
     content_type: str = "blog"  # mapped from backend content_format
+    content_format: str = "long_blog"  # raw pipeline value (how_to, comparison, etc.)
     cluster: str = ""
     target_word_count: int = 0
     citability_score: Optional[float] = None  # 0-100, from eval overall_score
+    priority_score: float = 0.0  # 0-1, from blueprint strategic planner
     cycle_id: Optional[str] = None  # run_metadata session_id
     task_id: Optional[str] = None  # pipeline task_id for HITL approval calls
     created_at: str = ""  # ISO string, from briefs.json mtime
@@ -46,6 +48,12 @@ class ContentBriefListItem(BaseModel):
     gap_context: Optional[GapContextSummary] = None
     published_url: str = ""  # CMS permalink (set by cms_service.publish_brief)
     published_at: Optional[str] = None  # ISO string, when CMS publish happened
+    # Topic Discovery → Content Studio integration
+    topic_assignment_id: Optional[str] = None  # TD assignment UUID (planner-originated cards)
+    buyer_stage: Optional[str] = None  # TOFU/MOFU/BOFU from topic assignment
+    source: Optional[str] = None  # "manual" | "planner" | "autonomous"
+    ga_run_id: Optional[str] = None  # UUID of completed topic-scoped GA run
+    effective_slug: Optional[str] = None  # company or company__product scope
 
 
 class ContentBriefListResponse(BaseModel):
@@ -77,6 +85,7 @@ class EvalDimension(BaseModel):
     passed: bool = False
     score: float = 0.0
     feedback: str = ""
+    details: Dict[str, Any] = Field(default_factory=dict)  # E-E-A-T sub-scores, structural counts, etc.
 
 
 class EvalCycle(BaseModel):
@@ -86,6 +95,13 @@ class EvalCycle(BaseModel):
     dimensions: List[EvalDimension] = Field(default_factory=list)
     overall_passed: bool = False
     overall_score: float = 0.0
+
+
+class CPSDetail(BaseModel):
+    """CPS (Citation Signal Predictor) per-engine scores."""
+
+    cps_score: float = 0.0  # Overall CPS score (0-1)
+    per_engine: Dict[str, float] = Field(default_factory=dict)  # engine_key → score (0-1)
 
 
 class BriefExemplar(BaseModel):
@@ -118,6 +134,7 @@ class ContentBriefDetailResponse(BaseModel):
     final_passed: bool = False
     exemplars: List[BriefExemplar] = Field(default_factory=list)
     available_stages: List[str] = Field(default_factory=list)
+    cps: Optional[CPSDetail] = None  # Per-engine citation prediction scores
 
 
 # ---------------------------------------------------------------------------

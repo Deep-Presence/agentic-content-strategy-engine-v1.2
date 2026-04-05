@@ -95,6 +95,7 @@ class TopicAssignmentStatus(str, Enum):
     approved = "approved"
     rejected = "rejected"
     in_gap_analysis = "in_gap_analysis"
+    gap_analysis_complete = "gap_analysis_complete"
     content_produced = "content_produced"
     published = "published"
 

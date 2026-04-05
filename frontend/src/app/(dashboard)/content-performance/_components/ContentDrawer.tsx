@@ -5,7 +5,7 @@ import { X, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, CartesianGrid,
+  CartesianGrid,
 } from 'recharts';
 import type { ContentPiece, QueryCoverage as QC } from './data';
 import {
@@ -138,29 +138,29 @@ export function ContentDrawer({ piece, onClose }: ContentDrawerProps) {
                 </ResponsiveContainer>
               </div>
 
-              {/* B. TRAFFIC vs CITATIONS */}
-              <SectionHeader>B. Traffic vs Citations</SectionHeader>
+              {/* B. TRAFFIC */}
+              <SectionHeader>B. Traffic</SectionHeader>
               <div style={{ height: 140 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={trafficTimeline} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                  <AreaChart data={trafficTimeline} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                    <defs>
+                      <linearGradient id="tvGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.12} />
+                        <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                     <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }} tickLine={false} axisLine={false} interval={4} />
-                    <YAxis yAxisId="pv" tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }} tickLine={false} axisLine={false} width={32} />
-                    <YAxis yAxisId="ct" orientation="right" tick={{ fontSize: 10, fill: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)' }} tickLine={false} axisLine={false} width={24} />
+                    <YAxis tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }} tickLine={false} axisLine={false} width={32} />
                     <Tooltip content={<MiniTooltip />} />
-                    <Area yAxisId="pv" type="monotone" dataKey="pageviews" stroke="var(--text-tertiary)" strokeWidth={0} fill="var(--text-tertiary)" fillOpacity={0.08} />
-                    <Line yAxisId="ct" type="monotone" dataKey="citations" stroke="var(--accent)" strokeWidth={2} dot={false} />
-                  </LineChart>
+                    <Area type="monotone" dataKey="pageviews" stroke="var(--accent)" strokeWidth={2} fill="url(#tvGrad)" />
+                  </AreaChart>
                 </ResponsiveContainer>
               </div>
               <div style={{ display: 'flex', gap: 16, marginTop: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <div style={{ width: 12, height: 8, borderRadius: 2, background: 'var(--text-tertiary)', opacity: 0.15 }} />
-                  <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Pageviews</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                   <div style={{ width: 12, height: 2, borderRadius: 1, background: 'var(--accent)' }} />
-                  <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Citations</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>Pageviews</span>
                 </div>
               </div>
 
@@ -249,8 +249,8 @@ export function ContentDrawer({ piece, onClose }: ContentDrawerProps) {
                 </div>
               )}
 
-              {/* G. BRIEF COMPLIANCE */}
-              <SectionHeader>G. Brief Compliance</SectionHeader>
+              {/* G. BRIEF COMPLIANCE — hidden until backend data is available */}
+              {/* <SectionHeader>G. Brief Compliance</SectionHeader>
               {briefCompliance ? (
                 <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
@@ -293,7 +293,7 @@ export function ContentDrawer({ piece, onClose }: ContentDrawerProps) {
                 <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 12 }}>
                   <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>No content brief found</span>
                 </div>
-              )}
+              )} */}
 
               {/* H. FRESHNESS ASSESSMENT */}
               <SectionHeader>H. Freshness Assessment</SectionHeader>

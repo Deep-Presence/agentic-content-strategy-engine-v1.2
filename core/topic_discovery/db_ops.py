@@ -941,6 +941,7 @@ async def db_write_assignments_for_subdomain(
     # deleting them would orphan content_pieces.topic_assignment_id (SET NULL).
     preserve_statuses = [
         DBTopicAssignmentStatus.in_gap_analysis,
+        DBTopicAssignmentStatus.gap_analysis_complete,
         DBTopicAssignmentStatus.content_produced,
         DBTopicAssignmentStatus.published,
     ]

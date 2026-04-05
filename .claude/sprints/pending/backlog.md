@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-04-05 (td-db-only-migration + planner-integration)
-> **Total open items:** 30
+> **Last synced:** 2026-04-05 (content-studio-integration)
+> **Total open items:** 31
 
 ## Critical (Fix Before Production)
 
@@ -244,6 +244,13 @@
 - **Date added:** 2026-04-04
 - **Description:** Currently, version history in the Brand Hub is derived client-side by parsing filenames from `GET /api/v1/artifacts/{type}/{slug}` (which returns all files including manifests, JSON, etc.). Add dedicated endpoints that use `StorageBackend.list_dir()` to discover versions and return structured metadata (version number, date, word count). Endpoints needed: `GET /api/v1/knowledge-base/{slug}/{doc_type}/versions`, `GET /api/v1/voice-style-guide/{slug}/guide/versions`, `GET /api/v1/audience-persona/{slug}/{persona_id}/versions`. Each should return `{ versions: [{ version: int, last_updated: str|null, word_count: int }] }`.
 - **Files affected:** `core/research/knowledge_base/storage.py`, `core/research/voice_style_guide/storage.py`, `core/research/audience_persona/storage.py`, `core/services/kb_data.py`, `core/services/vsg_data.py`, `core/services/persona_data.py`, `api/routers/knowledge_base.py`, `api/routers/voice_style_guide.py`, `api/routers/audience_persona.py`
+- **Blocked by:** nothing
+
+### PB-96: CPS model should score final articles (post-content), not just topics
+- **Source:** Content Studio frontend-backend integration audit, 2026-04-05
+- **Date added:** 2026-04-05
+- **Description:** The CPS (Citation Signal Predictor) model currently scores topics/queries using gap analysis features (structural, citability, authority signals from exemplars). Per-engine scores reflect topic citation potential, NOT article quality. The model should be enhanced to digest the final article content along with the query to produce post-content citation predictions. Currently frontend shows CPS per-engine scores with a "predicted citation potential" label as a workaround.
+- **Files affected:** `core/cps_model/scorer.py`, `core/cps_model/features.py`, `core/content_engine/pipeline_v13.py` (Stage 4.5)
 - **Blocked by:** nothing
 
 ## Low Priority / Nice to Have

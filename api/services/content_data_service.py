@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from api.schemas.content_data import (
     BriefExemplar,
+    CPSDetail,
     ContentBriefDetailResponse,
     ContentBriefListItem,
     ContentBriefListResponse,
@@ -450,9 +451,11 @@ def get_briefs(
             title=brief.get("title", ""),
             status=status,
             content_type=content_type,
+            content_format=brief.get("content_format", "long_blog"),
             cluster=brief.get("target_cluster", ""),
             target_word_count=target_wc,
             citability_score=citability,
+            priority_score=brief.get("priority_score", 0.0),
             cycle_id=session_id,
             task_id=task_id_map.get(brief_id),
             created_at=brief_created,
@@ -628,6 +631,7 @@ def get_brief_detail(
                     passed=d.get("passed", False),
                     score=d.get("score", 0.0),
                     feedback=d.get("feedback", ""),
+                    details=d.get("details", {}),
                 )
                 for d in cycle.get("dimensions", [])
             ]
@@ -656,6 +660,19 @@ def get_brief_detail(
     # Available stages
     available = _get_available_stages(sb, slug, brief_id)
 
+    # CPS per-engine scores (from run_metadata eval_summary)
+    cps_detail: Optional[CPSDetail] = None
+    for piece in pieces:
+        if piece.get("brief_id") == brief_id:
+            es = piece.get("eval_summary", {})
+            raw_cps = es.get("cps", {})
+            if raw_cps and isinstance(raw_cps, dict):
+                cps_detail = CPSDetail(
+                    cps_score=raw_cps.get("cps_score", 0.0),
+                    per_engine=raw_cps.get("per_engine", {}),
+                )
+            break
+
     return ContentBriefDetailResponse(
         id=brief_id,
         title=brief.get("title", ""),
@@ -672,6 +689,7 @@ def get_brief_detail(
         final_passed=final_passed,
         exemplars=exemplars,
         available_stages=available,
+        cps=cps_detail,
     )
 
 

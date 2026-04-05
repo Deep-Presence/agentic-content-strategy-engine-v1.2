@@ -1,6 +1,7 @@
 'use client';
 
 import type { ContentCard } from './types';
+import { getColumn, getDisplay, getWorkerStepIndex } from '../_lib/status-adapter';
 
 const OVERLINE: React.CSSProperties = {
   fontSize: 10,
@@ -47,15 +48,21 @@ function QueueSidebar({ card }: { card: ContentCard }) {
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
         <div style={OVERLINE}>Why this topic</div>
         <ul className="space-y-2">
-          <li style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            Competitors cited 3x more — significant gap opportunity
-          </li>
-          <li style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            Topic trending across multiple AI engines
-          </li>
-          <li style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            High citation correlation for {card.type.replace('_', ' ').toLowerCase()} format
-          </li>
+          {(card.briefContent?.reasons && card.briefContent.reasons.length > 0)
+            ? card.briefContent.reasons.map((reason, i) => (
+                <li key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{reason}</li>
+              ))
+            : (
+              <>
+                <li style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  Gap score indicates content opportunity
+                </li>
+                <li style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  High citation correlation for {card.type.replace('_', ' ').toLowerCase()} format
+                </li>
+              </>
+            )
+          }
         </ul>
       </div>
     </div>
@@ -174,19 +181,20 @@ function ArticleSidebar({ card, activeSection, onSectionClick }: {
   );
 }
 
+// Pipeline steps aligned with backend worker chain
+const SIDEBAR_STEPS = [
+  { key: 'briefing', label: 'Brief', desc: 'Building brief' },
+  { key: 'outlining', label: 'Outline', desc: 'Section structure' },
+  { key: 'drafting', label: 'Draft', desc: 'Content creation' },
+  { key: 'linking', label: 'Link', desc: 'Internal links' },
+  { key: 'enriching', label: 'Enrich', desc: 'Fact checking' },
+  { key: 'evaluating', label: 'Evaluate', desc: 'Quality scoring' },
+];
+
 function AgentSidebar({ card }: { card: ContentCard }) {
   const progress = card.agentProgress;
-  if (!progress) return null;
-
-  const stageOrder = ['planning', 'brief_generation', 'writing', 'evaluating'];
-  const currentIdx = stageOrder.indexOf(card.stage);
-
-  const stages = [
-    { key: 'planning', label: 'Planning', desc: 'Query analysis' },
-    { key: 'brief_generation', label: 'Brief generation', desc: 'Exemplar research' },
-    { key: 'writing', label: 'Writing', desc: 'Content creation' },
-    { key: 'evaluating', label: 'Evaluation', desc: 'Quality scoring' },
-  ];
+  const display = getDisplay(card.status);
+  const stepIndex = getWorkerStepIndex(card.status);
 
   return (
     <div className="p-4 space-y-4">
@@ -199,33 +207,37 @@ function AgentSidebar({ card }: { card: ContentCard }) {
               width: 6,
               height: 6,
               borderRadius: '50%',
-              background: 'var(--warning)',
-              animation: 'pulse 1.5s ease-in-out infinite',
+              background: display.isAgentActive ? 'var(--warning)' : 'var(--border)',
+              animation: display.isAgentActive ? 'pulse 1.5s ease-in-out infinite' : undefined,
             }}
           />
           <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
-            {card.stageLabel}
+            {display.label}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex-1" style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-            <div style={{
-              width: `${progress.pct}%`,
-              height: '100%',
-              borderRadius: 2,
-              background: progress.pct > 80 ? 'var(--success)' : progress.pct >= 50 ? 'var(--accent)' : 'var(--warning)',
-              animation: 'progressPulse 2.5s ease-in-out infinite',
-              transition: 'width 0.6s ease',
-            }} />
-          </div>
-          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
-            {progress.pct}%
-          </span>
-        </div>
-        {progress.wordsCurrent !== undefined && (
-          <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', marginTop: 4 }}>
-            {progress.wordsCurrent.toLocaleString()} / {progress.wordsTarget?.toLocaleString()} words
-          </div>
+        {progress && (
+          <>
+            <div className="flex items-center gap-2">
+              <div className="flex-1" style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{
+                  width: `${progress.pct}%`,
+                  height: '100%',
+                  borderRadius: 2,
+                  background: progress.pct > 80 ? 'var(--success)' : progress.pct >= 50 ? 'var(--accent)' : 'var(--warning)',
+                  animation: 'progressPulse 2.5s ease-in-out infinite',
+                  transition: 'width 0.6s ease',
+                }} />
+              </div>
+              <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
+                {progress.pct}%
+              </span>
+            </div>
+            {progress.wordsCurrent !== undefined && (
+              <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', marginTop: 4 }}>
+                {progress.wordsCurrent.toLocaleString()} / {progress.wordsTarget?.toLocaleString()} words
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -233,10 +245,9 @@ function AgentSidebar({ card }: { card: ContentCard }) {
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
         <div style={OVERLINE}>Pipeline</div>
         <div className="space-y-1">
-          {stages.map((stage, i) => {
-            const idx = stageOrder.indexOf(stage.key);
-            const done = idx < currentIdx;
-            const active = idx === currentIdx;
+          {SIDEBAR_STEPS.map((stage, i) => {
+            const done = stepIndex > i;
+            const active = stage.key === card.status;
 
             return (
               <div key={stage.key} className="flex items-center gap-2 py-1.5">
@@ -269,22 +280,24 @@ function AgentSidebar({ card }: { card: ContentCard }) {
       </div>
 
       {/* Current task */}
-      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-        <div style={OVERLINE}>Current Task</div>
-        <div className="flex items-start gap-2">
-          <span style={{
-            width: 4, height: 4, borderRadius: '50%', background: 'var(--warning)',
-            marginTop: 5, flexShrink: 0,
-            animation: 'pulse 1.5s ease-in-out infinite',
-          }} />
-          <div style={{ fontSize: 11, color: 'var(--text-primary)', animation: 'typing 1.8s ease-in-out infinite', lineHeight: 1.5 }}>
-            {progress.currentTask}
+      {progress && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div style={OVERLINE}>Current Task</div>
+          <div className="flex items-start gap-2">
+            <span style={{
+              width: 4, height: 4, borderRadius: '50%', background: 'var(--warning)',
+              marginTop: 5, flexShrink: 0,
+              animation: 'pulse 1.5s ease-in-out infinite',
+            }} />
+            <div style={{ fontSize: 11, color: 'var(--text-primary)', animation: 'typing 1.8s ease-in-out infinite', lineHeight: 1.5 }}>
+              {progress.currentTask}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Stats */}
-      {progress.sectionsComplete !== undefined && (
+      {progress?.sectionsComplete !== undefined && (
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
           <div style={OVERLINE}>Stats</div>
           <div className="grid grid-cols-2 gap-2">
@@ -307,6 +320,150 @@ function AgentSidebar({ card }: { card: ContentCard }) {
   );
 }
 
+// GA step definitions
+const GA_SIDEBAR_STEPS = [
+  { key: 'S1', label: 'Load Assets' },
+  { key: 'S2', label: 'Generate Queries' },
+  { key: 'S3', label: 'Search Platforms' },
+  { key: 'S4', label: 'Enrich Citations' },
+  { key: 'S5', label: 'Embed Content' },
+  { key: 'S6', label: 'Analyze Gaps' },
+  { key: 'S7', label: 'Visualize' },
+  { key: 'S8', label: 'Generate Report' },
+];
+
+function GapAnalysisSidebar({ card }: { card: ContentCard }) {
+  const progress = card.agentProgress;
+  const display = getDisplay(card.status);
+  const currentStepNum = progress?.gaStepNum ?? 0;
+
+  const buyerStageColors: Record<string, { bg: string; color: string }> = {
+    tofu: { bg: 'var(--accent-subtle)', color: 'var(--accent)' },
+    mofu: { bg: 'var(--warning-subtle)', color: 'var(--warning)' },
+    bofu: { bg: 'var(--success-subtle)', color: 'var(--success)' },
+  };
+
+  return (
+    <div className="p-4 space-y-4">
+      {/* Topic info */}
+      <div>
+        <div style={OVERLINE}>Topic</div>
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1.4, marginBottom: 4 }}>
+          {card.title}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          {card.cluster}
+        </div>
+      </div>
+
+      {/* Buyer stage badge */}
+      {card.buyerStage && (
+        <div>
+          <div style={OVERLINE}>Buyer Stage</div>
+          {(() => {
+            const style = buyerStageColors[card.buyerStage.toLowerCase()];
+            return (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  padding: '2px 8px',
+                  borderRadius: 'var(--radius-full)',
+                  background: style?.bg ?? 'var(--border)',
+                  color: style?.color ?? 'var(--text-secondary)',
+                }}
+              >
+                {card.buyerStage.toUpperCase()}
+              </span>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Current GA progress */}
+      {card.status === 'gap_analysis' && progress && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div style={OVERLINE}>Current Stage</div>
+          <div className="flex items-center gap-2 mb-2">
+            <span
+              style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: display.isAgentActive ? 'var(--warning)' : 'var(--border)',
+                animation: display.isAgentActive ? 'pulse 1.5s ease-in-out infinite' : undefined,
+              }}
+            />
+            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+              {progress.currentTask || display.label}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex-1" style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{
+                width: `${progress.pct}%`, height: '100%', borderRadius: 2,
+                background: progress.pct > 80 ? 'var(--success)' : progress.pct >= 50 ? 'var(--accent)' : 'var(--warning)',
+                animation: 'progressPulse 2.5s ease-in-out infinite',
+                transition: 'width 0.6s ease',
+              }} />
+            </div>
+            <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
+              {progress.pct}%
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* GA pipeline steps */}
+      {card.status === 'gap_analysis' && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div style={OVERLINE}>Pipeline</div>
+          <div className="space-y-1">
+            {GA_SIDEBAR_STEPS.map((stage, i) => {
+              const stepNum = i + 1;
+              const done = stepNum < currentStepNum;
+              const active = stepNum === currentStepNum;
+              return (
+                <div key={stage.key} className="flex items-center gap-2 py-1.5">
+                  <span style={{
+                    width: 18, height: 18, borderRadius: '50%',
+                    background: done ? 'var(--success)' : active ? 'var(--warning)' : 'var(--border)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 9, fontWeight: 600,
+                    color: done || active ? '#fff' : 'var(--text-tertiary)',
+                    flexShrink: 0,
+                    animation: active ? 'pulse 2s ease-in-out infinite' : undefined,
+                  }}>
+                    {done ? '\u2713' : stepNum}
+                  </span>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: active ? 500 : 400, color: done || active ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                      {stage.label}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Description */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        <div style={OVERLINE}>About</div>
+        {card.status === 'gap_analysis_complete' ? (
+          <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            Gap analysis complete. Click &ldquo;Start Production&rdquo; to begin content creation.
+          </p>
+        ) : (
+          <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            Analysis will identify content gaps across AI search platforms for this topic.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface LeftSidebarProps {
   card: ContentCard;
   activeSection: number;
@@ -314,6 +471,11 @@ interface LeftSidebarProps {
 }
 
 export function LeftSidebar({ card, activeSection, onSectionClick }: LeftSidebarProps) {
+  const column = getColumn(card.status);
+  const isGAPhase = card.status === 'gap_analysis_pending' || card.status === 'gap_analysis' || card.status === 'gap_analysis_complete';
+  const showBrief = card.status === 'brief_review' || card.status === 'pending_brief_approval';
+  const showArticle = card.status === 'review' || card.status === 'pending_content_approval';
+
   return (
     <div
       className="overflow-y-auto h-full"
@@ -324,12 +486,11 @@ export function LeftSidebar({ card, activeSection, onSectionClick }: LeftSidebar
         flexShrink: 0,
       }}
     >
-      {card.stage === 'queue' && <QueueSidebar card={card} />}
-      {card.stage === 'brief_review' && <BriefSidebar card={card} />}
-      {card.stage === 'article_review' && (
-        <ArticleSidebar card={card} activeSection={activeSection} onSectionClick={onSectionClick} />
-      )}
-      {card.column === 'agent' && <AgentSidebar card={card} />}
+      {isGAPhase && <GapAnalysisSidebar card={card} />}
+      {!isGAPhase && card.status === 'suggested' && <QueueSidebar card={card} />}
+      {showBrief && <BriefSidebar card={card} />}
+      {showArticle && <ArticleSidebar card={card} activeSection={activeSection} onSectionClick={onSectionClick} />}
+      {!isGAPhase && column === 'agent' && <AgentSidebar card={card} />}
     </div>
   );
 }

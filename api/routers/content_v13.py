@@ -25,6 +25,7 @@ from api.schemas.content_v13 import (
     ContentStartRequestV13,
     PipelineRunResponseV13,
     TopicApprovalRequest,
+    TopicContentProductionRequest,
     TopicContentStartRequest,
     TopicContentStatusItem,
     TopicContentStatusResponse,
@@ -36,6 +37,8 @@ from api.tasks.runner import (
     _resolve_scope_async,
     run_content_v13_pipeline_task,
     run_td_content_pipeline_task,
+    run_td_gap_analysis_task,
+    run_td_content_production_task,
 )
 from api.routers._helpers import create_task_durable
 from core.auth.service import AuthServiceProtocol
@@ -504,6 +507,163 @@ async def start_from_topics(
         status="started",
         entry_mode="topic_discovery",
         message=f"TD→Content pipeline started for {len(body.topic_assignment_ids)} topics",
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /from-topics/gap-analysis — Launch TD → GA-only pipeline (Phase 1)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/from-topics/gap-analysis", status_code=202)
+async def start_from_topics_gap_analysis(
+    body: TopicContentStartRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
+) -> PipelineRunResponseV13:
+    """Launch the TD → GA-only pipeline (Phase 1) for approved topic assignments.
+
+    Runs topic-scoped Gap Analysis without starting Content Engine.
+    The user can review GA results and then launch production (Phase 2).
+    """
+    # Tenant isolation
+    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
+    company_slug = _derive_slug(body.company_name)
+    if not user_company_slug or company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Cannot start pipeline for another company")
+
+    # Validate effective_slug format
+    if not _SLUG_PATTERN.match(body.effective_slug):
+        raise HTTPException(status_code=400, detail="Invalid effective_slug format")
+
+    # Create task
+    task = await create_task_durable(
+        task_store,
+        pipeline="td_gap_analysis",
+        company_slug=company_slug,
+        product_slug=body.product_slug,
+    )
+
+    handle = asyncio.create_task(
+        run_td_gap_analysis_task(
+            task_id=task.task_id,
+            effective_slug=body.effective_slug,
+            topic_assignment_ids=body.topic_assignment_ids,
+            company_name=body.company_name,
+            domain=body.domain,
+            task_store=task_store,
+            event_bus=event_bus,
+            product_slug=body.product_slug,
+            product_name=body.product_name,
+            product_description=body.product_description,
+            platforms=body.platforms,
+        )
+    )
+    task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="td_gap_analysis",
+        company_slug=company_slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "effective_slug": body.effective_slug,
+        },
+    )
+
+    return PipelineRunResponseV13(
+        run_id=task.task_id,
+        status="started",
+        entry_mode="topic_discovery_ga",
+        message=f"TD→GA pipeline started for {len(body.topic_assignment_ids)} topics",
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /from-topics/start-production — Launch Content Production (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/from-topics/start-production", status_code=202)
+async def start_from_topics_production(
+    body: TopicContentProductionRequest,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+    event_bus: EventBusProtocol = Depends(get_event_bus),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
+) -> PipelineRunResponseV13:
+    """Launch Content Engine production from pre-computed GA results (Phase 2).
+
+    Validates that the GA run's analysis.json exists before starting.
+    """
+    # Tenant isolation
+    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
+    company_slug = _derive_slug(body.company_name)
+    if not user_company_slug or company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Cannot start pipeline for another company")
+
+    # Validate effective_slug format
+    if not _SLUG_PATTERN.match(body.effective_slug):
+        raise HTTPException(status_code=400, detail="Invalid effective_slug format")
+
+    # Validate that the GA run analysis.json exists
+    from core.storage import get_storage_backend
+    storage = get_storage_backend()
+    analysis_key = f"gap_analysis/{body.effective_slug}/topic_scoped/{body.ga_run_id}/analysis.json"
+    if not storage.exists(analysis_key):
+        raise HTTPException(
+            status_code=404,
+            detail=f"GA run {body.ga_run_id} analysis not found. Gap analysis may not have completed.",
+        )
+
+    # Create task
+    task = await create_task_durable(
+        task_store,
+        pipeline="td_content",
+        company_slug=company_slug,
+        product_slug=body.product_slug,
+    )
+
+    handle = asyncio.create_task(
+        run_td_content_production_task(
+            task_id=task.task_id,
+            effective_slug=body.effective_slug,
+            topic_assignment_ids=body.topic_assignment_ids,
+            company_name=body.company_name,
+            domain=body.domain,
+            ga_run_id=body.ga_run_id,
+            task_store=task_store,
+            event_bus=event_bus,
+            product_slug=body.product_slug,
+            product_name=body.product_name,
+            product_description=body.product_description,
+            auto_approve=body.auto_approve,
+        )
+    )
+    task_store.register_task_handle(task.task_id, handle)
+
+    await log_pipeline_launch(
+        user_id=_user.id,
+        pipeline="td_content",
+        company_slug=company_slug,
+        task_id=task.task_id,
+        detail={
+            "product_slug": body.product_slug,
+            "effective_slug": body.effective_slug,
+            "ga_run_id": body.ga_run_id,
+        },
+    )
+
+    return PipelineRunResponseV13(
+        run_id=task.task_id,
+        status="started",
+        entry_mode="topic_discovery",
+        message=f"TD→Content production started for {len(body.topic_assignment_ids)} topics (GA: {body.ga_run_id[:8]}...)",
     )
 
 

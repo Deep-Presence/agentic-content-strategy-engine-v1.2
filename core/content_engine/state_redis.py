@@ -7,13 +7,21 @@ otherwise.
 Redis Hash structure for ``pipeline_state:{effective_slug}``:
   - ``brief-001`` → ``"generating"`` (status string)
   - ``__tid:brief-001`` → ``"task-uuid"`` (task ID for HITL discovery)
+  - ``ta-{uuid}`` → ``"gap_analysis"`` (GA-phase topic assignment card)
+  - ``__tid:ta-{uuid}`` → ``"ga-task-uuid"`` (GA task ID for SSE)
+  - ``__meta:ta-{uuid}`` → JSON ``{"title": "...", "cluster": "...", ...}``
 
 The ``__tid:`` prefix avoids collision with brief IDs. Readers reconstruct
 the ``__task_ids__`` nested dict for backward compatibility with existing
 content data service code.
+
+GA-phase cards use ``ta-{topic_assignment_id}`` keys and coexist with
+``brief-NNN`` keys in the same hash. ``__meta:`` entries store topic
+metadata needed to render cards before CE creates real briefs.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -307,3 +315,254 @@ def _reconstruct_state(raw: Dict[str, str]) -> Dict[str, Any]:
         result["__task_ids__"] = task_ids
 
     return result
+
+
+# ── GA-phase state (sync) ────────────────────────────────────────
+
+
+_META_PREFIX = "__meta:"
+_GA_CARD_PREFIX = "ta-"
+
+# Valid GA-phase status values
+_GA_PHASES: frozenset[str] = frozenset({
+    "gap_analysis_pending",
+    "gap_analysis",
+    "gap_analysis_complete",
+})
+
+
+def write_ga_phase_state(
+    redis_sync: Any,
+    slug: str,
+    assignment_ids: List[str],
+    phase: str,
+    *,
+    task_id: Optional[str] = None,
+    topic_data: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> None:
+    """Write GA-phase topic assignment card state to Redis Hash.
+
+    Keys use ``ta-{topic_assignment_id}`` prefix to coexist with
+    ``brief-NNN`` keys in the same ``pipeline_state:{slug}`` hash.
+
+    Args:
+        redis_sync: Sync Redis client.
+        slug: Effective slug (company or company__product).
+        assignment_ids: List of topic_assignment_id UUIDs.
+        phase: One of gap_analysis_pending, gap_analysis, gap_analysis_complete.
+        task_id: GA task_id for SSE subscription.
+        topic_data: Optional dict mapping assignment_id → metadata dict
+            (keys: title, cluster, priority_score, buyer_stage, ga_run_id).
+    """
+    import redis.asyncio as _aioredis
+
+    if isinstance(redis_sync, _aioredis.Redis):
+        raise TypeError(
+            "write_ga_phase_state requires a sync Redis client, "
+            "got async. Use write_ga_phase_state_async instead."
+        )
+
+    if phase not in _GA_PHASES:
+        logger.warning("write_ga_phase_state called with unknown phase %r", phase)
+
+    key = _state_key(slug)
+    pipe = redis_sync.pipeline()
+    try:
+        for aid in assignment_ids:
+            card_key = f"{_GA_CARD_PREFIX}{aid}"
+            pipe.hset(key, card_key, phase)
+            if task_id:
+                pipe.hset(key, f"{_TID_PREFIX}{card_key}", task_id)
+            if topic_data and aid in topic_data:
+                pipe.hset(
+                    key,
+                    f"{_META_PREFIX}{card_key}",
+                    json.dumps(topic_data[aid], default=str),
+                )
+        pipe.expire(key, _STATE_TTL)
+        pipe.execute()
+    finally:
+        pass
+
+
+def read_ga_phase_cards(
+    redis_sync: Any,
+    slug: str,
+) -> List[Dict[str, Any]]:
+    """Read GA-phase card entries from the pipeline state hash.
+
+    Returns a list of dicts, each containing:
+    - ``id``: ``ta-{topic_assignment_id}``
+    - ``status``: gap_analysis_pending | gap_analysis | gap_analysis_complete
+    - ``task_id``: GA task_id (if set)
+    - ``title``, ``cluster``, ``priority_score``, ``buyer_stage``, ``ga_run_id``:
+      from ``__meta:ta-*`` entries (if available)
+
+    Only returns entries whose status is in _GA_PHASES.
+    """
+    key = _state_key(slug)
+    raw = redis_sync.hgetall(key)
+    if not raw:
+        return []
+
+    # Collect card IDs, task IDs, and metadata
+    ga_cards: Dict[str, str] = {}  # card_key → status
+    task_ids: Dict[str, str] = {}  # card_key → task_id
+    meta: Dict[str, Dict[str, Any]] = {}  # card_key → metadata
+
+    for field, value in raw.items():
+        if field.startswith(_META_PREFIX):
+            card_key = field[len(_META_PREFIX):]
+            if card_key.startswith(_GA_CARD_PREFIX):
+                try:
+                    meta[card_key] = json.loads(value)
+                except (json.JSONDecodeError, ValueError):
+                    meta[card_key] = {}
+        elif field.startswith(_TID_PREFIX):
+            target = field[len(_TID_PREFIX):]
+            if target.startswith(_GA_CARD_PREFIX):
+                task_ids[target] = value
+        elif field.startswith(_GA_CARD_PREFIX):
+            if value in _GA_PHASES:
+                ga_cards[field] = value
+
+    result: List[Dict[str, Any]] = []
+    for card_key, status in ga_cards.items():
+        card: Dict[str, Any] = {
+            "id": card_key,
+            "status": status,
+            "task_id": task_ids.get(card_key),
+        }
+        card_meta = meta.get(card_key, {})
+        card["title"] = card_meta.get("title", "")
+        card["cluster"] = card_meta.get("cluster", "")
+        card["priority_score"] = card_meta.get("priority_score", 0.0)
+        card["buyer_stage"] = card_meta.get("buyer_stage")
+        card["ga_run_id"] = card_meta.get("ga_run_id")
+        card["topic_assignment_id"] = card_key[len(_GA_CARD_PREFIX):]
+        result.append(card)
+
+    return result
+
+
+def cleanup_ga_phase_state(
+    redis_sync: Any,
+    slug: str,
+    assignment_ids: List[str],
+) -> None:
+    """Remove GA-phase entries for given assignments (graduation to CE).
+
+    Removes ``ta-{id}``, ``__tid:ta-{id}``, and ``__meta:ta-{id}`` fields.
+    """
+    if not assignment_ids:
+        return
+
+    key = _state_key(slug)
+    fields: List[str] = []
+    for aid in assignment_ids:
+        card_key = f"{_GA_CARD_PREFIX}{aid}"
+        fields.append(card_key)
+        fields.append(f"{_TID_PREFIX}{card_key}")
+        fields.append(f"{_META_PREFIX}{card_key}")
+    redis_sync.hdel(key, *fields)
+
+
+# ── GA-phase state (async) ───────────────────────────────────────
+
+
+async def write_ga_phase_state_async(
+    redis_async: Any,
+    slug: str,
+    assignment_ids: List[str],
+    phase: str,
+    *,
+    task_id: Optional[str] = None,
+    topic_data: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> None:
+    """Async variant of write_ga_phase_state."""
+    if phase not in _GA_PHASES:
+        logger.warning("write_ga_phase_state_async called with unknown phase %r", phase)
+
+    key = _state_key(slug)
+    pipe = redis_async.pipeline()
+    for aid in assignment_ids:
+        card_key = f"{_GA_CARD_PREFIX}{aid}"
+        pipe.hset(key, card_key, phase)
+        if task_id:
+            pipe.hset(key, f"{_TID_PREFIX}{card_key}", task_id)
+        if topic_data and aid in topic_data:
+            pipe.hset(
+                key,
+                f"{_META_PREFIX}{card_key}",
+                json.dumps(topic_data[aid], default=str),
+            )
+    pipe.expire(key, _STATE_TTL)
+    await pipe.execute()
+
+
+async def read_ga_phase_cards_async(
+    redis_async: Any,
+    slug: str,
+) -> List[Dict[str, Any]]:
+    """Async variant of read_ga_phase_cards."""
+    key = _state_key(slug)
+    raw = await redis_async.hgetall(key)
+    if not raw:
+        return []
+
+    ga_cards: Dict[str, str] = {}
+    task_ids: Dict[str, str] = {}
+    meta: Dict[str, Dict[str, Any]] = {}
+
+    for field, value in raw.items():
+        if field.startswith(_META_PREFIX):
+            card_key = field[len(_META_PREFIX):]
+            if card_key.startswith(_GA_CARD_PREFIX):
+                try:
+                    meta[card_key] = json.loads(value)
+                except (json.JSONDecodeError, ValueError):
+                    meta[card_key] = {}
+        elif field.startswith(_TID_PREFIX):
+            target = field[len(_TID_PREFIX):]
+            if target.startswith(_GA_CARD_PREFIX):
+                task_ids[target] = value
+        elif field.startswith(_GA_CARD_PREFIX):
+            if value in _GA_PHASES:
+                ga_cards[field] = value
+
+    result: List[Dict[str, Any]] = []
+    for card_key, status in ga_cards.items():
+        card: Dict[str, Any] = {
+            "id": card_key,
+            "status": status,
+            "task_id": task_ids.get(card_key),
+        }
+        card_meta = meta.get(card_key, {})
+        card["title"] = card_meta.get("title", "")
+        card["cluster"] = card_meta.get("cluster", "")
+        card["priority_score"] = card_meta.get("priority_score", 0.0)
+        card["buyer_stage"] = card_meta.get("buyer_stage")
+        card["ga_run_id"] = card_meta.get("ga_run_id")
+        card["topic_assignment_id"] = card_key[len(_GA_CARD_PREFIX):]
+        result.append(card)
+
+    return result
+
+
+async def cleanup_ga_phase_state_async(
+    redis_async: Any,
+    slug: str,
+    assignment_ids: List[str],
+) -> None:
+    """Async variant of cleanup_ga_phase_state."""
+    if not assignment_ids:
+        return
+
+    key = _state_key(slug)
+    fields: List[str] = []
+    for aid in assignment_ids:
+        card_key = f"{_GA_CARD_PREFIX}{aid}"
+        fields.append(card_key)
+        fields.append(f"{_TID_PREFIX}{card_key}")
+        fields.append(f"{_META_PREFIX}{card_key}")
+    await redis_async.hdel(key, *fields)

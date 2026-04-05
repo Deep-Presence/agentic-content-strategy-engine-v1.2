@@ -1,6 +1,7 @@
 'use client';
 
-import type { ContentCard } from './types';
+import type { ContentCard, KanbanColumn } from './types';
+import { getColumn } from '../_lib/status-adapter';
 import { ContentCardItem } from './ContentCardItem';
 
 interface ColumnProps {
@@ -13,6 +14,17 @@ interface ColumnProps {
 }
 
 function Column({ title, subtitle, count, badgeColor, cards, onCardClick }: ColumnProps) {
+  const badgeBg =
+    badgeColor === 'neutral' ? 'var(--border)' :
+    badgeColor === 'teal' ? 'var(--accent-subtle)' :
+    badgeColor === 'success' ? 'var(--success-subtle)' :
+    'var(--warning-subtle)';
+  const badgeFg =
+    badgeColor === 'neutral' ? 'var(--text-secondary)' :
+    badgeColor === 'teal' ? 'var(--accent)' :
+    badgeColor === 'success' ? 'var(--success)' :
+    'var(--warning)';
+
   return (
     <div className="flex flex-col min-h-0" style={{ borderRight: '1px solid var(--border)' }}>
       {/* Column header */}
@@ -26,8 +38,8 @@ function Column({ title, subtitle, count, badgeColor, cards, onCardClick }: Colu
               fontFamily: 'var(--font-mono)',
               padding: '1px 6px',
               borderRadius: 'var(--radius-full)',
-              background: badgeColor === 'neutral' ? 'var(--border)' : badgeColor === 'teal' ? 'var(--accent-subtle)' : 'var(--warning-subtle)',
-              color: badgeColor === 'neutral' ? 'var(--text-secondary)' : badgeColor === 'teal' ? 'var(--accent)' : 'var(--warning)',
+              background: badgeBg,
+              color: badgeFg,
             }}
           >
             {count}
@@ -52,50 +64,52 @@ function Column({ title, subtitle, count, badgeColor, cards, onCardClick }: Colu
   );
 }
 
+const COLUMNS: { key: KanbanColumn; title: string; subtitle: string; badgeColor: string }[] = [
+  { key: 'triage', title: 'Queue', subtitle: 'Items from Content Planner', badgeColor: 'neutral' },
+  { key: 'human', title: 'Your review', subtitle: 'Approve or send back', badgeColor: 'teal' },
+  { key: 'agent', title: 'Agent work', subtitle: 'Automated generation in progress', badgeColor: 'amber' },
+  { key: 'done', title: 'Completed', subtitle: 'Published & archived', badgeColor: 'success' },
+];
+
 interface ColumnBoardProps {
   cards: ContentCard[];
   onCardClick: (card: ContentCard) => void;
 }
 
 export function ColumnBoard({ cards, onCardClick }: ColumnBoardProps) {
-  const queueCards = cards.filter((c) => c.column === 'queue');
-  const humanCards = cards.filter((c) => c.column === 'human');
-  const agentCards = cards.filter((c) => c.column === 'agent');
+  const cardsByColumn: Record<KanbanColumn, ContentCard[]> = {
+    triage: [],
+    human: [],
+    agent: [],
+    done: [],
+  };
+
+  for (const card of cards) {
+    const col = getColumn(card.status);
+    cardsByColumn[col].push(card);
+  }
 
   return (
     <div
       className="flex-1 grid min-h-0 overflow-hidden"
       style={{
-        gridTemplateColumns: '22% 39% 39%',
+        gridTemplateColumns: '16% 34% 34% 16%',
         border: '1px solid var(--border)',
         borderRadius: 'var(--radius-md)',
         background: 'var(--bg)',
       }}
     >
-      <Column
-        title="Queue"
-        subtitle="Items from Content Planner"
-        count={queueCards.length}
-        badgeColor="neutral"
-        cards={queueCards}
-        onCardClick={onCardClick}
-      />
-      <Column
-        title="Your review"
-        subtitle="Approve or send back"
-        count={humanCards.length}
-        badgeColor="teal"
-        cards={humanCards}
-        onCardClick={onCardClick}
-      />
-      <Column
-        title="Agent work"
-        subtitle="Automated generation in progress"
-        count={agentCards.length}
-        badgeColor="amber"
-        cards={agentCards}
-        onCardClick={onCardClick}
-      />
+      {COLUMNS.map((col) => (
+        <Column
+          key={col.key}
+          title={col.title}
+          subtitle={col.subtitle}
+          count={cardsByColumn[col.key].length}
+          badgeColor={col.badgeColor}
+          cards={cardsByColumn[col.key]}
+          onCardClick={onCardClick}
+        />
+      ))}
     </div>
   );
 }

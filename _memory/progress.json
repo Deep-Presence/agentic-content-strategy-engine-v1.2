@@ -1,7 +1,7 @@
 {
-  "current_sprint": "td-db-only-migration",
-  "last_updated": "2026-04-05",
-  "test_count": 1588,
+  "current_sprint": "td-ga-ce-two-phase-split",
+  "last_updated": "2026-04-06",
+  "test_count": 1655,
   "completed_sprints_summary": {
     "total_tasks_completed": 43,
     "sprints": [
@@ -48,10 +48,124 @@
       {"sprint": "prompt-tracking-frontend-integration-extended", "date": "2026-04-04", "summary": "Prompt Tracking full frontend integration + Brand Hub regeneration. Add Prompt modal (POST /prompts), Run All Prompts (POST /runs with persistent status banner, localStorage, polling), fanout generation animation (shimmer + polling), auto-run daily checkbox. Brand Hub: Re-generate buttons wired for KB/AP/VSG (auto-approve), Re-run Pipeline button calls Research Orchestrator (KB→AP→VSG DAG, auto-approve all). Two-pass competitor extraction: Haiku extracts structured JSON from KB markdown, daily tracker auto-resolves competitors from KB sidecar. PB-95 (tenant isolation) CRITICAL. 16 new extraction tests. Model fix (claude-haiku-4.5). LangSmith tracing on extraction. 683 tests passing."},
       {"sprint": "settings-page-integration", "date": "2026-04-04", "summary": "Settings page (/settings) frontend-backend integration. Team tab: real API (member list, role updates superuser-gated, invite code generation). Integrations tab: WordPress CMS connect/disconnect via modal form, GA4 Analytics full OAuth flow (authorize → Google consent → BFF callback → property selection → sync → disconnect w/ purge). BFF callback route bypasses catch-all proxy auth. api.del() enhanced with params. Role mapping layer (superuser↔Admin, member↔Editor, viewer↔Viewer). Models/Billing/Notifications tabs remain dummy. 8 new files, 3 modified. TypeScript clean, build clean."},
       {"sprint": "planner-integration", "date": "2026-04-04", "summary": "Content Planner (/planner) frontend-backend integration. 4 new backend endpoints (summary, assignments CRUD, custom create). TopicAssignmentStatus enum expanded (approved/rejected). Frontend: _lib/ (types, api, adapters) + usePlannerData hook + component updates. Initiatives sidebar stays dummy. 59 new tests. GA4 OAuth redirect fix. GA4 disconnect reconnect bug fix (active_only=False). Expand Topic button on Cluster Explorer."},
-      {"sprint": "td-db-only-migration", "date": "2026-04-05", "summary": "Eliminate JSON filesystem from Topic Discovery pipelines — DB-only storage. New db_ops.py (13 async functions replacing TopicDiscoveryStorage). Pipeline A & B rewritten. DbTopicDiscoveryDataService JSON fallback removed. TD→Content orchestrator reads from DB. Router/guard uses DB queries. pipeline_state.json writes conditional on Redis. Migration 0029 (scoring_json, persona_affinity_index_json). 1588 tests passing."}
+      {"sprint": "td-db-only-migration", "date": "2026-04-05", "summary": "Eliminate JSON filesystem from Topic Discovery pipelines — DB-only storage. New db_ops.py (13 async functions replacing TopicDiscoveryStorage). Pipeline A & B rewritten. DbTopicDiscoveryDataService JSON fallback removed. TD→Content orchestrator reads from DB. Router/guard uses DB queries. pipeline_state.json writes conditional on Redis. Migration 0029 (scoring_json, persona_affinity_index_json). 1588 tests passing."},
+      {"sprint": "td-additive-upsert", "date": "2026-04-05", "summary": "Refactor topic expansion (Pipeline B) to additive per-subdomain DB upserts. 5 new db_ops functions (claim, mark, write-per-subdomain, rebuild-tree-json, reset-stale). Pipeline B rewritten: per-subdomain expand+persist with retry/backoff, circuit breaker, crash recovery. Per-assignment persona affinity scoring. db_read_taxonomy fallback for NULL tree_json. allow_parallel=True for concurrent expansions (DB optimistic lock replaces Redis slug lock). 3 tree CRUD API endpoints. Frontend: persona affinity in cluster header, target persona in drawer, auto-refresh via task polling, concurrent expansion support. Migration 0031. 18 new tests. 647 TD+API tests passing."},
+      {"sprint": "content-studio-status-enum", "date": "2026-04-05", "summary": "Content Studio stage-status enum resolution. Replaced 8-value ContentStage + 3-value Column with 17-value BriefPipelineStatus (mirrors backend) + 4-value KanbanColumn. New _lib/status-adapter.ts with pure mapping functions (getColumn, getDisplay, getHITLActions, getWorkerStepIndex). 4 Kanban columns (triage/human/agent/done). Pipeline stepper aligned with backend worker chain (6 steps). 1 new file, 7 modified. TypeScript clean, build clean."},
+      {"sprint": "td-ga-ce-two-phase-split", "date": "2026-04-06", "summary": "Two-phase TD→GA→CE pipeline split. Split run_td_to_content_pipeline into run_td_gap_analysis_only (Phase 1: GA with SSE instrumentation, ga_step_start/ga_step_complete at all 8 S-steps) and run_td_content_production_only (Phase 2: CE from pre-computed GA). 3 new BriefPipelineStatus (gap_analysis_pending/gap_analysis/gap_analysis_complete). GA-phase Redis state layer (ta-{id} keys in pipeline_state:{slug} hash). DbContentDataService.get_briefs() merges GA cards before DB briefs. 2 new runner tasks, 2 new endpoints (POST /from-topics/gap-analysis, POST /from-topics/start-production). TopicContentProductionRequest schema. Alembic 0032. Frontend: types+adapter+api+hooks+visual components for GA phase (8-step stepper, 'Start Production' CTA). Planner handleApprove wires to GA pipeline. 49 new tests. Codex gpt-5.3-codex audit: 7 findings fixed (H1-H4, M1-M2). 85 tests passing. Build clean."}
     ]
   },
   "completed": [
+    {
+      "id": "T-td-ga-ce-two-phase-split",
+      "task": "Two-phase TD→GA→CE pipeline split — GA-only + CE-only with SSE, Redis state, frontend integration",
+      "sprint": "td-ga-ce-two-phase-split",
+      "status": "done",
+      "completed_at": "2026-04-06",
+      "tests_added": 49,
+      "files_created": [
+        "core/db/migrations/versions/0032_ga_phase_statuses.py",
+        "tests/content_engine/test_state_redis_ga.py",
+        "tests/orchestration/test_td_ga_only.py",
+        "tests/api/test_content_v13_ga_endpoints.py"
+      ],
+      "files_modified": [
+        "core/models/pipeline_status.py",
+        "core/models/topic_discovery.py",
+        "core/db/enums.py",
+        "api/tasks/models.py",
+        "api/schemas/content_v13.py",
+        "api/schemas/content_data.py",
+        "core/content_engine/state_redis.py",
+        "core/services/db_content_data.py",
+        "core/topic_discovery/db_ops.py",
+        "core/orchestration/td_content_orchestrator.py",
+        "core/gap_analysis/pipeline.py",
+        "api/tasks/runner.py",
+        "api/routers/content_v13.py",
+        "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/status-adapter.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useContentPipeline.ts",
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useContentBriefs.ts",
+        "frontend/src/app/(dashboard)/content-studio/page.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/LeftSidebar.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/ContentCardItem.tsx",
+        "frontend/src/app/(dashboard)/planner/_lib/api.ts",
+        "frontend/src/app/(dashboard)/planner/page.tsx"
+      ],
+      "details": {
+        "architecture": "Two separate tasks (GA-only + CE-only), each with own task_id/semaphore/SSE stream. GA completes with ga_run_id in result; CE receives ga_run_id as input.",
+        "backend_new_statuses": "BriefPipelineStatus: gap_analysis_pending, gap_analysis, gap_analysis_complete. TopicAssignmentStatus: gap_analysis_complete.",
+        "backend_ga_state": "GA-phase cards use ta-{uuid} keys in pipeline_state:{slug} Redis Hash. __tid: for task_id, __meta: for JSON metadata (title, cluster, priority, buyer_stage, ga_run_id). No JSON file fallback.",
+        "backend_sse": "ga_step_start/ga_step_complete events at all 8 S-step boundaries in run_topic_scoped_gap_analysis. Each includes step, name, step_num, total_steps.",
+        "backend_endpoints": "POST /from-topics/gap-analysis (Phase 1), POST /from-topics/start-production (Phase 2). Original POST /from-topics preserved.",
+        "frontend_flow": "Planner Approve → POST gap-analysis → card in Queue → SSE GA progress → gap_analysis_complete → user clicks Start Production → POST start-production → normal CE flow",
+        "audit_fixes": "H1: ga_step_complete payload (step_num/total_steps). H2: CancelledError cleanup. H3: GA cleanup moved to post-CE-success. H4: effectiveSlug wired through card. M1: multi-card GA progress. M2: completed/failed SSE aliases."
+      }
+    },
+    {
+      "id": "T-content-studio-status-enum",
+      "task": "Content Studio stage-status enum resolution — replace frontend ContentStage/Column with backend-aligned BriefPipelineStatus/KanbanColumn, adapter layer, 4-column Kanban, aligned pipeline stepper",
+      "sprint": "content-studio-status-enum",
+      "status": "done",
+      "completed_at": "2026-04-05",
+      "tests_added": 0,
+      "files_created": [
+        "frontend/src/app/(dashboard)/content-studio/_lib/status-adapter.ts"
+      ],
+      "files_modified": [
+        "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/mock-data.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/ColumnBoard.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/ContentCardItem.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/LeftSidebar.tsx",
+        "frontend/src/app/(dashboard)/content-studio/page.tsx"
+      ],
+      "details": {
+        "types_removed": "ContentStage (8 values), Column (3 values), stageLabel field",
+        "types_added": "BriefPipelineStatus (17 values mirroring core/models/pipeline_status.py), KanbanColumn (4 values: triage/agent/human/done)",
+        "adapter": "status-adapter.ts — getColumn, getDisplay, getHITLActions, getWorkerStepIndex, isTerminal, isAgentProcessing",
+        "kanban": "4 columns (16%/34%/34%/16%) replacing 3 columns (22%/39%/39%)",
+        "pipeline_stepper": "6 backend-aligned steps (Brief→Outline→Draft→Link→Enrich→Evaluate) replacing 4 frontend-invented stages",
+        "progress_sim": "Worker chain simulation advances through real statuses (outlining→drafting→linking→enriching→evaluating)"
+      }
+    },
+    {
+      "id": "T-td-additive-upsert",
+      "task": "Refactor topic expansion (Pipeline B) to additive per-subdomain DB upserts with parallel execution, per-assignment persona affinity, retry/backoff, circuit breaker, tree CRUD, and frontend auto-refresh",
+      "sprint": "td-additive-upsert",
+      "status": "done",
+      "completed_at": "2026-04-05",
+      "tests_added": 18,
+      "files_created": [
+        "core/db/migrations/versions/0031_td_additive_upsert.py",
+        "tests/topic_discovery/test_db_ops_additive.py"
+      ],
+      "files_modified": [
+        "core/db/models/topic_discovery.py",
+        "core/db/repositories/topic_discovery_repo.py",
+        "core/models/topic_discovery.py",
+        "core/topic_discovery/db_ops.py",
+        "core/topic_discovery/pipeline.py",
+        "core/topic_discovery/scoring.py",
+        "core/config/settings.py",
+        "core/services/db_topic_discovery_data.py",
+        "api/routers/topic_discovery.py",
+        "api/schemas/topic_discovery.py",
+        "api/tasks/runner.py",
+        "frontend/src/app/(dashboard)/planner/_components/ClusterExplorer.tsx",
+        "frontend/src/app/(dashboard)/planner/_components/DetailDrawer.tsx",
+        "frontend/src/app/(dashboard)/planner/_components/planner-data.ts",
+        "frontend/src/app/(dashboard)/planner/_hooks/usePlannerData.ts",
+        "frontend/src/app/(dashboard)/planner/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/planner/_lib/api.ts",
+        "tests/topic_discovery/test_expansion_pipeline_td.py"
+      ]
+    },
     {
       "id": "T-settings-page-integration",
       "task": "Settings page (/settings) frontend-backend integration — Team tab (real API), Integrations tab (WordPress CMS + GA4 OAuth), BFF callback route, role mapping",

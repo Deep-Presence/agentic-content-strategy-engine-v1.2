@@ -1646,6 +1646,225 @@ async def run_td_content_pipeline_task(
         clear_context()
 
 
+# ── TD → GA-only pipeline runner ─────────────────────────────────────
+
+
+async def run_td_gap_analysis_task(
+    task_id: str,
+    effective_slug: str,
+    topic_assignment_ids: List[str],
+    company_name: str,
+    domain: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBusProtocol,
+    *,
+    product_slug: Optional[str] = None,
+    product_name: Optional[str] = None,
+    product_description: Optional[str] = None,
+    platforms: Optional[List[str]] = None,
+) -> None:
+    """Background task wrapper for the TD → GA-only orchestrator (Phase 1).
+
+    Acquires semaphore, resolves DB context, calls
+    run_td_gap_analysis_only(), and handles completion/failure.
+    """
+    from core.orchestration.td_content_orchestrator import (
+        run_td_gap_analysis_only,
+        _update_assignment_statuses_db,
+        _cleanup_ga_phase_redis,
+    )
+    from core.models.topic_discovery import TopicAssignmentStatus
+
+    company_slug = _derive_slug(company_name)
+
+    session_factory, run_id, company_id = await _resolve_db_context(
+        company_slug, effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            effective_slug, "td_gap_analysis",
+        )
+
+    bind_context(task_id=task_id, pipeline_name="td_gap_analysis", company_slug=company_slug, run_id=str(run_id) if run_id else None)
+    try:
+        async with task_store.pipeline_semaphore(task_id):
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "td_gap_analysis"})
+
+            ga_result = await run_td_gap_analysis_only(
+                effective_slug=effective_slug,
+                topic_assignment_ids=topic_assignment_ids,
+                company_name=company_name,
+                domain=domain,
+                platforms=platforms,
+                product_slug=product_slug,
+                product_name=product_name,
+                product_description=product_description,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            result = {
+                "ga_run_id": ga_result.ga_run_id,
+                "analysis_path": ga_result.analysis_path,
+                "topic_assignment_ids": ga_result.valid_assignment_ids,
+                "produced_artifacts": [{"type": "td_gap_analysis", "slug": effective_slug}],
+            }
+            task_store.update_task(task_id, status=TaskStatus.COMPLETED, result=result)
+            event_bus.publish(task_id, "completed", {"pipeline": "td_gap_analysis", "ga_run_id": ga_result.ga_run_id})
+
+    except asyncio.CancelledError:
+        logger.info("TD→GA pipeline cancelled: task_id=%s", task_id)
+        # Revert assignment statuses and clean up GA-phase Redis state
+        if session_factory:
+            try:
+                await _update_assignment_statuses_db(
+                    session_factory, topic_assignment_ids,
+                    TopicAssignmentStatus.approved,
+                )
+            except Exception:
+                logger.warning("Failed to revert assignment statuses on GA cancel", exc_info=True)
+            try:
+                _cleanup_ga_phase_redis(effective_slug, topic_assignment_ids)
+            except Exception:
+                logger.warning("Failed to clean up GA-phase Redis state on cancel", exc_info=True)
+        task_store.update_task(task_id, status=TaskStatus.CANCELLED, error="Cancelled")
+        event_bus.publish(task_id, "cancelled", {"pipeline": "td_gap_analysis"})
+    except Exception as exc:
+        logger.exception("TD→GA pipeline failed: %s", exc)
+        # Revert assignment statuses back to approved
+        if session_factory:
+            try:
+                await _update_assignment_statuses_db(
+                    session_factory, topic_assignment_ids,
+                    TopicAssignmentStatus.approved,
+                )
+            except Exception:
+                logger.warning("Failed to revert assignment statuses on GA failure", exc_info=True)
+            # Clean up GA-phase Redis state
+            try:
+                _cleanup_ga_phase_redis(effective_slug, topic_assignment_ids)
+            except Exception:
+                logger.warning("Failed to clean up GA-phase Redis state", exc_info=True)
+        task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        await task_store.flush_terminal(task_id)
+        task_store.release_slug_lock(f"td_gap_analysis:{effective_slug}")
+        task_store.remove_task_handle(task_id)
+        clear_context()
+
+
+# ── TD → Content production-only pipeline runner ─────────────────────
+
+
+async def run_td_content_production_task(
+    task_id: str,
+    effective_slug: str,
+    topic_assignment_ids: List[str],
+    company_name: str,
+    domain: str,
+    ga_run_id: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBusProtocol,
+    *,
+    product_slug: Optional[str] = None,
+    product_name: Optional[str] = None,
+    product_description: Optional[str] = None,
+    auto_approve: bool = False,
+) -> None:
+    """Background task wrapper for the TD → Content production-only orchestrator (Phase 2).
+
+    Acquires semaphore, resolves DB context, calls
+    run_td_content_production_only(), and handles completion/failure.
+    """
+    from core.orchestration.td_content_orchestrator import (
+        run_td_content_production_only,
+        _update_assignment_statuses_db,
+    )
+    from core.models.topic_discovery import TopicAssignmentStatus
+
+    company_slug = _derive_slug(company_name)
+
+    session_factory, run_id, company_id = await _resolve_db_context(
+        company_slug, effective_slug,
+    )
+    if session_factory and run_id and company_id:
+        await _create_pipeline_run(
+            session_factory, run_id, company_id,
+            effective_slug, "content",
+        )
+
+    bind_context(task_id=task_id, pipeline_name="td_content_production", company_slug=company_slug, run_id=str(run_id) if run_id else None)
+    try:
+        async with task_store.pipeline_semaphore(task_id):
+            event_bus.publish(task_id, "pipeline_start", {"pipeline": "td_content"})
+
+            output = await run_td_content_production_only(
+                effective_slug=effective_slug,
+                topic_assignment_ids=topic_assignment_ids,
+                company_name=company_name,
+                domain=domain,
+                ga_run_id=ga_run_id,
+                auto_approve=auto_approve,
+                product_slug=product_slug,
+                product_name=product_name,
+                product_description=product_description,
+                task_id=task_id,
+                task_store=task_store,
+                event_bus=event_bus,
+                session_factory=session_factory,
+                run_id=run_id,
+                company_id=company_id,
+            )
+
+            result = {
+                "company_slug": output.company_slug,
+                "total_briefs": output.total_briefs,
+                "total_approved": output.total_approved,
+                "total_rejected": output.total_rejected,
+                "pieces": [
+                    {
+                        "brief_id": p.brief_id,
+                        "title": p.title,
+                        "status": p.status.value if hasattr(p.status, "value") else str(p.status),
+                        "topic_assignment_id": p.topic_assignment_id,
+                    }
+                    for p in output.pieces
+                ],
+                "produced_artifacts": [{"type": "td_content", "slug": effective_slug}],
+            }
+            task_store.update_task(task_id, status=TaskStatus.COMPLETED, result=result)
+            event_bus.publish(task_id, "completed", {"pipeline": "td_content"})
+
+    except asyncio.CancelledError:
+        logger.info("TD→Content production pipeline cancelled: task_id=%s", task_id)
+    except Exception as exc:
+        logger.exception("TD→Content production pipeline failed: %s", exc)
+        # Revert assignment statuses back to gap_analysis_complete
+        if session_factory:
+            try:
+                await _update_assignment_statuses_db(
+                    session_factory, topic_assignment_ids,
+                    TopicAssignmentStatus.gap_analysis_complete,
+                )
+            except Exception:
+                logger.warning("Failed to revert assignment statuses on production failure", exc_info=True)
+        task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+        await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
+    finally:
+        await task_store.flush_terminal(task_id)
+        task_store.release_slug_lock(f"td_content:{effective_slug}")
+        task_store.remove_task_handle(task_id)
+        clear_context()
+
+
 # ---------------------------------------------------------------------------
 # Onboarding Pipeline
 # ---------------------------------------------------------------------------

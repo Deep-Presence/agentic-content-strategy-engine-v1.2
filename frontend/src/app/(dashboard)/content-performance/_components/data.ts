@@ -485,12 +485,11 @@ export function getPlatformDetails(piece: ContentPiece): PlatformDetail[] {
 }
 
 // --- Traffic timeline data for drawer Section B ---
-export function generateTrafficTimeline(traffic: number): { date: string; pageviews: number; citations: number }[] {
+export function generateTrafficTimeline(traffic: number): { date: string; pageviews: number }[] {
   return Array.from({ length: 28 }, (_, i) => {
     const dailyBase = traffic / 30;
     const pv = Math.max(0, Math.round(dailyBase * (0.7 + Math.sin(i * 0.5 + traffic * 0.001) * 0.3 + Math.random() * 0.2)));
-    const ct = Math.max(0, Math.round(pv * 0.015 * (0.6 + Math.sin(i * 0.7) * 0.4)));
-    return { date: `Mar ${i + 1}`, pageviews: pv, citations: ct };
+    return { date: `Mar ${i + 1}`, pageviews: pv };
   });
 }
 

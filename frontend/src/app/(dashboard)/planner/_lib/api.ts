@@ -128,6 +128,23 @@ export function expandSubdomain(
   );
 }
 
+// ── GA-Only Pipeline (from Planner → Content Studio) ──
+
+/** Launch GA-only pipeline for approved topic assignments */
+export function startFromTopicsPipeline(
+  companyName: string,
+  domain: string,
+  effectiveSlug: string,
+  topicAssignmentIds: string[],
+): Promise<PipelineRunResponseAPI> {
+  return api.post<PipelineRunResponseAPI>('/api/v1/content/v13/from-topics/gap-analysis', {
+    company_name: companyName,
+    domain,
+    effective_slug: effectiveSlug,
+    topic_assignment_ids: topicAssignmentIds,
+  });
+}
+
 // ── Task Status Polling ────────────────────────────────
 
 export interface TaskStatusAPI {

@@ -14,6 +14,11 @@ class BriefPipelineStatus(str, Enum):
     Written to pipeline_state.json and returned by GET /briefs.
     """
 
+    # Triage / Queue column — Gap Analysis phase
+    GAP_ANALYSIS_PENDING = "gap_analysis_pending"  # GA queued, preflight running
+    GAP_ANALYSIS = "gap_analysis"  # GA S1-S8 running
+    GAP_ANALYSIS_COMPLETE = "gap_analysis_complete"  # GA done, awaiting "Start Production"
+
     # Triage column
     SUGGESTED = "suggested"  # Initial state, awaiting user/planner approval
 

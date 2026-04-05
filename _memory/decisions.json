@@ -1,5 +1,48 @@
 [
   {
+    "id": "D-TD-GA-CE-TWO-PHASE-SPLIT",
+    "timestamp": "2026-04-06",
+    "task": "TD→GA→CE two-phase pipeline split — Planner to Content Studio integration",
+    "decision": "Two separate tasks (GA-only + CE-only), each with own task_id/semaphore/SSE. GA-phase cards stored in existing pipeline_state:{slug} Redis Hash using ta-{uuid} keys. No JSON file fallback. DB+Redis only production path (DbContentDataService modified, JsonContentDataService untouched). GA cleanup moved to post-CE-success (not pre-CE). effectiveSlug wired end-to-end for product-scoped runs.",
+    "rationale": "A single task with HITL pause would hold the semaphore slot indefinitely (hours/days), blocking other pipelines. Two tasks cleanly maps to the existing runner pattern. Reusing the same Redis Hash avoids a second state store. DB+Redis only aligns with the elimination of JSON-based services.",
+    "alternatives": [
+      "One task with HITL pause between GA and CE — rejected: holds semaphore, impractical for indefinite wait",
+      "Separate Redis Hash ga_phase_state:{slug} — rejected: adds complexity, same hash with ta- prefix is simpler",
+      "JSON file fallback for GA-phase state — rejected: DB+Redis is sole production path per project direction"
+    ],
+    "approved_by": "Aryan",
+    "codex_review": "Codex gpt-5.3-codex found 12 findings (1 critical false-positive, 5 high, 3 medium, 3 low). 7 incorporated and fixed: H1 (ga_step_complete payload NaN), H2 (CancelledError cleanup), H3 (GA cleanup timing), H4 (effectiveSlug), M1 (multi-card progress), M2 (completed/failed SSE aliases). H5 verified correct (no fix needed). 85 tests passing post-fixes."
+  },
+  {
+    "id": "D-CONTENT-STUDIO-STATUS-ENUM",
+    "timestamp": "2026-04-05",
+    "task": "Content Studio stage-status enum resolution",
+    "decision": "Two-tier model: store raw BriefPipelineStatus (17 values mirroring backend) on each ContentCard, derive column/label/badge via pure adapter functions. 4 Kanban columns (triage/agent/human/done) instead of backend's 5 logical groups or frontend's 3.",
+    "rationale": "Users don't need 17 states; Kanban needs stable columns. Adding a 'done' column is higher-value than splitting agent work (Brief vs Generating). The adapter layer means adding a new backend worker step only requires one line change in the adapter, not a UI restructure.",
+    "alternatives": [
+      "Direct adoption of all 17 statuses as Kanban columns — too many columns, poor scannability",
+      "Keep 3 frontend columns — loses the 'done' state, completed cards mixed with human review",
+      "5 columns matching backend comments — Brief and Generating are both agent work from user perspective"
+    ],
+    "impact": "Frontend-only, no backend changes. ContentStage and Column types removed. All stage/column references now derived from status via status-adapter.ts.",
+    "reversible": true
+  },
+  {
+    "id": "D-TD-ADDITIVE-UPSERT",
+    "timestamp": "2026-04-05",
+    "task": "Refactor Pipeline B (topic expansion) to additive per-subdomain DB upserts",
+    "decision": "Replace delete-all-reinsert-all pattern with per-subdomain atomic writes. Each expansion claims a subdomain via optimistic DB lock (UPDATE WHERE status IN eligible RETURNING), writes assignments atomically, marks node as expanded/failed. Redis slug lock replaced with allow_parallel=True + DB-level concurrency. tree_json set NULL during expansion, rebuilt lazily from flat nodes. Stale 'expanding' nodes auto-reset after 20 minutes. Per-assignment persona affinity computed from subdomain base + direct match boost + role-based buyer stage boost. Circuit breaker stops expansion after 5 consecutive failures. Retry with exponential backoff on LLM and DB transient errors. Re-expansion preserves assignments with status in_gap_analysis/content_produced/published (FK safety). Codex (gpt-5.3-codex) reviewed the plan — 8 findings incorporated.",
+    "rationale": "The delete-all-reinsert-all pattern was fundamentally incompatible with concurrent writes. With 20 parallel expansions, the last writer would win and intermediate writes would be destroyed. Additive per-subdomain writes eliminate this race condition. The DB optimistic lock (claim_for_expansion) is simpler and more precise than a Redis slug lock — it prevents double-expansion at the subdomain level while allowing different subdomains to expand concurrently.",
+    "alternatives_considered": [
+      "Quick fix with delete-all-per-version — rejected: still blocks parallelism, requires version coordination",
+      "Advisory locks per subdomain — rejected: optimistic UPDATE is simpler and self-documenting",
+      "Keep Redis slug lock + send multiple subdomain_ids in one call — rejected: user wants to click Expand on different subclusters independently"
+    ],
+    "impact": "2 new files, 18 modified files. Migration 0031 (3 columns, 4 indexes, 2 partial unique constraints). 18 new tests. 647 TD+API tests passing. Frontend: persona affinity display, auto-refresh polling, concurrent expansion support.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-TD-DB-ONLY-MIGRATION",
     "timestamp": "2026-04-05",
     "task": "Eliminate JSON filesystem from Topic Discovery pipelines — DB-only storage",
