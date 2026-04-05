@@ -29,7 +29,6 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.gap_analysis.pipeline import run_topic_scoped_gap_analysis
-from core.gap_analysis.topic_cluster_map import is_excluded_combo
 from core.models.content_generation import ContentGenerationOutput
 from core.models.content_generation_v13 import (
     ContentGenerationInputV13,
@@ -192,26 +191,15 @@ async def run_td_to_content_pipeline(
     # Step 1: Preflight (DB-backed) — also returns the matrix
     matrix = await _validate_preflight_db(session_factory, effective_slug, topic_assignment_ids)
 
-    # Step 2: Load assignments, filter excluded combos
+    # Step 2: Load requested assignments
     requested_ids = set(topic_assignment_ids)
-    all_assignments = [a for a in matrix.assignments if a.id in requested_ids]
-
-    valid_assignments: List[TopicAssignment] = []
-    for a in all_assignments:
-        if is_excluded_combo(a.buyer_stage.value, a.intent_type.value):
-            logger.warning(
-                "Skipping excluded combo %s × %s for topic '%s' (id=%s)",
-                a.buyer_stage.value, a.intent_type.value,
-                a.topic_text[:50], a.id,
-            )
-            continue
-        valid_assignments.append(a)
+    valid_assignments = [a for a in matrix.assignments if a.id in requested_ids]
 
     if not valid_assignments:
-        logger.warning("No valid assignments after filtering. Returning empty output.")
+        logger.warning("No matching assignments found for requested IDs.")
         return ContentGenerationOutput(
             company_slug=effective_slug,
-            run_metadata={"error": "No valid topic assignments after filtering excluded combos"},
+            run_metadata={"error": "No matching topic assignments found"},
         )
 
     logger.info(
@@ -359,23 +347,12 @@ async def run_td_gap_analysis_only(
     # Step 1: Preflight (DB-backed)
     matrix = await _validate_preflight_db(session_factory, effective_slug, topic_assignment_ids)
 
-    # Step 2: Load assignments, filter excluded combos
+    # Step 2: Load requested assignments
     requested_ids = set(topic_assignment_ids)
-    all_assignments = [a for a in matrix.assignments if a.id in requested_ids]
-
-    valid_assignments: List[TopicAssignment] = []
-    for a in all_assignments:
-        if is_excluded_combo(a.buyer_stage.value, a.intent_type.value):
-            logger.warning(
-                "Skipping excluded combo %s × %s for topic '%s' (id=%s)",
-                a.buyer_stage.value, a.intent_type.value,
-                a.topic_text[:50], a.id,
-            )
-            continue
-        valid_assignments.append(a)
+    valid_assignments = [a for a in matrix.assignments if a.id in requested_ids]
 
     if not valid_assignments:
-        logger.warning("No valid assignments after filtering. Returning empty result.")
+        logger.warning("No matching assignments found for requested IDs.")
         return GapAnalysisOnlyResult(
             ga_run_id=str(ga_run_id),
             valid_assignment_ids=[],

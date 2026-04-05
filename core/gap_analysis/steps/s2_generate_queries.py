@@ -20,7 +20,6 @@ from core.gap_analysis.topic_cluster_map import (
     CLUSTER_INTENT_PATTERNS,
     get_cluster_brand_policy,
     get_cluster_mapping,
-    is_excluded_combo,
 )
 from core.shared_tools.async_embedding_client import async_embed_texts
 from core.shared_tools.tracing import log_generation
@@ -909,13 +908,6 @@ async def generate_queries_from_topics(
     for topic in topics:
         stage = topic.buyer_stage.value
         intent = topic.intent_type.value
-
-        if is_excluded_combo(stage, intent):
-            logger.info(
-                "Skipping excluded combo %s × %s for topic '%s'",
-                stage, intent, topic.topic_text[:50],
-            )
-            continue
 
         mapping = get_cluster_mapping(stage, intent)
         if mapping is None:
