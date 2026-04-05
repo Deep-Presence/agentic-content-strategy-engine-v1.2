@@ -1,92 +1,50 @@
 'use client';
 
-import { YOUR_DATA } from './data';
+import { Trophy, Target, AlertTriangle, Map } from 'lucide-react';
+import { YOUR_DATA, CLUSTER_RANKINGS } from './data';
 
-interface KPICardProps {
-  label: string;
-  value: string;
-  sub: string;
-  borderColor?: string;
-  valueColor?: string;
-  delay: number;
-}
+export function KPIStrip() {
+  const d = YOUR_DATA;
+  const clustersLed = CLUSTER_RANKINGS.filter((c) => c.status === 'winning').length;
+  const totalClusters = CLUSTER_RANKINGS.length;
 
-function KPICard({ label, value, sub, borderColor, valueColor, delay }: KPICardProps) {
   return (
-    <div
-      style={{
-        border: '1px solid var(--border)',
-        borderRadius: '6px',
-        padding: '14px',
-        borderLeft: borderColor ? `2px solid ${borderColor}` : '1px solid var(--border)',
-        animation: `fadeUp 400ms ease ${delay}ms both`,
-      }}
-    >
-      <p
-        style={{
-          fontSize: '10px',
-          fontWeight: 600,
-          textTransform: 'uppercase',
-          letterSpacing: '0.05em',
-          color: 'var(--text-secondary)',
-          fontFamily: 'var(--font-display)',
-        }}
-      >
-        {label}
-      </p>
-      <p
-        style={{
-          fontSize: '28px',
-          fontWeight: 600,
-          fontFamily: 'var(--font-mono)',
-          color: valueColor || 'var(--text-primary)',
-          marginTop: '4px',
-          lineHeight: 1.1,
-        }}
-      >
-        {value}
-      </p>
-      <p
-        style={{
-          fontSize: '13px',
-          color: 'var(--text-secondary)',
-          marginTop: '4px',
-          fontFamily: 'var(--font-display)',
-        }}
-      >
-        {sub}
-      </p>
+    <div className="grid grid-cols-4" style={{ gap: 12 }}>
+      <KPI icon={<Target size={14} />} iconColor={d.winRate >= 30 ? 'var(--warning)' : 'var(--error)'} label="Win Rate" value={`${d.winRate}%`} delta={`+${d.gapsNet} gaps closed this month`} deltaColor="var(--success)" sectionId="head-to-head" />
+      <KPI icon={<Trophy size={14} />} iconColor="var(--accent)" label="Competitive Rank" value={`#${d.rank} of ${d.totalTracked}`} delta={`Up from #${d.previousRank} last month`} deltaColor="var(--success)" sectionId="rank-hero" />
+      <KPI icon={<AlertTriangle size={14} />} iconColor="var(--error)" label="Citations at Risk" value={String(d.atRisk + d.lost)} delta={`${d.lost} lost · ${d.atRisk - d.lost} weakening`} deltaColor="var(--error)" sectionId="watchlist" />
+      <KPI icon={<Map size={14} />} iconColor="var(--success)" label="Territory Control" value={`${clustersLed} of ${totalClusters}`} delta={`Leading ${clustersLed} clusters`} deltaColor="var(--success)" sectionId="territory" />
     </div>
   );
 }
 
-export function KPIStrip() {
-  const d = YOUR_DATA;
-
-  // Rank color: accent if top 3, amber 4-6, red 7+
-  const rankBorder = d.rank <= 3 ? 'var(--accent)' : d.rank <= 6 ? 'var(--warning)' : 'var(--error)';
-
-  // Win rate color
-  const winColor = d.winRate > 50 ? 'var(--success)' : d.winRate >= 30 ? 'var(--warning)' : 'var(--error)';
-
-  // At-risk color
-  const atRiskColor = d.atRisk > 0 ? 'var(--error)' : 'var(--success)';
-  const atRiskValue = d.atRisk > 0 ? String(d.atRisk) : '0';
-  const atRiskSub = d.atRisk > 0 ? `${d.lost} lost this week` : 'All stable — no action needed';
-
-  // Growth direction
-  const growthColor =
-    d.growthDirection === 'gaining' ? 'var(--success)' : d.growthDirection === 'losing' ? 'var(--error)' : 'var(--text-secondary)';
-  const growthWord = d.growthDirection === 'gaining' ? 'Gaining' : d.growthDirection === 'losing' ? 'Losing' : 'Stable';
-  const growthSub =
-    d.growthDelta > 0 ? `+${d.growthDelta} points this month` : d.growthDelta < 0 ? `${d.growthDelta} points this month` : 'No change this month';
+function KPI({ icon, iconColor, label, value, delta, deltaColor, sectionId }: {
+  icon: React.ReactNode; iconColor: string; label: string; value: string; delta: string; deltaColor: string; sectionId: string;
+}) {
+  const scrollTo = () => {
+    const el = document.getElementById(sectionId);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   return (
-    <div className="grid grid-cols-4" style={{ gap: '12px' }}>
-      <KPICard label="Your Rank" value={`#${d.rank}`} sub={`out of ${d.totalTracked} tracked`} borderColor={rankBorder} delay={0} />
-      <KPICard label="Win Rate" value={`${d.winRate}%`} sub="vs top 5 rivals" valueColor={winColor} delay={40} />
-      <KPICard label="At-Risk Citations" value={atRiskValue} sub={atRiskSub} valueColor={atRiskColor} delay={80} />
-      <KPICard label="Growth Direction" value={growthWord} sub={growthSub} valueColor={growthColor} delay={120} />
+    <div
+      onClick={scrollTo}
+      style={{
+        border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: 14,
+        background: 'var(--surface)', cursor: 'pointer', transition: 'border-color 0.15s',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--border-strong)')}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+    >
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+          <div style={{ width: 22, height: 22, borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'center', color: iconColor, background: `color-mix(in srgb, ${iconColor} 12%, transparent)` }}>{icon}</div>
+          <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-tertiary)', fontFamily: 'var(--font-display)' }}>{label}</span>
+        </div>
+        <p style={{ fontSize: 22, fontWeight: 600, fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', lineHeight: 1 }}>{value}</p>
+        <p style={{ fontSize: 11, color: deltaColor, marginTop: 4, fontFamily: 'var(--font-mono)', fontWeight: 500 }}>{delta}</p>
+      </div>
     </div>
   );
 }
