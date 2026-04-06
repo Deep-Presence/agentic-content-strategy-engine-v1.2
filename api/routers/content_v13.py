@@ -687,19 +687,17 @@ async def get_topic_content_status(
     if not user_company_slug or not effective_slug.startswith(user_company_slug):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    try:
-        from core.topic_discovery.storage import TopicDiscoveryStorage
+    from core.topic_discovery.db_ops import db_read_latest_matrix
 
-        artifacts_root = http_request.app.state.artifacts_root
-        td_storage = TopicDiscoveryStorage(
-            artifacts_root=artifacts_root, slug=effective_slug,
-        )
-        matrix = td_storage.get_latest_matrix()
-    except (FileNotFoundError, ValueError, json.JSONDecodeError, OSError) as exc:
-        logger.warning(
-            "topic-content-status lookup failed for %s: %s", effective_slug, exc,
-        )
-        matrix = None
+    sf = getattr(http_request.app.state, "db_session_factory", None)
+    matrix = None
+    if sf is not None:
+        try:
+            matrix = await db_read_latest_matrix(sf, effective_slug)
+        except Exception as exc:
+            logger.warning(
+                "topic-content-status DB lookup failed for %s: %s", effective_slug, exc,
+            )
 
     if matrix is None:
         return TopicContentStatusResponse(effective_slug=effective_slug)

@@ -36,6 +36,40 @@ from core.models.topic_discovery import (
 logger = logging.getLogger(__name__)
 
 
+# ── Row → Pydantic conversion ─────────────────────────────────────────
+
+
+def _db_row_to_pydantic_assignment(row: Any) -> TopicAssignment:
+    """Convert a single ``TopicAssignmentModel`` DB row to a Pydantic ``TopicAssignment``."""
+    from core.models.topic_discovery import (
+        AudienceSegmentType as PydanticAudienceSegmentType,
+        BuyerStage as PydanticBuyerStage,
+        IntentType as PydanticIntentType,
+        RelevanceCell as PydanticRelevanceCell,
+        TopicAssignmentStatus as PydanticTopicAssignmentStatus,
+    )
+
+    return TopicAssignment(
+        id=str(row.id),
+        subdomain_id=row.subdomain_id_text or "",
+        subdomain_name=row.subdomain_name or "",
+        topic_text=row.topic_text,
+        buyer_stage=PydanticBuyerStage(row.buyer_stage.value),
+        intent_type=PydanticIntentType(row.intent_type.value),
+        audience_segment=row.audience_segment or "",
+        audience_segment_type=PydanticAudienceSegmentType(row.audience_segment_type.value),
+        relevance=PydanticRelevanceCell(row.relevance.value),
+        priority_score=row.priority_score or 0.0,
+        priority_factors=row.priority_factors or {},
+        status=PydanticTopicAssignmentStatus(row.status.value),
+        is_manually_added=row.is_manually_added,
+        metadata=row.metadata_json or {},
+        persona_id=row.persona_id or "",
+        persona_name=row.persona_name or "",
+        persona_affinity=getattr(row, "persona_affinity_json", None) or {},
+    )
+
+
 # ── Tree flattening (reused from persistence.py) ────────────────────────
 
 
@@ -786,12 +820,7 @@ async def db_read_latest_matrix(
     back to Pydantic enums.
     """
     from core.models.topic_discovery import (
-        AudienceSegmentType as PydanticAudienceSegmentType,
-        BuyerStage as PydanticBuyerStage,
-        IntentType as PydanticIntentType,
         RelevanceCell as PydanticRelevanceCell,
-        TopicAssignment,
-        TopicAssignmentStatus as PydanticTopicAssignmentStatus,
     )
     from core.db.repositories.topic_discovery_repo import (
         TopicAssignmentRepository,
@@ -816,7 +845,7 @@ async def db_read_latest_matrix(
     if not rows:
         return None
 
-    # Map DB rows -> Pydantic TopicAssignment models
+    # Map DB rows -> Pydantic TopicAssignment models via shared helper
     assignments: List[TopicAssignment] = []
     buyer_stage_dist: Dict[str, int] = {}
     intent_dist: Dict[str, int] = {}
@@ -825,43 +854,19 @@ async def db_read_latest_matrix(
     total_irrelevant = 0
 
     for row in rows:
-        # DB enum -> Pydantic enum via .value
-        bs = PydanticBuyerStage(row.buyer_stage.value)
-        it = PydanticIntentType(row.intent_type.value)
-        ast = PydanticAudienceSegmentType(row.audience_segment_type.value)
-        rel = PydanticRelevanceCell(row.relevance.value)
-        status = PydanticTopicAssignmentStatus(row.status.value)
-
-        assignments.append(TopicAssignment(
-            id=str(row.id),
-            subdomain_id=row.subdomain_id_text or "",
-            subdomain_name=row.subdomain_name or "",
-            topic_text=row.topic_text,
-            buyer_stage=bs,
-            intent_type=it,
-            audience_segment=row.audience_segment or "",
-            audience_segment_type=ast,
-            relevance=rel,
-            priority_score=row.priority_score or 0.0,
-            priority_factors=row.priority_factors or {},
-            status=status,
-            is_manually_added=row.is_manually_added,
-            metadata=row.metadata_json or {},
-            persona_id=row.persona_id or "",
-            persona_name=row.persona_name or "",
-            persona_affinity=getattr(row, "persona_affinity_json", None) or {},
-        ))
+        a = _db_row_to_pydantic_assignment(row)
+        assignments.append(a)
 
         # Aggregate statistics
-        bs_key = bs.value
+        bs_key = a.buyer_stage.value
         buyer_stage_dist[bs_key] = buyer_stage_dist.get(bs_key, 0) + 1
-        it_key = it.value
+        it_key = a.intent_type.value
         intent_dist[it_key] = intent_dist.get(it_key, 0) + 1
-        aud_key = row.audience_segment or "unknown"
+        aud_key = a.audience_segment or "unknown"
         audience_dist[aud_key] = audience_dist.get(aud_key, 0) + 1
-        if rel == PydanticRelevanceCell.relevant:
+        if a.relevance == PydanticRelevanceCell.relevant:
             total_relevant += 1
-        elif rel == PydanticRelevanceCell.irrelevant:
+        elif a.relevance == PydanticRelevanceCell.irrelevant:
             total_irrelevant += 1
 
     matrix = TopicAssignmentMatrix(
@@ -880,6 +885,46 @@ async def db_read_latest_matrix(
         effective_slug, matrix_version, len(assignments),
     )
     return matrix
+
+
+# ── 12b. db_read_assignments_by_ids ────────────────────────────────────
+
+
+async def db_read_assignments_by_ids(
+    session_factory: async_sessionmaker,
+    assignment_ids: List[str],
+) -> List[TopicAssignment]:
+    """Fetch specific assignments by ID and convert to Pydantic models.
+
+    Handles str→UUID conversion (skips invalid IDs with a warning).
+    Returns ``List[TopicAssignment]`` in the same Pydantic domain model
+    expected by ``extract_topic_contexts()`` and ``topic_assignment_to_selection()``.
+    """
+    if not assignment_ids:
+        return []
+
+    uuids: List[_uuid.UUID] = []
+    for aid in assignment_ids:
+        try:
+            uuids.append(_uuid.UUID(str(aid)))
+        except (ValueError, AttributeError):
+            logger.warning("db_read_assignments_by_ids: skipping invalid UUID: %s", aid)
+
+    if not uuids:
+        return []
+
+    from core.db.repositories.topic_discovery_repo import TopicAssignmentRepository
+
+    async with session_factory() as session:
+        repo = TopicAssignmentRepository(session)
+        rows = await repo.get_by_ids(uuids)
+
+    result = [_db_row_to_pydantic_assignment(row) for row in rows]
+    logger.debug(
+        "db_read_assignments_by_ids: requested=%d found=%d",
+        len(assignment_ids), len(result),
+    )
+    return result
 
 
 # ── 13. db_get_discovery_id ─────────────────────────────────────────────

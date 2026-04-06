@@ -1449,22 +1449,16 @@ async def _run_pipeline_stages(
             extract_topic_contexts,
             topic_assignment_to_selection,
         )
-        from core.topic_discovery.storage import TopicDiscoveryStorage
+        from core.topic_discovery.db_ops import db_read_assignments_by_ids
 
-        td_slug = input_data.td_effective_slug or slug
-        td_storage = TopicDiscoveryStorage(
-            artifacts_root=_PROJECT_ROOT / "artifacts", slug=td_slug,
+        if session_factory is None:
+            raise RuntimeError("session_factory is required for TOPIC_DISCOVERY entry mode")
+
+        assignments = await db_read_assignments_by_ids(
+            session_factory, list(input_data.topic_assignment_ids),
         )
-        matrix = td_storage.get_latest_matrix()
-
-        # Filter to requested assignments
-        requested_ids = set(input_data.topic_assignment_ids)
-        assignments = [
-            a for a in (matrix.assignments if matrix else [])
-            if a.id in requested_ids
-        ]
         if not assignments:
-            logger.warning("No matching TopicAssignments found for IDs: %s", requested_ids)
+            logger.warning("No matching TopicAssignments found for IDs: %s", input_data.topic_assignment_ids)
 
         # Load topic-scoped analysis
         td_analysis_json: dict[str, Any] = {}

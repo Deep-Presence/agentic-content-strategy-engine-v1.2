@@ -491,6 +491,18 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def get_by_ids(
+        self, assignment_ids: List[_uuid.UUID],
+    ) -> Sequence[TopicAssignmentModel]:
+        """Fetch specific assignments by a list of IDs."""
+        if not assignment_ids:
+            return []
+        stmt = select(TopicAssignmentModel).where(
+            TopicAssignmentModel.id.in_(assignment_ids)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
     async def update_assignment_status(
         self,
         assignment_id: _uuid.UUID | str,
