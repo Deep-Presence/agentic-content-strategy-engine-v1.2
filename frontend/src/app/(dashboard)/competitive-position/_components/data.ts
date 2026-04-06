@@ -135,7 +135,7 @@ export const ENGINE_DOMAINS: Record<string, string> = {
 export const YOUR_DATA = {
   domain: 'lovable.dev', name: 'Lovable',
   sov: 12.4, sovStart: 8.1, sovDelta: 4.3,
-  rank: 2, previousRank: 4, totalTracked: 14,
+  rank: 2, previousRank: 4, totalTracked: 17,
   citations: 847, winRate: 39,
   gapsClosed: 4, gapsOpened: 2, gapsNet: 2,
   atRisk: 4, lost: 3,
@@ -422,6 +422,71 @@ export const CLUSTER_DETAILS: Record<string, ClusterDetail> = {
     strategy: "Dominated by review aggregators. Get listed on G2, Capterra, Product Hunt. Create comparison tables, feature matrices, pricing breakdowns.",
   },
 };
+
+// ─── Market Share (total + by category) ─────────────────────────────────────
+
+export const MARKET_SHARE = {
+  you: { label: 'You (Lovable)', pct: 12.4, color: 'var(--accent)' },
+  direct: { label: 'Direct Competitors', pct: 56.4, color: '#E5484D' },
+  mindshare: { label: 'Mind Share', pct: 9.7, color: '#9D8CE0' },
+  authority: { label: 'Authority Sources', pct: 12.9, color: '#687076' },
+  others: { label: 'Others', pct: 8.6, color: 'var(--border-strong)' },
+};
+
+// ─── Competitive Breakdown by Intent ────────────────────────────────────────
+
+export interface DimensionBreakdown {
+  dimension: string;
+  you: number;
+  leader: string;
+  leaderDomain: string;
+  leaderPct: number;
+  totalQueries: number;
+  insight: string;
+}
+
+export const INTENT_BREAKDOWN: DimensionBreakdown[] = [
+  { dimension: 'Informational', you: 14.2, leader: 'Bolt.new', leaderDomain: 'bolt.new', leaderPct: 19.8, totalQueries: 42, insight: 'You perform well on educational queries but bolt.new leads with more comprehensive guides' },
+  { dimension: 'Commercial', you: 8.1, leader: 'Bolt.new', leaderDomain: 'bolt.new', leaderPct: 24.3, totalQueries: 28, insight: 'Biggest gap — bolt.new dominates comparison and pricing queries. Create competitive comparison content.' },
+  { dimension: 'Navigational', you: 18.6, leader: 'You', leaderDomain: 'lovable.dev', leaderPct: 18.6, totalQueries: 15, insight: 'You lead branded/navigational queries — these are your strongest queries to defend' },
+  { dimension: 'Transactional', you: 6.4, leader: 'Retool', leaderDomain: 'retool.com', leaderPct: 15.2, totalQueries: 14, insight: 'Retool dominates integration and setup queries. Create tutorial content for these use cases.' },
+];
+
+export const FUNNEL_BREAKDOWN: DimensionBreakdown[] = [
+  { dimension: 'TOFU (Awareness)', you: 11.8, leader: 'Bolt.new', leaderDomain: 'bolt.new', leaderPct: 16.4, totalQueries: 38, insight: 'Decent awareness presence but bolt.new publishes 2x more educational content' },
+  { dimension: 'MOFU (Consideration)', you: 14.1, leader: 'Cursor', leaderDomain: 'cursor.com', leaderPct: 15.8, totalQueries: 35, insight: 'Close race with Cursor — your comparison content is competitive but needs FAQ sections' },
+  { dimension: 'BOFU (Decision)', you: 4.2, leader: 'G2.com', leaderDomain: 'g2.com', leaderPct: 22.1, totalQueries: 26, insight: 'Major gap — review sites (G2, Capterra) dominate decision-stage queries. Get listed and well-reviewed.' },
+];
+
+export const PERSONA_BREAKDOWN: DimensionBreakdown[] = [
+  { dimension: 'Solo Founder', you: 16.8, leader: 'You', leaderDomain: 'lovable.dev', leaderPct: 16.8, totalQueries: 24, insight: 'Your strongest persona — you lead on startup and non-technical builder queries' },
+  { dimension: 'Product Manager', you: 11.2, leader: 'Bolt.new', leaderDomain: 'bolt.new', leaderPct: 18.4, totalQueries: 28, insight: 'bolt.new leads for PMs with feature-focused content. Create feature comparison guides.' },
+  { dimension: 'Agency Owner', you: 9.4, leader: 'Bolt.new', leaderDomain: 'bolt.new', leaderPct: 14.1, totalQueries: 18, insight: 'Moderate presence — focus on client delivery and white-label use cases' },
+  { dimension: 'Technical Engineer', you: 5.8, leader: 'Cursor', leaderDomain: 'cursor.com', leaderPct: 21.6, totalQueries: 29, insight: 'Weakest persona — cursor.com owns the technical audience. Invest in developer-focused content.' },
+];
+
+// ─── Cluster Cards (enriched with top competitors + content planner alignment) ─
+
+export interface ClusterCard {
+  cluster: string;
+  intent: string;
+  funnelStage: string;
+  yourSOV: number;
+  yourRank: number | null;
+  totalCitations: number;
+  topBrands: { domain: string; name: string; sov: number; type: 'direct' | 'mindshare' | 'authority' }[];
+  status: 'winning' | 'competitive' | 'losing';
+  contentGap: string;
+}
+
+export const CLUSTER_CARDS: ClusterCard[] = [
+  { cluster: 'Branded Evaluation', intent: 'Navigational', funnelStage: 'MOFU', yourSOV: 4.5, yourRank: 1, totalCitations: 312, topBrands: [{ domain: 'lovable.dev', name: 'You', sov: 4.5, type: 'direct' }, { domain: 'bolt.new', name: 'Bolt.new', sov: 3.8, type: 'direct' }, { domain: 'g2.com', name: 'G2', sov: 2.1, type: 'mindshare' }, { domain: 'cursor.com', name: 'Cursor', sov: 1.8, type: 'direct' }], status: 'winning', contentGap: 'Defend — keep content fresh and add new comparison angles' },
+  { cluster: 'Category Comparison', intent: 'Commercial', funnelStage: 'MOFU', yourSOV: 0.8, yourRank: 4, totalCitations: 280, topBrands: [{ domain: 'cursor.com', name: 'Cursor', sov: 5.2, type: 'direct' }, { domain: 'bolt.new', name: 'Bolt.new', sov: 4.1, type: 'direct' }, { domain: 'g2.com', name: 'G2', sov: 3.4, type: 'mindshare' }, { domain: 'lovable.dev', name: 'You', sov: 0.8, type: 'direct' }], status: 'competitive', contentGap: 'Create 8 comparison pages targeting "vs" queries with tables and pricing' },
+  { cluster: 'Mechanism', intent: 'Informational', funnelStage: 'TOFU', yourSOV: 1.2, yourRank: 3, totalCitations: 245, topBrands: [{ domain: 'emergent.sh', name: 'Emergent', sov: 2.8, type: 'direct' }, { domain: 'arxiv.org', name: 'arXiv', sov: 2.2, type: 'authority' }, { domain: 'lovable.dev', name: 'You', sov: 1.2, type: 'direct' }, { domain: 'nature.com', name: 'Nature', sov: 0.9, type: 'authority' }], status: 'competitive', contentGap: 'Publish 3 technical deep-dives on AI code generation mechanisms' },
+  { cluster: 'Problem/Awareness', intent: 'Informational', funnelStage: 'TOFU', yourSOV: 0, yourRank: null, totalCitations: 229, topBrands: [{ domain: 'cms.gov', name: 'CMS.gov', sov: 4.4, type: 'authority' }, { domain: 'healthcatalyst.com', name: 'Health Catalyst', sov: 2.8, type: 'direct' }, { domain: 'cdc.gov', name: 'CDC', sov: 2.1, type: 'authority' }], status: 'losing', contentGap: 'Enter with practitioner guides — "how-to" format, 2000+ words, FAQ sections' },
+  { cluster: 'Decision Criteria', intent: 'Commercial', funnelStage: 'BOFU', yourSOV: 0.2, yourRank: 8, totalCitations: 198, topBrands: [{ domain: 'alloy.app', name: 'Alloy', sov: 2.8, type: 'direct' }, { domain: 'retool.com', name: 'Retool', sov: 2.4, type: 'direct' }, { domain: 'capterra.com', name: 'Capterra', sov: 1.8, type: 'mindshare' }], status: 'losing', contentGap: 'Create buyer guides, ROI calculators, and feature matrices for decision-makers' },
+  { cluster: 'Best-of/Consideration', intent: 'Commercial', funnelStage: 'MOFU', yourSOV: 0, yourRank: null, totalCitations: 185, topBrands: [{ domain: 'rocket.new', name: 'Rocket', sov: 3.2, type: 'direct' }, { domain: 'g2.com', name: 'G2', sov: 2.8, type: 'mindshare' }, { domain: 'capterra.com', name: 'Capterra', sov: 2.1, type: 'mindshare' }], status: 'losing', contentGap: 'Get listed on review sites + create "best of" roundup content' },
+];
 
 // ─── Filter Options ─────────────────────────────────────────────────────────
 

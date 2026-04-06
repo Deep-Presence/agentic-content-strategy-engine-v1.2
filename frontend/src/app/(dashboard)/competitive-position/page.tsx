@@ -3,16 +3,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { Calendar } from 'lucide-react';
 import { KPIStrip } from './_components/kpi-strip';
-import { RankHero } from './_components/sov-hero';
-import { HeadToHead } from './_components/head-to-head';
-import { PositionTable } from './_components/position-table';
+import { SOVHeroSection } from './_components/sov-hero';
 import { LandscapeGrid } from './_components/landscape-grid';
+import { HeadToHead } from './_components/head-to-head';
+import { ClusterAndDimensions } from './_components/cluster-cards';
 import { ActivityFeed } from './_components/activity-feed';
-import { TerritoryTable } from './_components/territory-table';
-import { CitationWatchlist } from './_components/citation-watchlist';
-import { Collapsible } from './_components/collapsible';
-import { CompetitorDrawer, ClusterDrawer, RecaptureDrawer } from './_components/drawers';
-import { clusterOptions, platformOptions, CLUSTER_RANKINGS, CITATIONS, type CitationItem } from './_components/data';
+import { CompetitorDrawer, ClusterDrawer } from './_components/drawers';
+import { clusterOptions, platformOptions } from './_components/data';
 
 // ─── Date Range Picker ──────────────────────────────────────────────────────
 
@@ -35,7 +32,7 @@ function DateRangePicker({ value, onChange }: { value: [string, string]; onChang
       <div className="grid grid-cols-7 gap-0">
         {dN.map((d) => <div key={d} style={{ fontSize: 8, fontWeight: 500, color: 'var(--text-tertiary)', textAlign: 'center', padding: '3px 0' }}>{d}</div>)}
         {monthDays(y, m).map((d, i) => !d ? <div key={`e-${i}`} /> : (
-          <button key={d} onClick={() => click(y, m, d)} style={{ height: 24, width: 24, margin: '0 auto', fontSize: 10, borderRadius: 2, border: 'none', cursor: 'pointer', background: isE(y, m, d) ? 'var(--accent)' : inR(y, m, d) ? 'var(--accent-subtle)' : 'transparent', color: isE(y, m, d) ? 'var(--text-on-accent)' : 'var(--text-secondary)' }}>{d}</button>
+          <button key={d} onClick={() => click(y, m, d)} style={{ height: 24, width: 24, margin: '0 auto', fontSize: 10, borderRadius: 2, border: 'none', cursor: 'pointer', background: isE(y, m, d) ? 'var(--accent)' : inR(y, m, d) ? 'var(--accent-subtle)' : 'transparent', color: isE(y, m, d) ? '#fff' : 'var(--text-secondary)' }}>{d}</button>
         ))}
       </div>
     </div>
@@ -43,7 +40,7 @@ function DateRangePicker({ value, onChange }: { value: [string, string]; onChang
   return (
     <div className="relative" ref={ref}>
       <button onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-2" style={{ height: 28, padding: '0 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', fontSize: 11, color: 'var(--text-primary)', cursor: 'pointer' }}>
-        <Calendar size={12} strokeWidth={1.5} style={{ color: 'var(--text-tertiary)' }} /><span>{fmt(value[0])} – {fmt(value[1])}</span>
+        <Calendar size={12} strokeWidth={1.5} style={{ color: 'var(--text-tertiary)' }} /><span>{fmt(value[0])} {fmt(value[1])}</span>
       </button>
       {isOpen && (
         <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, background: 'var(--surface-raised)', border: '1px solid var(--border)', borderRadius: 6, boxShadow: 'var(--shadow-float)', padding: 14, zIndex: 50 }}>
@@ -64,18 +61,15 @@ export default function CompetitivePositionPage() {
 
   const [compDrawer, setCompDrawer] = useState<string | null>(null);
   const [clusterDrawer, setClusterDrawer] = useState<string | null>(null);
-  const [recaptureDrawer, setRecaptureDrawer] = useState<CitationItem | null>(null);
 
   const sel = { height: 28, padding: '0 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--surface)', fontSize: 11, color: 'var(--text-primary)', cursor: 'pointer', outline: 'none', fontFamily: 'var(--font-display)' } as const;
-
-  const actionableCitations = CITATIONS.filter((c) => c.status === 'lost' || c.status === 'at_risk').length;
 
   return (
     <div style={{ padding: '14px 24px 40px' }}>
       {/* Header */}
       <div>
         <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.02em', fontFamily: 'var(--font-display)' }}>Competitive Position</h1>
-        <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 1 }}>Your standing across AI engines — who you&apos;re beating, where you&apos;re losing, and what to do about it</p>
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 1 }}>Your competitive standing across AI engines</p>
       </div>
 
       {/* Filter bar */}
@@ -85,53 +79,35 @@ export default function CompetitivePositionPage() {
         <select value={cluster} onChange={(e) => setCluster(e.target.value)} style={sel}>{clusterOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
         <div style={{ height: 14, width: 1, background: 'var(--border)' }} />
         <select value={platform} onChange={(e) => setPlatform(e.target.value)} style={sel}>{platformOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-        <button onClick={() => { setDateRange(['2026-03-01', '2026-03-28']); setCluster('all'); setPlatform('all'); }} style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer' }}>× Clear</button>
+        <button onClick={() => { setDateRange(['2026-03-01', '2026-03-28']); setCluster('all'); setPlatform('all'); }} style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer' }}>Clear</button>
       </div>
 
-      {/* Content — 24px gaps between hero sections */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 24, marginTop: 14 }}>
-
-        {/* SECTION 1: KPI Strip */}
+      {/* Page content */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 24, marginTop: 16 }}>
+        {/* 1. KPIs */}
         <KPIStrip />
 
-        {/* HERO 1: Rank Trajectory + Threat Watch */}
-        <RankHero onCompetitorClick={setCompDrawer} />
+        {/* 2. Market Share + SOV Trend + Rising Threats */}
+        <SOVHeroSection onCompetitorClick={setCompDrawer} />
 
-        {/* HERO 2: Head-to-Head Cards + Expandable Matchups */}
+        {/* 3. Competitive Landscape (full-width stacked) */}
+        <LandscapeGrid onBrandClick={setCompDrawer} />
+
+        {/* 4. Head-to-Head (pinnable cards + expandable table) */}
         <div id="head-to-head">
           <HeadToHead onCompetitorClick={setCompDrawer} />
-          <div style={{ marginTop: 12 }}>
-            <Collapsible title="Detailed Matchups" subtitle="Full win/loss breakdown per competitor" count={6}>
-              <PositionTable onCompetitorClick={setCompDrawer} />
-            </Collapsible>
-          </div>
         </div>
 
-        {/* HERO 3: Competitive Landscape (moved UP from bottom) */}
-        <LandscapeGrid />
+        {/* 5. Competitive Breakdown + Cluster Cards */}
+        <ClusterAndDimensions onClusterClick={setClusterDrawer} />
 
-        {/* HERO 4: Competitive Activity Feed */}
-        <ActivityFeed />
-
-        {/* EXPANDABLE: Territory Position */}
-        <div id="territory">
-          <Collapsible title="Territory Position" subtitle="Your rank in each query cluster" count={CLUSTER_RANKINGS.length} defaultOpen={false}>
-            <TerritoryTable onClusterClick={setClusterDrawer} />
-          </Collapsible>
-        </div>
-
-        {/* EXPANDABLE: Citation Watchlist */}
-        <div id="watchlist">
-          <Collapsible title="Citation Watchlist" subtitle="Citations you hold, are losing, or never had" count={actionableCitations} defaultOpen={false}>
-            <CitationWatchlist onCitationClick={setRecaptureDrawer} />
-          </Collapsible>
-        </div>
+        {/* 6. Activity Feed */}
+        <ActivityFeed onEventClick={() => {}} />
       </div>
 
       {/* Drawers */}
       <CompetitorDrawer domain={compDrawer} onClose={() => setCompDrawer(null)} />
       <ClusterDrawer cluster={clusterDrawer} onClose={() => setClusterDrawer(null)} />
-      <RecaptureDrawer item={recaptureDrawer} onClose={() => setRecaptureDrawer(null)} />
     </div>
   );
 }

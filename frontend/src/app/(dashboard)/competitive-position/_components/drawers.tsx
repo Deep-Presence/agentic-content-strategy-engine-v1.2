@@ -1,7 +1,7 @@
 'use client';
 
 import { Check, X, ArrowRight } from 'lucide-react';
-import { COMPETITORS, COMPETITOR_DETAILS, CLUSTER_DETAILS, CLUSTER_RANKINGS, ENGINE_DOMAINS, type CitationItem } from './data';
+import { COMPETITORS, COMPETITOR_DETAILS, CLUSTER_DETAILS, CLUSTER_RANKINGS, ENGINE_DOMAINS } from './data';
 import { BrandLogo } from './brand-logo';
 import { SlideDrawer } from './slide-drawer';
 
@@ -95,33 +95,3 @@ export function ClusterDrawer({ cluster, onClose }: { cluster: string | null; on
   );
 }
 
-// ─── Recapture Drawer ───────────────────────────────────────────────────────
-
-export function RecaptureDrawer({ item, onClose }: { item: CitationItem | null; onClose: () => void }) {
-  return (
-    <SlideDrawer isOpen={!!item} onClose={onClose} title={item ? `${item.status === 'lost' ? 'Recapture' : 'Defend'}: "${item.query}"` : ''} width="420px">
-      {item && (
-        <div style={{ paddingTop: 14 }}>
-          <Section label="What Happened" color="var(--text-secondary)">
-            <p style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.6 }}>{item.reason || item.detail || 'Position weakening due to increased competition.'}</p>
-          </Section>
-          <Section label={`To ${item.status === 'lost' ? 'Recapture' : 'Defend'}`} color="var(--text-secondary)">
-            {[{ done: false, t: 'Add FAQ section (72% of top-cited content has this)' }, { done: false, t: 'Add comparison table' }, { done: false, t: 'Expand to 2,500+ words' }, { done: false, t: 'Update with current data' }, { done: true, t: 'Header structure is good' }, { done: true, t: 'Reading level appropriate' }].map((it, i) => (
-              <div key={i} style={{ display: 'flex', gap: 5, padding: '3px 0' }}>
-                {it.done ? <Check size={11} strokeWidth={2.5} style={{ color: 'var(--success)', marginTop: 1 }} /> : <X size={11} strokeWidth={2.5} style={{ color: 'var(--error)', marginTop: 1 }} />}
-                <span style={{ fontSize: 11, color: it.done ? 'var(--text-tertiary)' : 'var(--text-primary)', lineHeight: 1.5 }}>{it.t}</span>
-              </div>
-            ))}
-          </Section>
-          <div style={{ padding: '8px 10px', background: 'var(--accent-subtle)', borderRadius: 6, marginBottom: 16, border: '1px solid rgba(91,164,196,0.15)' }}>
-            <p style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent)', marginBottom: 2 }}>Estimated Impact</p>
-            <p style={{ fontSize: 11, color: 'var(--text-primary)' }}>~75% chance of recapturing · ~2 hours to implement</p>
-          </div>
-          <button style={{ height: 28, width: '100%', borderRadius: 4, border: 'none', background: 'var(--accent)', color: 'var(--text-on-accent)', fontSize: 11, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--font-display)' }}>Update in Content Studio</button>
-          <button style={{ height: 28, width: '100%', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-primary)', fontSize: 11, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--font-display)', marginTop: 6 }}>Create competing piece</button>
-          <button onClick={onClose} style={{ height: 28, width: '100%', borderRadius: 4, border: 'none', background: 'transparent', color: 'var(--text-tertiary)', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-display)', marginTop: 4 }}>Dismiss</button>
-        </div>
-      )}
-    </SlideDrawer>
-  );
-}
