@@ -1,5 +1,36 @@
 [
   {
+    "id": "D-CONTENT-TO-PROMPT-PIPELINE",
+    "timestamp": "2026-04-06",
+    "task": "Content-to-Prompt pipeline — architecture for generating AI visibility prompts from content inventory pages",
+    "decision": "Join table (content_inventory_prompts M:N) over FK column on tracked_prompts. Reuse BuyerStage enum (tofu/mofu/bofu) not new funnel_position naming. No modifications to existing content_inventory or tracked_prompts tables. External status tracking via pipeline_runs (not inline columns on content_inventory). 2-tier dedup: text hash + future semantic. Content enrichment as reusable enrich_thin_pages() on ContentInventoryService. 6 API endpoints (compromise between 4 and 9). Service+Orchestrator+Repository pattern matching existing codebase conventions.",
+    "rationale": "Join table needed for: (1) M:N — same prompt relevant to multiple pages via cross-page dedup, (2) per-link metadata (buyer_stage, intent_type, approved, is_user_edited), (3) company_id type mismatch — tracked_prompts uses String, content_inventory uses UUID — join table sidesteps by having both FKs point to UUID PKs, (4) content_inventory is a shared registry used by TD/GA/CE — shouldn't carry pipeline-specific status columns. Evaluated 10 dimensions against FK alternative.",
+    "alternatives": [
+      "FK content_inventory_id on tracked_prompts (1:N) — rejected: no M:N, type mismatch, modifies shared table, inline status loses re-gen history",
+      "source_metadata JSONB only (no join table, no FK) — rejected: JSONB not indexable for JOIN-heavy aggregation queries",
+      "funnel_position (top_of_mind/middle_of_mind/bottom_of_mind) naming — rejected: BuyerStage enum already exists in core/db/enums.py, 25+ test files use tofu/mofu/bofu",
+      "Inline prompt_gen_status on content_inventory — rejected: only tracks last run, loses history, pollutes shared registry table",
+      "Single service class (no orchestrator) — rejected: inconsistent with codebase patterns (DailyTrackerOrchestrator + PromptLibraryService)"
+    ],
+    "approved_by": "Aryan",
+    "codex_review": "gpt-5.3-codex critical review on 8 dimensions. Key findings incorporated: (1) CASCADE safety — page delete cascades link rows only, not shared prompts, (2) generation_run_id nullable for manual links, (3) is_user_edited flag to protect manual edits from re-gen overwrite, (4) 2-tier dedup — text hash (free, 80% case) + semantic (future), (5) concurrency 8 with 429 backoff, (6) partial failure model with per-page error tracking, (7) cost tracking via existing track_llm_cost(), (8) 4-table JOIN fine at current scale with proper indexes."
+  },
+  {
+    "id": "D-CONTENT-INVENTORY-STRUCTURAL-SIGNALS",
+    "timestamp": "2026-04-06",
+    "task": "Content Inventory — Gap Analysis S1 ingestion + structural signals JSONB",
+    "decision": "Add gap_analysis_crawl enum + structural_signals JSONB column. Surface HTML from run_site_audit() via optional _html_map_out dict param (not return type change). GA hydration reads company_page_analysis.json from storage (no embed_company_assets return change). Keep 4 legacy structural columns for API backward compat. Strip per_paragraph_word_counts from JSONB. Skip-step guarded (S1 skipped = no hydration). Last-writer-wins provenance for v1.",
+    "rationale": "run_site_audit() is called from 9 files (runner, onboarding orchestrator, CLI, ~20 tests). Changing return type would break all of them. _html_map_out dict param is zero-breakage. GA S1 already computes structural signals and writes company_page_analysis.json — reading from storage avoids changing embed_company_assets() return type. Legacy columns kept because API schemas, router, content_performance_service read them directly.",
+    "alternatives": [
+      "SiteAuditPipelineOutput wrapper return type — rejected: breaks 9 callers, 20+ tests",
+      "Return page_analyses from embed_company_assets() — rejected: changes contract, ripples through callers",
+      "Drop 4 legacy columns — rejected: API schemas, router, content_performance_service read them directly",
+      "Store full per_paragraph_word_counts in JSONB — rejected: variable-length array bloats row size"
+    ],
+    "approved_by": "Aryan",
+    "codex_review": "gpt-5.3-codex reviewed plan. 10 findings (4 high, 6 medium). 5 incorporated: D2 (keep legacy columns), D3 (strip per_paragraph_word_counts), D4 (skip-step guard), D5 (URL keying matches PageAuditResult.url), D6 (last-writer-wins acceptable for v1). Provenance history column deferred."
+  },
+  {
     "id": "D-TD-GA-CE-TWO-PHASE-SPLIT",
     "timestamp": "2026-04-06",
     "task": "TD→GA→CE two-phase pipeline split — Planner to Content Studio integration",
@@ -1045,6 +1076,34 @@
       "Automatic daily cron only — no ad-hoc flexibility"
     ],
     "outcome": "cleanup.py module + POST /admin/cleanup endpoint. cleanup_old_response_text() function shared by both triggers.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-ELIMINATE-EXCLUDED-COMBOS",
+    "timestamp": "2026-04-06",
+    "task": "Eliminate all 6 excluded buyer_stage × intent_type combos from gap analysis",
+    "decision": "Add ClusterMapping entries for all 6 previously-excluded combos, empty _EXCLUDED_COMBOS dict, remove is_excluded_combo filter from orchestrator and S2 query gen. All 12 buyer_stage × intent_type cells now have valid cluster mappings.",
+    "why": "User wants any and all combos of content allowed for gap analysis and content production — no artificial restrictions.",
+    "alternatives": [
+      "Keep exclusions but add a force-override flag",
+      "Remove only the specific combo that was blocking (mofu × transactional)"
+    ],
+    "outcome": "6 new ClusterMappings in topic_cluster_map.py (cells 7-12). _EXCLUDED_COMBOS emptied. Orchestrator filter loops removed from both run_td_to_content_pipeline and run_td_gap_analysis_only. is_excluded_combo check removed from s2_generate_queries. 43 tests updated and passing.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-GA-SIDEBAR-ENRICHMENT",
+    "timestamp": "2026-04-06",
+    "task": "Enrich GA-phase Content Studio sidebar with full topic assignment metadata",
+    "decision": "Pipe 11 additional fields from TopicAssignment through Redis __meta JSON → API schema → frontend ContentCard → redesigned GapAnalysisSidebar. Fields: intent_type, persona_name, persona_id, persona_affinity, priority_factors, content_format, estimated_word_count, citation_opportunity, description, target_keywords, content_angle.",
+    "why": "GA-phase cards in Content Studio only showed title/cluster/buyer_stage. User wants the same rich detail visible in the Planner drawer (content spec, keywords, persona affinity, priority factors, content angle).",
+    "alternatives": [
+      "Fetch assignment data from TD API at render time (adds network call + complexity)",
+      "Store full assignment JSON in a separate Redis key (more Redis memory, separate read)"
+    ],
+    "outcome": "End-to-end enrichment: _write_ga_phase_redis stores 11 extra fields in __meta JSON, state_redis readers pass them through, _load_ga_phase_cards maps to ContentBriefListItem, frontend adapter maps to ContentCard, GapAnalysisSidebar renders 7 sections. All tests passing, build clean.",
     "reversible": true,
     "approved_by": "Aryan"
   }

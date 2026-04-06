@@ -1,7 +1,7 @@
 {
-  "current_sprint": "td-ga-ce-two-phase-split",
+  "current_sprint": "content-to-prompt-pipeline",
   "last_updated": "2026-04-06",
-  "test_count": 1655,
+  "test_count": 1706,
   "completed_sprints_summary": {
     "total_tasks_completed": 43,
     "sprints": [
@@ -51,10 +51,71 @@
       {"sprint": "td-db-only-migration", "date": "2026-04-05", "summary": "Eliminate JSON filesystem from Topic Discovery pipelines — DB-only storage. New db_ops.py (13 async functions replacing TopicDiscoveryStorage). Pipeline A & B rewritten. DbTopicDiscoveryDataService JSON fallback removed. TD→Content orchestrator reads from DB. Router/guard uses DB queries. pipeline_state.json writes conditional on Redis. Migration 0029 (scoring_json, persona_affinity_index_json). 1588 tests passing."},
       {"sprint": "td-additive-upsert", "date": "2026-04-05", "summary": "Refactor topic expansion (Pipeline B) to additive per-subdomain DB upserts. 5 new db_ops functions (claim, mark, write-per-subdomain, rebuild-tree-json, reset-stale). Pipeline B rewritten: per-subdomain expand+persist with retry/backoff, circuit breaker, crash recovery. Per-assignment persona affinity scoring. db_read_taxonomy fallback for NULL tree_json. allow_parallel=True for concurrent expansions (DB optimistic lock replaces Redis slug lock). 3 tree CRUD API endpoints. Frontend: persona affinity in cluster header, target persona in drawer, auto-refresh via task polling, concurrent expansion support. Migration 0031. 18 new tests. 647 TD+API tests passing."},
       {"sprint": "content-studio-status-enum", "date": "2026-04-05", "summary": "Content Studio stage-status enum resolution. Replaced 8-value ContentStage + 3-value Column with 17-value BriefPipelineStatus (mirrors backend) + 4-value KanbanColumn. New _lib/status-adapter.ts with pure mapping functions (getColumn, getDisplay, getHITLActions, getWorkerStepIndex). 4 Kanban columns (triage/human/agent/done). Pipeline stepper aligned with backend worker chain (6 steps). 1 new file, 7 modified. TypeScript clean, build clean."},
-      {"sprint": "td-ga-ce-two-phase-split", "date": "2026-04-06", "summary": "Two-phase TD→GA→CE pipeline split. Split run_td_to_content_pipeline into run_td_gap_analysis_only (Phase 1: GA with SSE instrumentation, ga_step_start/ga_step_complete at all 8 S-steps) and run_td_content_production_only (Phase 2: CE from pre-computed GA). 3 new BriefPipelineStatus (gap_analysis_pending/gap_analysis/gap_analysis_complete). GA-phase Redis state layer (ta-{id} keys in pipeline_state:{slug} hash). DbContentDataService.get_briefs() merges GA cards before DB briefs. 2 new runner tasks, 2 new endpoints (POST /from-topics/gap-analysis, POST /from-topics/start-production). TopicContentProductionRequest schema. Alembic 0032. Frontend: types+adapter+api+hooks+visual components for GA phase (8-step stepper, 'Start Production' CTA). Planner handleApprove wires to GA pipeline. 49 new tests. Codex gpt-5.3-codex audit: 7 findings fixed (H1-H4, M1-M2). 85 tests passing. Build clean."}
+      {"sprint": "td-ga-ce-two-phase-split", "date": "2026-04-06", "summary": "Two-phase TD→GA→CE pipeline split. Split run_td_to_content_pipeline into run_td_gap_analysis_only (Phase 1: GA with SSE instrumentation, ga_step_start/ga_step_complete at all 8 S-steps) and run_td_content_production_only (Phase 2: CE from pre-computed GA). 3 new BriefPipelineStatus (gap_analysis_pending/gap_analysis/gap_analysis_complete). GA-phase Redis state layer (ta-{id} keys in pipeline_state:{slug} hash). DbContentDataService.get_briefs() merges GA cards before DB briefs. 2 new runner tasks, 2 new endpoints (POST /from-topics/gap-analysis, POST /from-topics/start-production). TopicContentProductionRequest schema. Alembic 0032. Frontend: types+adapter+api+hooks+visual components for GA phase (8-step stepper, 'Start Production' CTA). Planner handleApprove wires to GA pipeline. 49 new tests. Codex gpt-5.3-codex audit: 7 findings fixed (H1-H4, M1-M2). 85 tests passing. Build clean."},
+      {"sprint": "content-inventory-structural-signals", "date": "2026-04-06", "summary": "Content Inventory enhanced: Gap Analysis S1 as second ingestion source (gap_analysis_crawl enum), 45-field structural_signals JSONB column, Site Audit HTML pass-through via _html_map_out for signal computation. Migration 0033. Codex gpt-5.3-codex review: 10 findings, 5 addressed. 9 new tests. 138 passing."},
+      {"sprint": "content-to-prompt-pipeline", "date": "2026-04-06", "summary": "Content-to-Prompt pipeline — generates k AI visibility prompts per content inventory page for daily tracker monitoring. Join table content_inventory_prompts (migration 0034), ContentToPromptService (LLM via OpenRouter Sonnet), ContentToPromptOrchestrator (dedup + persist + approve), 6 API endpoints, enrich_thin_pages(), PromptSource.CONTENT_INVENTORY. Codex gpt-5.3-codex critical review: 8 findings incorporated (cascade safety, 2-tier dedup, is_user_edited, partial failure model, concurrency 8). 42 new tests. Architecture compared against FK-column alternative — join table chosen for M:N support, company_id type mismatch avoidance, no existing table mods."}
     ]
   },
   "completed": [
+    {
+      "id": "T-content-to-prompt-pipeline",
+      "task": "Content-to-Prompt pipeline — generate k AI visibility prompts per content inventory page",
+      "sprint": "content-to-prompt-pipeline",
+      "status": "done",
+      "completed_at": "2026-04-06",
+      "tests_added": 42,
+      "files_created": [
+        "core/db/migrations/versions/0034_content_inventory_prompts.py",
+        "core/db/models/content_inventory_prompt.py",
+        "core/db/repositories/content_inventory_prompt_repo.py",
+        "core/daily_tracker/content_to_prompt.py",
+        "core/daily_tracker/content_to_prompt_orchestrator.py",
+        "api/schemas/content_to_prompt.py",
+        "api/routers/content_to_prompt.py",
+        "tests/daily_tracker/test_content_to_prompt.py",
+        "tests/daily_tracker/test_content_to_prompt_orchestrator.py",
+        "tests/api/test_content_to_prompt.py"
+      ],
+      "files_modified": [
+        "core/models/daily_tracker.py",
+        "core/services/content_inventory_service.py",
+        "api/app.py"
+      ],
+      "details": {
+        "architecture": "Join table content_inventory_prompts (M:N) linking pages to tracked_prompts. ContentToPromptService (LLM generation via OpenRouter) + ContentToPromptOrchestrator (dedup/persist/approve). Follows QueryFanoutService + DailyTrackerOrchestrator patterns.",
+        "db_schema": "content_inventory_prompts: content_inventory_id FK, tracked_prompt_id FK, generation_run_id (nullable), buyer_stage, intent_type, is_branded, approved, is_user_edited. UNIQUE on (inventory_id, prompt_id). 3 indexes.",
+        "llm": "anthropic/claude-sonnet-4-6 via OpenRouter. System prompt generates k prompts spanning TOFU/MOFU/BOFU + 4 intent types. JSON structured output. Retry with backoff. Content hash caching.",
+        "dedup": "Tier 1: exact text match via exists_by_text(). Duplicate found = link to existing prompt instead of creating new. Tier 2 (future): semantic embedding similarity.",
+        "api_endpoints": "POST /generate, GET /pages/{id}/prompts, GET /pages/{id}/metrics, GET /pending, POST /approve, POST /regenerate/{id}",
+        "regeneration": "Deletes non-user-edited links, deactivates orphaned prompts (zero remaining links), generates fresh prompts with dedup.",
+        "content_enrichment": "enrich_thin_pages() added to ContentInventoryService — trafilatura fetch for pages with <100 chars content_preview.",
+        "codex_review": "gpt-5.3-codex critical review. Key findings: cascade safety (link CASCADE only), is_user_edited protection, 2-tier dedup, concurrency 8, partial failure model, cost tracking via track_llm_cost().",
+        "plan_comparison": "Evaluated join table (Plan A) vs FK on tracked_prompts (Plan B). Join table won 7/10 dimensions. Critical: tracked_prompts.company_id is String, content_inventory.company_id is UUID — join table sidesteps type mismatch."
+      }
+    },
+    {
+      "id": "T-content-inventory-structural-signals",
+      "task": "Content Inventory — Gap Analysis S1 ingestion + structural signals JSONB",
+      "sprint": "content-inventory-structural-signals",
+      "status": "done",
+      "completed_at": "2026-04-06",
+      "tests_added": 9,
+      "files_created": [
+        "core/db/migrations/versions/0033_content_inventory_structural_signals.py",
+        "tests/integration/test_gap_analysis_inventory_hydration.py"
+      ],
+      "files_modified": [
+        "core/db/enums.py",
+        "core/db/models/content_inventory.py",
+        "core/content_inventory/models.py",
+        "core/db/repositories/content_inventory_repo.py",
+        "core/site_audit/pipeline.py",
+        "core/content_inventory/hydration.py",
+        "core/services/content_inventory_service.py",
+        "api/tasks/runner.py",
+        "tests/integration/test_site_audit_inventory_hydration.py"
+      ]
+    },
     {
       "id": "T-td-ga-ce-two-phase-split",
       "task": "Two-phase TD→GA→CE pipeline split — GA-only + CE-only with SSE, Redis state, frontend integration",
@@ -429,7 +490,47 @@
       ]
     }
   ],
-  "in_progress": [],
+  "in_progress": [
+    {
+      "id": "T-ga-sidebar-enrichment",
+      "task": "Enrich GA-phase Content Studio sidebar with full topic assignment metadata — content spec, keywords, persona affinity, priority factors, content angle",
+      "sprint": "ga-sidebar-enrichment",
+      "status": "done",
+      "completed_at": "2026-04-06",
+      "tests_added": 0,
+      "files_modified": [
+        "core/orchestration/td_content_orchestrator.py",
+        "core/content_engine/state_redis.py",
+        "core/services/db_content_data.py",
+        "api/schemas/content_data.py",
+        "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/LeftSidebar.tsx"
+      ],
+      "details": {
+        "backend": "Enriched _write_ga_phase_redis with 11 additional fields from TopicAssignment (intent_type, persona_name, persona_id, persona_affinity, priority_factors, content_format, estimated_word_count, citation_opportunity, description, target_keywords, content_angle). Updated state_redis readers and _load_ga_phase_cards to pass through enriched metadata. Added 11 fields to ContentBriefListItem schema.",
+        "frontend": "GapAnalysisSidebar redesigned with 7 sections: Topic, Stage badges, Content Spec, Target Keywords, Why This Topic, Target Persona, Analysis Progress."
+      }
+    },
+    {
+      "id": "T-eliminate-excluded-combos",
+      "task": "Remove all 6 excluded buyer_stage × intent_type combos — all 12 cells now have cluster mappings",
+      "sprint": "ga-sidebar-enrichment",
+      "status": "done",
+      "completed_at": "2026-04-06",
+      "tests_added": 0,
+      "files_modified": [
+        "core/gap_analysis/topic_cluster_map.py",
+        "core/orchestration/td_content_orchestrator.py",
+        "core/gap_analysis/steps/s2_generate_queries.py",
+        "tests/gap_analysis/test_topic_cluster_map.py"
+      ],
+      "details": {
+        "changes": "Added 6 new ClusterMapping entries (cells 7-12) for tofu×transactional, tofu×navigational, mofu×navigational, mofu×transactional, bofu×informational, bofu×navigational. Emptied _EXCLUDED_COMBOS. Removed is_excluded_combo filter from orchestrator and S2 query gen. Updated tests: 12 valid cells, 0 excluded, 43 passing."
+      }
+    }
+  ],
   "pending": [
     {
       "id": "T-async-13",

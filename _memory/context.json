@@ -1,7 +1,7 @@
 {
-  "sprint": "td-ga-ce-two-phase-split",
-  "sprint_goal": "Split the TD→GA→CE orchestrator into two separate tasks (GA-only + CE-only) with SSE instrumentation, Redis GA-phase state, and full frontend Content Studio + Planner integration.",
-  "sprint_status": "COMPLETE — 9-phase implementation (A-I). 2 new orchestrator functions, 2 new runner tasks, 2 new endpoints, GA-phase Redis state, SSE at all 8 GA steps, frontend GA views + Planner wiring. Codex audit: 7 fixes applied. 49 new tests. 85 total passing. Build clean.",
+  "sprint": "content-to-prompt-pipeline",
+  "sprint_goal": "Build Content-to-Prompt pipeline — generate k AI visibility prompts per content inventory page for daily tracker monitoring.",
+  "sprint_status": "COMPLETE — Content-to-Prompt pipeline fully implemented. Join table content_inventory_prompts (migration 0034), ContentToPromptService (LLM via OpenRouter Sonnet), ContentToPromptOrchestrator (dedup/persist/approve), 6 API endpoints, enrich_thin_pages(), 42 new tests all passing. Codex-reviewed architecture. Frontend page-level drawer planned but not yet built.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -35,25 +35,24 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/orchestration/td_content_orchestrator.py (EXTENDED — run_td_gap_analysis_only, run_td_content_production_only, GapAnalysisOnlyResult, GA-phase Redis helpers)",
-    "core/gap_analysis/pipeline.py (EXTENDED — event_bus/task_id params on run_topic_scoped_gap_analysis, ga_step_start/ga_step_complete SSE at 8 boundaries)",
-    "core/content_engine/state_redis.py (EXTENDED — write/read/cleanup_ga_phase_state sync+async, ta-{id} keys, __meta: metadata)",
-    "core/services/db_content_data.py (EXTENDED — _load_ga_phase_cards, GA card merge before early-return in get_briefs)",
-    "api/tasks/runner.py (EXTENDED — run_td_gap_analysis_task, run_td_content_production_task with CancelledError cleanup)",
-    "api/routers/content_v13.py (EXTENDED — POST /from-topics/gap-analysis, POST /from-topics/start-production)",
-    "frontend/src/app/(dashboard)/content-studio/page.tsx (EXTENDED — start_production action, GA-priority activeTaskId, multi-card progress, effectiveSlug)",
-    "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx (EXTENDED — GapAnalysisView with 8-step stepper, Start Production CTA)",
-    "frontend/src/app/(dashboard)/planner/page.tsx (EXTENDED — handleApprove calls startFromTopicsPipeline)"
+    "core/db/models/content_inventory_prompt.py (NEW — join table ORM model)",
+    "core/db/repositories/content_inventory_prompt_repo.py (NEW — link CRUD, page-level metrics, pending by slug)",
+    "core/daily_tracker/content_to_prompt.py (NEW — LLM service, OpenRouter Sonnet, k prompts per page)",
+    "core/daily_tracker/content_to_prompt_orchestrator.py (NEW — dedup + persist + approve + regenerate)",
+    "api/routers/content_to_prompt.py (NEW — 6 endpoints under /api/v1/content-to-prompt/)",
+    "api/schemas/content_to_prompt.py (NEW — 8 request/response schemas)",
+    "core/models/daily_tracker.py (EXTENDED — PromptSource.CONTENT_INVENTORY + 5 new Pydantic models)",
+    "core/services/content_inventory_service.py (EXTENDED — enrich_thin_pages() method)"
   ],
-  "test_count": 1655,
-  "phases_completed_count": 69,
+  "test_count": 1706,
+  "phases_completed_count": 70,
   "recent_phases": [
+    "content-to-prompt-pipeline — Generate k AI visibility prompts per content inventory page. Join table M:N, ContentToPromptService (OpenRouter Sonnet), orchestrator, 6 API endpoints, enrich_thin_pages(). Codex-reviewed. 42 new tests.",
+    "ga-sidebar-enrichment — Enrich GA-phase sidebar with topic assignment metadata (11 fields end-to-end). Eliminate all 6 excluded buyer_stage × intent_type combos (12 cells valid). GapAnalysisSidebar redesigned. 43 tests passing.",
     "td-ga-ce-two-phase-split — Two-phase TD→GA→CE pipeline. Split orchestrator, GA SSE (8 steps), Redis ga_phase_state, 2 new endpoints, frontend GA views + Planner wiring. Codex audit: 7 fixes. 49 new tests. 85 passing.",
     "content-studio-status-enum — Resolve frontend-backend stage/status mismatch. BriefPipelineStatus (17→20 values). status-adapter.ts pure mapping layer. 4-column Kanban.",
     "td-additive-upsert — Refactor Pipeline B to additive per-subdomain DB upserts. 5 new db_ops functions, retry/backoff, circuit breaker, per-assignment persona affinity. Migration 0031. 18 new tests.",
-    "td-db-only-migration — Eliminate JSON filesystem from TD pipelines. DB-only storage. Migration 0029. 1588 tests passing.",
-    "planner-integration — Content Planner (/planner) frontend-backend integration. 4 new endpoints, TopicAssignmentStatus enum expanded. 59 new tests.",
-    "settings-page-integration — Settings page (/settings) frontend-backend integration. Team + Integrations tabs. Build clean."
+    "td-db-only-migration — Eliminate JSON filesystem from TD pipelines. DB-only storage. Migration 0029. 1588 tests passing."
   ],
   "phases_remaining": [
     "openrouter-phase3 — Embeddings: Point embedding clients at OpenRouter",

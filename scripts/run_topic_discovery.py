@@ -236,7 +236,100 @@ async def _run_discover(args: argparse.Namespace) -> int:
     print(f"  Time:              {elapsed:.1f}s")
     print()
 
+    # ── Persist results to filesystem (CLI-only) ──
+    _persist_discovery_output(result, Path(args.artifacts_root))
+
     return 0
+
+
+# ── CLI-only filesystem persistence ─────────────────────────────────
+
+
+def _persist_discovery_output(
+    result: TopicDiscoveryOutput, artifacts_root: Path
+) -> None:
+    """Write Pipeline A results to artifacts/ so CLI runs are never lost.
+
+    This is a CLI-only convenience — the pipeline itself is db_only.
+    Uses TopicDiscoveryStorage for consistent file layout.
+    """
+    from core.topic_discovery.storage import TopicDiscoveryStorage
+
+    slug = result.effective_slug or result.slug
+    if not slug:
+        logger.warning("No slug on output — skipping filesystem persist")
+        return
+
+    storage = TopicDiscoveryStorage(artifacts_root, slug)
+    written: list[str] = []
+
+    if result.manifest:
+        storage.write_manifest(result.manifest)
+        written.append("_manifest.json")
+
+    if result.taxonomy:
+        ver = result.taxonomy_version or result.taxonomy.version or 1
+        storage.write_taxonomy(result.taxonomy, version=ver)
+        written.append(f"taxonomy/v{ver}.json")
+
+    if result.coverage:
+        storage.write_coverage(result.coverage, version=1)
+        written.append("raw/coverage_v1.json")
+
+    if result.scored_subdomains:
+        ver = (result.manifest.scoring_version if result.manifest else 0) or 1
+        storage.write_scoring(result.scored_subdomains, version=ver)
+        written.append(f"scoring/v{ver}.json")
+
+    if result.persona_affinity:
+        ver = (result.manifest.persona_affinity_version if result.manifest else 0) or 1
+        storage.write_persona_affinity(result.persona_affinity, version=ver)
+        written.append(f"persona_affinity/v{ver}.json")
+
+    if result.matrix:
+        ver = result.matrix_version or 1
+        storage.write_matrix(result.matrix, version=ver)
+        written.append(f"matrix/v{ver}.json")
+
+    if written:
+        print(f"\n  📁 Saved {len(written)} artifacts to {storage.base_dir}/")
+        for f in written:
+            print(f"     {f}")
+    else:
+        logger.warning("No data on output — nothing written to filesystem")
+
+
+def _persist_expansion_output(
+    result: "TopicExpansionOutput", artifacts_root: Path
+) -> None:
+    """Write Pipeline B results to artifacts/ so CLI runs are never lost."""
+    from core.topic_discovery.storage import TopicDiscoveryStorage
+
+    slug = result.effective_slug or result.slug
+    if not slug:
+        logger.warning("No slug on output — skipping filesystem persist")
+        return
+
+    storage = TopicDiscoveryStorage(artifacts_root, slug)
+    written: list[str] = []
+
+    if result.matrix:
+        ver = result.matrix_version or 1
+        storage.write_matrix(result.matrix, version=ver)
+        written.append(f"matrix/v{ver}.json")
+
+        # Update manifest with new matrix version
+        manifest = storage.read_manifest()
+        manifest.matrix_version = ver
+        storage.write_manifest(manifest)
+        written.append("_manifest.json (updated)")
+
+    if written:
+        print(f"\n  📁 Saved {len(written)} artifacts to {storage.base_dir}/")
+        for f in written:
+            print(f"     {f}")
+    else:
+        logger.warning("No data on output — nothing written to filesystem")
 
 
 # ── Pipeline B: Expansion ────────────────────────────────────────────
@@ -316,6 +409,9 @@ async def _run_expand(args: argparse.Namespace) -> int:
         print(f"  Intent dist:        {result.matrix.intent_distribution}")
     print(f"  Time:               {elapsed:.1f}s")
     print()
+
+    # ── Persist results to filesystem (CLI-only) ──
+    _persist_expansion_output(result, Path(args.artifacts_root))
 
     return 0
 
