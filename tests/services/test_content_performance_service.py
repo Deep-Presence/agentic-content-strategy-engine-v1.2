@@ -177,10 +177,11 @@ def _make_inventory_item(
     content_modified_at: datetime | None = None,
     published_at: datetime | None = None,
     word_count: int = 1200,
+    id_: uuid.UUID | None = None,
 ):
     """Create a mock ContentInventoryModel."""
     m = MagicMock()
-    m.id = uuid.uuid4()
+    m.id = id_ or uuid.uuid4()
     m.url = url
     m.url_normalized = url.lower()
     m.title = title
@@ -189,6 +190,7 @@ def _make_inventory_item(
     m.published_at = published_at or datetime.now(timezone.utc)
     m.word_count = word_count
     m.content_type_detected = "blog_post"
+    m.structural_signals = None
     return m
 
 
@@ -495,3 +497,176 @@ class TestGetVelocityInsights:
         # Should not include detail fields
         assert "ai_referrals" not in result[0]
         assert "freshness_days" not in result[0]
+
+
+# ── Citation / platform / queries_covered tests ────────────────────
+
+
+@pytest.fixture
+def ci_prompt_repo():
+    repo = AsyncMock()
+    repo.get_citation_metrics_batch = AsyncMock(return_value=[])
+    repo.get_citation_timeline = AsyncMock(return_value=[])
+    return repo
+
+
+@pytest.fixture
+def gap_repo():
+    repo = AsyncMock()
+    repo.count_queries_targeting_inventory_batch = AsyncMock(return_value={})
+    return repo
+
+
+@pytest.fixture
+def enriched_service(traffic_repo, inventory_repo, ci_prompt_repo, gap_repo):
+    return ContentPerformanceService(
+        traffic_repo=traffic_repo,
+        inventory_repo=inventory_repo,
+        ci_prompt_repo=ci_prompt_repo,
+        gap_repo=gap_repo,
+    )
+
+
+class TestGetContentTableCitationFields:
+    """Tests for citations, platforms, queries_covered in get_content_table()."""
+
+    @pytest.mark.asyncio
+    async def test_table_includes_citation_fields(
+        self, enriched_service, inventory_repo, ci_prompt_repo, gap_repo,
+    ):
+        cid = uuid.uuid4()
+        inv_id = uuid.uuid4()
+        items = [_make_inventory_item(company_id=cid, id_=inv_id)]
+        inventory_repo.get_by_company.return_value = (items, 1)
+
+        ci_prompt_repo.get_citation_metrics_batch.return_value = [
+            {
+                "inventory_id": inv_id,
+                "total_cited": 5,
+                "cited_openai": True,
+                "cited_claude": False,
+                "cited_gemini": True,
+                "cited_perplexity": False,
+            },
+        ]
+        gap_repo.count_queries_targeting_inventory_batch.return_value = {
+            "https://example.com/blog/post": 3,
+        }
+
+        result = await enriched_service.get_content_table(
+            cid, date(2026, 3, 1), date(2026, 3, 28),
+        )
+
+        assert len(result) == 1
+        row = result[0]
+        assert row["citations"] == 5
+        assert row["platforms"]["chatgpt"] is True
+        assert row["platforms"]["claude"] is False
+        assert row["platforms"]["gemini"] is True
+        assert row["platforms"]["perplexity"] is False
+        assert row["platforms"]["google_ai"] is True  # derived from gemini
+        assert row["queries_covered"] == 3
+
+    @pytest.mark.asyncio
+    async def test_table_defaults_without_citation_data(
+        self, enriched_service, inventory_repo,
+    ):
+        """Pages not in citation_lookup get zero defaults."""
+        cid = uuid.uuid4()
+        items = [_make_inventory_item(company_id=cid)]
+        inventory_repo.get_by_company.return_value = (items, 1)
+
+        result = await enriched_service.get_content_table(
+            cid, date(2026, 3, 1), date(2026, 3, 28),
+        )
+
+        row = result[0]
+        assert row["citations"] == 0
+        assert row["platforms"]["chatgpt"] is False
+        assert row["queries_covered"] == 0
+
+    @pytest.mark.asyncio
+    async def test_table_graceful_without_repos(
+        self, traffic_repo, inventory_repo,
+    ):
+        """Service with ci_prompt_repo=None still works — returns defaults."""
+        svc = ContentPerformanceService(
+            traffic_repo=traffic_repo,
+            inventory_repo=inventory_repo,
+        )
+        cid = uuid.uuid4()
+        items = [_make_inventory_item(company_id=cid)]
+        inventory_repo.get_by_company.return_value = (items, 1)
+
+        result = await svc.get_content_table(
+            cid, date(2026, 3, 1), date(2026, 3, 28),
+        )
+
+        row = result[0]
+        assert row["citations"] == 0
+        assert row["platforms"]["chatgpt"] is False
+        assert row["queries_covered"] == 0
+
+
+class TestGetContentDetailCitationFields:
+    """Tests for citation_timeline, citations, platforms, queries_covered in detail."""
+
+    @pytest.mark.asyncio
+    async def test_detail_includes_citation_timeline(
+        self, enriched_service, inventory_repo, ci_prompt_repo,
+    ):
+        cid = uuid.uuid4()
+        inv_id = uuid.uuid4()
+        item = _make_inventory_item(company_id=cid, id_=inv_id)
+        inventory_repo.get_by_id.return_value = item
+
+        ci_prompt_repo.get_citation_timeline.return_value = [
+            {"day": date(2026, 3, 1), "cited": 2, "total_responses": 10},
+            {"day": date(2026, 3, 2), "cited": 3, "total_responses": 12},
+        ]
+        ci_prompt_repo.get_citation_metrics_batch.return_value = [
+            {
+                "inventory_id": inv_id,
+                "total_cited": 5,
+                "cited_openai": True,
+                "cited_claude": True,
+                "cited_gemini": False,
+                "cited_perplexity": False,
+            },
+        ]
+
+        result = await enriched_service.get_content_detail(
+            cid, inv_id, date(2026, 3, 1), date(2026, 3, 28),
+        )
+
+        assert result is not None
+        assert len(result["citation_timeline"]) == 2
+        assert result["citation_timeline"][0]["cited"] == 2
+        assert result["citations"] == 5  # sum of cited from timeline
+        assert result["platforms"]["chatgpt"] is True
+        assert result["platforms"]["claude"] is True
+        assert result["platforms"]["gemini"] is False
+
+    @pytest.mark.asyncio
+    async def test_detail_graceful_without_repos(
+        self, traffic_repo, inventory_repo,
+    ):
+        """Service with ci_prompt_repo=None returns empty timeline + defaults."""
+        svc = ContentPerformanceService(
+            traffic_repo=traffic_repo,
+            inventory_repo=inventory_repo,
+        )
+        cid = uuid.uuid4()
+        inv_id = uuid.uuid4()
+        item = _make_inventory_item(company_id=cid, id_=inv_id)
+        inventory_repo.get_by_id.return_value = item
+
+        result = await svc.get_content_detail(
+            cid, inv_id, date(2026, 3, 1), date(2026, 3, 28),
+        )
+
+        assert result is not None
+        assert result["citation_timeline"] == []
+        assert result["citations"] == 0
+        assert result["platforms"]["chatgpt"] is False
+        assert result["queries_covered"] == 0

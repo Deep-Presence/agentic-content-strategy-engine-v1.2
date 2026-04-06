@@ -26,6 +26,18 @@ class ContentPerformanceRow(BaseModel):
     content_type: str = ""
     word_count: int = 0
     published_at: Optional[datetime] = None
+    structural_score: int = 0
+    citations: int = 0
+    platforms: dict[str, bool] = Field(
+        default_factory=lambda: {
+            "chatgpt": False,
+            "claude": False,
+            "gemini": False,
+            "perplexity": False,
+            "google_ai": False,
+        },
+    )
+    queries_covered: int = 0
 
 
 class ContentPerformanceTableResponse(BaseModel):
@@ -61,6 +73,14 @@ class AIPlatformBreakdownItem(BaseModel):
     sessions: int = 0
 
 
+class CitationTimelinePoint(BaseModel):
+    """Single day in a citation timeline."""
+
+    date: str = ""
+    cited: int = 0
+    total_responses: int = 0
+
+
 class ContentDetailResponse(BaseModel):
     """Detailed analytics for a single content piece."""
 
@@ -79,6 +99,19 @@ class ContentDetailResponse(BaseModel):
         default_factory=list,
     )
     structural_signals: Optional[dict[str, Any]] = None
+    structural_score: int = 0
+    citation_timeline: list[CitationTimelinePoint] = Field(default_factory=list)
+    citations: int = 0
+    platforms: dict[str, bool] = Field(
+        default_factory=lambda: {
+            "chatgpt": False,
+            "claude": False,
+            "gemini": False,
+            "perplexity": False,
+            "google_ai": False,
+        },
+    )
+    queries_covered: int = 0
 
 
 class VelocityInsight(BaseModel):
