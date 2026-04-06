@@ -406,3 +406,64 @@ class TestFindExistingCoverage:
             query_text="Anything",
         )
         assert results == []
+
+
+# ── find_similar_pages (intra-inventory cannibalization) ──────────
+
+
+class TestFindSimilarPages:
+    """Service: find_similar_pages — intra-inventory cannibalization."""
+
+    @pytest.mark.asyncio
+    async def test_returns_matches_excluding_self(self):
+        repo = _make_repo()
+        mock_model = MagicMock()
+        mock_model.id = uuid.uuid4()
+        mock_model.url = "https://example.com/similar"
+        mock_model.title = "Similar Page"
+        mock_model.word_count = 1200
+        mock_model.content_preview = "Preview of similar page"
+        mock_model.content_type_detected = "blog_post"
+
+        repo.find_similar_to_page = AsyncMock(return_value=[(mock_model, 0.85)])
+        svc = _make_service(repo)
+
+        results = await svc.find_similar_pages(
+            company_id=uuid.uuid4(),
+            page_id=uuid.uuid4(),
+        )
+        assert len(results) == 1
+        assert isinstance(results[0], CannibalizationMatch)
+        assert results[0].similarity == 0.85
+        assert results[0].title == "Similar Page"
+        assert results[0].content_type_detected == "blog_post"
+
+    @pytest.mark.asyncio
+    async def test_no_embedding_returns_empty(self):
+        repo = _make_repo()
+        repo.find_similar_to_page = AsyncMock(return_value=[])
+        svc = _make_service(repo)
+
+        results = await svc.find_similar_pages(
+            company_id=uuid.uuid4(),
+            page_id=uuid.uuid4(),
+        )
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_threshold_and_limit_passed_through(self):
+        repo = _make_repo()
+        repo.find_similar_to_page = AsyncMock(return_value=[])
+        svc = _make_service(repo)
+        company_id = uuid.uuid4()
+        page_id = uuid.uuid4()
+
+        await svc.find_similar_pages(
+            company_id=company_id,
+            page_id=page_id,
+            threshold=0.90,
+            limit=3,
+        )
+        repo.find_similar_to_page.assert_called_once_with(
+            company_id, page_id, threshold=0.90, limit=3,
+        )

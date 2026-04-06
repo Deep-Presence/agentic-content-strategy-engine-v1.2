@@ -18,6 +18,15 @@ export interface ActivityEntry {
   by: string;
 }
 
+export interface CannibalizationMatchItem {
+  inventoryId: string;
+  url: string;
+  title: string;
+  similarity: number;
+  wordCount: number;
+  contentType: string;
+}
+
 export interface Assignment {
   id: string;
   displayId: string;
@@ -44,6 +53,8 @@ export interface Assignment {
   createdAt: string;
   activityLog: ActivityEntry[];
   priorityFactors: Record<string, number>;
+  cannibalizationRisk: number | null;
+  cannibalizationMatches: CannibalizationMatchItem[];
 }
 
 export interface Subcluster {
@@ -136,6 +147,8 @@ export const ASSIGNMENTS: Assignment[] = [
     createdAt: 'Mar 20, 2026',
     activityLog: [{ action: 'Discovered by topic discovery pipeline', date: null, by: 'System' }],
     priorityFactors: { strategic_centrality: 0.7, citation_opportunity: 0.74, content_authority: 0.6, conversion_potential: 0.95 },
+    cannibalizationRisk: null,
+    cannibalizationMatches: [],
   },
   {
     id: 'mock-004',
@@ -170,6 +183,8 @@ export const ASSIGNMENTS: Assignment[] = [
     createdAt: 'Mar 19, 2026',
     activityLog: [{ action: 'Discovered by topic discovery pipeline', date: null, by: 'System' }],
     priorityFactors: { strategic_centrality: 0.8, citation_opportunity: 0.65, content_authority: 0.7, conversion_potential: 0.9 },
+    cannibalizationRisk: null,
+    cannibalizationMatches: [],
   },
   {
     id: 'mock-005',
@@ -204,6 +219,8 @@ export const ASSIGNMENTS: Assignment[] = [
     createdAt: 'Mar 20, 2026',
     activityLog: [{ action: 'Discovered by topic discovery pipeline', date: null, by: 'System' }],
     priorityFactors: { strategic_centrality: 0.65, citation_opportunity: 0.70, content_authority: 0.85, conversion_potential: 0.6 },
+    cannibalizationRisk: null,
+    cannibalizationMatches: [],
   },
   {
     id: 'mock-007',
@@ -238,6 +255,8 @@ export const ASSIGNMENTS: Assignment[] = [
     createdAt: 'Mar 19, 2026',
     activityLog: [{ action: 'Discovered by topic discovery pipeline', date: null, by: 'System' }],
     priorityFactors: { strategic_centrality: 0.7, citation_opportunity: 0.68, content_authority: 0.75, conversion_potential: 0.6 },
+    cannibalizationRisk: null,
+    cannibalizationMatches: [],
   },
   {
     id: 'mock-009',
@@ -272,6 +291,8 @@ export const ASSIGNMENTS: Assignment[] = [
     createdAt: 'Mar 20, 2026',
     activityLog: [{ action: 'Discovered by topic discovery pipeline', date: null, by: 'System' }],
     priorityFactors: { strategic_centrality: 0.6, citation_opportunity: 0.78, content_authority: 0.65, conversion_potential: 0.85 },
+    cannibalizationRisk: null,
+    cannibalizationMatches: [],
   },
 ];
 

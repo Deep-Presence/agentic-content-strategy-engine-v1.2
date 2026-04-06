@@ -345,3 +345,186 @@ class TestTopicPriorityIntegration:
         p_high, _ = compute_topic_priority("bofu", "transactional", 1.0)
         p_low, _ = compute_topic_priority("bofu", "transactional", 0.5)
         assert p_high > p_low
+
+
+# ---------------------------------------------------------------------------
+# Cannibalization detection helpers
+# ---------------------------------------------------------------------------
+
+
+from core.topic_discovery.pipeline import _build_cannibal_query, _apply_cannibalization_results
+
+
+class TestBuildCannibalQuery:
+    """Tests for _build_cannibal_query()."""
+
+    def test_basic_topic_text(self):
+        a = TopicAssignment(topic_text="How to Build an Expense Policy")
+        result = _build_cannibal_query(a)
+        assert result == "How to Build an Expense Policy"
+
+    def test_includes_description(self):
+        a = TopicAssignment(
+            topic_text="Expense Policy Guide",
+            metadata={"description": "A comprehensive guide to expense policies."},
+        )
+        result = _build_cannibal_query(a)
+        assert "Expense Policy Guide" in result
+        assert "A comprehensive guide" in result
+        assert " | " in result
+
+    def test_includes_target_keywords(self):
+        a = TopicAssignment(
+            topic_text="Ramp vs Brex",
+            metadata={
+                "description": "Head-to-head comparison.",
+                "target_keywords": ["expense management", "corporate cards", "AP automation"],
+            },
+        )
+        result = _build_cannibal_query(a)
+        assert "Ramp vs Brex" in result
+        assert "expense management" in result
+        assert "corporate cards" in result
+
+    def test_truncates_keywords_at_10(self):
+        a = TopicAssignment(
+            topic_text="Topic",
+            metadata={"target_keywords": [f"kw{i}" for i in range(20)]},
+        )
+        result = _build_cannibal_query(a)
+        assert "kw9" in result
+        assert "kw10" not in result
+
+    def test_handles_empty_metadata(self):
+        a = TopicAssignment(topic_text="Some Topic", metadata={})
+        result = _build_cannibal_query(a)
+        assert result == "Some Topic"
+
+    def test_handles_non_list_keywords(self):
+        a = TopicAssignment(
+            topic_text="Topic",
+            metadata={"target_keywords": {"primary": "expense"}},
+        )
+        result = _build_cannibal_query(a)
+        # Non-list keywords are ignored
+        assert result == "Topic"
+
+
+class TestApplyCannibalizationResults:
+    """Tests for _apply_cannibalization_results()."""
+
+    def _make_match(self, similarity: float = 0.85):
+        """Create a mock CannibalizationMatch."""
+
+        class _Match:
+            def __init__(self, sim):
+                self.inventory_id = "inv-123"
+                self.url = "https://example.com/blog/guide"
+                self.title = "Existing Guide"
+                self.similarity = sim
+                self.word_count = 1500
+                self.content_type_detected = "blog_post"
+
+        return _Match(similarity)
+
+    def test_no_matches_sets_zero_risk(self):
+        a = TopicAssignment(topic_text="New Topic", priority_score=0.8, metadata={})
+        _apply_cannibalization_results([a], ["New Topic"], {})
+        assert a.metadata["cannibalization_risk"] == 0.0
+        assert a.metadata["cannibalization_matches"] == []
+        assert a.priority_score == 0.8  # Unchanged
+
+    def test_match_enriches_metadata(self):
+        a = TopicAssignment(topic_text="Topic A", priority_score=0.8, metadata={})
+        match = self._make_match(0.87)
+        _apply_cannibalization_results([a], ["Topic A"], {"Topic A": [match]})
+        assert a.metadata["cannibalization_risk"] == 0.87
+        assert len(a.metadata["cannibalization_matches"]) == 1
+        assert a.metadata["cannibalization_matches"][0]["url"] == "https://example.com/blog/guide"
+        assert a.metadata["cannibalization_matches"][0]["similarity"] == 0.87
+
+    def test_penalty_zero_at_threshold(self):
+        """Similarity at exactly the threshold (0.80) should produce no penalty."""
+        a = TopicAssignment(
+            topic_text="T", priority_score=1.0,
+            priority_factors={}, metadata={},
+        )
+        _apply_cannibalization_results(
+            [a], ["T"], {"T": [self._make_match(0.80)]},
+        )
+        # At 0.80, penalty should be 0 (or negligible)
+        assert a.priority_score == pytest.approx(1.0, abs=0.01)
+
+    def test_penalty_moderate_at_085(self):
+        """Similarity 0.85 → ~10% penalty."""
+        a = TopicAssignment(
+            topic_text="T", priority_score=1.0,
+            priority_factors={}, metadata={},
+        )
+        _apply_cannibalization_results(
+            [a], ["T"], {"T": [self._make_match(0.85)]},
+        )
+        assert a.priority_score == pytest.approx(0.90, abs=0.02)
+        assert "cannibalization_penalty" in a.priority_factors
+
+    def test_penalty_strong_at_090(self):
+        """Similarity 0.90 → 20% penalty."""
+        a = TopicAssignment(
+            topic_text="T", priority_score=1.0,
+            priority_factors={}, metadata={},
+        )
+        _apply_cannibalization_results(
+            [a], ["T"], {"T": [self._make_match(0.90)]},
+        )
+        assert a.priority_score == pytest.approx(0.80, abs=0.02)
+
+    def test_penalty_very_strong_at_095(self):
+        """Similarity 0.95 → ~27.5% penalty."""
+        a = TopicAssignment(
+            topic_text="T", priority_score=1.0,
+            priority_factors={}, metadata={},
+        )
+        _apply_cannibalization_results(
+            [a], ["T"], {"T": [self._make_match(0.95)]},
+        )
+        assert a.priority_score == pytest.approx(0.725, abs=0.02)
+
+    def test_penalty_capped_at_035(self):
+        """Penalty never exceeds 35% even at similarity=1.0."""
+        a = TopicAssignment(
+            topic_text="T", priority_score=1.0,
+            priority_factors={}, metadata={},
+        )
+        _apply_cannibalization_results(
+            [a], ["T"], {"T": [self._make_match(1.0)]},
+        )
+        assert a.priority_score >= 0.65
+
+    def test_caps_matches_at_max(self):
+        """Only top N matches stored (default 5 from settings)."""
+        a = TopicAssignment(topic_text="T", priority_score=1.0, metadata={})
+        matches = [self._make_match(0.80 + 0.02 * i) for i in range(10)]
+        _apply_cannibalization_results([a], ["T"], {"T": matches})
+        assert len(a.metadata["cannibalization_matches"]) <= 5
+
+    def test_multiple_assignments(self):
+        """Batch mode: each assignment gets its own result."""
+        a1 = TopicAssignment(topic_text="T1", priority_score=1.0, metadata={})
+        a2 = TopicAssignment(topic_text="T2", priority_score=0.8, metadata={})
+        results = {
+            "Q1": [self._make_match(0.90)],
+            "Q2": [],
+        }
+        _apply_cannibalization_results([a1, a2], ["Q1", "Q2"], results)
+        assert a1.metadata["cannibalization_risk"] == 0.90
+        assert a2.metadata["cannibalization_risk"] == 0.0
+        assert a1.priority_score < 1.0
+        assert a2.priority_score == 0.8  # Unchanged
+
+    def test_zero_priority_not_modified(self):
+        """Assignments with priority_score=0 are not penalized."""
+        a = TopicAssignment(topic_text="T", priority_score=0.0, metadata={})
+        _apply_cannibalization_results(
+            [a], ["T"], {"T": [self._make_match(0.95)]},
+        )
+        assert a.priority_score == 0.0

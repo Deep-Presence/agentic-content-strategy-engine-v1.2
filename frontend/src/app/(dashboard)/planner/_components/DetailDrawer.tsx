@@ -296,6 +296,41 @@ export function DetailDrawer({ assignment, onClose, onApprove, onReject }: Detai
                   </>
                 )}
 
+                {/* ─── Cannibalization Risk ─── */}
+                {assignment.cannibalizationRisk != null && assignment.cannibalizationRisk > 0 && (
+                  <>
+                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-secondary mt-6 mb-3">Cannibalization Risk</h3>
+                    <div className="rounded-md overflow-hidden" style={{ border: `1px solid ${assignment.cannibalizationRisk >= 0.90 ? '#E5484D' : '#F5A623'}`, background: assignment.cannibalizationRisk >= 0.90 ? 'rgba(229,72,77,0.04)' : 'rgba(245,166,35,0.04)' }}>
+                      <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[13px] text-text-secondary">Overlap Score</span>
+                          <span className="font-mono text-[14px] font-semibold" style={{ color: assignment.cannibalizationRisk >= 0.90 ? '#E5484D' : '#F5A623' }}>
+                            {Math.round(assignment.cannibalizationRisk * 100)}%
+                          </span>
+                        </div>
+                        <p className="text-[12px] text-text-tertiary mt-1">
+                          This topic overlaps with {assignment.cannibalizationMatches.length} existing page{assignment.cannibalizationMatches.length !== 1 ? 's' : ''}. Consider consolidating or differentiating the angle.
+                        </p>
+                      </div>
+                      {assignment.cannibalizationMatches.map((match, i) => (
+                        <div key={match.inventoryId} className="flex items-center justify-between px-4 py-2.5"
+                          style={{ borderBottom: i < assignment.cannibalizationMatches.length - 1 ? '1px solid var(--border)' : undefined }}>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[13px] text-text-primary truncate">{match.title}</p>
+                            <a href={match.url} target="_blank" rel="noopener noreferrer"
+                              className="text-[11px] text-text-tertiary hover:text-accent truncate block">
+                              {match.url}
+                            </a>
+                          </div>
+                          <span className="font-mono text-[12px] font-semibold ml-3" style={{ color: match.similarity >= 0.90 ? '#E5484D' : '#F5A623' }}>
+                            {Math.round(match.similarity * 100)}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
                 {/* ─── Activity ─── */}
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-secondary mt-6 mb-3">Activity</h3>
                 <div className="space-y-2.5">

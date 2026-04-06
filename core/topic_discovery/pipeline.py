@@ -80,7 +80,6 @@ from core.topic_discovery.graph import (
     build_td_taxonomy_review_graph,
     run_td_hitl_checkpoint,
 )
-from core.topic_discovery.storage import TopicDiscoveryStorage
 from core.topic_discovery.scoring import (
     apply_source_confidence_adjustment,
     build_persona_affinity_index_from_taxonomy,
@@ -816,6 +815,76 @@ def _update_expansion_status(
         _update_expansion_status(node.children, expanded_ids, failed_ids)
 
 
+# ---------------------------------------------------------------------------
+# Cannibalization detection helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_cannibal_query(assignment: TopicAssignment) -> str:
+    """Build enriched text for cannibalization similarity check.
+
+    Mirrors the content inventory embedding formula
+    (title | h1 | meta_description | preview) to produce better similarity.
+    """
+    parts = [assignment.topic_text]
+    meta = assignment.metadata or {}
+    if meta.get("description"):
+        parts.append(str(meta["description"]))
+    keywords = meta.get("target_keywords")
+    if keywords and isinstance(keywords, list):
+        parts.append(", ".join(str(k) for k in keywords[:10]))
+    return " | ".join(parts)
+
+
+def _apply_cannibalization_results(
+    assignments: List[TopicAssignment],
+    query_texts: List[str],
+    cannibal_results: Dict[str, list],
+) -> None:
+    """Enrich assignments with cannibalization data and adjust priority.
+
+    Piecewise penalty:
+      < 0.80: no penalty (filtered by pgvector threshold)
+      0.80-0.90: moderate (up to 20% reduction)
+      > 0.90: strong (20-35% reduction)
+    """
+    max_matches = settings.td_cannibalization_max_matches
+    for a, qt in zip(assignments, query_texts):
+        matches = cannibal_results.get(qt, [])
+        if not matches:
+            a.metadata["cannibalization_risk"] = 0.0
+            a.metadata["cannibalization_matches"] = []
+            continue
+
+        max_sim = max(m.similarity for m in matches)
+        a.metadata["cannibalization_risk"] = round(max_sim, 4)
+        a.metadata["cannibalization_matches"] = [
+            {
+                "inventory_id": m.inventory_id,
+                "url": m.url,
+                "title": m.title,
+                "similarity": round(m.similarity, 4),
+                "word_count": m.word_count,
+                "content_type": m.content_type_detected,
+            }
+            for m in matches[:max_matches]
+        ]
+
+        # Piecewise priority penalty
+        if a.priority_score > 0 and max_sim > 0:
+            threshold = settings.td_cannibalization_threshold
+            if max_sim >= 0.90:
+                penalty = 0.20 + (max_sim - 0.90) * 1.5  # 0.20 to 0.35
+            elif max_sim > threshold:
+                penalty = (max_sim - threshold) * (0.20 / (0.90 - threshold))
+            else:
+                penalty = 0.0
+            penalty = min(penalty, 0.35)
+            if penalty > 0:
+                a.priority_score = round(a.priority_score * (1 - penalty), 4)
+                a.priority_factors["cannibalization_penalty"] = round(-penalty, 4)
+
+
 async def run_topic_expansion_pipeline(
     input_data: TopicExpansionInput,
     *,
@@ -865,11 +934,10 @@ async def run_topic_expansion_pipeline(
         _emit(event_bus, task_id, "td_phase_start", {"phase": "preflight", "stage": "expansion_preflight"})
         _update_task(task_store, task_id, current_step="expansion_preflight")
 
-        if session_factory is not None:
-            manifest = await db_read_manifest(session_factory, effective_slug)
-        else:
-            _fs_storage = TopicDiscoveryStorage(root, effective_slug)
-            manifest = _fs_storage.read_manifest()
+        if session_factory is None:
+            raise RuntimeError("session_factory is required for topic expansion pipeline")
+
+        manifest = await db_read_manifest(session_factory, effective_slug)
 
         if manifest.taxonomy_version == 0 or manifest.scoring_version == 0:
             raise RuntimeError(
@@ -879,20 +947,13 @@ async def run_topic_expansion_pipeline(
 
         # Load taxonomy
         tax_version = input_data.taxonomy_version or manifest.taxonomy_version
-        if session_factory is not None:
-            taxonomy = await db_read_taxonomy(session_factory, effective_slug, version=tax_version)
-        else:
-            taxonomy = _fs_storage.read_taxonomy(tax_version)
+        taxonomy = await db_read_taxonomy(session_factory, effective_slug, version=tax_version)
         if taxonomy is None:
             raise RuntimeError(f"Taxonomy v{tax_version} not found for '{effective_slug}'.")
 
         # Load scored subdomains + persona affinity
-        if session_factory is not None:
-            scored_subdomains = await db_read_scoring(session_factory, effective_slug)
-            persona_affinity = await db_read_persona_affinity(session_factory, effective_slug)
-        else:
-            scored_subdomains = _fs_storage.read_scoring(manifest.scoring_version)
-            persona_affinity = _fs_storage.read_persona_affinity(manifest.persona_affinity_version)
+        scored_subdomains = await db_read_scoring(session_factory, effective_slug)
+        persona_affinity = await db_read_persona_affinity(session_factory, effective_slug)
 
         # Load company context + persona profiles (needed for expansion prompts)
         domain = input_data.domain or f"{company_slug}.com"
@@ -1135,6 +1196,32 @@ async def run_topic_expansion_pipeline(
                     a.priority_score = priority
                     a.priority_factors = factors
 
+            # 3b. Cannibalization detection (batch)
+            if session_factory is not None and company_id is not None and assignments:
+                try:
+                    from core.db.repositories.content_inventory_repo import ContentInventoryRepository
+                    from core.services.content_inventory_service import ContentInventoryService
+
+                    async with session_factory() as _cannibal_session:
+                        cannibal_svc = ContentInventoryService(
+                            inventory_repo=ContentInventoryRepository(_cannibal_session),
+                        )
+                        query_texts = [_build_cannibal_query(a) for a in assignments]
+                        cannibal_results = await cannibal_svc.check_cannibalization_batch(
+                            company_id, query_texts,
+                            threshold=settings.td_cannibalization_threshold,
+                        )
+                        _apply_cannibalization_results(
+                            assignments, query_texts, cannibal_results,
+                        )
+                except Exception:
+                    logger.warning(
+                        "TD-Expansion/%s: cannibalization check failed for '%s', continuing",
+                        effective_slug, sd_name, exc_info=True,
+                    )
+                    for a in assignments:
+                        a.metadata["cannibalization_risk"] = None
+
             # 4. Compute per-assignment persona affinity
             sd_affinity = subdomain_affinity_map.get(sd_id, {})
             if persona_entries:
@@ -1238,10 +1325,7 @@ async def run_topic_expansion_pipeline(
         # In production, per-subdomain writes already accumulated in DB;
         # the merge here handles the case where DB writes were skipped
         # (non-UUID test IDs, no session_factory, etc.).
-        if session_factory is not None:
-            db_matrix = await db_read_latest_matrix(session_factory, effective_slug)
-        else:
-            db_matrix = _fs_storage.read_matrix(mat_version)
+        db_matrix = await db_read_latest_matrix(session_factory, effective_slug)
         db_assignments = db_matrix.assignments if db_matrix and db_matrix.assignments else []
 
         # Merge: keep DB assignments for non-expanded subdomains,

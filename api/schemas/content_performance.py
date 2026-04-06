@@ -132,3 +132,27 @@ class VelocityInsightsResponse(BaseModel):
     items: list[VelocityInsight] = Field(default_factory=list)
     period_start: str = ""
     period_end: str = ""
+
+
+# ── Similar Content (Cannibalization) ────────────────────────────
+
+
+class SimilarContentItem(BaseModel):
+    """A page semantically similar to the queried page."""
+
+    inventory_id: str = ""
+    url: str = ""
+    title: str = ""
+    similarity: float = 0.0
+    word_count: int = 0
+    content_type: str = ""
+    content_preview: str = ""
+
+
+class SimilarContentResponse(BaseModel):
+    """Response for intra-inventory similarity (cannibalization) check."""
+
+    page_id: str = ""
+    similar_pages: list[SimilarContentItem] = Field(default_factory=list)
+    threshold: float = 0.78
+    embeddings_ready: bool = True

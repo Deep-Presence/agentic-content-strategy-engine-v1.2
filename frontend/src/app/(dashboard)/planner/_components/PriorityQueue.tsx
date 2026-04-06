@@ -129,7 +129,23 @@ export function PriorityQueue({ assignments, onRowClick, onApprove, onReject }: 
             </div>
             <div><span className="font-mono text-[11px] text-text-tertiary">{idx + 1}</span></div>
             <div className="px-2 min-w-0 overflow-hidden">
-              <div className="text-[13px] font-medium text-text-primary truncate">{a.title}</div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[13px] font-medium text-text-primary truncate">{a.title}</span>
+                {a.cannibalizationRisk != null && a.cannibalizationRisk >= 0.90 && (
+                  <span className="shrink-0 inline-flex items-center px-1.5 py-px text-[9px] font-semibold uppercase rounded-full"
+                    style={{ background: 'rgba(229,72,77,0.08)', color: '#E5484D', border: '1px solid rgba(229,72,77,0.25)' }}
+                    title={`${Math.round(a.cannibalizationRisk * 100)}% overlap with existing content`}>
+                    Near Dup
+                  </span>
+                )}
+                {a.cannibalizationRisk != null && a.cannibalizationRisk >= 0.80 && a.cannibalizationRisk < 0.90 && (
+                  <span className="shrink-0 inline-flex items-center px-1.5 py-px text-[9px] font-semibold uppercase rounded-full"
+                    style={{ background: 'rgba(245,166,35,0.08)', color: '#F5A623', border: '1px solid rgba(245,166,35,0.25)' }}
+                    title={`${Math.round(a.cannibalizationRisk * 100)}% overlap with existing content`}>
+                    Overlap
+                  </span>
+                )}
+              </div>
               <div className="text-[11px] text-text-secondary truncate">
                 <span className="font-mono">{a.displayId}</span><span className="text-text-tertiary mx-1">·</span><span>{a.cluster}</span>
               </div>

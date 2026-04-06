@@ -267,6 +267,21 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def count_with_embeddings(
+        self,
+        company_id: _uuid.UUID,
+    ) -> int:
+        """Count inventory pages that have embeddings for a company."""
+        stmt = (
+            select(func.count())
+            .select_from(ContentInventoryModel)
+            .where(
+                ContentInventoryModel.company_id == company_id,
+                ContentInventoryModel.embedding.isnot(None),
+            )
+        )
+        return (await self._session.execute(stmt)).scalar_one()
+
     # ── Similarity ────────────────────────────────────────────────
 
     async def find_similar(
@@ -292,6 +307,49 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
             .where(
                 ContentInventoryModel.company_id == company_id,
                 ContentInventoryModel.embedding.isnot(None),
+                (1 - distance_expr) >= threshold,
+            )
+            .order_by(distance_expr.asc())
+            .limit(limit)
+        )
+
+        result = await self._session.execute(stmt)
+        return [(row[0], float(row[1])) for row in result.all()]
+
+    async def find_similar_to_page(
+        self,
+        company_id: _uuid.UUID,
+        page_id: _uuid.UUID,
+        *,
+        threshold: float = 0.78,
+        limit: int = 5,
+    ) -> list[tuple[ContentInventoryModel, float]]:
+        """Find inventory pages similar to an existing page, excluding self.
+
+        Loads the page's embedding, then runs cosine similarity against
+        all other pages for the same company.
+        """
+        # 1. Load the page's embedding
+        stmt = select(ContentInventoryModel.embedding).where(
+            ContentInventoryModel.id == page_id
+        )
+        result = await self._session.execute(stmt)
+        embedding = result.scalar_one_or_none()
+        if embedding is None:
+            return []
+
+        # 2. Run cosine similarity excluding self
+        distance_expr = ContentInventoryModel.embedding.cosine_distance(  # type: ignore[attr-defined]
+            embedding
+        )
+        similarity_expr = (1 - distance_expr).label("similarity")
+
+        stmt = (
+            select(ContentInventoryModel, similarity_expr)
+            .where(
+                ContentInventoryModel.company_id == company_id,
+                ContentInventoryModel.embedding.isnot(None),
+                ContentInventoryModel.id != page_id,
                 (1 - distance_expr) >= threshold,
             )
             .order_by(distance_expr.asc())

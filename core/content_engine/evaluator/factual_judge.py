@@ -88,10 +88,11 @@ async def evaluate_factual(
 
         # Parse the judge's JSON response
         try:
+            import json_repair
             from core.content_engine.utils import _extract_json_block
 
             json_str = _extract_json_block(raw_text)
-            judge_result = json.loads(json_str)
+            judge_result = json_repair.loads(json_str)
             score = float(judge_result.get("score", 0.0))
             passed = judge_result.get("passed", score >= 0.7)
             feedback = judge_result.get("feedback", "")

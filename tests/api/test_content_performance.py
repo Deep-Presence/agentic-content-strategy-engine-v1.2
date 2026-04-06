@@ -26,12 +26,22 @@ def mock_perf_service(monkeypatch):
 
 
 @pytest.fixture
-def app(app, mock_perf_service, monkeypatch):
+def mock_inventory_service():
+    """Pre-built ContentInventoryService mock."""
+    svc = AsyncMock()
+    svc.find_similar_pages = AsyncMock(return_value=[])
+    svc.count_with_embeddings = AsyncMock(return_value=0)
+    return svc
+
+
+@pytest.fixture
+def app(app, mock_perf_service, mock_inventory_service, monkeypatch):
     """Extend the base app fixture with content performance service mock.
 
     Also patch Redis cache to prevent real Redis calls.
     """
     app.state.content_performance_service = mock_perf_service
+    app.state.content_inventory_service = mock_inventory_service
 
     # Disable Redis cache reads (return None = cache miss)
     monkeypatch.setattr(
@@ -239,4 +249,80 @@ class TestGetContentDetail:
     def test_unauthenticated(self, public_client: TestClient):
         inv_id = str(uuid.uuid4())
         resp = public_client.get(f"/api/v1/content-performance/{inv_id}")
+        assert resp.status_code == 401
+
+
+# ── 4. Similar Content (Cannibalization) ────────────────────────────
+
+
+class TestGetSimilarContent:
+    """GET /api/v1/content-performance/{inventory_id}/similar"""
+
+    def test_empty_results_no_embeddings(self, client: TestClient):
+        """Zero embeddings → embeddings_ready=False."""
+        inv_id = str(uuid.uuid4())
+        resp = client.get(f"/api/v1/content-performance/{inv_id}/similar")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["page_id"] == inv_id
+        assert data["similar_pages"] == []
+        assert data["threshold"] == 0.78
+        assert data["embeddings_ready"] is False
+
+    def test_embeddings_ready_when_sufficient(self, client: TestClient, mock_inventory_service):
+        """2+ embeddings → embeddings_ready=True."""
+        mock_inventory_service.count_with_embeddings.return_value = 5
+        inv_id = str(uuid.uuid4())
+        resp = client.get(f"/api/v1/content-performance/{inv_id}/similar")
+        assert resp.status_code == 200
+        assert resp.json()["embeddings_ready"] is True
+
+    def test_with_matches(self, client: TestClient, mock_inventory_service):
+        from core.content_inventory.models import CannibalizationMatch
+
+        inv_id = str(uuid.uuid4())
+        match_id = str(uuid.uuid4())
+        mock_inventory_service.find_similar_pages.return_value = [
+            CannibalizationMatch(
+                inventory_id=match_id,
+                url="https://example.com/blog/guide",
+                title="Existing Guide",
+                similarity=0.87,
+                word_count=1500,
+                content_preview="This is a guide about...",
+                content_type_detected="blog_post",
+            ),
+        ]
+        resp = client.get(f"/api/v1/content-performance/{inv_id}/similar")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["similar_pages"]) == 1
+        assert data["similar_pages"][0]["similarity"] == 0.87
+        assert data["similar_pages"][0]["title"] == "Existing Guide"
+        assert data["similar_pages"][0]["content_type"] == "blog_post"
+
+    def test_custom_threshold(self, client: TestClient, mock_inventory_service):
+        inv_id = str(uuid.uuid4())
+        resp = client.get(f"/api/v1/content-performance/{inv_id}/similar?threshold=0.90&limit=3")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["threshold"] == 0.90
+        mock_inventory_service.find_similar_pages.assert_called_once()
+        call_kwargs = mock_inventory_service.find_similar_pages.call_args
+        assert call_kwargs.kwargs["threshold"] == 0.90
+        assert call_kwargs.kwargs["limit"] == 3
+
+    def test_invalid_uuid(self, client: TestClient):
+        resp = client.get("/api/v1/content-performance/not-a-uuid/similar")
+        assert resp.status_code == 400
+        assert "Invalid inventory_id" in resp.json()["detail"]
+
+    def test_threshold_too_low(self, client: TestClient):
+        inv_id = str(uuid.uuid4())
+        resp = client.get(f"/api/v1/content-performance/{inv_id}/similar?threshold=0.3")
+        assert resp.status_code == 422
+
+    def test_unauthenticated(self, public_client: TestClient):
+        inv_id = str(uuid.uuid4())
+        resp = public_client.get(f"/api/v1/content-performance/{inv_id}/similar")
         assert resp.status_code == 401

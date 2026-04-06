@@ -9,7 +9,8 @@ import {
 } from 'recharts';
 import type { ContentPiece } from './data';
 import { PLATFORM_LIST, formatTraffic } from './data';
-import { fetchContentDetail } from '../_lib/api';
+import { fetchContentDetail, fetchSimilarContent, generateEmbeddings } from '../_lib/api';
+import type { SimilarContentItemAPI } from '../_lib/api';
 import { SIGNAL_NAME_TO_FIELD, SIGNAL_FIELD_MAP } from '../_lib/types';
 import type { SignalAverageRow, ContentDetailAPI } from '../_lib/types';
 import {
@@ -143,6 +144,51 @@ export function ContentDrawer({ piece, onClose, signalAverages = [] }: ContentDr
       });
     return () => controller.abort();
   }, [piece]);
+
+  // Fetch similar content (cannibalization) in parallel
+  const [similarPages, setSimilarPages] = useState<SimilarContentItemAPI[]>([]);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [embeddingsReady, setEmbeddingsReady] = useState(true);
+  const [generatingEmbeddings, setGeneratingEmbeddings] = useState(false);
+
+  const loadSimilar = (invId: string, signal?: AbortSignal) => {
+    setSimilarLoading(true);
+    fetchSimilarContent(invId, undefined, signal)
+      .then((resp) => {
+        setSimilarPages(resp.similar_pages ?? []);
+        setEmbeddingsReady(resp.embeddings_ready ?? true);
+        setSimilarLoading(false);
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          setSimilarPages([]);
+          setSimilarLoading(false);
+        }
+      });
+  };
+
+  useEffect(() => {
+    if (!piece) { setSimilarPages([]); setEmbeddingsReady(true); return; }
+    const invId = piece.id;
+    if (!invId) { setSimilarPages([]); return; }
+
+    const controller = new AbortController();
+    loadSimilar(invId, controller.signal);
+    return () => controller.abort();
+  }, [piece]);
+
+  const handleGenerateEmbeddings = async () => {
+    setGeneratingEmbeddings(true);
+    try {
+      await generateEmbeddings();
+      // Reload similar content after embeddings are generated
+      if (piece?.id) loadSimilar(piece.id);
+    } catch {
+      // Silently fail — user can retry
+    } finally {
+      setGeneratingEmbeddings(false);
+    }
+  };
 
   // Structural compliance from real signals
   const pageSignals = detailData?.structural_signals ?? null;
@@ -361,9 +407,57 @@ export function ContentDrawer({ piece, onClose, signalAverages = [] }: ContentDr
               <SectionHeader>E. Query Coverage</SectionHeader>
               <UnavailableSection message="Query coverage requires gap analysis &rarr; content inventory join (Phase 4)." />
 
-              {/* F. CANNIBALIZATION RISK — unavailable */}
+              {/* F. CANNIBALIZATION RISK */}
               <SectionHeader>F. Cannibalization Risk</SectionHeader>
-              <UnavailableSection message="Cannibalization detection requires the similarity endpoint (Phase 3)." />
+              {similarLoading || generatingEmbeddings ? (
+                <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 16, textAlign: 'center' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                    {generatingEmbeddings ? 'Generating embeddings for your content...' : 'Checking for similar pages...'}
+                  </span>
+                </div>
+              ) : !embeddingsReady ? (
+                <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 16 }}>
+                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                    Content embeddings have not been generated yet. Embeddings are required to detect semantic overlap between your pages.
+                  </p>
+                  <button onClick={handleGenerateEmbeddings}
+                    style={{ height: 30, padding: '0 12px', fontSize: 12, fontWeight: 500, borderRadius: 4, background: 'var(--accent)', color: 'white', border: 'none', cursor: 'pointer' }}>
+                    Generate Embeddings
+                  </button>
+                </div>
+              ) : similarPages.length > 0 ? (
+                <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                        <th style={{ textAlign: 'left', fontSize: 10, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-tertiary)', padding: '6px 8px' }}>Similar Page</th>
+                        <th style={{ textAlign: 'right', fontSize: 10, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-tertiary)', padding: '6px 8px', width: 70 }}>Words</th>
+                        <th style={{ textAlign: 'right', fontSize: 10, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-tertiary)', padding: '6px 8px', width: 70 }}>Overlap</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {similarPages.map((sp, i) => {
+                        const overlapPct = Math.round(sp.similarity * 100);
+                        const overlapColor = sp.similarity >= 0.90 ? '#E5484D' : sp.similarity >= 0.80 ? '#F5A623' : 'var(--success)';
+                        return (
+                          <tr key={sp.inventory_id} style={{ borderBottom: i < similarPages.length - 1 ? '1px solid var(--border-subtle)' : undefined }}>
+                            <td style={{ padding: '6px 8px' }}>
+                              <p style={{ fontSize: 12, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 280 }}>{sp.title}</p>
+                              <a href={sp.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: 'var(--text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 280, display: 'block' }}>{sp.url}</a>
+                            </td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{sp.word_count.toLocaleString()}</td>
+                            <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: overlapColor }}>{overlapPct}%</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 16 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>No similar pages detected. This content has unique semantic coverage.</span>
+                </div>
+              )}
 
               {/* G. BRIEF COMPLIANCE — not yet available */}
 

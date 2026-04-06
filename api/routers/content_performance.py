@@ -5,10 +5,11 @@ Content Performance dashboard.
 
 Auth: All endpoints require authentication + tenant isolation.
 
-3 endpoints:
-  GET  /                    Content performance table (all pieces)
-  GET  /insights/velocity   Velocity + lifecycle insights
-  GET  /{inventory_id}      Detail view for a single content piece
+4 endpoints:
+  GET  /                           Content performance table (all pieces)
+  GET  /insights/velocity          Velocity + lifecycle insights
+  GET  /{inventory_id}/similar     Similar pages (cannibalization detection)
+  GET  /{inventory_id}             Detail view for a single content piece
 """
 from __future__ import annotations
 
@@ -21,11 +22,17 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.auth.dependencies import require_auth
-from api.dependencies import get_auth_service, get_content_performance_service
+from api.dependencies import (
+    get_auth_service,
+    get_content_inventory_service,
+    get_content_performance_service,
+)
 from api.schemas.content_performance import (
     ContentDetailResponse,
     ContentPerformanceRow,
     ContentPerformanceTableResponse,
+    SimilarContentItem,
+    SimilarContentResponse,
     VelocityInsight,
     VelocityInsightsResponse,
 )
@@ -168,7 +175,57 @@ async def get_velocity_insights(
     return response
 
 
-# ── 3. Content Detail ───────────────────────────────────────────────
+# ── 3. Similar Content (Cannibalization) ───────────────────────────
+
+
+@router.get("/{inventory_id}/similar", response_model=SimilarContentResponse)
+async def get_similar_content(
+    inventory_id: str,
+    http_request: Request,
+    threshold: float = Query(default=0.78, ge=0.5, le=1.0),
+    limit: int = Query(default=5, ge=1, le=20),
+    _user: UserProfile = Depends(require_auth),
+    inventory_service: Any = Depends(get_content_inventory_service),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
+) -> SimilarContentResponse:
+    """Find other inventory pages similar to this one (intra-inventory cannibalization)."""
+    company_slug = _get_company_slug(http_request)
+    company = await auth_service.get_company_by_slug(company_slug)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    try:
+        inv_uuid = _uuid.UUID(inventory_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid inventory_id format")
+
+    matches = await inventory_service.find_similar_pages(
+        company.id, inv_uuid, threshold=threshold, limit=limit,
+    )
+
+    # Check if embeddings are generated (needed for similarity to work)
+    embeddings_count = await inventory_service.count_with_embeddings(company.id)
+
+    return SimilarContentResponse(
+        page_id=inventory_id,
+        similar_pages=[
+            SimilarContentItem(
+                inventory_id=m.inventory_id,
+                url=m.url,
+                title=m.title,
+                similarity=m.similarity,
+                word_count=m.word_count,
+                content_type=m.content_type_detected,
+                content_preview=m.content_preview,
+            )
+            for m in matches
+        ],
+        threshold=threshold,
+        embeddings_ready=embeddings_count >= 2,
+    )
+
+
+# ── 4. Content Detail ───────────────────────────────────────────────
 
 
 @router.get("/{inventory_id}", response_model=ContentDetailResponse)

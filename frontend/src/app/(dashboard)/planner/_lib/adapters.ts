@@ -7,7 +7,7 @@
  */
 
 import type { SubdomainNodeAPI, TopicAssignmentAPI, PersonaSubdomainEntryAPI } from './types';
-import type { Assignment, Cluster, RejectedItem, TargetKeywords, RelatedQuery } from '../_components/planner-data';
+import type { Assignment, CannibalizationMatchItem, Cluster, RejectedItem, TargetKeywords, RelatedQuery } from '../_components/planner-data';
 
 // ── Taxonomy helpers ────────────────────────────────────
 
@@ -264,6 +264,18 @@ export function adaptAssignment(
   const rawFormat = meta.content_format as string | undefined;
   const wordCount = (meta.estimated_word_count as number) ?? null;
 
+  // Cannibalization data (populated by Pipeline B when content inventory exists)
+  const cannibRisk = (meta.cannibalization_risk as number) ?? null;
+  const cannibRawMatches = (meta.cannibalization_matches as Array<Record<string, unknown>>) ?? [];
+  const cannibMatches: CannibalizationMatchItem[] = cannibRawMatches.map((m) => ({
+    inventoryId: (m.inventory_id as string) ?? '',
+    url: (m.url as string) ?? '',
+    title: (m.title as string) ?? '',
+    similarity: (m.similarity as number) ?? 0,
+    wordCount: (m.word_count as number) ?? 0,
+    contentType: (m.content_type as string) ?? '',
+  }));
+
   return {
     id: item.id,
     displayId: '', // assigned by hook after sorting
@@ -290,6 +302,8 @@ export function adaptAssignment(
     createdAt,
     activityLog: deriveActivityLog(item.is_manually_added, item.status, matrixCreatedAt),
     priorityFactors: factors,
+    cannibalizationRisk: cannibRisk,
+    cannibalizationMatches: cannibMatches,
   };
 }
 

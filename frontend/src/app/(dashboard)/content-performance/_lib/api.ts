@@ -51,6 +51,54 @@ export function fetchVelocityInsights(
   );
 }
 
+// ── Similar Content (Cannibalization) ────────────────
+
+export interface SimilarContentItemAPI {
+  inventory_id: string;
+  url: string;
+  title: string;
+  similarity: number;
+  word_count: number;
+  content_type: string;
+  content_preview: string;
+}
+
+export interface SimilarContentResponseAPI {
+  page_id: string;
+  similar_pages: SimilarContentItemAPI[];
+  threshold: number;
+  embeddings_ready: boolean;
+}
+
+export function fetchSimilarContent(
+  inventoryId: string,
+  params?: Record<string, string | number>,
+  signal?: AbortSignal,
+): Promise<SimilarContentResponseAPI> {
+  return api.get<SimilarContentResponseAPI>(
+    `/api/v1/content-performance/${inventoryId}/similar`,
+    params,
+    signal,
+  );
+}
+
+// ── Generate Embeddings ──────────────────────────────
+
+export interface GenerateEmbeddingsResponseAPI {
+  generated: number;
+  message: string;
+}
+
+export function generateEmbeddings(
+  signal?: AbortSignal,
+): Promise<GenerateEmbeddingsResponseAPI> {
+  return api.post<GenerateEmbeddingsResponseAPI>(
+    '/api/v1/content-inventory/generate-embeddings',
+    undefined,
+    signal ? { signal } : undefined,
+  );
+}
+
 // ── CMS Connection Status ────────────────────────────
 
 export interface CMSConnectionInfo {

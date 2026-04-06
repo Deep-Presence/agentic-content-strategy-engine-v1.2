@@ -468,6 +468,42 @@ class ContentInventoryService:
 
         return result
 
+    async def find_similar_pages(
+        self,
+        company_id: _uuid.UUID,
+        page_id: _uuid.UUID,
+        *,
+        threshold: float = 0.78,
+        limit: int = 5,
+    ) -> list[CannibalizationMatch]:
+        """Find pages semantically similar to a given page (intra-inventory).
+
+        Used by the Content Performance drawer to show cannibalization risk
+        between existing published pages.
+        """
+        similar = await self._repo.find_similar_to_page(
+            company_id, page_id, threshold=threshold, limit=limit,
+        )
+        return [
+            CannibalizationMatch(
+                inventory_id=str(model.id),
+                url=model.url,
+                title=model.title or "",
+                similarity=sim,
+                word_count=model.word_count or 0,
+                content_preview=model.content_preview or "",
+                content_type_detected=model.content_type_detected or "",
+            )
+            for model, sim in similar
+        ]
+
+    async def count_with_embeddings(
+        self,
+        company_id: _uuid.UUID,
+    ) -> int:
+        """Return count of inventory pages that have embeddings."""
+        return await self._repo.count_with_embeddings(company_id)
+
     async def find_existing_coverage(
         self,
         company_id: _uuid.UUID,

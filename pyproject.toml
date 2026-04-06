@@ -47,6 +47,8 @@ dependencies = [
     "google-auth>=2.20.0",
     "google-auth-oauthlib>=1.2.0",
     "google-auth-httplib2>=0.2.0",
+    # Robust JSON repair for malformed LLM output
+    "json-repair>=0.39",
 ]
 
 [project.optional-dependencies]

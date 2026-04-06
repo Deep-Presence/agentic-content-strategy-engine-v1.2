@@ -328,6 +328,8 @@ export function usePlannerData(): PlannerData {
           { action: 'Restored from rejected', date: new Date().toISOString(), by: 'User' },
         ],
         priorityFactors: {},
+        cannibalizationRisk: null,
+        cannibalizationMatches: [],
       };
       setAssignments((prev) => [...prev, restored]);
 
@@ -380,6 +382,8 @@ export function usePlannerData(): PlannerData {
           { action: 'Manually created', date: new Date().toISOString(), by: 'User' },
         ],
         priorityFactors: {},
+        cannibalizationRisk: null,
+        cannibalizationMatches: [],
       };
 
       setAssignments((prev) => [newAssignment, ...prev]);
