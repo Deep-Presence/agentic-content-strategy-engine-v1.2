@@ -23,6 +23,12 @@ export interface AIPlatformBreakdownItem {
   sessions: number;
 }
 
+export interface CitationTimelinePoint {
+  date: string;
+  cited: number;
+  total_responses: number;
+}
+
 export interface ContentDetailAPI {
   inventory_id: string;
   url: string;
@@ -37,6 +43,11 @@ export interface ContentDetailAPI {
   source_breakdown: SourceBreakdownItem[];
   ai_platform_breakdown: AIPlatformBreakdownItem[];
   structural_signals: Record<string, number | boolean | string | null> | null;
+  structural_score: number;
+  citation_timeline?: CitationTimelinePoint[];
+  citations?: number;
+  platforms?: Record<string, boolean>;
+  queries_covered?: number;
 }
 
 // ── Signal Averages (from /gap-analysis/signals) ───────
@@ -59,6 +70,52 @@ export interface SignalCorrelationRow {
 export interface SignalAveragesAPI {
   signals: SignalAverageRow[];
   correlations: SignalCorrelationRow[];
+}
+
+// ── Content Performance Table (from /content-performance) ─────
+
+export interface ContentPerformanceRowAPI {
+  inventory_id: string;
+  url: string;
+  title: string;
+  traffic: number;
+  ai_referrals: number;
+  velocity: number;
+  velocity_trend: string;
+  freshness_days: number;
+  lifecycle: string;
+  content_type: string;
+  word_count: number;
+  published_at: string | null;
+  structural_score: number;
+  citations?: number;
+  platforms?: Record<string, boolean>;
+  queries_covered?: number;
+}
+
+export interface ContentPerformanceTableResponseAPI {
+  items: ContentPerformanceRowAPI[];
+  period_start: string;
+  period_end: string;
+  total_items: number;
+}
+
+// ── Velocity Insights (from /content-performance/insights/velocity) ──
+
+export interface VelocityInsightAPI {
+  inventory_id: string;
+  url: string;
+  title: string;
+  velocity: number;
+  velocity_trend: string;
+  lifecycle: string;
+  traffic: number;
+}
+
+export interface VelocityInsightsResponseAPI {
+  items: VelocityInsightAPI[];
+  period_start: string;
+  period_end: string;
 }
 
 // ── Signal Definitions (mirrors _SIGNAL_DEFS in gap_data_service.py) ──
