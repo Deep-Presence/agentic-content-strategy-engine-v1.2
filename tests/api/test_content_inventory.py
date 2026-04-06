@@ -39,6 +39,7 @@ def _mock_inventory_model(**overrides):
     m.has_faq_section = overrides.get("has_faq_section", False)
     m.has_schema_markup = overrides.get("has_schema_markup", False)
     m.heading_count = overrides.get("heading_count", 5)
+    m.structural_signals = overrides.get("structural_signals", None)
     m.embedding = overrides.get("embedding", None)
     m.published_at = overrides.get("published_at", datetime.now(timezone.utc))
     m.content_modified_at = overrides.get("content_modified_at", None)
@@ -205,6 +206,41 @@ class TestGetSingleItem:
 
         resp = client.get(f"/api/v1/content-inventory/{model.id}")
         assert resp.status_code == 404
+
+    def test_detail_includes_structural_signals(
+        self, client: TestClient, mock_inventory_service, test_company,
+    ):
+        """Detail endpoint returns structural_signals JSONB."""
+        inv_id = uuid.uuid4()
+        signals = {"word_count": 1500, "has_faq_section": True, "reading_level": 10.2}
+        model = _mock_inventory_model(
+            id=inv_id, company_id=test_company.id,
+            structural_signals=signals,
+        )
+        mock_inventory_service._repo.get_by_id.return_value = model
+
+        resp = client.get(f"/api/v1/content-inventory/{inv_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["structural_signals"] is not None
+        assert data["structural_signals"]["has_faq_section"] is True
+        assert data["structural_signals"]["word_count"] == 1500
+
+    def test_list_excludes_structural_signals(
+        self, client: TestClient, mock_inventory_service, test_company,
+    ):
+        """List endpoint returns structural_signals as null even when DB has data (Codex C4/C5)."""
+        model = _mock_inventory_model(
+            company_id=test_company.id,
+            structural_signals={"word_count": 2000, "has_faq_section": True},
+        )
+        mock_inventory_service._repo.get_by_company.return_value = ([model], 1)
+
+        resp = client.get("/api/v1/content-inventory/")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["structural_signals"] is None
 
     def test_invalid_uuid_returns_400(self, client: TestClient, mock_inventory_service):
         """Non-UUID inventory_id → 400, not 500."""

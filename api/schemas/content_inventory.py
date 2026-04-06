@@ -8,7 +8,7 @@ Embedding vector excluded from API responses (too large).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -44,6 +44,7 @@ class ContentInventoryItem(BaseModel):
     has_faq_section: bool = False
     has_schema_markup: bool = False
     heading_count: int = 0
+    structural_signals: Optional[dict[str, Any]] = None
     has_embedding: bool = False
     published_at: Optional[datetime] = None
     content_modified_at: Optional[datetime] = None

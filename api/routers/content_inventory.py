@@ -188,7 +188,9 @@ async def get_inventory_item(
     if model.company_id != company.id:
         raise HTTPException(status_code=404, detail="Inventory record not found")
 
-    return _model_to_item(model)
+    item = _model_to_item(model)
+    item.structural_signals = model.structural_signals  # Only on detail
+    return item
 
 
 # ── 4. CSV Import ────────────────────────────────────────────────────

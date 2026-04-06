@@ -54,6 +54,7 @@ class PromptSource(str, Enum):
     GAP_ANALYSIS = "gap_analysis"
     IMPORTED = "imported"
     FANOUT = "fanout"
+    CONTENT_INVENTORY = "content_inventory"
 
 
 class PromptStatus(str, Enum):
@@ -269,3 +270,57 @@ class FanoutGenerationResult(BaseModel):
     queries: list[FanoutQuery] = Field(default_factory=list)
     model_used: str = ""
     token_usage: dict[str, int] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Content-to-Prompt Generation Models
+# ---------------------------------------------------------------------------
+
+
+class PageContext(BaseModel):
+    """Input context for content-to-prompt generation.
+
+    Constructed from a ContentInventoryModel row — provides the page
+    metadata the LLM needs to generate relevant visibility prompts.
+    """
+
+    inventory_id: str = ""
+    url: str = ""
+    title: str = ""
+    meta_description: str = ""
+    content_preview: str = ""
+    categories: list[str] = Field(default_factory=list)
+    detected_primary_topic: str = ""
+    content_type_detected: str = ""
+    word_count: int = 0
+
+
+class GeneratedPagePrompt(BaseModel):
+    """A single prompt generated for a content inventory page."""
+
+    query_text: str = ""
+    buyer_stage: str = ""
+    intent_type: str = ""
+    is_branded: bool = False
+    reasoning: str = ""
+
+
+class PagePromptGenerationResult(BaseModel):
+    """Result of generating prompts for one content inventory page."""
+
+    inventory_id: str = ""
+    prompts: list[GeneratedPagePrompt] = Field(default_factory=list)
+    model_used: str = ""
+    token_usage: dict[str, int] = Field(default_factory=dict)
+
+
+class ContentToPromptRunResult(BaseModel):
+    """Summary of a content-to-prompt generation run (one or more pages)."""
+
+    generation_run_id: str = ""
+    pages_processed: int = 0
+    pages_succeeded: int = 0
+    pages_failed: int = 0
+    prompts_created: int = 0
+    prompts_deduplicated: int = 0
+    errors: list[dict[str, str]] = Field(default_factory=list)

@@ -510,6 +510,67 @@ class ContentInventoryService:
         ]
 
 
+    # ── Content enrichment ─────────────────────────────────────
+
+    async def enrich_thin_pages(
+        self,
+        company_id: _uuid.UUID,
+        min_content_chars: int = 100,
+        batch_size: int = 10,
+    ) -> int:
+        """Fetch and update content_preview for pages with thin content.
+
+        Pages with ``content_preview`` shorter than ``min_content_chars``
+        are fetched via trafilatura and their content_preview + word_count
+        are updated in-place.
+
+        Returns the number of pages enriched.
+        """
+        items, _total = await self._repo.get_by_company(
+            company_id, limit=1000, offset=0,
+        )
+
+        thin = [
+            it for it in items
+            if len(it.content_preview or "") < min_content_chars
+        ]
+        if not thin:
+            return 0
+
+        enriched = 0
+        for item in thin[:batch_size]:
+            try:
+                text = await asyncio.to_thread(self._fetch_page_text, item.url)
+                if text and len(text) >= min_content_chars:
+                    preview = text[:500]
+                    word_count = len(text.split())
+                    await self._repo.update(
+                        item.id,
+                        content_preview=preview,
+                        word_count=word_count,
+                    )
+                    enriched += 1
+                    _logger.info("Enriched page %s (%d chars)", item.url, len(preview))
+            except Exception as exc:
+                _logger.warning("Failed to enrich page %s: %s", item.url, exc)
+                continue
+
+        return enriched
+
+    @staticmethod
+    def _fetch_page_text(url: str) -> str:
+        """Fetch and extract plaintext from a URL using trafilatura."""
+        try:
+            import trafilatura
+            downloaded = trafilatura.fetch_url(url)
+            if downloaded:
+                text = trafilatura.extract(downloaded)
+                return text or ""
+        except Exception:
+            pass
+        return ""
+
+
 def _classify_content_type(url: str) -> str:
     """Heuristic content type classification from URL patterns."""
     url_lower = url.lower()
