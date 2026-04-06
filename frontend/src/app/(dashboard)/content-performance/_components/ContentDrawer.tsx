@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { X, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -13,10 +13,75 @@ import {
   getTrafficSources, formatTraffic,
   STRUCTURAL_DETAILS, QUERY_COVERAGE, CANNIBALIZATION_DATA, BRIEF_COMPLIANCE,
 } from './data';
+import { fetchContentDetail } from '../_lib/api';
+import { SIGNAL_NAME_TO_FIELD, SIGNAL_FIELD_MAP } from '../_lib/types';
+import type { SignalAverageRow } from '../_lib/types';
+
+interface StructuralDetailRow {
+  signal: string;
+  citedAvg: string;
+  yours: string;
+  gap: string;
+  status: 'above' | 'match' | 'below' | 'missing';
+}
+
+function computeCompliance(
+  pageSignals: Record<string, number | boolean | string | null> | null,
+  citedAverages: SignalAverageRow[],
+): StructuralDetailRow[] {
+  if (!pageSignals || citedAverages.length === 0) return [];
+
+  return citedAverages.slice(0, 10).map((avg) => {
+    const field = SIGNAL_NAME_TO_FIELD[avg.signal];
+    const def = field ? SIGNAL_FIELD_MAP[field] : undefined;
+    const rawVal = field ? pageSignals[field] : undefined;
+
+    // Normalize: booleans → 0 or 1, numbers pass through
+    let yours: number | null = null;
+    if (rawVal === true) yours = 1;
+    else if (rawVal === false) yours = 0;
+    else if (typeof rawVal === 'number') yours = rawVal;
+
+    const citedAvg = avg.citation_avg;
+    const isBool = def?.isBool ?? false;
+
+    // Format for display
+    const fmtCited = isBool ? `${Math.round(citedAvg * 100)}%` : `${Math.round(citedAvg * 100) / 100}`;
+    const fmtYours = yours === null ? '—' : isBool ? `${yours ? 'Yes' : 'No'}` : `${Math.round(yours * 100) / 100}`;
+
+    // Compute gap and status
+    let status: StructuralDetailRow['status'] = 'missing';
+    let gap = '—';
+    if (yours !== null) {
+      const numCited = isBool ? citedAvg : citedAvg;
+      const numYours = isBool ? yours : yours;
+      const diff = numYours - numCited;
+      if (isBool) {
+        // Bool: "Yes" when citedAvg > 0.5 is 'above', otherwise 'below'
+        status = yours >= 1 ? 'above' : citedAvg > 0.5 ? 'below' : 'match';
+        gap = yours >= 1 ? '+' : '-';
+      } else {
+        if (numCited === 0) {
+          status = numYours > 0 ? 'above' : 'match';
+        } else if (numYours >= numCited * 1.1) {
+          status = 'above';
+        } else if (numYours >= numCited * 0.9) {
+          status = 'match';
+        } else {
+          status = 'below';
+        }
+        gap = diff > 0 ? `+${Math.round(diff * 100) / 100}` : `${Math.round(diff * 100) / 100}`;
+      }
+    }
+
+    return { signal: avg.signal, citedAvg: fmtCited, yours: fmtYours, gap, status };
+  });
+}
 
 interface ContentDrawerProps {
   piece: ContentPiece | null;
   onClose: () => void;
+  signalAverages?: SignalAverageRow[];
 }
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
@@ -57,7 +122,7 @@ function ClassificationBadge({ classification }: { classification: string }) {
   );
 }
 
-export function ContentDrawer({ piece, onClose }: ContentDrawerProps) {
+export function ContentDrawer({ piece, onClose, signalAverages = [] }: ContentDrawerProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
@@ -69,9 +134,41 @@ export function ContentDrawer({ piece, onClose }: ContentDrawerProps) {
   const platformDetails = useMemo(() => piece ? getPlatformDetails(piece) : [], [piece]);
   const trafficSources = useMemo(() => piece ? getTrafficSources(piece) : [], [piece]);
 
+  // Fetch per-page structural signals from API when drawer opens
+  const [pageSignals, setPageSignals] = useState<Record<string, number | boolean | string | null> | null>(null);
+  const [signalsLoading, setSignalsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!piece) { setPageSignals(null); return; }
+    // Use inventory_id if available (real data), otherwise skip API fetch
+    const pieceAny = piece as unknown as Record<string, unknown>;
+    const invId = pieceAny.inventoryId ?? pieceAny.inventory_id;
+    if (!invId || typeof invId !== 'string') { setPageSignals(null); return; }
+
+    const controller = new AbortController();
+    setSignalsLoading(true);
+    fetchContentDetail(invId, undefined, controller.signal)
+      .then((detail) => {
+        setPageSignals(detail.structural_signals);
+        setSignalsLoading(false);
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          setPageSignals(null);
+          setSignalsLoading(false);
+        }
+      });
+    return () => controller.abort();
+  }, [piece]);
+
   if (!piece) return null;
 
-  const structuralDetails = STRUCTURAL_DETAILS[piece.id] || [];
+  // Compute real structural compliance or fall back to mock
+  const realCompliance = useMemo(
+    () => computeCompliance(pageSignals, signalAverages),
+    [pageSignals, signalAverages],
+  );
+  const structuralDetails = realCompliance.length > 0 ? realCompliance : (STRUCTURAL_DETAILS[piece.id] || []);
   const queryCoverage: QC[] = QUERY_COVERAGE[piece.id] || [];
   const cannibalization = CANNIBALIZATION_DATA[piece.id] || [];
   const briefCompliance = BRIEF_COMPLIANCE[piece.id];

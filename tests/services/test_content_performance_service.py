@@ -436,6 +436,43 @@ class TestGetContentDetail:
         assert channels["ai_referral"] == 20
 
 
+    @pytest.mark.asyncio
+    async def test_detail_includes_structural_signals(
+        self, service, inventory_repo, traffic_repo,
+    ):
+        """get_content_detail passes through structural_signals from the inventory item."""
+        cid = uuid.uuid4()
+        signals_dict = {"word_count": 2450, "has_faq_section": True, "reading_level": 11.5}
+        item = _make_inventory_item(company_id=cid)
+        item.structural_signals = signals_dict
+        inventory_repo.get_by_id.return_value = item
+
+        result = await service.get_content_detail(
+            cid, item.id,
+            date(2026, 3, 1), date(2026, 3, 28),
+        )
+        assert result is not None
+        assert result["structural_signals"] == signals_dict
+        assert result["structural_signals"]["has_faq_section"] is True
+
+    @pytest.mark.asyncio
+    async def test_detail_structural_signals_null(
+        self, service, inventory_repo, traffic_repo,
+    ):
+        """Pages without structural_signals return None."""
+        cid = uuid.uuid4()
+        item = _make_inventory_item(company_id=cid)
+        item.structural_signals = None
+        inventory_repo.get_by_id.return_value = item
+
+        result = await service.get_content_detail(
+            cid, item.id,
+            date(2026, 3, 1), date(2026, 3, 28),
+        )
+        assert result is not None
+        assert result["structural_signals"] is None
+
+
 class TestGetVelocityInsights:
     """Tests for get_velocity_insights()."""
 

@@ -6,7 +6,7 @@ existing JSON artifacts).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -78,6 +78,7 @@ class ContentDetailResponse(BaseModel):
     ai_platform_breakdown: list[AIPlatformBreakdownItem] = Field(
         default_factory=list,
     )
+    structural_signals: Optional[dict[str, Any]] = None
 
 
 class VelocityInsight(BaseModel):

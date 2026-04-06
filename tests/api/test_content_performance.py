@@ -184,6 +184,58 @@ class TestGetContentDetail:
         assert len(data["source_breakdown"]) == 3
         assert len(data["ai_platform_breakdown"]) == 2
 
+    def test_detail_includes_structural_signals(self, client: TestClient, mock_perf_service):
+        """structural_signals JSONB is returned when present."""
+        inv_id = str(uuid.uuid4())
+        mock_perf_service.get_content_detail.return_value = {
+            "inventory_id": inv_id,
+            "url": "https://example.com/post",
+            "title": "Test Post",
+            "traffic": 200,
+            "ai_referrals": 30,
+            "velocity": 50.0,
+            "velocity_trend": "up",
+            "freshness_days": 10,
+            "lifecycle": "growing",
+            "daily_traffic": [],
+            "source_breakdown": [],
+            "ai_platform_breakdown": [],
+            "structural_signals": {
+                "word_count": 2450,
+                "has_faq_section": True,
+                "reading_level": 11.5,
+                "h2_count": 6,
+            },
+        }
+        resp = client.get(f"/api/v1/content-performance/{inv_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["structural_signals"]["word_count"] == 2450
+        assert data["structural_signals"]["has_faq_section"] is True
+        assert data["structural_signals"]["reading_level"] == 11.5
+
+    def test_detail_structural_signals_null(self, client: TestClient, mock_perf_service):
+        """structural_signals is null when page has no signals."""
+        inv_id = str(uuid.uuid4())
+        mock_perf_service.get_content_detail.return_value = {
+            "inventory_id": inv_id,
+            "url": "https://example.com/post",
+            "title": "Test Post",
+            "traffic": 100,
+            "ai_referrals": 0,
+            "velocity": 25.0,
+            "velocity_trend": "flat",
+            "freshness_days": 30,
+            "lifecycle": "stable",
+            "daily_traffic": [],
+            "source_breakdown": [],
+            "ai_platform_breakdown": [],
+            "structural_signals": None,
+        }
+        resp = client.get(f"/api/v1/content-performance/{inv_id}")
+        assert resp.status_code == 200
+        assert resp.json()["structural_signals"] is None
+
     def test_unauthenticated(self, public_client: TestClient):
         inv_id = str(uuid.uuid4())
         resp = public_client.get(f"/api/v1/content-performance/{inv_id}")

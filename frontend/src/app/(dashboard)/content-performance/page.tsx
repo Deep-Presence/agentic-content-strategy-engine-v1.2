@@ -1,12 +1,15 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Calendar, X, Search } from 'lucide-react';
 import { MetricCard, FilterBar } from '@/components/ui';
+import { useAuth } from '@/hooks/useAuth';
 import {
   CONTENT_PIECES, STRUCTURAL_SIGNALS, VELOCITY_DATA, CPS_SCATTER,
 } from './_components/data';
-import type { ContentPiece } from './_components/data';
+import type { ContentPiece, StructuralSignal, ImpactLevel } from './_components/data';
+import { fetchSignalAverages } from './_lib/api';
+import type { SignalAverageRow, SignalCorrelationRow } from './_lib/types';
 import { VelocityChart } from './_components/VelocityChart';
 import { CPSScatterChart } from './_components/CPSScatterChart';
 import { StructuralAlignment } from './_components/StructuralAlignment';
@@ -30,12 +33,60 @@ const LIFECYCLE_OPTIONS = [
 
 type Tab = 'pages' | 'insights';
 
+function deriveImpact(r: number): ImpactLevel {
+  const absR = Math.abs(r);
+  if (absR >= 0.65) return 'critical';
+  if (absR >= 0.5) return 'high';
+  if (absR >= 0.35) return 'medium';
+  return 'low';
+}
+
+function buildStructuralSignals(
+  averages: SignalAverageRow[],
+  correlations: SignalCorrelationRow[],
+): StructuralSignal[] {
+  const corrMap = new Map(correlations.map((c) => [c.signal, c.correlation]));
+  return averages
+    .map((avg) => {
+      const r = corrMap.get(avg.signal) ?? 0;
+      // For boolean signals (like has_faq_section), citation_avg/company_avg
+      // are rates (0-1). Scale to percentage for display.
+      const isBoolSignal = avg.unit === '%';
+      const citedAvg = isBoolSignal ? Math.round(avg.citation_avg * 100) : Math.round(avg.citation_avg * 100) / 100;
+      const yours = isBoolSignal ? Math.round(avg.company_avg * 100) : Math.round(avg.company_avg * 100) / 100;
+      return { signal: avg.signal, r, citedAvg, yours, impact: deriveImpact(r) };
+    })
+    .sort((a, b) => Math.abs(b.r) - Math.abs(a.r));
+}
+
 export default function ContentPerformancePage() {
+  const { companySlug } = useAuth();
   const [cluster, setCluster] = useState('all');
   const [lifecycle, setLifecycle] = useState('all');
   const [selectedPiece, setSelectedPiece] = useState<ContentPiece | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('pages');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Fetch company-level signal averages + correlations
+  const [signalAverages, setSignalAverages] = useState<SignalAverageRow[]>([]);
+  const [realSignals, setRealSignals] = useState<StructuralSignal[] | null>(null);
+
+  useEffect(() => {
+    if (!companySlug) return;
+    const controller = new AbortController();
+    fetchSignalAverages(companySlug, controller.signal)
+      .then((res) => {
+        setSignalAverages(res.signals);
+        setRealSignals(buildStructuralSignals(res.signals, res.correlations));
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          // Fall back to mock data silently
+          setRealSignals(null);
+        }
+      });
+    return () => controller.abort();
+  }, [companySlug]);
 
   const hasFilters = cluster !== 'all' || lifecycle !== 'all';
 
@@ -181,7 +232,7 @@ export default function ContentPerformancePage() {
           </div>
 
           {/* Structural Alignment */}
-          <StructuralAlignment signals={STRUCTURAL_SIGNALS} />
+          <StructuralAlignment signals={realSignals ?? STRUCTURAL_SIGNALS} />
 
           {/* Lifecycle Distribution */}
           <LifecycleDistribution pieces={filteredPieces} />
@@ -189,7 +240,7 @@ export default function ContentPerformancePage() {
       )}
 
       {/* Side Drawer */}
-      <ContentDrawer piece={selectedPiece} onClose={handleDrawerClose} />
+      <ContentDrawer piece={selectedPiece} onClose={handleDrawerClose} signalAverages={signalAverages} />
     </div>
   );
 }

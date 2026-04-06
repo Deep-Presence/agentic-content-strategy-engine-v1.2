@@ -325,6 +325,7 @@ class ContentPerformanceService:
             "daily_traffic": daily_traffic,
             "source_breakdown": source_breakdown,
             "ai_platform_breakdown": ai_platform_breakdown,
+            "structural_signals": item.structural_signals,
         }
 
     async def get_velocity_insights(
