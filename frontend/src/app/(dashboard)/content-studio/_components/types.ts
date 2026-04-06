@@ -148,6 +148,28 @@ export interface ContentCard {
   gaRunId?: string;
   /** Effective slug scope (company or company__product, used in startProduction) */
   effectiveSlug?: string;
+  /** Intent type from planner (informational/commercial/navigational/transactional) */
+  intentType?: string;
+  /** Primary target persona display name */
+  personaName?: string;
+  /** Persona identifier */
+  personaId?: string;
+  /** Persona affinity scores: {persona_id: 0-1} */
+  personaAffinity?: Record<string, number>;
+  /** Priority factor scores: {factor_name: 0-1} */
+  priorityFactors?: Record<string, number>;
+  /** Content format from planner (e.g. comprehensive_guide) */
+  contentFormat?: string;
+  /** Estimated word count from planner */
+  estimatedWordCount?: number;
+  /** Citation opportunity score (0-1) */
+  citationOpp?: number;
+  /** Topic description */
+  description?: string;
+  /** Target keywords: {primary, secondary[]} */
+  targetKeywords?: { primary?: string; secondary?: string[] };
+  /** Content angle — why this topic */
+  contentAngle?: string;
 
   /** Backend cycle/session identifier */
   cycleId?: string;

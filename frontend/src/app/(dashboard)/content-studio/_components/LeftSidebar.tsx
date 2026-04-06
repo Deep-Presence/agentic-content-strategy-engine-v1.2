@@ -332,16 +332,46 @@ const GA_SIDEBAR_STEPS = [
   { key: 'S8', label: 'Generate Report' },
 ];
 
+const BUYER_STAGE_COLORS: Record<string, { bg: string; color: string }> = {
+  tofu: { bg: 'var(--accent-subtle)', color: 'var(--accent)' },
+  mofu: { bg: 'var(--warning-subtle)', color: 'var(--warning)' },
+  bofu: { bg: 'var(--success-subtle)', color: 'var(--success)' },
+};
+
+const INTENT_COLORS: Record<string, { bg: string; color: string }> = {
+  informational: { bg: 'var(--accent-subtle)', color: 'var(--accent)' },
+  commercial: { bg: 'var(--warning-subtle)', color: 'var(--warning)' },
+  navigational: { bg: 'var(--surface)', color: 'var(--text-secondary)' },
+  transactional: { bg: 'var(--success-subtle)', color: 'var(--success)' },
+};
+
+const FORMAT_LABELS: Record<string, string> = {
+  comprehensive_guide: 'Comprehensive Guide',
+  long_form_article: 'Long-form Article',
+  comparison_guide: 'Comparison Guide',
+  how_to_guide: 'How-to Guide',
+  explainer: 'Explainer',
+  listicle: 'Listicle',
+  case_study: 'Case Study',
+  tutorial: 'Tutorial',
+};
+
+const FACTOR_LABELS: Record<string, string> = {
+  citation_opportunity: 'Citation Opp.',
+  conversion_potential: 'Conversion',
+  strategic_centrality: 'Centrality',
+  content_authority: 'Authority',
+};
+
+function formatPersonaName(raw: string): string {
+  if (!raw) return '';
+  return raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function GapAnalysisSidebar({ card }: { card: ContentCard }) {
   const progress = card.agentProgress;
   const display = getDisplay(card.status);
   const currentStepNum = progress?.gaStepNum ?? 0;
-
-  const buyerStageColors: Record<string, { bg: string; color: string }> = {
-    tofu: { bg: 'var(--accent-subtle)', color: 'var(--accent)' },
-    mofu: { bg: 'var(--warning-subtle)', color: 'var(--warning)' },
-    bofu: { bg: 'var(--success-subtle)', color: 'var(--success)' },
-  };
 
   return (
     <div className="p-4 space-y-4">
@@ -354,37 +384,193 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
         <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
           {card.cluster}
         </div>
+        {card.description && (
+          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.5, marginTop: 6 }}>
+            {card.description}
+          </p>
+        )}
       </div>
 
-      {/* Buyer stage badge */}
-      {card.buyerStage && (
-        <div>
-          <div style={OVERLINE}>Buyer Stage</div>
-          {(() => {
-            const style = buyerStageColors[card.buyerStage.toLowerCase()];
+      {/* Buyer stage + Intent type badges */}
+      {(card.buyerStage || card.intentType) && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {card.buyerStage && (() => {
+            const style = BUYER_STAGE_COLORS[card.buyerStage.toLowerCase()];
             return (
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 600,
-                  textTransform: 'uppercase',
-                  padding: '2px 8px',
-                  borderRadius: 'var(--radius-full)',
-                  background: style?.bg ?? 'var(--border)',
-                  color: style?.color ?? 'var(--text-secondary)',
-                }}
-              >
+              <span style={{
+                fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                padding: '2px 8px', borderRadius: 'var(--radius-full)',
+                background: style?.bg ?? 'var(--border)', color: style?.color ?? 'var(--text-secondary)',
+              }}>
                 {card.buyerStage.toUpperCase()}
+              </span>
+            );
+          })()}
+          {card.intentType && (() => {
+            const style = INTENT_COLORS[card.intentType.toLowerCase()];
+            return (
+              <span style={{
+                fontSize: 10, fontWeight: 600, textTransform: 'capitalize',
+                padding: '2px 8px', borderRadius: 'var(--radius-full)',
+                border: '1px solid var(--border)',
+                background: style?.bg ?? 'var(--border)', color: style?.color ?? 'var(--text-secondary)',
+              }}>
+                {card.intentType}
               </span>
             );
           })()}
         </div>
       )}
 
+      {/* Content Specification */}
+      {(card.contentFormat || card.estimatedWordCount || card.citationOpp != null) && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div style={OVERLINE}>Content Spec</div>
+          <div className="space-y-2">
+            {card.contentFormat && (
+              <div className="flex items-center justify-between">
+                <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Format</span>
+                <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-primary)' }}>
+                  {FORMAT_LABELS[card.contentFormat] ?? card.contentFormat.replace(/_/g, ' ')}
+                </span>
+              </div>
+            )}
+            {card.estimatedWordCount != null && card.estimatedWordCount > 0 && (
+              <div className="flex items-center justify-between">
+                <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Word count</span>
+                <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
+                  ~{card.estimatedWordCount.toLocaleString()}
+                </span>
+              </div>
+            )}
+            {card.citationOpp != null && (
+              <div className="flex items-center justify-between">
+                <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Citation opp.</span>
+                <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--accent)' }}>
+                  {Math.round(card.citationOpp * 100)}%
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Target Keywords */}
+      {card.targetKeywords && (card.targetKeywords.primary || (card.targetKeywords.secondary && card.targetKeywords.secondary.length > 0)) && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div style={OVERLINE}>Target Keywords</div>
+          {card.targetKeywords.primary && (
+            <div
+              className="p-2 rounded-md mb-2"
+              style={{ border: '1px solid var(--accent)', background: 'var(--accent-subtle)' }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-primary)' }}>
+                {card.targetKeywords.primary}
+              </div>
+              <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent)', textTransform: 'uppercase' }}>
+                Primary keyword
+              </span>
+            </div>
+          )}
+          {card.targetKeywords.secondary && card.targetKeywords.secondary.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {card.targetKeywords.secondary.map((kw, i) => (
+                <span
+                  key={i}
+                  style={{
+                    fontSize: 10, padding: '2px 6px', borderRadius: 'var(--radius-full)',
+                    border: '1px solid var(--border)', color: 'var(--text-secondary)',
+                  }}
+                >
+                  {kw}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Why We Recommend (content angle + top priority factor) */}
+      {(card.contentAngle || (card.priorityFactors && Object.keys(card.priorityFactors).length > 0)) && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div style={OVERLINE}>Why This Topic</div>
+          <div className="space-y-2">
+            {card.contentAngle && (
+              <div className="p-2 rounded-md" style={{ border: '1px solid var(--border)', borderLeft: '2px solid var(--warning)' }}>
+                <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 2 }}>Content Angle</div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{card.contentAngle}</div>
+              </div>
+            )}
+            {card.priorityFactors && Object.entries(card.priorityFactors).length > 0 && (
+              <div className="space-y-1.5">
+                {Object.entries(card.priorityFactors)
+                  .sort(([, a], [, b]) => b - a)
+                  .slice(0, 3)
+                  .map(([key, val]) => (
+                    <div key={key} className="flex items-center justify-between">
+                      <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                        {FACTOR_LABELS[key] ?? key.replace(/_/g, ' ')}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <div style={{ width: 40, height: 3, borderRadius: 2, background: 'var(--border)', overflow: 'hidden' }}>
+                          <div style={{ width: `${Math.round(val * 100)}%`, height: '100%', borderRadius: 2, background: 'var(--accent)' }} />
+                        </div>
+                        <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)', width: 28, textAlign: 'right' }}>
+                          {Math.round(val * 100)}%
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Persona Affinity */}
+      {card.personaName && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div style={OVERLINE}>Target Persona</div>
+          <div className="flex items-center gap-2 mb-2">
+            <div
+              className="flex items-center justify-center rounded-full text-white shrink-0"
+              style={{ width: 22, height: 22, fontSize: 9, fontWeight: 600, background: 'var(--accent)' }}
+            >
+              {formatPersonaName(card.personaName).split(' ').map(w => w[0]).join('').slice(0, 2)}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>
+                {formatPersonaName(card.personaName)}
+              </div>
+              <div style={{ fontSize: 9, fontWeight: 600, color: 'var(--accent)', textTransform: 'uppercase' }}>
+                Primary target
+              </div>
+            </div>
+          </div>
+          {card.personaAffinity && Object.keys(card.personaAffinity).length > 0 && (
+            <div className="space-y-1">
+              {Object.entries(card.personaAffinity)
+                .sort(([, a], [, b]) => b - a)
+                .slice(0, 4)
+                .map(([pid, score]) => (
+                  <div key={pid} className="flex items-center justify-between">
+                    <span style={{ fontSize: 11, color: pid === card.personaId ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: pid === card.personaId ? 500 : 400 }}>
+                      {formatPersonaName(pid)}
+                    </span>
+                    <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
+                      {Math.round(score * 100)}%
+                    </span>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Current GA progress */}
       {card.status === 'gap_analysis' && progress && (
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-          <div style={OVERLINE}>Current Stage</div>
+          <div style={OVERLINE}>Analysis Progress</div>
           <div className="flex items-center gap-2 mb-2">
             <span
               style={{
@@ -393,7 +579,7 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
                 animation: display.isAgentActive ? 'pulse 1.5s ease-in-out infinite' : undefined,
               }}
             />
-            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>
               {progress.currentTask || display.label}
             </span>
           </div>
@@ -447,16 +633,20 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
         </div>
       )}
 
-      {/* Description */}
+      {/* About / status message */}
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
         <div style={OVERLINE}>About</div>
         {card.status === 'gap_analysis_complete' ? (
           <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
             Gap analysis complete. Click &ldquo;Start Production&rdquo; to begin content creation.
           </p>
+        ) : card.status === 'gap_analysis' ? (
+          <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            Analyzing content gaps across AI search platforms for this topic.
+          </p>
         ) : (
           <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            Analysis will identify content gaps across AI search platforms for this topic.
+            Queued for gap analysis. Will identify content opportunities across AI platforms.
           </p>
         )}
       </div>

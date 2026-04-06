@@ -581,12 +581,26 @@ def _write_ga_phase_redis(
 
         topic_data = {}
         for a in assignments:
+            meta = a.metadata or {}
+            factors = a.priority_factors or {}
             topic_data[a.id] = {
                 "title": a.topic_text[:200] if a.topic_text else "",
                 "cluster": getattr(a, "subdomain_name", "") or "",
                 "priority_score": getattr(a, "priority_score", 0.0),
                 "buyer_stage": a.buyer_stage.value if a.buyer_stage else None,
                 "ga_run_id": ga_run_id,
+                # Enriched fields for Content Studio sidebar
+                "intent_type": a.intent_type.value if a.intent_type else None,
+                "persona_name": getattr(a, "persona_name", "") or "",
+                "persona_id": getattr(a, "persona_id", "") or "",
+                "persona_affinity": getattr(a, "persona_affinity", {}),
+                "priority_factors": factors,
+                "content_format": meta.get("content_format"),
+                "estimated_word_count": meta.get("estimated_word_count"),
+                "citation_opportunity": factors.get("citation_opportunity", a.priority_score),
+                "description": meta.get("description", ""),
+                "target_keywords": meta.get("target_keywords"),
+                "content_angle": meta.get("angle"),
             }
 
         write_ga_phase_state(

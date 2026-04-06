@@ -270,6 +270,18 @@ class DbContentDataService:
                 source="planner",
                 ga_run_id=card.get("ga_run_id"),
                 effective_slug=effective_slug,
+                # Enriched topic assignment metadata
+                intent_type=card.get("intent_type"),
+                persona_name=card.get("persona_name"),
+                persona_id=card.get("persona_id"),
+                persona_affinity=card.get("persona_affinity"),
+                priority_factors=card.get("priority_factors"),
+                content_format=card.get("content_format"),
+                estimated_word_count=card.get("estimated_word_count"),
+                citation_opportunity=card.get("citation_opportunity"),
+                description=card.get("description"),
+                target_keywords=card.get("target_keywords"),
+                content_angle=card.get("content_angle"),
             ))
         return items
 

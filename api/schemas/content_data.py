@@ -54,6 +54,18 @@ class ContentBriefListItem(BaseModel):
     source: Optional[str] = None  # "manual" | "planner" | "autonomous"
     ga_run_id: Optional[str] = None  # UUID of completed topic-scoped GA run
     effective_slug: Optional[str] = None  # company or company__product scope
+    # Enriched topic assignment metadata (GA-phase cards only)
+    intent_type: Optional[str] = None  # informational/commercial/navigational/transactional
+    persona_name: Optional[str] = None  # primary target persona display name
+    persona_id: Optional[str] = None  # persona identifier
+    persona_affinity: Optional[Dict[str, float]] = None  # {persona_id: 0-1 score}
+    priority_factors: Optional[Dict[str, float]] = None  # {factor_name: 0-1 score}
+    content_format: Optional[str] = None  # e.g. comprehensive_guide, how_to_guide
+    estimated_word_count: Optional[int] = None
+    citation_opportunity: Optional[float] = None  # 0-1, from priority_factors
+    description: Optional[str] = None  # topic description
+    target_keywords: Optional[Dict[str, Any]] = None  # {primary, secondary[]}
+    content_angle: Optional[str] = None  # why this topic angle
 
 
 class ContentBriefListResponse(BaseModel):

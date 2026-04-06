@@ -440,6 +440,16 @@ def read_ga_phase_cards(
         card["buyer_stage"] = card_meta.get("buyer_stage")
         card["ga_run_id"] = card_meta.get("ga_run_id")
         card["topic_assignment_id"] = card_key[len(_GA_CARD_PREFIX):]
+        # Pass through enriched metadata for Content Studio sidebar
+        for extra_key in (
+            "intent_type", "persona_name", "persona_id",
+            "persona_affinity", "priority_factors",
+            "content_format", "estimated_word_count",
+            "citation_opportunity", "description",
+            "target_keywords", "content_angle",
+        ):
+            if extra_key in card_meta:
+                card[extra_key] = card_meta[extra_key]
         result.append(card)
 
     return result
@@ -544,6 +554,16 @@ async def read_ga_phase_cards_async(
         card["buyer_stage"] = card_meta.get("buyer_stage")
         card["ga_run_id"] = card_meta.get("ga_run_id")
         card["topic_assignment_id"] = card_key[len(_GA_CARD_PREFIX):]
+        # Pass through enriched metadata for Content Studio sidebar
+        for extra_key in (
+            "intent_type", "persona_name", "persona_id",
+            "persona_affinity", "priority_factors",
+            "content_format", "estimated_word_count",
+            "citation_opportunity", "description",
+            "target_keywords", "content_angle",
+        ):
+            if extra_key in card_meta:
+                card[extra_key] = card_meta[extra_key]
         result.append(card)
 
     return result

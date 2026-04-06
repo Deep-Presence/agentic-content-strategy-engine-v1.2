@@ -55,6 +55,17 @@ export interface ContentBriefListItemAPI {
   source?: string;
   ga_run_id?: string;
   effective_slug?: string;
+  // Enriched topic assignment metadata (GA-phase cards)
+  intent_type?: string;
+  persona_name?: string;
+  persona_id?: string;
+  persona_affinity?: Record<string, number>;
+  priority_factors?: Record<string, number>;
+  estimated_word_count?: number;
+  citation_opportunity?: number;
+  description?: string;
+  target_keywords?: { primary?: string; secondary?: string[] };
+  content_angle?: string;
 }
 
 export interface ContentBriefListResponseAPI {
