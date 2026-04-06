@@ -8,6 +8,7 @@ from core.db.models import (  # noqa: F401
     cms,
     content,
     content_inventory,
+    content_inventory_prompt,
     cost,
     daily_tracker,
     embeddings,

@@ -81,11 +81,17 @@ def mock_repos():
 
 @pytest.fixture
 def patched_client(client: TestClient, mock_repos: dict):
-    """Client with _get_repos patched to return mock repos."""
+    """Client with _get_repos and _resolve_company_uuid patched."""
     async def _fake_get_repos(request):
         return mock_repos
 
-    with patch("api.routers.content_to_prompt._get_repos", _fake_get_repos):
+    async def _fake_resolve_company_uuid(request, auth_service):
+        return uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+    with (
+        patch("api.routers.content_to_prompt._get_repos", _fake_get_repos),
+        patch("api.routers.content_to_prompt._resolve_company_uuid", _fake_resolve_company_uuid),
+    ):
         yield client
 
 
@@ -168,6 +174,9 @@ class TestGetPagePrompts:
         )
         prompt = _make_prompt_model(id=prompt_id)
 
+        # Mock page ownership check (company_id matches resolved UUID)
+        page = _make_inventory_model(id=inv_id, company_id=uuid.UUID("00000000-0000-0000-0000-000000000001"))
+        mock_repos["inventory_repo"].get_by_id = AsyncMock(return_value=page)
         mock_repos["link_repo"].get_prompts_for_page = AsyncMock(return_value=[link])
         mock_repos["prompt_repo"].get_by_id = AsyncMock(return_value=prompt)
 
@@ -180,6 +189,8 @@ class TestGetPagePrompts:
 
     def test_empty_page_returns_empty_list(self, patched_client, mock_repos):
         inv_id = uuid.uuid4()
+        page = _make_inventory_model(id=inv_id, company_id=uuid.UUID("00000000-0000-0000-0000-000000000001"))
+        mock_repos["inventory_repo"].get_by_id = AsyncMock(return_value=page)
         mock_repos["link_repo"].get_prompts_for_page = AsyncMock(return_value=[])
 
         resp = patched_client.get(f"/api/v1/content-to-prompt/pages/{inv_id}/prompts")
@@ -193,6 +204,8 @@ class TestGetPagePrompts:
 class TestGetPageMetrics:
     def test_returns_aggregated_metrics(self, patched_client, mock_repos):
         inv_id = uuid.uuid4()
+        page = _make_inventory_model(id=inv_id, company_id=uuid.UUID("00000000-0000-0000-0000-000000000001"))
+        mock_repos["inventory_repo"].get_by_id = AsyncMock(return_value=page)
         mock_repos["link_repo"].get_page_metrics = AsyncMock(return_value={
             "total_prompts": 6,
             "active_prompts": 5,

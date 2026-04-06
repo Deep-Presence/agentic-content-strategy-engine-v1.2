@@ -66,6 +66,7 @@ class ContentToPromptOrchestrator:
     async def run_for_pages(
         self,
         company_id: str,
+        company_uuid: _uuid.UUID | None,
         page_ids: list[_uuid.UUID],
         brand_name: str,
         brand_category: str = "",
@@ -77,6 +78,7 @@ class ContentToPromptOrchestrator:
 
         Args:
             company_id: Company identifier (string, matching tracked_prompts.company_id).
+            company_uuid: Company UUID for tenant isolation (validates page ownership).
             page_ids: Content inventory UUIDs to process.
             brand_name: Brand name for prompt context.
             brand_category: Optional brand category.
@@ -95,12 +97,17 @@ class ContentToPromptOrchestrator:
         prompts_deduplicated = 0
         errors: list[dict[str, str]] = []
 
-        # 1. Load page metadata
+        # 1. Load page metadata with tenant isolation
         page_contexts: list[PageContext] = []
         for pid in page_ids:
             item = await self._inventory_repo.get_by_id(pid)
             if item is None:
                 errors.append({"page_id": str(pid), "error": "Page not found"})
+                pages_failed += 1
+                continue
+            # Tenant isolation: verify page belongs to the requesting company
+            if company_uuid and item.company_id != company_uuid:
+                errors.append({"page_id": str(pid), "error": "Access denied"})
                 pages_failed += 1
                 continue
             page_contexts.append(_orm_to_page_context(item))
@@ -172,7 +179,9 @@ class ContentToPromptOrchestrator:
                     page_deduped += 1
                     continue
 
-                # Create new tracked prompt
+                # Create new tracked prompt (race-safe: catch IntegrityError
+                # if a concurrent request created the same prompt between our
+                # exists_by_text check and this insert)
                 source_metadata = {
                     "inventory_id": gen_result.inventory_id,
                     "generation_run_id": str(generation_run_id),
@@ -180,15 +189,21 @@ class ContentToPromptOrchestrator:
                     "intent_type": prompt.intent_type,
                 }
 
-                new_prompt = await self._prompt_repo.create(
-                    company_id=company_id,
-                    text=query_text,
-                    category=prompt.intent_type or None,
-                    tags=[],
-                    source=PromptSource.CONTENT_INVENTORY.value,
-                    source_metadata=source_metadata,
-                    active=auto_approve,
-                )
+                try:
+                    new_prompt = await self._prompt_repo.create(
+                        company_id=company_id,
+                        text=query_text,
+                        category=prompt.intent_type or None,
+                        tags=[],
+                        source=PromptSource.CONTENT_INVENTORY.value,
+                        source_metadata=source_metadata,
+                        active=auto_approve,
+                    )
+                except Exception:
+                    # Concurrent insert created the same prompt — treat as dedup
+                    logger.debug("Concurrent dedup for prompt: %s", query_text[:60])
+                    page_deduped += 1
+                    continue
 
                 # Create link row
                 await self._link_repo.bulk_create_links([{
@@ -229,6 +244,7 @@ class ContentToPromptOrchestrator:
     async def regenerate_for_page(
         self,
         company_id: str,
+        company_uuid: _uuid.UUID | None,
         page_id: _uuid.UUID,
         brand_name: str,
         brand_category: str = "",
@@ -272,6 +288,7 @@ class ContentToPromptOrchestrator:
         # 4. Generate fresh prompts
         return await self.run_for_pages(
             company_id=company_id,
+            company_uuid=company_uuid,
             page_ids=[page_id],
             brand_name=brand_name,
             brand_category=brand_category,

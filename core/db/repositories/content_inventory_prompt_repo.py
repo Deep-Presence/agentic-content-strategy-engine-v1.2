@@ -11,7 +11,7 @@ import uuid as _uuid
 from datetime import datetime
 from typing import Any, Sequence
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.db.models.content_inventory_prompt import ContentInventoryPromptModel
@@ -282,7 +282,7 @@ class ContentInventoryPromptRepository(
                 func.cast(DailyRunResponseModel.brand_mentioned, func.integer())  # type: ignore[call-arg]
             ).label("mentioned"),
             func.sum(
-                func.case(
+                case(
                     (func.jsonb_array_length(DailyRunResponseModel.citations) > 0, 1),
                     else_=0,
                 )
@@ -333,6 +333,162 @@ class ContentInventoryPromptRepository(
             "total_responses": total,
             "by_buyer_stage": by_stage,
         }
+
+    # ── Batch citation metrics (for content performance table) ────
+
+    async def get_citation_metrics_batch(
+        self,
+        company_id: _uuid.UUID,
+        start: datetime,
+        end: datetime,
+    ) -> list[dict[str, Any]]:
+        """Batch-aggregate citation counts + per-engine presence for all pages.
+
+        Single query, grouped by content_inventory_id.  Pages without
+        linked prompts or responses simply won't appear — the caller
+        defaults missing pages to zero.
+
+        Returns: [{inventory_id, total_cited, cited_openai, cited_claude,
+                   cited_gemini, cited_perplexity}]
+        """
+        from core.db.models.content_inventory import ContentInventoryModel
+
+        has_citations = func.jsonb_array_length(DailyRunResponseModel.citations) > 0
+
+        stmt = (
+            select(
+                ContentInventoryPromptModel.content_inventory_id.label("inventory_id"),
+                func.sum(
+                    case((has_citations, 1), else_=0)
+                ).label("total_cited"),
+                func.bool_or(
+                    and_(DailyRunResponseModel.engine == "openai", has_citations)
+                ).label("cited_openai"),
+                func.bool_or(
+                    and_(DailyRunResponseModel.engine == "claude", has_citations)
+                ).label("cited_claude"),
+                func.bool_or(
+                    and_(DailyRunResponseModel.engine == "gemini", has_citations)
+                ).label("cited_gemini"),
+                func.bool_or(
+                    and_(DailyRunResponseModel.engine == "perplexity", has_citations)
+                ).label("cited_perplexity"),
+            )
+            .join(
+                ContentInventoryModel,
+                ContentInventoryPromptModel.content_inventory_id == ContentInventoryModel.id,
+            )
+            .join(
+                TrackedPromptModel,
+                ContentInventoryPromptModel.tracked_prompt_id == TrackedPromptModel.id,
+            )
+            .join(
+                DailyRunResponseModel,
+                DailyRunResponseModel.prompt_id == TrackedPromptModel.id,
+            )
+            .where(
+                and_(
+                    ContentInventoryModel.company_id == company_id,
+                    ContentInventoryPromptModel.approved.is_(True),
+                    DailyRunResponseModel.created_at >= start,
+                    DailyRunResponseModel.created_at <= end,
+                ),
+            )
+            .group_by(ContentInventoryPromptModel.content_inventory_id)
+        )
+
+        result = await self._session.execute(stmt)
+        return [
+            {
+                "inventory_id": row.inventory_id,
+                "total_cited": int(row.total_cited or 0),
+                "cited_openai": bool(row.cited_openai),
+                "cited_claude": bool(row.cited_claude),
+                "cited_gemini": bool(row.cited_gemini),
+                "cited_perplexity": bool(row.cited_perplexity),
+            }
+            for row in result.all()
+        ]
+
+    async def get_citation_timeline(
+        self,
+        inventory_id: _uuid.UUID,
+        start: datetime,
+        end: datetime,
+    ) -> list[dict[str, Any]]:
+        """Daily citation timeseries for a single page.
+
+        Groups by day, returns [{day, cited, total_responses}] ordered by date.
+        Used in the content-performance detail/drawer endpoint.
+        """
+        has_citations = func.jsonb_array_length(DailyRunResponseModel.citations) > 0
+        day_col = func.date_trunc("day", DailyRunResponseModel.created_at)
+
+        prompt_ids = await self.get_page_prompt_ids(inventory_id)
+        if not prompt_ids:
+            return []
+
+        stmt = (
+            select(
+                day_col.label("day"),
+                func.sum(
+                    case((has_citations, 1), else_=0)
+                ).label("cited"),
+                func.count().label("total_responses"),
+            )
+            .where(
+                and_(
+                    DailyRunResponseModel.prompt_id.in_(prompt_ids),
+                    DailyRunResponseModel.created_at >= start,
+                    DailyRunResponseModel.created_at <= end,
+                ),
+            )
+            .group_by(day_col)
+            .order_by(day_col)
+        )
+
+        result = await self._session.execute(stmt)
+        return [
+            {
+                "day": row.day,
+                "cited": int(row.cited or 0),
+                "total_responses": int(row.total_responses or 0),
+            }
+            for row in result.all()
+        ]
+
+    async def get_pages_without_prompts(
+        self,
+        company_id: _uuid.UUID,
+        *,
+        limit: int = 500,
+    ) -> list[_uuid.UUID]:
+        """Get content inventory page IDs that have NO linked prompts.
+
+        Uses a LEFT JOIN + NULL check (anti-join) to find pages in
+        content_inventory that are not present in content_inventory_prompts.
+        """
+        from core.db.models.content_inventory import ContentInventoryModel
+
+        subq = (
+            select(ContentInventoryPromptModel.content_inventory_id)
+            .distinct()
+            .subquery()
+        )
+
+        stmt = (
+            select(ContentInventoryModel.id)
+            .outerjoin(subq, ContentInventoryModel.id == subq.c.content_inventory_id)
+            .where(
+                and_(
+                    ContentInventoryModel.company_id == company_id,
+                    subq.c.content_inventory_id.is_(None),
+                ),
+            )
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
 
     # ── Pages with prompt counts (for listing) ────────────────────
 

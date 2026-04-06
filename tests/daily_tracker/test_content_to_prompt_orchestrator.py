@@ -141,6 +141,7 @@ class TestRunForPages:
 
         result = await orchestrator.run_for_pages(
             company_id="test-co",
+            company_uuid=None,
             page_ids=[page_id],
             brand_name="TestBrand",
             k=6,
@@ -164,6 +165,7 @@ class TestRunForPages:
 
         result = await orchestrator.run_for_pages(
             company_id="test-co",
+            company_uuid=None,
             page_ids=[page_id],
             brand_name="Brand",
         )
@@ -191,6 +193,7 @@ class TestRunForPages:
 
         result = await orchestrator.run_for_pages(
             company_id="test-co",
+            company_uuid=None,
             page_ids=[page_id],
             brand_name="Brand",
         )
@@ -214,6 +217,7 @@ class TestRunForPages:
 
         result = await orchestrator.run_for_pages(
             company_id="test-co",
+            company_uuid=None,
             page_ids=[page_id],
             brand_name="Brand",
             auto_approve=False,
@@ -239,6 +243,7 @@ class TestRunForPages:
 
         result = await orchestrator.run_for_pages(
             company_id="test-co",
+            company_uuid=None,
             page_ids=[page_id],
             brand_name="Brand",
         )
@@ -260,6 +265,7 @@ class TestRunForPages:
 
         await orchestrator.run_for_pages(
             company_id="test-co",
+            company_uuid=None,
             page_ids=[page_id],
             brand_name="Brand",
         )
@@ -297,6 +303,7 @@ class TestRegenerateForPage:
 
         result = await orchestrator.regenerate_for_page(
             company_id="test-co",
+            company_uuid=None,
             page_id=page_id,
             brand_name="Brand",
         )
@@ -329,6 +336,7 @@ class TestRegenerateForPage:
 
         await orchestrator.regenerate_for_page(
             company_id="test-co",
+            company_uuid=None,
             page_id=page_id,
             brand_name="Brand",
         )
