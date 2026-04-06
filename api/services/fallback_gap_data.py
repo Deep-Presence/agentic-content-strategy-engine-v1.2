@@ -15,11 +15,13 @@ from api.schemas.brand_data import SPATrendResponse
 from api.schemas.content_data import EmbeddingProjectionResponse
 from api.schemas.gap_data import (
     ClusterListResponse,
+    ClusterProfileListResponse,
     GapSummaryResponse,
     HeatmapResponse,
     PlatformListResponse,
     QueryListResponse,
     SignalAveragesResponse,
+    TerritoryGapsResponse,
 )
 from core.services.gap_data import GapDataServiceProtocol
 
@@ -83,3 +85,13 @@ class FallbackGapDataService:
 
     async def get_trend(self, effective_slug: str) -> SPATrendResponse:
         return await self._fallback("get_trend", effective_slug)
+
+    async def get_cluster_profiles(
+        self, effective_slug: str,
+    ) -> ClusterProfileListResponse:
+        return await self._fallback("get_cluster_profiles", effective_slug)
+
+    async def get_territory_gaps(
+        self, effective_slug: str,
+    ) -> TerritoryGapsResponse:
+        return await self._fallback("get_territory_gaps", effective_slug)

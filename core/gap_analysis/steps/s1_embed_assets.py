@@ -783,15 +783,18 @@ async def discover_site_tree(
 
         # Early-stopping counters
         _consecutive_pw_fails = 0
+        _consecutive_wb_fails = 0
         _consecutive_total_fails = 0
         _pw_fail_threshold = settings.gap_analysis_pw_fail_threshold
+        _wb_fail_threshold = settings.gap_analysis_wb_fail_threshold
         _total_fail_threshold = settings.gap_analysis_total_fail_threshold
+        _wb_available = True
 
         async def _crawl_one(
             url: str, depth: int, parent_url: Optional[str],
         ) -> Optional[Tuple[str, str, int, dict, Optional[str], Dict[str, str]]]:
             """Fetch a single page. Fallback chain: httpx -> Playwright -> Wayback."""
-            nonlocal _consecutive_pw_fails
+            nonlocal _consecutive_pw_fails, _consecutive_wb_fails, _wb_available
             html: Optional[str] = None
             status_code: int = 0
 
@@ -860,14 +863,28 @@ async def discover_site_tree(
                 _ga_dbg(f"Playwright not available, falling through to Wayback for {url}")
 
             # --- Tier 3: Wayback Machine ---
-            wb_result = await _fetch_from_wayback(url, client)
-            if wb_result is not None:
-                _ga_dbg(f"Wayback hit for {url}")
-                _, html, status_code = wb_result
-                metadata = _extract_page_metadata(html)
-                canonical = _extract_canonical(html, url)
-                hreflang = _extract_hreflang(html, url)
-                return (url, html, status_code, metadata, canonical, hreflang)
+            if _wb_available:
+                wb_result = await _fetch_from_wayback(url, client)
+                if wb_result is not None:
+                    _consecutive_wb_fails = 0
+                    _ga_dbg(f"Wayback hit for {url}")
+                    _, html, status_code = wb_result
+                    metadata = _extract_page_metadata(html)
+                    canonical = _extract_canonical(html, url)
+                    hreflang = _extract_hreflang(html, url)
+                    return (url, html, status_code, metadata, canonical, hreflang)
+                else:
+                    _consecutive_wb_fails += 1
+                    _ga_dbg(f"Wayback returned None for {url} (consecutive_fails={_consecutive_wb_fails})")
+                    if _consecutive_wb_fails >= _wb_fail_threshold:
+                        _wb_available = False
+                        logger.info(
+                            "[SiteDiscovery] Wayback Machine disabled — %d consecutive failures",
+                            _consecutive_wb_fails,
+                        )
+                        _ga_dbg(f"Wayback DISABLED after {_consecutive_wb_fails} consecutive failures")
+            else:
+                _ga_dbg(f"Wayback not available, skipping tier-3 for {url}")
 
             _ga_dbg(f"ALL 3 TIERS FAILED for {url}")
             return None

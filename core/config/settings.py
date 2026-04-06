@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     gap_analysis_max_crawl_depth: int = 4
     gap_analysis_debug: bool = False  # GA_DEBUG=true → microscopic pipeline tracing via structlog
     gap_analysis_pw_fail_threshold: int = 10   # consecutive Playwright timeouts before disabling it
+    gap_analysis_wb_fail_threshold: int = 5    # consecutive Wayback failures before disabling it
     gap_analysis_total_fail_threshold: int = 20  # consecutive all-3-tiers failures before stopping BFS
 
     # Gap Analysis — S3 Concurrency (two-level: global + per-engine)

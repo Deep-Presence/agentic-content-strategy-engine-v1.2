@@ -14,11 +14,13 @@ from api.schemas.brand_data import SPATrendResponse
 from api.schemas.content_data import EmbeddingProjectionResponse
 from api.schemas.gap_data import (
     ClusterListResponse,
+    ClusterProfileListResponse,
     GapSummaryResponse,
     HeatmapResponse,
     PlatformListResponse,
     QueryListResponse,
     SignalAveragesResponse,
+    TerritoryGapsResponse,
 )
 from api.services import gap_data_service as _gap_svc
 from api.services import brand_data_service as _brand_svc
@@ -101,4 +103,18 @@ class JsonGapDataService:
     async def get_spa_trend(self, effective_slug: str) -> SPATrendResponse:
         return await asyncio.to_thread(
             _brand_svc.get_spa_trend, self._task_store, effective_slug,
+        )
+
+    async def get_cluster_profiles(
+        self, effective_slug: str,
+    ) -> ClusterProfileListResponse:
+        return await asyncio.to_thread(
+            _gap_svc.get_cluster_profiles, self._storage, effective_slug,
+        )
+
+    async def get_territory_gaps(
+        self, effective_slug: str,
+    ) -> TerritoryGapsResponse:
+        return await asyncio.to_thread(
+            _gap_svc.get_territory_gaps, self._storage, effective_slug,
         )

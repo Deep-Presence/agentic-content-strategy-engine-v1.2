@@ -80,6 +80,7 @@ from core.topic_discovery.graph import (
     build_td_taxonomy_review_graph,
     run_td_hitl_checkpoint,
 )
+from core.topic_discovery.storage import TopicDiscoveryStorage
 from core.topic_discovery.scoring import (
     apply_source_confidence_adjustment,
     build_persona_affinity_index_from_taxonomy,
@@ -864,7 +865,11 @@ async def run_topic_expansion_pipeline(
         _emit(event_bus, task_id, "td_phase_start", {"phase": "preflight", "stage": "expansion_preflight"})
         _update_task(task_store, task_id, current_step="expansion_preflight")
 
-        manifest = await db_read_manifest(session_factory, effective_slug)
+        if session_factory is not None:
+            manifest = await db_read_manifest(session_factory, effective_slug)
+        else:
+            _fs_storage = TopicDiscoveryStorage(root, effective_slug)
+            manifest = _fs_storage.read_manifest()
 
         if manifest.taxonomy_version == 0 or manifest.scoring_version == 0:
             raise RuntimeError(
@@ -874,13 +879,20 @@ async def run_topic_expansion_pipeline(
 
         # Load taxonomy
         tax_version = input_data.taxonomy_version or manifest.taxonomy_version
-        taxonomy = await db_read_taxonomy(session_factory, effective_slug, version=tax_version)
+        if session_factory is not None:
+            taxonomy = await db_read_taxonomy(session_factory, effective_slug, version=tax_version)
+        else:
+            taxonomy = _fs_storage.read_taxonomy(tax_version)
         if taxonomy is None:
             raise RuntimeError(f"Taxonomy v{tax_version} not found for '{effective_slug}'.")
 
         # Load scored subdomains + persona affinity
-        scored_subdomains = await db_read_scoring(session_factory, effective_slug)
-        persona_affinity = await db_read_persona_affinity(session_factory, effective_slug)
+        if session_factory is not None:
+            scored_subdomains = await db_read_scoring(session_factory, effective_slug)
+            persona_affinity = await db_read_persona_affinity(session_factory, effective_slug)
+        else:
+            scored_subdomains = _fs_storage.read_scoring(manifest.scoring_version)
+            persona_affinity = _fs_storage.read_persona_affinity(manifest.persona_affinity_version)
 
         # Load company context + persona profiles (needed for expansion prompts)
         domain = input_data.domain or f"{company_slug}.com"
@@ -1226,7 +1238,10 @@ async def run_topic_expansion_pipeline(
         # In production, per-subdomain writes already accumulated in DB;
         # the merge here handles the case where DB writes were skipped
         # (non-UUID test IDs, no session_factory, etc.).
-        db_matrix = await db_read_latest_matrix(session_factory, effective_slug)
+        if session_factory is not None:
+            db_matrix = await db_read_latest_matrix(session_factory, effective_slug)
+        else:
+            db_matrix = _fs_storage.read_matrix(mat_version)
         db_assignments = db_matrix.assignments if db_matrix and db_matrix.assignments else []
 
         # Merge: keep DB assignments for non-expanded subdomains,

@@ -6,6 +6,7 @@ Embedding projections remain filesystem-backed (pre-computed s7 blobs).
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
@@ -15,9 +16,12 @@ from fastapi import HTTPException
 from api.schemas.brand_data import SPATrendResponse, SPATrendPoint
 from api.schemas.content_data import EmbeddingProjectionResponse
 from api.schemas.gap_data import (
+    ClusterDomainEntry,
     ClusterListResponse,
     ClusterPatternRow,
     ClusterPerformanceRow,
+    ClusterProfileListResponse,
+    ClusterProfileResponse,
     ClusterSpecResponse,
     GapClassificationCounts,
     GapSummaryResponse,
@@ -35,6 +39,13 @@ from api.schemas.gap_data import (
     SignalAveragesResponse,
     SignalCorrelationRow,
     SPAScore,
+    TerritoryCompanySignals,
+    TerritoryContentBrief,
+    TerritoryGapExemplar,
+    TerritoryGapQuery,
+    TerritoryGapsResponse,
+    TerritoryProximityStats,
+    TerritorySPA,
 )
 from core.db.enums import PipelineStatus, PipelineType
 from core.db.repositories.gap_analysis_repo import GapAnalysisRepository
@@ -84,6 +95,35 @@ def _map_engine_display(engine: Optional[str]) -> str:
     if engine is None:
         return "Unknown"
     return _ENGINE_DISPLAY.get(engine, engine.title())
+
+
+def _slugify_cluster(name: str) -> str:
+    """Convert cluster display name to URL-safe slug."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def _compute_presence(company_share: float) -> str:
+    """Derive presence level from company share of citations."""
+    if company_share <= 0:
+        return "none"
+    if company_share < 0.05:
+        return "minimal"
+    if company_share < 0.15:
+        return "low"
+    if company_share < 0.30:
+        return "moderate"
+    return "strong"
+
+
+def _as_list(val: Any) -> Optional[List[Any]]:
+    """Coerce a scalar or dict range to a 2-element list, or None."""
+    if val is None:
+        return None
+    if isinstance(val, (list, tuple)):
+        return list(val)
+    if isinstance(val, dict):
+        return [val.get("min", 0), val.get("max", 0)]
+    return [val, val]
 
 
 class DbGapDataService:
@@ -181,6 +221,7 @@ class DbGapDataService:
             cluster_performance=cluster_perf,
             total_queries=total_gaps,
             total_citations=run_summary.get("total_citations", 0),
+            company_cited_count=run_summary.get("company_cited_count", 0),
             average_gap=run_summary.get("avg_gap", 0.0),
             executive_summary=run_summary.get("executive_summary", ""),
             recommendations=run_summary.get("recommendations", []),
@@ -277,7 +318,7 @@ class DbGapDataService:
                 cluster_id=spec.cluster_id or "",
                 cluster_name=spec.cluster_name,
                 query_count=spec.query_count,
-                total_citations_analyzed=spec.total_citations_analyzed,
+                citations_analyzed=spec.total_citations_analyzed,
                 word_count_range={"min": spec.word_count_min, "max": spec.word_count_max},
                 avg_word_count=spec.avg_word_count,
                 dominant_content_type=spec.dominant_content_type or "article",
@@ -366,7 +407,7 @@ class DbGapDataService:
             }
 
         return SignalAveragesResponse(
-            averages=averages,
+            signals=averages,
             correlations=correlations,
             cluster_patterns=pattern_rows,
             cluster_fingerprints=fingerprints,
@@ -409,8 +450,8 @@ class DbGapDataService:
 
         return PlatformListResponse(
             platforms=platform_list,
-            agreement_matrix=agreement,
-            exclusivity={},
+            agreement=agreement,
+            citation_exclusivity={},
         )
 
     async def get_heatmap(self, effective_slug: str) -> HeatmapResponse:
@@ -450,6 +491,288 @@ class DbGapDataService:
         from api.services.gap_data_service import get_embedding_projection
         return await asyncio.to_thread(
             get_embedding_projection, self._storage, effective_slug, method=method,
+        )
+
+    async def get_cluster_profiles(
+        self, effective_slug: str,
+    ) -> ClusterProfileListResponse:
+        """SQL-backed cluster profiles — replaces filesystem delegation."""
+        run_id = await self._resolve_run_id(effective_slug)
+
+        cluster_specs = await self._gap_repo.get_cluster_specs(run_id)
+        cluster_metrics = await self._gap_repo.get_all_cluster_metrics(run_id)
+        proximity_stats = await self._gap_repo.get_cluster_proximity_stats(run_id)
+        spa_results = await self._gap_repo.get_spa_results(run_id)
+        cross_cluster_domains = await self._gap_repo.get_cross_cluster_domains(run_id)
+
+        spec_lookup = {s.cluster_name: s for s in cluster_specs if s.cluster_name}
+        metrics_lookup = {m.cluster_name: m for m in cluster_metrics if m.cluster_name}
+        prox_lookup = {p.cluster_name: p for p in proximity_stats}
+
+        all_clusters = set(spec_lookup.keys()) | set(metrics_lookup.keys())
+        all_clusters.discard(None)  # type: ignore[arg-type]
+
+        profiles: Dict[str, ClusterProfileResponse] = {}
+        for cname in sorted(all_clusters):
+            spec = spec_lookup.get(cname)
+            metrics = metrics_lookup.get(cname)
+            prox = prox_lookup.get(cname)
+
+            total_citations = metrics.total_citations if metrics else 0
+            unique_domains = metrics.unique_domains if metrics else 0
+            company_citations = metrics.company_citations if metrics else 0
+            company_share = (
+                company_citations / total_citations if total_citations > 0 else 0.0
+            )
+
+            # Per-cluster domain leaderboard + engine breakdown
+            domain_rows = await self._gap_repo.get_cluster_domain_leaderboard(
+                run_id, cname,
+            )
+            engine_rows = await self._gap_repo.get_cluster_engine_breakdown(
+                run_id, cname,
+            )
+
+            # Build company domain set from leaderboard
+            company_domains = {d.domain for d in domain_rows if d.is_company}
+
+            # Domain type classification
+            top_domains: List[ClusterDomainEntry] = []
+            for d in domain_rows:
+                share = d.citations / total_citations if total_citations > 0 else 0.0
+                domain_str = d.domain or ""
+                if d.is_company:
+                    dtype = "company"
+                elif domain_str in cross_cluster_domains:
+                    dtype = "mindshare"
+                elif any(domain_str.endswith(s) for s in (
+                    ".gov", ".edu", ".org", ".ac.uk", ".gov.uk",
+                )):
+                    dtype = "authority"
+                else:
+                    dtype = "direct"
+                top_domains.append(ClusterDomainEntry(
+                    domain=d.domain or "",
+                    citations=d.citations,
+                    is_company=d.is_company or False,
+                    share=round(share, 4),
+                    type=dtype,
+                ))
+
+            engine_breakdown = {
+                str(e.engine.value): e.citations for e in engine_rows
+            }
+
+            slug_id = _slugify_cluster(cname)
+
+            # Company rank among domains
+            company_rank = None
+            if company_domains:
+                for rank, d in enumerate(domain_rows, 1):
+                    if d.domain in company_domains:
+                        company_rank = rank
+                        break
+
+            proximity = None
+            if prox:
+                proximity = {
+                    "mean": prox.citation_mean,
+                    "std": prox.citation_std,
+                    "count": prox.count,
+                }
+
+            wc_range = (
+                [spec.word_count_min, spec.word_count_max] if spec else [0, 0]
+            )
+
+            profiles[slug_id] = ClusterProfileResponse(
+                cluster_id=slug_id,
+                cluster_name=cname,
+                query_count=spec.query_count if spec else 0,
+                total_citations=total_citations,
+                unique_domains=unique_domains,
+                company_citations=company_citations,
+                company_share=round(company_share, 4),
+                company_rank=company_rank,
+                presence=_compute_presence(company_share),
+                avg_word_count=spec.avg_word_count if spec else 0.0,
+                word_count_range=wc_range,
+                dominant_content_type=(
+                    spec.dominant_content_type if spec else None
+                ),
+                dominant_authority_type=(
+                    spec.dominant_authority_type if spec else None
+                ),
+                structural_rates=spec.structural_rates or {} if spec else {},
+                faq_rate=spec.faq_rate if spec else 0.0,
+                table_rate=spec.table_rate if spec else 0.0,
+                required_elements=(
+                    spec.required_elements or [] if spec else []
+                ),
+                exemplar_themes=spec.exemplar_themes or [] if spec else [],
+                authority_signals={},
+                proximity=proximity,
+                engine_breakdown=engine_breakdown,
+                top_domains=top_domains,
+            )
+
+        return ClusterProfileListResponse(profiles=profiles)
+
+    async def get_territory_gaps(
+        self, effective_slug: str,
+    ) -> TerritoryGapsResponse:
+        """SQL-backed territory gaps — replaces filesystem delegation."""
+        run_id = await self._resolve_run_id(effective_slug)
+
+        gaps = await self._gap_repo.get_territory_gaps_with_signals(run_id)
+        proximity_rows = await self._gap_repo.get_cluster_proximity_stats(run_id)
+        spa_results = await self._gap_repo.get_spa_results(run_id)
+
+        territory_gaps: List[TerritoryGapQuery] = []
+        uncovered = 0
+
+        for gap in gaps:
+            cname = gap.cluster_name or ""
+            slug_id = _slugify_cluster(cname)
+            company_cited = gap.company_cited or False
+            if not company_cited:
+                uncovered += 1
+
+            # Build exemplars from ORM relationships (sorted by rank)
+            sorted_exemplars = sorted(
+                gap.exemplars or [], key=lambda e: e.rank or 999,
+            )
+            exemplars: List[TerritoryGapExemplar] = []
+            for ex in sorted_exemplars[:5]:
+                ss = None
+                if ex.url_enrichment and ex.url_enrichment.structural_signals:
+                    ss = ex.url_enrichment.structural_signals
+                exemplars.append(TerritoryGapExemplar(
+                    domain=ex.domain or "",
+                    url=ex.url,
+                    similarity=ex.similarity,
+                    content_type=(
+                        ex.url_enrichment.content_type
+                        if ex.url_enrichment else None
+                    ),
+                    authority_type=ex.authority_type or (
+                        ex.url_enrichment.authority_type
+                        if ex.url_enrichment else None
+                    ),
+                    word_count=ss.word_count if ss else None,
+                    header_count=ss.header_count if ss else None,
+                    has_faq=bool(ss.has_faq_section) if ss else False,
+                    has_tables=bool(ss.table_count) if ss else False,
+                    reading_level=ss.reading_level if ss else None,
+                    list_item_count=ss.list_item_count if ss else 0,
+                    stat_count=ss.stat_count if ss else 0,
+                    citation_count=ss.citation_count if ss else 0,
+                ))
+
+            # Company signals from JSONB
+            company_signals = None
+            if gap.best_company_structural_signals and isinstance(
+                gap.best_company_structural_signals, dict,
+            ):
+                raw = gap.best_company_structural_signals
+                company_signals = TerritoryCompanySignals(
+                    word_count=raw.get("word_count"),
+                    header_count=raw.get("header_count"),
+                    has_faq=bool(raw.get("has_faq_section", False)),
+                    has_tables=bool(raw.get("table_count", 0)),
+                    reading_level=raw.get("reading_level"),
+                    list_item_count=raw.get("list_item_count", 0) or 0,
+                )
+
+            # Content brief from JSONB
+            content_brief = None
+            if gap.content_brief and isinstance(gap.content_brief, dict):
+                cb = gap.content_brief
+                content_brief = TerritoryContentBrief(
+                    word_count_range=_as_list(cb.get("target_word_count")),
+                    reading_level_range=_as_list(cb.get("target_reading_level")),
+                    header_count_range=_as_list(
+                        cb.get("recommended_header_count"),
+                    ),
+                    header_hierarchy=cb.get("header_hierarchy"),
+                    has_faq=cb.get("has_faq_section", 0.0) or 0.0,
+                    has_tables=cb.get("has_tables", 0.0) or 0.0,
+                    has_definition=cb.get("has_definition_opening", 0.0) or 0.0,
+                    has_key_takeaways=cb.get("has_key_takeaways", 0.0) or 0.0,
+                    has_step_by_step=cb.get("has_step_by_step", 0.0) or 0.0,
+                    dominant_content_type=cb.get("dominant_content_type"),
+                    dominant_authority_type=cb.get("dominant_authority_type"),
+                )
+
+            territory_gaps.append(TerritoryGapQuery(
+                id=gap.query_id,
+                query=gap.query_text,
+                cluster=cname,
+                cluster_id=slug_id,
+                gap=gap.gap or 0.0,
+                classification=(
+                    str(gap.classification.value)
+                    if gap.classification else "roughly_equal"
+                ),
+                company_cited=company_cited,
+                company_url=gap.best_company_url,
+                company_similarity=gap.best_company_similarity,
+                avg_citation_similarity=gap.avg_citation_similarity or 0.0,
+                exemplars=exemplars,
+                company_signals=company_signals,
+                content_brief=content_brief,
+            ))
+
+        # SPA — find the "all" entry
+        spa = TerritorySPA()
+        for sr in spa_results:
+            cname = sr.cluster_name or ""
+            if cname == "all" or cname == "":
+                spa = TerritorySPA(
+                    t_stat=sr.t_stat or 0.0,
+                    p_value=sr.p_value or 0.0,
+                    effect=sr.effect or "unknown",
+                )
+                break
+
+        # Global proximity from __global__ row
+        global_prox = None
+        per_cluster_proximity: Dict[str, Dict[str, float]] = {}
+        for p in proximity_rows:
+            if p.cluster_name == "__global__":
+                global_prox = p
+            else:
+                slug_id = _slugify_cluster(p.cluster_name)
+                per_cluster_proximity[slug_id] = {
+                    "mean": p.citation_mean,
+                    "std": p.citation_std,
+                    "min": p.citation_min,
+                    "max": p.citation_max,
+                    "count": p.count,
+                }
+
+        proximity_stats = TerritoryProximityStats(
+            citation_mean=global_prox.citation_mean if global_prox else 0.0,
+            citation_median=(
+                global_prox.citation_median if global_prox else 0.0
+            ),
+            company_mean=global_prox.company_mean if global_prox else 0.0,
+            company_median=(
+                global_prox.company_median if global_prox else 0.0
+            ),
+            similarity_gap=(
+                (global_prox.citation_mean - global_prox.company_mean)
+                if global_prox else 0.0
+            ),
+        )
+
+        return TerritoryGapsResponse(
+            gaps=territory_gaps,
+            proximity_stats=proximity_stats,
+            spa=spa,
+            per_cluster_proximity=per_cluster_proximity,
+            total_gaps=len(territory_gaps),
+            uncovered_queries=uncovered,
         )
 
     async def get_spa_trend(self, effective_slug: str) -> SPATrendResponse:

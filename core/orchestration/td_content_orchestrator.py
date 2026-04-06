@@ -285,10 +285,19 @@ async def run_td_to_content_pipeline(
         company_id=company_id,
     )
 
-    # Step 5: Update assignment status → content_produced (DB)
-    await _update_assignment_statuses_db(
-        session_factory, valid_ids, TopicAssignmentStatus.content_produced,
-    )
+    # Step 5: Update assignment status based on outcome
+    if len(output.pieces) > 0:
+        await _update_assignment_statuses_db(
+            session_factory, valid_ids, TopicAssignmentStatus.content_produced,
+        )
+    else:
+        logger.warning(
+            "Combined orchestrator produced zero pieces — reverting %d assignments to gap_analysis_complete",
+            len(valid_ids),
+        )
+        await _update_assignment_statuses_db(
+            session_factory, valid_ids, TopicAssignmentStatus.gap_analysis_complete,
+        )
 
     total_elapsed = time.monotonic() - pipeline_start
     logger.info(
@@ -537,13 +546,24 @@ async def run_td_content_production_only(
         company_id=company_id,
     )
 
-    # Step 3: CE succeeded — clean up GA-phase cards (graduate to real briefs)
-    _cleanup_ga_phase_redis(effective_slug, topic_assignment_ids)
+    if len(output.pieces) > 0:
+        # Step 3: CE succeeded — clean up GA-phase cards (graduate to real briefs)
+        _cleanup_ga_phase_redis(effective_slug, topic_assignment_ids)
 
-    # Step 4: Update assignment status → content_produced
-    await _update_assignment_statuses_db(
-        session_factory, topic_assignment_ids, TopicAssignmentStatus.content_produced,
-    )
+        # Step 4: Update assignment status → content_produced
+        await _update_assignment_statuses_db(
+            session_factory, topic_assignment_ids, TopicAssignmentStatus.content_produced,
+        )
+    else:
+        # Pipeline ran but produced nothing — revert to gap_analysis_complete
+        # so the card remains visible and the user can retry.
+        logger.warning(
+            "Phase 2 produced zero pieces — reverting %d assignments to gap_analysis_complete",
+            len(topic_assignment_ids),
+        )
+        await _update_assignment_statuses_db(
+            session_factory, topic_assignment_ids, TopicAssignmentStatus.gap_analysis_complete,
+        )
 
     total_elapsed = time.monotonic() - pipeline_start
     logger.info(

@@ -271,3 +271,148 @@ class HeatmapResponse(BaseModel):
     clusters: List[HeatmapCluster] = Field(default_factory=list)
     min_gap: float = 0.0
     max_gap: float = 0.0
+
+
+# ── 2.7 Cluster Profiles (Embedding Lab) ──────────────────────────
+
+
+class ClusterDomainEntry(BaseModel):
+    """Domain in the per-cluster leaderboard."""
+
+    domain: str
+    citations: int = 0
+    is_company: bool = False
+    share: float = 0.0
+    type: str = "authority"  # direct | mindshare | authority | company
+
+
+class ClusterProfileResponse(BaseModel):
+    """Rich cluster profile for Embedding Lab territory intelligence."""
+
+    cluster_id: str
+    cluster_name: str
+    query_count: int = 0
+    total_citations: int = 0
+    unique_domains: int = 0
+    company_citations: int = 0
+    company_share: float = 0.0
+    company_rank: Optional[int] = None
+    presence: str = "none"  # none | minimal | low | moderate | strong
+    avg_word_count: float = 0.0
+    word_count_range: List[int] = Field(default_factory=lambda: [0, 0])
+    dominant_content_type: Optional[str] = None
+    dominant_authority_type: Optional[str] = None
+    structural_rates: Dict[str, float] = Field(default_factory=dict)
+    faq_rate: float = 0.0
+    table_rate: float = 0.0
+    required_elements: List[str] = Field(default_factory=list)
+    exemplar_themes: List[str] = Field(default_factory=list)
+    authority_signals: Dict[str, int] = Field(default_factory=dict)
+    proximity: Optional[Dict[str, float]] = None
+    engine_breakdown: Dict[str, int] = Field(default_factory=dict)
+    top_domains: List[ClusterDomainEntry] = Field(default_factory=list)
+
+
+class ClusterProfileListResponse(BaseModel):
+    """GET /cluster-profiles — rich cluster profiles for Embedding Lab."""
+
+    profiles: Dict[str, ClusterProfileResponse] = Field(default_factory=dict)
+
+
+# ── 2.8 Territory Gap Queries (Embedding Lab) ─────────────────────
+
+
+class TerritoryGapExemplar(BaseModel):
+    """Rich exemplar with structural signals for territory intelligence."""
+
+    domain: str = ""
+    url: str = ""
+    similarity: float = 0.0
+    content_type: Optional[str] = None
+    authority_type: Optional[str] = None
+    word_count: Optional[int] = None
+    header_count: Optional[int] = None
+    has_faq: bool = False
+    has_tables: bool = False
+    reading_level: Optional[float] = None
+    list_item_count: int = 0
+    stat_count: int = 0
+    citation_count: int = 0
+
+
+class TerritoryCompanySignals(BaseModel):
+    """Company page structural signals subset."""
+
+    word_count: Optional[int] = None
+    header_count: Optional[int] = None
+    has_faq: bool = False
+    has_tables: bool = False
+    reading_level: Optional[float] = None
+    list_item_count: int = 0
+
+
+class TerritoryContentBrief(BaseModel):
+    """Winning content profile for a gap query."""
+
+    word_count_range: Optional[List[int]] = None
+    reading_level_range: Optional[List[float]] = None
+    header_count_range: Optional[List[int]] = None
+    header_hierarchy: Optional[Dict[str, int]] = None
+    has_faq: float = 0.0
+    has_tables: float = 0.0
+    has_definition: float = 0.0
+    has_key_takeaways: float = 0.0
+    has_step_by_step: float = 0.0
+    dominant_content_type: Optional[str] = None
+    dominant_authority_type: Optional[str] = None
+    data_density: Optional[float] = None
+    citation_density: Optional[float] = None
+
+
+class TerritoryGapQuery(BaseModel):
+    """Gap query with rich exemplars for Embedding Lab."""
+
+    id: str
+    query: str
+    cluster: str  # display name
+    cluster_id: str  # slugified
+    gap: float = 0.0
+    classification: str = "roughly_equal"
+    company_cited: bool = False
+    company_url: Optional[str] = None
+    company_similarity: Optional[float] = None
+    avg_citation_similarity: float = 0.0
+    exemplars: List[TerritoryGapExemplar] = Field(default_factory=list)
+    company_signals: Optional[TerritoryCompanySignals] = None
+    content_brief: Optional[TerritoryContentBrief] = None
+
+
+class TerritoryProximityStats(BaseModel):
+    """Global proximity statistics for territory intelligence."""
+
+    citation_mean: float = 0.0
+    citation_median: float = 0.0
+    company_mean: float = 0.0
+    company_median: float = 0.0
+    similarity_gap: float = 0.0
+
+
+class TerritorySPA(BaseModel):
+    """Semantic Proximity Analysis result for territory intelligence."""
+
+    t_stat: float = 0.0
+    p_value: float = 0.0
+    effect: str = "unknown"
+
+
+class TerritoryGapsResponse(BaseModel):
+    """GET /territory-gaps — gap queries with rich signals for Embedding Lab."""
+
+    gaps: List[TerritoryGapQuery] = Field(default_factory=list)
+    proximity_stats: TerritoryProximityStats = Field(
+        default_factory=TerritoryProximityStats,
+    )
+    spa: TerritorySPA = Field(default_factory=TerritorySPA)
+    per_cluster_proximity: Dict[str, Dict[str, float]] = Field(default_factory=dict)
+    total_gaps: int = 0
+    uncovered_queries: int = 0

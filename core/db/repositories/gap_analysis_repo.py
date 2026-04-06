@@ -19,6 +19,7 @@ _CLASSIFICATION_RANK = {
 }
 from core.db.models.gap_analysis import (
     CentroidResultModel,
+    ClusterProximityStatsModel,
     ClusterSpecModel,
     QueryExemplarModel,
     QueryGapModel,
@@ -207,6 +208,164 @@ class GapAnalysisRepository(SQLAlchemyRepository[QueryGapModel]):
     ) -> Sequence[QueryExemplarModel]:
         """Insert multiple query exemplars in a single flush."""
         instances = [QueryExemplarModel(**e) for e in exemplars]
+        self._session.add_all(instances)
+        await self._session.flush()
+        return instances
+
+    # ── Content Performance: queries covered per page ─────────────────────
+
+    async def count_queries_targeting_inventory_batch(
+        self,
+        company_id: _uuid.UUID,
+    ) -> dict[str, int]:
+        """Count gap-analysis queries targeting each published URL.
+
+        Joins query_gaps → content_pieces (via targeted_by_content_id FK).
+        Returns {published_url: count} for all targeted content in this company.
+        The caller normalises URLs and matches to content_inventory rows.
+        """
+        from core.db.models.content import ContentPieceModel
+
+        stmt = (
+            select(
+                ContentPieceModel.published_url,
+                func.count(func.distinct(QueryGapModel.id)).label("cnt"),
+            )
+            .join(
+                ContentPieceModel,
+                QueryGapModel.targeted_by_content_id == ContentPieceModel.id,
+            )
+            .where(
+                ContentPieceModel.company_id == company_id,
+                QueryGapModel.targeted_by_content_id.isnot(None),
+            )
+            .group_by(ContentPieceModel.published_url)
+        )
+
+        result = await self._session.execute(stmt)
+        return {
+            row.published_url: int(row.cnt)
+            for row in result.all()
+            if row.published_url
+        }
+
+    # ── Embedding Lab: cluster profiles & territory gaps ──────────────────
+
+    async def get_all_cluster_metrics(
+        self, run_id: _uuid.UUID | str,
+    ) -> Sequence[Any]:
+        """Per-cluster: total_citations, unique_domains, company_citations."""
+        pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        stmt = (
+            select(
+                RunCitationModel.cluster_name,
+                func.count().label("total_citations"),
+                func.count(func.distinct(RunCitationModel.domain)).label("unique_domains"),
+                func.count().filter(
+                    RunCitationModel.is_company_citation.is_(True)
+                ).label("company_citations"),
+            )
+            .where(RunCitationModel.run_id == pk)
+            .group_by(RunCitationModel.cluster_name)
+        )
+        result = await self._session.execute(stmt)
+        return result.all()
+
+    async def get_cluster_domain_leaderboard(
+        self, run_id: _uuid.UUID | str, cluster_name: str, limit: int = 15,
+    ) -> Sequence[Any]:
+        """Top domains by citation count for a cluster."""
+        pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        stmt = (
+            select(
+                RunCitationModel.domain,
+                func.count().label("citations"),
+                func.bool_or(RunCitationModel.is_company_citation).label("is_company"),
+            )
+            .where(
+                RunCitationModel.run_id == pk,
+                RunCitationModel.cluster_name == cluster_name,
+            )
+            .group_by(RunCitationModel.domain)
+            .order_by(func.count().desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return result.all()
+
+    async def get_cluster_engine_breakdown(
+        self, run_id: _uuid.UUID | str, cluster_name: str,
+    ) -> Sequence[Any]:
+        """Citation count per engine for a cluster."""
+        pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        stmt = (
+            select(
+                RunCitationModel.engine,
+                func.count().label("citations"),
+            )
+            .where(
+                RunCitationModel.run_id == pk,
+                RunCitationModel.cluster_name == cluster_name,
+            )
+            .group_by(RunCitationModel.engine)
+        )
+        result = await self._session.execute(stmt)
+        return result.all()
+
+    async def get_cluster_proximity_stats(
+        self, run_id: _uuid.UUID | str,
+    ) -> Sequence[ClusterProximityStatsModel]:
+        """Per-cluster (and global) proximity statistics."""
+        pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        stmt = (
+            select(ClusterProximityStatsModel)
+            .where(ClusterProximityStatsModel.run_id == pk)
+            .order_by(ClusterProximityStatsModel.cluster_name)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_territory_gaps_with_signals(
+        self, run_id: _uuid.UUID | str,
+    ) -> Sequence[QueryGapModel]:
+        """All gaps with exemplars → url_enrichment → structural_signals."""
+        from sqlalchemy.orm import selectinload
+
+        from core.db.models.cache import UrlEnrichmentCacheModel
+
+        pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        stmt = (
+            select(QueryGapModel)
+            .where(QueryGapModel.run_id == pk)
+            .options(
+                selectinload(QueryGapModel.exemplars)
+                .joinedload(QueryExemplarModel.url_enrichment)
+                .joinedload(UrlEnrichmentCacheModel.structural_signals)
+            )
+            .order_by(QueryGapModel.gap.desc())
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().unique().all()
+
+    async def get_cross_cluster_domains(
+        self, run_id: _uuid.UUID | str,
+    ) -> set[str]:
+        """Domains appearing in 2+ clusters (mindshare indicator)."""
+        pk = _uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+        stmt = (
+            select(RunCitationModel.domain)
+            .where(RunCitationModel.run_id == pk)
+            .group_by(RunCitationModel.domain)
+            .having(func.count(func.distinct(RunCitationModel.cluster_name)) > 1)
+        )
+        result = await self._session.execute(stmt)
+        return {row[0] for row in result.all() if row[0]}
+
+    async def bulk_insert_cluster_proximity_stats(
+        self, rows: list[dict[str, object]],
+    ) -> Sequence[ClusterProximityStatsModel]:
+        """Insert multiple cluster proximity stats in a single flush."""
+        instances = [ClusterProximityStatsModel(**r) for r in rows]
         self._session.add_all(instances)
         await self._session.flush()
         return instances
