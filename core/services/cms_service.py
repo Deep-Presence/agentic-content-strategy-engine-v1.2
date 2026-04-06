@@ -181,11 +181,15 @@ class CMSService:
         stale_count = 0
 
         for post in all_posts:
+            # Ensure timezone-aware comparison (CMS may return naive datetimes)
+            mod_at = post.modified_at
+            if mod_at is not None and mod_at.tzinfo is None:
+                mod_at = mod_at.replace(tzinfo=timezone.utc)
             is_stale = (
-                post.modified_at is not None and post.modified_at < stale_threshold
+                mod_at is not None and mod_at < stale_threshold
             )
             staleness_days = (
-                (now - post.modified_at).days if post.modified_at else 0
+                (now - mod_at).days if mod_at else 0
             )
             if is_stale:
                 stale_count += 1

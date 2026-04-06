@@ -119,7 +119,7 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
         }
 
         stmt = stmt.on_conflict_do_update(
-            constraint="uq_content_inventory_company_url",
+            index_elements=["company_id", "url_normalized"],
             set_=update_set,
         ).returning(ContentInventoryModel)
 
