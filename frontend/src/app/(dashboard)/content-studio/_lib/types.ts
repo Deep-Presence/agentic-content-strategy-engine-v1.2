@@ -30,6 +30,37 @@ export interface GapContextSummaryAPI {
 }
 
 // ---------------------------------------------------------------------------
+// Gap analysis summary (GET /companies/{slug}/gap-analysis/summary)
+// ---------------------------------------------------------------------------
+
+export interface GapClassificationCountsAPI {
+  significant_gap: number;
+  gap_to_close: number;
+  roughly_equal: number;
+  company_wins: number;
+}
+
+export interface ClusterPerformanceRowAPI {
+  cluster_id?: string;
+  cluster_name: string;
+  query_count: number;
+  citation_count: number;
+  avg_gap: number;
+  avg_citation_sim: number;
+  avg_company_sim: number;
+}
+
+export interface GapSummaryResponseAPI {
+  classification_counts: GapClassificationCountsAPI;
+  cluster_performance: ClusterPerformanceRowAPI[];
+  total_queries: number;
+  total_citations: number;
+  company_cited_count: number;
+  average_gap: number;
+  executive_summary: string;
+}
+
+// ---------------------------------------------------------------------------
 // Brief list (GET /companies/{slug}/content/briefs)
 // ---------------------------------------------------------------------------
 

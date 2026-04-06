@@ -2,8 +2,9 @@
 
 import { useState, useMemo } from 'react';
 import { ChevronRight, ArrowUpDown } from 'lucide-react';
-import { CLUSTERS, CLUSTER_COLORS, GAP_QUERIES, PER_CLUSTER_PROXIMITY } from './data';
+import { CLUSTER_COLORS } from './data';
 import type { ClusterProfile } from './data';
+import { useEmbeddingLabContext } from './embedding-lab-context';
 
 interface ClusterScorecardProps {
   onClusterClick: (clusterId: string) => void;
@@ -20,15 +21,16 @@ const PRESENCE_BADGE: Record<string, { label: string; className: string }> = {
   none:     { label: 'NONE',     className: 'text-[var(--error)] bg-[var(--error-subtle)]' },
 };
 
-function getCoverage(clusterId: string): { cited: number; total: number } {
-  const queriesInCluster = GAP_QUERIES.filter(q => q.clusterId === clusterId);
-  const cited = queriesInCluster.filter(q => q.companyCited === true).length;
-  return { cited, total: queriesInCluster.length };
-}
-
 export function ClusterScorecard({ onClusterClick }: ClusterScorecardProps) {
+  const { clusters: CLUSTERS, gapQueries: GAP_QUERIES, perClusterProximity: PER_CLUSTER_PROXIMITY } = useEmbeddingLabContext();
   const [sortKey, setSortKey] = useState<SortKey>('totalCitations');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  function getCoverage(clusterId: string): { cited: number; total: number } {
+    const queriesInCluster = GAP_QUERIES.filter(q => q.clusterId === clusterId);
+    const cited = queriesInCluster.filter(q => q.companyCited === true).length;
+    return { cited, total: queriesInCluster.length };
+  }
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -160,6 +162,8 @@ export function ClusterScorecard({ onClusterClick }: ClusterScorecardProps) {
                 key={cluster.id}
                 cluster={cluster}
                 onClick={() => onClusterClick(cluster.id)}
+                perClusterProximity={PER_CLUSTER_PROXIMITY}
+                gapQueries={GAP_QUERIES}
               />
             ))}
           </tbody>
@@ -205,11 +209,12 @@ function SortableHeader({
   );
 }
 
-function ClusterRow({ cluster, onClick }: { cluster: ClusterProfile; onClick: () => void }) {
+function ClusterRow({ cluster, onClick, perClusterProximity, gapQueries }: { cluster: ClusterProfile; onClick: () => void; perClusterProximity: Record<string, { mean: number }>; gapQueries: { clusterId: string; companyCited: boolean }[] }) {
   const badge = PRESENCE_BADGE[cluster.presence] || PRESENCE_BADGE.none;
-  const proximity = PER_CLUSTER_PROXIMITY[cluster.id];
+  const proximity = perClusterProximity[cluster.id];
   const similarityMean = proximity?.mean ?? 0;
-  const coverage = getCoverage(cluster.id);
+  const queriesInCluster = gapQueries.filter(q => q.clusterId === cluster.id);
+  const coverage = { cited: queriesInCluster.filter(q => q.companyCited).length, total: queriesInCluster.length };
   const coverageRatio = coverage.total > 0 ? coverage.cited / coverage.total : 0;
   const isNone = cluster.presence === 'none';
 

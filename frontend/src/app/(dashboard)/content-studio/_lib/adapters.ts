@@ -114,6 +114,7 @@ export function adaptBriefToCard(item: ContentBriefListItemAPI): ContentCard {
     description: item.description ?? undefined,
     targetKeywords: item.target_keywords ?? undefined,
     contentAngle: item.content_angle ?? undefined,
+    gapContext: item.gap_context ?? undefined,
     cycleId: item.cycle_id ?? undefined,
     targetWordCount: item.target_word_count,
     createdAt: item.created_at,
@@ -147,6 +148,9 @@ export function adaptBriefContent(
         name: ex.snippet || domain || ex.url,
         domain,
         engines: 0,
+        url: ex.url,
+        authorityType: ex.authority_type,
+        wordCount: ex.word_count,
       };
     }),
     reasons: detail.key_angles.length > 0 ? detail.key_angles : detail.exemplars.length > 0

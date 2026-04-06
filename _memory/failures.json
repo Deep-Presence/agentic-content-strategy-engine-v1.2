@@ -108,6 +108,15 @@
     "files_affected": ["core/topic_discovery/db_ops.py"]
   },
   {
+    "id": "F16",
+    "timestamp": "2026-04-06",
+    "what_broke": "Content card vanished from Content Studio after clicking 'Start Production'. Card completely disappeared — not in any Kanban column.",
+    "root_cause": "Three compounding issues: (1) pipeline_v13.py loads topic assignments from TopicDiscoveryStorage.get_latest_matrix() (filesystem), NOT the database. If the matrix version changed (re-expansion), old assignment IDs aren't found. (2) td_content_orchestrator cleaned up Redis GA-phase card BEFORE confirming content engine success — when CE failed (zero blueprints), the Redis card was already gone. (3) Orchestrator unconditionally marked DB status as content_produced even with zero pieces, and content_produced is not a recognized BriefPipelineStatus in the frontend.",
+    "fix_applied": "Partial fix: orchestrator now checks len(output.pieces) > 0 before Redis cleanup and status update. Zero pieces → revert to gap_analysis_complete. Root cause (filesystem matrix read in pipeline_v13.py) NOT YET FIXED — documented in .claude/sprints/pending/td-filesystem-db-disconnect-audit.md with 6 gaps identified.",
+    "lesson": "When the TD expansion was migrated to DB (b36b53a), only the write path was migrated. Multiple read paths in pipeline_v13.py and content_v13.py still use TopicDiscoveryStorage (filesystem). Always audit ALL read+write paths when migrating storage layer. Also: never clean up state (Redis cards) before confirming the operation that replaces that state has succeeded.",
+    "files_affected": ["core/orchestration/td_content_orchestrator.py", "core/content_engine/pipeline_v13.py", "api/routers/content_v13.py"]
+  },
+  {
     "id": "F13",
     "timestamp": "2026-03-22",
     "what_broke": "test_revise_loops_back_to_agent (PB-39) — intermittent ~15% failure rate after langgraph-checkpoint-redis install",

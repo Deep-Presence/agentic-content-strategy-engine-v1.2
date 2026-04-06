@@ -1,3 +1,5 @@
+import type { GapContextSummaryAPI } from '../_lib/types';
+
 // ---------------------------------------------------------------------------
 // Backend-aligned status enum (mirrors core/models/pipeline_status.py)
 // ---------------------------------------------------------------------------
@@ -53,6 +55,9 @@ export interface BriefSource {
   name: string;
   domain: string;
   engines: number;
+  url?: string;
+  authorityType?: string;
+  wordCount?: number;
 }
 
 export interface BriefContent {
@@ -171,6 +176,9 @@ export interface ContentCard {
   /** Content angle — why this topic */
   contentAngle?: string;
 
+  /** Full gap context from gap analysis (preserved from brief list API) */
+  gapContext?: GapContextSummaryAPI;
+
   /** Backend cycle/session identifier */
   cycleId?: string;
   targetWordCount?: number;
@@ -201,4 +209,15 @@ export interface Cycle {
     avgCitationScore: number;
     completionPct: number;
   };
+}
+
+// ---------------------------------------------------------------------------
+// Inline review comments (HITL-3 feedback)
+// ---------------------------------------------------------------------------
+
+export interface ReviewComment {
+  id: string;
+  selectedText: string;
+  feedback: string;
+  createdAt: string;
 }

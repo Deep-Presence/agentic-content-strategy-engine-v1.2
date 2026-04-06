@@ -1,7 +1,7 @@
 {
-  "current_sprint": "content-to-prompt-pipeline",
+  "current_sprint": "content-performance-gaps",
   "last_updated": "2026-04-06",
-  "test_count": 1706,
+  "test_count": 1728,
   "completed_sprints_summary": {
     "total_tasks_completed": 43,
     "sprints": [
@@ -53,17 +53,46 @@
       {"sprint": "content-studio-status-enum", "date": "2026-04-05", "summary": "Content Studio stage-status enum resolution. Replaced 8-value ContentStage + 3-value Column with 17-value BriefPipelineStatus (mirrors backend) + 4-value KanbanColumn. New _lib/status-adapter.ts with pure mapping functions (getColumn, getDisplay, getHITLActions, getWorkerStepIndex). 4 Kanban columns (triage/human/agent/done). Pipeline stepper aligned with backend worker chain (6 steps). 1 new file, 7 modified. TypeScript clean, build clean."},
       {"sprint": "td-ga-ce-two-phase-split", "date": "2026-04-06", "summary": "Two-phase TD→GA→CE pipeline split. Split run_td_to_content_pipeline into run_td_gap_analysis_only (Phase 1: GA with SSE instrumentation, ga_step_start/ga_step_complete at all 8 S-steps) and run_td_content_production_only (Phase 2: CE from pre-computed GA). 3 new BriefPipelineStatus (gap_analysis_pending/gap_analysis/gap_analysis_complete). GA-phase Redis state layer (ta-{id} keys in pipeline_state:{slug} hash). DbContentDataService.get_briefs() merges GA cards before DB briefs. 2 new runner tasks, 2 new endpoints (POST /from-topics/gap-analysis, POST /from-topics/start-production). TopicContentProductionRequest schema. Alembic 0032. Frontend: types+adapter+api+hooks+visual components for GA phase (8-step stepper, 'Start Production' CTA). Planner handleApprove wires to GA pipeline. 49 new tests. Codex gpt-5.3-codex audit: 7 findings fixed (H1-H4, M1-M2). 85 tests passing. Build clean."},
       {"sprint": "content-inventory-structural-signals", "date": "2026-04-06", "summary": "Content Inventory enhanced: Gap Analysis S1 as second ingestion source (gap_analysis_crawl enum), 45-field structural_signals JSONB column, Site Audit HTML pass-through via _html_map_out for signal computation. Migration 0033. Codex gpt-5.3-codex review: 10 findings, 5 addressed. 9 new tests. 138 passing."},
-      {"sprint": "content-to-prompt-pipeline", "date": "2026-04-06", "summary": "Content-to-Prompt pipeline — generates k AI visibility prompts per content inventory page for daily tracker monitoring. Join table content_inventory_prompts (migration 0034), ContentToPromptService (LLM via OpenRouter Sonnet), ContentToPromptOrchestrator (dedup + persist + approve), 6 API endpoints, enrich_thin_pages(), PromptSource.CONTENT_INVENTORY. Codex gpt-5.3-codex critical review: 8 findings incorporated (cascade safety, 2-tier dedup, is_user_edited, partial failure model, concurrency 8). 42 new tests. Architecture compared against FK-column alternative — join table chosen for M:N support, company_id type mismatch avoidance, no existing table mods."}
+      {"sprint": "content-to-prompt-pipeline", "date": "2026-04-06", "summary": "Content-to-Prompt pipeline — generates k AI visibility prompts per content inventory page for daily tracker monitoring. Join table content_inventory_prompts (migration 0034), ContentToPromptService (LLM via OpenRouter Sonnet), ContentToPromptOrchestrator (dedup + persist + approve), 6 API endpoints, enrich_thin_pages(), PromptSource.CONTENT_INVENTORY. Codex gpt-5.3-codex critical review: 8 findings incorporated. 42 new tests. Post-review security hardening: 6 critical fixes (tenant isolation on all endpoints via company_uuid validation, prompt injection mitigation with XML tags, dedup TOCTOU race condition fix). Model registration fix (__init__.py). Structural composite score (compute_structural_score 0-100 from 24 signals, 4 categories) added to ContentPerformanceRow + ContentDetailResponse. 17 structural score tests. Content Performance page readiness audit completed: 5/8 table columns ready, 3/9 drawer sections ready, citation-matching service identified as biggest gap."},
+      {"sprint": "content-performance-gaps", "date": "2026-04-06", "summary": "Content Performance 4-gap fill: citations (total cited count per page), platforms (5 per-engine booleans via bool_or), queries_covered (gap analysis queries targeting page via URL match), citation_timeline (daily timeseries for drawer). 3 new repo methods (batch citations, timeline, gap query count). Service layer enriched (Optional repos, backward compat). DI wiring. Frontend: types, adapters (3 hardcoded→API), ContentDrawer Section A live chart. Codex gpt-5.3-codex reviewed (5 concerns addressed). 5 new tests. 63 total passing."}
     ]
   },
   "completed": [
+    {
+      "id": "T-content-performance-gaps",
+      "task": "Content Performance 4-gap fill — citations, platforms, queries_covered, citation_timeline",
+      "sprint": "content-performance-gaps",
+      "status": "done",
+      "completed_at": "2026-04-06",
+      "tests_added": 5,
+      "files_modified": [
+        "core/db/repositories/content_inventory_prompt_repo.py",
+        "core/db/repositories/gap_analysis_repo.py",
+        "core/services/content_performance_service.py",
+        "api/schemas/content_performance.py",
+        "api/dependencies.py",
+        "frontend/src/app/(dashboard)/content-performance/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-performance/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/content-performance/_components/ContentDrawer.tsx",
+        "tests/services/test_content_performance_service.py"
+      ],
+      "details": {
+        "architecture": "3 new repo methods (get_citation_metrics_batch, get_citation_timeline, count_queries_targeting_inventory_batch). Service __init__ gains 2 optional repos (backward compat). DI wiring adds 2 repos to session.",
+        "gap1_citations": "Batch COUNT(CASE WHEN jsonb_array_length(citations) > 0) from daily_run_responses via content_inventory_prompts join. Single query grouped by inventory_id.",
+        "gap2_platforms": "bool_or(engine = X AND citations > 0) per engine. Maps openai→chatgpt, google_ai derived from gemini.",
+        "gap3_queries_covered": "query_gaps → content_pieces via targeted_by_content_id FK. Python-side URL normalization match to content_inventory.url_normalized.",
+        "gap4_citation_timeline": "GROUP BY date_trunc('day', created_at) for single-page drawer detail. AreaChart in ContentDrawer Section A.",
+        "codex_review": "gpt-5.3-codex reviewed. 5 concerns: cardinality risk (N/A — counting responses not prompts), GROUP BY correctness (inventory_id only), pages with 0 prompts (handled by lookup.get default), gap 404 risk (direct query, no _resolve_run_id), platforms schema looseness (changed to typed default factory).",
+        "frontend": "3 hardcoded adapter values (citations, platforms, queriesCovered) replaced with row.X ?? fallback. New toDrawerCitationTimeline adapter. ContentDrawer Section A: live AreaChart replacing UnavailableSection placeholder."
+      }
+    },
     {
       "id": "T-content-to-prompt-pipeline",
       "task": "Content-to-Prompt pipeline — generate k AI visibility prompts per content inventory page",
       "sprint": "content-to-prompt-pipeline",
       "status": "done",
       "completed_at": "2026-04-06",
-      "tests_added": 42,
+      "tests_added": 59,
       "files_created": [
         "core/db/migrations/versions/0034_content_inventory_prompts.py",
         "core/db/models/content_inventory_prompt.py",
@@ -74,12 +103,16 @@
         "api/routers/content_to_prompt.py",
         "tests/daily_tracker/test_content_to_prompt.py",
         "tests/daily_tracker/test_content_to_prompt_orchestrator.py",
-        "tests/api/test_content_to_prompt.py"
+        "tests/api/test_content_to_prompt.py",
+        "tests/services/test_structural_score.py"
       ],
       "files_modified": [
         "core/models/daily_tracker.py",
         "core/services/content_inventory_service.py",
-        "api/app.py"
+        "core/services/content_performance_service.py",
+        "core/db/models/__init__.py",
+        "api/app.py",
+        "api/schemas/content_performance.py"
       ],
       "details": {
         "architecture": "Join table content_inventory_prompts (M:N) linking pages to tracked_prompts. ContentToPromptService (LLM generation via OpenRouter) + ContentToPromptOrchestrator (dedup/persist/approve). Follows QueryFanoutService + DailyTrackerOrchestrator patterns.",
@@ -90,7 +123,10 @@
         "regeneration": "Deletes non-user-edited links, deactivates orphaned prompts (zero remaining links), generates fresh prompts with dedup.",
         "content_enrichment": "enrich_thin_pages() added to ContentInventoryService — trafilatura fetch for pages with <100 chars content_preview.",
         "codex_review": "gpt-5.3-codex critical review. Key findings: cascade safety (link CASCADE only), is_user_edited protection, 2-tier dedup, concurrency 8, partial failure model, cost tracking via track_llm_cost().",
-        "plan_comparison": "Evaluated join table (Plan A) vs FK on tracked_prompts (Plan B). Join table won 7/10 dimensions. Critical: tracked_prompts.company_id is String, content_inventory.company_id is UUID — join table sidesteps type mismatch."
+        "plan_comparison": "Evaluated join table (Plan A) vs FK on tracked_prompts (Plan B). Join table won 7/10 dimensions. Critical: tracked_prompts.company_id is String, content_inventory.company_id is UUID — join table sidesteps type mismatch.",
+        "security_review": "Post-implementation critical review found 6 issues. ALL FIXED: (1) CRITICAL: Model not registered in __init__.py — Alembic can't discover. (2) CRITICAL: No tenant isolation in /generate — attacker can generate prompts for other company's pages. (3) CRITICAL: No tenant isolation in /approve — can approve any company's links. (4) CRITICAL: No company validation in orchestrator page loading. (5) HIGH: Dedup TOCTOU race condition (exists_by_text → create). (6) MEDIUM: Prompt injection via page content. Fixes: company_uuid param on orchestrator, _resolve_company_uuid() helper using auth_service, XML tag wrapping for untrusted content, try/except for concurrent dedup.",
+        "structural_score": "compute_structural_score() added to content_performance_service.py. 24 signals across 4 categories (Text Composition 25pts, Structural Elements 21pts, Content Patterns 30pts, Factual Density 15pts). Boolean signals: full weight if True. Numeric: min(1.0, value/benchmark) * weight. Returns 0-100 int. Added to ContentPerformanceRow + ContentDetailResponse schemas. 17 new tests.",
+        "content_performance_audit": "Full audit of Content Performance page readiness. Table: 5/8 columns ready (structural_score now included). KPI: 3/6 ready. Drawer: 3/9 ready. Biggest gap: citation-matching service (~30%) — bridges daily tracker citations → content inventory pages via content_inventory_prompts. Also missing: cluster assignment (TD join), CPS batch scoring, query coverage (GA join), brief compliance."
       }
     },
     {
@@ -491,6 +527,80 @@
     }
   ],
   "in_progress": [
+    {
+      "id": "T-content-studio-detail-view-rework",
+      "task": "Content Studio detail view rework — gap analysis metrics, brief flow, right sidebar gap section, left sidebar brief data during production",
+      "sprint": "content-studio-detail-view-rework",
+      "status": "done",
+      "completed_at": "2026-04-06",
+      "tests_added": 0,
+      "files_created": [
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useGapSummary.ts"
+      ],
+      "files_modified": [
+        "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/LeftSidebar.tsx"
+      ],
+      "details": {
+        "gap_analysis_complete_center": "Replaced simple checkmark view with rich metrics: topic description, 'Gap Analysis: Complete' header, 3-column KPI grid (queries analyzed, avg gap score, citations found from /gap-analysis/summary), classification breakdown (stacked bar + legend), company cited stats, top competitor domains with favicons, success indicators, Start Production button.",
+        "right_sidebar_gap_section": "New GapAnalysisSection in MetricsTab — gap score, classification badge, company cited, exemplar count, summary stats, competitor domains. Persists from gap_analysis_complete through all subsequent stages. When article metrics become available, both sections render together.",
+        "left_sidebar_brief_data": "AgentSidebar (during outlining/drafting/etc) now shows brief outline, target word count, exemplar count, key angles, source domains below pipeline progress section.",
+        "brief_review_enhanced": "BriefContent center view enhanced with exemplar cards showing favicons, truncated URLs, authority type badges, word counts.",
+        "data_layer": "gapContext (full GapContextSummaryAPI) added to ContentCard type and preserved in adapter. BriefSource extended with url, authorityType, wordCount. GapSummaryResponseAPI type added. fetchGapSummary() API function. useGapSummary() hook.",
+        "ga_animation": "Replaced 8-step pipeline stepper (exposing S1-S8 step names) with abstract orbiting rings animation to prevent reverse engineering. Both center and sidebar step labels removed."
+      }
+    },
+    {
+      "id": "T-orchestrator-card-vanish-fix",
+      "task": "Fix content card vanishing when production pipeline produces zero pieces",
+      "sprint": "content-studio-detail-view-rework",
+      "status": "done",
+      "completed_at": "2026-04-06",
+      "tests_added": 0,
+      "files_modified": [
+        "core/orchestration/td_content_orchestrator.py"
+      ],
+      "details": {
+        "bug": "When 'Start Production' was clicked, orchestrator immediately cleaned up Redis GA-phase card then ran content engine. If CE failed (zero blueprints), card vanished: Redis card gone, no brief in blueprints.json, DB marked content_produced.",
+        "root_cause": "Two issues: (1) Redis cleanup happened BEFORE confirming CE success. (2) Status unconditionally set to content_produced regardless of piece count.",
+        "fix": "Both run_td_to_content_pipeline() and run_td_content_production_only() now check len(output.pieces) > 0 before cleanup/status update. Zero pieces → revert to gap_analysis_complete so card stays visible for retry.",
+        "remaining": "Root cause of 'No matching TopicAssignments' is pipeline_v13.py still reading from filesystem matrix instead of DB. See .claude/sprints/pending/td-filesystem-db-disconnect-audit.md"
+      }
+    },
+    {
+      "id": "T-content-performance-frontend-integration",
+      "task": "Content Performance page frontend-backend integration — wire 3 backend endpoints, eliminate all mock data, structural_score integration",
+      "sprint": "content-performance-frontend-integration",
+      "status": "done",
+      "completed_at": "2026-04-06",
+      "tests_added": 0,
+      "files_created": [
+        "frontend/src/app/(dashboard)/content-performance/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/content-performance/_hooks/useContentPerformanceData.ts"
+      ],
+      "files_modified": [
+        "frontend/src/app/(dashboard)/content-performance/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-performance/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-performance/_components/data.ts",
+        "frontend/src/app/(dashboard)/content-performance/page.tsx",
+        "frontend/src/app/(dashboard)/content-performance/_components/ContentDrawer.tsx"
+      ],
+      "details": {
+        "types": "Added ContentPerformanceRowAPI, ContentPerformanceTableResponseAPI, VelocityInsightAPI, VelocityInsightsResponseAPI. Added structural_score to ContentDetailAPI.",
+        "api": "Added fetchContentTable() and fetchVelocityInsights() — 2 new API functions.",
+        "adapters": "6 adapter functions: toContentPiece (snake→camelCase + GAP defaults), toVelocityDatum, toDrawerTrafficTimeline, toDrawerTrafficSources, toDrawerAIPlatforms. Validation helpers for VelocityTrend/LifecycleStage casting.",
+        "hook": "useContentPerformanceData — parallel Promise.all fetch, AbortController cleanup, loading/error/refetch. Returns pieces, velocityData, periodStart/End, totalItems.",
+        "mock_elimination": "Removed ALL mock constants from data.ts: CONTENT_PIECES, VELOCITY_DATA, CPS_SCATTER, STRUCTURAL_SIGNALS, QUERY_COVERAGE, STRUCTURAL_DETAILS, CANNIBALIZATION_DATA, BRIEF_COMPLIANCE, generateCitationTimeline, generateTrafficTimeline, getPlatformDetails, getTrafficSources. Kept: type definitions, LIFECYCLE_CONFIG, PLATFORM_LIST, formatTraffic.",
+        "page_changes": "Real data from hook. Date range from API period. KPIs: AI Referrals replaces Citations, CPS/Utilization show '—'. CPS scatter chart removed. Structural alignment: real-only (no mock fallback). Loading/error/empty states added.",
+        "drawer_changes": "Real daily_traffic (section B), real source_breakdown (section I), real ai_platform_breakdown (section C), real structural compliance (section D). Sections A/E/F show explicit unavailable messages. Structural score in header.",
+        "verification": "tsc --noEmit: 0 errors. npm run build: clean pass."
+      }
+    },
     {
       "id": "T-ga-sidebar-enrichment",
       "task": "Enrich GA-phase Content Studio sidebar with full topic assignment metadata — content spec, keywords, persona affinity, priority factors, content angle",

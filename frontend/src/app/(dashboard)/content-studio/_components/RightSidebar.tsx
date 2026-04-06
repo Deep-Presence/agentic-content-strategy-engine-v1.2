@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Check, Download, ExternalLink, Copy } from 'lucide-react';
 import type { ContentCard, ContentMetadata } from './types';
+import type { GapSummaryResponseAPI } from '../_lib/types';
 
 type Tab = 'metrics' | 'seo' | 'links' | 'export';
 
@@ -40,9 +41,111 @@ const BAR_HEIGHT = 6;
 const BAR_RADIUS = 3;
 const BAR_BG = 'var(--border)';
 
-function MetricsTab({ card }: { card: ContentCard }) {
+function GapAnalysisSection({ card, gapSummary }: { card: ContentCard; gapSummary?: GapSummaryResponseAPI }) {
+  const ctx = card.gapContext;
+  if (!ctx) return null;
+
+  const classificationColors: Record<string, string> = {
+    significant_gap: 'var(--error, #e53e3e)',
+    gap_to_close: 'var(--warning)',
+    roughly_equal: 'var(--accent)',
+    company_wins: 'var(--success)',
+  };
+  const classificationLabel = ctx.classification
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const uniqueDomains = Array.from(new Set(ctx.exemplars.map((e) => e.domain).filter(Boolean)));
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+      <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+        <span style={{ ...OVERLINE, marginBottom: 0 }}>Gap Analysis</span>
+      </div>
+      <div className="px-3 py-2 space-y-2.5">
+        {/* Gap score */}
+        <div className="flex items-center justify-between">
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Gap Score</span>
+          <span style={{ fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--accent)' }}>
+            {Math.round(ctx.gap_score * 100)}%
+          </span>
+        </div>
+        {/* Classification */}
+        <div className="flex items-center justify-between">
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Classification</span>
+          <span style={{
+            fontSize: 10, fontWeight: 600, padding: '1px 6px',
+            borderRadius: 'var(--radius-full)',
+            background: classificationColors[ctx.classification] ? `color-mix(in srgb, ${classificationColors[ctx.classification]} 15%, transparent)` : 'var(--border)',
+            color: classificationColors[ctx.classification] || 'var(--text-secondary)',
+          }}>
+            {classificationLabel}
+          </span>
+        </div>
+        {/* Company cited */}
+        <div className="flex items-center justify-between">
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Company Cited</span>
+          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: ctx.company_cited ? 'var(--success)' : 'var(--text-tertiary)' }}>
+            {ctx.company_cited ? 'Yes' : 'No'}
+          </span>
+        </div>
+        {/* Exemplars */}
+        <div className="flex items-center justify-between">
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Exemplars</span>
+          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
+            {ctx.exemplars.length}
+          </span>
+        </div>
+        {/* Summary stats if available */}
+        {gapSummary && (
+          <>
+            <div className="flex items-center justify-between">
+              <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Total Queries</span>
+              <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
+                {gapSummary.total_queries}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Citations Found</span>
+              <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
+                {gapSummary.total_citations}
+              </span>
+            </div>
+          </>
+        )}
+        {/* Competitor domains */}
+        {uniqueDomains.length > 0 && (
+          <div style={{ paddingTop: 4 }}>
+            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4 }}>Top competitors</div>
+            <div className="flex flex-wrap gap-1">
+              {uniqueDomains.slice(0, 4).map((domain) => (
+                <div key={domain} className="flex items-center gap-1 px-1.5 py-0.5" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 10, color: 'var(--text-secondary)' }}>
+                  <img
+                    src={`https://www.google.com/s2/favicons?domain=${domain}&sz=32`}
+                    alt={domain}
+                    width={12}
+                    height={12}
+                    style={{ borderRadius: 2 }}
+                  />
+                  {domain}
+                </div>
+              ))}
+              {uniqueDomains.length > 4 && (
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', alignSelf: 'center' }}>+{uniqueDomains.length - 4}</span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MetricsTab({ card, gapSummary }: { card: ContentCard; gapSummary?: GapSummaryResponseAPI }) {
   const article = card.articleContent;
-  if (!article) {
+  const hasGapContext = !!card.gapContext;
+
+  if (!article && !hasGapContext) {
     return (
       <div className="p-4 flex flex-col items-center justify-center" style={{ paddingTop: 48, color: 'var(--text-tertiary)', fontSize: 12 }}>
         <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10, fontSize: 18 }}>
@@ -53,10 +156,26 @@ function MetricsTab({ card }: { card: ContentCard }) {
     );
   }
 
-  const avgScore = Math.round(article.citPrediction.reduce((a, b) => a + b.score, 0) / article.citPrediction.length);
+  // Gap context only — no article yet
+  if (!article && hasGapContext) {
+    return (
+      <div className="p-3 space-y-4 overflow-y-auto flex-1">
+        <GapAnalysisSection card={card} gapSummary={gapSummary} />
+        <div className="flex flex-col items-center py-4" style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>
+          Article metrics will appear after content is generated.
+        </div>
+      </div>
+    );
+  }
+
+  // article is guaranteed non-null here (both !article paths returned above)
+  const art = article!;
+  const avgScore = Math.round(art.citPrediction.reduce((a, b) => a + b.score, 0) / art.citPrediction.length);
 
   return (
     <div className="p-3 space-y-4 overflow-y-auto flex-1">
+      {/* Gap analysis section (persists through all stages) */}
+      {hasGapContext && <GapAnalysisSection card={card} gapSummary={gapSummary} />}
       {/* Citation Prediction — card with avg score prominent */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
         <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
@@ -69,7 +188,7 @@ function MetricsTab({ card }: { card: ContentCard }) {
           </div>
         </div>
         <div className="px-3 py-2 space-y-2">
-          {article.citPrediction.map((p) => (
+          {art.citPrediction.map((p) => (
             <div key={p.engine} className="flex items-center gap-2">
               <img
                 src={`https://www.google.com/s2/favicons?domain=${ENGINE_DOMAINS[p.engine]}&sz=32`}
@@ -96,7 +215,7 @@ function MetricsTab({ card }: { card: ContentCard }) {
           <span style={{ ...OVERLINE, marginBottom: 0 }}>Structural Compliance</span>
         </div>
         <div className="px-3 py-2 space-y-2.5">
-          {article.compliance.map((c) => {
+          {art.compliance.map((c) => {
             const pct = Math.round((c.current / c.target) * 100);
             const isGood = pct >= 85;
             return (
@@ -127,11 +246,11 @@ function MetricsTab({ card }: { card: ContentCard }) {
             <div className="flex items-center justify-between mb-1">
               <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Voice compliance</span>
               <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--accent)' }}>
-                {article.voiceCompliance}%
+                {art.voiceCompliance}%
               </span>
             </div>
             <div style={{ height: BAR_HEIGHT, background: BAR_BG, borderRadius: BAR_RADIUS, overflow: 'hidden' }}>
-              <div style={{ width: `${article.voiceCompliance}%`, height: '100%', background: 'var(--accent)', borderRadius: BAR_RADIUS }} />
+              <div style={{ width: `${art.voiceCompliance}%`, height: '100%', background: 'var(--accent)', borderRadius: BAR_RADIUS }} />
             </div>
           </div>
 
@@ -142,15 +261,15 @@ function MetricsTab({ card }: { card: ContentCard }) {
           <div className="flex items-center justify-between">
             <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>E-E-A-T overall</span>
             <span style={{ fontSize: 16, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
-              {article.eeat.overall}<span style={{ fontSize: 10, color: 'var(--text-tertiary)', fontWeight: 400 }}>/100</span>
+              {art.eeat.overall}<span style={{ fontSize: 10, color: 'var(--text-tertiary)', fontWeight: 400 }}>/100</span>
             </span>
           </div>
           <div className="space-y-2">
             {[
-              { label: 'Experience', value: article.eeat.experience },
-              { label: 'Expertise', value: article.eeat.expertise },
-              { label: 'Authority', value: article.eeat.authoritativeness },
-              { label: 'Trust', value: article.eeat.trustworthiness },
+              { label: 'Experience', value: art.eeat.experience },
+              { label: 'Expertise', value: art.eeat.expertise },
+              { label: 'Authority', value: art.eeat.authoritativeness },
+              { label: 'Trust', value: art.eeat.trustworthiness },
             ].map((item) => (
               <div key={item.label}>
                 <div className="flex items-center justify-between mb-1">
@@ -494,12 +613,13 @@ function ExportTab({ onPublish }: { onPublish: () => void }) {
 
 interface RightSidebarProps {
   card: ContentCard;
+  gapSummary?: GapSummaryResponseAPI;
   metadata?: ContentMetadata;
   onMetadataChange: (m: ContentMetadata) => void;
   onPublish: () => void;
 }
 
-export function RightSidebar({ card, metadata, onMetadataChange, onPublish }: RightSidebarProps) {
+export function RightSidebar({ card, gapSummary, metadata, onMetadataChange, onPublish }: RightSidebarProps) {
   const [activeTab, setActiveTab] = useState<Tab>('metrics');
 
   const tabs: { id: Tab; label: string }[] = [
@@ -539,7 +659,7 @@ export function RightSidebar({ card, metadata, onMetadataChange, onPublish }: Ri
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {activeTab === 'metrics' && <MetricsTab card={card} />}
+        {activeTab === 'metrics' && <MetricsTab card={card} gapSummary={gapSummary} />}
         {activeTab === 'seo' && <SEOTab metadata={metadata} onChange={onMetadataChange} />}
         {activeTab === 'links' && <LinksTab card={card} />}
         {activeTab === 'export' && <ExportTab onPublish={onPublish} />}

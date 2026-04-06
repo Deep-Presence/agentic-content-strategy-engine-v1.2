@@ -215,7 +215,7 @@
   /* Tiptap editor — Linear-inspired typography */
   .tiptap-editor .ProseMirror {
     outline: none;
-    font-family: var(--font-body), -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: var(--font-inter), 'Helvetica Neue', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     color: var(--text-primary);
     font-size: 15px;
     line-height: 1.75;
@@ -398,5 +398,18 @@
   .tiptap-editor .ProseMirror s {
     text-decoration: line-through;
     color: var(--text-tertiary);
+  }
+
+  /* Inline review comment highlights */
+  .review-comment-highlight {
+    background: rgba(91, 164, 196, 0.15);
+    border-bottom: 2px solid var(--accent);
+    cursor: pointer;
+    transition: background 0.15s ease;
+    border-radius: 2px;
+    padding: 1px 0;
+  }
+  .review-comment-highlight:hover {
+    background: rgba(91, 164, 196, 0.3);
   }
 }

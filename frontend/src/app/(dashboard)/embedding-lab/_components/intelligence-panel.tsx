@@ -1,7 +1,8 @@
 'use client';
 
-import { ENGINE_KEYS, ENGINE_META, GAP_QUERIES, CLUSTERS } from './data';
+import { ENGINE_KEYS, ENGINE_META } from './data';
 import type { ClusterData } from './data';
+import { useEmbeddingLabContext } from './embedding-lab-context';
 import { BrandLogo } from './brand-logo';
 import { ArrowRight } from 'lucide-react';
 
@@ -15,13 +16,14 @@ export function IntelligencePanel({ cluster }: IntelligencePanelProps) {
 }
 
 function DefaultPanel() {
-  const totalCitations = CLUSTERS.reduce((s, c) => s + c.citations, 0);
-  const totalDomains = CLUSTERS.reduce((s, c) => s + c.domains, 0);
-  const coveredClusters = CLUSTERS.filter(c => c.yourCitations > 0).length;
+  const { clusters: CLUSTERS, gapQueries: GAP_QUERIES } = useEmbeddingLabContext();
+  const totalCitations = CLUSTERS.reduce((s, c) => s + c.totalCitations, 0);
+  const totalDomains = CLUSTERS.reduce((s, c) => s + c.uniqueDomains, 0);
+  const coveredClusters = CLUSTERS.filter(c => c.companyCitations > 0).length;
   const dangerZones = CLUSTERS.filter(c => c.presence === 'none');
   const topOpportunities = [...CLUSTERS]
     .filter(c => c.presence === 'none' || c.presence === 'minimal')
-    .sort((a, b) => b.citations - a.citations)
+    .sort((a, b) => b.totalCitations - a.totalCitations)
     .slice(0, 3);
 
   return (
@@ -66,7 +68,7 @@ function DefaultPanel() {
             {dangerZones.map((z) => (
               <div key={z.id} className="text-[12px]">
                 <span className="font-medium text-text-primary">{z.name}</span>
-                <span className="text-text-tertiary ml-1">— {z.citations} citations, {z.domains} domains</span>
+                <span className="text-text-tertiary ml-1">— {z.totalCitations} citations, {z.uniqueDomains} domains</span>
               </div>
             ))}
           </div>
@@ -85,7 +87,7 @@ function DefaultPanel() {
                 <span className="font-mono text-text-tertiary mr-1">{i + 1}.</span>
                 <span className="font-medium text-text-primary">{c.name}</span>
                 <span className="text-text-tertiary ml-1">
-                  — {c.yourShare === 0 ? '0%' : `${c.yourShare.toFixed(1)}%`} share, {gaps.length} critical gaps
+                  — {c.companyShare === 0 ? '0%' : `${(c.companyShare * 100).toFixed(1)}%`} share, {gaps.length} critical gaps
                 </span>
               </div>
             );
@@ -97,6 +99,7 @@ function DefaultPanel() {
 }
 
 function ClusterPanel({ cluster }: { cluster: ClusterData }) {
+  const { gapQueries: GAP_QUERIES } = useEmbeddingLabContext();
   const clusterGaps = GAP_QUERIES.filter(g => g.clusterId === cluster.id).slice(0, 5);
   const directCount = cluster.competitors.filter(c => c.type === 'direct').length;
   const mindshareCount = cluster.competitors.filter(c => c.type === 'mindshare').length;

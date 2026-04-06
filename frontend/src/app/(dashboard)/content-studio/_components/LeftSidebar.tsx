@@ -316,21 +316,84 @@ function AgentSidebar({ card }: { card: ContentCard }) {
           </div>
         </div>
       )}
+
+      {/* Brief content (shown during production stages when brief is available) */}
+      {card.briefContent && (
+        <>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <div style={OVERLINE}>Brief Outline</div>
+            <div className="space-y-1">
+              {card.briefContent.sections.map((section, i) => (
+                <div key={i} className="flex items-start gap-2" style={{ fontSize: 11, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                  <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', width: 16, flexShrink: 0 }}>{i + 1}.</span>
+                  {section}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <div style={OVERLINE}>Brief Targets</div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Target words</span>
+                <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
+                  {card.briefContent.targetWords.toLocaleString()}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Exemplars</span>
+                <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
+                  {card.briefContent.exemplarCount}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {card.briefContent.reasons.length > 0 && (
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+              <div style={OVERLINE}>Key Angles</div>
+              <div className="space-y-1.5">
+                {card.briefContent.reasons.map((reason, i) => (
+                  <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    {reason}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {card.briefContent.sources.length > 0 && (
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+              <div style={OVERLINE}>Sources</div>
+              <div className="space-y-1.5">
+                {card.briefContent.sources.slice(0, 5).map((src, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    {src.domain && (
+                      <img
+                        src={`https://www.google.com/s2/favicons?domain=${src.domain}&sz=32`}
+                        alt={src.domain}
+                        width={12}
+                        height={12}
+                        style={{ borderRadius: 2, flexShrink: 0 }}
+                      />
+                    )}
+                    <span className="truncate" style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
+                      {src.domain || src.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
 
-// GA step definitions
-const GA_SIDEBAR_STEPS = [
-  { key: 'S1', label: 'Load Assets' },
-  { key: 'S2', label: 'Generate Queries' },
-  { key: 'S3', label: 'Search Platforms' },
-  { key: 'S4', label: 'Enrich Citations' },
-  { key: 'S5', label: 'Embed Content' },
-  { key: 'S6', label: 'Analyze Gaps' },
-  { key: 'S7', label: 'Visualize' },
-  { key: 'S8', label: 'Generate Report' },
-];
+// GA total steps (used for progress fraction only — labels not exposed)
+const GA_TOTAL_STEPS = 8;
 
 const BUYER_STAGE_COLORS: Record<string, { bg: string; color: string }> = {
   tofu: { bg: 'var(--accent-subtle)', color: 'var(--accent)' },
@@ -599,36 +662,30 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
         </div>
       )}
 
-      {/* GA pipeline steps */}
+      {/* GA pipeline progress (abstract — no step names) */}
       {card.status === 'gap_analysis' && (
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
           <div style={OVERLINE}>Pipeline</div>
-          <div className="space-y-1">
-            {GA_SIDEBAR_STEPS.map((stage, i) => {
+          {/* Step dots — filled/empty, no labels */}
+          <div className="flex items-center gap-1.5 mb-3">
+            {Array.from({ length: GA_TOTAL_STEPS }, (_, i) => {
               const stepNum = i + 1;
               const done = stepNum < currentStepNum;
               const active = stepNum === currentStepNum;
               return (
-                <div key={stage.key} className="flex items-center gap-2 py-1.5">
-                  <span style={{
-                    width: 18, height: 18, borderRadius: '50%',
+                <div
+                  key={i}
+                  style={{
+                    width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
                     background: done ? 'var(--success)' : active ? 'var(--warning)' : 'var(--border)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 9, fontWeight: 600,
-                    color: done || active ? '#fff' : 'var(--text-tertiary)',
-                    flexShrink: 0,
                     animation: active ? 'pulse 2s ease-in-out infinite' : undefined,
-                  }}>
-                    {done ? '\u2713' : stepNum}
-                  </span>
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: active ? 500 : 400, color: done || active ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
-                      {stage.label}
-                    </div>
-                  </div>
-                </div>
+                  }}
+                />
               );
             })}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+            Step {currentStepNum} of {GA_TOTAL_STEPS}
           </div>
         </div>
       )}

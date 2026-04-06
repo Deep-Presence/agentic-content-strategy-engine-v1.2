@@ -1,18 +1,11 @@
 'use client';
 
 import { useState, useCallback, useMemo } from 'react';
-import {
-  TOTAL_TERRITORIES,
-  DANGER_ZONES,
-  CLUSTERS_WITH_PRESENCE,
-  SPA_RESULT,
-  CLUSTER_PROFILES,
-  PROXIMITY_STATS,
-  CLUSTERS,
-  PER_CLUSTER_PROXIMITY,
-  CLUSTER_COLORS,
-  GAP_QUERIES,
-} from './_components/data';
+import type { EmbeddingPoint } from './_components/data';
+import { CLUSTER_COLORS } from './_components/data';
+import { EmbeddingLabProvider, useEmbeddingLabContext } from './_components/embedding-lab-context';
+import { useEmbeddingLabData } from './_hooks/useEmbeddingLabData';
+import { useEmbeddingProjection } from './_hooks/useEmbeddingProjection';
 import { TerritoryTab } from './_components/territory-tab';
 import { ClusterScorecard } from './_components/cluster-scorecard';
 import { ClusterDrawer } from './_components/cluster-drawer';
@@ -26,13 +19,6 @@ const TABS: { id: Tab; label: string; icon: typeof LayoutGrid }[] = [
   { id: 'analysis', label: 'Cluster Analysis', icon: BarChart3 },
   { id: 'scatter', label: 'Scatter Explorer', icon: ScatterChart },
   { id: 'knowledge', label: 'Knowledge Graph', icon: Share2 },
-];
-
-const STATS = [
-  { value: String(TOTAL_TERRITORIES), label: 'TERRITORIES', color: 'var(--text-primary)' },
-  { value: `${CLUSTERS_WITH_PRESENCE} of ${TOTAL_TERRITORIES}`, label: 'WITH PRESENCE', color: 'var(--accent)' },
-  { value: String(DANGER_ZONES), label: 'DANGER ZONES', color: 'var(--error)' },
-  { value: `t=${SPA_RESULT.tStat.toFixed(2)}`, label: 'SPA', color: 'var(--accent)' },
 ];
 
 // ── Buyer Journey Stage Mapping ────────────────────────────
@@ -58,6 +44,51 @@ const JOURNEY_STAGES = [
 ];
 
 export default function EmbeddingLabPage() {
+  const data = useEmbeddingLabData();
+
+  if (data.isLoading) {
+    return (
+      <div className="flex items-center justify-center" style={{ height: 'calc(100vh - 200px)' }}>
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          <span className="text-[13px] text-text-secondary">Loading Embedding Lab...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (data.error) {
+    return (
+      <div className="flex items-center justify-center" style={{ height: 'calc(100vh - 200px)' }}>
+        <div className="text-center space-y-2">
+          <p className="text-[14px] text-text-secondary">{data.error}</p>
+          <button
+            onClick={data.refetch}
+            className="px-4 h-[30px] text-[12px] font-medium rounded border border-border hover:bg-[var(--accent-subtle)] transition-colors cursor-pointer"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <EmbeddingLabProvider value={data}>
+      <EmbeddingLabContent />
+    </EmbeddingLabProvider>
+  );
+}
+
+function EmbeddingLabContent() {
+  const {
+    totalTerritories,
+    dangerZones,
+    clustersWithPresence,
+    spaResult,
+    clusterProfiles,
+  } = useEmbeddingLabContext();
+
   const [activeTab, setActiveTab] = useState<Tab>('territory');
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
 
@@ -69,7 +100,14 @@ export default function EmbeddingLabPage() {
     setSelectedCluster(null);
   }, []);
 
-  const clusterData = selectedCluster ? CLUSTER_PROFILES[selectedCluster] || null : null;
+  const clusterData = selectedCluster ? clusterProfiles[selectedCluster] || null : null;
+
+  const STATS = useMemo(() => [
+    { value: String(totalTerritories), label: 'TERRITORIES', color: 'var(--text-primary)' },
+    { value: `${clustersWithPresence} of ${totalTerritories}`, label: 'WITH PRESENCE', color: 'var(--accent)' },
+    { value: String(dangerZones), label: 'DANGER ZONES', color: 'var(--error)' },
+    { value: `t=${spaResult.tStat.toFixed(2)}`, label: 'SPA', color: 'var(--accent)' },
+  ], [totalTerritories, clustersWithPresence, dangerZones, spaResult]);
 
   return (
     <div className="space-y-3">
@@ -139,6 +177,15 @@ export default function EmbeddingLabPage() {
 
 // ── Tab 2: Cluster Analysis ──────────────────────────────
 function ClusterAnalysisTab({ onClusterClick }: { onClusterClick: (id: string) => void }) {
+  const {
+    spaResult: SPA_RESULT,
+    proximityStats: PROXIMITY_STATS,
+    clusters: CLUSTERS,
+    gapQueries: GAP_QUERIES,
+    perClusterProximity: PER_CLUSTER_PROXIMITY,
+    totalTerritories: TOTAL_TERRITORIES,
+  } = useEmbeddingLabContext();
+
   return (
     <div className="space-y-6" style={{ animation: 'fadeIn 150ms ease-out' }}>
       {/* Section 1: SPA Headline + KPI Cards */}
@@ -307,33 +354,16 @@ function ClusterAnalysisTab({ onClusterClick }: { onClusterClick: (id: string) =
 
 // ── Tab 3: Scatter Explorer ──────────────────────────────
 function ScatterExplorerTab() {
+  const { clusters: CLUSTERS } = useEmbeddingLabContext();
   const [projection, setProjection] = useState<'umap' | 'tsne'>('umap');
   const [colorBy, setColorBy] = useState<'cluster' | 'type'>('cluster');
-  const [points, setPoints] = useState<Array<{ id: string; x: number; y: number; type: string; label: string; cluster: string; clusterId: string }>>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedPoint, setSelectedPoint] = useState<typeof points[0] | null>(null);
-
-  // Fetch points
-  useState(() => {
-    fetch(`/data/embedding-${projection}.json`)
-      .then((r) => r.json())
-      .then((data) => {
-        setPoints(data.points);
-        setLoading(false);
-      });
-  });
+  const { points, isLoading: loading } = useEmbeddingProjection(projection);
+  const [selectedPoint, setSelectedPoint] = useState<(typeof points)[0] | null>(null);
 
   // Refetch when projection changes
   const switchProjection = useCallback((p: 'umap' | 'tsne') => {
     setProjection(p);
-    setLoading(true);
     setSelectedPoint(null);
-    fetch(`/data/embedding-${p}.json`)
-      .then((r) => r.json())
-      .then((data) => {
-        setPoints(data.points);
-        setLoading(false);
-      });
   }, []);
 
   // Compute point type counts
@@ -502,8 +532,8 @@ function ScatterExplorerTab() {
 
 // ── Nearest Neighbors Helper ─────────────────────────────
 function computeNearestNeighbors(
-  target: { id: string; x: number; y: number; type: string; label: string; cluster: string; clusterId: string },
-  allPoints: Array<{ id: string; x: number; y: number; type: string; label: string; cluster: string; clusterId: string }>,
+  target: EmbeddingPoint,
+  allPoints: EmbeddingPoint[],
   k: number
 ) {
   return allPoints
@@ -519,12 +549,20 @@ function ScatterCanvas({
   colorBy,
   onSelect,
 }: {
-  points: Array<{ id: string; x: number; y: number; type: string; label: string; cluster: string; clusterId: string }>;
+  points: EmbeddingPoint[];
   colorBy: 'cluster' | 'type';
-  onSelect: (p: (typeof points)[0]) => void;
+  onSelect: (p: EmbeddingPoint) => void;
 }) {
   const allColors: Record<string, string> = { ...CLUSTER_COLORS, company: '#5BA4C4' };
   const typeColors: Record<string, string> = { query: '#3B82F6', citation: '#10B981', company: '#5BA4C4' };
+
+  if (points.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full text-[13px] text-text-tertiary">
+        No embedding points available
+      </div>
+    );
+  }
 
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);

@@ -2,9 +2,11 @@
 
 import { useState, useCallback } from 'react';
 import { ArrowLeft, Play, CheckCircle, RotateCcw, Send, XCircle, Upload, RefreshCw } from 'lucide-react';
-import type { ContentCard, ContentMetadata } from './types';
+import type { ContentCard, ContentMetadata, ReviewComment } from './types';
 import { getColumn, getDisplay, getHITLActions, getWorkerStepIndex } from '../_lib/status-adapter';
 import { useBriefDetail } from '../_hooks/useBriefDetail';
+import { useGapSummary } from '../_hooks/useGapSummary';
+import type { GapSummaryResponseAPI } from '../_lib/types';
 import { LeftSidebar } from './LeftSidebar';
 import { RightSidebar } from './RightSidebar';
 import { ArticleEditor } from './ArticleEditor';
@@ -49,14 +51,34 @@ function stageBadge(card: ContentCard) {
   );
 }
 
+type ActionType = 'start' | 'start_production' | 'approve_brief' | 'approve_article' | 'publish' | 'send_back' | 'cancel' | 'retry';
+
 interface FullPageViewProps {
   card: ContentCard;
   onClose: () => void;
-  onAction: (action: 'start' | 'start_production' | 'approve_brief' | 'approve_article' | 'publish' | 'send_back' | 'cancel' | 'retry') => void;
+  onAction: (action: ActionType, data?: { editorNotes?: string }) => void;
+}
+
+function compileEditorNotes(comments: ReviewComment[], overall: string): string {
+  const parts: string[] = [];
+  if (comments.length > 0) {
+    parts.push('## Inline Comments\n');
+    comments.forEach((c, i) => {
+      const snippet = c.selectedText.length > 100 ? c.selectedText.slice(0, 100) + '...' : c.selectedText;
+      parts.push(`[${i + 1}] "${snippet}" → Change: ${c.feedback}`);
+    });
+  }
+  if (overall.trim()) {
+    parts.push('\n## Overall Review\n');
+    parts.push(overall.trim());
+  }
+  return parts.length > 0 ? parts.join('\n') : 'Needs revision';
 }
 
 export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
   const [activeSection, setActiveSection] = useState(0);
+  const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
+  const [overallReview, setOverallReview] = useState('');
   const [metadata, setMetadata] = useState<ContentMetadata>(
     card.metadata || {
       slug: '',
@@ -82,6 +104,18 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
   // Use loaded data, falling back to card-level data (from SSE/mock)
   const briefContent = loadedBrief || card.briefContent || null;
   const articleContent = loadedArticle || card.articleContent || null;
+
+  // Load gap analysis summary (for gap metrics display)
+  const productSlug = card.effectiveSlug?.includes('__')
+    ? card.effectiveSlug.split('__')[1]
+    : undefined;
+  const {
+    data: gapSummary,
+    isLoading: gapSummaryLoading,
+  } = useGapSummary(
+    card.status === 'gap_analysis_complete' || !isGAPhase,
+    productSlug,
+  );
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') onClose();
@@ -237,7 +271,10 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
           {hitl.canApproveContent && (
             <>
               <button
-                onClick={() => onAction('send_back')}
+                onClick={() => {
+                  const notes = compileEditorNotes(reviewComments, overallReview);
+                  onAction('send_back', { editorNotes: notes });
+                }}
                 className="flex items-center gap-1.5"
                 style={{
                   height: 30,
@@ -390,16 +427,26 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
               Loading content...
             </div>
           )}
-          {showGAPhase && <GapAnalysisView card={card} onAction={onAction} />}
+          {showGAPhase && <GapAnalysisView card={card} onAction={onAction} gapSummary={gapSummary} gapSummaryLoading={gapSummaryLoading} />}
           {showQueue && <QueueContent card={card} />}
           {showBrief && <BriefContent card={{ ...card, briefContent: briefContent ?? undefined }} />}
-          {showArticle && articleContent && <ArticleEditor sections={articleContent.sections} />}
+          {showArticle && articleContent && (
+            <ArticleEditor
+              sections={articleContent.sections}
+              isReviewMode={hitl.canApproveContent}
+              comments={reviewComments}
+              onCommentsChange={setReviewComments}
+              overallReview={overallReview}
+              onOverallReviewChange={setOverallReview}
+            />
+          )}
           {showAgent && <AgentContent card={card} />}
           {showDone && <DoneContent card={card} />}
         </div>
 
         <RightSidebar
           card={{ ...card, articleContent: articleContent ?? undefined, briefContent: briefContent ?? undefined }}
+          gapSummary={gapSummary ?? undefined}
           metadata={metadata}
           onMetadataChange={setMetadata}
           onPublish={() => onAction('publish')}
@@ -529,7 +576,7 @@ function BriefContent({ card }: { card: ContentCard }) {
         </div>
       </div>
 
-      <div>
+      <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 8 }}>Proposed Sections</div>
         <div className="space-y-1">
           {brief.sections.map((section, i) => (
@@ -540,6 +587,54 @@ function BriefContent({ card }: { card: ContentCard }) {
           ))}
         </div>
       </div>
+
+      {/* Exemplars — enriched sources with structural detail */}
+      {brief.sources.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 8 }}>Exemplars</div>
+          <div className="space-y-2">
+            {brief.sources.map((src, i) => (
+              <div key={i} className="flex items-start gap-3 p-3" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface)' }}>
+                {src.domain && (
+                  <img
+                    src={`https://www.google.com/s2/favicons?domain=${src.domain}&sz=32`}
+                    alt={src.domain}
+                    width={16}
+                    height={16}
+                    style={{ borderRadius: 2, marginTop: 1, flexShrink: 0 }}
+                  />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate" style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 2 }}>
+                    {src.domain || src.name}
+                  </div>
+                  {src.url && (
+                    <div className="truncate" style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4 }}>
+                      {src.url}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {src.authorityType && (
+                      <span style={{
+                        fontSize: 9, fontWeight: 600, textTransform: 'capitalize',
+                        padding: '1px 6px', borderRadius: 'var(--radius-full)',
+                        border: '1px solid var(--border)', color: 'var(--text-secondary)',
+                      }}>
+                        {src.authorityType.replace(/_/g, ' ')}
+                      </span>
+                    )}
+                    {src.wordCount != null && src.wordCount > 0 && (
+                      <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>
+                        {src.wordCount.toLocaleString()} words
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -729,21 +824,15 @@ function AgentContent({ card }: { card: ContentCard }) {
 }
 
 // ---------------------------------------------------------------------------
-// GA step definitions for stepper visualization
+// GA analysis animation (abstract — no internal step names exposed)
 // ---------------------------------------------------------------------------
 
-const GA_STEPS = [
-  { key: 'S1', label: 'Load Assets' },
-  { key: 'S2', label: 'Generate Queries' },
-  { key: 'S3', label: 'Search Platforms' },
-  { key: 'S4', label: 'Enrich Citations' },
-  { key: 'S5', label: 'Embed Content' },
-  { key: 'S6', label: 'Analyze Gaps' },
-  { key: 'S7', label: 'Visualize' },
-  { key: 'S8', label: 'Generate Report' },
-] as const;
-
-function GapAnalysisView({ card, onAction }: { card: ContentCard; onAction: (action: 'start_production') => void }) {
+function GapAnalysisView({ card, onAction, gapSummary, gapSummaryLoading }: {
+  card: ContentCard;
+  onAction: (action: 'start_production') => void;
+  gapSummary: GapSummaryResponseAPI | null;
+  gapSummaryLoading: boolean;
+}) {
   const progress = card.agentProgress;
   const currentStepNum = progress?.gaStepNum ?? 0;
   const totalSteps = progress?.gaTotalSteps ?? 8;
@@ -795,8 +884,8 @@ function GapAnalysisView({ card, onAction }: { card: ContentCard; onAction: (act
           <div style={{ fontSize: 28, marginBottom: 12 }}>&#9202;</div>
           <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>Queued for Analysis</div>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, maxWidth: 400, margin: '0 auto' }}>
-            This topic is queued for gap analysis. The 8-step pipeline will identify content gaps
-            across AI search platforms before content production begins.
+            This topic is queued for gap analysis. We&apos;ll scan AI search platforms to identify
+            content gaps before production begins.
           </p>
         </div>
       )}
@@ -827,117 +916,239 @@ function GapAnalysisView({ card, onAction }: { card: ContentCard; onAction: (act
             </div>
           )}
 
-          {/* 8-step pipeline stepper */}
-          <div className="p-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>
-            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 12 }}>
-              Gap Analysis Pipeline
+          {/* Abstract analysis animation */}
+          <div className="flex flex-col items-center justify-center py-10" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>
+            {/* Orbiting rings animation */}
+            <div style={{ position: 'relative', width: 96, height: 96, marginBottom: 20 }}>
+              {/* Outer ring */}
+              <div style={{
+                position: 'absolute', inset: 0, borderRadius: '50%',
+                border: '2px solid var(--border)',
+                borderTopColor: 'var(--accent)',
+                animation: 'gaOrbitOuter 3s linear infinite',
+              }} />
+              {/* Middle ring */}
+              <div style={{
+                position: 'absolute', inset: 12, borderRadius: '50%',
+                border: '2px solid var(--border)',
+                borderTopColor: 'var(--warning)',
+                animation: 'gaOrbitMiddle 2s linear infinite',
+              }} />
+              {/* Inner ring */}
+              <div style={{
+                position: 'absolute', inset: 24, borderRadius: '50%',
+                border: '2px solid var(--border)',
+                borderTopColor: 'var(--success)',
+                animation: 'gaOrbitInner 1.5s linear infinite',
+              }} />
+              {/* Center dot */}
+              <div style={{
+                position: 'absolute', top: '50%', left: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: 10, height: 10, borderRadius: '50%',
+                background: 'var(--accent)',
+                animation: 'pulse 2s ease-in-out infinite',
+              }} />
             </div>
-            <div className="flex items-start gap-0">
-              {GA_STEPS.map((step, i) => {
-                const stepNum = i + 1;
-                const done = stepNum < currentStepNum;
-                const active = stepNum === currentStepNum;
-                return (
-                  <div key={step.key} className="flex-1 flex flex-col items-center text-center" style={{ position: 'relative' }}>
-                    {i > 0 && (
-                      <div style={{
-                        position: 'absolute', top: 12, right: '50%', width: '100%', height: 2,
-                        background: done || active ? 'var(--accent)' : 'var(--border)', zIndex: 0,
-                      }} />
-                    )}
-                    <div style={{
-                      width: 24, height: 24, borderRadius: '50%',
-                      background: done ? 'var(--success)' : active ? 'var(--warning)' : 'var(--border)',
-                      border: active ? '2px solid var(--warning)' : 'none',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 10, fontWeight: 600, color: done || active ? '#fff' : 'var(--text-tertiary)',
-                      position: 'relative', zIndex: 1,
-                      animation: active ? 'pulse 2s ease-in-out infinite' : undefined,
-                    }}>
-                      {done ? '\u2713' : stepNum}
-                    </div>
-                    <div style={{ fontSize: 10, fontWeight: active ? 500 : 400, color: active ? 'var(--text-primary)' : done ? 'var(--text-primary)' : 'var(--text-tertiary)', marginTop: 6 }}>
-                      {step.key}
-                    </div>
-                    <div style={{ fontSize: 9, color: 'var(--text-tertiary)', marginTop: 2 }}>{step.label}</div>
-                  </div>
-                );
-              })}
+            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>
+              Scanning AI platforms
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+              Identifying content gaps across search engines
             </div>
           </div>
+
+          {/* Keyframes for orbit animation */}
+          <style>{`
+            @keyframes gaOrbitOuter { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+            @keyframes gaOrbitMiddle { from { transform: rotate(0deg); } to { transform: rotate(-360deg); } }
+            @keyframes gaOrbitInner { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+          `}</style>
         </>
       )}
 
-      {/* Analysis complete */}
-      {card.status === 'gap_analysis_complete' && (
-        <div className="space-y-4">
-          <div className="p-6" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)', textAlign: 'center' }}>
-            <div style={{
-              width: 48, height: 48, borderRadius: '50%',
-              background: 'var(--accent-subtle)', display: 'flex',
-              alignItems: 'center', justifyContent: 'center',
-              fontSize: 22, color: 'var(--accent)', margin: '0 auto 16px',
-            }}>
-              &#10003;
-            </div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
-              Gap Analysis Complete
-            </div>
-            <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, maxWidth: 440, margin: '0 auto 20px' }}>
-              Content gaps have been identified across AI search platforms. Review the results
-              and start content production when ready.
-            </p>
-            <button
-              onClick={() => onAction('start_production')}
-              className="inline-flex items-center gap-1.5"
-              style={{
-                height: 36,
-                padding: '0 20px',
-                fontSize: 13,
-                fontWeight: 500,
-                background: 'var(--accent)',
-                color: 'var(--text-on-accent)',
-                border: 'none',
-                borderRadius: 'var(--radius-sm)',
-                cursor: 'pointer',
-              }}
-            >
-              <Play size={13} strokeWidth={2} />
-              Start Production
-            </button>
-          </div>
+      {/* Analysis complete — rich metrics view */}
+      {card.status === 'gap_analysis_complete' && (() => {
+        const ctx = card.gapContext;
+        const classificationLabels: Record<string, { label: string; color: string }> = {
+          significant_gap: { label: 'Significant Gap', color: 'var(--error, #e53e3e)' },
+          gap_to_close: { label: 'Gap to Close', color: 'var(--warning)' },
+          roughly_equal: { label: 'Roughly Equal', color: 'var(--accent)' },
+          company_wins: { label: 'Company Wins', color: 'var(--success)' },
+        };
+        const counts = gapSummary?.classification_counts;
+        const totalClassified = counts
+          ? counts.significant_gap + counts.gap_to_close + counts.roughly_equal + counts.company_wins
+          : 0;
+        const uniqueDomains = ctx?.exemplars
+          ? Array.from(new Set(ctx.exemplars.map((e) => e.domain).filter(Boolean)))
+          : [];
 
-          {/* What happens next */}
-          <div className="p-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>
-            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 10 }}>
-              What Happens Next
+        return (
+          <div className="space-y-4">
+            {/* Description */}
+            {card.description && (
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                {card.description}
+              </p>
+            )}
+
+            {/* Gap Analysis: Complete header */}
+            <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
+              <div style={{
+                width: 24, height: 24, borderRadius: '50%',
+                background: 'var(--success-subtle)', display: 'flex',
+                alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, color: 'var(--success)',
+              }}>
+                &#10003;
+              </div>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                Gap Analysis: Complete
+              </span>
             </div>
-            <div className="space-y-3">
-              {[
-                { step: '1', label: 'Brief generation', desc: 'Using gap analysis results to build a targeted content brief' },
-                { step: '2', label: 'Content production', desc: 'Outline, draft, link, enrich, and evaluate the article' },
-                { step: '3', label: 'Quality review', desc: 'E-E-A-T scoring, voice compliance, and citation verification' },
-                { step: '4', label: 'Human review', desc: 'Article moves to Your Review for final approval' },
-              ].map((item) => (
-                <div key={item.step} className="flex items-start gap-3">
-                  <span style={{
-                    width: 20, height: 20, borderRadius: '50%',
-                    background: 'var(--accent-subtle)', color: 'var(--accent)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 10, fontWeight: 600, fontFamily: 'var(--font-mono)', flexShrink: 0,
-                  }}>
-                    {item.step}
-                  </span>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>{item.label}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.4 }}>{item.desc}</div>
+
+            {/* KPI grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+              <div className="p-3" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface)' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Queries Analyzed</div>
+                <div style={{ fontSize: 20, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {gapSummaryLoading ? '—' : (gapSummary?.total_queries ?? '—')}
+                </div>
+              </div>
+              <div className="p-3" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface)' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Avg Gap Score</div>
+                <div style={{ fontSize: 20, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {gapSummary ? `${Math.round(gapSummary.average_gap * 100)}%` : ctx ? `${Math.round(ctx.gap_score * 100)}%` : '—'}
+                </div>
+              </div>
+              <div className="p-3" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface)' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Citations Found</div>
+                <div style={{ fontSize: 20, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {gapSummaryLoading ? '—' : (gapSummary?.total_citations ?? '—')}
+                </div>
+              </div>
+            </div>
+
+            {/* Classification breakdown */}
+            {counts && totalClassified > 0 && (
+              <div className="p-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 10 }}>
+                  Gap Severity Breakdown
+                </div>
+                {/* Stacked bar */}
+                <div className="flex" style={{ height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: 12 }}>
+                  {(['significant_gap', 'gap_to_close', 'roughly_equal', 'company_wins'] as const).map((key) => {
+                    const count = counts[key];
+                    if (!count) return null;
+                    return (
+                      <div
+                        key={key}
+                        style={{
+                          width: `${(count / totalClassified) * 100}%`,
+                          height: '100%',
+                          background: classificationLabels[key].color,
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+                {/* Legend */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  {(['significant_gap', 'gap_to_close', 'roughly_equal', 'company_wins'] as const).map((key) => (
+                    <div key={key} className="flex items-center gap-2">
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: classificationLabels[key].color, flexShrink: 0 }} />
+                      <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{classificationLabels[key].label}</span>
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)', marginLeft: 'auto' }}>{counts[key]}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Platform coverage — company cited */}
+            {gapSummary && (
+              <div className="flex gap-3">
+                <div className="flex-1 p-3" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface)' }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Company Cited</div>
+                  <div style={{ fontSize: 18, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {gapSummary.company_cited_count}
+                    <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-tertiary)', marginLeft: 4 }}>/ {gapSummary.total_queries}</span>
                   </div>
                 </div>
-              ))}
+                <div className="flex-1 p-3" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface)' }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Clusters</div>
+                  <div style={{ fontSize: 18, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {gapSummary.cluster_performance.length}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Top competitors */}
+            {uniqueDomains.length > 0 && (
+              <div className="p-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 10 }}>
+                  Top Competitors
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {uniqueDomains.slice(0, 6).map((domain) => (
+                    <div key={domain} className="flex items-center gap-1.5 px-2 py-1" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 11, color: 'var(--text-secondary)' }}>
+                      <img
+                        src={`https://www.google.com/s2/favicons?domain=${domain}&sz=32`}
+                        alt={domain}
+                        width={14}
+                        height={14}
+                        style={{ borderRadius: 2 }}
+                      />
+                      {domain}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Success indicators from gap context */}
+            {ctx?.success_indicators && ctx.success_indicators.length > 0 && (
+              <div className="p-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 10 }}>
+                  Key Indicators
+                </div>
+                <div className="space-y-2">
+                  {ctx.success_indicators.map((ind, i) => (
+                    <div key={i} className="flex items-center justify-between">
+                      <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{ind.label}</span>
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>{ind.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Start Production */}
+            <div style={{ textAlign: 'center', paddingTop: 8 }}>
+              <button
+                onClick={() => onAction('start_production')}
+                className="inline-flex items-center gap-1.5"
+                style={{
+                  height: 36,
+                  padding: '0 24px',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  background: 'var(--accent)',
+                  color: 'var(--text-on-accent)',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  cursor: 'pointer',
+                }}
+              >
+                <Play size={13} strokeWidth={2} />
+                Start Production
+              </button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

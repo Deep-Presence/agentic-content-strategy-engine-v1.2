@@ -1,7 +1,7 @@
 {
-  "sprint": "content-to-prompt-pipeline",
-  "sprint_goal": "Build Content-to-Prompt pipeline — generate k AI visibility prompts per content inventory page for daily tracker monitoring.",
-  "sprint_status": "COMPLETE — Content-to-Prompt pipeline fully implemented. Join table content_inventory_prompts (migration 0034), ContentToPromptService (LLM via OpenRouter Sonnet), ContentToPromptOrchestrator (dedup/persist/approve), 6 API endpoints, enrich_thin_pages(), 42 new tests all passing. Codex-reviewed architecture. Frontend page-level drawer planned but not yet built.",
+  "sprint": "content-studio-detail-view-rework",
+  "sprint_goal": "Rework Content Studio detail view: gap analysis metrics in center/sidebar, brief flow enhancement, card vanish bug fix, TD filesystem→DB disconnect audit.",
+  "sprint_status": "COMPLETE — (1) Gap analysis metrics: rich center view for gap_analysis_complete with KPI grid + classification breakdown + competitors. Right sidebar GapAnalysisSection persists through all stages. (2) Brief flow: enhanced BriefContent with exemplar details, AgentSidebar shows brief outline during production. (3) Card vanish fix: orchestrator checks piece count before cleanup. (4) TD filesystem audit: 6 gaps documented in .claude/sprints/pending/td-filesystem-db-disconnect-audit.md (2 critical: pipeline_v13.py + content_v13.py still use TopicDiscoveryStorage). (5) GA animation: replaced step labels with abstract orbits to prevent reverse engineering. tsc clean.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -35,19 +35,21 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/db/models/content_inventory_prompt.py (NEW — join table ORM model)",
-    "core/db/repositories/content_inventory_prompt_repo.py (NEW — link CRUD, page-level metrics, pending by slug)",
-    "core/daily_tracker/content_to_prompt.py (NEW — LLM service, OpenRouter Sonnet, k prompts per page)",
-    "core/daily_tracker/content_to_prompt_orchestrator.py (NEW — dedup + persist + approve + regenerate)",
-    "api/routers/content_to_prompt.py (NEW — 6 endpoints under /api/v1/content-to-prompt/)",
-    "api/schemas/content_to_prompt.py (NEW — 8 request/response schemas)",
-    "core/models/daily_tracker.py (EXTENDED — PromptSource.CONTENT_INVENTORY + 5 new Pydantic models)",
-    "core/services/content_inventory_service.py (EXTENDED — enrich_thin_pages() method)"
+    "core/orchestration/td_content_orchestrator.py (FIXED — piece count check before Redis cleanup + status update, zero pieces reverts to gap_analysis_complete)",
+    "core/content_engine/pipeline_v13.py (STALE — lines 1452-1465 still read TopicDiscoveryStorage filesystem matrix instead of DB — ROOT CAUSE of card vanish bug)",
+    "api/routers/content_v13.py (STALE — lines 690-702 topic-content-status endpoint reads filesystem matrix)",
+    "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx (REWORKED — gap_analysis_complete rich metrics, enhanced BriefContent, abstract GA animation)",
+    "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx (EXTENDED — GapAnalysisSection in MetricsTab)",
+    "frontend/src/app/(dashboard)/content-studio/_components/LeftSidebar.tsx (EXTENDED — brief data in AgentSidebar during production, abstract GA pipeline dots)",
+    "frontend/src/app/(dashboard)/content-studio/_hooks/useGapSummary.ts (NEW — fetch gap analysis summary)"
   ],
-  "test_count": 1706,
+  "test_count": 1728,
   "phases_completed_count": 70,
   "recent_phases": [
-    "content-to-prompt-pipeline — Generate k AI visibility prompts per content inventory page. Join table M:N, ContentToPromptService (OpenRouter Sonnet), orchestrator, 6 API endpoints, enrich_thin_pages(). Codex-reviewed. 42 new tests.",
+    "content-studio-detail-view-rework — Rich gap analysis metrics (center + sidebar), brief flow enhancement, card vanish bug fix, TD filesystem→DB disconnect audit (6 gaps documented). 8 frontend files, 1 backend fix. tsc clean.",
+    "content-performance-gaps — Fill 4 backend gaps (citations, platforms, queries_covered, citation_timeline). 3 repo methods, service enrichment (optional repos), DI wiring, frontend adapters + drawer chart. Codex reviewed. 63 tests passing.",
+    "content-performance-frontend-integration — Wire Content Performance page to 3 backend endpoints. Eliminate all mock data. Adapter layer (6 functions). useContentPerformanceData hook (parallel fetch). Drawer real data (daily_traffic, source_breakdown, ai_platform_breakdown). CPS scatter removed. structural_score integrated. tsc + build clean.",
+    "content-to-prompt-pipeline — Generate k AI visibility prompts per content inventory page. Join table M:N, ContentToPromptService (OpenRouter Sonnet), orchestrator, 6 API endpoints, enrich_thin_pages(). Codex-reviewed. 42+17 tests. Post-review: 6 security fixes (tenant isolation, prompt injection, dedup race). Structural composite score (0-100, 24 signals). CP page audit: citation-matching service is next priority.",
     "ga-sidebar-enrichment — Enrich GA-phase sidebar with topic assignment metadata (11 fields end-to-end). Eliminate all 6 excluded buyer_stage × intent_type combos (12 cells valid). GapAnalysisSidebar redesigned. 43 tests passing.",
     "td-ga-ce-two-phase-split — Two-phase TD→GA→CE pipeline. Split orchestrator, GA SSE (8 steps), Redis ga_phase_state, 2 new endpoints, frontend GA views + Planner wiring. Codex audit: 7 fixes. 49 new tests. 85 passing.",
     "content-studio-status-enum — Resolve frontend-backend stage/status mismatch. BriefPipelineStatus (17→20 values). status-adapter.ts pure mapping layer. 4-column Kanban.",

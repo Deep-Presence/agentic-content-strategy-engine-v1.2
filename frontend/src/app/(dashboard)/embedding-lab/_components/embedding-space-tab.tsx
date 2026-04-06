@@ -2,13 +2,18 @@
 
 import { useState, useRef, useEffect, useMemo } from 'react';
 import * as d3 from 'd3';
-import { EMBEDDING_POINTS, CLUSTERS, CLUSTER_COLORS, ENGINE_META } from './data';
+import { CLUSTER_COLORS, ENGINE_META } from './data';
 import type { EmbeddingPoint } from './data';
+import { useEmbeddingLabContext } from './embedding-lab-context';
 import { BrandLogo } from './brand-logo';
 
 type SubTab = 'scatter' | 'proximity' | 'dna' | 'authority';
 type Projection = 'umap' | 'tsne';
 type ColorBy = 'cluster' | 'type' | 'gap';
+
+// EMBEDDING_POINTS must be loaded separately via useEmbeddingProjection hook
+// For now use empty array — this tab is not yet wired to the API
+const EMBEDDING_POINTS: EmbeddingPoint[] = [];
 
 export function EmbeddingSpaceTab() {
   const [subTab, setSubTab] = useState<SubTab>('scatter');
@@ -79,8 +84,8 @@ function ScatterExplorer() {
 
     const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
 
-    const getX = (p: EmbeddingPoint) => projection === 'umap' ? p.x : p.tsne_x;
-    const getY = (p: EmbeddingPoint) => projection === 'umap' ? p.y : p.tsne_y;
+    const getX = (p: EmbeddingPoint) => p.x;
+    const getY = (p: EmbeddingPoint) => p.y;
 
     const xExtent = d3.extent(EMBEDDING_POINTS, getX) as [number, number];
     const yExtent = d3.extent(EMBEDDING_POINTS, getY) as [number, number];
@@ -238,7 +243,7 @@ function ScatterExplorer() {
               {selected.engine && (
                 <div className="flex justify-between">
                   <span className="text-text-secondary">AI Engine</span>
-                  <span className="text-text-primary">{ENGINE_META[selected.engine]?.label || selected.engine}</span>
+                  <span className="text-text-primary">{ENGINE_META[selected.engine as keyof typeof ENGINE_META]?.label || selected.engine}</span>
                 </div>
               )}
               {selected.authorityType && (
@@ -415,7 +420,7 @@ function ProximityAnalysis() {
                     sim: {(1 / (1 + n.dist)).toFixed(2)}
                   </span>
                   {n.point.engine && (
-                    <BrandLogo domain={ENGINE_META[n.point.engine].domain} size={12} />
+                    <BrandLogo domain={ENGINE_META[n.point.engine as keyof typeof ENGINE_META]?.domain ?? ''} size={12} />
                   )}
                 </div>
               ))}
@@ -512,6 +517,7 @@ function ContentDNA() {
 
 // ── Authority & Similarity ────────────────────────────────
 function AuthoritySimilarity() {
+  const { clusters: CLUSTERS } = useEmbeddingLabContext();
   const companyPointsByCluster = useMemo(() => {
     const map: Record<string, EmbeddingPoint[]> = {};
     for (const p of EMBEDDING_POINTS) {

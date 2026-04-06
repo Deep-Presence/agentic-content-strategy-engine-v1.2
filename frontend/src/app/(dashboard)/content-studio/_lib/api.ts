@@ -13,6 +13,7 @@ import type {
   StageContentResponseAPI,
   PipelineRunResponseAPI,
   ApprovalResponseAPI,
+  GapSummaryResponseAPI,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -221,5 +222,21 @@ export function addBrief(
       source: source ?? 'manual',
       gap_query_id: gapQueryId ?? '',
     },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Gap analysis summary (for gap metrics display in detail view)
+// ---------------------------------------------------------------------------
+
+export function fetchGapSummary(
+  slug: string,
+  productSlug?: string,
+  signal?: AbortSignal,
+): Promise<GapSummaryResponseAPI> {
+  return api.get<GapSummaryResponseAPI>(
+    `/api/v1/companies/${encodeURIComponent(slug)}/gap-analysis/summary`,
+    productSlug ? { product_slug: productSlug } : undefined,
+    signal,
   );
 }

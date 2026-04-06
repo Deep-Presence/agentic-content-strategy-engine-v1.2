@@ -5,15 +5,16 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, ChevronRight, Check, X } from 'lucide-react';
 import * as d3 from 'd3';
 import {
-  ClusterProfile,
-  GAP_QUERIES,
   CLUSTER_COLORS,
   ENGINE_KEYS,
   ENGINE_META,
-  PER_CLUSTER_PROXIMITY,
+} from './data';
+import type {
+  ClusterProfile,
   EmbeddingPoint,
   GapQuery,
 } from './data';
+import { useEmbeddingLabContext } from './embedding-lab-context';
 import { BrandLogo } from './brand-logo';
 
 // ── Extended DomainEntry (topDomains in cluster-profiles.json has extra fields) ──
@@ -134,6 +135,7 @@ function OverviewMetricCard({ label, value, color }: { label: string; value: str
 
 // ── Overview Section (summary dashboard) ─────────────────────
 function OverviewSection({ cluster }: { cluster: ClusterProfile }) {
+  const { gapQueries: GAP_QUERIES, perClusterProximity: PER_CLUSTER_PROXIMITY } = useEmbeddingLabContext();
   const clusterGaps = GAP_QUERIES.filter((g) => g.clusterId === cluster.id);
   const cited = clusterGaps.filter((g) => g.companyCited).length;
   const prox = PER_CLUSTER_PROXIMITY[cluster.id];
@@ -933,11 +935,12 @@ function QueryRow({
 
 // ── Query Intelligence Section ───────────────────────────────
 function QueryIntelligence({ cluster }: { cluster: ClusterProfile }) {
+  const { gapQueries: GAP_QUERIES } = useEmbeddingLabContext();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   const queries = useMemo(
     () => GAP_QUERIES.filter((g) => g.clusterId === cluster.id).sort((a, b) => b.gap - a.gap),
-    [cluster.id]
+    [cluster.id, GAP_QUERIES]
   );
 
   const toggle = useCallback((id: string) => {
@@ -1188,6 +1191,7 @@ const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
 
 // ── Main Drawer ──────────────────────────────────────────────
 export function ClusterDrawer({ cluster, onClose }: ClusterDrawerProps) {
+  const { gapQueries: GAP_QUERIES, perClusterProximity: PER_CLUSTER_PROXIMITY } = useEmbeddingLabContext();
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('overview');
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
 

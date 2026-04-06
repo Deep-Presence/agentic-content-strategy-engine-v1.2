@@ -1,5 +1,33 @@
 [
   {
+    "id": "D-CONTENT-PERF-GAPS-ARCHITECTURE",
+    "timestamp": "2026-04-06",
+    "task": "Content Performance 4-gap fill — citations, platforms, queries_covered, citation_timeline",
+    "decision": "Extend existing repos with 3 new methods (no new services/tables). ContentPerformanceService gains 2 Optional repos (ci_prompt_repo, gap_repo) with None defaults for backward compat. Batch query for citations+platforms uses bool_or (existing pattern at gap_analysis_repo.py:246). Gap 3 (queries_covered) uses Python-side URL normalization matching (normalize_url from url_utils.py). google_ai platform derived from gemini engine (no distinct google_ai in daily_run_responses). platforms schema uses typed default_factory with all 5 keys = False.",
+    "rationale": "Single batch query per company avoids N+1. Optional repos preserve 43 existing service tests unchanged. Python URL matching avoids duplicating normalization logic in SQL. bool_or is Postgres-native and already proven in codebase.",
+    "alternatives": [
+      "New ContentPerformanceMetricsService — rejected: CLAUDE.md says no new services",
+      "per-page get_page_metrics N+1 calls — rejected: performance concern for 1000+ pages",
+      "SQL-side URL normalization for Gap 3 — rejected: normalize_url is complex Python-only logic"
+    ],
+    "impact": "7 backend files + 3 frontend files modified. All 63 tests passing. No schema migration needed.",
+    "reversible": true
+  },
+  {
+    "id": "D-STRUCTURAL-COMPOSITE-SCORE",
+    "timestamp": "2026-04-06",
+    "task": "Structural composite score (0-100) for Content Performance table column",
+    "decision": "Pure computation from existing structural_signals JSONB — no new data, no new tables. 24 signals across 4 categories weighted by citation importance. Boolean signals: full weight if True. Numeric: min(1.0, value/benchmark) * weight. Normalization: round(raw/total_weight*100). Added to ContentPerformanceRow + ContentDetailResponse schemas. Total weight 91 points (not forced to 100 — normalization handles it).",
+    "rationale": "The structural_signals JSONB (45 fields from compute_structural_signals) already exists on every content_inventory row via Site Audit + GA S1 hydration. The gap_data_service already computes signal correlations with citation likelihood. The composite score distills these into a single 0-100 number for the table column. Benchmarks derived from cited exemplar averages. Content Patterns (boolean) weighted heaviest (30pts) because presence/absence of FAQ, key takeaways, etc. is the highest-signal predictor of citation likelihood.",
+    "alternatives": [
+      "Use gap analysis correlation r-values as weights — rejected: correlations are per-company, vary by run, would need storage. Static weights are simpler and more stable.",
+      "Store composite score in DB column — rejected: computed field from JSONB, no need to persist. Recomputation is <1ms per page.",
+      "Equal weights across all signals — rejected: not all signals matter equally. has_faq_section and word_count are much stronger citation predictors than h4_count or code_block_count."
+    ],
+    "approved_by": "Aryan",
+    "codex_review": null
+  },
+  {
     "id": "D-CONTENT-TO-PROMPT-PIPELINE",
     "timestamp": "2026-04-06",
     "task": "Content-to-Prompt pipeline — architecture for generating AI visibility prompts from content inventory pages",
@@ -1104,6 +1132,49 @@
       "Store full assignment JSON in a separate Redis key (more Redis memory, separate read)"
     ],
     "outcome": "End-to-end enrichment: _write_ga_phase_redis stores 11 extra fields in __meta JSON, state_redis readers pass them through, _load_ga_phase_cards maps to ContentBriefListItem, frontend adapter maps to ContentCard, GapAnalysisSidebar renders 7 sections. All tests passing, build clean.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-DETAIL-VIEW-REWORK",
+    "timestamp": "2026-04-06",
+    "task": "Content Studio detail view rework — gap analysis metrics, brief flow, GA animation",
+    "decision": "Rich gap analysis metrics view for gap_analysis_complete center panel, persistent GapAnalysisSection in right sidebar Metrics tab, brief data in AgentSidebar during production, enhanced BriefContent with exemplar details. Abstract orbiting rings animation for active GA (replaces 8-step stepper that exposed S1-S8 internal step names).",
+    "why": "gap_analysis_complete showed no useful data (just checkmark + button). Users need to see GA results before deciding to start production. Gap metrics should persist through all stages for reference. Brief data in sidebar during production gives context for what the agent is building. Step names exposed product internals.",
+    "alternatives": [
+      "Show gap metrics only in center (not sidebar) — rejected because user navigates away from center view during production",
+      "Fetch per-query gap data instead of summary — too heavy for a summary view, summary endpoint is sufficient",
+      "Keep 8-step stepper with generic labels — still reveals number of steps, orbiting animation is more abstract"
+    ],
+    "outcome": "8 files (7 modified + 1 new hook). Types: gapContext on ContentCard, GapSummaryResponseAPI, extended BriefSource. Data: fetchGapSummary API fn, useGapSummary hook. UI: rich center metrics, sidebar gap section, brief in AgentSidebar, exemplars in BriefContent. tsc clean.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-ORCHESTRATOR-CARD-VANISH-FIX",
+    "timestamp": "2026-04-06",
+    "task": "Fix content card vanishing when production pipeline produces zero pieces",
+    "decision": "Check len(output.pieces) > 0 before cleaning up Redis GA-phase card and marking content_produced. Zero pieces → revert to gap_analysis_complete. Applied to both run_td_to_content_pipeline() and run_td_content_production_only().",
+    "why": "The orchestrator cleaned up the Redis card BEFORE confirming CE success. When CE failed (filesystem matrix lookup miss → zero blueprints), the card had nowhere to live: Redis card gone, no brief written, DB status unrecognized by frontend.",
+    "alternatives": [
+      "Mark as 'failed' instead of reverting to gap_analysis_complete — rejected because failed has different semantics and the GA data is still valid, user should retry",
+      "Fix the root cause only (filesystem→DB migration) — too risky as a quick fix, needs full audit first"
+    ],
+    "outcome": "Defensive fix applied. Root cause (pipeline_v13.py filesystem read) documented in .claude/sprints/pending/td-filesystem-db-disconnect-audit.md for separate session.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-FILESYSTEM-DB-DISCONNECT-AUDIT",
+    "timestamp": "2026-04-06",
+    "task": "Audit and document all remaining TopicDiscoveryStorage filesystem usage that should be DB",
+    "decision": "Deferred to fresh session. Full audit documented with 6 gaps (2 critical, 2 medium, 2 low). Critical: pipeline_v13.py:1452-1465 and content_v13.py:690-702 still use TopicDiscoveryStorage.get_latest_matrix() instead of DB. Pre-req: add get_by_ids() to TopicAssignmentRepository.",
+    "why": "Commit b36b53a migrated TD expansion WRITES to DB but left multiple READ paths on filesystem. When matrix version changes (re-expansion), old assignment IDs aren't found on disk even though they exist in DB.",
+    "alternatives": [
+      "Fix inline this session — too risky without full test coverage of the affected paths",
+      "Add DB fallback only when filesystem returns empty — viable but masks the real issue"
+    ],
+    "outcome": "Audit saved to .claude/sprints/pending/td-filesystem-db-disconnect-audit.md. Includes 6 gaps, severity ratings, exact file/line references, available DB equivalents, and implementation order.",
     "reversible": true,
     "approved_by": "Aryan"
   }

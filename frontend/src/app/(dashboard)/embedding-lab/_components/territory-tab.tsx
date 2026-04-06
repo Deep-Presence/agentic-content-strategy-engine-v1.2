@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react';
 import { TerritoryMap } from './territory-map';
 import { getClusterDataForEngine, ENGINE_KEYS, ENGINE_META } from './data';
 import type { EngineKey } from './data';
+import { useEmbeddingLabContext } from './embedding-lab-context';
 import { BrandLogo } from './brand-logo';
 
 interface TerritoryTabProps {
@@ -11,11 +12,12 @@ interface TerritoryTabProps {
 }
 
 export function TerritoryTab({ onClusterSelect }: TerritoryTabProps) {
+  const { clusters: allClusters } = useEmbeddingLabContext();
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
   const [engineFilter, setEngineFilter] = useState<EngineKey | 'all'>('all');
   const [viewMode, setViewMode] = useState<'citations' | 'market_share' | 'authority'>('citations');
 
-  const clusters = getClusterDataForEngine(engineFilter);
+  const clusters = getClusterDataForEngine(allClusters, engineFilter);
 
   const handleClusterSelect = useCallback((id: string | null) => {
     setSelectedCluster(id);

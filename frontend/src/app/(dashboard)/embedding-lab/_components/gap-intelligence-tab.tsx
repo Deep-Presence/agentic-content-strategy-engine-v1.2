@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { GAP_QUERIES, CLUSTERS, ENGINE_KEYS, ENGINE_META } from './data';
+import { ENGINE_KEYS, ENGINE_META } from './data';
 import type { GapQuery } from './data';
+import { useEmbeddingLabContext } from './embedding-lab-context';
 import { BrandLogo } from './brand-logo';
 import { ArrowRight, ChevronRight } from 'lucide-react';
 
@@ -14,6 +15,7 @@ const CLASSIFICATION_LABELS: Record<string, { label: string; color: string; bg: 
 };
 
 export function GapIntelligenceTab() {
+  const { gapQueries: GAP_QUERIES, clusters: CLUSTERS } = useEmbeddingLabContext();
   const [clusterFilter, setClusterFilter] = useState<string>('all');
   const [classFilter, setClassFilter] = useState<string>('all');
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -22,7 +24,7 @@ export function GapIntelligenceTab() {
     let gaps = [...GAP_QUERIES];
     if (clusterFilter !== 'all') gaps = gaps.filter(g => g.clusterId === clusterFilter);
     if (classFilter !== 'all') gaps = gaps.filter(g => g.classification === classFilter);
-    return gaps.sort((a, b) => b.opportunityScore - a.opportunityScore);
+    return gaps.sort((a, b) => (b.opportunityScore ?? b.gap) - (a.opportunityScore ?? a.gap));
   }, [clusterFilter, classFilter]);
 
   const totalGaps = GAP_QUERIES.length;
@@ -117,7 +119,7 @@ function GapRow({
 }: {
   gap: GapQuery;
   cls: { label: string; color: string; bg: string };
-  cluster: typeof CLUSTERS[0] | undefined;
+  cluster: { id: string; name: string; color: string } | undefined;
   isExpanded: boolean;
   onToggle: () => void;
   idx: number;
@@ -158,10 +160,10 @@ function GapRow({
         </td>
         {/* Your Content */}
         <td className="px-3 py-1.5 max-w-[140px]">
-          {gap.yourContent ? (
+          {gap.companyUrl ? (
             <div className="flex items-center gap-1.5 truncate">
-              <BrandLogo domain="insighthealth.ai" size={12} />
-              <span className="text-[12px] text-text-secondary truncate">{gap.yourContent.url.replace('insighthealth.ai/', '')}</span>
+              <BrandLogo domain={new URL(gap.companyUrl).hostname} size={12} />
+              <span className="text-[12px] text-text-secondary truncate">{gap.companyUrl.replace(/^https?:\/\/[^/]+\/?/, '')}</span>
             </div>
           ) : (
             <span className="text-[12px] text-[var(--error)] font-medium">No content</span>
@@ -170,15 +172,15 @@ function GapRow({
         {/* Top Cited */}
         <td className="px-3 py-1.5 max-w-[140px]">
           <div className="flex items-center gap-1.5 truncate">
-            <BrandLogo domain={gap.topCited.domain} size={12} />
-            <span className="text-[12px] text-text-secondary truncate">{gap.topCited.domain}</span>
+            <BrandLogo domain={gap.exemplars[0]?.domain ?? ''} size={12} />
+            <span className="text-[12px] text-text-secondary truncate">{gap.exemplars[0]?.domain ?? '—'}</span>
           </div>
         </td>
         {/* Engines */}
         <td className="px-3 py-1.5">
           <div className="flex items-center gap-1">
             {ENGINE_KEYS.map((key) => (
-              <div key={key} style={{ opacity: gap.engines[key] ? 1 : 0.2 }}>
+              <div key={key} style={{ opacity: gap.companyCited ? 0.8 : 0.2 }}>
                 <BrandLogo domain={ENGINE_META[key].domain} size={12} />
               </div>
             ))}
@@ -187,7 +189,7 @@ function GapRow({
         {/* Opportunity */}
         <td className="px-3 py-1.5">
           <span className="font-mono text-[12px] font-semibold text-[var(--success)]">
-            {gap.opportunityScore.toFixed(2)}
+            {(gap.opportunityScore ?? gap.gap).toFixed(2)}
           </span>
         </td>
         {/* Action */}
@@ -197,13 +199,13 @@ function GapRow({
             className="inline-flex items-center h-[26px] px-2.5 text-[11px] font-medium rounded border border-border text-text-primary hover:border-border-strong transition-colors"
             onClick={(e) => e.stopPropagation()}
           >
-            {gap.yourContent ? <>Improve <ChevronRight size={12} /></> : <>Create <ChevronRight size={12} /></>}
+            {gap.companyUrl ? <>Improve <ChevronRight size={12} /></> : <>Create <ChevronRight size={12} /></>}
           </a>
         </td>
       </tr>
 
       {/* Expanded row */}
-      {isExpanded && gap.topCitedSignals && (
+      {isExpanded && gap.exemplars.length > 0 && (
         <tr>
           <td colSpan={8} className="px-3 py-3 bg-surface border-b border-border">
             <StructuralComparison gap={gap} />
@@ -215,19 +217,19 @@ function GapRow({
 }
 
 function StructuralComparison({ gap }: { gap: GapQuery }) {
-  const yours = gap.yourSignals;
-  const cited = gap.topCitedSignals;
+  const yours = gap.companySignals;
+  const cited = gap.exemplars[0];
   if (!cited) return null;
 
   const signals = [
-    { label: 'Word count', yours: yours?.wordCount ?? '—', cited: cited.wordCount },
-    { label: 'Headers', yours: yours?.headers ?? '—', cited: cited.headers },
+    { label: 'Word count', yours: yours?.wordCount ?? '—', cited: cited.wordCount ?? '—' },
+    { label: 'Headers', yours: yours?.headerCount ?? '—', cited: cited.headerCount ?? '—' },
     { label: 'FAQ sections', yours: yours?.hasFaq ? 'Yes' : 'No', cited: cited.hasFaq ? 'Yes' : 'No' },
     { label: 'Tables', yours: yours?.hasTables ? 'Yes' : 'No', cited: cited.hasTables ? 'Yes' : 'No' },
-    { label: 'Lists', yours: yours?.lists ?? '—', cited: cited.lists },
-    { label: 'External citations', yours: yours?.externalCitations ?? '—', cited: cited.externalCitations },
-    { label: 'Reading level', yours: yours?.readingLevel?.toFixed(1) ?? '—', cited: cited.readingLevel.toFixed(1) },
-    { label: 'Schema markup', yours: yours?.hasSchema ? 'Yes' : 'No', cited: cited.hasSchema ? 'Yes' : 'No' },
+    { label: 'Lists', yours: yours?.listItemCount ?? '—', cited: cited.listItemCount ?? '—' },
+    { label: 'External citations', yours: '—', cited: cited.citationCount ?? '—' },
+    { label: 'Reading level', yours: yours?.readingLevel?.toFixed(1) ?? '—', cited: cited.readingLevel?.toFixed(1) ?? '—' },
+    { label: 'Stats', yours: '—', cited: cited.statCount ?? '—' },
   ];
 
   return (
@@ -238,7 +240,7 @@ function StructuralComparison({ gap }: { gap: GapQuery }) {
       <div className="grid grid-cols-3 gap-x-4 gap-y-1 text-[12px]">
         <div className="text-text-tertiary font-medium">Signal</div>
         <div className="text-text-tertiary font-medium">{yours ? 'Your content' : '—'}</div>
-        <div className="text-text-tertiary font-medium">Top cited ({gap.topCited.domain})</div>
+        <div className="text-text-tertiary font-medium">Top cited ({gap.exemplars[0]?.domain ?? '—'})</div>
         {signals.map(s => (
           <div key={s.label} className="contents">
             <div className="text-text-secondary">{s.label}</div>
@@ -252,6 +254,12 @@ function StructuralComparison({ gap }: { gap: GapQuery }) {
 }
 
 function CoverageRadar() {
+  const { clusters: clusterList, gapQueries } = useEmbeddingLabContext();
+  const CLUSTERS = clusterList.map(c => {
+    const total = gapQueries.filter(g => g.clusterId === c.id).length;
+    const covered = gapQueries.filter(g => g.clusterId === c.id && g.companyCited).length;
+    return { ...c, queriesTotal: total, queriesCovered: covered };
+  });
   return (
     <div className="border border-border rounded-md p-4">
       <h3 className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-tertiary mb-3">
@@ -282,6 +290,7 @@ function CoverageRadar() {
 }
 
 function WhiteSpaces() {
+  const { clusters: CLUSTERS, gapQueries: GAP_QUERIES } = useEmbeddingLabContext();
   const whiteSpaces = CLUSTERS.filter(c => c.presence === 'none');
   if (whiteSpaces.length === 0) return null;
 
@@ -295,7 +304,7 @@ function WhiteSpaces() {
           const topGap = GAP_QUERIES
             .filter(g => g.clusterId === c.id)
             .sort((a, b) => b.gap - a.gap)[0];
-          const authorityDomains = c.competitors
+          const authorityDomains = c.topDomains
             .filter(comp => comp.type === 'authority')
             .map(comp => comp.domain)
             .slice(0, 2)
@@ -308,7 +317,7 @@ function WhiteSpaces() {
                 <span className="text-[14px] font-semibold text-text-primary font-display">{c.name}</span>
               </div>
               <p className="text-[12px] text-text-secondary pl-4">
-                {c.citations} citations from {c.domains} competitors
+                {c.totalCitations} citations from {c.uniqueDomains} competitors
                 {authorityDomains && <> · Dominated by {authorityDomains}</>}
               </p>
               {topGap && (

@@ -1,12 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { ENGINE_DATA, ENGINE_KEYS, ENGINE_META, DIVERGENCE_DATA, getClusterDataForEngine } from './data';
+import { ENGINE_KEYS, ENGINE_META, getClusterDataForEngine } from './data';
 import type { EngineKey } from './data';
+import { useEmbeddingLabContext } from './embedding-lab-context';
 import { BrandLogo } from './brand-logo';
 import { TerritoryMap } from './territory-map';
 
 export function EngineIntelligenceTab() {
+  const { engineData: ENGINE_DATA, divergenceData: DIVERGENCE_DATA, clusters } = useEmbeddingLabContext();
   const [engineView, setEngineView] = useState<EngineKey | 'all'>('all');
 
   return (
@@ -30,8 +32,8 @@ export function EngineIntelligenceTab() {
               <div className="text-[12px]">
                 <div className="text-text-tertiary">Top domain:</div>
                 <div className="flex items-center gap-1.5 mt-0.5">
-                  <BrandLogo domain={engine.topDomain} size={12} />
-                  <span className="text-text-primary font-medium truncate">{engine.topDomain}</span>
+                  <BrandLogo domain={engine.topDomain ?? engine.domain} size={12} />
+                  <span className="text-text-primary font-medium truncate">{engine.topDomain ?? engine.domain}</span>
                 </div>
               </div>
               <div className="text-[12px]">
@@ -43,7 +45,7 @@ export function EngineIntelligenceTab() {
               <div className="text-[12px]">
                 <div className="text-text-tertiary mb-1">Preferred:</div>
                 <div className="flex flex-wrap gap-1">
-                  {engine.preferredTraits.map(t => (
+                  {(engine.preferredTraits ?? []).map(t => (
                     <span key={t} className="text-[10px] px-1.5 py-0.5 rounded border border-border text-text-secondary">
                       {t}
                     </span>
@@ -148,7 +150,7 @@ export function EngineIntelligenceTab() {
         </div>
         <div className="border border-border rounded-md overflow-hidden" style={{ height: 420 }}>
           <TerritoryMap
-            clusters={getClusterDataForEngine(engineView)}
+            clusters={getClusterDataForEngine(clusters, engineView)}
             engineFilter={engineView}
             viewMode="citations"
             onClusterSelect={() => {}}

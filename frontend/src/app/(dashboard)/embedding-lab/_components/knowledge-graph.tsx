@@ -4,13 +4,10 @@ import { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
 import { X } from 'lucide-react';
 import {
-  CLUSTERS,
-  GAP_QUERIES,
   CLUSTER_COLORS,
-  type ClusterProfile,
-  type GapQuery,
-  type GapExemplar,
 } from './data';
+import type { ClusterProfile, GapQuery, GapExemplar } from './data';
+import { useEmbeddingLabContext } from './embedding-lab-context';
 import { BrandLogo } from './brand-logo';
 
 // ── Types ──────────────────────────────────────────────────
@@ -43,6 +40,7 @@ interface DomainData {
 // ── Component ──────────────────────────────────────────────
 
 export function KnowledgeGraph() {
+  const { clusters: CLUSTERS, gapQueries: GAP_QUERIES } = useEmbeddingLabContext();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [dimensions, setDimensions] = useState({ width: 900, height: 600 });
