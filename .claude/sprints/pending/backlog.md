@@ -1,7 +1,7 @@
 # Pending Backlog
 
-> **Last synced:** 2026-04-05 (content-studio-integration)
-> **Total open items:** 31
+> **Last synced:** 2026-04-07 (cannibalization-detection)
+> **Total open items:** 32
 
 ## Critical (Fix Before Production)
 
@@ -59,6 +59,14 @@
 - **Blocked by:** nothing
 
 ## Medium Priority
+
+### PB-96: Migrate remaining pipelines to json_repair for LLM JSON parsing
+- **Source:** Cannibalization detection sprint — json_repair Tier 1 integration (2026-04-07)
+- **Date added:** 2026-04-07
+- **Description:** Content engine now uses `json_repair` library for robust LLM JSON parsing (safe_parse + 3 evaluator judges). Five other modules still use hand-rolled regex-based JSON repair: topic discovery (`_parse_json_response` + `_repair_truncated_json` in `agents.py`), gap analysis (`s2_generate_queries.py`, `s8_generate_report.py`), research agents (`voice_style_guide/agents.py`, `audience_persona/agents.py`), and daily tracker (`content_to_prompt.py`, `query_fanout.py`). Each has its own `_strip_code_fences` / bracket extraction / truncation repair — duplicated logic that `json_repair.loads()` handles out of the box.
+- **Fix:** Replace each module's custom JSON repair with `json_repair.loads()`, keeping `_extract_json_block()` for markdown fence stripping. ~8 files, low risk per file.
+- **Files affected:** `core/topic_discovery/agents.py`, `core/gap_analysis/steps/s2_generate_queries.py`, `core/gap_analysis/steps/s8_generate_report.py`, `core/research/voice_style_guide/agents.py`, `core/research/audience_persona/agents.py`, `core/daily_tracker/content_to_prompt.py`, `core/daily_tracker/query_fanout.py`
+- **Blocked by:** nothing
 
 ### PB-89: Stale pipeline_state.json entries on HITL-2 reject / zero-blueprint / exception paths
 - **Source:** Codex backend review, Kanban-Pipeline Sync sprint, 2026-03-20

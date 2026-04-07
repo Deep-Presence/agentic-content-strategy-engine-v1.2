@@ -1,5 +1,14 @@
 [
   {
+    "id": "F15",
+    "timestamp": "2026-04-07",
+    "what_broke": "Brief builder failed 3/3 JSON parse retries — 'Expecting comma delimiter: line 107'. Zero blueprints produced, assignment reverted to gap_analysis_complete. Compounded by uvicorn --reload hot restart mid-pipeline (file save triggered WatchFiles) which invalidated JWT → user logged out.",
+    "root_cause": "Claude Sonnet via OpenRouter returned malformed JSON (missing comma between fields) in ContentBlueprint output. Hand-rolled _repair_json() regex couldn't fix the pattern. Separately, code changes saved while pipeline was running triggered uvicorn --reload.",
+    "fix_applied": "Replaced _repair_json() (32 lines of regex) with json_repair library (json_repair.loads()) in safe_parse() and all 3 evaluator judges. json_repair handles missing commas, unclosed brackets, trailing commas, truncated output out of the box.",
+    "lesson": "Never hand-roll JSON repair for LLM output — use a battle-tested library. Also: don't save code changes while pipelines are running in dev mode (--reload kills in-flight requests). PB-96 added for migrating remaining pipelines.",
+    "files_affected": ["core/content_engine/utils.py", "core/content_engine/evaluator/eeat_judge.py", "core/content_engine/evaluator/factual_judge.py", "core/content_engine/evaluator/style_judge.py", "pyproject.toml"]
+  },
+  {
     "id": "F1",
     "timestamp": "2026-02-15",
     "what_broke": "Carta company_embeddings.json was empty — BFS crawl returned nothing",

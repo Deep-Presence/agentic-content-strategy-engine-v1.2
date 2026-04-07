@@ -78,6 +78,18 @@ configure_logging()
 logger = logging.getLogger("run_td")
 
 
+def _get_session_factory():
+    """Create a DB session factory if DATABASE_URL is configured."""
+    if not settings.database_url:
+        return None
+    try:
+        from core.db.engine import get_session_factory
+        return get_session_factory()
+    except Exception as exc:
+        logger.warning("Could not create DB session factory: %s", exc)
+        return None
+
+
 # ── Argument parsing ─────────────────────────────────────────────────
 
 
@@ -210,9 +222,11 @@ async def _run_discover(args: argparse.Namespace) -> int:
     print(f"{'=' * 60}\n")
 
     t0 = time.time()
+    sf = _get_session_factory()
     result: TopicDiscoveryOutput = await run_topic_discovery_pipeline(
         inp,
         artifacts_root=Path(args.artifacts_root),
+        session_factory=sf,
     )
     elapsed = time.time() - t0
 
@@ -388,9 +402,14 @@ async def _run_expand(args: argparse.Namespace) -> int:
     print(f"{'=' * 60}\n")
 
     t0 = time.time()
+    sf = _get_session_factory()
+    if sf is None:
+        print("ERROR: DATABASE_URL is required for topic expansion. Set it in .env or environment.")
+        return 1
     result: TopicExpansionOutput = await run_topic_expansion_pipeline(
         inp,
         artifacts_root=Path(args.artifacts_root),
+        session_factory=sf,
     )
     elapsed = time.time() - t0
 

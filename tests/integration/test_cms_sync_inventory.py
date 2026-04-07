@@ -79,8 +79,9 @@ class TestCMSSyncInventoryIntegration:
 
         inventory_service = AsyncMock()
         inv_id = uuid.uuid4()
+        # Return type is now (pairs, new_page_ids)
         inventory_service.ingest_from_cms_sync = AsyncMock(
-            return_value=[(inv_id, "wp-100")]
+            return_value=([(inv_id, "wp-100")], [inv_id])
         )
 
         svc = CMSService(
@@ -116,8 +117,9 @@ class TestCMSSyncInventoryIntegration:
             pairs=[(inv_id, "wp-100")],
         )
 
-        # Verify sync still succeeded
+        # Verify sync still succeeded and new_page_ids included
         assert result["synced"] == 1
+        assert result["new_page_ids"] == [str(inv_id)]
 
     @pytest.mark.asyncio
     async def test_inventory_failure_does_not_crash_sync(self):
@@ -209,8 +211,9 @@ class TestCMSSyncInventoryIntegration:
 
         inventory_service = AsyncMock()
         inv_id = uuid.uuid4()
+        # Return type is now (pairs, new_page_ids)
         inventory_service.ingest_from_cms_sync = AsyncMock(
-            return_value=[(inv_id, "wp-100")]
+            return_value=([(inv_id, "wp-100")], [inv_id])
         )
 
         svc = CMSService(
@@ -247,7 +250,8 @@ class TestCMSSyncInventoryIntegration:
         storage = MagicMock()
 
         inventory_service = AsyncMock()
-        inventory_service.ingest_from_cms_sync = AsyncMock(return_value=[])
+        # Return type is now (pairs, new_page_ids)
+        inventory_service.ingest_from_cms_sync = AsyncMock(return_value=([], []))
 
         svc = CMSService(
             connection_repo=conn_repo,

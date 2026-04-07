@@ -8,7 +8,7 @@ Plus schema validation and task runner integration.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -313,11 +313,19 @@ class TestStartFromTopics:
 class TestGetTopicContentStatus:
     """Tests for GET /api/v1/content/v13/{effective_slug}/topic-content-status."""
 
+    @staticmethod
+    def _ensure_session_factory(app):
+        """Set a mock db_session_factory on app state if absent."""
+        if getattr(app.state, "db_session_factory", None) is None:
+            app.state.db_session_factory = MagicMock()
+
     def test_returns_empty_when_no_matrix(self, client: TestClient):
+        self._ensure_session_factory(client.app)
         with patch(
-            "core.topic_discovery.storage.TopicDiscoveryStorage",
-        ) as mock_cls:
-            mock_cls.return_value.get_latest_matrix.return_value = None
+            "core.topic_discovery.db_ops.db_read_latest_matrix",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
             resp = client.get(
                 "/api/v1/content/v13/test-co/topic-content-status",
             )
@@ -362,10 +370,12 @@ class TestGetTopicContentStatus:
             total_assignments=2,
         )
 
+        self._ensure_session_factory(client.app)
         with patch(
-            "core.topic_discovery.storage.TopicDiscoveryStorage",
-        ) as mock_cls:
-            mock_cls.return_value.get_latest_matrix.return_value = matrix
+            "core.topic_discovery.db_ops.db_read_latest_matrix",
+            new_callable=AsyncMock,
+            return_value=matrix,
+        ):
             resp = client.get(
                 "/api/v1/content/v13/test-co/topic-content-status",
             )
@@ -389,33 +399,31 @@ class TestGetTopicContentStatus:
         )
         assert resp.status_code == 403
 
-    def test_json_decode_error_returns_empty(self, client: TestClient):
-        """M1 fix: corrupt JSON should not 500."""
-        import json as _json
-
+    def test_db_error_returns_empty(self, client: TestClient):
+        """DB errors should not 500 — return empty response."""
+        self._ensure_session_factory(client.app)
         with patch(
-            "core.topic_discovery.storage.TopicDiscoveryStorage",
-        ) as mock_cls:
-            mock_cls.return_value.get_latest_matrix.side_effect = _json.JSONDecodeError(
-                "Expecting value", "doc", 0,
-            )
+            "core.topic_discovery.db_ops.db_read_latest_matrix",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("DB connection failed"),
+        ):
             resp = client.get(
                 "/api/v1/content/v13/test-co/topic-content-status",
             )
         assert resp.status_code == 200
         assert resp.json()["items"] == []
 
-    def test_os_error_returns_empty(self, client: TestClient):
-        """M1 fix: permission denied / OS errors should not 500."""
-        with patch(
-            "core.topic_discovery.storage.TopicDiscoveryStorage",
-        ) as mock_cls:
-            mock_cls.return_value.get_latest_matrix.side_effect = OSError(
-                "Permission denied"
-            )
+    def test_no_session_factory_returns_empty(self, client: TestClient):
+        """When db_session_factory is None, return empty response."""
+        app = client.app
+        original = getattr(app.state, "db_session_factory", None)
+        app.state.db_session_factory = None
+        try:
             resp = client.get(
                 "/api/v1/content/v13/test-co/topic-content-status",
             )
+        finally:
+            app.state.db_session_factory = original
         assert resp.status_code == 200
         assert resp.json()["items"] == []
 

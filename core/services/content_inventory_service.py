@@ -163,19 +163,30 @@ class ContentInventoryService:
         company_id: _uuid.UUID,
         effective_slug: str,
         cms_posts: list[Any],
-    ) -> list[tuple[_uuid.UUID, Any]]:
+    ) -> tuple[list[tuple[_uuid.UUID, Any]], list[_uuid.UUID]]:
         """Upsert CMS posts into content_inventory.
 
-        Returns list of (content_inventory_id, cms_post_identifier) pairs
-        for the caller to link cms_synced_posts.content_inventory_id.
+        Returns:
+            ``(pairs, new_page_ids)`` where *pairs* is
+            ``[(content_inventory_id, cms_post_identifier), ...]`` for the
+            caller to link ``cms_synced_posts.content_inventory_id``, and
+            *new_page_ids* is the list of inventory IDs for pages that were
+            genuinely **new** (not previously in the inventory).
         """
+        # Pre-collect existing normalized URLs so we can detect NEW pages
+        existing_urls = await self._repo.get_existing_urls(company_id)
+
         pairs: list[tuple[_uuid.UUID, Any]] = []
+        new_page_ids: list[_uuid.UUID] = []
 
         for post in cms_posts:
             url = getattr(post, "url", "") or getattr(post, "link", "")
             title = getattr(post, "title", "") or ""
             if not url:
                 continue
+
+            url_norm = normalize_url(url)
+            is_new = url_norm not in existing_urls
 
             model = await self._repo.upsert_page(
                 company_id=company_id,
@@ -200,12 +211,21 @@ class ContentInventoryService:
                 or getattr(post, "id", None)
             )
             pairs.append((model.id, post_id))
+            if is_new:
+                new_page_ids.append(model.id)
+                # Add to existing set so subsequent duplicates within this
+                # batch are not double-counted as "new".
+                existing_urls.add(url_norm)
 
         _logger.info(
             "content_inventory.cms_sync_ingest",
-            extra={"company_id": str(company_id), "count": len(pairs)},
+            extra={
+                "company_id": str(company_id),
+                "count": len(pairs),
+                "new_count": len(new_page_ids),
+            },
         )
-        return pairs
+        return pairs, new_page_ids
 
     async def ingest_from_csv(
         self,

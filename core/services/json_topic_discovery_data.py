@@ -1,7 +1,14 @@
-"""JsonTopicDiscoveryDataService — filesystem-backed implementation of TopicDiscoveryDataServiceProtocol."""
+"""JsonTopicDiscoveryDataService — filesystem-backed implementation of TopicDiscoveryDataServiceProtocol.
+
+.. deprecated::
+    Use ``DbTopicDiscoveryDataService`` instead. This class exists only for
+    CLI scripts and legacy tests. The API layer raises 503 without a database
+    and never instantiates this service.
+"""
 from __future__ import annotations
 
 import asyncio
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -9,10 +16,18 @@ from typing import Optional
 class JsonTopicDiscoveryDataService:
     """Filesystem-backed TD data service.
 
+    .. deprecated::
+        Use ``DbTopicDiscoveryDataService`` instead.
+
     Delegates to ``TopicDiscoveryStorage`` via ``asyncio.to_thread()``.
     """
 
     def __init__(self, artifacts_root: Path, *, backend: Optional["StorageBackend"] = None) -> None:
+        warnings.warn(
+            "JsonTopicDiscoveryDataService is deprecated. Use DbTopicDiscoveryDataService.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         from core.storage.backends import LocalStorageBackend
 
         self._root = artifacts_root

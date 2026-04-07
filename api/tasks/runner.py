@@ -2355,6 +2355,10 @@ async def run_cms_sync_task(
 
     Creates its own DB session and CMSService instance (the DI session
     from the router is closed by the time the background task runs).
+
+    After sync completes, automatically generates AI visibility prompts
+    for any **newly discovered** pages (capped at ``auto_prompt_max_pages``).
+    Prompt generation failures do NOT fail the overall sync task.
     """
     bind_context(task_id=task_id, pipeline_name="cms_sync", company_slug=company_slug)
     task_store.update_task(task_id, status=TaskStatus.RUNNING, current_step="sync")
@@ -2382,6 +2386,7 @@ async def run_cms_sync_task(
                 ContentInventoryRepository = None  # type: ignore[assignment,misc]
                 ContentInventoryService = None  # type: ignore[assignment,misc]
 
+            # ── Phase 1: CMS Sync ─────────────────────────────────────
             session = session_factory()
             try:
                 if ContentInventoryRepository is not None:
@@ -2404,18 +2409,34 @@ async def run_cms_sync_task(
 
                 result = await svc.sync_existing_content(company_slug, connection)
                 await session.commit()
-
-                task_store.update_task(
-                    task_id,
-                    status=TaskStatus.COMPLETED,
-                    result=result,
-                )
-                event_bus.publish(task_id, "completed", {"pipeline": "cms_sync", **result})
             except Exception:
                 await session.rollback()
                 raise
             finally:
                 await session.close()
+
+            # ── Phase 2: Auto-prompt generation for new pages ─────────
+            new_page_ids: list[str] = result.get("new_page_ids", [])
+            if new_page_ids:
+                await _run_auto_prompt_generation(
+                    task_id=task_id,
+                    company_slug=company_slug,
+                    new_page_ids=new_page_ids,
+                    session_factory=session_factory,
+                    event_bus=event_bus,
+                    task_store=task_store,
+                    result=result,
+                )
+
+            # ── Mark task completed ───────────────────────────────────
+            # Strip new_page_ids from the final result (internal use only)
+            final_result = {k: v for k, v in result.items() if k != "new_page_ids"}
+            task_store.update_task(
+                task_id,
+                status=TaskStatus.COMPLETED,
+                result=final_result,
+            )
+            event_bus.publish(task_id, "completed", {"pipeline": "cms_sync", **final_result})
 
     except asyncio.CancelledError:
         logger.info("CMS sync task %s cancelled", task_id)
@@ -2436,6 +2457,128 @@ async def run_cms_sync_task(
         task_store.release_slug_lock(f"cms_sync:{company_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()
+
+
+async def _run_auto_prompt_generation(
+    *,
+    task_id: str,
+    company_slug: str,
+    new_page_ids: list[str],
+    session_factory: Any,
+    event_bus: EventBusProtocol,
+    task_store: TaskStoreProtocol,
+    result: dict[str, Any],
+) -> None:
+    """Generate AI visibility prompts for newly discovered pages.
+
+    Called as Phase 2 of ``run_cms_sync_task``.  Opens a fresh DB session,
+    creates the orchestrator, and runs prompt generation with
+    ``auto_approve=True``.  Failures are logged but never propagate —
+    the CMS sync is considered successful regardless.
+    """
+    from core.config.settings import settings
+
+    cap = settings.auto_prompt_max_pages
+    if cap <= 0:
+        return
+
+    task_store.update_task(task_id, current_step="prompt_generation")
+    event_bus.publish(
+        task_id, "step_start",
+        {"step": "prompt_generation", "new_page_count": len(new_page_ids)},
+    )
+
+    try:
+        from core.daily_tracker.content_to_prompt import ContentToPromptService
+        from core.daily_tracker.content_to_prompt_orchestrator import (
+            ContentToPromptOrchestrator,
+        )
+        from core.db.repositories.content_inventory_prompt_repo import (
+            ContentInventoryPromptRepository,
+        )
+        from core.db.repositories.content_inventory_repo import (
+            ContentInventoryRepository,
+        )
+        from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
+        from core.db.repositories.company_repo import CompanyRepository
+
+        session = session_factory()
+        try:
+            # Resolve company UUID and brand name
+            company_repo = CompanyRepository(session)
+            company = await company_repo.get_by_slug(company_slug)
+            if company is None:
+                logger.warning(
+                    "Auto-prompt skipped: company '%s' not found in DB",
+                    company_slug,
+                )
+                return
+
+            company_uuid = company.id
+            brand_name = getattr(company, "name", company_slug) or company_slug
+
+            # Cap and convert page IDs
+            capped_ids = [uuid.UUID(pid) for pid in new_page_ids[:cap]]
+            if len(new_page_ids) > cap:
+                logger.info(
+                    "Auto-prompt capped at %d pages (total new: %d) for %s",
+                    cap, len(new_page_ids), company_slug,
+                )
+
+            generator = ContentToPromptService()
+            orchestrator = ContentToPromptOrchestrator(
+                generator=generator,
+                prompt_repo=TrackedPromptRepository(session),
+                link_repo=ContentInventoryPromptRepository(session),
+                inventory_repo=ContentInventoryRepository(session),
+            )
+
+            prompt_result = await orchestrator.run_for_pages(
+                company_id=company_slug,
+                company_uuid=company_uuid,
+                page_ids=capped_ids,
+                brand_name=brand_name,
+                k=6,
+                auto_approve=True,
+            )
+
+            await session.commit()
+
+            # Merge prompt results into the sync result dict
+            result["prompts_created"] = prompt_result.prompts_created
+            result["prompts_deduplicated"] = prompt_result.prompts_deduplicated
+            result["prompt_pages_processed"] = prompt_result.pages_processed
+
+            logger.info(
+                "Auto-prompt generation complete for %s: %d prompts created, %d deduped",
+                company_slug,
+                prompt_result.prompts_created,
+                prompt_result.prompts_deduplicated,
+            )
+            event_bus.publish(
+                task_id, "step_complete",
+                {
+                    "step": "prompt_generation",
+                    "prompts_created": prompt_result.prompts_created,
+                    "prompts_deduplicated": prompt_result.prompts_deduplicated,
+                },
+            )
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    except Exception as exc:
+        logger.exception(
+            "Auto-prompt generation failed for %s (sync still succeeded): %s",
+            company_slug, exc,
+        )
+        result["prompt_generation_error"] = str(exc)
+        event_bus.publish(
+            task_id, "prompt_generation_failed",
+            {"error": str(exc)},
+        )
 
 
 async def run_ga4_sync_task(

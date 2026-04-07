@@ -141,6 +141,7 @@ class TestIngestFromCmsSync:
         mock_model = MagicMock()
         mock_model.id = uuid.uuid4()
         repo.upsert_page = AsyncMock(return_value=mock_model)
+        repo.get_existing_urls = AsyncMock(return_value=set())
         svc = _make_service(repo)
 
         posts = [
@@ -161,7 +162,7 @@ class TestIngestFromCmsSync:
             ),
         ]
 
-        pairs = await svc.ingest_from_cms_sync(
+        pairs, new_page_ids = await svc.ingest_from_cms_sync(
             company_id=uuid.uuid4(),
             effective_slug="test-co",
             cms_posts=posts,
@@ -170,20 +171,93 @@ class TestIngestFromCmsSync:
         assert pairs[0][0] == mock_model.id
         assert pairs[0][1] == "cms-1"
         repo.upsert_page.assert_awaited_once()
+        # All pages are new (empty existing set)
+        assert len(new_page_ids) == 1
+        assert new_page_ids[0] == mock_model.id
 
     @pytest.mark.asyncio
     async def test_skips_posts_without_url(self):
         repo = _make_repo()
+        repo.get_existing_urls = AsyncMock(return_value=set())
         svc = _make_service(repo)
 
         posts = [SimpleNamespace(url="", title="No URL")]
-        pairs = await svc.ingest_from_cms_sync(
+        pairs, new_page_ids = await svc.ingest_from_cms_sync(
             company_id=uuid.uuid4(),
             effective_slug="test-co",
             cms_posts=posts,
         )
         assert len(pairs) == 0
+        assert len(new_page_ids) == 0
         repo.upsert_page.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_identifies_new_vs_existing_pages(self):
+        """Only pages whose URL is NOT in existing_urls are flagged as new."""
+        repo = _make_repo()
+        # Simulate: post1 already exists, post2 is new
+        repo.get_existing_urls = AsyncMock(
+            return_value={"https://example.com/post1"},
+        )
+        model1 = MagicMock()
+        model1.id = uuid.uuid4()
+        model2 = MagicMock()
+        model2.id = uuid.uuid4()
+        repo.upsert_page = AsyncMock(side_effect=[model1, model2])
+        svc = _make_service(repo)
+
+        posts = [
+            SimpleNamespace(
+                url="https://example.com/post1", title="Post 1",
+                cms_post_id="cms-1", h1_text="", excerpt="", content_preview="",
+                word_count=0, categories=None, tags=None, seo_title="", seo_description="",
+                published_at=None, modified_at=None,
+            ),
+            SimpleNamespace(
+                url="https://example.com/post2", title="Post 2",
+                cms_post_id="cms-2", h1_text="", excerpt="", content_preview="",
+                word_count=0, categories=None, tags=None, seo_title="", seo_description="",
+                published_at=None, modified_at=None,
+            ),
+        ]
+
+        pairs, new_page_ids = await svc.ingest_from_cms_sync(
+            company_id=uuid.uuid4(),
+            effective_slug="test-co",
+            cms_posts=posts,
+        )
+        assert len(pairs) == 2
+        assert len(new_page_ids) == 1
+        assert new_page_ids[0] == model2.id
+
+    @pytest.mark.asyncio
+    async def test_all_existing_no_new_pages(self):
+        """When all URLs already exist, new_page_ids is empty."""
+        repo = _make_repo()
+        repo.get_existing_urls = AsyncMock(
+            return_value={"https://example.com/post1"},
+        )
+        mock_model = MagicMock()
+        mock_model.id = uuid.uuid4()
+        repo.upsert_page = AsyncMock(return_value=mock_model)
+        svc = _make_service(repo)
+
+        posts = [
+            SimpleNamespace(
+                url="https://example.com/post1", title="Post 1",
+                cms_post_id="cms-1", h1_text="", excerpt="", content_preview="",
+                word_count=0, categories=None, tags=None, seo_title="", seo_description="",
+                published_at=None, modified_at=None,
+            ),
+        ]
+
+        pairs, new_page_ids = await svc.ingest_from_cms_sync(
+            company_id=uuid.uuid4(),
+            effective_slug="test-co",
+            cms_posts=posts,
+        )
+        assert len(pairs) == 1
+        assert len(new_page_ids) == 0
 
 
 # ── ingest_from_csv ───────────────────────────────────────────────

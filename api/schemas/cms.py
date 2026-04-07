@@ -61,6 +61,7 @@ class CMSConnectResponse(BaseModel):
     cms_version: str = ""
     user_display_name: str = ""
     error: Optional[str] = None
+    sync_task_id: Optional[str] = None  # Set when auto-sync is triggered on first connect
 
 
 class CMSConnectionInfoResponse(BaseModel):

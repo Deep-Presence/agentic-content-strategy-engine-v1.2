@@ -9,7 +9,7 @@ All LLM calls in the v1.3 pipeline route through this module, providing:
 The module uses the ``openai`` SDK pointed at OpenRouter's base URL.
 Model strings use provider-prefixed format:
   - "anthropic/claude-sonnet-4-6"
-  - "anthropic/claude-haiku-4-5-20251001"
+  - "anthropic/claude-haiku-4-5"
   - "perplexity/sonar-pro"
   - "openai/gpt-5.2-2025-12-11"
 """

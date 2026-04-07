@@ -30,7 +30,7 @@ class TestEnsureModelPrefix:
         assert _ensure_model_prefix("claude-sonnet-4-5-20250929") == "anthropic/claude-sonnet-4-5-20250929"
 
     def test_claude_haiku_gets_anthropic_prefix(self):
-        assert _ensure_model_prefix("claude-haiku-4-5-20251001") == "anthropic/claude-haiku-4-5-20251001"
+        assert _ensure_model_prefix("claude-haiku-4-5") == "anthropic/claude-haiku-4-5"
 
     def test_sonar_gets_perplexity_prefix(self):
         assert _ensure_model_prefix("sonar-pro") == "perplexity/sonar-pro"

@@ -384,6 +384,8 @@ class TestSync:
         assert result["categories"] == 1
         assert result["truncated"] is False
         assert synced_repo.upsert_from_cms.call_count == 2
+        # new_page_ids is present (empty when no inventory service injected)
+        assert "new_page_ids" in result
 
     @pytest.mark.asyncio
     async def test_sync_truncated_result(self) -> None:

@@ -1,7 +1,7 @@
 {
-  "current_sprint": "content-performance-gaps",
-  "last_updated": "2026-04-06",
-  "test_count": 1728,
+  "current_sprint": "cms-auto-sync-prompt-gen",
+  "last_updated": "2026-04-07",
+  "test_count": 1979,
   "completed_sprints_summary": {
     "total_tasks_completed": 43,
     "sprints": [
@@ -54,10 +54,80 @@
       {"sprint": "td-ga-ce-two-phase-split", "date": "2026-04-06", "summary": "Two-phase TD→GA→CE pipeline split. Split run_td_to_content_pipeline into run_td_gap_analysis_only (Phase 1: GA with SSE instrumentation, ga_step_start/ga_step_complete at all 8 S-steps) and run_td_content_production_only (Phase 2: CE from pre-computed GA). 3 new BriefPipelineStatus (gap_analysis_pending/gap_analysis/gap_analysis_complete). GA-phase Redis state layer (ta-{id} keys in pipeline_state:{slug} hash). DbContentDataService.get_briefs() merges GA cards before DB briefs. 2 new runner tasks, 2 new endpoints (POST /from-topics/gap-analysis, POST /from-topics/start-production). TopicContentProductionRequest schema. Alembic 0032. Frontend: types+adapter+api+hooks+visual components for GA phase (8-step stepper, 'Start Production' CTA). Planner handleApprove wires to GA pipeline. 49 new tests. Codex gpt-5.3-codex audit: 7 findings fixed (H1-H4, M1-M2). 85 tests passing. Build clean."},
       {"sprint": "content-inventory-structural-signals", "date": "2026-04-06", "summary": "Content Inventory enhanced: Gap Analysis S1 as second ingestion source (gap_analysis_crawl enum), 45-field structural_signals JSONB column, Site Audit HTML pass-through via _html_map_out for signal computation. Migration 0033. Codex gpt-5.3-codex review: 10 findings, 5 addressed. 9 new tests. 138 passing."},
       {"sprint": "content-to-prompt-pipeline", "date": "2026-04-06", "summary": "Content-to-Prompt pipeline — generates k AI visibility prompts per content inventory page for daily tracker monitoring. Join table content_inventory_prompts (migration 0034), ContentToPromptService (LLM via OpenRouter Sonnet), ContentToPromptOrchestrator (dedup + persist + approve), 6 API endpoints, enrich_thin_pages(), PromptSource.CONTENT_INVENTORY. Codex gpt-5.3-codex critical review: 8 findings incorporated. 42 new tests. Post-review security hardening: 6 critical fixes (tenant isolation on all endpoints via company_uuid validation, prompt injection mitigation with XML tags, dedup TOCTOU race condition fix). Model registration fix (__init__.py). Structural composite score (compute_structural_score 0-100 from 24 signals, 4 categories) added to ContentPerformanceRow + ContentDetailResponse. 17 structural score tests. Content Performance page readiness audit completed: 5/8 table columns ready, 3/9 drawer sections ready, citation-matching service identified as biggest gap."},
-      {"sprint": "content-performance-gaps", "date": "2026-04-06", "summary": "Content Performance 4-gap fill: citations (total cited count per page), platforms (5 per-engine booleans via bool_or), queries_covered (gap analysis queries targeting page via URL match), citation_timeline (daily timeseries for drawer). 3 new repo methods (batch citations, timeline, gap query count). Service layer enriched (Optional repos, backward compat). DI wiring. Frontend: types, adapters (3 hardcoded→API), ContentDrawer Section A live chart. Codex gpt-5.3-codex reviewed (5 concerns addressed). 5 new tests. 63 total passing."}
+      {"sprint": "content-performance-gaps", "date": "2026-04-06", "summary": "Content Performance 4-gap fill: citations (total cited count per page), platforms (5 per-engine booleans via bool_or), queries_covered (gap analysis queries targeting page via URL match), citation_timeline (daily timeseries for drawer). 3 new repo methods (batch citations, timeline, gap query count). Service layer enriched (Optional repos, backward compat). DI wiring. Frontend: types, adapters (3 hardcoded→API), ContentDrawer Section A live chart. Codex gpt-5.3-codex reviewed (5 concerns addressed). 5 new tests. 63 total passing."},
+      {"sprint": "cannibalization-detection", "date": "2026-04-07", "summary": "Content cannibalization detection module (two surfaces) + json_repair integration. Proactive: Pipeline B checks new topic assignments vs content inventory embeddings during expansion — enriched query text (topic+description+keywords), piecewise priority penalty (0% at 0.80, 20% at 0.90, 35% cap), stored in metadata_json. Retroactive: GET /{inventory_id}/similar endpoint (pgvector cosine, self-excluding, embeddings_ready flag, Generate Embeddings CTA). Frontend: overlap badges on Planner rows, cannibalization section in Planner DetailDrawer, Content Performance drawer Section F live. json_repair library replaces hand-rolled _repair_json() in safe_parse() + 3 evaluator judges. Codex gpt-5.3-codex reviewed. 34 new tests. 73 total passing. 21 files changed."},
+      {"sprint": "cms-auto-sync-prompt-gen", "date": "2026-04-07", "summary": "CMS auto-sync + incremental upsert tracking + auto-prompt generation. Feature 1: Auto-sync on first CMS connect (POST /connect triggers run_cms_sync_task if last_sync_at is None, TaskConflictError idempotency guard, sync_task_id in response). Feature 2: Incremental upsert with new page detection (get_existing_urls() pre-collect, ingest_from_cms_sync returns (pairs, new_page_ids) tuple). Feature 3: Auto-prompt generation for new pages chained in run_cms_sync_task Phase 2 (_run_auto_prompt_generation helper, ContentToPromptOrchestrator, auto_approve=True, cap at auto_prompt_max_pages=50, error isolation, SSE events for prompt_generation phase). Codex gpt-5.3-codex reviewed: idempotency guard, deterministic page selection, observability for partial success incorporated. 13 new tests. 106 targeted tests passing. 1979 total passing. 8 files changed."}
     ]
   },
   "completed": [
+    {
+      "id": "T-cms-auto-sync-prompt-gen",
+      "task": "CMS auto-sync on connect + incremental upsert tracking + auto-prompt generation",
+      "sprint": "cms-auto-sync-prompt-gen",
+      "status": "done",
+      "completed_at": "2026-04-07",
+      "tests_added": 13,
+      "files_modified": [
+        "api/schemas/cms.py",
+        "api/routers/cms.py",
+        "core/db/repositories/content_inventory_repo.py",
+        "core/services/content_inventory_service.py",
+        "core/services/cms_service.py",
+        "api/tasks/runner.py",
+        "core/config/settings.py",
+        "tests/api/test_cms.py",
+        "tests/api/test_cms_sync_prompt_chain.py",
+        "tests/services/test_content_inventory_service.py",
+        "tests/services/test_cms_service.py",
+        "tests/integration/test_cms_sync_inventory.py"
+      ],
+      "details": {
+        "feature_1_auto_sync": "POST /cms/connect: after cms_service.connect() succeeds, check connection.last_sync_at is None (first connect). If so, task_store.create_task('cms_sync') with TaskConflictError catch for idempotency. Launch run_cms_sync_task background task. Return sync_task_id in CMSConnectResponse.",
+        "feature_2_incremental_upsert": "New get_existing_urls(company_id) repo method returns set[str] of normalized URLs. ingest_from_cms_sync() pre-collects existing URLs, checks each post URL against set, tracks new_page_ids. Returns (pairs, new_page_ids) tuple. Within-batch dedup handled by adding new URLs to existing set.",
+        "feature_3_auto_prompt_gen": "New _run_auto_prompt_generation() helper in runner.py. Called as Phase 2 of run_cms_sync_task after sync commits. Opens fresh session, resolves company UUID + brand name, creates ContentToPromptOrchestrator, calls run_for_pages(auto_approve=True). Capped at settings.auto_prompt_max_pages (default 50). Error isolation: failures logged + prompt_generation_error in result + SSE prompt_generation_failed event, sync still COMPLETED.",
+        "setting_added": "auto_prompt_max_pages: int = 50 in core/config/settings.py",
+        "codex_review": "gpt-5.3-codex reviewed. Incorporated: idempotency guard (slug lock + TaskConflictError), deterministic page selection (newest first), observability for partial success (SSE events). Rejected: initial_sync_enqueued_at column, DB-native xmax detection, prompt retry queue, semaphore ordering concern, per-company daily budget. Deferred: read replica visibility, 100K+ page performance."
+      }
+    },
+    {
+      "id": "T-cannibalization-detection",
+      "task": "Content cannibalization detection module + json_repair LLM JSON parsing robustness",
+      "sprint": "cannibalization-detection",
+      "status": "done",
+      "completed_at": "2026-04-07",
+      "tests_added": 34,
+      "files_modified": [
+        "core/topic_discovery/pipeline.py",
+        "core/config/settings.py",
+        "core/db/repositories/content_inventory_repo.py",
+        "core/services/content_inventory_service.py",
+        "core/content_engine/utils.py",
+        "core/content_engine/evaluator/eeat_judge.py",
+        "core/content_engine/evaluator/factual_judge.py",
+        "core/content_engine/evaluator/style_judge.py",
+        "api/routers/content_performance.py",
+        "api/schemas/content_performance.py",
+        "pyproject.toml",
+        "frontend/src/app/(dashboard)/planner/_components/planner-data.ts",
+        "frontend/src/app/(dashboard)/planner/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/planner/_components/PriorityQueue.tsx",
+        "frontend/src/app/(dashboard)/planner/_components/DetailDrawer.tsx",
+        "frontend/src/app/(dashboard)/content-performance/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-performance/_components/ContentDrawer.tsx",
+        "tests/topic_discovery/test_expansion_td.py",
+        "tests/services/test_content_inventory_service.py",
+        "tests/api/test_content_performance.py"
+      ],
+      "details": {
+        "proactive_detection": "Pipeline B step 3b: _build_cannibal_query() enriches topic_text with description+keywords. check_cannibalization_batch() embeds + pgvector similarity. _apply_cannibalization_results() writes cannibalization_risk/matches to metadata, applies piecewise penalty (0-35%). Wrapped in try/except — never blocks expansion. On failure, risk=None (distinguishes 'not checked' from 'checked clean').",
+        "retroactive_detection": "New repo method find_similar_to_page() (self-excluding cosine query). Service find_similar_pages(). GET /{inventory_id}/similar endpoint with embeddings_ready flag. count_with_embeddings() repo check (>=2 pages needed).",
+        "frontend_planner": "CannibalizationMatchItem type + cannibalizationRisk/cannibalizationMatches on Assignment. Adapter extracts from metadata. PriorityQueue: red 'Near Dup' badge (>=0.90), amber 'Overlap' badge (>=0.80). DetailDrawer: cannibalization section with overlap score + matching pages list.",
+        "frontend_content_perf": "fetchSimilarContent() + generateEmbeddings() API. ContentDrawer Section F: 3 states (no embeddings → CTA button, loading, results table with color-coded overlap %).",
+        "json_repair": "Replaced _repair_json() regex (32 lines) with json_repair.loads() in safe_parse(). Also replaced json.loads() in factual_judge, style_judge, eeat_judge. Fixes brief builder 3/3 JSON parse failure (missing comma at line 107). PB-96 added to backlog for remaining pipelines.",
+        "settings": "td_cannibalization_threshold (0.80), td_cannibalization_max_matches (5)",
+        "codex_review": "gpt-5.3-codex reviewed architecture. 5 findings applied: piecewise penalty, include target_keywords, observability (risk=None), sequential pgvector acceptable at scale, endpoint location."
+      }
+    },
     {
       "id": "T-content-performance-gaps",
       "task": "Content Performance 4-gap fill — citations, platforms, queries_covered, citation_timeline",

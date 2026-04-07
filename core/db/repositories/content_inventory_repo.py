@@ -359,6 +359,16 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
         result = await self._session.execute(stmt)
         return [(row[0], float(row[1])) for row in result.all()]
 
+    # ── Lookup ────────────────────────────────────────────────────
+
+    async def get_existing_urls(self, company_id: _uuid.UUID) -> set[str]:
+        """Return all normalized URLs for a company (for new-page detection)."""
+        stmt = select(ContentInventoryModel.url_normalized).where(
+            ContentInventoryModel.company_id == company_id,
+        )
+        result = await self._session.execute(stmt)
+        return set(result.scalars().all())
+
     # ── Query ─────────────────────────────────────────────────────
 
     async def get_by_company(

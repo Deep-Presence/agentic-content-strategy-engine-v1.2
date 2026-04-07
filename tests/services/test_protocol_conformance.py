@@ -344,6 +344,7 @@ class TestVSGDataProtocol:
 # ── TopicDiscoveryDataServiceProtocol ───────────────────────────────
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 class TestTopicDiscoveryDataProtocol:
     """Verify both implementations satisfy TopicDiscoveryDataServiceProtocol."""
 

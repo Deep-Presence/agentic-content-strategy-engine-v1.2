@@ -223,15 +223,17 @@ class CMSService:
             )
 
         # Hydrate content inventory (non-blocking, savepoint-isolated)
+        new_page_ids: list[str] = []
         if self._inventory_service is not None:
             try:
                 # Use a nested savepoint so DB errors don't poison the session
                 async with self._synced_post_repo._session.begin_nested():
-                    pairs = await self._inventory_service.ingest_from_cms_sync(
+                    pairs, _new_ids = await self._inventory_service.ingest_from_cms_sync(
                         company_id=connection.company_id,
                         effective_slug=company_slug,
                         cms_posts=all_posts,
                     )
+                    new_page_ids = [str(pid) for pid in _new_ids]
                     if pairs:
                         await self._synced_post_repo.batch_link_inventory_ids(
                             connection_id=connection.id,
@@ -255,6 +257,7 @@ class CMSService:
             "stale": stale_count,
             "categories": len(categories),
             "truncated": truncated,
+            "new_page_ids": new_page_ids,
         }
 
     # ── Publish Flow ──────────────────────────────────────────────

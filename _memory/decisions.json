@@ -1,5 +1,22 @@
 [
   {
+    "id": "D-CMS-AUTO-SYNC-PROMPT-GEN",
+    "timestamp": "2026-04-07",
+    "task": "CMS auto-sync + incremental upsert + auto-prompt generation",
+    "decision": "Three-feature chain: (1) Auto-sync via background task on first CMS connect (last_sync_at is None gate, TaskConflictError idempotency). (2) New page detection via pre-collected URL set in ingest_from_cms_sync (returns tuple). (3) Prompt generation chained as Phase 2 in run_cms_sync_task with separate session, error isolation, and cap.",
+    "rationale": "Follows existing td_content_orchestrator synchronous chaining pattern. Slug lock is the idempotency guard (no schema changes needed). Pre-collect URLs approach is simpler than xmax system column (SQLAlchemy ORM compatibility). Error isolation ensures sync is always COMPLETED. Cap prevents runaway LLM costs.",
+    "alternatives": [
+      "initial_sync_enqueued_at column — rejected: over-engineering, slug lock already prevents double sync",
+      "DB-native xmax insert detection — rejected: SQLAlchemy ORM RETURNING doesn't cleanly expose xmax",
+      "Event-driven subscriber pattern — rejected: no subscriber infrastructure exists, synchronous chaining is simpler",
+      "Separate background task for prompt gen — rejected: SSE would need two task IDs, unnecessarily complex",
+      "Prompt retry queue — rejected: manual /content-to-prompt/generate-new endpoint already exists"
+    ],
+    "impact": "8 backend files modified + 1 new test file. 106 targeted tests passing. 1979 total passing.",
+    "reversible": true,
+    "codex_review": "gpt-5.3-codex reviewed. 3 incorporated, 5 rejected with reason, 2 deferred."
+  },
+  {
     "id": "D-CONTENT-PERF-GAPS-ARCHITECTURE",
     "timestamp": "2026-04-06",
     "task": "Content Performance 4-gap fill — citations, platforms, queries_covered, citation_timeline",

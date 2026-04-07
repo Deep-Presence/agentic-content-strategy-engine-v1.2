@@ -280,6 +280,22 @@ def _expansion_patches(
 class TestExpansionPreflight:
 
     @pytest.mark.asyncio
+    async def test_session_factory_none_raises(self, tmp_path):
+        """Pipeline B fails fast when session_factory is None (DB required)."""
+        inp = TopicExpansionInput(
+            company_name="Test Co",
+            domain="test.com",
+            company_slug="test-co",
+            effective_slug="test-co",
+            subdomain_ids=["sd-1"],
+        )
+        from core.topic_discovery.pipeline import run_topic_expansion_pipeline
+        with pytest.raises(RuntimeError, match="session_factory is required"):
+            await run_topic_expansion_pipeline(
+                inp, artifacts_root=tmp_path, session_factory=None,
+            )
+
+    @pytest.mark.asyncio
     async def test_missing_discovery_artifacts(self, tmp_path, mock_session_factory):
         """Pipeline B fails if Pipeline A hasn't run (manifest has taxonomy_version=0)."""
         ctx_dir = tmp_path / "company_context"

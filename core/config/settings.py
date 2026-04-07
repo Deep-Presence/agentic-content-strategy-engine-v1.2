@@ -123,8 +123,8 @@ class Settings(BaseSettings):
     # Content Generation Engine – Models
     content_engine_planner_model: str = "anthropic/claude-opus-4-6"
     content_engine_worker_model: str = "claude-sonnet-4-6"
-    content_engine_formatter_model: str = "claude-haiku-4-5-20251001"
-    content_engine_style_judge_model: str = "claude-haiku-4-5-20251001"
+    content_engine_formatter_model: str = "claude-haiku-4-5"
+    content_engine_style_judge_model: str = "claude-haiku-4-5"
     content_engine_factual_judge_model: str = "claude-sonnet-4-6"
     content_engine_fact_enricher_model: str = "sonar-pro"
 
@@ -143,8 +143,8 @@ class Settings(BaseSettings):
     content_engine_v13_planner_model: str =  "anthropic/claude-sonnet-4-6"
     content_engine_v13_brief_builder_model: str = "anthropic/claude-sonnet-4-6"
     content_engine_v13_worker_model: str = "anthropic/claude-sonnet-4-6"
-    content_engine_v13_formatter_model: str =  "anthropic/claude-haiku-4-5-20251001"
-    content_engine_v13_style_judge_model: str = "anthropic/claude-haiku-4-5-20251001"
+    content_engine_v13_formatter_model: str =  "anthropic/claude-haiku-4-5"
+    content_engine_v13_style_judge_model: str = "anthropic/claude-haiku-4-5"
     content_engine_v13_factual_judge_model: str = "anthropic/claude-sonnet-4-6"
     content_engine_v13_eeat_judge_model: str = "anthropic/claude-sonnet-4-6"
     content_engine_v13_fact_enricher_model: str = "perplexity/sonar-pro"
@@ -192,7 +192,7 @@ class Settings(BaseSettings):
 
     # --- Topic Discovery Pipeline ---
     topic_discovery_brainstorm_model: str = "anthropic/claude-sonnet-4-6"
-    topic_discovery_dedup_model: str = "anthropic/claude-haiku-4-5-20251001"
+    topic_discovery_dedup_model: str = "anthropic/claude-haiku-4-5"
     topic_discovery_max_expansion_rounds: int = 4
     topic_discovery_dedup_threshold: float = 0.85
     topic_discovery_max_concurrent_sources: int = 4
@@ -269,6 +269,7 @@ class Settings(BaseSettings):
 
     # --- CMS Integration ---
     cms_fernet_key: str | None = None  # Fernet symmetric encryption key for CMS credentials
+    auto_prompt_max_pages: int = 50  # Max pages to auto-generate prompts for per CMS sync
 
     # --- Google Analytics (GA4) Integration ---
     google_oauth_client_id: str | None = None

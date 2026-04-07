@@ -4693,8 +4693,8 @@ DraftNotification:   thread, fit_score (0.0-1.0), why_match, draft_markdown, met
 |----------|---------|---------|
 | `CONTENT_ENGINE_PLANNER_MODEL` | `claude-sonnet-4-5-20250929` | Strategic planner model |
 | `CONTENT_ENGINE_WORKER_MODEL` | `claude-sonnet-4-5-20250929` | Outliner + drafter model |
-| `CONTENT_ENGINE_FORMATTER_MODEL` | `claude-haiku-4-5-20251001` | Formatter model |
-| `CONTENT_ENGINE_STYLE_JUDGE_MODEL` | `claude-haiku-4-5-20251001` | Style judge model |
+| `CONTENT_ENGINE_FORMATTER_MODEL` | `claude-haiku-4-5` | Formatter model |
+| `CONTENT_ENGINE_STYLE_JUDGE_MODEL` | `claude-haiku-4-5` | Style judge model |
 | `CONTENT_ENGINE_FACTUAL_JUDGE_MODEL` | `claude-sonnet-4-5-20250929` | Factual judge model |
 | `CONTENT_ENGINE_FACT_ENRICHER_MODEL` | `sonar-pro` | Perplexity fact enricher model |
 | `CONTENT_ENGINE_MAX_CONCURRENT_WORKERS` | `3` | Max parallel worker chains |
@@ -7968,8 +7968,8 @@ All 1127 existing tests (non-DB) pass unchanged — they use JSON-backed service
 | Content Engine: Outliner | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
 | Content Engine: Drafter | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
 | Content Engine: Fact Enricher | Perplexity | `PERPLEXITY_API_KEY` | `sonar-pro` |
-| Content Engine: Formatter | Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
-| Content Engine: Style Judge | Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
+| Content Engine: Formatter | Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` |
+| Content Engine: Style Judge | Claude | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` |
 | Content Engine: Factual Judge | Claude | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
 | Content Engine: Semantic Eval | OpenAI | `OPENAI_API_KEY` | `text-embedding-3-small` |
 | Content Engine: Tracing | LangSmith | `LANGSMITH_API_KEY` | — |

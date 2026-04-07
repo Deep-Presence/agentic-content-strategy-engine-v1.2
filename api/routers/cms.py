@@ -56,7 +56,7 @@ from core.cms.exceptions import (
     CMSRateLimitError,
 )
 from core.models.organization import UserProfile
-from core.services.task_store import TaskStoreProtocol
+from core.services.task_store import TaskConflictError, TaskStoreProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -118,8 +118,14 @@ async def connect_cms(
     _user: UserProfile = Depends(require_role("member", "superuser")),
     cms_service: Any = Depends(get_cms_service),
     auth_service: AuthServiceProtocol = Depends(get_auth_service),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+    event_bus: Any = Depends(get_event_bus),
 ) -> CMSConnectResponse:
-    """Connect a CMS to the company's Deep Presence account."""
+    """Connect a CMS to the company's Deep Presence account.
+
+    On first-time connect (``last_sync_at is None``), automatically launches
+    a CMS sync background task to populate the content inventory.
+    """
     company_slug = _get_company_slug(http_request)
 
     # Resolve company_id
@@ -145,7 +151,47 @@ async def connect_cms(
     # Invalidate cached connection info after successful connect
     await asyncio.to_thread(invalidate_connection_info, company_slug, company_slug)
 
-    return CMSConnectResponse(**result)
+    response = CMSConnectResponse(**result)
+
+    # ── Auto-sync on first connect ────────────────────────────────
+    if response.connected:
+        conn = await cms_service.get_connection(company_slug, company_slug)
+        if conn is not None and conn.last_sync_at is None:
+            try:
+                task = task_store.create_task("cms_sync", company_slug)
+
+                from api.tasks.runner import run_cms_sync_task
+                from core.config.settings import settings
+
+                session_factory = getattr(http_request.app.state, "db_session_factory", None)
+                storage = getattr(http_request.app.state, "storage_backend", None)
+
+                handle = asyncio.create_task(
+                    run_cms_sync_task(
+                        task_id=task.task_id,
+                        company_slug=company_slug,
+                        tenant_id=company_slug,
+                        task_store=task_store,
+                        event_bus=event_bus,
+                        session_factory=session_factory,
+                        storage=storage,
+                        fernet_key=settings.cms_fernet_key or "",
+                    )
+                )
+                task_store.register_task_handle(task.task_id, handle)
+                response.sync_task_id = task.task_id
+                logger.info(
+                    "Auto-sync triggered on first CMS connect for %s (task=%s)",
+                    company_slug, task.task_id,
+                )
+            except TaskConflictError:
+                # Another sync is already running — skip silently
+                logger.info(
+                    "Auto-sync skipped for %s — sync already running",
+                    company_slug,
+                )
+
+    return response
 
 
 # ── 2. Get Connection ─────────────────────────────────────────────────

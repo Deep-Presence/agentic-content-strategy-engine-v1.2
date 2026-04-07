@@ -1,7 +1,7 @@
 {
-  "sprint": "content-studio-detail-view-rework",
-  "sprint_goal": "Rework Content Studio detail view: gap analysis metrics in center/sidebar, brief flow enhancement, card vanish bug fix, TD filesystem→DB disconnect audit.",
-  "sprint_status": "COMPLETE — (1) Gap analysis metrics: rich center view for gap_analysis_complete with KPI grid + classification breakdown + competitors. Right sidebar GapAnalysisSection persists through all stages. (2) Brief flow: enhanced BriefContent with exemplar details, AgentSidebar shows brief outline during production. (3) Card vanish fix: orchestrator checks piece count before cleanup. (4) TD filesystem audit: 6 gaps documented in .claude/sprints/pending/td-filesystem-db-disconnect-audit.md (2 critical: pipeline_v13.py + content_v13.py still use TopicDiscoveryStorage). (5) GA animation: replaced step labels with abstract orbits to prevent reverse engineering. tsc clean.",
+  "sprint": "cms-auto-sync-prompt-gen",
+  "sprint_goal": "CMS auto-sync on connect + incremental upsert tracking + auto-prompt generation for new pages.",
+  "sprint_status": "COMPLETE — (1) Auto-sync on first CMS connect: POST /connect fires run_cms_sync_task background task when last_sync_at is None. TaskConflictError idempotency guard. sync_task_id in CMSConnectResponse. (2) Incremental upsert with new page detection: get_existing_urls() pre-collect, ingest_from_cms_sync returns (pairs, new_page_ids) tuple. Within-batch dedup. (3) Auto-prompt generation chained in run_cms_sync_task Phase 2: _run_auto_prompt_generation helper, ContentToPromptOrchestrator with auto_approve=True, cap at auto_prompt_max_pages=50, error isolation (sync COMPLETED regardless), SSE events for step progress. Codex gpt-5.3-codex reviewed. 13 new tests. 106 targeted passing. 1979 total passing.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",
@@ -35,17 +35,18 @@
   ],
   "current_clients": ["Ramp", "Carta", "Mynd"],
   "key_files_in_flux": [
-    "core/orchestration/td_content_orchestrator.py (FIXED — piece count check before Redis cleanup + status update, zero pieces reverts to gap_analysis_complete)",
+    "api/routers/cms.py (EXTENDED — connect_cms auto-sync on first connect with TaskConflictError idempotency, sync_task_id in response)",
+    "api/tasks/runner.py (EXTENDED — run_cms_sync_task Phase 2 auto-prompt gen, new _run_auto_prompt_generation helper)",
+    "core/services/content_inventory_service.py (MODIFIED — ingest_from_cms_sync returns (pairs, new_page_ids) tuple)",
+    "core/services/cms_service.py (MODIFIED — sync_existing_content unpacks new tuple, includes new_page_ids in result)",
     "core/content_engine/pipeline_v13.py (STALE — lines 1452-1465 still read TopicDiscoveryStorage filesystem matrix instead of DB — ROOT CAUSE of card vanish bug)",
-    "api/routers/content_v13.py (STALE — lines 690-702 topic-content-status endpoint reads filesystem matrix)",
-    "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx (REWORKED — gap_analysis_complete rich metrics, enhanced BriefContent, abstract GA animation)",
-    "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx (EXTENDED — GapAnalysisSection in MetricsTab)",
-    "frontend/src/app/(dashboard)/content-studio/_components/LeftSidebar.tsx (EXTENDED — brief data in AgentSidebar during production, abstract GA pipeline dots)",
-    "frontend/src/app/(dashboard)/content-studio/_hooks/useGapSummary.ts (NEW — fetch gap analysis summary)"
+    "api/routers/content_v13.py (STALE — lines 690-702 topic-content-status endpoint reads filesystem matrix)"
   ],
-  "test_count": 1728,
-  "phases_completed_count": 70,
+  "test_count": 1979,
+  "phases_completed_count": 72,
   "recent_phases": [
+    "cms-auto-sync-prompt-gen — CMS auto-sync on connect + incremental upsert tracking + auto-prompt generation. 3 features (auto-sync, new page detection, prompt gen chain). Codex reviewed. 13 new tests. 8 files changed.",
+    "cannibalization-detection — Content cannibalization detection (proactive Pipeline B + retroactive Content Performance) + json_repair library integration. Piecewise priority penalty, enriched query text, embeddings_ready flag, Generate Embeddings CTA. Codex reviewed. 34 new tests. 21 files changed.",
     "content-studio-detail-view-rework — Rich gap analysis metrics (center + sidebar), brief flow enhancement, card vanish bug fix, TD filesystem→DB disconnect audit (6 gaps documented). 8 frontend files, 1 backend fix. tsc clean.",
     "content-performance-gaps — Fill 4 backend gaps (citations, platforms, queries_covered, citation_timeline). 3 repo methods, service enrichment (optional repos), DI wiring, frontend adapters + drawer chart. Codex reviewed. 63 tests passing.",
     "content-performance-frontend-integration — Wire Content Performance page to 3 backend endpoints. Eliminate all mock data. Adapter layer (6 functions). useContentPerformanceData hook (parallel fetch). Drawer real data (daily_traffic, source_breakdown, ai_platform_breakdown). CPS scatter removed. structural_score integrated. tsc + build clean.",
@@ -53,8 +54,7 @@
     "ga-sidebar-enrichment — Enrich GA-phase sidebar with topic assignment metadata (11 fields end-to-end). Eliminate all 6 excluded buyer_stage × intent_type combos (12 cells valid). GapAnalysisSidebar redesigned. 43 tests passing.",
     "td-ga-ce-two-phase-split — Two-phase TD→GA→CE pipeline. Split orchestrator, GA SSE (8 steps), Redis ga_phase_state, 2 new endpoints, frontend GA views + Planner wiring. Codex audit: 7 fixes. 49 new tests. 85 passing.",
     "content-studio-status-enum — Resolve frontend-backend stage/status mismatch. BriefPipelineStatus (17→20 values). status-adapter.ts pure mapping layer. 4-column Kanban.",
-    "td-additive-upsert — Refactor Pipeline B to additive per-subdomain DB upserts. 5 new db_ops functions, retry/backoff, circuit breaker, per-assignment persona affinity. Migration 0031. 18 new tests.",
-    "td-db-only-migration — Eliminate JSON filesystem from TD pipelines. DB-only storage. Migration 0029. 1588 tests passing."
+    "td-additive-upsert — Refactor Pipeline B to additive per-subdomain DB upserts. 5 new db_ops functions, retry/backoff, circuit breaker, per-assignment persona affinity. Migration 0031. 18 new tests."
   ],
   "phases_remaining": [
     "openrouter-phase3 — Embeddings: Point embedding clients at OpenRouter",

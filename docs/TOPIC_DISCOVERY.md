@@ -957,7 +957,7 @@ After Pipeline B completes:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `TOPIC_DISCOVERY_BRAINSTORM_MODEL` | `anthropic/claude-sonnet-4-6` | LLM for S1 brainstorm agents |
-| `TOPIC_DISCOVERY_DEDUP_MODEL` | `anthropic/claude-haiku-4-5-20251001` | LLM for deduplication |
+| `TOPIC_DISCOVERY_DEDUP_MODEL` | `anthropic/claude-haiku-4-5` | LLM for deduplication |
 | `TOPIC_DISCOVERY_MAX_EXPANSION_ROUNDS` | `4` | Max iterative brainstorm rounds per source |
 | `TOPIC_DISCOVERY_DEDUP_THRESHOLD` | `0.85` | Embedding similarity threshold for dedup |
 | `TOPIC_DISCOVERY_MAX_CONCURRENT_SOURCES` | `4` | Semaphore limit for concurrent expansion |

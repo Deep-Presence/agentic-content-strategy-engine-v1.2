@@ -218,7 +218,7 @@ class TestExtractCompetitorRegistryJson:
         with patch(
             "core.content_engine.llm_client.llm_call",
             new_callable=AsyncMock,
-            return_value=_make_llm_response(response_json, model="anthropic/claude-haiku-4-5-20251001"),
+            return_value=_make_llm_response(response_json, model="anthropic/claude-haiku-4-5"),
         ):
             from core.research.knowledge_base.extraction import (
                 extract_competitor_registry_json,
@@ -229,7 +229,7 @@ class TestExtractCompetitorRegistryJson:
             )
 
         assert result is not None
-        assert result["extraction_model"] == "anthropic/claude-haiku-4-5-20251001"
+        assert result["extraction_model"] == "anthropic/claude-haiku-4-5"
         assert "T" in result["extraction_timestamp"]  # ISO format
 
 
