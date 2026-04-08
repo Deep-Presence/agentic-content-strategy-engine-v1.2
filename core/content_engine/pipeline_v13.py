@@ -43,10 +43,12 @@ from core.content_engine.state_helpers import (
     _cleanup_pipeline_state,
     _cleanup_pipeline_state_async,
     _emit,
+    _emit_company,
     _write_pipeline_state,
     _write_pipeline_state_async,
 )
 from core.content_engine.persistence import (
+    persist_blueprints_early,
     persist_content_pieces,
     persist_content_run_summary,
     persist_v13_brief_approval,
@@ -595,6 +597,8 @@ async def _finalize_pipeline(
       5. Mark task as completed
       6. Emit pipeline_complete SSE event
     """
+    _company_slug = slug.split("__")[0]  # company slug for company-wide SSE
+
     # 1. Save run metadata
     # For manual mode parallel runs, namespace by first brief_id to avoid
     # overwriting metadata from concurrent pipelines.
@@ -661,6 +665,7 @@ async def _finalize_pipeline(
         "total_rejected": total_rejected,
         "duration": round(time.time() - start_time, 1),
     })
+    _emit_company(_company_slug, "state_changed", {"changed": [], "hint": "pipeline_complete"})
 
     logger.info(
         "v1.3 pipeline complete: %d briefs, %d approved, %d rejected, %.1fs",
@@ -715,6 +720,7 @@ async def run_content_generation_v13(
     configure_openrouter()
 
     slug = _resolve_slug(input_data)
+    _company_slug = slug.split("__")[0]  # company slug for company-wide SSE
     artifact_dir = _ensure_artifact_dir(slug)
 
     # Start tracing
@@ -763,6 +769,12 @@ async def run_content_generation_v13(
         flush()
         _update_task(task_store, task_id, status=TaskStatus.FAILED.value, error=error_msg)
         _emit(event_bus, task_id, "pipeline_error", {"error": error_msg})
+        _emit_company(_company_slug, "notification", {
+            "type": "pipeline_error",
+            "brief_id": "",
+            "title": slug,
+            "message": f"Content pipeline failed: {error_msg[:200]}",
+        })
         raise
 
 
@@ -783,6 +795,8 @@ async def _run_pipeline_stages(
     redis_client: Optional[Any] = None,
 ) -> ContentGenerationOutput:
     """Internal stage execution — called by run_content_generation_v13 inside try/except."""
+
+    _company_slug = slug.split("__")[0]  # company slug for company-wide SSE
 
     # Initialize StorageBackend early — needed for Stage 0 artifact loading (CX-1 fix)
     from core.storage import get_storage_backend as _get_storage_backend
@@ -1055,6 +1069,16 @@ async def _run_pipeline_stages(
                         redis_client=redis_client,
                         effective_slug=slug,
                     )
+                    _emit_company(_company_slug, "notification", {
+                        "type": "hitl_review_needed",
+                        "brief_id": bp.brief_id,
+                        "title": bp.title,
+                        "checkpoint": "brief_approval",
+                        "message": f"'{bp.title}' needs your review",
+                    })
+                    _emit_company(_company_slug, "state_changed", {
+                        "changed": [bp.brief_id], "hint": "pending_brief_approval",
+                    })
                     set_current_span(stage2_span)
                     brief_graph = build_brief_approval_graph()
                     brief_state = await run_hitl_checkpoint(
@@ -1349,6 +1373,16 @@ async def _run_pipeline_stages(
                     redis_client=redis_client,
                     effective_slug=slug,
                 )
+                _emit_company(_company_slug, "notification", {
+                    "type": "hitl_review_needed",
+                    "brief_id": bp.brief_id,
+                    "title": bp.title,
+                    "checkpoint": "brief_approval",
+                    "message": f"'{bp.title}' needs your review",
+                })
+                _emit_company(_company_slug, "state_changed", {
+                    "changed": [bp.brief_id], "hint": "pending_brief_approval",
+                })
                 set_current_span(pipeline_trace)
                 brief_graph = build_brief_approval_graph()
                 brief_state = await run_hitl_checkpoint(
@@ -1509,12 +1543,157 @@ async def _run_pipeline_stages(
                 company_slug=slug,
             )
 
+            # TD-title-fix: Preserve original topic titles from TopicAssignment.
+            # Brief Builder generates SEO-optimized titles, but users expect
+            # the title they approved in Topic Discovery.
+            for idx, bp in enumerate(blueprints):
+                if idx < len(assignments) and assignments[idx].topic_text:
+                    bp.title = assignments[idx].topic_text
+                    bp.topic_assignment_id = assignments[idx].id
+
+            # TD-fix: Persist blueprint placeholders to DB BEFORE HITL-2 so
+            # DbContentDataService.get_briefs() returns brief-001 during the
+            # approval pause. Also graduate GA-phase ta- cards so the frontend
+            # sees brief-001 (with pending_brief_approval from Redis pipeline
+            # state) instead of a stale ta- card stuck at "briefing".
+            if blueprints:
+                await persist_blueprints_early(
+                    session_factory=session_factory,
+                    run_id=run_id,
+                    company_id=company_id,
+                    slug=slug,
+                    blueprints=blueprints,
+                )
+                if input_data.topic_assignment_ids:
+                    try:
+                        from core.redis import get_sync_redis_or_none as _get_sync
+                        from core.content_engine.state_redis import cleanup_ga_phase_state
+                        _rc = _get_sync()
+                        if _rc is not None:
+                            cleanup_ga_phase_state(
+                                _rc, slug, list(input_data.topic_assignment_ids),
+                            )
+                    except Exception:
+                        logger.warning("GA-phase cleanup before HITL-2 failed", exc_info=True)
+
             if input_data.auto_approve:
                 approved_blueprints = blueprints
             else:
-                # HITL-2: Brief approval (same as AUTONOMOUS mode)
-                # For now, auto-approve in TD mode; full HITL-2 can be added later
-                approved_blueprints = blueprints
+                # HITL-2: Brief Approval (per blueprint) with feedback loop
+                # Same pattern as AUTONOMOUS/MANUAL modes — user reviews each
+                # generated blueprint before committing to the worker chain.
+                await _write_pipeline_state_async(
+                    artifact_dir,
+                    [bp.brief_id for bp in blueprints],
+                    "brief_review",
+                    task_id=task_id,
+                    redis_client=redis_client,
+                    effective_slug=slug,
+                )
+                _MAX_BRIEF_FEEDBACK_RETRIES = 1
+                brief_decision_log: list[dict] = []
+
+                for bp in blueprints:
+                    brief_feedback_count = 0
+
+                    while True:
+                        await _write_pipeline_state_async(
+                            artifact_dir, [bp.brief_id],
+                            "pending_brief_approval",
+                            task_id=task_id,
+                            redis_client=redis_client,
+                            effective_slug=slug,
+                        )
+                        _emit_company(_company_slug, "notification", {
+                            "type": "hitl_review_needed",
+                            "brief_id": bp.brief_id,
+                            "title": bp.title,
+                            "checkpoint": "brief_approval",
+                            "message": f"'{bp.title}' needs your review",
+                        })
+                        _emit_company(_company_slug, "state_changed", {
+                            "changed": [bp.brief_id], "hint": "pending_brief_approval",
+                        })
+                        set_current_span(pipeline_trace)
+                        brief_graph = build_brief_approval_graph()
+                        brief_state = await run_hitl_checkpoint(
+                            graph=brief_graph,
+                            initial_state={
+                                "blueprint": bp.model_dump(mode="json"),
+                                "auto_approve": input_data.auto_approve,
+                            },
+                            thread_id=f"{task_id or 'cli'}-brief-approval-{bp.brief_id}-f{brief_feedback_count}",
+                            task_store=task_store,
+                            event_bus=event_bus,
+                            task_id=task_id,
+                            stage_name=f"Brief Approval ({bp.brief_id})",
+                        )
+
+                        brief_decision = brief_state.get("brief_decision", "approve")
+                        if brief_decision == "approve":
+                            feedback = brief_state.get("brief_feedback", "")
+                            if feedback:
+                                bp.user_feedback = feedback
+                            approved_blueprints.append(bp)
+                            await _write_pipeline_state_async(artifact_dir, [bp.brief_id], "approved", task_id=task_id, redis_client=redis_client, effective_slug=slug)
+                            brief_decision_log.append({
+                                "brief_id": bp.brief_id,
+                                "decision": "approve",
+                                "feedback": feedback,
+                                "feedback_attempts": brief_feedback_count,
+                            })
+                            break
+                        elif brief_decision == "feedback" and brief_feedback_count < _MAX_BRIEF_FEEDBACK_RETRIES:
+                            brief_feedback_count += 1
+                            feedback = brief_state.get("brief_feedback", "")
+                            logger.info(
+                                "TD HITL-2 feedback for %s (attempt %d/%d): %r",
+                                bp.brief_id, brief_feedback_count, _MAX_BRIEF_FEEDBACK_RETRIES,
+                                feedback[:100] if feedback else "",
+                            )
+                            if bp.gap_context and feedback:
+                                primary_qid = bp.gap_context.query_gap.get("query_id", bp.brief_id)
+                                feedback_topic = TopicSelection(
+                                    rank=0,
+                                    query_ids=[primary_qid],
+                                    query_texts=[bp.title],
+                                    cluster_name=getattr(bp, "cluster_name", bp.target_cluster),
+                                    rationale=f"[User feedback: {feedback[:300]}]",
+                                )
+                                revised = await build_briefs_parallel(
+                                    contexts={primary_qid: bp.gap_context},
+                                    topics=[feedback_topic],
+                                    company_context_md=company_context_md,
+                                    persona_mds=persona_mds,
+                                    style_guide_md=style_guide_md,
+                                    max_concurrent=1,
+                                    parent_span=pipeline_trace,
+                                    brief_id_overrides=[bp.brief_id],
+                                    company_slug=slug,
+                                )
+                                if revised:
+                                    bp = revised[0]
+                                    bp.user_feedback = feedback
+                        else:
+                            feedback = brief_state.get("brief_feedback", "")
+                            logger.info("TD brief %s rejected", bp.brief_id)
+                            brief_decision_log.append({
+                                "brief_id": bp.brief_id,
+                                "decision": "reject",
+                                "feedback": feedback,
+                                "feedback_attempts": brief_feedback_count,
+                            })
+                            break
+
+                # Persist brief approvals with full decision audit trail
+                await persist_v13_brief_approval(
+                    session_factory=session_factory,
+                    run_id=run_id,
+                    company_id=company_id,
+                    slug=slug,
+                    blueprints=[bp.model_dump(mode="json") for bp in blueprints],
+                    approval_decisions=brief_decision_log,
+                )
 
             # Tag blueprints with topic_assignment_id for downstream traceability
             for bp in approved_blueprints:
@@ -1556,6 +1735,12 @@ async def _run_pipeline_stages(
         logger.error(error_msg)
         _update_task(task_store, task_id, status=TaskStatus.FAILED.value, error=error_msg)
         _emit(event_bus, task_id, "pipeline_failed", {"error": error_msg})
+        _emit_company(_company_slug, "notification", {
+            "type": "pipeline_error",
+            "brief_id": "",
+            "title": slug,
+            "message": f"Pipeline failed: {error_msg[:200]}",
+        })
         update_trace_output(pipeline_trace, output={"error": error_msg})
         flush()
         return ContentGenerationOutput(
@@ -1828,6 +2013,16 @@ async def _run_pipeline_stages(
                         redis_client=redis_client,
                         effective_slug=slug,
                     )
+                    _emit_company(_company_slug, "notification", {
+                        "type": "hitl_review_needed",
+                        "brief_id": final_content.brief_id,
+                        "title": final_content.title,
+                        "checkpoint": "content_review",
+                        "message": f"'{final_content.title}' needs your review",
+                    })
+                    _emit_company(_company_slug, "state_changed", {
+                        "changed": [final_content.brief_id], "hint": "pending_content_approval",
+                    })
                     set_current_span(stage5_span)
                     review_graph = build_content_review_graph()
                     review_state = await run_hitl_checkpoint(
@@ -1855,6 +2050,15 @@ async def _run_pipeline_stages(
                         # Emit brief completion event for Kanban sync
                         _emit(event_bus, task_id, "brief_completed", {
                             "brief_id": final_content.brief_id, "decision": "approve",
+                        })
+                        _emit_company(_company_slug, "notification", {
+                            "type": "pipeline_complete",
+                            "brief_id": final_content.brief_id,
+                            "title": final_content.title,
+                            "message": f"'{final_content.title}' is ready for review",
+                        })
+                        _emit_company(_company_slug, "state_changed", {
+                            "changed": [final_content.brief_id], "hint": "completed",
                         })
                         # Approved — write final.md via StorageBackend
                         _brief_dir(artifact_dir, final_content.brief_id)  # ensure local dir for state_helpers

@@ -2,7 +2,7 @@
 
 Reads content brief metadata from content_pieces table via ContentRepository.
 Stage content reads via StorageBackend (R2 in prod, local in dev).
-pipeline_state.json remains on local filesystem (ephemeral, Redis migration later).
+Pipeline state is read from Redis exclusively (no file fallback).
 """
 from __future__ import annotations
 
@@ -124,8 +124,9 @@ class DbContentDataService:
             load_analysis_json, self._backend, base_slug,
         )
 
-        # Load pipeline state — Redis first (when configured), file fallback
-        content_root = self._artifacts_root / "content" / effective_slug
+        # Load pipeline state — Redis only (no file fallback).
+        # When Redis is empty/unavailable, status comes from DB content_pieces.status.
+        # File fallback removed: stale cross-run entries caused 4-min kanban lag.
         pipeline_state: Dict[str, Any] = {}
         from core.config.settings import settings as _cfg
 
@@ -139,21 +140,16 @@ class DbContentDataService:
                     pipeline_state = await read_pipeline_state_redis_async(rc, effective_slug)
             except Exception:
                 logger.warning(
-                    "Redis pipeline state read failed — falling back to file",
+                    "Redis pipeline state read failed for %s", effective_slug,
                     exc_info=True,
                 )
-        if not pipeline_state:
-            # StorageBackend fallback (R2 or local)
-            content = self._backend.read(
-                f"content/{effective_slug}/pipeline_state.json"
+        if pipeline_state:
+            logger.info(
+                "get_briefs: pipeline_state from Redis for %s: %s",
+                effective_slug,
+                {k: v for k, v in pipeline_state.items() if not k.startswith("__")},
             )
-            if content:
-                try:
-                    raw_ps = json.loads(content)
-                    if isinstance(raw_ps, dict):
-                        pipeline_state = raw_ps
-                except (json.JSONDecodeError, ValueError):
-                    pass
+
         # Extract brief_id → task_id mapping for frontend HITL approval calls
         task_id_map: Dict[str, str] = {}
         raw_task_ids = pipeline_state.get("__task_ids__")
@@ -162,7 +158,7 @@ class DbContentDataService:
 
         items: List[ContentBriefListItem] = []
         for piece in pieces:
-            # Status mapping: pipeline_state.json overrides DB status (Phase 0)
+            # Status mapping: Redis pipeline_state overrides DB status
             brief_id = piece.brief_id or ""
             ps_status = pipeline_state.get(brief_id)
             if isinstance(ps_status, str):
@@ -170,6 +166,10 @@ class DbContentDataService:
             else:
                 raw_status = piece.status.value if piece.status else "planned"
                 display_status = _PIECE_STATUS_MAP.get(raw_status, "suggested")
+                logger.debug(
+                    "get_briefs: brief %s — no Redis override, DB status=%s → display=%s",
+                    brief_id, raw_status, display_status,
+                )
 
             # Content type mapping
             content_type = _FORMAT_TO_TYPE.get(

@@ -1,5 +1,36 @@
 [
   {
+    "id": "D-KANBAN-SYNC-LAG-FIX",
+    "timestamp": "2026-04-08",
+    "task": "Fix Content Studio Kanban 4-minute sync lag — Codex audit recommendation R1",
+    "decision": "Centralize _emit_company('state_changed') inside _write_pipeline_state_async() (after both Redis + file writes). Every status write automatically broadcasts a company SSE event. Frontend debounces at 300ms → single refetch per transition. Also: (1) GA-phase cleanup log debug→warning, (2) isSubmitting guard on approve buttons, (3) optimistic updateCard bumps updatedAt.",
+    "rationale": "Codex audit identified that dispatcher worker transitions (outlining/drafting/linking/enriching) wrote to Redis but never emitted company SSE — frontend only discovered changes via poll. Production logs confirmed 4-minute lag. Centralizing emit in the state write function (rather than adding emit calls to each caller) ensures zero caller changes and future-proofs new call sites. Double-emit at HITL checkpoints is harmless due to 300ms debounce. File-based state non-atomicity and in-memory CompanyEventBus are pre-existing architectural issues explicitly deferred.",
+    "alternatives": [
+      "Add _emit_company to each dispatcher call site — rejected: 20+ call sites, fragile, misses future callers",
+      "Drop file fallback entirely (Codex R2) — deferred: breaks local dev without Redis",
+      "Replace CompanyEventBus with Redis Pub/Sub (Codex R3) — deferred: single-worker deployment for now"
+    ],
+    "impact": "4 files modified, 1 new test file (7 tests). state_helpers.py (SSE emit), pipeline_v13.py (log level), FullPageView.tsx (button guard), useContentBriefs.ts (updatedAt bump).",
+    "approved_by": "Aryan",
+    "status": "COMPLETE — Codex gpt-5.3-codex R1 PASS, 2 architectural items deferred"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-ARCH-FIX",
+    "timestamp": "2026-04-07",
+    "task": "Content Studio 3-phase architecture fix: 4 bug fixes + company-wide SSE stream",
+    "decision": "Phase 1: Fix 3 backend bugs (TD HITL-2 bypass via full checkpoint pattern mirror, OpenRouter model ID dot→dash, GA→CE snap-back via 'briefing' phase + in_content_production enum + Alembic 0036). Phase 2: Fix frontend poll-overwrites-SSE via version-aware merge (updatedAt comparison, Map-based O(1) lookup) + adaptive polling (5s active/60s idle/none empty). Phase 3: Company-wide SSE stream — in-memory CompanyEventBus singleton (sync emit via put_nowait, Queue maxsize=100, drop-oldest overflow), dedicated SSE endpoint at GET /companies/{slug}/stream (tenant isolation, 30s heartbeat), _emit_company helper in state_helpers.py (best-effort, lazy import), useCompanyStream hook (300ms debounce, EventSource auto-reconnect).",
+    "rationale": "In-memory bus chosen over Redis Pub/Sub for Phase 3 because: (1) single-worker dev mode is current deployment, (2) interface designed for Redis swap later (subscribe/unsubscribe/emit), (3) avoids adding Redis complexity to already-complex sprint. Sync emit chosen because 24+ existing emit sites are sync (pipeline helpers). Version-aware merge chosen over full SSE-driven state because poll endpoint is the trusted source of truth — SSE is just a nudge.",
+    "alternatives": [
+      "Redis Pub/Sub for CompanyEventBus — deferred: single-worker for now, interface ready for swap",
+      "Full card state in SSE events — rejected: poll endpoint is source of truth, SSE events are hints only",
+      "Remove periodic polling entirely — rejected: SSE can drop events, 60s safety heartbeat needed",
+      "Worker-step emit points — deferred: only major transitions emitted now, adaptive 5s polling compensates"
+    ],
+    "impact": "5 new files (core/events/*.py, api/routers/company_stream.py, useCompanyStream.ts, tests/events/*). 10+ modified files. 9 EventBus tests. Migration 0036. CRITICAL: _company_slug NameError must be fixed before merge.",
+    "approved_by": "Aryan",
+    "status": "MOSTLY FIXED — _company_slug NameError (F17) fixed, SSE centralized in kanban-sync-lag-fix sprint. F18 (Redis GA-phase revert on failure) still open."
+  },
+  {
     "id": "D-CMS-AUTO-SYNC-PROMPT-GEN",
     "timestamp": "2026-04-07",
     "task": "CMS auto-sync + incremental upsert + auto-prompt generation",

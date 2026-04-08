@@ -21,6 +21,14 @@ def main() -> None:
         host="0.0.0.0",
         port=8000,
         reload=True,
+        reload_excludes=[
+            "artifacts/*",
+            "*.log",
+            "*.txt",
+            "_memory/*",
+            ".claude/*",
+            "frontend/*",
+        ],
         log_config=None,  # Disable Uvicorn's default logging — we own it
     )
 

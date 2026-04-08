@@ -253,6 +253,12 @@ async def run_td_to_content_pipeline(
 
     # Step 4: Launch Content Engine in TOPIC_DISCOVERY mode
     from core.content_engine.pipeline_v13 import run_content_generation_v13
+    from core.redis import get_redis_or_none as _get_async_redis
+
+    # Acquire async Redis client for CE pipeline state writes.
+    # Without this, CE writes to file only and get_briefs() falls back to
+    # stale pipeline_state.json — root cause of 4-min kanban sync lag.
+    _redis_async = _get_async_redis()
 
     ce_input = ContentGenerationInputV13(
         company_name=company_name,
@@ -283,6 +289,7 @@ async def run_td_to_content_pipeline(
         session_factory=session_factory,
         run_id=run_id,
         company_id=company_id,
+        redis_client=_redis_async,
     )
 
     # Step 5: Update assignment status based on outcome
@@ -409,6 +416,9 @@ async def run_td_gap_analysis_only(
         effective_slug, valid_assignments, "gap_analysis",
         task_id=task_id, ga_run_id=str(ga_run_id),
     )
+    _emit_company_event(effective_slug, "state_changed", {
+        "changed": [a.id for a in valid_assignments], "hint": "gap_analysis",
+    })
 
     _report, topic_query_map = await run_topic_scoped_gap_analysis(
         topics=valid_assignments,
@@ -444,6 +454,9 @@ async def run_td_gap_analysis_only(
         effective_slug, valid_assignments, "gap_analysis_complete",
         task_id=task_id, ga_run_id=str(ga_run_id),
     )
+    _emit_company_event(effective_slug, "state_changed", {
+        "changed": [a.id for a in valid_assignments], "hint": "gap_analysis_complete",
+    })
 
     logger.info(
         "TD���GA orchestrator (Phase 1) completed: %d topics, %.1fs",
@@ -488,8 +501,14 @@ async def run_td_content_production_only(
     and updates assignment status to content_produced.
     """
     from core.content_engine.pipeline_v13 import run_content_generation_v13
+    from core.redis import get_redis_or_none as _get_async_redis
 
     pipeline_start = time.monotonic()
+
+    # Acquire async Redis client for CE pipeline state writes.
+    # Without this, CE writes to file only and get_briefs() falls back to
+    # stale pipeline_state.json — root cause of 4-min kanban sync lag.
+    _redis_async = _get_async_redis()
 
     if session_factory is None:
         raise TDContentPipelineError("session_factory is required for TD→Content production")
@@ -509,7 +528,16 @@ async def run_td_content_production_only(
             f"GA run {ga_run_id} may not have completed successfully."
         )
 
-    # Step 2: Build CE input and run (GA cards stay visible until CE succeeds)
+    # Step 2a: Transition GA-phase cards → briefing (prevents snap-back on next poll)
+    _update_ga_phase_status(effective_slug, topic_assignment_ids, "briefing", task_id=task_id)
+    await _update_assignment_statuses_db(
+        session_factory, topic_assignment_ids, TopicAssignmentStatus.in_content_production,
+    )
+    _emit_company_event(effective_slug, "state_changed", {
+        "changed": topic_assignment_ids, "hint": "briefing",
+    })
+
+    # Step 2b: Build CE input and run (GA cards stay visible until CE succeeds)
     company_context_path = f"artifacts/company_context/{effective_slug}.md"
     persona_storage = PersonaStorage(
         artifacts_root=_PROJECT_ROOT / "artifacts", slug=effective_slug
@@ -536,15 +564,34 @@ async def run_td_content_production_only(
         ),
     )
 
-    output = await run_content_generation_v13(
-        ce_input,
-        task_id=task_id,
-        task_store=task_store,
-        event_bus=event_bus,
-        session_factory=session_factory,
-        run_id=run_id,
-        company_id=company_id,
-    )
+    try:
+        output = await run_content_generation_v13(
+            ce_input,
+            task_id=task_id,
+            task_store=task_store,
+            event_bus=event_bus,
+            session_factory=session_factory,
+            run_id=run_id,
+            company_id=company_id,
+            redis_client=_redis_async,
+        )
+    except Exception:
+        # CE failed — rollback: revert Redis GA-phase cards and DB status
+        # so the card returns to gap_analysis_complete (retryable).
+        logger.exception(
+            "Phase 2 CE failed — reverting %d assignments to gap_analysis_complete",
+            len(topic_assignment_ids),
+        )
+        _update_ga_phase_status(
+            effective_slug, topic_assignment_ids, "gap_analysis_complete", task_id=task_id,
+        )
+        await _update_assignment_statuses_db(
+            session_factory, topic_assignment_ids, TopicAssignmentStatus.gap_analysis_complete,
+        )
+        _emit_company_event(effective_slug, "state_changed", {
+            "changed": topic_assignment_ids, "hint": "gap_analysis_complete",
+        })
+        raise
 
     if len(output.pieces) > 0:
         # Step 3: CE succeeded — clean up GA-phase cards (graduate to real briefs)
@@ -560,6 +607,9 @@ async def run_td_content_production_only(
         logger.warning(
             "Phase 2 produced zero pieces — reverting %d assignments to gap_analysis_complete",
             len(topic_assignment_ids),
+        )
+        _update_ga_phase_status(
+            effective_slug, topic_assignment_ids, "gap_analysis_complete", task_id=task_id,
         )
         await _update_assignment_statuses_db(
             session_factory, topic_assignment_ids, TopicAssignmentStatus.gap_analysis_complete,
@@ -633,6 +683,47 @@ def _write_ga_phase_redis(
     except Exception:
         logger.warning(
             "Failed to write GA-phase state for %s (phase=%s)", slug, phase,
+            exc_info=True,
+        )
+
+
+def _emit_company_event(
+    effective_slug: str,
+    event_type: str,
+    data: dict,
+) -> None:
+    """Broadcast a company-wide SSE event. Best-effort."""
+    try:
+        from core.events.company_event_bus import company_event_bus, CompanyEvent
+        company_slug = effective_slug.split("__")[0]
+        company_event_bus.emit(company_slug, CompanyEvent(event_type=event_type, data=data))
+    except Exception:
+        logger.debug("Company event emit failed for %s", effective_slug, exc_info=True)
+
+
+def _update_ga_phase_status(
+    slug: str,
+    assignment_ids: List[str],
+    phase: str,
+    *,
+    task_id: Optional[str] = None,
+) -> None:
+    """Update GA-phase card status in Redis without full TopicAssignment objects.
+
+    Lightweight variant of ``_write_ga_phase_redis`` — only updates the status
+    field (and optionally task_id) for existing entries.  Best-effort.
+    """
+    try:
+        from core.redis import get_sync_redis_or_none
+        from core.content_engine.state_redis import write_ga_phase_state
+
+        rc = get_sync_redis_or_none()
+        if rc is None:
+            return
+        write_ga_phase_state(rc, slug, assignment_ids, phase, task_id=task_id)
+    except Exception:
+        logger.warning(
+            "Failed to update GA-phase status for %s (phase=%s)", slug, phase,
             exc_info=True,
         )
 

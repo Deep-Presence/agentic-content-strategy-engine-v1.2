@@ -1,0 +1,610 @@
+
+> frontend@0.1.0 dev
+> next dev
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 1656ms
+ ✓ Compiled /api/v1/[...path] in 251ms (65 modules)
+ GET /api/v1/companies/webflow/stream 502 in 778ms
+ ✓ Compiled /src/middleware in 133ms (72 modules)
+ ○ Compiling / ...
+ ✓ Compiled / in 3.8s (2507 modules)
+ GET / 200 in 4109ms
+ ○ Compiling /api/auth/me ...
+ ✓ Compiled /api/auth/me in 564ms (1284 modules)
+ GET /api/auth/me 401 in 694ms
+ ✓ Compiled /api/auth/logout in 174ms (1286 modules)
+ POST /api/auth/logout 200 in 199ms
+ ○ Compiling /login ...
+ ✓ Compiled /login in 1339ms (4466 modules)
+ GET /login 200 in 1524ms
+ GET /api/auth/me 401 in 14ms
+ POST /api/auth/logout 200 in 13ms
+ GET /login?redirect=%2F.well-known%2Fappspecific%2Fcom.chrome.devtools.json 200 in 95ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 3.3s (3933 modules)
+ GET /_next/static/chunks/app/(auth)/login/LayoutGroupContext.mjs.map 404 in 3477ms
+ GET /_next/static/chunks/app/(auth)/LayoutGroupContext.mjs.map 404 in 3470ms
+ ✓ Compiled /api/auth/login in 297ms (1757 modules)
+ POST /api/auth/login 200 in 952ms
+ ✓ Compiled / in 130ms (1759 modules)
+ ✓ Compiled (2264 modules)
+ GET /api/auth/me 200 in 390ms
+ GET /_next/static/chunks/app/(dashboard)/LayoutGroupContext.mjs.map 404 in 37ms
+ ○ Compiling /planner ...
+ ✓ Compiled /planner in 1017ms (4523 modules)
+ GET /_next/static/chunks/app/(dashboard)/planner/LayoutGroupContext.mjs.map 404 in 192ms
+ ✓ Compiled /api/v1/[...path] in 345ms (2295 modules)
+ GET /api/v1/topic-discovery/webflow/summary 200 in 652ms
+ GET /api/v1/topic-discovery/webflow/assignments?page_size=500 200 in 104ms
+ GET /api/v1/topic-discovery/webflow/taxonomy 200 in 116ms
+ GET /api/v1/topic-discovery/webflow/personas 200 in 128ms
+ ○ Compiling /content-studio ...
+ ✓ Compiled /content-studio in 2.1s (4731 modules)
+ GET /api/v1/companies/webflow/content/briefs 200 in 298ms
+ GET /api/v1/companies/webflow/stream 200 in 6509ms
+ GET /api/v1/topic-discovery/webflow/summary 200 in 119ms
+ GET /api/v1/topic-discovery/webflow/assignments?page_size=500 200 in 61ms
+ GET /api/v1/topic-discovery/webflow/taxonomy 200 in 85ms
+ GET /api/v1/topic-discovery/webflow/personas 200 in 88ms
+ PATCH /api/v1/topic-discovery/webflow/assignments/8d274080-4cb8-4997-9f23-38a1e32cd2a6 200 in 75ms
+ POST /api/v1/content/v13/from-topics/gap-analysis 202 in 203ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 280ms
+ POST /api/v1/tasks/37bb0848-119f-4149-a84e-e4830676b522/stream-token 200 in 27ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 82ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 118ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 42ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 25ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 56ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 70ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 39ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 29ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 131ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 66ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 40ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 53ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 36ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 131ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 69ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 480ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 175ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 90ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 51ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 25ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 61ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 52ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 51ms
+ GET /api/v1/tasks/37bb0848-119f-4149-a84e-e4830676b522/events?stream_token=eyJ1c2VyX2lkIjogImNiZTY0MDI5LTI1ODctNDdhNi05MTc0LTY2NTRlNzYwMmM4NyIsICJjb21wYW55X3NsdWciOiAid2ViZmxvdyIsICJzdHJlYW1fb25seSI6IHRydWUsICJleHAiOiAiMjAyNi0wNC0wN1QyMTowMTozMC4zNzE1OTQrMDA6MDAifQ%3D%3D.db9fae490488d0352fce9b14f3269e3e462945a498886bc5843b6329e2fd9ec6 200 in 114753ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 83ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 256ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 540ms
+ POST /api/v1/content/v13/from-topics/start-production 202 in 79ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 32ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 77ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 87ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 115ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 481ms
+ GET /api/v1/companies/webflow/content/briefs/ta-8d274080-4cb8-4997-9f23-38a1e32cd2a6 404 in 570ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 65ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 37ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 105ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 87ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 116ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 59ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 29ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 80ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 77ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 31ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 80ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 64ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 70ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 51ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 61ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 72ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 84ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 67ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 28ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 76ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 85ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 113ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 373ms
+ GET /api/v1/tasks/f0661964-727c-4248-9d34-75fdffe5f85b/events?stream_token=eyJ1c2VyX2lkIjogImNiZTY0MDI5LTI1ODctNDdhNi05MTc0LTY2NTRlNzYwMmM4NyIsICJjb21wYW55X3NsdWciOiAid2ViZmxvdyIsICJzdHJlYW1fb25seSI6IHRydWUsICJleHAiOiAiMjAyNi0wNC0wN1QyMTowMTozMC4zNzE1OTQrMDA6MDAifQ%3D%3D.db9fae490488d0352fce9b14f3269e3e462945a498886bc5843b6329e2fd9ec6 200 in 129094ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 470ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 478ms
+ POST /api/v1/content/v13/f0661964-727c-4248-9d34-75fdffe5f85b/approve/briefs 200 in 147ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 91ms
+ GET /api/v1/tasks/f0661964-727c-4248-9d34-75fdffe5f85b/events?stream_token=eyJ1c2VyX2lkIjogImNiZTY0MDI5LTI1ODctNDdhNi05MTc0LTY2NTRlNzYwMmM4NyIsICJjb21wYW55X3NsdWciOiAid2ViZmxvdyIsICJzdHJlYW1fb25seSI6IHRydWUsICJleHAiOiAiMjAyNi0wNC0wN1QyMTowMTozMC4zNzE1OTQrMDA6MDAifQ%3D%3D.db9fae490488d0352fce9b14f3269e3e462945a498886bc5843b6329e2fd9ec6 200 in 5103ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 415ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 537ms
+ POST /api/v1/content/v13/f0661964-727c-4248-9d34-75fdffe5f85b/approve/briefs 409 in 20ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 146ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 430ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 546ms
+ POST /api/v1/content/v13/f0661964-727c-4248-9d34-75fdffe5f85b/approve/briefs 409 in 54ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 145ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 409ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 471ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 431ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 114ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 155ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 411ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 431ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 492ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 126ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 152ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 171ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 124ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 88ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 83ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 88ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 125ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 85ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 344ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 173ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 521ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 265ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 5129ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 1462ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 1461ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/enriched 200 in 110ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 1697ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 119ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 84ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 130ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 104ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 264ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 146ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 79ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 114ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 111ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 103ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 10ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 133ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/enriched 200 in 26ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 181ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 89ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 67ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 125ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 151ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 105ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 114ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 310ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 60ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 93ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 142ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 170ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 86ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 84ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 101ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 262ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 104ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 65ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 135ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 117ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 73ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 67ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 122ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 110ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 154ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 188ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 70ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 101ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 128ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 4974ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 3811ms
+ GET /api/v1/tasks/f0661964-727c-4248-9d34-75fdffe5f85b/events?stream_token=eyJ1c2VyX2lkIjogImNiZTY0MDI5LTI1ODctNDdhNi05MTc0LTY2NTRlNzYwMmM4NyIsICJjb21wYW55X3NsdWciOiAid2ViZmxvdyIsICJzdHJlYW1fb25seSI6IHRydWUsICJleHAiOiAiMjAyNi0wNC0wN1QyMTowMTozMC4zNzE1OTQrMDA6MDAifQ%3D%3D.db9fae490488d0352fce9b14f3269e3e462945a498886bc5843b6329e2fd9ec6 200 in 308827ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 85ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 434ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 434ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/enriched 200 in 28ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 413ms
+ POST /api/v1/content/v13/f0661964-727c-4248-9d34-75fdffe5f85b/approve/content 409 in 20ms
+ POST /api/v1/content/v13/f0661964-727c-4248-9d34-75fdffe5f85b/approve/content 200 in 846ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 95ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 44ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 460ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 50ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 533ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 132ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 173ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 334ms
+ POST /api/v1/content/v13/f0661964-727c-4248-9d34-75fdffe5f85b/approve/content 409 in 42ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 154ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 428ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 418ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 746ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 419ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 430ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 426ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 417ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 437ms
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /api/v1/companies/webflow/stream 200 in 1538887ms
+ ✓ Compiled in 8.1s (4738 modules)
+ GET /content-studio 200 in 1707ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 3.4s (4727 modules)
+ GET /.well-known/appspecific/com.chrome.devtools.json 404 in 3511ms
+ GET /_next/static/chunks/app/(dashboard)/LayoutGroupContext.mjs.map 404 in 1774ms
+ ○ Compiling /api/auth/me ...
+ ✓ Compiled /api/auth/me in 1028ms (2424 modules)
+ ✓ Compiled (2426 modules)
+ GET /favicon.ico 200 in 1483ms
+ GET /api/auth/me 200 in 1732ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 497ms
+^C
+aryankeshri@Aryans-MacBook-Air-2 frontend % npm run dev
+
+> frontend@0.1.0 dev
+> next dev
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 1753ms
+ ✓ Compiled /api/auth/me in 262ms (65 modules)
+ GET /api/auth/me 401 in 478ms
+ ✓ Compiled /api/auth/logout in 30ms (67 modules)
+ POST /api/auth/logout 200 in 54ms
+ ✓ Compiled /src/middleware in 71ms (72 modules)
+ ○ Compiling /login ...
+ ✓ Compiled /login in 2.9s (3470 modules)
+ ○ Compiling /api/auth/login ...
+ ✓ Compiled /api/auth/login in 516ms (1760 modules)
+ POST /api/auth/login 200 in 1273ms
+ GET /api/auth/me 200 in 106ms
+ ○ Compiling / ...
+ ✓ Compiled / in 3.1s (4480 modules)
+ ○ Compiling /planner ...
+ ✓ Compiled /planner in 1097ms (4522 modules)
+ ✓ Compiled /api/v1/[...path] in 358ms (2296 modules)
+ GET /api/v1/topic-discovery/webflow/summary 200 in 1080ms
+ GET /api/v1/topic-discovery/webflow/assignments?page_size=500 200 in 125ms
+ GET /api/v1/topic-discovery/webflow/taxonomy 200 in 140ms
+ GET /api/v1/topic-discovery/webflow/personas 200 in 157ms
+ ○ Compiling /content-studio ...
+ ✓ Compiled /content-studio in 2.7s (4730 modules)
+ GET /api/v1/companies/webflow/content/briefs 200 in 392ms
+ GET /api/v1/companies/webflow/stream 200 in 2457ms
+ GET /api/v1/topic-discovery/webflow/summary 200 in 41ms
+ GET /api/v1/topic-discovery/webflow/assignments?page_size=500 200 in 59ms
+ GET /api/v1/topic-discovery/webflow/personas 200 in 80ms
+ GET /api/v1/topic-discovery/webflow/taxonomy 200 in 84ms
+ PATCH /api/v1/topic-discovery/webflow/assignments/5ee7c60c-fcc1-453d-a0fb-68d616312992 200 in 143ms
+ POST /api/v1/content/v13/from-topics/gap-analysis 202 in 133ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 413ms
+ POST /api/v1/tasks/88026b95-c515-4df9-bb9f-cef06c97d927/stream-token 200 in 13ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 75ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 376ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 302ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 86ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 127ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 65ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 76ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 83ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 111ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 57ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 58ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 159ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 443ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 93ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 162ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 97ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 1550ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 1342ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 85ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 125ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 119ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 120ms
+ GET /api/v1/tasks/88026b95-c515-4df9-bb9f-cef06c97d927/events?stream_token=eyJ1c2VyX2lkIjogImNiZTY0MDI5LTI1ODctNDdhNi05MTc0LTY2NTRlNzYwMmM4NyIsICJjb21wYW55X3NsdWciOiAid2ViZmxvdyIsICJzdHJlYW1fb25seSI6IHRydWUsICJleHAiOiAiMjAyNi0wNC0wOFQwNjoxMjoyMi4xMzkzMDUrMDA6MDAifQ%3D%3D.5c86a7f0e8287b7a10ca0bfa982f3d7a5cd485cd90d168a5cf642e88855af753 200 in 108853ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 228ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 406ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 164ms
+ POST /api/v1/content/v13/from-topics/start-production 202 in 48ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 69ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 156ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 74ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 138ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 84ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 174ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 3933ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 574ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 1221ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 278ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 578ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 692ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 211ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 130ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 138ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 128ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 144ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 157ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 427ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 146ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 131ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 128ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 174ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 504ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 109ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 131ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 81ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 154ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 137ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 359ms
+ GET /api/v1/tasks/9ea613e2-f17c-42e7-a3a3-710756d0e090/events?stream_token=eyJ1c2VyX2lkIjogImNiZTY0MDI5LTI1ODctNDdhNi05MTc0LTY2NTRlNzYwMmM4NyIsICJjb21wYW55X3NsdWciOiAid2ViZmxvdyIsICJzdHJlYW1fb25seSI6IHRydWUsICJleHAiOiAiMjAyNi0wNC0wOFQwNjoxMjoyMi4xMzkzMDUrMDA6MDAifQ%3D%3D.5c86a7f0e8287b7a10ca0bfa982f3d7a5cd485cd90d168a5cf642e88855af753 200 in 143422ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 167ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 197ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 83ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 436ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 122ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 571ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 524ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 123ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 81ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 111ms
+ POST /api/v1/content/v13/9ea613e2-f17c-42e7-a3a3-710756d0e090/approve/briefs 200 in 226ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 98ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 103ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 340ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 366ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 113ms
+ GET /api/v1/tasks/9ea613e2-f17c-42e7-a3a3-710756d0e090/events?stream_token=eyJ1c2VyX2lkIjogImNiZTY0MDI5LTI1ODctNDdhNi05MTc0LTY2NTRlNzYwMmM4NyIsICJjb21wYW55X3NsdWciOiAid2ViZmxvdyIsICJzdHJlYW1fb25seSI6IHRydWUsICJleHAiOiAiMjAyNi0wNC0wOFQwNjoxMjoyMi4xMzkzMDUrMDA6MDAifQ%3D%3D.5c86a7f0e8287b7a10ca0bfa982f3d7a5cd485cd90d168a5cf642e88855af753 200 in 15252ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 166ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 120ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 128ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 84ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 93ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 88ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 161ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 228ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 85ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 66ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 780ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 117ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 125ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 294ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 182ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 269ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 136ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 109ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 126ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 103ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 136ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 124ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 119ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 123ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1890ms (2599 modules)
+ GET /.well-known/appspecific/com.chrome.devtools.json 404 in 1727ms
+ GET /_next/static/chunks/app/(auth)/LayoutGroupContext.mjs.map 404 in 2122ms
+ GET /_next/static/chunks/app/(auth)/login/LayoutGroupContext.mjs.map 404 in 2144ms
+ GET /_next/static/chunks/app/(dashboard)/planner/LayoutGroupContext.mjs.map 404 in 1559ms
+ GET /_next/static/chunks/app/(dashboard)/LayoutGroupContext.mjs.map 404 in 1571ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 783ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 118ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 145ms
+ POST /api/v1/content/v13/9ea613e2-f17c-42e7-a3a3-710756d0e090/approve/briefs 409 in 57ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 196ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 226ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 93ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 319ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 475ms
+ POST /api/v1/content/v13/9ea613e2-f17c-42e7-a3a3-710756d0e090/approve/briefs 409 in 34ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 98ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 102ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 63ms
+ POST /api/v1/content/v13/9ea613e2-f17c-42e7-a3a3-710756d0e090/approve/briefs 409 in 23ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 97ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 113ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 142ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 103ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 158ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 117ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 121ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 76ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 123ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 199ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 124ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 250ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 111ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 184ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 120ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 101ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 120ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 134ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 173ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 47ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 97ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 78ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 181ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 206ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 86ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 20ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 265ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 80ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 66ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 71ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 75ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 106ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 72ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 108ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 1313ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 63ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 122ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 129ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 147ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 404ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 111ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 90ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 248ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 19ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 378ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 134ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 86ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 3491ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 64ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 73ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 103ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 107ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 113ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 81ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 82ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 363ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 312ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 138ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 82ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 85ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 187ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 124ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 125ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 106ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 126ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 52ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 323ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 94ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 83ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 137ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 109ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 102ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 70ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 125ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 75ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 110ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 112ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 126ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 70ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 127ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 76ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 156ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 153ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 127ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 129ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 115ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 980ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 126ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 74ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 102ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 117ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 562ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 275ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 81ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 194ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 139ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 4300ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 58ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 64ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 125ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 128ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 112ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 87ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 534ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 119ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 41ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 224ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 69ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 116ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 131ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 213ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 139ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 113ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 84ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 120ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 85ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 87ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 94ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 77ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 114ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 62ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 98ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 87ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 85ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 77ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 157ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 230ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 80ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 93ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 115ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 101ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 81ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 71ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 126ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 118ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 187ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 235ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 1213ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 489ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 140ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 118ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 72ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 121ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 132ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 77ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 550ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 880ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 158ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 112ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 105ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 47ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 300ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 96ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 1299ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 141ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 115ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 5012ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 396ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 37ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 164ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 116ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 111ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 120ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 67ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 138ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 206ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 137ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 60ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 107ms
+ GET /api/v1/tasks/9ea613e2-f17c-42e7-a3a3-710756d0e090/events?stream_token=eyJ1c2VyX2lkIjogImNiZTY0MDI5LTI1ODctNDdhNi05MTc0LTY2NTRlNzYwMmM4NyIsICJjb21wYW55X3NsdWciOiAid2ViZmxvdyIsICJzdHJlYW1fb25seSI6IHRydWUsICJleHAiOiAiMjAyNi0wNC0wOFQwNjoxMjoyMi4xMzkzMDUrMDA6MDAifQ%3D%3D.5c86a7f0e8287b7a10ca0bfa982f3d7a5cd485cd90d168a5cf642e88855af753 200 in 604994ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 109ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 78ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 77ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 111ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 77ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 119ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 120ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 89ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 265ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 128ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 115ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 101ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 107ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 125ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 112ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 81ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 116ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 153ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 132ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 116ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 245ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 106ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 85ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 119ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 72ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 112ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 98ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 130ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 104ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 107ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 102ms
+ GET /api/v1/companies/webflow/gap-analysis/summary 200 in 131ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001 200 in 157ms
+ GET /api/v1/companies/webflow/content/briefs/brief-001/final 200 in 27ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 123ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 220ms
+ POST /api/v1/content/v13/9ea613e2-f17c-42e7-a3a3-710756d0e090/approve/content 200 in 273ms
+ GET /api/v1/companies/webflow/content/briefs 200 in 65ms

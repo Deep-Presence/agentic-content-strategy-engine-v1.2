@@ -1,7 +1,7 @@
 {
-  "current_sprint": "cms-auto-sync-prompt-gen",
-  "last_updated": "2026-04-07",
-  "test_count": 1979,
+  "current_sprint": "kanban-sync-lag-fix",
+  "last_updated": "2026-04-08",
+  "test_count": 1986,
   "completed_sprints_summary": {
     "total_tasks_completed": 43,
     "sprints": [
@@ -56,10 +56,27 @@
       {"sprint": "content-to-prompt-pipeline", "date": "2026-04-06", "summary": "Content-to-Prompt pipeline — generates k AI visibility prompts per content inventory page for daily tracker monitoring. Join table content_inventory_prompts (migration 0034), ContentToPromptService (LLM via OpenRouter Sonnet), ContentToPromptOrchestrator (dedup + persist + approve), 6 API endpoints, enrich_thin_pages(), PromptSource.CONTENT_INVENTORY. Codex gpt-5.3-codex critical review: 8 findings incorporated. 42 new tests. Post-review security hardening: 6 critical fixes (tenant isolation on all endpoints via company_uuid validation, prompt injection mitigation with XML tags, dedup TOCTOU race condition fix). Model registration fix (__init__.py). Structural composite score (compute_structural_score 0-100 from 24 signals, 4 categories) added to ContentPerformanceRow + ContentDetailResponse. 17 structural score tests. Content Performance page readiness audit completed: 5/8 table columns ready, 3/9 drawer sections ready, citation-matching service identified as biggest gap."},
       {"sprint": "content-performance-gaps", "date": "2026-04-06", "summary": "Content Performance 4-gap fill: citations (total cited count per page), platforms (5 per-engine booleans via bool_or), queries_covered (gap analysis queries targeting page via URL match), citation_timeline (daily timeseries for drawer). 3 new repo methods (batch citations, timeline, gap query count). Service layer enriched (Optional repos, backward compat). DI wiring. Frontend: types, adapters (3 hardcoded→API), ContentDrawer Section A live chart. Codex gpt-5.3-codex reviewed (5 concerns addressed). 5 new tests. 63 total passing."},
       {"sprint": "cannibalization-detection", "date": "2026-04-07", "summary": "Content cannibalization detection module (two surfaces) + json_repair integration. Proactive: Pipeline B checks new topic assignments vs content inventory embeddings during expansion — enriched query text (topic+description+keywords), piecewise priority penalty (0% at 0.80, 20% at 0.90, 35% cap), stored in metadata_json. Retroactive: GET /{inventory_id}/similar endpoint (pgvector cosine, self-excluding, embeddings_ready flag, Generate Embeddings CTA). Frontend: overlap badges on Planner rows, cannibalization section in Planner DetailDrawer, Content Performance drawer Section F live. json_repair library replaces hand-rolled _repair_json() in safe_parse() + 3 evaluator judges. Codex gpt-5.3-codex reviewed. 34 new tests. 73 total passing. 21 files changed."},
-      {"sprint": "cms-auto-sync-prompt-gen", "date": "2026-04-07", "summary": "CMS auto-sync + incremental upsert tracking + auto-prompt generation. Feature 1: Auto-sync on first CMS connect (POST /connect triggers run_cms_sync_task if last_sync_at is None, TaskConflictError idempotency guard, sync_task_id in response). Feature 2: Incremental upsert with new page detection (get_existing_urls() pre-collect, ingest_from_cms_sync returns (pairs, new_page_ids) tuple). Feature 3: Auto-prompt generation for new pages chained in run_cms_sync_task Phase 2 (_run_auto_prompt_generation helper, ContentToPromptOrchestrator, auto_approve=True, cap at auto_prompt_max_pages=50, error isolation, SSE events for prompt_generation phase). Codex gpt-5.3-codex reviewed: idempotency guard, deterministic page selection, observability for partial success incorporated. 13 new tests. 106 targeted tests passing. 1979 total passing. 8 files changed."}
+      {"sprint": "cms-auto-sync-prompt-gen", "date": "2026-04-07", "summary": "CMS auto-sync + incremental upsert tracking + auto-prompt generation. Feature 1: Auto-sync on first CMS connect (POST /connect triggers run_cms_sync_task if last_sync_at is None, TaskConflictError idempotency guard, sync_task_id in response). Feature 2: Incremental upsert with new page detection (get_existing_urls() pre-collect, ingest_from_cms_sync returns (pairs, new_page_ids) tuple). Feature 3: Auto-prompt generation for new pages chained in run_cms_sync_task Phase 2 (_run_auto_prompt_generation helper, ContentToPromptOrchestrator, auto_approve=True, cap at auto_prompt_max_pages=50, error isolation, SSE events for prompt_generation phase). Codex gpt-5.3-codex reviewed: idempotency guard, deterministic page selection, observability for partial success incorporated. 13 new tests. 106 targeted tests passing. 1979 total passing. 8 files changed."},
+      {"sprint": "content-studio-architecture-fix", "date": "2026-04-07", "summary": "Content Studio 3-phase architecture fix. Phase 1: Bug 1 (TD HITL-2 bypass — dead else branch replaced with full HITL checkpoint pattern in pipeline_v13.py), Bug 2 (OpenRouter model ID fix: claude-haiku-4.5→claude-haiku-4-5 in settings.py), Bug 3 (GA→CE card snap-back — added 'briefing' to _GA_PHASES, in_content_production enum+migration 0036, orchestrator transition step 2a). Phase 2: Bug 4 (polling overwrites SSE — version-aware merge using updatedAt in useContentBriefs.ts, adaptive polling 5s/60s/none). Phase 3: Company-wide SSE stream — CompanyEventBus (in-memory pub/sub per company, core/events/company_event_bus.py), SSE endpoint (api/routers/company_stream.py), _emit_company helper (state_helpers.py), 8+ emit points in pipeline_v13.py, 3 emit points in td_content_orchestrator.py, useCompanyStream hook (300ms debounce), page.tsx wired. 9 EventBus tests. CRITICAL BUG FOUND IN REVIEW: _company_slug NameError in _run_pipeline_stages and _finalize_pipeline (variable defined in caller function, not passed as parameter). 5 additional issues identified (see failures.json F17-F18)."},
+      {"sprint": "kanban-sync-lag-fix", "date": "2026-04-08", "summary": "Fix Content Studio Kanban 4-minute sync lag (Codex audit R1). 4 fixes: (1) CRITICAL — centralized _emit_company() inside _write_pipeline_state_async() so every status write (outlining/drafting/linking/enriching) auto-broadcasts company SSE state_changed event; (2) GA-phase cleanup log level debug→warning; (3) Approve button in-flight guard (isSubmitting + handleActionGuarded prevents 409 double-click); (4) Optimistic updatedAt bump in updateCard so version-aware merge correctly keeps local status during 15s grace period. 7 new tests (test_state_helpers.py). Codex gpt-5.3-codex reviewed: R1 PASS, 2 pre-existing architectural items (file fallback non-atomic, in-memory CompanyEventBus) noted as DEFERRED. 624/625 content_engine tests passing (1 pre-existing). TypeScript clean."}
     ]
   },
   "completed": [
+    {
+      "id": "T-kanban-sync-lag-fix",
+      "task": "Fix Content Studio Kanban 4-minute sync lag — centralize SSE emission in _write_pipeline_state_async",
+      "sprint": "kanban-sync-lag-fix",
+      "status": "done",
+      "completed_at": "2026-04-08",
+      "tests_added": 7,
+      "files_modified": [
+        "core/content_engine/state_helpers.py",
+        "core/content_engine/pipeline_v13.py",
+        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useContentBriefs.ts",
+        "tests/content_engine/test_state_helpers.py"
+      ]
+    },
     {
       "id": "T-cms-auto-sync-prompt-gen",
       "task": "CMS auto-sync on connect + incremental upsert tracking + auto-prompt generation",
@@ -598,117 +615,56 @@
   ],
   "in_progress": [
     {
-      "id": "T-content-studio-detail-view-rework",
-      "task": "Content Studio detail view rework — gap analysis metrics, brief flow, right sidebar gap section, left sidebar brief data during production",
-      "sprint": "content-studio-detail-view-rework",
-      "status": "done",
-      "completed_at": "2026-04-06",
-      "tests_added": 0,
-      "files_created": [
-        "frontend/src/app/(dashboard)/content-studio/_hooks/useGapSummary.ts"
+      "id": "T-content-studio-arch-fix-remaining",
+      "task": "Content Studio architecture fix — 6 remaining issues from critical review",
+      "sprint": "content-studio-architecture-fix",
+      "status": "in_progress",
+      "started_at": "2026-04-07",
+      "remaining_issues": [
+        {
+          "severity": "CRITICAL",
+          "id": "CSAF-1",
+          "issue": "_company_slug NameError in _run_pipeline_stages() and _finalize_pipeline() — variable defined at pipeline_v13.py:720 in run_content_generation_v13() but used in 2 separate functions that don't receive it as a parameter. Causes runtime crash at 12+ emit points.",
+          "fix": "Add _company_slug = slug.split('__')[0] at top of _run_pipeline_stages (after line 793) and _finalize_pipeline (after line 588)"
+        },
+        {
+          "severity": "HIGH",
+          "id": "CSAF-2",
+          "issue": "Redis GA-phase state not reverted on zero-pieces path in td_content_orchestrator.py:572-581. DB reverts to gap_analysis_complete but Redis still shows 'briefing'. Card stuck in Agent column.",
+          "fix": "Add _update_ga_phase_status(effective_slug, topic_assignment_ids, 'gap_analysis_complete', task_id=task_id) before the DB revert"
+        },
+        {
+          "severity": "HIGH",
+          "id": "CSAF-3",
+          "issue": "Redis GA-phase state not reverted on exception in runner.py:1881-1891. DB reverts but Redis not touched. Same stuck-card result.",
+          "fix": "Add _update_ga_phase_status call in the except block, after the DB revert"
+        },
+        {
+          "severity": "HIGH",
+          "id": "CSAF-4",
+          "issue": "agentProgress wiped by version-aware merge in useContentBriefs.ts:52-53. Server card wins merge but replaces existing card entirely — agentProgress (local-only field set by useContentPipeline) lost. Progress bar flickers every 5s poll.",
+          "fix": "When server wins: merged.push({ ...card, agentProgress: existing.agentProgress })"
+        },
+        {
+          "severity": "MEDIUM",
+          "id": "CSAF-5",
+          "issue": "All-rejected TD HITL-2 triggers misleading error 'Brief Builder produced zero blueprints — LLM failure or invalid input' at pipeline_v13.py:1691-1707. User explicitly rejected all briefs but error says LLM failed.",
+          "fix": "Add check to distinguish user-rejected-all from zero-blueprint LLM failure in TD entry mode"
+        },
+        {
+          "severity": "MEDIUM",
+          "id": "CSAF-6",
+          "issue": "No reconnect backoff in useCompanyStream.ts:80. If backend returns 401, EventSource auto-reconnects immediately creating tight 401 loop.",
+          "fix": "Add error counter in onerror handler, close source after 5+ consecutive errors"
+        }
       ],
-      "files_modified": [
-        "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
-        "frontend/src/app/(dashboard)/content-studio/_lib/api.ts",
-        "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
-        "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
-        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
-        "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx",
-        "frontend/src/app/(dashboard)/content-studio/_components/LeftSidebar.tsx"
-      ],
-      "details": {
-        "gap_analysis_complete_center": "Replaced simple checkmark view with rich metrics: topic description, 'Gap Analysis: Complete' header, 3-column KPI grid (queries analyzed, avg gap score, citations found from /gap-analysis/summary), classification breakdown (stacked bar + legend), company cited stats, top competitor domains with favicons, success indicators, Start Production button.",
-        "right_sidebar_gap_section": "New GapAnalysisSection in MetricsTab — gap score, classification badge, company cited, exemplar count, summary stats, competitor domains. Persists from gap_analysis_complete through all subsequent stages. When article metrics become available, both sections render together.",
-        "left_sidebar_brief_data": "AgentSidebar (during outlining/drafting/etc) now shows brief outline, target word count, exemplar count, key angles, source domains below pipeline progress section.",
-        "brief_review_enhanced": "BriefContent center view enhanced with exemplar cards showing favicons, truncated URLs, authority type badges, word counts.",
-        "data_layer": "gapContext (full GapContextSummaryAPI) added to ContentCard type and preserved in adapter. BriefSource extended with url, authorityType, wordCount. GapSummaryResponseAPI type added. fetchGapSummary() API function. useGapSummary() hook.",
-        "ga_animation": "Replaced 8-step pipeline stepper (exposing S1-S8 step names) with abstract orbiting rings animation to prevent reverse engineering. Both center and sidebar step labels removed."
-      }
-    },
-    {
-      "id": "T-orchestrator-card-vanish-fix",
-      "task": "Fix content card vanishing when production pipeline produces zero pieces",
-      "sprint": "content-studio-detail-view-rework",
-      "status": "done",
-      "completed_at": "2026-04-06",
-      "tests_added": 0,
-      "files_modified": [
-        "core/orchestration/td_content_orchestrator.py"
-      ],
-      "details": {
-        "bug": "When 'Start Production' was clicked, orchestrator immediately cleaned up Redis GA-phase card then ran content engine. If CE failed (zero blueprints), card vanished: Redis card gone, no brief in blueprints.json, DB marked content_produced.",
-        "root_cause": "Two issues: (1) Redis cleanup happened BEFORE confirming CE success. (2) Status unconditionally set to content_produced regardless of piece count.",
-        "fix": "Both run_td_to_content_pipeline() and run_td_content_production_only() now check len(output.pieces) > 0 before cleanup/status update. Zero pieces → revert to gap_analysis_complete so card stays visible for retry.",
-        "remaining": "Root cause of 'No matching TopicAssignments' is pipeline_v13.py still reading from filesystem matrix instead of DB. See .claude/sprints/pending/td-filesystem-db-disconnect-audit.md"
-      }
-    },
-    {
-      "id": "T-content-performance-frontend-integration",
-      "task": "Content Performance page frontend-backend integration — wire 3 backend endpoints, eliminate all mock data, structural_score integration",
-      "sprint": "content-performance-frontend-integration",
-      "status": "done",
-      "completed_at": "2026-04-06",
-      "tests_added": 0,
-      "files_created": [
-        "frontend/src/app/(dashboard)/content-performance/_lib/adapters.ts",
-        "frontend/src/app/(dashboard)/content-performance/_hooks/useContentPerformanceData.ts"
-      ],
-      "files_modified": [
-        "frontend/src/app/(dashboard)/content-performance/_lib/types.ts",
-        "frontend/src/app/(dashboard)/content-performance/_lib/api.ts",
-        "frontend/src/app/(dashboard)/content-performance/_components/data.ts",
-        "frontend/src/app/(dashboard)/content-performance/page.tsx",
-        "frontend/src/app/(dashboard)/content-performance/_components/ContentDrawer.tsx"
-      ],
-      "details": {
-        "types": "Added ContentPerformanceRowAPI, ContentPerformanceTableResponseAPI, VelocityInsightAPI, VelocityInsightsResponseAPI. Added structural_score to ContentDetailAPI.",
-        "api": "Added fetchContentTable() and fetchVelocityInsights() — 2 new API functions.",
-        "adapters": "6 adapter functions: toContentPiece (snake→camelCase + GAP defaults), toVelocityDatum, toDrawerTrafficTimeline, toDrawerTrafficSources, toDrawerAIPlatforms. Validation helpers for VelocityTrend/LifecycleStage casting.",
-        "hook": "useContentPerformanceData — parallel Promise.all fetch, AbortController cleanup, loading/error/refetch. Returns pieces, velocityData, periodStart/End, totalItems.",
-        "mock_elimination": "Removed ALL mock constants from data.ts: CONTENT_PIECES, VELOCITY_DATA, CPS_SCATTER, STRUCTURAL_SIGNALS, QUERY_COVERAGE, STRUCTURAL_DETAILS, CANNIBALIZATION_DATA, BRIEF_COMPLIANCE, generateCitationTimeline, generateTrafficTimeline, getPlatformDetails, getTrafficSources. Kept: type definitions, LIFECYCLE_CONFIG, PLATFORM_LIST, formatTraffic.",
-        "page_changes": "Real data from hook. Date range from API period. KPIs: AI Referrals replaces Citations, CPS/Utilization show '—'. CPS scatter chart removed. Structural alignment: real-only (no mock fallback). Loading/error/empty states added.",
-        "drawer_changes": "Real daily_traffic (section B), real source_breakdown (section I), real ai_platform_breakdown (section C), real structural compliance (section D). Sections A/E/F show explicit unavailable messages. Structural score in header.",
-        "verification": "tsc --noEmit: 0 errors. npm run build: clean pass."
-      }
-    },
-    {
-      "id": "T-ga-sidebar-enrichment",
-      "task": "Enrich GA-phase Content Studio sidebar with full topic assignment metadata — content spec, keywords, persona affinity, priority factors, content angle",
-      "sprint": "ga-sidebar-enrichment",
-      "status": "done",
-      "completed_at": "2026-04-06",
-      "tests_added": 0,
-      "files_modified": [
+      "files_affected": [
+        "core/content_engine/pipeline_v13.py",
         "core/orchestration/td_content_orchestrator.py",
-        "core/content_engine/state_redis.py",
-        "core/services/db_content_data.py",
-        "api/schemas/content_data.py",
-        "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
-        "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
-        "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
-        "frontend/src/app/(dashboard)/content-studio/_components/LeftSidebar.tsx"
-      ],
-      "details": {
-        "backend": "Enriched _write_ga_phase_redis with 11 additional fields from TopicAssignment (intent_type, persona_name, persona_id, persona_affinity, priority_factors, content_format, estimated_word_count, citation_opportunity, description, target_keywords, content_angle). Updated state_redis readers and _load_ga_phase_cards to pass through enriched metadata. Added 11 fields to ContentBriefListItem schema.",
-        "frontend": "GapAnalysisSidebar redesigned with 7 sections: Topic, Stage badges, Content Spec, Target Keywords, Why This Topic, Target Persona, Analysis Progress."
-      }
-    },
-    {
-      "id": "T-eliminate-excluded-combos",
-      "task": "Remove all 6 excluded buyer_stage × intent_type combos — all 12 cells now have cluster mappings",
-      "sprint": "ga-sidebar-enrichment",
-      "status": "done",
-      "completed_at": "2026-04-06",
-      "tests_added": 0,
-      "files_modified": [
-        "core/gap_analysis/topic_cluster_map.py",
-        "core/orchestration/td_content_orchestrator.py",
-        "core/gap_analysis/steps/s2_generate_queries.py",
-        "tests/gap_analysis/test_topic_cluster_map.py"
-      ],
-      "details": {
-        "changes": "Added 6 new ClusterMapping entries (cells 7-12) for tofu×transactional, tofu×navigational, mofu×navigational, mofu×transactional, bofu×informational, bofu×navigational. Emptied _EXCLUDED_COMBOS. Removed is_excluded_combo filter from orchestrator and S2 query gen. Updated tests: 12 valid cells, 0 excluded, 43 passing."
-      }
+        "api/tasks/runner.py",
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useContentBriefs.ts",
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useCompanyStream.ts"
+      ]
     }
   ],
   "pending": [

@@ -273,3 +273,20 @@ export interface SSEGAStepData {
   total_steps: number;
   elapsed_s?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Company-wide SSE stream events
+// ---------------------------------------------------------------------------
+
+export interface CompanyStateChangedData {
+  changed: string[];
+  hint: string;
+}
+
+export interface CompanyNotification {
+  type: 'hitl_review_needed' | 'pipeline_complete' | 'pipeline_error';
+  brief_id: string;
+  title: string;
+  checkpoint?: string;
+  message: string;
+}

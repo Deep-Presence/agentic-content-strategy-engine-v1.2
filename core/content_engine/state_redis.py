@@ -328,6 +328,7 @@ _GA_PHASES: frozenset[str] = frozenset({
     "gap_analysis_pending",
     "gap_analysis",
     "gap_analysis_complete",
+    "briefing",
 })
 
 

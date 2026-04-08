@@ -172,7 +172,7 @@ class Settings(BaseSettings):
     research_kb_company_overview_model: str = "sonar-deep-research"
     research_kb_customer_reviews_model: str = "sonar-deep-research"
     research_kb_competitor_scanner_model: str = "sonar-deep-research"
-    research_kb_competitor_extractor_model: str = "anthropic/claude-haiku-4.5"
+    research_kb_competitor_extractor_model: str = "anthropic/claude-haiku-4-5"
     research_kb_weakness_analyst_model: str = "sonar-deep-research"
     # Agent 5 (Brand Perception) — raw Anthropic SDK, plain model ID
     research_kb_brand_perception_model: str = "claude-sonnet-4-6"

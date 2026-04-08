@@ -56,7 +56,7 @@ type ActionType = 'start' | 'start_production' | 'approve_brief' | 'approve_arti
 interface FullPageViewProps {
   card: ContentCard;
   onClose: () => void;
-  onAction: (action: ActionType, data?: { editorNotes?: string }) => void;
+  onAction: (action: ActionType, data?: { editorNotes?: string }) => void | Promise<void>;
 }
 
 function compileEditorNotes(comments: ReviewComment[], overall: string): string {
@@ -78,6 +78,20 @@ function compileEditorNotes(comments: ReviewComment[], overall: string): string 
 export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
   const [activeSection, setActiveSection] = useState(0);
   const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleActionGuarded = useCallback(
+    async (action: ActionType, data?: { editorNotes?: string }) => {
+      if (isSubmitting) return;
+      setIsSubmitting(true);
+      try {
+        await onAction(action, data);
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [isSubmitting, onAction],
+  );
   const [overallReview, setOverallReview] = useState('');
   const [metadata, setMetadata] = useState<ContentMetadata>(
     card.metadata || {
@@ -230,7 +244,8 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
           {hitl.canApproveBrief && (
             <>
               <button
-                onClick={() => onAction('send_back')}
+                onClick={() => handleActionGuarded('send_back')}
+                disabled={isSubmitting}
                 className="flex items-center gap-1.5"
                 style={{
                   height: 30,
@@ -241,14 +256,16 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
                   border: '1px solid var(--border)',
                   borderRadius: 'var(--radius-sm)',
                   color: 'var(--text-secondary)',
-                  cursor: 'pointer',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  opacity: isSubmitting ? 0.5 : undefined,
                 }}
               >
                 <RotateCcw size={11} strokeWidth={1.5} />
                 Send back
               </button>
               <button
-                onClick={() => onAction('approve_brief')}
+                onClick={() => handleActionGuarded('approve_brief')}
+                disabled={isSubmitting}
                 className="flex items-center gap-1.5"
                 style={{
                   height: 30,
@@ -259,7 +276,8 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
                   color: 'var(--text-on-accent)',
                   border: 'none',
                   borderRadius: 'var(--radius-sm)',
-                  cursor: 'pointer',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  opacity: isSubmitting ? 0.5 : undefined,
                 }}
               >
                 <CheckCircle size={11} strokeWidth={2} />
@@ -273,8 +291,9 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
               <button
                 onClick={() => {
                   const notes = compileEditorNotes(reviewComments, overallReview);
-                  onAction('send_back', { editorNotes: notes });
+                  handleActionGuarded('send_back', { editorNotes: notes });
                 }}
+                disabled={isSubmitting}
                 className="flex items-center gap-1.5"
                 style={{
                   height: 30,
@@ -285,14 +304,16 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
                   border: '1px solid var(--border)',
                   borderRadius: 'var(--radius-sm)',
                   color: 'var(--text-secondary)',
-                  cursor: 'pointer',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  opacity: isSubmitting ? 0.5 : undefined,
                 }}
               >
                 <Send size={11} strokeWidth={1.5} />
                 Send back
               </button>
               <button
-                onClick={() => onAction('approve_article')}
+                onClick={() => handleActionGuarded('approve_article')}
+                disabled={isSubmitting}
                 className="flex items-center gap-1.5"
                 style={{
                   height: 30,
@@ -303,7 +324,8 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
                   color: 'var(--text-on-accent)',
                   border: 'none',
                   borderRadius: 'var(--radius-sm)',
-                  cursor: 'pointer',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  opacity: isSubmitting ? 0.5 : undefined,
                 }}
               >
                 <CheckCircle size={11} strokeWidth={2} />

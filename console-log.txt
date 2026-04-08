@@ -1,0 +1,1238 @@
+login:1 [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) <input class=​"rounded-sm border border-border bg-surface font-body text-text-primary outline-none transition-[border-color]​ duration-[120ms]​ ease-out hover:​border-border-strong focus:​border-accent focus:​border-2 focus:​bg-surface-raised focus:​shadow-[0_0_0_3px_var(--accent-subtle)​]​ placeholder:​text-text-tertiary disabled:​opacity-50 disabled:​cursor-not-allowed w-full h-[36px]​ text-[14px]​ px-3" type=​"password" placeholder=​"Enter password" required value>​
+inject.js:77 WARNING:Found both blacklist and siteRules — using siteRules
+api/auth/me:1  Failed to load resource: the server responded with a status of 401 (Unauthorized)
+hot-reloader-client.js:187 [Fast Refresh] rebuilding
+hot-reloader-client.js:44 [Fast Refresh] done in 1070ms
+hot-reloader-client.js:187 [Fast Refresh] rebuilding
+hot-reloader-client.js:44 [Fast Refresh] done in 736ms
+hot-reloader-client.js:187 [Fast Refresh] rebuilding
+hot-reloader-client.js:44 [Fast Refresh] done in 2552ms
+hot-reloader-client.js:187 [Fast Refresh] rebuilding
+hot-reloader-client.js:44 [Fast Refresh] done in 2959ms
+hot-reloader-client.js:187 [Fast Refresh] rebuilding
+hot-reloader-client.js:44 [Fast Refresh] done in 2048ms
+hot-reloader-client.js:187 [Fast Refresh] rebuilding
+hot-reloader-client.js:44 [Fast Refresh] done in 1555ms
+hot-reloader-client.js:187 [Fast Refresh] rebuilding
+hot-reloader-client.js:44 [Fast Refresh] done in 477ms
+hot-reloader-client.js:187 [Fast Refresh] rebuilding
+hot-reloader-client.js:44 [Fast Refresh] done in 466ms
+hot-reloader-client.js:187 [Fast Refresh] rebuilding
+hot-reloader-client.js:44 [Fast Refresh] done in 716ms
+api/auth/me:1  Failed to load resource: the server responded with a status of 401 (Unauthorized)
+login:1 [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) <input class=​"rounded-sm border border-border bg-surface font-body text-text-primary outline-none transition-[border-color]​ duration-[120ms]​ ease-out hover:​border-border-strong focus:​border-accent focus:​border-2 focus:​bg-surface-raised focus:​shadow-[0_0_0_3px_var(--accent-subtle)​]​ placeholder:​text-text-tertiary disabled:​opacity-50 disabled:​cursor-not-allowed w-full h-[36px]​ text-[14px]​ px-3" placeholder=​"Enter password" required type=​"password" value=​"Aryan@Ramp">​
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:06:43.644Z: brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:07:22.106Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:07:27.210Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:07:32.547Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:07:38.536Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:07:43.143Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:07:48.178Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useCompanyStream.ts:76 [useCompanyStream] connected @2026-04-08T06:07:51.860Z url=/api/v1/companies/webflow/stream
+page.tsx:69 [CompanyStream] state_changed -> refetch @2026-04-08T06:07:51.861Z
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:07:51.965Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:07:53.107Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:07:58.127Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:03.156Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:08.092Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:13.092Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:17.303Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:23.554Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:28.141Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:33.229Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:38.149Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:44.608Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:49.392Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:53.138Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:08:58.163Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:09:03.189Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:09:08.188Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis, brief-001:completed
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:09:11.000Z Object
+page.tsx:69 [CompanyStream] state_changed -> refetch @2026-04-08T06:09:11.302Z
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:09:11.857Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis_complete, brief-001:completed
+useContentBriefs.ts:89 [useContentBriefs] STATUS CHANGE @2026-04-08T06:09:11.859Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992 gap_analysis -> gap_analysis_complete (server wins, updatedAt:  -> )
+useContentBriefs.ts:89 [useContentBriefs] STATUS CHANGE @2026-04-08T06:09:11.861Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992 gap_analysis -> gap_analysis_complete (server wins, updatedAt:  -> )
+useContentBriefs.ts:154 [useContentBriefs] polling speed @2026-04-08T06:09:11.947Z: SLOW (60s) — all idle
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:10:12.509Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:gap_analysis_complete, brief-001:completed
+useContentBriefs.ts:154 [useContentBriefs] polling speed @2026-04-08T06:10:16.571Z: FAST (5s) — active cards detected
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:10:16.726Z Object
+page.tsx:69 [CompanyStream] state_changed -> refetch @2026-04-08T06:10:17.027Z
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:10:17.107Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:10:21.750Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:10:26.657Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:10:31.743Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:10:36.669Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:10:41.781Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:10:50.558Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:10:52.202Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:10:57.867Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:01.906Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:07.557Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:13.389Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:16.865Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:21.714Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:26.731Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:31.736Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:36.735Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:41.751Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:47.123Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:51.729Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:11:56.729Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:01.717Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:06.795Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:12.110Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:16.704Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:21.732Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:26.665Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:31.743Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:36.745Z: ta-5ee7c60c-fcc1-453d-a0fb-68d616312992:briefing, brief-001:completed
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:12:39.092Z Object
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:12:39.095Z Object
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:12:39.104Z Object
+page.tsx:69 [CompanyStream] state_changed -> refetch @2026-04-08T06:12:39.405Z
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:39.846Z: brief-001:pending_brief_approval
+useContentBriefs.ts:89 [useContentBriefs] STATUS CHANGE @2026-04-08T06:12:39.852Z: brief-001 completed -> pending_brief_approval (server wins, updatedAt: 2026-04-07T21:12:25.914145+00:00 -> 2026-04-08T06:12:38.717861+00:00)
+useContentBriefs.ts:89 [useContentBriefs] STATUS CHANGE @2026-04-08T06:12:39.852Z: brief-001 completed -> pending_brief_approval (server wins, updatedAt: 2026-04-07T21:12:25.914145+00:00 -> 2026-04-08T06:12:38.717861+00:00)
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:45.162Z: brief-001:pending_brief_approval
+installHook.js:1 Warning: Received NaN for the `children` attribute. If this is expected, cast the value to a string. Error Component Stack
+    at span (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at MetricsTab (RightSidebar.tsx:144:23)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at RightSidebar (RightSidebar.tsx:622:32)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at FullPageView (FullPageView.tsx:78:32)
+    at ContentStudioPage (page.tsx:43:47)
+    at ClientPageRoot (client-page.js:14:11)
+    at InnerLayoutRouter (layout-router.js:243:11)
+    at RedirectErrorBoundary (redirect-boundary.js:74:9)
+    at RedirectBoundary (redirect-boundary.js:82:11)
+    at NotFoundBoundary (not-found-boundary.js:84:11)
+    at LoadingBoundary (layout-router.js:349:11)
+    at ErrorBoundary (error-boundary.js:160:11)
+    at InnerScrollAndFocusHandler (layout-router.js:153:9)
+    at ScrollAndFocusHandler (layout-router.js:228:11)
+    at RenderFromTemplateContext (render-from-template-context.js:16:44)
+    at OuterLayoutRouter (layout-router.js:370:11)
+    at InnerLayoutRouter (layout-router.js:243:11)
+    at RedirectErrorBoundary (redirect-boundary.js:74:9)
+    at RedirectBoundary (redirect-boundary.js:82:11)
+    at NotFoundErrorBoundary (not-found-boundary.js:76:9)
+    at NotFoundBoundary (not-found-boundary.js:84:11)
+    at LoadingBoundary (layout-router.js:349:11)
+    at ErrorBoundary (error-boundary.js:160:11)
+    at InnerScrollAndFocusHandler (layout-router.js:153:9)
+    at ScrollAndFocusHandler (layout-router.js:228:11)
+    at RenderFromTemplateContext (render-from-template-context.js:16:44)
+    at OuterLayoutRouter (layout-router.js:370:11)
+    at main (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at AuthGuard (AuthGuard.tsx:16:29)
+    at DashboardLayout (layout.tsx:11:3)
+    at InnerLayoutRouter (layout-router.js:243:11)
+    at RedirectErrorBoundary (redirect-boundary.js:74:9)
+    at RedirectBoundary (redirect-boundary.js:82:11)
+    at NotFoundErrorBoundary (not-found-boundary.js:76:9)
+    at NotFoundBoundary (not-found-boundary.js:84:11)
+    at LoadingBoundary (layout-router.js:349:11)
+    at ErrorBoundary (error-boundary.js:160:11)
+    at InnerScrollAndFocusHandler (layout-router.js:153:9)
+    at ScrollAndFocusHandler (layout-router.js:228:11)
+    at RenderFromTemplateContext (render-from-template-context.js:16:44)
+    at OuterLayoutRouter (layout-router.js:370:11)
+    at AuthProvider (AuthProvider.tsx:14:32)
+    at body (<anonymous>)
+    at html (<anonymous>)
+    at RootLayout [Server] (<anonymous>)
+    at RedirectErrorBoundary (redirect-boundary.js:74:9)
+    at RedirectBoundary (redirect-boundary.js:82:11)
+    at NotFoundErrorBoundary (not-found-boundary.js:76:9)
+    at NotFoundBoundary (not-found-boundary.js:84:11)
+    at DevRootNotFoundBoundary (dev-root-not-found-boundary.js:33:11)
+    at ReactDevOverlay (ReactDevOverlay.js:87:9)
+    at HotReload (hot-reloader-client.js:321:11)
+    at Router (app-router.js:207:11)
+    at ErrorBoundaryHandler (error-boundary.js:113:9)
+    at ErrorBoundary (error-boundary.js:160:11)
+    at AppRouter (app-router.js:585:13)
+    at ServerRoot (app-index.js:112:27)
+    at Root (app-index.js:117:11)
+overrideMethod @ installHook.js:1
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:50.123Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:12:55.583Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:00.584Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:05.116Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:10.080Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:15.109Z: brief-001:pending_brief_approval
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:13:19.843Z Object
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:20.083Z: brief-001:pending_brief_approval
+useContentBriefs.ts:75 [useContentBriefs] OPTIMISTIC PROTECTED @2026-04-08T06:13:20.084Z: brief-001 keeping local=outlining (server=pending_brief_approval, grace=15s left)
+useContentBriefs.ts:75 [useContentBriefs] OPTIMISTIC PROTECTED @2026-04-08T06:13:20.084Z: brief-001 keeping local=outlining (server=pending_brief_approval, grace=15s left)
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:13:20.130Z Object
+page.tsx:69 [CompanyStream] state_changed -> refetch @2026-04-08T06:13:20.431Z
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:20.542Z: brief-001:pending_brief_approval
+useContentBriefs.ts:75 [useContentBriefs] OPTIMISTIC PROTECTED @2026-04-08T06:13:20.543Z: brief-001 keeping local=outlining (server=pending_brief_approval, grace=14s left)
+useContentBriefs.ts:75 [useContentBriefs] OPTIMISTIC PROTECTED @2026-04-08T06:13:20.543Z: brief-001 keeping local=outlining (server=pending_brief_approval, grace=14s left)
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:25.426Z: brief-001:pending_brief_approval
+useContentBriefs.ts:75 [useContentBriefs] OPTIMISTIC PROTECTED @2026-04-08T06:13:25.433Z: brief-001 keeping local=outlining (server=pending_brief_approval, grace=9s left)
+useContentBriefs.ts:75 [useContentBriefs] OPTIMISTIC PROTECTED @2026-04-08T06:13:25.433Z: brief-001 keeping local=outlining (server=pending_brief_approval, grace=9s left)
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:30.369Z: brief-001:pending_brief_approval
+useContentBriefs.ts:75 [useContentBriefs] OPTIMISTIC PROTECTED @2026-04-08T06:13:30.371Z: brief-001 keeping local=outlining (server=pending_brief_approval, grace=5s left)
+useContentBriefs.ts:75 [useContentBriefs] OPTIMISTIC PROTECTED @2026-04-08T06:13:30.371Z: brief-001 keeping local=outlining (server=pending_brief_approval, grace=5s left)
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:35.126Z: brief-001:pending_brief_approval
+useContentBriefs.ts:89 [useContentBriefs] STATUS CHANGE @2026-04-08T06:13:35.129Z: brief-001 outlining -> pending_brief_approval (server wins, updatedAt: 2026-04-08T06:13:20.100483+00:00 -> 2026-04-08T06:13:20.100483+00:00)
+useContentBriefs.ts:89 [useContentBriefs] STATUS CHANGE @2026-04-08T06:13:35.129Z: brief-001 outlining -> pending_brief_approval (server wins, updatedAt: 2026-04-08T06:13:20.100483+00:00 -> 2026-04-08T06:13:20.100483+00:00)
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:40.165Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:45.082Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:50.071Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:13:55.251Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:00.229Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:05.068Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:10.057Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:15.855Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:20.127Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:25.130Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:30.323Z: brief-001:pending_brief_approval
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:14:33.990Z Object
+page.tsx:69 [CompanyStream] state_changed -> refetch @2026-04-08T06:14:34.298Z
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:34.509Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:35.255Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:40.536Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:45.095Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:50.123Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:14:55.092Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:00.163Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:05.120Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:10.121Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:15.125Z: brief-001:pending_brief_approval
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:21.620Z: brief-001:pending_brief_approval
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:25.102Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:30.131Z: brief-001:pending_brief_approval
+api-client.ts:95  POST http://localhost:3000/api/v1/content/v13/9ea613e2-f17c-42e7-a3a3-710756d0e090/approve/briefs 409 (Conflict)
+doFetch @ api-client.ts:95
+request @ api-client.ts:130
+post @ api-client.ts:149
+approveBrief @ api.ts:111
+eval @ page.tsx:177
+eval @ FullPageView.tsx:88
+onClick @ FullPageView.tsx:267
+callCallback @ react-dom.development.js:20565
+invokeGuardedCallbackImpl @ react-dom.development.js:20614
+invokeGuardedCallback @ react-dom.development.js:20689
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:20703
+executeDispatch @ react-dom.development.js:32128
+processDispatchQueueItemsInOrder @ react-dom.development.js:32160
+processDispatchQueue @ react-dom.development.js:32173
+dispatchEventsForPlugins @ react-dom.development.js:32184
+eval @ react-dom.development.js:32374
+batchedUpdates$1 @ react-dom.development.js:24953
+batchedUpdates @ react-dom.development.js:28844
+dispatchEventForPluginEventSystem @ react-dom.development.js:32373
+dispatchEvent @ react-dom.development.js:30141
+dispatchDiscreteEvent @ react-dom.development.js:30112
+installHook.js:1 Action "approve_brief" failed: ApiError: Task is not awaiting approval (current status: running)
+    at doFetch (api-client.ts:123:11)
+    at async request (api-client.ts:130:15)
+    at async eval (page.tsx:177:13)
+    at async eval (FullPageView.tsx:88:9)
+overrideMethod @ installHook.js:1
+window.console.error @ app-index.js:33
+console.error @ hydration-error-info.js:63
+eval @ page.tsx:232
+await in eval
+eval @ FullPageView.tsx:88
+onClick @ FullPageView.tsx:267
+callCallback @ react-dom.development.js:20565
+invokeGuardedCallbackImpl @ react-dom.development.js:20614
+invokeGuardedCallback @ react-dom.development.js:20689
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:20703
+executeDispatch @ react-dom.development.js:32128
+processDispatchQueueItemsInOrder @ react-dom.development.js:32160
+processDispatchQueue @ react-dom.development.js:32173
+dispatchEventsForPlugins @ react-dom.development.js:32184
+eval @ react-dom.development.js:32374
+batchedUpdates$1 @ react-dom.development.js:24953
+batchedUpdates @ react-dom.development.js:28844
+dispatchEventForPluginEventSystem @ react-dom.development.js:32373
+dispatchEvent @ react-dom.development.js:30141
+dispatchDiscreteEvent @ react-dom.development.js:30112
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:35.179Z: brief-001:pending_brief_approval
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:40.291Z: brief-001:pending_brief_approval
+api-client.ts:95  POST http://localhost:3000/api/v1/content/v13/9ea613e2-f17c-42e7-a3a3-710756d0e090/approve/briefs 409 (Conflict)
+doFetch @ api-client.ts:95
+request @ api-client.ts:130
+post @ api-client.ts:149
+approveBrief @ api.ts:111
+eval @ page.tsx:177
+eval @ FullPageView.tsx:88
+onClick @ FullPageView.tsx:267
+callCallback @ react-dom.development.js:20565
+invokeGuardedCallbackImpl @ react-dom.development.js:20614
+invokeGuardedCallback @ react-dom.development.js:20689
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:20703
+executeDispatch @ react-dom.development.js:32128
+processDispatchQueueItemsInOrder @ react-dom.development.js:32160
+processDispatchQueue @ react-dom.development.js:32173
+dispatchEventsForPlugins @ react-dom.development.js:32184
+eval @ react-dom.development.js:32374
+batchedUpdates$1 @ react-dom.development.js:24953
+batchedUpdates @ react-dom.development.js:28844
+dispatchEventForPluginEventSystem @ react-dom.development.js:32373
+dispatchEvent @ react-dom.development.js:30141
+dispatchDiscreteEvent @ react-dom.development.js:30112
+installHook.js:1 Action "approve_brief" failed: ApiError: Task is not awaiting approval (current status: running)
+    at doFetch (api-client.ts:123:11)
+    at async request (api-client.ts:130:15)
+    at async eval (page.tsx:177:13)
+    at async eval (FullPageView.tsx:88:9)
+overrideMethod @ installHook.js:1
+window.console.error @ app-index.js:33
+console.error @ hydration-error-info.js:63
+eval @ page.tsx:232
+await in eval
+eval @ FullPageView.tsx:88
+onClick @ FullPageView.tsx:267
+callCallback @ react-dom.development.js:20565
+invokeGuardedCallbackImpl @ react-dom.development.js:20614
+invokeGuardedCallback @ react-dom.development.js:20689
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:20703
+executeDispatch @ react-dom.development.js:32128
+processDispatchQueueItemsInOrder @ react-dom.development.js:32160
+processDispatchQueue @ react-dom.development.js:32173
+dispatchEventsForPlugins @ react-dom.development.js:32184
+eval @ react-dom.development.js:32374
+batchedUpdates$1 @ react-dom.development.js:24953
+batchedUpdates @ react-dom.development.js:28844
+dispatchEventForPluginEventSystem @ react-dom.development.js:32373
+dispatchEvent @ react-dom.development.js:30141
+dispatchDiscreteEvent @ react-dom.development.js:30112
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+api-client.ts:95  POST http://localhost:3000/api/v1/content/v13/9ea613e2-f17c-42e7-a3a3-710756d0e090/approve/briefs 409 (Conflict)
+doFetch @ api-client.ts:95
+request @ api-client.ts:130
+post @ api-client.ts:149
+approveBrief @ api.ts:111
+eval @ page.tsx:177
+eval @ FullPageView.tsx:88
+onClick @ FullPageView.tsx:267
+callCallback @ react-dom.development.js:20565
+invokeGuardedCallbackImpl @ react-dom.development.js:20614
+invokeGuardedCallback @ react-dom.development.js:20689
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:20703
+executeDispatch @ react-dom.development.js:32128
+processDispatchQueueItemsInOrder @ react-dom.development.js:32160
+processDispatchQueue @ react-dom.development.js:32173
+dispatchEventsForPlugins @ react-dom.development.js:32184
+eval @ react-dom.development.js:32374
+batchedUpdates$1 @ react-dom.development.js:24953
+batchedUpdates @ react-dom.development.js:28844
+dispatchEventForPluginEventSystem @ react-dom.development.js:32373
+dispatchEvent @ react-dom.development.js:30141
+dispatchDiscreteEvent @ react-dom.development.js:30112
+installHook.js:1 Action "approve_brief" failed: ApiError: Task is not awaiting approval (current status: running)
+    at doFetch (api-client.ts:123:11)
+    at async request (api-client.ts:130:15)
+    at async eval (page.tsx:177:13)
+    at async eval (FullPageView.tsx:88:9)
+overrideMethod @ installHook.js:1
+window.console.error @ app-index.js:33
+console.error @ hydration-error-info.js:63
+eval @ page.tsx:232
+await in eval
+eval @ FullPageView.tsx:88
+onClick @ FullPageView.tsx:267
+callCallback @ react-dom.development.js:20565
+invokeGuardedCallbackImpl @ react-dom.development.js:20614
+invokeGuardedCallback @ react-dom.development.js:20689
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:20703
+executeDispatch @ react-dom.development.js:32128
+processDispatchQueueItemsInOrder @ react-dom.development.js:32160
+processDispatchQueue @ react-dom.development.js:32173
+dispatchEventsForPlugins @ react-dom.development.js:32184
+eval @ react-dom.development.js:32374
+batchedUpdates$1 @ react-dom.development.js:24953
+batchedUpdates @ react-dom.development.js:28844
+dispatchEventForPluginEventSystem @ react-dom.development.js:32373
+dispatchEvent @ react-dom.development.js:30141
+dispatchDiscreteEvent @ react-dom.development.js:30112
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:45.072Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:50.109Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:15:55.137Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:00.086Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:05.157Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:10.114Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:15.116Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:20.056Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:25.111Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:30.194Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:35.118Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:40.249Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:45.105Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:50.179Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:16:55.105Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:00.081Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:05.110Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:10.129Z: brief-001:pending_brief_approval
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:17:14.168Z {changed: Array(1), hint: 'linking'}
+page.tsx:69 [CompanyStream] state_changed -> refetch @2026-04-08T06:17:14.476Z
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:14.938Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:15.021Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:20.077Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:25.064Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:30.153Z: brief-001:pending_brief_approval
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:35.201Z: brief-001:pending_brief_approval
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:40.051Z: brief-001:linking
+useContentBriefs.ts:89 [useContentBriefs] STATUS CHANGE @2026-04-08T06:17:40.051Z: brief-001 pending_brief_approval -> linking (server wins, updatedAt: 2026-04-08T06:13:20.100483+00:00 -> 2026-04-08T06:13:20.100483+00:00)
+useContentBriefs.ts:89 [useContentBriefs] STATUS CHANGE @2026-04-08T06:17:40.052Z: brief-001 pending_brief_approval -> linking (server wins, updatedAt: 2026-04-08T06:13:20.100483+00:00 -> 2026-04-08T06:13:20.100483+00:00)
+[Violation] Forced reflow while executing JavaScript took 48ms
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:17:43.656Z {changed: Array(1), hint: 'enriching'}
+page.tsx:69 [CompanyStream] state_changed -> refetch @2026-04-08T06:17:43.958Z
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:44.035Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:45.043Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:50.047Z: brief-001:linking
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:17:55.082Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:00.045Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:05.087Z: brief-001:linking
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:18:11.127Z {changed: Array(1), hint: 'evaluating'}
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:11.303Z: brief-001:linking
+page.tsx:69 [CompanyStream] state_changed -> refetch @2026-04-08T06:18:11.429Z
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:11.501Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:15.112Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:20.116Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:25.131Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:30.425Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:35.118Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:40.070Z: brief-001:linking
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:45.121Z: brief-001:linking
+proxy.js:1 Uncaught Error: Attempting to use a disconnected port object
+    at handleMessageFromPage (proxy.js:1:850)
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:50.058Z: brief-001:linking
+useCompanyStream.ts:58 [useCompanyStream] state_changed @2026-04-08T06:18:58.344Z {changed: Array(1), hint: 'revising'}
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:58.467Z: brief-001:linking
+page.tsx:69 [CompanyStream] state_changed -> refetch @2026-04-08T06:18:58.646Z
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:18:58.716Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:00.049Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:05.077Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:10.078Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:15.095Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:20.061Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:25.049Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:30.343Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:35.337Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:40.133Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:45.054Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:50.053Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:19:55.178Z: brief-001:linking
+useContentBriefs.ts:49 [useContentBriefs] poll @2026-04-08T06:20:00.128Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:20:05.092Z: brief-001:linking
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+ [useContentBriefs] poll @2026-04-08T06:20:10.593Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:20:15.074Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:20:20.067Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:20:25.123Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:20:30.073Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:20:35.116Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:20:40.038Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:20:45.099Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:20:50.047Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:20:55.093Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:00.103Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:05.101Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:10.044Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:15.110Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:20.041Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:25.171Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:30.126Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:35.111Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:40.129Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:45.104Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:50.956Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:21:55.115Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:22:00.040Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:22:05.083Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:22:10.107Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:22:15.542Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:22:20.272Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:22:25.061Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:22:30.170Z: brief-001:linking
+ [useContentBriefs] poll @2026-04-08T06:22:35.117Z: brief-001:linking
+ [useCompanyStream] state_changed @2026-04-08T06:22:44.122Z {changed: Array(1), hint: 'revising'}
+ [useContentBriefs] poll @2026-04-08T06:22:44.323Z: brief-001:revising
+ [useContentBriefs] STATUS CHANGE @2026-04-08T06:22:44.328Z: brief-001 linking -> revising (server wins, updatedAt: 2026-04-08T06:13:20.100483+00:00 -> 2026-04-08T06:13:20.100483+00:00)
+ [useContentBriefs] STATUS CHANGE @2026-04-08T06:22:44.329Z: brief-001 linking -> revising (server wins, updatedAt: 2026-04-08T06:13:20.100483+00:00 -> 2026-04-08T06:13:20.100483+00:00)
+ [CompanyStream] state_changed -> refetch @2026-04-08T06:22:44.433Z
+ [useContentBriefs] poll @2026-04-08T06:22:44.504Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:22:45.033Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:22:50.122Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:22:55.123Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:23:00.094Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:23:05.064Z: brief-001:revising
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+ [useContentBriefs] poll @2026-04-08T06:23:10.516Z: brief-001:revising
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+ [useContentBriefs] poll @2026-04-08T06:23:15.037Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:23:20.107Z: brief-001:revising
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+ [useContentBriefs] poll @2026-04-08T06:23:25.128Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:23:30.206Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:23:35.123Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:23:40.112Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:23:45.056Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:23:50.106Z: brief-001:revising
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+ [useContentBriefs] poll @2026-04-08T06:23:55.047Z: brief-001:revising
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+ [useContentBriefs] poll @2026-04-08T06:24:00.097Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:24:05.034Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:24:10.080Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:24:15.068Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:24:20.069Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:24:25.047Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:24:30.131Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:24:35.222Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:24:40.054Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:24:45.064Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:24:50.096Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:24:55.085Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:00.053Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:05.039Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:10.107Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:15.094Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:20.698Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:25.228Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:31.258Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:35.488Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:40.119Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:45.100Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:50.038Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:25:55.093Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:26:00.117Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:26:05.040Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:26:10.620Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:26:15.867Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:26:20.144Z: brief-001:revising
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+ [useContentBriefs] poll @2026-04-08T06:26:25.305Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:26:30.069Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:26:36.296Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:26:40.120Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:26:45.085Z: brief-001:revising
+ [useCompanyStream] state_changed @2026-04-08T06:26:55.183Z {changed: Array(1), hint: 'review'}
+ [useCompanyStream] state_changed @2026-04-08T06:26:55.188Z {changed: Array(1), hint: 'pending_content_approval'}
+ [useCompanyStream] state_changed @2026-04-08T06:26:55.225Z {changed: Array(1), hint: 'pending_content_approval'}
+ [useContentBriefs] poll @2026-04-08T06:26:55.390Z: brief-001:revising
+ [CompanyStream] state_changed -> refetch @2026-04-08T06:26:55.527Z
+ [useContentBriefs] poll @2026-04-08T06:26:55.572Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:27:00.151Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:27:05.099Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:27:10.081Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:27:15.094Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:27:20.035Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:27:25.114Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:27:30.172Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:27:35.118Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:27:40.021Z: brief-001:revising
+ [useContentBriefs] poll @2026-04-08T06:27:45.069Z: brief-001:pending_content_approval
+ [useContentBriefs] STATUS CHANGE @2026-04-08T06:27:45.077Z: brief-001 revising -> pending_content_approval (server wins, updatedAt: 2026-04-08T06:13:20.100483+00:00 -> 2026-04-08T06:13:20.100483+00:00)
+ [useContentBriefs] STATUS CHANGE @2026-04-08T06:27:45.078Z: brief-001 revising -> pending_content_approval (server wins, updatedAt: 2026-04-08T06:13:20.100483+00:00 -> 2026-04-08T06:13:20.100483+00:00)
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+ [useContentBriefs] poll @2026-04-08T06:27:50.105Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:27:55.044Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:00.046Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:05.083Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:10.039Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:15.091Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:20.098Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:25.061Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:30.235Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:35.134Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:40.097Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:45.071Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:50.086Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:28:55.104Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:00.117Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:05.050Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:10.095Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:15.139Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:20.116Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:25.097Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:30.228Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:35.086Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:40.051Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:45.092Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:50.036Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:29:55.100Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:30:00.065Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:30:05.144Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:30:10.091Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:30:15.075Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:30:20.073Z: brief-001:pending_content_approval
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+ [tiptap warn]: Duplicate extension names found: ['link', 'underline']. This can lead to issues. 
+overrideMethod @ installHook.js:1
+resolveExtensions @ webpack-internal:///…/dist/index.js:1865
+ExtensionManager @ webpack-internal:///…/dist/index.js:3747
+createExtensionManager @ webpack-internal:///…/dist/index.js:5092
+Editor @ webpack-internal:///…/dist/index.js:4830
+createEditor @ webpack-internal:///…t/dist/index.js:510
+refreshEditorInstance @ webpack-internal:///…t/dist/index.js:611
+eval @ webpack-internal:///…t/dist/index.js:586
+commitHookEffectListMount @ webpack-internal:///…evelopment.js:21102
+commitHookPassiveMountEffects @ webpack-internal:///…evelopment.js:23154
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23259
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23256
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23370
+recursivelyTraversePassiveMountEffects @ webpack-internal:///…evelopment.js:23237
+commitPassiveMountOnFiber @ webpack-internal:///…evelopment.js:23267
+commitPassiveMountEffects @ webpack-internal:///…evelopment.js:23225
+flushPassiveEffectsImpl @ webpack-internal:///…evelopment.js:26497
+flushPassiveEffects @ webpack-internal:///…evelopment.js:26438
+eval @ webpack-internal:///…evelopment.js:26172
+workLoop @ webpack-internal:///….development.js:256
+flushWork @ webpack-internal:///….development.js:225
+performWorkUntilDeadline @ webpack-internal:///….development.js:534
+webpack-internal:///….development.js:519 [Violation] 'message' handler took 152ms
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+ [useContentBriefs] poll @2026-04-08T06:30:25.098Z: brief-001:pending_content_approval
+ [useContentBriefs] poll @2026-04-08T06:30:30.192Z: brief-001:pending_content_approval
+ [useCompanyStream] state_changed @2026-04-08T06:30:32.170Z {changed: Array(1), hint: 'completed'}
+ [useCompanyStream] state_changed @2026-04-08T06:30:32.258Z {changed: Array(1), hint: 'completed'}
+proxy.js:1 Uncaught 
+handleMessageFromPage @ proxy.js:1
+postMessage
+send @ backendManager.js:1
+(anonymous) @ react_devtools_backend_compact.js:1
+ [useContentBriefs] polling speed @2026-04-08T06:30:32.349Z: SLOW (60s) — all idle
+ [useCompanyStream] state_changed @2026-04-08T06:30:32.457Z {changed: Array(0), hint: 'pipeline_complete'}
+ [CompanyStream] state_changed -> refetch @2026-04-08T06:30:32.759Z
+ [useContentBriefs] poll @2026-04-08T06:30:32.836Z: brief-001:pending_content_approval
+ [useContentBriefs] OPTIMISTIC PROTECTED @2026-04-08T06:30:32.836Z: brief-001 keeping local=completed (server=pending_content_approval, grace=14s left)
+ [useContentBriefs] OPTIMISTIC PROTECTED @2026-04-08T06:30:32.836Z: brief-001 keeping local=completed (server=pending_content_approval, grace=14s left)

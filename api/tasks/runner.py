@@ -1820,6 +1820,8 @@ async def run_td_content_production_task(
     from core.orchestration.td_content_orchestrator import (
         run_td_content_production_only,
         _update_assignment_statuses_db,
+        _update_ga_phase_status,
+        _emit_company_event,
     )
     from core.models.topic_discovery import TopicAssignmentStatus
 
@@ -1880,7 +1882,16 @@ async def run_td_content_production_task(
         logger.info("TD→Content production pipeline cancelled: task_id=%s", task_id)
     except Exception as exc:
         logger.exception("TD→Content production pipeline failed: %s", exc)
-        # Revert assignment statuses back to gap_analysis_complete
+        # Revert assignment statuses back to gap_analysis_complete (DB + Redis + SSE)
+        # F18 fix: Redis GA-phase state must also be reverted, not just DB.
+        # Without this, cards stay stuck in 'briefing' in the Kanban.
+        try:
+            _update_ga_phase_status(
+                effective_slug, topic_assignment_ids,
+                "gap_analysis_complete", task_id=task_id,
+            )
+        except Exception:
+            logger.warning("Failed to revert Redis GA-phase on production failure", exc_info=True)
         if session_factory:
             try:
                 await _update_assignment_statuses_db(
@@ -1889,6 +1900,12 @@ async def run_td_content_production_task(
                 )
             except Exception:
                 logger.warning("Failed to revert assignment statuses on production failure", exc_info=True)
+        try:
+            _emit_company_event(effective_slug, "state_changed", {
+                "changed": topic_assignment_ids, "hint": "gap_analysis_complete",
+            })
+        except Exception:
+            pass  # Best-effort SSE
         task_store.update_task(task_id, status=TaskStatus.FAILED, error=str(exc))
         event_bus.publish(task_id, "failed", {"error": str(exc)})
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))

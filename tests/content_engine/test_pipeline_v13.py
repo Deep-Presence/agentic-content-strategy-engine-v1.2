@@ -2876,21 +2876,28 @@ class TestManualHITL2:
 
     @pytest.mark.asyncio
     async def test_manual_hitl2_writes_pipeline_state(self, tmp_path):
-        """After HITL-2 approve, pipeline_state.json must show 'approved' for the brief."""
+        """After HITL-2 approve, _write_pipeline_state_async is called with 'approved'."""
         input_data = _make_manual_input(tmp_path, skip_stages=[3, 4, 5])
         input_data.auto_approve = False
 
         blueprint = _make_blueprint()
 
+        # Track calls via a wrapping mock
+        write_calls: list = []
+
+        async def _tracking_write(artifact_dir, brief_ids, phase, **kwargs):
+            write_calls.append((list(brief_ids), phase))
+
         with patch("core.content_engine.pipeline_v13.build_briefs_parallel",
                    new_callable=AsyncMock, return_value=[blueprint]), \
              patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
                    new_callable=AsyncMock,
-                   return_value={"brief_decision": "approve"}):
+                   return_value={"brief_decision": "approve"}), \
+             patch("core.content_engine.pipeline_v13._write_pipeline_state_async",
+                   side_effect=_tracking_write):
             await run_content_generation_v13(input_data)
 
-        # Check pipeline_state.json has "approved" for the brief
-        state_path = tmp_path / "artifacts" / "content" / "test-co" / "pipeline_state.json"
-        if state_path.exists():
-            state = json.loads(state_path.read_text())
-            assert state.get("brief-001") == "approved"
+        # Verify "approved" was written for brief-001 at some point
+        approved_calls = [(bids, phase) for bids, phase in write_calls
+                          if "brief-001" in bids and phase == "approved"]
+        assert len(approved_calls) >= 1, f"Expected 'approved' write for brief-001, got: {write_calls}"

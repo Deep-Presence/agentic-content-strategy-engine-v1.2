@@ -58,6 +58,14 @@
 - **Files affected:** `api/routers/auth.py`
 - **Blocked by:** nothing
 
+### PB-97: TD-mode Brief Builder must thematically preserve original topic title
+- **Source:** Content Studio integration testing — 2026-04-08
+- **Date added:** 2026-04-08
+- **Description:** In topic_discovery entry mode, gap analysis exemplars heavily influence the Brief Builder, which can generate a title and sections that drift from the original topic. E.g., topic "Webflow Partner Program for Animation-Focused Agencies" becomes "Platform Evaluation Checklist for Animation Heavy Agencies". Current fix: title override post-hoc (pipeline_v13.py:1546). Proper fix: pass `title_hint` constraint into Brief Builder prompt so generated sections/angles stay thematically aligned with the user's original topic while still incorporating gap analysis insights.
+- **Fix:** Add `title_hint` field to TopicSelection, populate from TopicAssignment.topic_text in TD mode, modify Brief Builder prompt to respect it as a hard constraint on title + thematic anchor for sections. Gap analysis should *enrich* the topic, not replace it.
+- **Files affected:** `core/models/content_generation_v13.py` (TopicSelection.title_hint), `core/content_engine/brief_builder.py` (prompt), `core/content_engine/pipeline_v13.py` (pass-through)
+- **Blocked by:** nothing
+
 ## Medium Priority
 
 ### PB-96: Migrate remaining pipelines to json_repair for LLM JSON parsing

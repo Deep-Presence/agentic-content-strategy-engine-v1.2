@@ -25,6 +25,19 @@ def _emit(event_bus: Any, task_id: Optional[str], event_type: str, data: Dict[st
         event_bus.publish(task_id, event_type, data)
 
 
+def _emit_company(company_slug: str, event_type: str, data: Dict[str, Any]) -> None:
+    """Broadcast an event on the company-wide SSE stream.
+
+    Sync — safe to call from both sync and async contexts.
+    Best-effort: import/emit failures are logged, never propagated.
+    """
+    try:
+        from core.events.company_event_bus import company_event_bus, CompanyEvent
+        company_event_bus.emit(company_slug, CompanyEvent(event_type=event_type, data=data))
+    except Exception:
+        logger.debug("Company event emit failed for %s", company_slug, exc_info=True)
+
+
 def _write_pipeline_state(
     artifact_dir: Path,
     brief_ids: List[str],
@@ -169,33 +182,66 @@ async def _write_pipeline_state_async(
     redis_client: Optional[Any] = None,
     effective_slug: Optional[str] = None,
 ) -> None:
-    """Async write: writes to both async Redis AND sync file for resilience.
+    """Async write: writes to Redis (primary). File only when Redis unavailable.
 
     Also refreshes the associated lock TTL on successful Redis write,
     preventing lock expiry during long HITL waits.
+
+    Safety net: when *redis_client* is None but Redis is configured,
+    self-acquires the async singleton so callers that forget to pass
+    redis_client (e.g. orchestrator paths) still get Redis writes.
+
+    File writes are a dev/no-Redis fallback only — never unconditional.
+    Readers (get_briefs) use Redis exclusively when available; stale file
+    entries from prior runs caused 4-min kanban sync lag.
     """
-    if redis_client is not None and effective_slug:
+    # Self-acquire async Redis when caller doesn't provide one.
+    _rc = redis_client
+    if _rc is None and effective_slug:
+        try:
+            from core.config.settings import settings as _cfg
+            if _cfg.redis_pipeline_state and _cfg.redis_url:
+                from core.redis import get_redis_or_none
+                _rc = get_redis_or_none()
+        except Exception:
+            pass  # Best-effort — fall through to file write
+
+    redis_succeeded = False
+    if _rc is not None and effective_slug:
         try:
             from core.content_engine.state_redis import write_pipeline_state_redis_async
 
             await write_pipeline_state_redis_async(
-                redis_client, effective_slug, brief_ids, phase, task_id=task_id
+                _rc, effective_slug, brief_ids, phase, task_id=task_id
             )
+            redis_succeeded = True
             # Refresh associated lock TTL (prevents expiry during HITL waits)
             try:
-                await redis_client.expire(
+                await _rc.expire(
                     f"lock:content_v13:{effective_slug}", _LOCK_TTL
                 )
             except Exception:
                 pass  # Best-effort refresh
         except Exception:
             logger.warning(
-                "Redis pipeline state write failed — file write still proceeds",
+                "Redis pipeline state write failed — falling back to file",
                 exc_info=True,
             )
 
-    # File write (ALWAYS runs — ensures fallback is never stale)
-    _write_pipeline_state(artifact_dir, brief_ids, phase, task_id=task_id)
+    # File write ONLY when Redis is unavailable (dev / no-Redis fallback)
+    if not redis_succeeded:
+        _write_pipeline_state(artifact_dir, brief_ids, phase, task_id=task_id)
+
+    # ── Company-wide SSE broadcast ──
+    if effective_slug:
+        try:
+            company_slug = effective_slug.split("__")[0]
+            _emit_company(company_slug, "state_changed", {
+                "changed": brief_ids,
+                "hint": phase,
+            })
+        except Exception:
+            pass  # Best-effort — never fail the state write for an SSE emit
 
 
 async def _cleanup_pipeline_state_async(
@@ -205,19 +251,36 @@ async def _cleanup_pipeline_state_async(
     redis_client: Optional[Any] = None,
     effective_slug: Optional[str] = None,
 ) -> None:
-    """Async cleanup: tries async Redis first, always cleans file too."""
-    if redis_client is not None and effective_slug:
+    """Async cleanup: Redis primary. File only when Redis unavailable.
+
+    Safety net: self-acquires async Redis when *redis_client* is None
+    (same pattern as ``_write_pipeline_state_async``).
+    """
+    _rc = redis_client
+    if _rc is None and effective_slug:
+        try:
+            from core.config.settings import settings as _cfg
+            if _cfg.redis_pipeline_state and _cfg.redis_url:
+                from core.redis import get_redis_or_none
+                _rc = get_redis_or_none()
+        except Exception:
+            pass
+
+    redis_succeeded = False
+    if _rc is not None and effective_slug:
         try:
             from core.content_engine.state_redis import cleanup_pipeline_state_redis_async
 
             await cleanup_pipeline_state_redis_async(
-                redis_client, effective_slug, brief_ids
+                _rc, effective_slug, brief_ids
             )
+            redis_succeeded = True
         except Exception:
             logger.warning(
                 "Redis pipeline state cleanup failed — falling back to file",
                 exc_info=True,
             )
 
-    # File-based cleanup (always runs as safety net)
-    _cleanup_pipeline_state(artifact_dir, brief_ids)
+    # File cleanup ONLY when Redis is unavailable
+    if not redis_succeeded:
+        _cleanup_pipeline_state(artifact_dir, brief_ids)

@@ -52,6 +52,83 @@ def _map_content_status(status_value: str) -> Any:
         return ContentPieceStatus.planned
 
 
+async def persist_blueprints_early(
+    session_factory: Optional[async_sessionmaker],
+    run_id: Optional[_uuid.UUID],
+    company_id: Optional[_uuid.UUID],
+    slug: str,
+    blueprints: list,
+) -> None:
+    """Persist blueprint placeholders to content_pieces BEFORE HITL-2.
+
+    Creates minimal ContentPiece records so ``DbContentDataService.get_briefs()``
+    returns them during the HITL-2 approval pause. Pipeline state in Redis
+    overrides the display status to ``pending_brief_approval``.
+
+    Uses upsert by (effective_slug, brief_id) — safe to call even if records
+    already exist from a previous run.
+    """
+    if not _should_persist(session_factory, run_id, company_id):
+        return
+    assert session_factory is not None and run_id is not None
+    try:
+        from core.db.repositories.content_repo import ContentRepository
+        from core.db.enums import ContentPieceStatus
+
+        async with session_factory() as session:
+            repo = ContentRepository(session)
+            for bp in blueprints:
+                brief_id = bp.brief_id if hasattr(bp, "brief_id") else bp.get("brief_id", "")
+                title = bp.title if hasattr(bp, "title") else bp.get("title", "")
+                content_format = (
+                    bp.content_format if hasattr(bp, "content_format")
+                    else bp.get("content_format", "long_blog")
+                )
+                cluster = (
+                    bp.target_cluster if hasattr(bp, "target_cluster")
+                    else bp.get("target_cluster", "")
+                )
+                ta_id_raw = getattr(bp, "topic_assignment_id", None) or bp.get("topic_assignment_id") if isinstance(bp, dict) else getattr(bp, "topic_assignment_id", None)
+                ta_id: _uuid.UUID | None = None
+                if ta_id_raw:
+                    try:
+                        ta_id = _uuid.UUID(str(ta_id_raw))
+                    except (ValueError, AttributeError):
+                        ta_id = None
+
+                existing = await repo.get_by_slug_and_brief_id(slug, brief_id)
+                if existing:
+                    existing.run_id = run_id
+                    existing.title = title
+                    existing.company_id = company_id
+                    existing.cluster_name = cluster
+                    existing.content_type = content_format
+                    existing.topic_assignment_id = ta_id
+                    await session.flush()
+                else:
+                    await repo.create_piece(
+                        run_id=run_id,
+                        effective_slug=slug,
+                        brief_id=brief_id,
+                        company_id=company_id,
+                        title=title,
+                        status=ContentPieceStatus.planned,
+                        content_type=content_format,
+                        cluster_name=cluster,
+                        topic_assignment_id=ta_id,
+                    )
+            await session.commit()
+        logger.info(
+            "persist_blueprints_early: %d placeholders stored for %s",
+            len(blueprints), slug,
+        )
+    except Exception:
+        logger.warning(
+            "persist_blueprints_early failed for %s, continuing without DB",
+            slug, exc_info=True,
+        )
+
+
 async def persist_content_pieces(
     session_factory: Optional[async_sessionmaker],
     run_id: Optional[_uuid.UUID],

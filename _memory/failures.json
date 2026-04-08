@@ -126,6 +126,24 @@
     "files_affected": ["core/orchestration/td_content_orchestrator.py", "core/content_engine/pipeline_v13.py", "api/routers/content_v13.py"]
   },
   {
+    "id": "F17",
+    "timestamp": "2026-04-07",
+    "what_broke": "_company_slug NameError crashes pipeline at runtime — all _emit_company() calls in _run_pipeline_stages() and _finalize_pipeline() fail with NameError because _company_slug is defined in run_content_generation_v13() (line 720) but these are separate functions, not closures.",
+    "root_cause": "Phase 3 (Company SSE) added _emit_company(_company_slug, ...) calls to _run_pipeline_stages (12 sites) and _finalize_pipeline (1 site). The variable _company_slug = slug.split('__')[0] was defined in the caller function run_content_generation_v13() but never passed as a parameter to _run_pipeline_stages or _finalize_pipeline. Python scoping rules mean separate function defs cannot access each other's locals.",
+    "fix_applied": "FIXED (2026-04-07). Added _company_slug = slug.split('__')[0] at top of _run_pipeline_stages() (line 798) and _finalize_pipeline() (line 599). Also centralized _emit_company inside _write_pipeline_state_async (2026-04-08, kanban-sync-lag-fix sprint) so all 20+ callers get automatic SSE emission without needing _company_slug at all.",
+    "lesson": "When adding a derived variable to an existing function call chain, verify each function that uses it is either (a) a closure of the defining scope, or (b) receives it as a parameter. Separate def functions cannot access each other's locals even if one calls the other.",
+    "files_affected": ["core/content_engine/pipeline_v13.py"]
+  },
+  {
+    "id": "F18",
+    "timestamp": "2026-04-07",
+    "what_broke": "Redis GA-phase state not reverted on CE failure — cards stuck in 'briefing' (Agent column) after pipeline error or zero-pieces output. DB reverts to gap_analysis_complete but Redis Hash still has the 'briefing' status.",
+    "root_cause": "Two failure paths in the TD→CE flow revert DB assignment statuses but don't revert Redis GA-phase state: (1) td_content_orchestrator.py:572-581 (zero pieces) reverts DB but not Redis, (2) runner.py:1881-1891 (unhandled exception) reverts DB but not Redis. The Redis state was set at orchestrator line 519 (_update_ga_phase_status → 'briefing') but neither failure path calls _update_ga_phase_status back to 'gap_analysis_complete'.",
+    "fix_applied": "NOT YET FIXED. Need to add _update_ga_phase_status(effective_slug, topic_assignment_ids, 'gap_analysis_complete', task_id=task_id) in both failure paths.",
+    "lesson": "When introducing a new state transition (GA cards → 'briefing'), every failure path that reverts the DB status must also revert the Redis status. Audit all except/else branches that touch the same state variable.",
+    "files_affected": ["core/orchestration/td_content_orchestrator.py", "api/tasks/runner.py"]
+  },
+  {
     "id": "F13",
     "timestamp": "2026-03-22",
     "what_broke": "test_revise_loops_back_to_agent (PB-39) — intermittent ~15% failure rate after langgraph-checkpoint-redis install",
