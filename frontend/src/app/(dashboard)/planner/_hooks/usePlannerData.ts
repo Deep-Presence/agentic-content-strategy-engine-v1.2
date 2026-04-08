@@ -164,13 +164,30 @@ export function usePlannerData(): PlannerData {
         }
       }
 
-      // Assign human-readable displayIds: sort by createdAt, then sequential
-      const prefix = prefixRef.current;
-      const sortedActive = [...active].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-      const idLookup = new Map<string, string>();
-      sortedActive.forEach((a, i) => idLookup.set(a.id, formatDisplayId(prefix, i + 1)));
-      for (const a of active) {
-        a.displayId = idLookup.get(a.id) ?? a.id;
+      // Use backend-supplied displayId when available; fall back to
+      // client-side sequential IDs for legacy data without display_id.
+      // Start fallback numbering AFTER the max existing backend number
+      // to avoid visual collisions (e.g., backend has WE-005, fallback
+      // should not also produce WE-001).
+      const needsFallback = active.some((a) => !a.displayId);
+      if (needsFallback) {
+        const prefix = prefixRef.current;
+        // Find max existing number from backend-supplied display_ids
+        let maxExisting = 0;
+        for (const a of active) {
+          if (a.displayId) {
+            const match = a.displayId.match(/-(\d+)$/);
+            if (match) {
+              const num = parseInt(match[1], 10);
+              if (num > maxExisting) maxExisting = num;
+            }
+          }
+        }
+        const missingItems = active.filter((a) => !a.displayId);
+        const sortedMissing = [...missingItems].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        sortedMissing.forEach((a, i) => {
+          a.displayId = formatDisplayId(prefix, maxExisting + i + 1);
+        });
       }
 
       setAssignments(active);
@@ -355,7 +372,7 @@ export function usePlannerData(): PlannerData {
       const taxonomyMap = buildTaxonomyMap(rootNodesRef.current);
       const newAssignment: Assignment = {
         id: created.id,
-        displayId: formatDisplayId(prefixRef.current, assignments.length + rejected.length + 1),
+        displayId: created.display_id || formatDisplayId(prefixRef.current, assignments.length + rejected.length + 1),
         title: created.topic_text,
         description: '',
         cluster: taxonomyMap.get(created.subdomain_id)?.clusterName ?? 'Uncategorized',

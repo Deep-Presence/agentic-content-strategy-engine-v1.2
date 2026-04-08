@@ -61,7 +61,7 @@ export function ContentCardItem({ card, onClick }: { card: ContentCard; onClick:
         className="mt-1"
         style={{ fontSize: 11, color: 'var(--text-secondary)' }}
       >
-        {card.id} · {card.cluster}
+        {card.displayId || card.id} · {card.cluster}
       </div>
 
       {/* Tags row */}

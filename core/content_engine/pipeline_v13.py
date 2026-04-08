@@ -202,7 +202,12 @@ def _ensure_artifact_dir(slug: str) -> Path:
 
 
 def _brief_dir(artifact_dir: Path, brief_id: str) -> Path:
-    """Return the per-brief artifact directory."""
+    """Return the per-brief artifact directory.
+
+    Raises ValueError if brief_id contains path-unsafe characters.
+    """
+    if not brief_id or "/" in brief_id or "\\" in brief_id or ".." in brief_id or "\x00" in brief_id:
+        raise ValueError(f"unsafe brief_id for directory creation: {brief_id!r}")
     d = artifact_dir / "content" / brief_id
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -506,6 +511,7 @@ async def _rebrief_and_rerun(
             brief_id_overrides=[rebrief_id],
             company_slug=_slug,
         )
+        new_blueprints = [bp for bp in new_blueprints if bp is not None]
 
         if not new_blueprints:
             logger.warning("Re-brief produced no blueprints for %s", blueprint.brief_id)
@@ -1033,6 +1039,7 @@ async def _run_pipeline_stages(
                 parent_span=stage2_span,
                 company_slug=slug,
             )
+            blueprints = [bp for bp in blueprints if bp is not None]
 
             # Save blueprints (C1-fix: merge to preserve manually-added entries)
             blueprints_path = artifact_dir / "blueprints.json"
@@ -1138,6 +1145,7 @@ async def _run_pipeline_stages(
                                 brief_id_overrides=[bp.brief_id],
                                 company_slug=slug,
                             )
+                            revised = [r for r in revised if r is not None]
                             if revised:
                                 bp = revised[0]
                                 bp.user_feedback = feedback
@@ -1343,6 +1351,7 @@ async def _run_pipeline_stages(
             brief_id_overrides=[_manual_brief_id],
             company_slug=slug,
         )
+        blueprints = [bp for bp in blueprints if bp is not None]
 
         # Save blueprints before HITL-2 (C1-fix: merge to preserve existing entries)
         blueprints_path = artifact_dir / "blueprints.json"
@@ -1440,6 +1449,7 @@ async def _run_pipeline_stages(
                             brief_id_overrides=[bp.brief_id],
                             company_slug=slug,
                         )
+                        revised = [r for r in revised if r is not None]
                         if revised:
                             bp = revised[0]
                             bp.user_feedback = feedback
@@ -1532,6 +1542,12 @@ async def _run_pipeline_stages(
             approved_topics.append(ts)
 
         if approved_topics and worker_contexts:
+            # Use display_id as brief_id when available (TD-originated).
+            # Fall back to brief-{N} for assignments without display_id.
+            _td_overrides = [
+                a.display_id if a.display_id else f"brief-{idx + 1:03d}"
+                for idx, a in enumerate(assignments)
+            ]
             blueprints = await build_briefs_parallel(
                 contexts=worker_contexts,
                 topics=approved_topics,
@@ -1541,15 +1557,22 @@ async def _run_pipeline_stages(
                 max_concurrent=input_data.max_concurrent_workers,
                 parent_span=pipeline_trace,
                 company_slug=slug,
+                brief_id_overrides=_td_overrides,
             )
 
             # TD-title-fix: Preserve original topic titles from TopicAssignment.
             # Brief Builder generates SEO-optimized titles, but users expect
             # the title they approved in Topic Discovery.
+            # NOTE: blueprints list preserves positional alignment with
+            # assignments (None entries for failed topics). Map by index
+            # BEFORE filtering Nones to avoid mis-association (H2 fix).
             for idx, bp in enumerate(blueprints):
-                if idx < len(assignments) and assignments[idx].topic_text:
+                if bp is not None and idx < len(assignments) and assignments[idx].topic_text:
                     bp.title = assignments[idx].topic_text
                     bp.topic_assignment_id = assignments[idx].id
+
+            # Filter out None entries (failed topics) after index mapping
+            blueprints = [bp for bp in blueprints if bp is not None]
 
             # TD-fix: Persist blueprint placeholders to DB BEFORE HITL-2 so
             # DbContentDataService.get_briefs() returns brief-001 during the
@@ -1671,6 +1694,7 @@ async def _run_pipeline_stages(
                                     brief_id_overrides=[bp.brief_id],
                                     company_slug=slug,
                                 )
+                                revised = [r for r in revised if r is not None]
                                 if revised:
                                     bp = revised[0]
                                     bp.user_feedback = feedback

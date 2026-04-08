@@ -6,6 +6,7 @@
 
 export interface TopicAssignmentAPI {
   id: string;
+  display_id?: string;
   subdomain_id: string;
   subdomain_name: string;
   topic_text: string;

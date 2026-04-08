@@ -1880,8 +1880,13 @@ async def run_td_content_production_task(
 
     except asyncio.CancelledError:
         logger.info("TD→Content production pipeline cancelled: task_id=%s", task_id)
+        _cleanup_stale_pipeline_state(None, effective_slug, redis_client=get_sync_redis_or_none(), task_id=task_id)
     except Exception as exc:
         logger.exception("TD→Content production pipeline failed: %s", exc)
+        # Clean up stale CE pipeline state (brief-level entries like 'revising', 'evaluating')
+        # Without this, stale entries block future pipeline launches with 409 and
+        # cause ghost cards in the Kanban.
+        _cleanup_stale_pipeline_state(None, effective_slug, redis_client=get_sync_redis_or_none(), task_id=task_id)
         # Revert assignment statuses back to gap_analysis_complete (DB + Redis + SSE)
         # F18 fix: Redis GA-phase state must also be reverted, not just DB.
         # Without this, cards stay stuck in 'briefing' in the Kanban.
@@ -1911,6 +1916,12 @@ async def run_td_content_production_task(
         await _mark_pipeline_run_failed(session_factory, run_id, str(exc))
     finally:
         await task_store.flush_terminal(task_id)
+        try:
+            _rc = get_sync_redis_or_none()
+            if _rc:
+                cache_delete_pattern(_rc, f"cache:content:{effective_slug}:*")
+        except Exception:
+            pass
         task_store.release_slug_lock(f"td_content:{effective_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()

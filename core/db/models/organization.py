@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -36,6 +37,12 @@ class CompanyModel(UUIDPKMixin, TimestampMixin, Base):
     )
     industry: Mapped[str | None] = mapped_column(String, nullable=True)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    display_id_prefix: Mapped[str | None] = mapped_column(
+        String(10), nullable=True,
+    )
+    display_id_counter: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
 
     # relationships
     products: Mapped[list[ProductModel]] = relationship(

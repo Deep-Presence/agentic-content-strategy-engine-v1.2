@@ -23,6 +23,154 @@ M = TypeVar("M", bound=BaseModel)
 
 
 # ---------------------------------------------------------------------------
+# Literal field coercion — map invalid LLM values to allowed defaults
+# ---------------------------------------------------------------------------
+
+_CONTENT_FORMAT_ALLOWED = {"long_blog", "short_faq", "pillar_page", "comparison", "how_to"}
+_CONTENT_FORMAT_MAP: dict[str, str] = {
+    "technical_guide": "how_to",
+    "guide": "how_to",
+    "tutorial": "how_to",
+    "listicle": "short_faq",
+    "faq": "short_faq",
+    "deep_dive": "long_blog",
+    "thought_leadership": "long_blog",
+    "opinion": "long_blog",
+    "case_study": "long_blog",
+    "roundup": "comparison",
+    "versus": "comparison",
+    "ultimate_guide": "pillar_page",
+}
+
+_FUNNEL_STAGE_ALLOWED = {"awareness", "consideration", "decision", "retention"}
+_CHANNEL_ALLOWED = {"blog", "help_center", "landing_page", "resource_hub"}
+
+
+def _coerce_literal_fields(data: Any) -> Any:
+    """Coerce known Literal fields to valid values before Pydantic validation.
+
+    Handles content_format, funnel_stage, and channel — the three Literal
+    fields on ContentBrief/ContentBlueprint that LLMs occasionally hallucinate.
+    """
+    if not isinstance(data, dict):
+        return data
+
+    cf = data.get("content_format")
+    if isinstance(cf, str) and cf not in _CONTENT_FORMAT_ALLOWED:
+        mapped = _CONTENT_FORMAT_MAP.get(cf, "long_blog")
+        logger.warning(
+            "Coerced content_format %r → %r (not in allowed set)", cf, mapped,
+        )
+        data["content_format"] = mapped
+
+    fs = data.get("funnel_stage")
+    if isinstance(fs, str) and fs not in _FUNNEL_STAGE_ALLOWED:
+        logger.warning(
+            "Coerced funnel_stage %r → 'awareness' (not in allowed set)", fs,
+        )
+        data["funnel_stage"] = "awareness"
+
+    ch = data.get("channel")
+    if isinstance(ch, str) and ch not in _CHANNEL_ALLOWED:
+        logger.warning(
+            "Coerced channel %r → 'blog' (not in allowed set)", ch,
+        )
+        data["channel"] = "blog"
+
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Null coercion — replace null values with sensible defaults
+# ---------------------------------------------------------------------------
+
+_TYPE_DEFAULTS: dict[str, Any] = {
+    "string": "",
+    "integer": 0,
+    "number": 0.0,
+    "boolean": False,
+    "array": [],
+    "object": {},
+}
+
+
+def _coerce_nulls(data: Any, model_cls: type[BaseModel]) -> Any:
+    """Recursively replace null values with type-appropriate defaults.
+
+    Without constrained decoding, LLMs may emit ``null`` for fields that
+    Pydantic requires to be non-None.  This walks the data dict, consults
+    the model's field annotations, and swaps nulls for safe defaults
+    (empty string, 0, [], etc.) so that ``model_validate`` succeeds.
+    """
+    if not isinstance(data, dict):
+        return data
+
+    try:
+        fields = model_cls.model_fields
+    except AttributeError:
+        return data
+
+    for field_name, field_info in fields.items():
+        if field_name not in data:
+            continue
+        if data[field_name] is not None:
+            # Recurse into nested BaseModel fields
+            anno = field_info.annotation
+            if anno is not None:
+                origin = getattr(anno, "__origin__", None)
+                if origin is list and isinstance(data[field_name], list):
+                    args = getattr(anno, "__args__", ())
+                    if args and isinstance(args[0], type) and issubclass(args[0], BaseModel):
+                        data[field_name] = [
+                            _coerce_nulls(item, args[0])
+                            if isinstance(item, dict) else item
+                            for item in data[field_name]
+                        ]
+                elif isinstance(anno, type) and issubclass(anno, BaseModel) and isinstance(data[field_name], dict):
+                    data[field_name] = _coerce_nulls(data[field_name], anno)
+            continue
+
+        # data[field_name] is None — check if the field is Optional first
+        import typing
+
+        anno = field_info.annotation
+        if anno is None:
+            continue
+
+        # If the field is Optional (Union[X, None]), None is valid — leave it
+        origin = getattr(anno, "__origin__", None)
+        if origin is typing.Union:
+            args = getattr(anno, "__args__", ())
+            if type(None) in args:
+                continue  # Optional field — None is a valid value
+
+        # Field is required and non-Optional — coerce null to a safe default
+        if origin is list:
+            data[field_name] = []
+        elif origin is dict:
+            data[field_name] = {}
+        elif isinstance(anno, type):
+            if issubclass(anno, str):
+                data[field_name] = ""
+            elif issubclass(anno, bool):
+                data[field_name] = False
+            elif issubclass(anno, int):
+                data[field_name] = 0
+            elif issubclass(anno, float):
+                data[field_name] = 0.0
+            elif issubclass(anno, list):
+                data[field_name] = []
+            elif issubclass(anno, dict):
+                data[field_name] = {}
+            else:
+                data[field_name] = ""
+        else:
+            data[field_name] = ""
+
+    return data
+
+
+# ---------------------------------------------------------------------------
 # safe_parse — robust LLM JSON → Pydantic
 # ---------------------------------------------------------------------------
 
@@ -58,6 +206,8 @@ def safe_parse(text: str, model_cls: Type[M]) -> M:
     # Layer 1: direct parse (strict=False tolerates control chars in strings)
     try:
         data = json.loads(raw, strict=False)
+        _coerce_literal_fields(data)
+        _coerce_nulls(data, model_cls)
         return model_cls.model_validate(data)
     except (json.JSONDecodeError, Exception):
         pass
@@ -70,6 +220,8 @@ def safe_parse(text: str, model_cls: Type[M]) -> M:
             "json_repair succeeded for %s (repaired malformed LLM output)",
             model_cls.__name__,
         )
+        _coerce_literal_fields(data)
+        _coerce_nulls(data, model_cls)
         return model_cls.model_validate(data)
     except Exception as exc:
         raise ValueError(

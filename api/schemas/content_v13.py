@@ -31,8 +31,8 @@ class ContentStartRequestV13(BaseModel):
     manual_cluster: Optional[str] = Field(default=None, max_length=200)
     gap_query_id: Optional[str] = None  # Direct gap lookup key from Analytics
     brief_id_hint: Optional[str] = Field(
-        default=None, max_length=20, pattern=r"^brief-\d{1,4}$",
-    )  # Pre-created brief_id (validated to prevent path traversal)
+        default=None, max_length=20, pattern=r"^[A-Za-z][A-Za-z0-9]{0,9}-\d{1,4}$",
+    )  # Pre-created brief_id — accepts brief-001 and display_id (WE-003)
 
     # Product scope
     product_slug: Optional[str] = None

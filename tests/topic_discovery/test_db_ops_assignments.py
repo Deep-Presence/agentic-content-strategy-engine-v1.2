@@ -35,6 +35,7 @@ class TestDbRowToPydanticAssignment:
 
         row = MagicMock()
         row.id = overrides.get("id", uuid.uuid4())
+        row.display_id = overrides.get("display_id", "WE-001")
         row.subdomain_id_text = overrides.get("subdomain_id_text", "sd-001")
         row.subdomain_name = overrides.get("subdomain_name", "AP Automation")
         row.topic_text = overrides.get("topic_text", "How AP Works")
@@ -163,6 +164,7 @@ class TestDbReadAssignmentsByIds:
         row_id = uuid.uuid4()
         mock_row = MagicMock()
         mock_row.id = row_id
+        mock_row.display_id = "WE-001"
         mock_row.subdomain_id_text = "sd-1"
         mock_row.subdomain_name = "Test Node"
         mock_row.topic_text = "Test Topic"

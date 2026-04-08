@@ -1,5 +1,55 @@
 [
   {
+    "id": "D-STRUCTURED-OUTPUT-LAYER1",
+    "timestamp": "2026-04-08",
+    "task": "Layer 1 Constrained Decoding — add json_schema strict mode to 14 LLM call sites",
+    "decision": "Create dedicated schema models (not reuse domain models) for OpenRouter constrained decoding. CE schemas in core/content_engine/structured_schemas.py (6 models), TD schemas in core/topic_discovery/structured_schemas.py (7 models). Shared build_response_format() helper in core/shared_tools/structured_output.py. All Dict[str, Any/T] fields replaced with typed sub-models (strict mode requires additionalProperties: false). Perplexity calls (Source C, Fact Enricher, Linker) and raw-markdown calls (Drafter, Formatter) excluded. require_parameters=True on all json_schema calls for routing safety.",
+    "rationale": "Production crash on 2026-04-08: Brief Builder LLM returned content_format='technical_guide' instead of 5 allowed Literal values. Blind retries produced same invalid value. Zero blueprints. Pipeline failure. Constrained decoding prevents this class of error at the token level. Dedicated schema models chosen because: (1) domain models have post-parse fields (gap_context, id, embedding) that waste tokens and confuse the LLM, (2) Dict[str, Any] breaks strict mode, (3) clean contract for what LLM should output vs what system populates.",
+    "alternatives": [
+      "Reuse domain models directly as response_format — rejected: Dict[str, Any] fields break strict mode, post-parse fields waste tokens",
+      "Use client.beta.chat.completions.parse() for auto-parsing — rejected: changes LLMResponse return type, breaks all 11+ existing callers",
+      "Use json_object mode (no schema enforcement) — rejected: does not prevent invalid Literal values, just ensures valid JSON",
+      "Use instructor library for validation-driven re-prompting — considered as Layer 2, orthogonal to Layer 1"
+    ],
+    "impact": "6 new files + 10 modified files. 43 new tests. 14 LLM call sites wired. Token overhead: ~200-2000 tokens per request depending on schema complexity.",
+    "approved_by": "Aryan",
+    "codex_review": "gpt-5.3-codex critical review (473K tokens). 9 findings identified — see codex_findings below.",
+    "codex_findings": [
+      {"id": "CF-1", "severity": "CRITICAL", "issue": "Source B source_personas vs target_personas key mismatch — prompt uses source_personas, schema enforces target_personas, parser reads source_personas → persona_ids resolve to empty under constrained decoding", "status": "NEEDS_FIX"},
+      {"id": "CF-2", "severity": "HIGH", "issue": "require_parameters sent at top level of extra_body; OpenRouter docs define it under provider.require_parameters (nested)", "status": "NEEDS_FIX"},
+      {"id": "CF-3", "severity": "HIGH", "issue": "Hierarchy/unified S2 prompt uses pillar_name/pillar_description/subdomains; schema uses name/description/children — material key name mismatch", "status": "NEEDS_FIX"},
+      {"id": "CF-4", "severity": "HIGH", "issue": "target_keywords prompt expects {primary, secondary[]}, schema enforces List[str]; UI/API expect object shape", "status": "NEEDS_FIX"},
+      {"id": "CF-5", "severity": "MEDIUM", "issue": "reading_hierarchy prompt uses H1/H2/H3 (uppercase), schema uses h1/h2/h3 (lowercase); to_domain_model() normalizes but build_brief() parses to ContentBlueprint directly, bypassing schema model", "status": "NEEDS_FIX"},
+      {"id": "CF-6", "severity": "MEDIUM", "issue": "No graceful downgrade if provider rejects json_schema — fails hard, no fallback to json_object mode", "status": "DEFERRED"},
+      {"id": "CF-7", "severity": "MEDIUM", "issue": "Non-trivial token overhead: CEContentBlueprintSchema ~2038 tokens, TDUnifiedHierarchySchema ~596 tokens", "status": "MONITOR"},
+      {"id": "CF-8", "severity": "LOW", "issue": "Several prompt example fields now forbidden by schema (user_feedback, rationale, example_topics) — wasted prompt instructions", "status": "DEFERRED"},
+      {"id": "CF-9", "severity": "MEDIUM", "issue": "Test suite passes but misses major prompt/schema contract regressions — need contract tests", "status": "DEFERRED"}
+    ],
+    "status": "IMPLEMENTATION_COMPLETE_NEEDS_FIXES"
+  },
+  {
+    "id": "D-DISPLAY-ID-PART2",
+    "timestamp": "2026-04-08",
+    "task": "Universal Display ID Part 2 — pipeline propagation + frontend + 6 audit fixes",
+    "decision": "Part 2: Propagate display_id through orchestrator→Redis→CE→Content Data Service→Frontend. 6 audit fixes: H1 (brief_id_hint regex ^[A-Za-z][A-Za-z0-9]{0,9}-\\d{1,4}$), H2 (build_briefs_parallel preserves None entries for index alignment; all 7 callers filter after), M1 (JSON service regex), M2 (GA card dedup by topic_assignment_id in get_briefs), M3 (_brief_dir path sanitization), L1 (frontend fallback numbering from max existing).",
+    "rationale": "H1: Content Studio 'Retry' button sends selectedCard.id (now WE-003) as brief_id_hint — old regex ^brief-\\d{1,4}$ would 422-reject. H2: Pre-existing bug — build_briefs_parallel filtered None entries, collapsing indices. When topic 1 fails, topic 2's blueprint gets topic 1's assignment data. Now Nones preserved, callers map by index THEN filter. M2: If cleanup_ga_phase_state fails, both ta-{uuid} and WE-003 appear — dedup by topic_assignment_id prevents duplication. M3: Defense-in-depth — brief_id used as path segment, reject /, \\, .., null. L1: Mixed backend/fallback display_ids could collide (both WE-001) — fallback now starts after max existing number.",
+    "alternatives": [
+      "Remove brief_id_hint validation entirely — rejected: loses path traversal protection",
+      "Fix only TD caller for H2, leave others — rejected: all 7 callers could receive Nones",
+      "Full dedup by ta_id + brief_id hash — over-engineering: topic_assignment_id is sufficient",
+      "Sanitize at derive_prefix instead of _brief_dir — rejected: defense-in-depth at consumption point is safer"
+    ],
+    "impact": "15 backend files + 7 frontend files modified, 3 new test files (37 tests). 240 affected tests passing. TypeScript clean.",
+    "approved_by": "Aryan",
+    "codex_review": "2 rounds of gpt-5.3-codex review. Round 1: 6 findings (2 HIGH, 2 MEDIUM, 2 LOW) — all 6 fixed. Round 2: 3 new findings (2 HIGH-theoretical, 1 LOW) — deferred as low real-world risk. 106 tests run by Codex, all passing.",
+    "deferred_findings": [
+      "Legacy pipeline.py _brief_dir has no sanitization (workers/dispatcher.py imports it) — LOW real risk, derive_prefix only produces [A-Z]",
+      "derive_prefix can produce digit-first prefix for digit-first company names (e.g. '3M' → '3M-001') which fails ^[A-Za-z] validator — extremely rare",
+      "build_briefs_parallel return type annotation says List[ContentBlueprint] but now includes None entries — type annotation drift"
+    ],
+    "status": "COMPLETE"
+  },
+  {
     "id": "D-KANBAN-SYNC-LAG-FIX",
     "timestamp": "2026-04-08",
     "task": "Fix Content Studio Kanban 4-minute sync lag — Codex audit recommendation R1",
@@ -1223,6 +1273,31 @@
       "Add DB fallback only when filesystem returns empty — viable but masks the real issue"
     ],
     "outcome": "Audit saved to .claude/sprints/pending/td-filesystem-db-disconnect-audit.md. Includes 6 gaps, severity ratings, exact file/line references, available DB equivalents, and implementation order.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-DISPLAY-ID-SYSTEM",
+    "timestamp": "2026-04-08",
+    "task": "Universal Display ID System — backend-generated per-company IDs (WE-001, IH-042) for topic assignments",
+    "decision": "Per-company counter on companies table (display_id_prefix + display_id_counter) with SELECT FOR UPDATE for atomicity. backfill_display_ids() called after every bulk write. Gap-tolerant (Linear-style). display_id stored on topic_assignments. Carried through Pydantic model during delete+insert cycles. AUTONOMOUS/MANUAL CE modes keep brief-NNN fallback.",
+    "rationale": "User needs a single human-readable ID to track a topic from discovery through content production. Frontend-only IDs (computed at render time) reset on every page load and don't persist to Content Engine. brief-001 numbering resets every pipeline run and clobbers previous briefs. Codex reviewed plan: PASS — no CRITICAL/HIGH/MEDIUM findings.",
+    "alternatives": [
+      "Per-discovery counter — rejected: IDs not globally unique across expansions",
+      "Reuse deleted IDs — rejected: confusing for users, complex logic",
+      "Generate display_ids for AUTONOMOUS/MANUAL modes — deferred: no TopicAssignment exists"
+    ],
+    "files_affected": [
+      "core/topic_discovery/display_id.py (NEW)",
+      "core/db/migrations/versions/0037_add_display_id_system.py (NEW)",
+      "core/models/topic_discovery.py",
+      "core/db/models/topic_discovery.py",
+      "core/db/models/organization.py",
+      "core/topic_discovery/db_ops.py",
+      "core/topic_discovery/pipeline.py",
+      "core/services/db_topic_discovery_data.py"
+    ],
+    "outcome": "Part 1 (Backend Foundation) implemented. 3 new files, 7 modified, 20 new tests. 1401 API + 45 TD tests passing. Part 2 (Pipeline Propagation + Frontend) pending.",
     "reversible": true,
     "approved_by": "Aryan"
   }

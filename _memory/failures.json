@@ -1,5 +1,14 @@
 [
   {
+    "id": "F19",
+    "timestamp": "2026-04-08",
+    "what_broke": "Codex review of structured-output-layer1 found 5 schema/prompt/API contract mismatches that would cause runtime failures under constrained decoding (NOT YET HIT IN PRODUCTION — caught in code review).",
+    "root_cause": "Schema models were designed from domain models and test data, not verified field-by-field against LLM prompt output examples. Five specific mismatches: (1) Source B prompt says source_personas, schema says target_personas, parser reads source_personas → empty persona_ids. (2) require_parameters sent at top-level extra_body, should be nested under provider key per OpenRouter docs. (3) Hierarchy prompts use pillar_name/subdomains, schemas use name/children. (4) target_keywords prompt expects {primary, secondary[]}, schema enforces List[str]. (5) reading_hierarchy prompt uses H1/H2/H3, schema uses h1/h2/h3, to_domain_model() normalizes but is never called.",
+    "fix_applied": "NOT YET FIXED. All 5 findings documented in decisions.json D-STRUCTURED-OUTPUT-LAYER1 codex_findings CF-1 through CF-5.",
+    "lesson": "When creating schema models for constrained decoding, verify each schema field-by-field against: (1) the LLM prompt output example, (2) the downstream parser code that reads the output, (3) the API/frontend consumers. Schema models must be the single source of truth for LLM output shape — a mismatch between schema and prompt/parser causes silent data loss or crashes. Also: OpenRouter's provider routing parameters live under a nested 'provider' key, not at the extra_body root.",
+    "files_affected": ["core/topic_discovery/structured_schemas.py", "core/content_engine/structured_schemas.py", "core/content_engine/llm_client.py", "core/topic_discovery/agents.py"]
+  },
+  {
     "id": "F15",
     "timestamp": "2026-04-07",
     "what_broke": "Brief builder failed 3/3 JSON parse retries — 'Expecting comma delimiter: line 107'. Zero blueprints produced, assignment reverted to gap_analysis_complete. Compounded by uvicorn --reload hot restart mid-pipeline (file save triggered WatchFiles) which invalidated JWT → user logged out.",

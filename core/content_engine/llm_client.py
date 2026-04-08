@@ -18,9 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from typing import Any, Dict, List, Optional, Type
-
-from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
 
 from core.models.content_generation_v13 import LLMResponse
 
@@ -73,7 +71,7 @@ async def llm_call(
     user: str,
     max_tokens: int = 4096,
     temperature: float = 0.0,
-    response_format: Optional[Type[BaseModel]] = None,
+    response_format: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     max_retries: int = 3,
     base_delay: float = 1.0,
@@ -86,7 +84,8 @@ async def llm_call(
         user: User prompt.
         max_tokens: Maximum output tokens.
         temperature: Sampling temperature.
-        response_format: Optional Pydantic model for structured output.
+        response_format: Optional dict (e.g. {"type": "json_object"}) passed
+            through as-is. None → no structured output constraint.
         metadata: Optional metadata dict (passed via extra_body for tracing).
         max_retries: Maximum retry attempts on transient failures.
         base_delay: Base delay in seconds for exponential backoff.
@@ -115,10 +114,13 @@ async def llm_call(
         "temperature": temperature,
     }
 
+    extra_body: Dict[str, Any] = {}
     if metadata:
-        kwargs["extra_body"] = {"metadata": metadata}
+        extra_body["metadata"] = metadata
+    if extra_body:
+        kwargs["extra_body"] = extra_body
 
-    if response_format:
+    if response_format is not None:
         kwargs["response_format"] = response_format
 
     last_error: Optional[Exception] = None
@@ -156,6 +158,7 @@ async def llm_call(
 
         except Exception as exc:
             last_error = exc
+
             if attempt < max_retries - 1:
                 delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
                 logger.warning(

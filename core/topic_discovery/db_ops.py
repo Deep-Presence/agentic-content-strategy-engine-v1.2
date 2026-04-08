@@ -51,6 +51,7 @@ def _db_row_to_pydantic_assignment(row: Any) -> TopicAssignment:
 
     return TopicAssignment(
         id=str(row.id),
+        display_id=row.display_id or "",
         subdomain_id=row.subdomain_id_text or "",
         subdomain_name=row.subdomain_name or "",
         topic_text=row.topic_text,
@@ -695,6 +696,8 @@ async def db_write_matrix(
     discovery_id: _uuid.UUID,
     matrix: TopicAssignmentMatrix,
     version: int,
+    *,
+    company_id: Optional[_uuid.UUID] = None,
 ) -> int:
     """Persist TopicAssignmentModel rows for the dimensionality matrix.
 
@@ -703,6 +706,7 @@ async def db_write_matrix(
     2. Delete existing assignments for this discovery + version (idempotent)
     3. Map Pydantic enums -> DB enums and bulk insert
     4. Update topic_discoveries.matrix_version
+    5. Backfill display_ids for newly inserted assignments (if company_id given)
 
     Returns the version written.
     """
@@ -755,6 +759,9 @@ async def db_write_matrix(
                 except (ValueError, AttributeError):
                     pass
 
+            # Map display_id: "" → None for backfill detection
+            raw_display_id = getattr(a, "display_id", None) or None
+
             models.append(TopicAssignmentModel(
                 id=a_uuid,
                 discovery_id=discovery_id,
@@ -788,12 +795,18 @@ async def db_write_matrix(
                     if isinstance(getattr(a, "persona_affinity", None), dict)
                     else None
                 ),
+                display_id=raw_display_id,
             ))
 
         if models:
             await assign_repo.bulk_create(models)
 
-        # 4. Update discovery version
+        # 4. Backfill display_ids for newly inserted assignments
+        if company_id is not None:
+            from core.topic_discovery.display_id import backfill_display_ids
+            await backfill_display_ids(session, company_id, discovery_id)
+
+        # 5. Update discovery version
         await disc_repo.update_versions(
             discovery_id, matrix_version=version,
         )
@@ -961,6 +974,8 @@ async def db_write_assignments_for_subdomain(
     assignments: List["TopicAssignment"],
     matrix_version: int,
     expansion_batch_id: _uuid.UUID,
+    *,
+    company_id: Optional[_uuid.UUID] = None,
 ) -> int:
     """Replace assignments for ONE subdomain atomically.
 
@@ -969,6 +984,7 @@ async def db_write_assignments_for_subdomain(
        — preserves assignments with status in_gap_analysis/content_produced/published
        to avoid breaking content_pieces FK references.
     2. Bulk INSERT new assignments with expansion_batch_id.
+    3. Backfill display_ids for newly inserted assignments (if company_id given).
 
     Returns count of assignments written.
     """
@@ -987,6 +1003,7 @@ async def db_write_assignments_for_subdomain(
     preserve_statuses = [
         DBTopicAssignmentStatus.in_gap_analysis,
         DBTopicAssignmentStatus.gap_analysis_complete,
+        DBTopicAssignmentStatus.in_content_production,
         DBTopicAssignmentStatus.content_produced,
         DBTopicAssignmentStatus.published,
     ]
@@ -1009,6 +1026,9 @@ async def db_write_assignments_for_subdomain(
                 a_uuid = _uuid.UUID(a.id)
             except (ValueError, AttributeError):
                 a_uuid = _uuid.uuid4()
+
+            # Map display_id: "" → None for backfill detection
+            raw_display_id = getattr(a, "display_id", None) or None
 
             models.append(TopicAssignmentModel(
                 id=a_uuid,
@@ -1042,10 +1062,16 @@ async def db_write_assignments_for_subdomain(
                     if isinstance(getattr(a, "persona_affinity", None), dict) else None
                 ),
                 expansion_batch_id=expansion_batch_id,
+                display_id=raw_display_id,
             ))
 
         if models:
             await assign_repo.insert_for_subdomain(models)
+
+        # 3. Backfill display_ids for newly inserted assignments
+        if company_id is not None:
+            from core.topic_discovery.display_id import backfill_display_ids
+            await backfill_display_ids(session, company_id, discovery_id)
 
         await session.commit()
 

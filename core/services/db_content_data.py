@@ -202,6 +202,7 @@ class DbContentDataService:
 
             items.append(ContentBriefListItem(
                 id=display_id,
+                display_id=display_id,
                 title=piece.title or "",
                 status=display_status,
                 content_type=content_type,
@@ -224,6 +225,20 @@ class DbContentDataService:
                     else None
                 ),
             ))
+
+        # Dedup: filter out GA cards whose topic_assignment_id already has
+        # a DB content piece (prevents transient duplication when
+        # cleanup_ga_phase_state fails after persist_blueprints_early).
+        piece_ta_ids: set[str] = set()
+        for piece in pieces:
+            ta_id = getattr(piece, "topic_assignment_id", None)
+            if ta_id is not None:
+                piece_ta_ids.add(str(ta_id))
+        if piece_ta_ids:
+            ga_cards = [
+                card for card in ga_cards
+                if card.topic_assignment_id not in piece_ta_ids
+            ]
 
         # Prepend GA-phase cards (Queue column) before DB brief cards
         all_items = ga_cards + items
@@ -259,6 +274,7 @@ class DbContentDataService:
         for card in raw_cards:
             items.append(ContentBriefListItem(
                 id=card["id"],  # ta-{uuid}
+                display_id=card.get("display_id", ""),
                 title=card.get("title", ""),
                 status=card["status"],
                 content_type="blog",  # default, will be determined by Brief Builder later

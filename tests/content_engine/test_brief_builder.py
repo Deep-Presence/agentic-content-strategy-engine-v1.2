@@ -159,7 +159,8 @@ class TestBuildBriefsParallel:
         assert len(results) == 2
 
     @pytest.mark.asyncio
-    async def test_missing_context_filtered(self):
+    async def test_missing_context_preserved_as_none(self):
+        """Topics with missing context produce None entries (index-preserving)."""
         from core.content_engine.brief_builder import build_briefs_parallel
 
         contexts = {
@@ -176,7 +177,10 @@ class TestBuildBriefsParallel:
                    new_callable=AsyncMock, return_value=resp):
             results = await build_briefs_parallel(contexts=contexts, topics=topics)
 
-        assert len(results) == 1
+        # Index-preserving: 2 entries, one non-None, one None
+        assert len(results) == 2
+        assert results[0] is not None  # q-001 succeeded
+        assert results[1] is None  # q-002 missing context
 
     @pytest.mark.asyncio
     async def test_unique_brief_ids(self):
@@ -235,8 +239,10 @@ class TestBuildBriefsParallel:
                    new_callable=AsyncMock, side_effect=_side_effect):
             results = await build_briefs_parallel(contexts=contexts, topics=topics)
 
-        # One fails, one succeeds
-        assert len(results) == 1
+        # Index-preserving: 2 entries, one None (failed), one non-None
+        assert len(results) == 2
+        non_none = [r for r in results if r is not None]
+        assert len(non_none) == 1
 
     @pytest.mark.asyncio
     async def test_semaphore_limits_concurrency(self):

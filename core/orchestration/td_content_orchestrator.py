@@ -659,6 +659,7 @@ def _write_ga_phase_redis(
                 "priority_score": getattr(a, "priority_score", 0.0),
                 "buyer_stage": a.buyer_stage.value if a.buyer_stage else None,
                 "ga_run_id": ga_run_id,
+                "display_id": getattr(a, "display_id", "") or "",
                 # Enriched fields for Content Studio sidebar
                 "intent_type": a.intent_type.value if a.intent_type else None,
                 "persona_name": getattr(a, "persona_name", "") or "",

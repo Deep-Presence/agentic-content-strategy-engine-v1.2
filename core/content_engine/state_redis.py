@@ -443,6 +443,7 @@ def read_ga_phase_cards(
         card["topic_assignment_id"] = card_key[len(_GA_CARD_PREFIX):]
         # Pass through enriched metadata for Content Studio sidebar
         for extra_key in (
+            "display_id",
             "intent_type", "persona_name", "persona_id",
             "persona_affinity", "priority_factors",
             "content_format", "estimated_word_count",
@@ -557,6 +558,7 @@ async def read_ga_phase_cards_async(
         card["topic_assignment_id"] = card_key[len(_GA_CARD_PREFIX):]
         # Pass through enriched metadata for Content Studio sidebar
         for extra_key in (
+            "display_id",
             "intent_type", "persona_name", "persona_id",
             "persona_affinity", "priority_factors",
             "content_format", "estimated_word_count",

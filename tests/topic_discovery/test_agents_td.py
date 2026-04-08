@@ -909,14 +909,16 @@ class TestHierarchyConstruction:
 
     @pytest.mark.asyncio
     async def test_uses_response_format_json_object(self, mock_litellm):
-        """Hierarchy construction should request JSON mode from the LLM."""
+        """Hierarchy construction should request json_object mode."""
         response_json = json.dumps({"hierarchy": [{"pillar_name": "A", "pillar_description": "d"}]})
         mock_litellm.acompletion = AsyncMock(
             return_value=_make_mock_response(response_json)
         )
         await run_hierarchy_construction(["A"], "test.com", timeout_s=10.0)
         first_call_kwargs = mock_litellm.acompletion.call_args_list[0].kwargs
-        assert first_call_kwargs.get("response_format") == {"type": "json_object"}
+        rf = first_call_kwargs.get("response_format")
+        assert rf is not None
+        assert rf["type"] == "json_object"
 
     @pytest.mark.asyncio
     async def test_retry_on_first_failure(self, mock_litellm):

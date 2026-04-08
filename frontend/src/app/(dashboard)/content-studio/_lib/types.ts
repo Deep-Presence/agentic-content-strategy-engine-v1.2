@@ -66,6 +66,7 @@ export interface GapSummaryResponseAPI {
 
 export interface ContentBriefListItemAPI {
   id: string;
+  display_id?: string;
   title: string;
   status: string;
   content_type: string;

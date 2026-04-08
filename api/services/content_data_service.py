@@ -133,7 +133,7 @@ def _resolve_storage(
 
 # Accepts bare company slugs ("ramp") and effective product slugs ("ramp__card")
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
-_BRIEF_ID_PATTERN = re.compile(r"^brief-\d{1,4}$")
+_BRIEF_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,9}-\d{1,4}$")
 
 _VALID_STAGES = frozenset(
     {"outline", "draft", "enriched", "formatted", "eval_history", "final"}

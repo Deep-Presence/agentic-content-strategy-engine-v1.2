@@ -278,7 +278,7 @@ export function adaptAssignment(
 
   return {
     id: item.id,
-    displayId: '', // assigned by hook after sorting
+    displayId: item.display_id || '', // from backend; hook fills fallback if empty
     title: item.topic_text,
     description: (meta.description as string) ?? '',
     cluster: taxonomyEntry?.clusterName ?? 'Uncategorized',

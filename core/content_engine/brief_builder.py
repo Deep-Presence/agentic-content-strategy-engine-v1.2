@@ -103,6 +103,7 @@ async def build_brief(
             user=user_prompt,
             max_tokens=8192,
             temperature=0.0 if parse_attempt == 0 else 0.1,
+            response_format={"type": "json_object"},
             metadata={
                 "agent": "brief_builder",
                 "brief_id": brief_id,
@@ -253,11 +254,14 @@ async def build_briefs_parallel(
     ]
     results = await asyncio.gather(*tasks, return_exceptions=False)
 
-    blueprints = [bp for bp in results if bp is not None]
+    # Preserve positional alignment: return List[Optional[ContentBlueprint]]
+    # so callers can zip results with their input lists by index.
+    # None entries indicate failed topics (missing context or LLM error).
+    blueprints: list = list(results)
 
     logger.info(
         "Built %d/%d blueprints in parallel (max_concurrent=%d)",
-        len(blueprints),
+        sum(1 for bp in blueprints if bp is not None),
         len(topics),
         max_concurrent,
     )

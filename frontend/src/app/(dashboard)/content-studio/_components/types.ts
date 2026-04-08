@@ -128,6 +128,8 @@ export interface ContentMetadata {
 
 export interface ContentCard {
   id: string;
+  /** Human-readable display ID from Topic Discovery (e.g. "WE-003") */
+  displayId?: string;
   title: string;
   type: ContentType;
   cluster: string;

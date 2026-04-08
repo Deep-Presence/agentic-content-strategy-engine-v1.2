@@ -1,7 +1,7 @@
 {
-  "current_sprint": "kanban-sync-lag-fix",
+  "current_sprint": "structured-output-layer1",
   "last_updated": "2026-04-08",
-  "test_count": 1986,
+  "test_count": 2079,
   "completed_sprints_summary": {
     "total_tasks_completed": 43,
     "sprints": [
@@ -58,10 +58,67 @@
       {"sprint": "cannibalization-detection", "date": "2026-04-07", "summary": "Content cannibalization detection module (two surfaces) + json_repair integration. Proactive: Pipeline B checks new topic assignments vs content inventory embeddings during expansion — enriched query text (topic+description+keywords), piecewise priority penalty (0% at 0.80, 20% at 0.90, 35% cap), stored in metadata_json. Retroactive: GET /{inventory_id}/similar endpoint (pgvector cosine, self-excluding, embeddings_ready flag, Generate Embeddings CTA). Frontend: overlap badges on Planner rows, cannibalization section in Planner DetailDrawer, Content Performance drawer Section F live. json_repair library replaces hand-rolled _repair_json() in safe_parse() + 3 evaluator judges. Codex gpt-5.3-codex reviewed. 34 new tests. 73 total passing. 21 files changed."},
       {"sprint": "cms-auto-sync-prompt-gen", "date": "2026-04-07", "summary": "CMS auto-sync + incremental upsert tracking + auto-prompt generation. Feature 1: Auto-sync on first CMS connect (POST /connect triggers run_cms_sync_task if last_sync_at is None, TaskConflictError idempotency guard, sync_task_id in response). Feature 2: Incremental upsert with new page detection (get_existing_urls() pre-collect, ingest_from_cms_sync returns (pairs, new_page_ids) tuple). Feature 3: Auto-prompt generation for new pages chained in run_cms_sync_task Phase 2 (_run_auto_prompt_generation helper, ContentToPromptOrchestrator, auto_approve=True, cap at auto_prompt_max_pages=50, error isolation, SSE events for prompt_generation phase). Codex gpt-5.3-codex reviewed: idempotency guard, deterministic page selection, observability for partial success incorporated. 13 new tests. 106 targeted tests passing. 1979 total passing. 8 files changed."},
       {"sprint": "content-studio-architecture-fix", "date": "2026-04-07", "summary": "Content Studio 3-phase architecture fix. Phase 1: Bug 1 (TD HITL-2 bypass — dead else branch replaced with full HITL checkpoint pattern in pipeline_v13.py), Bug 2 (OpenRouter model ID fix: claude-haiku-4.5→claude-haiku-4-5 in settings.py), Bug 3 (GA→CE card snap-back — added 'briefing' to _GA_PHASES, in_content_production enum+migration 0036, orchestrator transition step 2a). Phase 2: Bug 4 (polling overwrites SSE — version-aware merge using updatedAt in useContentBriefs.ts, adaptive polling 5s/60s/none). Phase 3: Company-wide SSE stream — CompanyEventBus (in-memory pub/sub per company, core/events/company_event_bus.py), SSE endpoint (api/routers/company_stream.py), _emit_company helper (state_helpers.py), 8+ emit points in pipeline_v13.py, 3 emit points in td_content_orchestrator.py, useCompanyStream hook (300ms debounce), page.tsx wired. 9 EventBus tests. CRITICAL BUG FOUND IN REVIEW: _company_slug NameError in _run_pipeline_stages and _finalize_pipeline (variable defined in caller function, not passed as parameter). 5 additional issues identified (see failures.json F17-F18)."},
-      {"sprint": "kanban-sync-lag-fix", "date": "2026-04-08", "summary": "Fix Content Studio Kanban 4-minute sync lag (Codex audit R1). 4 fixes: (1) CRITICAL — centralized _emit_company() inside _write_pipeline_state_async() so every status write (outlining/drafting/linking/enriching) auto-broadcasts company SSE state_changed event; (2) GA-phase cleanup log level debug→warning; (3) Approve button in-flight guard (isSubmitting + handleActionGuarded prevents 409 double-click); (4) Optimistic updatedAt bump in updateCard so version-aware merge correctly keeps local status during 15s grace period. 7 new tests (test_state_helpers.py). Codex gpt-5.3-codex reviewed: R1 PASS, 2 pre-existing architectural items (file fallback non-atomic, in-memory CompanyEventBus) noted as DEFERRED. 624/625 content_engine tests passing (1 pre-existing). TypeScript clean."}
+      {"sprint": "kanban-sync-lag-fix", "date": "2026-04-08", "summary": "Fix Content Studio Kanban 4-minute sync lag (Codex audit R1). 4 fixes: (1) CRITICAL — centralized _emit_company() inside _write_pipeline_state_async() so every status write (outlining/drafting/linking/enriching) auto-broadcasts company SSE state_changed event; (2) GA-phase cleanup log level debug→warning; (3) Approve button in-flight guard (isSubmitting + handleActionGuarded prevents 409 double-click); (4) Optimistic updatedAt bump in updateCard so version-aware merge correctly keeps local status during 15s grace period. 7 new tests (test_state_helpers.py). Codex gpt-5.3-codex reviewed: R1 PASS, 2 pre-existing architectural items (file fallback non-atomic, in-memory CompanyEventBus) noted as DEFERRED. 624/625 content_engine tests passing (1 pre-existing). TypeScript clean."},
+      {"sprint": "universal-display-id-part2", "date": "2026-04-08", "summary": "Universal Display ID Part 2 — pipeline propagation + frontend + 6 audit fixes. display_id flows TD→Orchestrator→GA Redis→CE pipeline→Content Data Service→Frontend. H1: brief_id_hint regex relaxed. H2: build_briefs_parallel index preservation (all 7 callers). M1: JSON service regex. M2: GA card dedup by topic_assignment_id. M3: _brief_dir path sanitization. L1: frontend fallback numbering from max(existing)+1. 2 Codex gpt-5.3-codex reviews PASS. 37 new tests. 240 affected tests passing. TypeScript clean. 3 LOW-risk findings deferred (legacy pipeline.py _brief_dir, derive_prefix digit guard, return type annotation)."},
+      {"sprint": "structured-output-layer1", "date": "2026-04-08", "summary": "Layer 1 Constrained Decoding — OpenRouter json_schema strict mode on 14 LLM call sites (6 CE + 8 TD). 13 schema models. build_response_format() helper. All Dict[str, Any] replaced with typed sub-models. Perplexity/raw-markdown excluded. 43 new tests. Codex gpt-5.3-codex critical review: 9 findings (1 CRITICAL source_personas key mismatch, 3 HIGH require_parameters location + hierarchy key names + target_keywords shape, 3 MEDIUM reading_hierarchy casing + no graceful downgrade + token overhead, 1 LOW prompt field suppression, 1 MEDIUM test gaps). Findings 1-5 need fixes before production."}
     ]
   },
   "completed": [
+    {
+      "id": "T-structured-output-layer1",
+      "task": "Layer 1 Constrained Decoding — json_schema strict mode on 14 LLM call sites",
+      "sprint": "structured-output-layer1",
+      "status": "done",
+      "completed_at": "2026-04-08",
+      "tests_added": 43,
+      "files_modified": [
+        "core/shared_tools/structured_output.py",
+        "core/content_engine/structured_schemas.py",
+        "core/topic_discovery/structured_schemas.py",
+        "core/content_engine/llm_client.py",
+        "core/topic_discovery/agents.py",
+        "core/content_engine/brief_builder.py",
+        "core/content_engine/strategic_planner.py",
+        "core/content_engine/workers/outliner.py",
+        "core/content_engine/evaluator/eeat_judge.py",
+        "core/content_engine/evaluator/style_judge.py",
+        "core/content_engine/evaluator/factual_judge.py",
+        "tests/shared_tools/test_structured_output.py",
+        "tests/content_engine/test_structured_schemas.py",
+        "tests/topic_discovery/test_structured_schemas.py",
+        "tests/topic_discovery/test_agents_td.py"
+      ],
+      "codex_review": "gpt-5.3-codex — 9 findings: F1 CRITICAL (source_personas key mismatch), F2 HIGH (require_parameters wrong location), F3 HIGH (hierarchy key names), F4 HIGH (target_keywords shape), F5 MEDIUM (reading_hierarchy casing), F6 MEDIUM (no graceful downgrade), F7 MEDIUM (token overhead), F8 LOW (prompt field suppression), F9 MEDIUM (test gaps)"
+    },
+    {
+      "id": "T-universal-display-id-part2",
+      "task": "Universal Display ID Part 2 — pipeline propagation + frontend + 6 audit fixes",
+      "sprint": "universal-display-id-part2",
+      "status": "done",
+      "completed_at": "2026-04-08",
+      "tests_added": 37,
+      "files_modified": [
+        "core/orchestration/td_content_orchestrator.py",
+        "core/content_engine/pipeline_v13.py",
+        "core/content_engine/brief_builder.py",
+        "core/content_engine/state_redis.py",
+        "core/services/db_content_data.py",
+        "api/schemas/content_data.py",
+        "api/schemas/content_v13.py",
+        "api/services/content_data_service.py",
+        "frontend/src/app/(dashboard)/planner/_lib/types.ts",
+        "frontend/src/app/(dashboard)/planner/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/planner/_hooks/usePlannerData.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/ContentCardItem.tsx",
+        "tests/topic_discovery/test_display_id_propagation.py",
+        "tests/content_engine/test_h1_h2_audit_fixes.py",
+        "tests/content_engine/test_m2_m3_l1_audit_fixes.py",
+        "tests/content_engine/test_brief_builder.py"
+      ]
+    },
     {
       "id": "T-kanban-sync-lag-fix",
       "task": "Fix Content Studio Kanban 4-minute sync lag — centralize SSE emission in _write_pipeline_state_async",

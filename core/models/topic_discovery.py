@@ -317,6 +317,7 @@ class TopicAssignment(BaseModel):
     """A single content opportunity in the dimensionality matrix."""
 
     id: str = Field(default_factory=_uuid)
+    display_id: str = ""
     subdomain_id: str = ""
     subdomain_name: str = ""
     topic_text: str = ""

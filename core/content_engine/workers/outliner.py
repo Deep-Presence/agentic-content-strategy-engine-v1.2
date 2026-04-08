@@ -79,6 +79,7 @@ async def generate_outline(
             system=OUTLINER_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=4096,
+            response_format={"type": "json_object"},
             metadata={
                 "agent": "outliner",
                 "brief_id": brief.brief_id,
