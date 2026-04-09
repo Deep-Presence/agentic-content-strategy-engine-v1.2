@@ -1,7 +1,7 @@
 {
-  "sprint": "structured-output-layer1",
-  "sprint_goal": "Layer 1 Constrained Decoding — add response_format json_schema strict mode to 14 LLM call sites across Content Engine v1.3, Topic Discovery Pipeline A, and Pipeline B. Prevent Literal/enum field hallucinations at the token level.",
-  "sprint_status": "Implementation COMPLETE. 6 new files, 10 modified files, 43 new tests (11+16+16), 1 existing test updated. 236 targeted tests passing. Codex gpt-5.3-codex critical review: 9 findings (1 CRITICAL, 3 HIGH, 3 MEDIUM, 1 LOW, 1 INFO). Findings 1-5 need fixes before production.",
+  "sprint": "planner-studio-pipeline-fixes",
+  "sprint_goal": "Fix Content Planner→Studio pipeline integration issues discovered via Playwright E2E testing. 11 issues identified, 6 fixed (1,2,5,6,7 + topic-scoped GA detail view). 4 remaining UX issues (3,4,8,10). 1 new infrastructure issue (F20: stale semaphore blocks pipelines after restart).",
+  "sprint_status": "6/11 issues FIXED. E2E retest blocked by stale Redis semaphore (F20). Next session: clear semaphore, retest full pipeline, then tackle remaining UX issues.",
   "constraints": [
     "Backward compatibility with existing artifacts — all Pydantic fields must have defaults",
     "Raw SDK clients for gap analysis + content engine (no LangChain wrappers)",

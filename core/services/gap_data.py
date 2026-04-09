@@ -26,7 +26,7 @@ class GapDataServiceProtocol(Protocol):
     - ``DbGapDataService``: SQL queries against Postgres (Phase 3, Step 3)
     """
 
-    async def get_summary(self, effective_slug: str) -> GapSummaryResponse: ...
+    async def get_summary(self, effective_slug: str, *, ga_run_id: Optional[str] = None) -> GapSummaryResponse: ...
 
     async def get_queries(
         self,

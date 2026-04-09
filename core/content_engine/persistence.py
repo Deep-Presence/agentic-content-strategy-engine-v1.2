@@ -96,6 +96,28 @@ async def persist_blueprints_early(
                     except (ValueError, AttributeError):
                         ta_id = None
 
+                # Extract brief metadata for the detail endpoint
+                # so it works without the blueprints.json fallback
+                # (concurrent pipelines cause file race conditions).
+                _bp_dict = bp if isinstance(bp, dict) else (
+                    bp.model_dump(mode="json") if hasattr(bp, "model_dump") else {}
+                )
+                eval_data = {}
+                if _bp_dict.get("key_topics"):
+                    eval_data["key_topics"] = _bp_dict["key_topics"]
+                if _bp_dict.get("key_angles"):
+                    eval_data["key_angles"] = _bp_dict["key_angles"]
+                wc = _bp_dict.get("word_count_range")
+                if wc:
+                    if isinstance(wc, (list, tuple)) and len(wc) >= 2:
+                        eval_data["word_count_range"] = {"min": wc[0], "max": wc[1]}
+                    elif isinstance(wc, dict):
+                        eval_data["word_count_range"] = wc
+                if _bp_dict.get("priority_score") is not None:
+                    eval_data["priority_score"] = _bp_dict["priority_score"]
+                if _bp_dict.get("structural_targets") is not None:
+                    eval_data["structural_targets"] = _bp_dict["structural_targets"]
+
                 existing = await repo.get_by_slug_and_brief_id(slug, brief_id)
                 if existing:
                     existing.run_id = run_id
@@ -104,6 +126,11 @@ async def persist_blueprints_early(
                     existing.cluster_name = cluster
                     existing.content_type = content_format
                     existing.topic_assignment_id = ta_id
+                    if eval_data:
+                        existing.evaluation_results = {
+                            **(existing.evaluation_results or {}),
+                            **eval_data,
+                        }
                     await session.flush()
                 else:
                     await repo.create_piece(
@@ -116,6 +143,7 @@ async def persist_blueprints_early(
                         content_type=content_format,
                         cluster_name=cluster,
                         topic_assignment_id=ta_id,
+                        evaluation_results=eval_data or None,
                     )
             await session.commit()
         logger.info(

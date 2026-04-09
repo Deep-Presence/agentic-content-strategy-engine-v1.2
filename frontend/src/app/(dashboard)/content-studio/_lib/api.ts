@@ -233,10 +233,14 @@ export function fetchGapSummary(
   slug: string,
   productSlug?: string,
   signal?: AbortSignal,
+  gaRunId?: string,
 ): Promise<GapSummaryResponseAPI> {
+  const params: Record<string, string> = {};
+  if (productSlug) params.product_slug = productSlug;
+  if (gaRunId) params.ga_run_id = gaRunId;
   return api.get<GapSummaryResponseAPI>(
     `/api/v1/companies/${encodeURIComponent(slug)}/gap-analysis/summary`,
-    productSlug ? { product_slug: productSlug } : undefined,
+    Object.keys(params).length > 0 ? params : undefined,
     signal,
   );
 }

@@ -129,6 +129,7 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
   } = useGapSummary(
     card.status === 'gap_analysis_complete' || !isGAPhase,
     productSlug,
+    card.gaRunId,
   );
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {

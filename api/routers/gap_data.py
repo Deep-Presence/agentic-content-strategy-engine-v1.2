@@ -41,10 +41,11 @@ async def get_gap_summary(
     slug: str,
     gap_service: GapDataServiceProtocol = Depends(get_gap_data_service),
     product_slug: Optional[str] = Query(None, description="Filter by product slug"),
+    ga_run_id: Optional[str] = Query(None, description="Topic-scoped GA run ID (loads from topic_scoped/{id}/)"),
     _access=Depends(require_tenant),
 ) -> GapSummaryResponse:
     """Executive overview: SPA score, proximity stats, classifications, clusters."""
-    return await gap_service.get_summary(_effective(slug, product_slug))
+    return await gap_service.get_summary(_effective(slug, product_slug), ga_run_id=ga_run_id)
 
 
 @router.get("/queries", response_model=QueryListResponse)

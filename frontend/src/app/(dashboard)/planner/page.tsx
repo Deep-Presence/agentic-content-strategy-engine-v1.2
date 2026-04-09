@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, Plus, RotateCcw, X } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { ApiError } from '@/lib/api-client';
 import { startFromTopicsPipeline } from './_lib/api';
 import { deriveCompanyPrefix, formatDisplayId } from './_components/planner-data';
 import type { Assignment, RejectedItem } from './_components/planner-data';
@@ -74,9 +75,10 @@ export default function ContentPlannerPage() {
   const handleApprove = useCallback(async (ids: string[]) => {
     setDrawerAssignment(null);
     try {
+      // Step 1: Mark assignments as approved in DB
       await plannerData.approveAssignments(ids);
 
-      // Launch GA pipeline for Content Studio
+      // Step 2: Launch GA pipeline — if this fails, revert approvals
       if (companySlug) {
         try {
           await startFromTopicsPipeline(
@@ -85,9 +87,25 @@ export default function ContentPlannerPage() {
             companySlug,
             ids,
           );
-        } catch (pipelineErr) {
-          // GA launch failure should not block approval
+        } catch (pipelineErr: unknown) {
           console.error('GA pipeline launch failed:', pipelineErr);
+
+          // Revert assignment statuses back to not_started (best-effort)
+          try {
+            await plannerData.revertAssignments(ids);
+          } catch {
+            console.error('Failed to revert assignment statuses after pipeline failure');
+          }
+
+          // Show specific error to user
+          const is409 = pipelineErr instanceof ApiError && pipelineErr.status === 409;
+          showToast(
+            is409
+              ? 'A pipeline is already running. Wait for it to complete before sending more topics.'
+              : 'Failed to start content pipeline. Topics have been reverted.',
+            'error',
+          );
+          return;
         }
       }
 

@@ -621,12 +621,15 @@ async def start_from_topics_production(
             detail=f"GA run {body.ga_run_id} analysis not found. Gap analysis may not have completed.",
         )
 
-    # Create task
+    # Create task — allow_parallel=True because each start-production call
+    # targets a different topic (unique display_id as brief_id).  The pipeline
+    # semaphore already limits global concurrency.
     task = await create_task_durable(
         task_store,
         pipeline="td_content",
         company_slug=company_slug,
         product_slug=body.product_slug,
+        allow_parallel=True,
     )
 
     handle = asyncio.create_task(

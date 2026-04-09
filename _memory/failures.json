@@ -1,5 +1,14 @@
 [
   {
+    "id": "F20",
+    "timestamp": "2026-04-09",
+    "what_broke": "Pipeline semaphore timeout after server restart — new GA pipeline blocked for 300s then failed with TimeoutError. Stale entries in Redis Sorted Set semaphore:pipelines from previous session's crashed tasks.",
+    "root_cause": "When uvicorn reloads (file change detection) or crashes, running asyncio.create_task pipelines are cancelled. Their semaphore entries (ZADD with 2h TTL) persist in Redis. On restart, DbTaskStore.recover_tasks() calls _cleanup_semaphore_entries() for orphaned tasks — but only for tasks loaded into memory from DB. If the task completed/failed before startup recovery ran, the semaphore entry remains. Also: stale slug locks (SET NX EX 7200) from previous runs persist across restarts.",
+    "fix_applied": "Manual cleanup via redis-cli during testing. Production fix needed: (1) force_clear() at startup should also scan for entries whose holder task_id is not in _tasks, (2) Consider shorter semaphore member TTL or startup ZREMRANGEBYSCORE to purge entries older than server uptime.",
+    "lesson": "Background pipeline tasks tied to asyncio.create_task do not survive server restarts. All Redis state (locks, semaphore entries, pipeline_state hashes) needs cleanup on startup recovery. The 2h TTL is too long for dev where restarts are frequent.",
+    "files_affected": ["core/redis_semaphore.py", "core/services/db_task_store.py"]
+  },
+  {
     "id": "F19",
     "timestamp": "2026-04-08",
     "what_broke": "Codex review of structured-output-layer1 found 5 schema/prompt/API contract mismatches that would cause runtime failures under constrained decoding (NOT YET HIT IN PRODUCTION — caught in code review).",

@@ -44,6 +44,7 @@ export interface PlannerData {
   isExpanding: boolean;
   refetch: () => void;
   approveAssignments: (ids: string[]) => Promise<void>;
+  revertAssignments: (ids: string[]) => Promise<void>;
   rejectAssignments: (ids: string[]) => Promise<void>;
   restoreAssignment: (id: string) => Promise<void>;
   createAssignment: (data: CreateCustomAssignmentData) => Promise<void>;
@@ -266,6 +267,17 @@ export function usePlannerData(): PlannerData {
     [companySlug, assignments],
   );
 
+  const revertAssignments = useCallback(
+    async (ids: string[]) => {
+      if (!companySlug) return;
+      // Revert assignments back to not_started (used when pipeline launch fails)
+      await Promise.allSettled(
+        ids.map((id) => updateAssignmentStatus(companySlug, id, 'not_started')),
+      );
+    },
+    [companySlug],
+  );
+
   const rejectAssignments = useCallback(
     async (ids: string[]) => {
       if (!companySlug) return;
@@ -480,6 +492,7 @@ export function usePlannerData(): PlannerData {
     isExpanding,
     refetch,
     approveAssignments,
+    revertAssignments,
     rejectAssignments,
     restoreAssignment,
     createAssignment,

@@ -1880,13 +1880,13 @@ async def run_td_content_production_task(
 
     except asyncio.CancelledError:
         logger.info("TD→Content production pipeline cancelled: task_id=%s", task_id)
-        _cleanup_stale_pipeline_state(None, effective_slug, redis_client=get_sync_redis_or_none(), task_id=task_id)
+        _cleanup_stale_pipeline_state(_PROJECT_ROOT / "artifacts", effective_slug, redis_client=get_sync_redis_or_none(), task_id=task_id)
     except Exception as exc:
         logger.exception("TD→Content production pipeline failed: %s", exc)
         # Clean up stale CE pipeline state (brief-level entries like 'revising', 'evaluating')
         # Without this, stale entries block future pipeline launches with 409 and
         # cause ghost cards in the Kanban.
-        _cleanup_stale_pipeline_state(None, effective_slug, redis_client=get_sync_redis_or_none(), task_id=task_id)
+        _cleanup_stale_pipeline_state(_PROJECT_ROOT / "artifacts", effective_slug, redis_client=get_sync_redis_or_none(), task_id=task_id)
         # Revert assignment statuses back to gap_analysis_complete (DB + Redis + SSE)
         # F18 fix: Redis GA-phase state must also be reverted, not just DB.
         # Without this, cards stay stuck in 'briefing' in the Kanban.
@@ -1922,7 +1922,9 @@ async def run_td_content_production_task(
                 cache_delete_pattern(_rc, f"cache:content:{effective_slug}:*")
         except Exception:
             pass
-        task_store.release_slug_lock(f"td_content:{effective_slug}")
+        # No slug lock to release — start-production uses allow_parallel=True.
+        # Calling release_slug_lock here would pop a *different* locked run's
+        # entry from _slug_locks, causing cross-talk (Codex finding).
         task_store.remove_task_handle(task_id)
         clear_context()
 

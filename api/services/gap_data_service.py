@@ -596,12 +596,48 @@ def _compute_citation_exclusivity(
 # ── Endpoint 2.1: Summary ───────────────────────────────────────────
 
 
-def get_summary(storage: StorageBackend, slug: str) -> GapSummaryResponse:
-    """Build the executive overview response."""
-    _validate_slug(storage, slug)
+def get_summary(storage: StorageBackend, slug: str, *, ga_run_id: Optional[str] = None) -> GapSummaryResponse:
+    """Build the executive overview response.
 
-    data = _load_analysis_data(storage, slug)
-    report = _load_report_data(storage, slug)
+    When ``ga_run_id`` is provided, loads from the topic-scoped GA directory
+    (``gap_analysis/{slug}/topic_scoped/{ga_run_id}/``) instead of the
+    company-wide location.
+    """
+    if ga_run_id:
+        # Validate slug format even for scoped paths (Codex finding #1:
+        # without this, a crafted product_slug could traverse to another slug subtree)
+        if not _SLUG_PATTERN.match(slug):
+            raise HTTPException(status_code=400, detail="Invalid slug format")
+        # Validate ga_run_id is a UUID (defense-in-depth; StorageBackend also validates paths)
+        import uuid as _uuid_mod
+        try:
+            _uuid_mod.UUID(ga_run_id)
+        except (ValueError, AttributeError):
+            raise HTTPException(400, f"Invalid ga_run_id format: {ga_run_id}")
+        # Topic-scoped GA: load analysis.json from the scoped directory
+        scoped_key = f"gap_analysis/{slug}/topic_scoped/{ga_run_id}/analysis.json"
+        content = storage.read(scoped_key)
+        if content is None:
+            raise HTTPException(404, f"Topic-scoped GA run {ga_run_id} not found for '{slug}'")
+        try:
+            analysis = json.loads(content)
+        except json.JSONDecodeError:
+            raise HTTPException(500, f"Invalid JSON in topic-scoped analysis for GA run {ga_run_id}")
+        data = {"analysis": analysis, "report": {}, "cluster_specs": analysis.get("cluster_specs", [])}
+        # Try to load topic-scoped report if it exists (Codex finding #3)
+        scoped_report_key = f"gap_analysis/{slug}/topic_scoped/{ga_run_id}/gap_report.json"
+        report_content = storage.read(scoped_report_key)
+        if report_content is not None:
+            try:
+                report = json.loads(report_content)
+            except json.JSONDecodeError:
+                report = {}
+        else:
+            report = {}
+    else:
+        _validate_slug(storage, slug)
+        data = _load_analysis_data(storage, slug)
+        report = _load_report_data(storage, slug)
     analysis = data.get("analysis", {})
 
     # SPA score — find the "all" cluster result

@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 
 
 # Map ContentPieceStatus → frontend display status
+# Active pipeline statuses for GA-phase card validation (orphan cleanup)
+_ACTIVE_ASSIGNMENT_STATUSES = frozenset({
+    "approved", "in_gap_analysis", "gap_analysis_complete", "in_content_production",
+})
+
 _PIECE_STATUS_MAP = {
     "planned": "suggested",
     "drafting": "drafting",
@@ -253,6 +258,10 @@ class DbContentDataService:
 
         These are cards for topics undergoing gap analysis that don't yet
         have content_pieces DB rows. They appear in the Content Studio Queue.
+
+        Self-healing: validates each card's topic assignment still has an
+        active pipeline status in the DB. Orphaned cards (assignment reverted
+        to not_started or rejected) are purged from Redis automatically.
         """
         from core.config.settings import settings as _cfg
 
@@ -260,7 +269,10 @@ class DbContentDataService:
             return []
 
         from core.redis import get_redis_or_none
-        from core.content_engine.state_redis import read_ga_phase_cards_async
+        from core.content_engine.state_redis import (
+            read_ga_phase_cards_async,
+            cleanup_ga_phase_state_async,
+        )
 
         rc = get_redis_or_none()
         if rc is None:
@@ -270,8 +282,61 @@ class DbContentDataService:
         if not raw_cards:
             return []
 
+        # Self-healing: cross-reference with DB assignment statuses.
+        # Cards whose assignments are not_started or rejected are orphaned
+        # (e.g. from a 409'd pipeline launch where statuses were reverted).
+        orphan_ids: List[str] = []
+        try:
+            import uuid as _uuid_mod
+            from core.db.repositories.topic_discovery_repo import TopicAssignmentRepository
+
+            ta_ids = []
+            for card in raw_cards:
+                ta_id = card.get("topic_assignment_id")
+                if ta_id:
+                    try:
+                        ta_ids.append(_uuid_mod.UUID(ta_id))
+                    except (ValueError, AttributeError):
+                        pass
+
+            if ta_ids:
+                from core.db.engine import get_session_factory
+                _sf = get_session_factory()
+                async with _sf() as session:
+                    repo = TopicAssignmentRepository(session)
+                    db_assignments = await repo.get_by_ids(ta_ids)
+                    active_ids = {
+                        str(a.id) for a in db_assignments
+                        if a.status and a.status.value in _ACTIVE_ASSIGNMENT_STATUSES
+                    }
+                    # Assignments not in DB at all or in inactive status are orphans
+                    for card in raw_cards:
+                        ta_id = card.get("topic_assignment_id")
+                        if ta_id and ta_id not in active_ids:
+                            orphan_ids.append(ta_id)
+        except Exception:
+            logger.debug(
+                "GA-phase card validation skipped for %s", effective_slug,
+                exc_info=True,
+            )
+
+        # Purge orphaned ta-* keys from Redis (best-effort, non-blocking)
+        if orphan_ids:
+            logger.info(
+                "Purging %d orphaned GA-phase cards for %s: %s",
+                len(orphan_ids), effective_slug, orphan_ids,
+            )
+            try:
+                await cleanup_ga_phase_state_async(rc, effective_slug, orphan_ids)
+            except Exception:
+                logger.debug("Orphan cleanup failed", exc_info=True)
+
+        # Filter out orphans from the result
+        orphan_set = set(orphan_ids)
         items: List[ContentBriefListItem] = []
         for card in raw_cards:
+            if card.get("topic_assignment_id") in orphan_set:
+                continue
             items.append(ContentBriefListItem(
                 id=card["id"],  # ta-{uuid}
                 display_id=card.get("display_id", ""),

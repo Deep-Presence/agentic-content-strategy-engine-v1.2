@@ -1,0 +1,30 @@
+
+> frontend@0.1.0 dev
+> next dev
+
+ ⚠ Port 3000 is in use, trying 3001 instead.
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3001
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2s
+ ○ Compiling /api/v1/[...path] ...
+ ✓ Compiled /api/v1/[...path] in 550ms (65 modules)
+ GET /api/v1/companies/webflow/stream 401 in 976ms
+ GET /api/v1/companies/webflow/content/briefs 401 in 33ms
+ ○ Compiling /api/auth/logout ...
+ ✓ Compiled /api/auth/logout in 1076ms (67 modules)
+ POST /api/auth/logout 200 in 1202ms
+ ✓ Compiled /src/middleware in 157ms (72 modules)
+ ○ Compiling /login ...
+ ✓ Compiled /login in 4.1s (3456 modules)
+ GET /login 200 in 4339ms
+ GET /login?redirect=%2F.well-known%2Fappspecific%2Fcom.chrome.devtools.json 200 in 71ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /api/auth/me in 3s (3459 modules)
+ ✓ Compiled (3461 modules)
+ GET /api/auth/me 401 in 2012ms
+ GET /_next/static/chunks/app/(auth)/login/LayoutGroupContext.mjs.map 404 in 3773ms
+ GET /_next/static/chunks/app/(auth)/LayoutGroupContext.mjs.map 404 in 4236ms
+ POST /api/auth/logout 200 in 26ms

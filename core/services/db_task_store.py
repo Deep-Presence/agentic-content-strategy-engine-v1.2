@@ -286,13 +286,18 @@ end
         """Undo an in-memory create when DB persistence fails.
 
         Removes the task from memory and releases the slug lock so the
-        pipeline slot is not permanently consumed.
+        pipeline slot is not permanently consumed.  Only releases if this
+        task actually holds the lock (allow_parallel tasks don't acquire one).
         """
         task = self._tasks.pop(task_id, None)
         if task:
             effective = task.effective_slug or task.company_slug
             lock_key = f"{task.pipeline}:{effective}"
-            self.release_slug_lock(lock_key)
+            # Only release if this task owns the lock — parallel tasks
+            # (allow_parallel=True) never set _slug_locks, so releasing
+            # would pop a *different* locked run's entry (Codex finding).
+            if self._slug_locks.get(lock_key) == task_id:
+                self.release_slug_lock(lock_key)
         self._pending_creates.pop(task_id, None)
 
     def get_task(self, task_id: str) -> PipelineTask:
@@ -320,7 +325,13 @@ end
                 nonce = ap.get("checkpoint_nonce")
                 if nonce:
                     try:
-                        self._redis_sync.set(nonce_key, nonce, ex=86400)
+                        # Clear previous flag + set new nonce atomically via pipeline.
+                        # Without the flag delete, HITL-3 submissions are rejected with
+                        # "Approval already submitted" because the HITL-2 flag persists.
+                        pipe = self._redis_sync.pipeline(transaction=False)
+                        pipe.delete(flag_key)
+                        pipe.set(nonce_key, nonce, ex=86400)
+                        pipe.execute()
                     except Exception:
                         logger.warning(
                             "Redis: failed to write nonce for %s", task_id, exc_info=True

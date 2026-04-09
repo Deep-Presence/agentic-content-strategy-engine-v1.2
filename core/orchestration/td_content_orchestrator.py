@@ -594,7 +594,10 @@ async def run_td_content_production_only(
         raise
 
     if len(output.pieces) > 0:
-        # Step 3: CE succeeded — clean up GA-phase cards (graduate to real briefs)
+        # Step 3: CE succeeded — clean up GA-phase ta-* keys (graduate to WE-* briefs).
+        # pipeline_v13 already cleans up after persist_blueprints_early, but
+        # if that cleanup failed silently the ta-* key lingers as a dead
+        # entry alongside the WE-* key. This is the unconditional safety net.
         _cleanup_ga_phase_redis(effective_slug, topic_assignment_ids)
 
         # Step 4: Update assignment status → content_produced
@@ -602,8 +605,8 @@ async def run_td_content_production_only(
             session_factory, topic_assignment_ids, TopicAssignmentStatus.content_produced,
         )
     else:
-        # Pipeline ran but produced nothing — revert to gap_analysis_complete
-        # so the card remains visible and the user can retry.
+        # Pipeline ran but produced nothing — revert ta-* to gap_analysis_complete
+        # so the card returns to Queue (Analysis ready) and the user can retry.
         logger.warning(
             "Phase 2 produced zero pieces — reverting %d assignments to gap_analysis_complete",
             len(topic_assignment_ids),
