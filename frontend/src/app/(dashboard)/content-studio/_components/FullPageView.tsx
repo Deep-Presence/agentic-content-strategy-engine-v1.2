@@ -6,6 +6,7 @@ import type { ContentCard, ContentMetadata, ReviewComment } from './types';
 import { getColumn, getDisplay, getHITLActions, getWorkerStepIndex } from '../_lib/status-adapter';
 import { useBriefDetail } from '../_hooks/useBriefDetail';
 import { useGapSummary } from '../_hooks/useGapSummary';
+import { useCardActivity } from '../_hooks/useCardActivity';
 import type { GapSummaryResponseAPI } from '../_lib/types';
 import { LeftSidebar } from './LeftSidebar';
 import { RightSidebar } from './RightSidebar';
@@ -105,7 +106,7 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
   );
 
   // Guard: GA-phase cards use ta-{uuid} IDs — no brief detail endpoint exists
-  const isGAPhase = card.status === 'gap_analysis_pending' || card.status === 'gap_analysis' || card.status === 'gap_analysis_complete';
+  const isGAPhase = card.status === 'gap_analysis_pending' || card.status === 'gap_analysis' || card.status === 'gap_analysis_complete' || card.status === 'content_queued';
   const briefIdForDetail = isGAPhase ? null : card.id;
 
   // Load brief detail + article content on demand
@@ -127,10 +128,15 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
     data: gapSummary,
     isLoading: gapSummaryLoading,
   } = useGapSummary(
-    card.status === 'gap_analysis_complete' || !isGAPhase,
+    card.status === 'gap_analysis_complete' || card.status === 'content_queued' || !isGAPhase,
     productSlug,
     card.gaRunId,
   );
+  const {
+    items: activityItems,
+    isLoading: activityLoading,
+    sourceKind: activitySourceKind,
+  } = useCardActivity(card.effectiveSlug ?? null, card.topicRunId ?? null);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') onClose();
@@ -470,6 +476,9 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
         <RightSidebar
           card={{ ...card, articleContent: articleContent ?? undefined, briefContent: briefContent ?? undefined }}
           gapSummary={gapSummary ?? undefined}
+          activityItems={activityItems}
+          activityLoading={activityLoading}
+          activitySourceKind={activitySourceKind}
           metadata={metadata}
           onMetadataChange={setMetadata}
           onPublish={() => onAction('publish')}
@@ -991,7 +1000,7 @@ function GapAnalysisView({ card, onAction, gapSummary, gapSummaryLoading }: {
       )}
 
       {/* Analysis complete — rich metrics view */}
-      {card.status === 'gap_analysis_complete' && (() => {
+      {(card.status === 'gap_analysis_complete' || card.status === 'content_queued') && (() => {
         const ctx = card.gapContext;
         const classificationLabels: Record<string, { label: string; color: string }> = {
           significant_gap: { label: 'Significant Gap', color: 'var(--error, #e53e3e)' },
@@ -1027,7 +1036,7 @@ function GapAnalysisView({ card, onAction, gapSummary, gapSummaryLoading }: {
                 &#10003;
               </div>
               <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-                Gap Analysis: Complete
+                {card.status === 'content_queued' ? 'Queued for Production' : 'Gap Analysis: Complete'}
               </span>
             </div>
 

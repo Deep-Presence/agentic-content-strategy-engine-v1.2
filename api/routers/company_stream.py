@@ -10,7 +10,6 @@ AuthMiddleware validates the Bearer token injected by the BFF.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from typing import AsyncIterator
@@ -19,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from api.auth.dependencies import require_auth
-from core.events.company_event_bus import company_event_bus, CompanyEvent
+from core.events.company_event_bus import company_event_bus
 from core.models.organization import UserProfile
 from core.shared_tools.structured_logging import bind_context, clear_context
 
@@ -53,25 +52,30 @@ async def company_stream(
         company_slug=company_slug,
     )
 
-    queue = company_event_bus.subscribe(company_slug)
+    raw_last_event_id = request.headers.get("Last-Event-ID", "").strip()
+    try:
+        last_event_id = int(raw_last_event_id) if raw_last_event_id else None
+    except ValueError:
+        last_event_id = None
 
     async def event_generator() -> AsyncIterator[str]:
         try:
-            while True:
+            async for event in company_event_bus.stream(
+                company_slug,
+                last_event_id=last_event_id,
+                heartbeat_interval_s=_HEARTBEAT_INTERVAL_S,
+            ):
                 if await request.is_disconnected():
                     break
-                try:
-                    event = await asyncio.wait_for(
-                        queue.get(), timeout=_HEARTBEAT_INTERVAL_S,
-                    )
+                if event is None:
+                    yield ": keepalive\n\n"
+                else:
                     yield (
+                        f"id: {event.seq}\n"
                         f"event: {event.event_type}\n"
                         f"data: {json.dumps(event.data)}\n\n"
                     )
-                except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
         finally:
-            company_event_bus.unsubscribe(company_slug, queue)
             clear_context()
 
     return StreamingResponse(

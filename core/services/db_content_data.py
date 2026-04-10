@@ -345,6 +345,8 @@ class DbContentDataService:
                 content_type="blog",  # default, will be determined by Brief Builder later
                 cluster=card.get("cluster", ""),
                 task_id=card.get("task_id"),
+                created_at=card.get("created_at", ""),
+                updated_at=card.get("updated_at", card.get("created_at", "")),
                 priority_score=card.get("priority_score", 0.0),
                 topic_assignment_id=card.get("topic_assignment_id"),
                 buyer_stage=card.get("buyer_stage"),

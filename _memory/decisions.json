@@ -1,5 +1,170 @@
 [
   {
+    "id": "D-TD-CONTENT-QUEUED-CLAIM-SEMANTICS",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry start-production semantics under shared CE semaphore pressure",
+    "decision": "TD start-production should expose an explicit queue state before actual CE execution begins. The HTTP route now preflights Redis GA-card state for the requested `topic_assignment_id`s and rejects duplicates with 409 when the same topic is already `content_queued` or `briefing` for the same `ga_run_id`. On first acceptance it persists a visible `content_queued` state to GA Redis cards and durable topic runs, and the frontend reflects that queue state instead of optimistically switching the card to `briefing`. The durable `briefing` transition remains runner-owned after `task_store.pipeline_semaphore(task_id)` acquires capacity.",
+    "rationale": "The Webflow WE-177 test run proved that the old contract was lying to the user: a 202 response plus frontend optimistic `briefing` made a card look active even while the task was still waiting behind the global Redis semaphore for up to 300 seconds. Repeated clicks then created duplicate queued tasks for the same topic. A dedicated queue state is more truthful, prevents duplicate starts for the same card, and preserves the existing execution-timed rule that only the runner may advance to `briefing`.",
+    "alternatives": [
+      "Keep returning 202 + optimistic `briefing` and rely on polling to snap back — rejected: this is exactly the misleading bounce the user reported",
+      "Advance durable topic runs to `briefing` in the HTTP request handler — rejected: it breaks the rule that execution stages must only flip at true execution points after semaphore claim",
+      "Expose no queue state at all and only disable the button locally — rejected: backend still needs duplicate-start protection and the user still needs truthful queue visibility"
+    ],
+    "impact": "Patched `api/routers/content_v13.py`, `core/models/pipeline_status.py`, `core/content_engine/state_redis.py`, and the Content Studio status/UI files to add `content_queued` end to end. Added regression coverage in `tests/api/test_content_v13_ga_endpoints.py`. Validation: `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q`, `venv/bin/pytest tests/content_engine/test_state_redis_ga.py -q`, and `cd frontend && npx tsc --noEmit`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-DEV-CONTENT-ENGINE-RUNTIME-RESET-SCOPE",
+    "timestamp": "2026-04-10",
+    "task": "Operational cleanup boundary for resetting a company's Content Studio / TD-entry run history in local dev",
+    "decision": "When a local test account needs a clean Content Studio slate, clear the company-scoped runtime-driving records rather than deleting `pipeline_runs` directly. The safe reset slice is: `content_engine_batch_runs`, `content_engine_topic_runs`, `content_engine_topic_events`, `content_pieces`, `content_artifacts`, company `api_tasks` for content-engine pipelines, the Redis hash `pipeline_state:{company_slug}`, and any leftover task SSE keys for the removed tasks. Do not treat `pipeline_runs` as a first-pass cleanup target unless the script also deletes the dependent GA analytics tables (`run_queries`, `run_citations`, `query_gaps`, embeddings tables, etc.) in the same transaction.",
+    "rationale": "For the Webflow test account (`akeshri516@gmail.com`), the visible confusion in Content Studio came from stale runtime rows and Redis state, not from the deeper historical pipeline graph. A direct `pipeline_runs` delete failed immediately on `run_queries_run_id_fkey`, which confirmed that pipeline runs fan out into many analytics tables that are broader than the UI reset use case. Clearing the runtime-driving tables and Redis keys is enough to remove old cards, durable topic logs, and task records before a new TD-entry test pass while avoiding collateral damage to unrelated company data.",
+    "alternatives": [
+      "Delete all company `pipeline_runs` for content-related pipeline types — rejected: unsafe without deleting a much larger dependency graph in the same transaction",
+      "Clear only Redis `pipeline_state:{slug}` and leave the database rows — rejected: old cards and task history would be able to repopulate from Postgres-backed endpoints",
+      "Delete the entire company row and recreate the account — rejected: far broader than the user-visible Content Studio reset that was requested"
+    ],
+    "impact": "For the Webflow test account, the cleanup zeroed `content_engine_batch_runs`, `content_engine_topic_runs`, `content_engine_topic_events`, `content_pieces`, `content_artifacts`, and content-engine `api_tasks`, and removed `pipeline_state:webflow` plus the remaining Webflow `sse:*` task-stream keys. `pipeline_runs` and its analytics dependents were intentionally left intact.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-GA-CARD-TIMESTAMP-RECONCILIATION",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry GA card reconciliation — make poll responses authoritative after missed SSE transitions",
+    "decision": "GA-phase topic-assignment cards must carry server-authored `created_at` and `updated_at` timestamps in Redis metadata and in the `/companies/{slug}/content/briefs` response. `write_ga_phase_state()` and `write_ga_phase_state_async()` now always upsert `__meta:ta-*` with timestamps, preserving the original `created_at` and bumping `updated_at` on every phase transition, even for status-only writes with no fresh topic_data payload. `DbContentDataService._load_ga_phase_cards()` now passes those timestamps through to `ContentBriefListItem` so frontend poll reconciliation can compare server recency against any locally stamped SSE state.",
+    "rationale": "Live and poll paths were using different notions of recency. When a company SSE `state_changed` event updated a GA card locally, the frontend gave that card an `updatedAt`, but subsequent poll payloads for GA cards arrived with blank timestamps because the Redis-backed card serializer omitted them. The merge rule therefore kept stale local `gap_analysis` forever if the final `gap_analysis_complete` event was missed, leaving the card visually stuck in `Agent work` despite the backend having already persisted `gap_analysis_complete`. The fix belongs at the data source, not as a frontend-only exception, because any mixed live/poll path needs server timestamps to self-heal safely.",
+    "alternatives": [
+      "Patch the frontend merge rule to special-case blank GA-card timestamps — rejected: hides the contract bug and keeps future live/poll flows fragile",
+      "Trust local SSE state over poll forever for GA cards — rejected: missed or dropped live events would remain unrecoverable",
+      "Move GA cards entirely off the `/content/briefs` poll path — deferred: poll reconciliation is still needed as a safety net even with authoritative live updates"
+    ],
+    "impact": "Patched `core/content_engine/state_redis.py` and `core/services/db_content_data.py`, added regression coverage in `tests/content_engine/test_state_redis_ga.py` and `tests/services/test_db_content_data_backend.py`, and documented the mixed live/poll lesson in memory. Validation: `venv/bin/pytest tests/content_engine/test_state_redis_ga.py -q` and `venv/bin/pytest tests/services/test_db_content_data_backend.py -k 'load_ga_phase_cards_includes_timestamps or passes_backend_not_path' -q`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-COMPANY-SSE-XREAD-TIMEOUT-HARDENING",
+    "timestamp": "2026-04-10",
+    "task": "Company SSE Redis Streams transport — align XREAD heartbeats with Redis socket timeout",
+    "decision": "The company-wide SSE stream must never block Redis longer than the configured socket timeout, and Redis read timeouts during an otherwise healthy idle stream should be treated as heartbeat ticks rather than fatal transport errors. `CompanyEventBus.stream()` now computes a safe `XREAD BLOCK` below `settings.redis_socket_timeout` and catches `redis.exceptions.TimeoutError` inside the live-tail loop to yield a heartbeat (`None`) instead of closing the SSE stream.",
+    "rationale": "After migrating company SSE to Redis Streams, the company bus used `heartbeat_interval_s=30` directly as the Redis `XREAD BLOCK` value while the shared Redis client remained configured with `socket_timeout=20s`. Idle streams therefore timed out at the Redis socket layer first, producing repeated `Company event stream error ... closing SSE stream` log entries and forcing the frontend EventSource to reconnect even though nothing was actually wrong with the stream. The task SSE bus already avoided this class of issue by using a shorter block window, so the company bus needed the same transport discipline.",
+    "alternatives": [
+      "Increase the global Redis socket timeout above 30s — rejected: broad infrastructure change for a single stream-loop bug",
+      "Keep the 30s block and simply suppress the exception log — rejected: the connection would still be torn down and reconnect unnecessarily",
+      "Disable Redis Streams heartbeats and rely entirely on browser reconnects — rejected: degrades live UX and hides the transport mismatch instead of fixing it"
+    ],
+    "impact": "Patched `core/events/company_event_bus.py` to cap `XREAD` block duration below the Redis socket timeout and to treat Redis read timeouts as idle heartbeats. Added regression coverage in `tests/events/test_company_event_bus.py`. Validation: `venv/bin/pytest tests/events/test_company_event_bus.py -q`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-CARD-ACTIVITY-ABSTRACTION",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution — enrich durable topic events and lift the UI contract to generic card activity",
+    "decision": "Keep TD-entry durable activity sourced from `content_engine_topic_events`, but enrich each returned event payload with stable run context on the service read path (`brief_id`, `display_id`, `topic_text`, `entry_mode`, `buyer_stage`, `intent_type`, `effective_slug`, `batch_run_id`) and attach explicit human-readable `note` payloads on runner completion/rollback transitions. On the frontend, stop binding the detail-view activity tab directly to `topic_run_*` naming; instead, use a generic card-activity adapter and `useCardActivity` hook that currently map TD topic-run events into reusable card-level activity items.",
+    "rationale": "The TD topic log is now useful enough to become the base execution-log model, but the previous implementation still leaked TD-specific naming all the way into the UI and left too much interpretation to the frontend. Enriching the payload on read makes the append-only log more self-describing without requiring data backfills or new writes, and adding explicit notes on rollback/terminal transitions makes the user-visible timeline much clearer. Lifting the frontend boundary to a generic card-activity abstraction lets manual and future prompt-entry modes plug into the same tab and renderer later without forking a second logging experience before they have their own durable runtime source.",
+    "alternatives": [
+      "Introduce a brand-new generic backend `card-runs` endpoint immediately — rejected: manual/prompt modes do not yet have a settled durable runtime identity, so a generic route now would mostly be a TD alias with extra churn",
+      "Keep the UI and hook named around `topic_run_*` until manual mode arrives — rejected: bakes TD-specific transport details into the component boundary we already know needs to be shared",
+      "Persist a second enriched event row format to the database — rejected: the stable run context already exists on the run row, so enriching on read is lower risk and applies to historical events too"
+    ],
+    "impact": "Added runner payload notes for GA/prod start, terminal completion/rejection, and production rollback; enriched service event snapshots with stable run context; introduced frontend `card-activity` adapter + `useCardActivity`; and rewired the Content Studio `Activity` tab to consume generic card-activity items while keeping TD backed by `topic_run_id`. Validation: `venv/bin/pytest tests/content_engine/test_topic_run_service.py -q`, `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q`, `venv/bin/pytest tests/api/test_content_v13_from_topics.py -k 'TestGetTopicRunEvents' -q`, and `npx tsc --noEmit`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-TOPIC-LOG",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution — expose the durable topic-level execution log in Content Studio",
+    "decision": "The TD-entry card log is implemented as an additive read path over the existing durable `content_engine_topic_events` stream. The backend exposes `GET /api/v1/content/v13/{effective_slug}/topic-runs/{topic_run_id}/events`, scoped by the same exact company-boundary auth rules as `/topic-runs`, and the frontend loads that event list on demand inside the existing card detail view as a new `Activity` tab in the right sidebar. The log stays keyed by `topic_run_id` and preserves `display_id` as the visible identifier for the card.",
+    "rationale": "The durable append-only event table already existed and was being populated by `topic_run_changed` and `topic_run_created`. Reusing that source avoids inventing a second execution-log channel or re-deriving history from coarse `state_changed` hints. Keeping the UI inside the existing card detail view makes the TD-first slice low-risk and immediately useful, while still matching the future direction of a generalized card-level log model for manual and prompt-entry modes.",
+    "alternatives": [
+      "Build the topic log from company SSE replay instead of the durable event table — rejected: SSE is a transport, not the audit source of truth",
+      "Create a separate drawer/page for the log — rejected: unnecessary navigation churn; the existing card detail view is already the right execution context",
+      "Fetch activity by `display_id` alone — rejected: the durable runtime identity for TD-entry is `topic_run_id`, while `display_id` remains purely user-facing"
+    ],
+    "impact": "Added additive topic-event API schemas and route, a durable service read path over `content_engine_topic_events`, frontend API/types + `useTopicRunEvents`, and a new Content Studio `Activity` tab that renders the append-only event timeline for TD-entry cards. Validation: `venv/bin/pytest tests/api/test_content_v13_from_topics.py -q`, `venv/bin/pytest tests/api/test_content_v13.py -q`, and `npx tsc --noEmit`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-CORRECTNESS-HARDENING",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution — harden durable/live-state correctness before topic-level logs",
+    "decision": "TD-entry live state must be finalized per topic/card, not per batch. The topic-runs endpoint now enforces an exact company boundary (`company` or `company__product` only), production completion derives durable terminal states per `topic_assignment_id`, CE exception rollback mirrors the existing retryable `gap_analysis_complete` UX in durable topic runs, Stage 3 worker failures write an explicit durable `failed` transition immediately, and the frontend now treats run recency by `updated_at` while queuing debounced `state_changed` payloads instead of dropping earlier cards.",
+    "rationale": "The review surfaced three ship-blocking backend regressions and two frontend reconciliation bugs. Prefix-based topic-run authorization leaked tenant data across similarly prefixed slugs. Batch-level durable completion writes clobbered mixed terminal outcomes, and CE crash handling persisted `failed` even when the visible card rolled back to a retryable queue state. Separately, Stage 3 worker failures could leave durable rows stuck at the last in-flight stage, cross-run recency could prefer an older historical run because `seq` is only per-run, and the reused debounce path dropped earlier `state_changed` payloads. Hardening these semantics is a prerequisite for exposing topic-level execution logs because the log must reflect the same authoritative card truth the UI renders.",
+    "alternatives": [
+      "Proceed to topic-level logging first and clean up state correctness afterward — rejected: the log would amplify incorrect terminal state semantics",
+      "Keep batch-level terminal writes and let polling reconcile per-card truth — rejected: poll-only correction is exactly what the durable topic-run model is meant to replace",
+      "Preserve crash history by keeping durable live state at `failed` while the UI rolls back to queue state — rejected: authoritative live state must match the retryable UX; failure history belongs in events/payloads, not the current status field"
+    ],
+    "impact": "Patched router authorization, TD production finalization, rollback handling, Stage 3 worker failure propagation, and frontend topic-run reconciliation. Added regression coverage in `test_content_v13_from_topics.py`, `test_content_v13_ga_endpoints.py`, and `test_pipeline_v13.py`. Validation: `venv/bin/pytest tests/api/test_content_v13_from_topics.py -q`, `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q`, `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k 'td_worker_failure_writes_explicit_failed_state or TestRebriefContextExtraction or reject_with_rethink_triggers_rebrief or major_change_triggers_rebrief or max_rebriefs_then_rejected' -q`, and `npx tsc --noEmit`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-CE-TRANSITION-COVERAGE",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution — finish remaining durable CE transition coverage",
+    "decision": "TD-entry retry/rebrief/review/edit flows must preserve the original brief/display identity and must keep threading `session_factory` through every user-visible CE state write that depends on `_write_pipeline_state_async()`. In practice: TOPIC_DISCOVERY rebriefs reuse the existing `brief_id`/`display_id` instead of inventing a `rebrief-*` identity, and evaluator-driven `revising` plus rebrief worker/evaluator reruns now carry `session_factory` so the shared helper can keep appending durable topic-run events and emitting authoritative `topic_run_changed` payloads.",
+    "rationale": "The audit found three remaining gaps after the first CE propagation slice. First, the TD HITL-2 `brief_review` write still omitted `session_factory`, so the frontend only got legacy `state_changed`. Second, evaluator revision loops wrote `revising` without durable context, so edit/retry paths depended on polling. Third, `_rebrief_and_rerun()` generated a new `rebrief-*` brief_id for TD-entry runs, which broke the durable brief_id lookup and undercut the universal display ID contract. Keeping the stable brief identity and durable context in these loops is required for authoritative live updates.",
+    "alternatives": [
+      "Keep random `rebrief-*` IDs for TD-entry and rely on polling/state_changed to reconcile the UI — rejected: breaks durable brief_id matching and weakens the display_id contract",
+      "Patch the durable repo/service directly inside each retry branch — rejected: duplicates stage propagation logic instead of using the shared state-write helper",
+      "Scope the fix to only the initial HITL-2 branch and leave evaluator/rebrief loops coarse — rejected: users can see revising/rebrief/review transitions on the frontend, so those paths must be authoritative too"
+    ],
+    "impact": "Updated pipeline_v13 and evaluator loop call chains so TD `brief_review`, evaluator `revising`, and TD rebrief worker/evaluator reruns all preserve durable topic-run propagation. Added regression coverage in `test_td_hitl2.py`, `test_evaluator.py`, and `test_pipeline_v13.py`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-FRONTEND-TOPIC-RUN-STORE",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution — frontend consumption of authoritative topic-run events",
+    "decision": "Introduce a normalized Content Studio topic-run store keyed by topic_run_id with secondary indexes by topic_assignment_id and brief_id. `useCompanyStream` now consumes `topic_run_changed` directly and `useContentBriefs` overlays the durable topic-run snapshot onto polled cards, while `state_changed` is reduced to a compatibility patch path and polling remains only a reconciliation mechanism. The page-level company SSE subscription no longer refetches the board on every state change.",
+    "rationale": "The previous frontend model treated company SSE as invalidation and depended on a refetch loop to discover the real state. That does not scale cleanly once multiple TD-entry runs are active in parallel and different cards can be in different CE stages simultaneously. The backend now emits durable, sequenced topic-run snapshots, so the frontend should consume them directly and only poll to self-heal missed events or non-TD state. A normalized store is required to handle out-of-order and duplicate updates safely.",
+    "alternatives": [
+      "Keep refetch-on-state_changed and just add topic_run_changed for debugging — rejected: preserves coarse invalidation semantics and misses the main benefit of durable eventing",
+      "Store topic-run state directly on each card without normalization — rejected: duplicate/out-of-order events become harder to reason about and reconcile",
+      "Adopt a new global state library for this slice — rejected: unnecessary churn; a local normalized store plus pure merge/select helpers is enough"
+    ],
+    "impact": "Added frontend topic-run API types and fetcher, new pure topic-run store/overlay helpers, updated company stream hook contract, and rewired the board page to apply authoritative live deltas instead of immediate refetch. Validation: `npx tsc --noEmit` clean.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-CE-STAGE-PROPAGATION",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution — fine-grained CE stage propagation and company-stream payloads",
+    "decision": "Use the shared `_write_pipeline_state_async()` path as the source of truth for brief-level CE stage propagation. For TD-entry runs only, each brief-level state write now performs a best-effort durable topic-run update keyed by `(effective_slug, brief_id, pipeline_task_id)` and emits authoritative `topic_run_changed` company events with the durable row snapshot, while preserving the existing `state_changed` event for backward compatibility. A new brief-id scoped repository/service path was added instead of trying to infer topic runs from generic pipeline artifacts.",
+    "rationale": "The shared state helper already sits on the hot path for `brief_review`, `pending_brief_approval`, worker stages like `drafting`/`linking`, evaluator transitions, and final completion/rejection states. Hooking durable propagation there keeps the CE runtime model aligned with the existing Redis/file state writes and avoids duplicating stage logic across many pipeline branches. Matching on task-scoped brief IDs is robust for TD-entry because `brief_id` is the display ID and the runner already rebinds the durable rows to the active production task before CE begins.",
+    "alternatives": [
+      "Emit authoritative topic-run events only from worker dispatcher — rejected: misses other CE stages like approval/review/revising/rebrief transitions already funneled through `_write_pipeline_state_async`",
+      "Infer topic-run changes from generic `state_changed` events in the frontend — rejected: keeps backend state implicit and reintroduces ordering/glitch risk",
+      "Update topic runs by brief_id without task scoping — rejected: unsafe under retries or reused display IDs across future flows"
+    ],
+    "impact": "Added brief-id scoped durable update path in content_engine_run_repo/topic_run_service, threaded session_factory into CE state-write call sites, and expanded state_helpers tests to assert authoritative `topic_run_changed` emission alongside legacy `state_changed` compatibility events.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-RUN-IDENTITY-HARDENING",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution — harden durable topic-run identity and execution timing",
+    "decision": "Durable topic-run writes must match a specific in-flight run, not 'latest row for this topic'. ContentEngineTopicRunService.advance_topic_runs now supports explicit match scopes: match_pipeline_task_id for the GA task that created the rows, and match_ga_run_id for production updates after GA completion. The previous unscoped fallback by topic_assignment_id was removed. The HTTP start-production route no longer advances durable rows to briefing; that transition now happens inside the runner after pipeline_semaphore acquisition, which is the first true execution point.",
+    "rationale": "A topic_assignment_id can appear in multiple batches/retries. Updating by assignment alone can mutate the wrong historical run, especially once parallel TD-entry is enabled. GA completion is the moment the real ga_run_id becomes known, so that identifier must be bound back onto the exact rows originally created under the GA task. Separately, setting briefing in the request handler overstated progress while the job was still waiting for capacity, which would create frontend/backend drift under queueing pressure.",
+    "alternatives": [
+      "Keep fallback-to-latest and rely on created_at ordering — rejected: incorrect under retries/overlapping batches",
+      "Advance to briefing in the request handler for snappier UI — rejected: misrepresents queued work as actively executing",
+      "Require topic_run_id from the frontend immediately for all mutations — deferred: additive API already returns it, but backend scoping fixes the immediate correctness issue without blocking current clients"
+    ],
+    "impact": "Repository query scoping widened (pipeline_task_id + effective_slug filters), durable service matching semantics tightened, production route optimistic state write removed, runner start path owns the briefing transition, and a regression DB test now covers reused topic_assignment_id across two GA tasks.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
     "id": "D-STRUCTURED-OUTPUT-LAYER1",
     "timestamp": "2026-04-08",
     "task": "Layer 1 Constrained Decoding — add json_schema strict mode to 14 LLM call sites",
@@ -1298,6 +1463,52 @@
       "core/services/db_topic_discovery_data.py"
     ],
     "outcome": "Part 1 (Backend Foundation) implemented. 3 new files, 7 modified, 20 new tests. 1401 API + 45 TD tests passing. Part 2 (Pipeline Propagation + Frontend) pending.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-ENTRY-TOPIC-RUN-FOUNDATION",
+    "timestamp": "2026-04-09",
+    "task": "Codex kickoff for TD-entry parallel execution architecture",
+    "decision": "Introduce durable content_engine_batch_runs + content_engine_topic_runs + content_engine_topic_events as the new execution spine for TD-entry Content Engine. Every topic-run row carries both topic_assignment_id and display_id, with display_id also copied into the event log. TD gap-analysis task creation now uses allow_parallel=True so company-level slug exclusivity no longer blocks parallel TD-entry batches. The global semaphore still caps overall pipeline concurrency.",
+    "rationale": "The existing system already had topic_assignment_id at the data layer and display_id as the human-facing identifier, but runtime execution was still primarily task-centric and partially lock-centric. The new requirement needs per-topic durability, parallel multi-batch execution, and a user-visible identity that remains display_id-first. Removing only the old lock without introducing durable topic-run records would make the frontend harder to reconcile and would not give us auditability.",
+    "alternatives": [
+      "Keep company-level slug lock and only allow parallelism inside a single batch — rejected because the user explicitly needs multiple batches in parallel",
+      "Use topic_assignment_id only and derive display_id at render time — rejected because display_id is the conversation and Kanban identity",
+      "Continue relying on file-backed pipeline state for the new flow — rejected because multi-worker consistency and replay become fragile"
+    ],
+    "files_affected": [
+      "core/db/migrations/versions/0038_content_engine_topic_runs.py (NEW)",
+      "core/db/models/content_engine_runs.py (NEW)",
+      "core/db/repositories/content_engine_run_repo.py (NEW)",
+      "core/services/content_engine_topic_runs.py (NEW)",
+      "api/routers/content_v13.py",
+      "api/schemas/content_v13.py",
+      "api/tasks/runner.py",
+      "tests/db/test_content_engine_run_repo.py"
+    ],
+    "outcome": "Foundation slice implemented on branch codex-td-entry-parallelism-plan. TD GA start now creates durable batch/topic-run rows best-effort and returns additive batch_run_id/topic_runs fields. Added GET /api/v1/content/v13/{effective_slug}/topic-runs. Coarse topic-run status advancement wired on GA/prod start and runner terminal paths. Targeted validation: 52 passed, 2 skipped.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-COMPANY-EVENT-TRANSPORT-REDIS",
+    "timestamp": "2026-04-10",
+    "task": "Replace process-local company event streaming with Redis Streams",
+    "decision": "Move CompanyEventBus from process-local queue fanout to Redis Streams-backed delivery in production, while preserving the same synchronous emit(company_slug, CompanyEvent(...)) publisher API. The /api/v1/companies/{company_slug}/stream SSE endpoint now reads sequenced company events from Redis Streams, includes SSE id values, and honors Last-Event-ID for replay. A small in-memory path remains only when CompanyEventBus is instantiated without Redis in tests.",
+    "rationale": "The Kanban and Content Studio rely on company-scoped state invalidation and notification events. In the old implementation those events only reached subscribers connected to the same worker process, which breaks in multi-worker deployment. Redis Streams aligns the company stream with the existing task SSE architecture and gives replay semantics needed for reconnect correctness.",
+    "alternatives": [
+      "Keep the in-memory company bus and rely on sticky sessions — rejected because it is not robust enough for enterprise multi-worker deployment",
+      "Use Redis Pub/Sub only — rejected because replay on reconnect is materially weaker",
+      "Move immediately to topic_run_changed-only events before transport replacement — rejected because transport correctness is the prerequisite"
+    ],
+    "files_affected": [
+      "core/events/company_event_bus.py",
+      "api/routers/company_stream.py",
+      "api/app.py",
+      "tests/events/test_company_event_bus.py"
+    ],
+    "outcome": "Company event transport now uses Redis Streams in production. Startup config wires the singleton with app.state.redis and the running loop. SSE responses now carry id fields and support Last-Event-ID replay. Targeted validation: 80 passed.",
     "reversible": true,
     "approved_by": "Aryan"
   }

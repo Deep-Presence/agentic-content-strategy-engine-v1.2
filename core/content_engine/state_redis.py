@@ -21,6 +21,7 @@ metadata needed to render cards before CE creates real briefs.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -328,8 +329,35 @@ _GA_PHASES: frozenset[str] = frozenset({
     "gap_analysis_pending",
     "gap_analysis",
     "gap_analysis_complete",
+    "content_queued",
     "briefing",
 })
+
+
+def _ga_meta_key(card_key: str) -> str:
+    return f"{_META_PREFIX}{card_key}"
+
+
+def _parse_ga_meta(raw_meta: Any) -> Dict[str, Any]:
+    if not raw_meta:
+        return {}
+    try:
+        return json.loads(raw_meta)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _merge_ga_meta(
+    existing_meta: Dict[str, Any],
+    incoming_meta: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    merged = dict(existing_meta)
+    if incoming_meta:
+        merged.update(incoming_meta)
+    merged["created_at"] = existing_meta.get("created_at") or merged.get("created_at") or now_iso
+    merged["updated_at"] = now_iso
+    return merged
 
 
 def write_ga_phase_state(
@@ -350,7 +378,8 @@ def write_ga_phase_state(
         redis_sync: Sync Redis client.
         slug: Effective slug (company or company__product).
         assignment_ids: List of topic_assignment_id UUIDs.
-        phase: One of gap_analysis_pending, gap_analysis, gap_analysis_complete.
+        phase: One of gap_analysis_pending, gap_analysis, gap_analysis_complete,
+            content_queued, briefing.
         task_id: GA task_id for SSE subscription.
         topic_data: Optional dict mapping assignment_id → metadata dict
             (keys: title, cluster, priority_score, buyer_stage, ga_run_id).
@@ -374,12 +403,16 @@ def write_ga_phase_state(
             pipe.hset(key, card_key, phase)
             if task_id:
                 pipe.hset(key, f"{_TID_PREFIX}{card_key}", task_id)
-            if topic_data and aid in topic_data:
-                pipe.hset(
-                    key,
-                    f"{_META_PREFIX}{card_key}",
-                    json.dumps(topic_data[aid], default=str),
-                )
+            existing_meta = _parse_ga_meta(redis_sync.hget(key, _ga_meta_key(card_key)))
+            merged_meta = _merge_ga_meta(
+                existing_meta,
+                topic_data.get(aid) if topic_data else None,
+            )
+            pipe.hset(
+                key,
+                _ga_meta_key(card_key),
+                json.dumps(merged_meta, default=str),
+            )
         pipe.expire(key, _STATE_TTL)
         pipe.execute()
     finally:
@@ -395,6 +428,7 @@ def read_ga_phase_cards(
     Returns a list of dicts, each containing:
     - ``id``: ``ta-{topic_assignment_id}``
     - ``status``: gap_analysis_pending | gap_analysis | gap_analysis_complete
+      | content_queued | briefing
     - ``task_id``: GA task_id (if set)
     - ``title``, ``cluster``, ``priority_score``, ``buyer_stage``, ``ga_run_id``:
       from ``__meta:ta-*`` entries (if available)
@@ -440,6 +474,8 @@ def read_ga_phase_cards(
         card["priority_score"] = card_meta.get("priority_score", 0.0)
         card["buyer_stage"] = card_meta.get("buyer_stage")
         card["ga_run_id"] = card_meta.get("ga_run_id")
+        card["created_at"] = card_meta.get("created_at", "")
+        card["updated_at"] = card_meta.get("updated_at", card["created_at"])
         card["topic_assignment_id"] = card_key[len(_GA_CARD_PREFIX):]
         # Pass through enriched metadata for Content Studio sidebar
         for extra_key in (
@@ -502,12 +538,16 @@ async def write_ga_phase_state_async(
         pipe.hset(key, card_key, phase)
         if task_id:
             pipe.hset(key, f"{_TID_PREFIX}{card_key}", task_id)
-        if topic_data and aid in topic_data:
-            pipe.hset(
-                key,
-                f"{_META_PREFIX}{card_key}",
-                json.dumps(topic_data[aid], default=str),
-            )
+        existing_meta = _parse_ga_meta(await redis_async.hget(key, _ga_meta_key(card_key)))
+        merged_meta = _merge_ga_meta(
+            existing_meta,
+            topic_data.get(aid) if topic_data else None,
+        )
+        pipe.hset(
+            key,
+            _ga_meta_key(card_key),
+            json.dumps(merged_meta, default=str),
+        )
     pipe.expire(key, _STATE_TTL)
     await pipe.execute()
 
@@ -555,6 +595,8 @@ async def read_ga_phase_cards_async(
         card["priority_score"] = card_meta.get("priority_score", 0.0)
         card["buyer_stage"] = card_meta.get("buyer_stage")
         card["ga_run_id"] = card_meta.get("ga_run_id")
+        card["created_at"] = card_meta.get("created_at", "")
+        card["updated_at"] = card_meta.get("updated_at", card["created_at"])
         card["topic_assignment_id"] = card_key[len(_GA_CARD_PREFIX):]
         # Pass through enriched metadata for Content Studio sidebar
         for extra_key in (

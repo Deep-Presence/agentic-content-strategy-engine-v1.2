@@ -1,5 +1,42 @@
 [
   {
+    "id": "F22",
+    "timestamp": "2026-04-10",
+    "what_broke": "TD-entry `Start Production` for WE-177 was accepted multiple times, visually bounced between `briefing` and `gap_analysis_complete`, and only started much later after other runs progressed.",
+    "root_cause": "The HTTP start-production route returns 202 immediately and the frontend optimistically moves the clicked card to `briefing`, but the real production runner does not transition the assignment until after `task_store.pipeline_semaphore(task_id)` acquires a global Redis semaphore slot. In the 2026-04-10 Webflow run, three WE-177 start attempts (`72d2cad0-5bcd-47d1-ba08-df54954517de`, `e39aa205-92d7-4f38-8e90-197aa559c462`, `8c769404-1dbf-4e6b-98f6-661c7590fb8d`) all sat behind the global `max_concurrent=3` semaphore for 300 seconds and then failed with `Failed to acquire pipeline semaphore within 300s`, reverting the assignment back to `gap_analysis_complete`. Because the API response does not confirm that the clicked `topic_assignment_id` actually acquired capacity, repeated user clicks create duplicate queued tasks and misleading local UI starts.",
+    "fix_applied": "Fixed on 2026-04-10. Added an explicit TD `content_queued` state before semaphore acquisition, reject duplicate start-production requests for the same topic/GA run while that topic is already `content_queued` or `briefing`, and changed the frontend to move cards to `content_queued` rather than optimistic `briefing` on start-production acceptance. The broader throughput lesson remains: the global semaphore is still a hard bottleneck because each topic holds a slot for the full CE lifecycle.",
+    "lesson": "Do not report a TD-entry card as actively started unless the backend has actually claimed execution capacity for that exact `topic_assignment_id`. A global pipeline semaphore with a 300-second wait window is not a user-facing queue; without explicit claim/queue responses it creates false starts, duplicate queued tasks, and poor parallel behavior long before the product reaches the 20-30 topic goal.",
+    "files_affected": [
+      "api/routers/content_v13.py",
+      "api/tasks/runner.py",
+      "core/redis_semaphore.py",
+      "core/services/db_task_store.py",
+      "frontend/src/app/(dashboard)/content-studio/page.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_hooks/useContentBriefs.ts"
+    ]
+  },
+  {
+    "id": "F23",
+    "timestamp": "2026-04-10",
+    "what_broke": "A TD-entry content card appeared to 'restart' after reaching final review, even though the backend had actually moved it to `pending_content_approval` and was waiting for HITL approval.",
+    "root_cause": "The backend logs for WE-177 show one real production run (`6a9c377b-7fc8-4a86-9878-e0f969e1334c`) that reached `pending_content_approval` and then stayed there until the user approved it. There is no second backend `pipeline.started` for WE-177 after that point. The misleading UI came from frontend merge recency: `/companies/{slug}/content/briefs` was still returning an older server `updatedAt` (`2026-04-10T08:25:53.074830+00:00`) while local state had a newer `updatedAt` from the live path, so `useContentBriefs` kept local `revising` over newer server `pending_content_approval` for several polls. This is the content-card analogue of the earlier GA-card recency bug, but on post-GA CE/HITL states.",
+    "fix_applied": "Fixed on 2026-04-10 by removing client-authored `updatedAt` bumps from `useContentBriefs` optimistic updates and coarse `state_changed` applications. The hook now relies on the separate optimistic grace timer for temporary protection, so stale local CE states no longer become permanently newer than durable topic-run updates or polled server payloads.",
+    "lesson": "If Content Studio uses `updatedAt` to arbitrate between local live state and poll reconciliation, every server-visible CE state transition must also advance an authoritative server timestamp. Otherwise the UI can display phantom regressions or apparent restarts even when the backend is correctly waiting in HITL.",
+    "files_affected": [
+      "core/services/db_content_data.py",
+      "frontend/src/app/(dashboard)/content-studio/_hooks/useContentBriefs.ts"
+    ]
+  },
+  {
+    "id": "F21",
+    "timestamp": "2026-04-10",
+    "what_broke": "TD GA cards stayed visually stuck in `Agent work` (`gap_analysis`) even after the backend finished and persisted `gap_analysis_complete` for the selected batch.",
+    "root_cause": "The mixed live/poll reconciliation contract was incomplete. Company SSE/state_changed updated GA cards locally and stamped a frontend `updatedAt`, but the Redis-backed `/companies/{slug}/content/briefs` serializer omitted `created_at`/`updated_at` for GA cards. Once the final `gap_analysis_complete` live event was missed or dropped, later polls always lost the merge because the server card had a blank timestamp while the local stale `gap_analysis` card had a newer local `updatedAt`.",
+    "fix_applied": "Patched `core/content_engine/state_redis.py` so GA card metadata always stores `created_at`/`updated_at` and refreshes `updated_at` on every phase transition, even for status-only writes. Patched `core/services/db_content_data.py` to surface those timestamps on `ContentBriefListItem` for GA cards. Added regression coverage in `tests/content_engine/test_state_redis_ga.py` and `tests/services/test_db_content_data_backend.py`.",
+    "lesson": "If polling is meant to repair missed live events, the server payload must carry its own recency fields. Frontend-local timestamps are not enough: they make stale optimistic/live state impossible to overwrite safely. Any future manual/prompt-entry card path that mixes live updates with polling must expose authoritative `created_at`/`updated_at` from the backend.",
+    "files_affected": ["core/content_engine/state_redis.py", "core/services/db_content_data.py"]
+  },
+  {
     "id": "F20",
     "timestamp": "2026-04-09",
     "what_broke": "Pipeline semaphore timeout after server restart — new GA pipeline blocked for 300s then failed with TimeoutError. Stale entries in Redis Sorted Set semaphore:pipelines from previous session's crashed tasks.",

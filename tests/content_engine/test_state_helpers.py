@@ -183,6 +183,76 @@ class TestWritePipelineStateAsyncEmitsSSE:
             assert call_data["changed"] == ["brief-001", "brief-002", "brief-003"]
             assert call_data["hint"] == "drafting"
 
+    @pytest.mark.asyncio
+    async def test_emits_authoritative_topic_run_changed_when_durable_update_succeeds(
+        self, mock_async_redis: AsyncMock, tmp_artifact_dir: Path
+    ) -> None:
+        with patch(
+            "core.content_engine.state_helpers._emit_company"
+        ) as mock_emit, patch(
+            "core.content_engine.state_redis.write_pipeline_state_redis_async",
+            new_callable=AsyncMock,
+        ), patch(
+            "core.content_engine.state_helpers._sync_td_topic_runs_for_briefs",
+            new_callable=AsyncMock,
+            return_value=[{
+                "topic_run_id": "run-1",
+                "batch_run_id": "batch-1",
+                "topic_assignment_id": "ta-1",
+                "display_id": "WE-003",
+                "topic_text": "Topic",
+                "brief_id": "WE-003",
+                "ga_run_id": "ga-1",
+                "pipeline_task_id": "task-1",
+                "status": "drafting",
+                "stage": "drafting",
+                "seq": 4,
+                "content_piece_id": None,
+                "created_at": "2026-04-10T00:00:00+00:00",
+                "updated_at": "2026-04-10T00:00:01+00:00",
+                "effective_slug": "acme",
+            }],
+        ) as mock_sync:
+            from core.content_engine.state_helpers import _write_pipeline_state_async
+
+            await _write_pipeline_state_async(
+                tmp_artifact_dir,
+                ["WE-003"],
+                "drafting",
+                task_id="task-1",
+                redis_client=mock_async_redis,
+                effective_slug="acme",
+                session_factory=MagicMock(),
+            )
+
+            mock_sync.assert_awaited_once()
+            assert mock_emit.call_args_list[0].args == (
+                "acme",
+                "topic_run_changed",
+                {
+                    "topic_run_id": "run-1",
+                    "batch_run_id": "batch-1",
+                    "topic_assignment_id": "ta-1",
+                    "display_id": "WE-003",
+                    "topic_text": "Topic",
+                    "brief_id": "WE-003",
+                    "ga_run_id": "ga-1",
+                    "pipeline_task_id": "task-1",
+                    "status": "drafting",
+                    "stage": "drafting",
+                    "seq": 4,
+                    "content_piece_id": None,
+                    "created_at": "2026-04-10T00:00:00+00:00",
+                    "updated_at": "2026-04-10T00:00:01+00:00",
+                    "effective_slug": "acme",
+                },
+            )
+            assert mock_emit.call_args_list[1].args == (
+                "acme",
+                "state_changed",
+                {"changed": ["WE-003"], "hint": "drafting"},
+            )
+
 
 class TestSelfAcquireRedis:
     """_write_pipeline_state_async self-acquires Redis when redis_client=None.

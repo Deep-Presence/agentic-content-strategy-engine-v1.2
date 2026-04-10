@@ -772,6 +772,31 @@ class TestTDHitl2PipelineState:
         assert phases.index("brief_review") < phases.index("pending_brief_approval")
         assert phases.index("pending_brief_approval") < phases.index("approved")
 
+    @pytest.mark.asyncio
+    async def test_brief_review_write_threads_session_factory(self, tmp_path):
+        """TD brief_review must carry session_factory so durable topic-run updates can emit."""
+        _write_scoped_analysis(tmp_path)
+        inp = _make_td_input(tmp_path, skip_stages=[3, 4, 5])
+        session_factory = _mock_session_factory()
+
+        patches = _td_base_patches(tmp_path, hitl_return={"brief_decision": "approve"})
+
+        with patches["db_read"], patches["extract_ctx"], patches["ta_to_sel"], \
+             patches["build_briefs"], patches["build_graph"], patches["hitl"], \
+             patches["persist_early"], patches["persist_approval"], \
+             patches["get_sync_redis"], patches["cleanup_ga"], \
+             patches["emit_company"], patches["write_state"] as mock_state:
+            await run_content_generation_v13(
+                inp, session_factory=session_factory, run_id=uuid.uuid4(), company_id=uuid.uuid4(),
+            )
+
+        brief_review_calls = [
+            call for call in mock_state.call_args_list
+            if len(call.args) >= 3 and call.args[2] == "brief_review"
+        ]
+        assert brief_review_calls, "expected a TD brief_review pipeline-state write"
+        assert brief_review_calls[0].kwargs["session_factory"] is session_factory
+
 
 # ===========================================================================
 # Test class: Company SSE Events

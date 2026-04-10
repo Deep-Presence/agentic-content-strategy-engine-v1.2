@@ -95,6 +95,60 @@ class TestWriteGaPhaseState:
         # The JSON payload should contain the title
         assert "How AP Works" in call_str
 
+    def test_adds_created_and_updated_timestamps_to_metadata(
+        self, mock_sync_redis: MagicMock,
+    ) -> None:
+        """GA card metadata always includes created_at/updated_at for poll reconciliation."""
+        from core.content_engine.state_redis import write_ga_phase_state
+
+        write_ga_phase_state(
+            mock_sync_redis, "ramp",
+            ["aid-1"],
+            "gap_analysis_pending",
+            topic_data={"aid-1": {"title": "How AP Works"}},
+        )
+
+        pipe = mock_sync_redis.pipeline.return_value
+        meta_calls = [
+            c for c in pipe.method_calls
+            if c[0] == "hset" and c[1][1] == "__meta:ta-aid-1"
+        ]
+        assert meta_calls
+        payload = json.loads(meta_calls[-1][1][2])
+        assert payload["title"] == "How AP Works"
+        assert payload["created_at"]
+        assert payload["updated_at"]
+
+    def test_status_only_update_preserves_created_at_and_bumps_updated_at(
+        self, mock_sync_redis: MagicMock,
+    ) -> None:
+        """Status-only GA writes keep the original created_at but refresh updated_at."""
+        from core.content_engine.state_redis import write_ga_phase_state
+
+        existing_meta = {
+            "title": "How AP Works",
+            "created_at": "2026-04-10T07:00:00+00:00",
+            "updated_at": "2026-04-10T07:00:00+00:00",
+        }
+        mock_sync_redis.hget.return_value = json.dumps(existing_meta)
+
+        write_ga_phase_state(
+            mock_sync_redis, "ramp",
+            ["aid-1"],
+            "gap_analysis_complete",
+        )
+
+        pipe = mock_sync_redis.pipeline.return_value
+        meta_calls = [
+            c for c in pipe.method_calls
+            if c[0] == "hset" and c[1][1] == "__meta:ta-aid-1"
+        ]
+        assert meta_calls
+        payload = json.loads(meta_calls[-1][1][2])
+        assert payload["title"] == "How AP Works"
+        assert payload["created_at"] == "2026-04-10T07:00:00+00:00"
+        assert payload["updated_at"] != "2026-04-10T07:00:00+00:00"
+
     def test_skips_task_id_when_none(self, mock_sync_redis: MagicMock) -> None:
         """No __tid: fields written when task_id is None."""
         from core.content_engine.state_redis import write_ga_phase_state
@@ -109,8 +163,8 @@ class TestWriteGaPhaseState:
         call_str = str(pipe.method_calls)
         assert "__tid:" not in call_str
 
-    def test_skips_metadata_when_not_provided(self, mock_sync_redis: MagicMock) -> None:
-        """No __meta: fields written when topic_data is None."""
+    def test_status_only_write_still_refreshes_metadata(self, mock_sync_redis: MagicMock) -> None:
+        """Status-only writes still update __meta so poll reconciliation has timestamps."""
         from core.content_engine.state_redis import write_ga_phase_state
 
         write_ga_phase_state(
@@ -121,7 +175,7 @@ class TestWriteGaPhaseState:
 
         pipe = mock_sync_redis.pipeline.return_value
         call_str = str(pipe.method_calls)
-        assert "__meta:" not in call_str
+        assert "__meta:ta-aid-1" in call_str
 
     def test_refreshes_ttl(self, mock_sync_redis: MagicMock) -> None:
         """EXPIRE called with 86400 after HSET."""
@@ -192,7 +246,13 @@ class TestReadGaPhaseCards:
         """Cards include task_id, title, cluster from __tid: and __meta: entries."""
         from core.content_engine.state_redis import read_ga_phase_cards
 
-        meta = {"title": "How AP Works", "cluster": "AP Automation", "priority_score": 0.85}
+        meta = {
+            "title": "How AP Works",
+            "cluster": "AP Automation",
+            "priority_score": 0.85,
+            "created_at": "2026-04-10T07:00:00+00:00",
+            "updated_at": "2026-04-10T07:05:00+00:00",
+        }
         mock_sync_redis.hgetall.return_value = {
             "ta-aid-1": "gap_analysis",
             "__tid:ta-aid-1": "task-xyz",
@@ -210,6 +270,8 @@ class TestReadGaPhaseCards:
         assert card["cluster"] == "AP Automation"
         assert card["priority_score"] == 0.85
         assert card["topic_assignment_id"] == "aid-1"
+        assert card["created_at"] == "2026-04-10T07:00:00+00:00"
+        assert card["updated_at"] == "2026-04-10T07:05:00+00:00"
 
     def test_skips_non_ga_status_on_ta_keys(self, mock_sync_redis: MagicMock) -> None:
         """ta-* entries with non-GA status (e.g. 'generating') are filtered out."""

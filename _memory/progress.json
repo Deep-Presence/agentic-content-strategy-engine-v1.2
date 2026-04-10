@@ -1,10 +1,11 @@
 {
-  "current_sprint": "planner-studio-pipeline-fixes",
-  "last_updated": "2026-04-09",
-  "test_count": 2079,
+  "current_sprint": "td-entry-parallel-execution",
+  "last_updated": "2026-04-10",
+  "test_count": 2098,
   "completed_sprints_summary": {
-    "total_tasks_completed": 43,
+    "total_tasks_completed": 47,
     "sprints": [
+      {"sprint": "td-entry-parallel-execution-phase3b", "date": "2026-04-10", "summary": "TD-entry production queue semantics + recency hardening. Added a real `content_queued` pre-brief state for TD start-production, with backend preflight conflict rejection when the same topic is already queued/running for the same GA run. HTTP start-production now persists queue state before the runner competes for the global semaphore, and the frontend moves cards to `content_queued` instead of falsely showing `briefing`. Also removed client-authored `updatedAt` bumps from `useContentBriefs` optimistic/state-changed paths so stale local CE/HITL states no longer outrank newer backend truth. Validation: `tests/api/test_content_v13_ga_endpoints.py -q`, `tests/content_engine/test_state_redis_ga.py -q`, and `frontend npx tsc --noEmit`."},
       {"sprint": "v3-async", "date": "2026-02-15", "summary": "Async pipeline conversion (12 tasks), Playwright CF bypass, content engine v1.0"},
       {"sprint": "v3-signals", "date": "2026-02-18", "summary": "Structural Signal Overhaul — S4 dual-soup, ~45 signals, GapContentBrief, 3-tier output"},
       {"sprint": "api-v1", "date": "2026-02-24", "summary": "FastAPI REST API, SSE events, HITL fix, Codex review fixes, approval flow"},
@@ -65,6 +66,173 @@
     ]
   },
   "completed": [
+    {
+      "id": "T-webflow-content-engine-runtime-reset",
+      "task": "Operational reset — clear prior Webflow content-engine runtime state before the next TD-entry test pass",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 0,
+      "files_modified": [],
+      "codex_review": "Cleared the Webflow company-scoped runtime rows that were driving stale Content Studio state for `akeshri516@gmail.com`: `content_engine_batch_runs`, `content_engine_topic_runs`, `content_engine_topic_events`, `content_pieces`, `content_artifacts`, Webflow `api_tasks` for `td_gap_analysis`/`td_content`/`content`/`gap_analysis`, the Redis hash `pipeline_state:webflow`, and the remaining Webflow task SSE keys. Attempting to also delete `pipeline_runs` was intentionally backed out after Postgres surfaced a real FK boundary (`run_queries_run_id_fkey`), so internal pipeline history was left intact. Validation: post-cleanup counts for the cleared runtime tables all reached zero, `EXISTS pipeline_state:webflow` returned 0, and `redis-cli --scan --pattern 'sse:*'` returned no remaining keys."
+    },
+    {
+      "id": "T-td-ga-card-timestamp-reconciliation",
+      "task": "TD-entry GA card reconciliation — persist GA-card timestamps so polling can repair missed live transitions",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 4,
+      "files_modified": [
+        "core/content_engine/state_redis.py",
+        "core/services/db_content_data.py",
+        "tests/content_engine/test_state_redis_ga.py",
+        "tests/services/test_db_content_data_backend.py"
+      ],
+      "codex_review": "Diagnosed the 'TD cards stuck in Agent Work after GA completion' issue as a mixed live/poll reconciliation bug, not a backend completion failure. The backend correctly persisted `gap_analysis_complete`, but GA cards read from Redis were serialized through `/content/briefs` without `created_at`/`updated_at`, so once the frontend locally stamped those cards from SSE, later polls could never win if the final live event was missed. Fixed by making GA Redis card metadata always carry `created_at`/`updated_at`, refreshing `updated_at` on every status-only write, and surfacing those timestamps through `DbContentDataService._load_ga_phase_cards()`. Validation: `venv/bin/pytest tests/content_engine/test_state_redis_ga.py -q` (18 passed) and `venv/bin/pytest tests/services/test_db_content_data_backend.py -k 'load_ga_phase_cards_includes_timestamps or passes_backend_not_path' -q` (2 passed)."
+    },
+    {
+      "id": "T-company-sse-timeout-hardening",
+      "task": "Company SSE Redis Streams transport — prevent XREAD heartbeat timeouts from tearing down the stream",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 1,
+      "files_modified": [
+        "core/events/company_event_bus.py",
+        "tests/events/test_company_event_bus.py"
+      ],
+      "codex_review": "Diagnosed repeated `/api/v1/companies/{slug}/stream` disconnects as a Redis transport bug: the company event bus blocked `XREAD` for 30s while the shared Redis client used `socket_timeout=20s`, so idle periods raised `redis.exceptions.TimeoutError` and closed the SSE stream. Fixed by capping company-stream `XREAD` block time below the Redis socket timeout and treating Redis read timeouts as heartbeat ticks instead of fatal stream errors. Validation: `venv/bin/pytest tests/events/test_company_event_bus.py -q` (17 passed)."
+    },
+    {
+      "id": "T-td-entry-card-activity-abstraction",
+      "task": "TD-entry parallel execution — enrich durable event payloads and lift the Activity tab to a generic card-activity contract",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 2,
+      "files_modified": [
+        "core/services/content_engine_topic_runs.py",
+        "api/tasks/runner.py",
+        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useCardActivity.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/card-activity.ts",
+        "tests/api/test_content_v13_ga_endpoints.py",
+        "tests/content_engine/test_topic_run_service.py",
+        "tests/db/test_content_engine_run_repo.py"
+      ],
+      "codex_review": "Enriched the TD topic-event payloads with stable run context on the service read path and added explicit runner `note` payloads for GA/prod start, per-topic terminal completion/rejection, and production rollback-to-retryable state. Then lifted the Content Studio detail view from TD-specific `topic_run_*` consumption to a generic card-activity adapter + `useCardActivity` hook, while still sourcing TD cards from `topic_run_id` today. Validation: `venv/bin/pytest tests/content_engine/test_topic_run_service.py -q` (2 passed), `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q` (26 passed, 3 pre-existing warnings), `venv/bin/pytest tests/api/test_content_v13_from_topics.py -k 'TestGetTopicRunEvents' -q` (2 passed), and `npx tsc --noEmit` (clean). DB coverage in `tests/db/test_content_engine_run_repo.py` was updated as well and still skips locally when `TEST_DATABASE_URL` is unset."
+    },
+    {
+      "id": "T-td-entry-topic-log",
+      "task": "TD-entry parallel execution — expose the durable topic-level execution log in Content Studio",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 3,
+      "files_modified": [
+        "core/db/repositories/content_engine_run_repo.py",
+        "core/services/content_engine_topic_runs.py",
+        "api/schemas/content_v13.py",
+        "api/routers/content_v13.py",
+        "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useTopicRunEvents.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+        "tests/api/test_content_v13_from_topics.py",
+        "tests/db/test_content_engine_run_repo.py"
+      ],
+      "codex_review": "Built the TD-entry topic-level/card-level log directly on the durable `content_engine_topic_events` stream. Added an authenticated additive route at `GET /api/v1/content/v13/{effective_slug}/topic-runs/{topic_run_id}/events`, a service/repo read path scoped by effective_slug + topic_run_id, frontend event types/API + `useTopicRunEvents`, and a new `Activity` tab in the Content Studio detail sidebar. Validation: `venv/bin/pytest tests/api/test_content_v13_from_topics.py -q` (31 passed, 2 pre-existing warnings), `venv/bin/pytest tests/api/test_content_v13.py -q` (71 passed, 13 pre-existing warnings), `npx tsc --noEmit` (clean). DB test coverage for the service path was added in `tests/db/test_content_engine_run_repo.py` and auto-skipped locally because `TEST_DATABASE_URL` is not set."
+    },
+    {
+      "id": "T-td-entry-correctness-hardening",
+      "task": "TD-entry parallel execution — harden router/live-state correctness before topic-level logging",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 4,
+      "files_modified": [
+        "api/routers/content_v13.py",
+        "api/tasks/runner.py",
+        "core/content_engine/pipeline_v13.py",
+        "frontend/src/app/(dashboard)/content-studio/_lib/topic-run-store.ts",
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useCompanyStream.ts",
+        "tests/api/test_content_v13_from_topics.py",
+        "tests/api/test_content_v13_ga_endpoints.py",
+        "tests/content_engine/test_pipeline_v13.py"
+      ],
+      "codex_review": "Closed the TD-entry correctness issues identified in review before moving to topic-level logs. Fixed exact tenant boundary enforcement on GET /topic-runs, replaced batch-level durable completion clobbering with per-topic terminal finalization in the runner, mirrored CE crash rollback to durable `gap_analysis_complete`, added an explicit Stage 3 worker-failure durable `failed` write, ranked competing topic runs by updated_at rather than per-run seq, and queued debounced `state_changed` payloads instead of dropping earlier cards. Validation: `venv/bin/pytest tests/api/test_content_v13_from_topics.py -q` (29 passed, 2 pre-existing warnings), `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q` (26 passed, 3 pre-existing warnings), `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k 'td_worker_failure_writes_explicit_failed_state or TestRebriefContextExtraction or reject_with_rethink_triggers_rebrief or major_change_triggers_rebrief or max_rebriefs_then_rejected' -q` (7 passed, 1 AsyncMock warning from mocked DB internals), `npx tsc --noEmit` (clean)."
+    },
+    {
+      "id": "T-td-entry-ce-transition-coverage",
+      "task": "TD-entry parallel execution — finish remaining CE transition coverage across review/edit/rebrief loops",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 3,
+      "files_modified": [
+        "core/content_engine/pipeline_v13.py",
+        "core/content_engine/evaluator/loop.py",
+        "tests/content_engine/test_td_hitl2.py",
+        "tests/content_engine/test_evaluator.py",
+        "tests/content_engine/test_pipeline_v13.py"
+      ],
+      "codex_review": "Audit found the remaining TD-entry live-state gaps: the TD HITL-2 `brief_review` write still omitted `session_factory`, evaluator `revising` writes bypassed durable topic-run propagation, and `_rebrief_and_rerun()` changed TD brief identity away from the stable display_id-backed brief_id. Fixed by threading `session_factory` through evaluator/rebrief paths and preserving the original brief_id for TOPIC_DISCOVERY rebriefs so authoritative `topic_run_changed` emission continues through review/edit/reject/rethink flows. Validation: `venv/bin/pytest tests/content_engine/test_evaluator.py -q` (4 passed), `venv/bin/pytest tests/content_engine/test_td_hitl2.py -q` (31 passed, 8 pre-existing AsyncMock warnings), `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k 'TestRebriefContextExtraction or reject_with_rethink_triggers_rebrief or major_change_triggers_rebrief or max_rebriefs_then_rejected' -q` (6 passed)."
+    },
+    {
+      "id": "T-td-entry-frontend-topic-run-store",
+      "task": "TD-entry parallel execution — frontend normalized topic-run store and authoritative SSE consumption",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 0,
+      "files_modified": [
+        "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/topic-run-store.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useCompanyStream.ts",
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useContentBriefs.ts",
+        "frontend/src/app/(dashboard)/content-studio/page.tsx"
+      ],
+      "codex_review": "Implemented the next slice after backend topic_run_changed support: Content Studio now keeps a normalized topic-run store keyed by topic_run_id/topic_assignment_id/brief_id, merges company-stream topic_run_changed deltas directly, overlays authoritative run state onto cards, and uses polling only as reconciliation. Validation: `npx tsc --noEmit`."
+    },
+    {
+      "id": "T-td-entry-ce-stage-propagation",
+      "task": "TD-entry parallel execution — fine-grained CE stage propagation and authoritative company topic_run_changed events",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 2,
+      "files_modified": [
+        "core/db/repositories/content_engine_run_repo.py",
+        "core/services/content_engine_topic_runs.py",
+        "core/content_engine/state_helpers.py",
+        "core/content_engine/workers/dispatcher.py",
+        "core/content_engine/pipeline_v13.py",
+        "tests/content_engine/test_state_helpers.py",
+        "tests/db/test_content_engine_run_repo.py"
+      ],
+      "codex_review": "Implemented next slice after Codex review direction: `_write_pipeline_state_async` now drives durable TD-entry brief-level stage propagation by brief_id scoped to the active production task and emits authoritative company-stream `topic_run_changed` payloads before the legacy `state_changed` hint. Validation: 65 passed, 4 skipped."
+    },
+    {
+      "id": "T-td-entry-run-identity-hardening",
+      "task": "TD-entry parallel execution — durable topic-run identity hardening + execution-timed production start",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 1,
+      "files_modified": [
+        "core/db/repositories/content_engine_run_repo.py",
+        "core/services/content_engine_topic_runs.py",
+        "api/routers/content_v13.py",
+        "api/tasks/runner.py",
+        "tests/db/test_content_engine_run_repo.py"
+      ],
+      "codex_review": "Follow-up implementation from Codex review findings: remove unsafe latest-run fallback, bind ga_run_id onto the exact GA-created rows via pipeline_task_id matching, and move durable briefing transition from request time to post-semaphore execution start. Validation: 52 passed, 3 skipped."
+    },
     {
       "id": "T-structured-output-layer1",
       "task": "Layer 1 Constrained Decoding — json_schema strict mode on 14 LLM call sites",
@@ -672,6 +840,79 @@
     }
   ],
   "in_progress": [
+    {
+      "id": "T-td-entry-parallel-execution-phase2",
+      "task": "Codex Phase 2 — Redis-backed company event transport",
+      "sprint": "td-entry-parallel-execution",
+      "status": "in_progress",
+      "started_at": "2026-04-10",
+      "branch": "codex-td-entry-parallelism-plan",
+      "completed_in_phase": [
+        "Replaced process-local CompanyEventBus internals with Redis Streams-backed fanout and replay",
+        "Preserved existing publisher call sites: company_event_bus.emit(company_slug, CompanyEvent(...))",
+        "Updated /api/v1/companies/{company_slug}/stream to consume sequenced company events with SSE id support and Last-Event-ID replay",
+        "Configured the company event bus at FastAPI lifespan startup using the healthy app Redis client and running loop",
+        "Kept an in-memory fallback path only for isolated tests by instantiating CompanyEventBus without Redis"
+      ],
+      "remaining_next_steps": [
+        "Drive fine-grained CE stage transitions into content_engine_topic_runs and content_engine_topic_events",
+        "Emit authoritative topic_run_changed payloads instead of relying mainly on state_changed invalidation hints",
+        "Refactor Content Studio to consume a normalized topic-run store instead of a single activeTaskId",
+        "Remove filesystem-based pipeline state from the TD-entry hot path"
+      ],
+      "files_affected": [
+        "core/events/company_event_bus.py",
+        "api/routers/company_stream.py",
+        "api/app.py",
+        "tests/events/test_company_event_bus.py"
+      ],
+      "validation": {
+        "compileall": "python3 -m compileall core/events/company_event_bus.py api/routers/company_stream.py api/app.py tests/events/test_company_event_bus.py",
+        "tests": "venv/bin/pytest -q tests/events/test_company_event_bus.py tests/api/test_content_v13_ga_endpoints.py tests/api/test_content_v13_from_topics.py tests/content_engine/test_state_helpers.py",
+        "result": "80 passed"
+      }
+    },
+    {
+      "id": "T-td-entry-parallel-execution-phase1",
+      "task": "Codex Phase 1 — durable TD-entry batch/topic-run foundation + parallel GA task creation",
+      "sprint": "td-entry-parallel-execution",
+      "status": "in_progress",
+      "started_at": "2026-04-09",
+      "branch": "codex-td-entry-parallelism-plan",
+      "completed_in_phase": [
+        "Created durable execution models: content_engine_batch_runs, content_engine_topic_runs, content_engine_topic_events",
+        "Added Alembic migration 0038_content_engine_topic_runs.py",
+        "Added repositories and ContentEngineTopicRunService",
+        "Made TD gap-analysis task creation allow_parallel=True so batches are no longer slug-locked per company",
+        "Added additive PipelineRunResponseV13 fields: batch_run_id and topic_runs",
+        "Added GET /api/v1/content/v13/{effective_slug}/topic-runs",
+        "Wired TD GA start to create durable batch/topic-run rows with topic_assignment_id + display_id + brief_id",
+        "Wired coarse topic-run advancement on TD production start and runner completion/failure paths"
+      ],
+      "remaining_next_steps": [
+        "Replace process-local company stream with Redis-backed company event transport",
+        "Move Content Studio from single activeTaskId to normalized topic-run store",
+        "Drive fine-grained CE stage transitions into content_engine_topic_runs/content_engine_topic_events",
+        "Eliminate filesystem-based pipeline state from the TD-entry hot path",
+        "Backfill Content Studio list endpoints to hydrate primarily from topic runs instead of mixed Redis/file state"
+      ],
+      "handoff_note": "Memory updated on 2026-04-10. Codex can continue from this branch in the next session without re-discovery; the immediate next slice is Redis-backed company event transport plus finer-grained topic-run state writes.",
+      "files_affected": [
+        "core/db/migrations/versions/0038_content_engine_topic_runs.py",
+        "core/db/models/content_engine_runs.py",
+        "core/db/repositories/content_engine_run_repo.py",
+        "core/services/content_engine_topic_runs.py",
+        "api/routers/content_v13.py",
+        "api/schemas/content_v13.py",
+        "api/tasks/runner.py",
+        "tests/db/test_content_engine_run_repo.py"
+      ],
+      "validation": {
+        "compileall": "python3 -m compileall api/routers/content_v13.py api/tasks/runner.py core/db/models/content_engine_runs.py core/db/repositories/content_engine_run_repo.py core/services/content_engine_topic_runs.py api/schemas/content_v13.py tests/db/test_content_engine_run_repo.py",
+        "tests": "venv/bin/pytest -q tests/api/test_content_v13_ga_endpoints.py tests/api/test_content_v13_from_topics.py tests/db/test_content_engine_run_repo.py",
+        "result": "52 passed, 2 skipped"
+      }
+    },
     {
       "id": "T-content-studio-arch-fix-remaining",
       "task": "Content Studio architecture fix — 6 remaining issues from critical review",

@@ -38,6 +38,59 @@ def _emit_company(company_slug: str, event_type: str, data: Dict[str, Any]) -> N
         logger.debug("Company event emit failed for %s", company_slug, exc_info=True)
 
 
+async def _sync_td_topic_runs_for_briefs(
+    *,
+    session_factory: Any,
+    effective_slug: str,
+    brief_ids: List[str],
+    phase: str,
+    task_id: str,
+) -> List[Dict[str, Any]]:
+    """Best-effort durable stage propagation for TD-entry Content Engine runs."""
+    try:
+        from core.services.content_engine_topic_runs import ContentEngineTopicRunService
+
+        service = ContentEngineTopicRunService(session_factory)
+        snapshots = await service.advance_topic_runs_by_brief_ids(
+            effective_slug=effective_slug,
+            brief_ids=brief_ids,
+            status=phase,
+            stage=phase,
+            pipeline_task_id=task_id,
+            match_pipeline_task_id=task_id,
+            event_type="topic_run_changed",
+            payload_json={"source": "pipeline_state_write"},
+        )
+        return [
+            {
+                "topic_run_id": s.topic_run_id,
+                "batch_run_id": s.batch_run_id,
+                "topic_assignment_id": s.topic_assignment_id,
+                "display_id": s.display_id,
+                "topic_text": s.topic_text,
+                "brief_id": s.brief_id,
+                "ga_run_id": s.ga_run_id,
+                "pipeline_task_id": s.pipeline_task_id,
+                "status": s.status,
+                "stage": s.stage,
+                "seq": s.seq,
+                "content_piece_id": s.content_piece_id,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
+                "effective_slug": effective_slug,
+            }
+            for s in snapshots
+        ]
+    except Exception:
+        logger.warning(
+            "Durable topic-run stage propagation failed for slug=%s phase=%s",
+            effective_slug,
+            phase,
+            exc_info=True,
+        )
+        return []
+
+
 def _write_pipeline_state(
     artifact_dir: Path,
     brief_ids: List[str],
@@ -181,6 +234,7 @@ async def _write_pipeline_state_async(
     task_id: Optional[str] = None,
     redis_client: Optional[Any] = None,
     effective_slug: Optional[str] = None,
+    session_factory: Optional[Any] = None,
 ) -> None:
     """Async write: writes to Redis (primary). File only when Redis unavailable.
 
@@ -232,10 +286,22 @@ async def _write_pipeline_state_async(
     if not redis_succeeded:
         _write_pipeline_state(artifact_dir, brief_ids, phase, task_id=task_id)
 
+    topic_run_events: List[Dict[str, Any]] = []
+    if session_factory is not None and effective_slug and task_id:
+        topic_run_events = await _sync_td_topic_runs_for_briefs(
+            session_factory=session_factory,
+            effective_slug=effective_slug,
+            brief_ids=brief_ids,
+            phase=phase,
+            task_id=task_id,
+        )
+
     # ── Company-wide SSE broadcast ──
     if effective_slug:
         try:
             company_slug = effective_slug.split("__")[0]
+            for item in topic_run_events:
+                _emit_company(company_slug, "topic_run_changed", item)
             _emit_company(company_slug, "state_changed", {
                 "changed": brief_ids,
                 "hint": phase,

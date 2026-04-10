@@ -1,15 +1,23 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import type { CompanyNotification } from '../_lib/types';
+import type {
+  CompanyNotification,
+  CompanyStateChangedData,
+  CompanyTopicRunChangedData,
+} from '../_lib/types';
 
 const DEBOUNCE_MS = 300;
 
 export interface CompanyStreamCallbacks {
-  /** Called (debounced) when one or more cards change status. Trigger a re-poll. */
-  onStateChanged: () => void;
+  /** Called (debounced) for coarse compatibility status hints. */
+  onStateChanged?: (data: CompanyStateChangedData) => void;
+  /** Called immediately with authoritative durable topic-run deltas. */
+  onTopicRunChanged?: (data: CompanyTopicRunChangedData) => void;
   /** Called for user-facing notifications (HITL review, completion, error). */
   onNotification?: (data: CompanyNotification) => void;
+  /** Called on (re)connect so polling can reconcile anything missed while offline. */
+  onReconnect?: () => void;
 }
 
 /**
@@ -31,6 +39,7 @@ export function useCompanyStream(
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queuedStateChangesRef = useRef<CompanyStateChangedData[]>([]);
 
   const disconnect = useCallback(() => {
     if (sourceRef.current) {
@@ -42,6 +51,7 @@ export function useCompanyStream(
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
+    queuedStateChangesRef.current = [];
   }, []);
 
   useEffect(() => {
@@ -55,12 +65,33 @@ export function useCompanyStream(
     sourceRef.current = source;
 
     source.addEventListener('state_changed', (ev: MessageEvent) => {
-      console.info(`[useCompanyStream] state_changed @${new Date().toISOString()}`, ev.data ? JSON.parse(ev.data) : '(no data)');
-      // Debounce: coalesce rapid state_changed events into one callback
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      let data: CompanyStateChangedData | null = null;
+      try {
+        data = JSON.parse(ev.data) as CompanyStateChangedData;
+      } catch {
+        data = null;
+      }
+      console.info(`[useCompanyStream] state_changed @${new Date().toISOString()}`, data ?? '(no data)');
+      if (!data) return;
+      queuedStateChangesRef.current.push(data);
+      if (debounceRef.current) return;
       debounceRef.current = setTimeout(() => {
-        callbacksRef.current.onStateChanged();
+        const pending = queuedStateChangesRef.current;
+        queuedStateChangesRef.current = [];
+        debounceRef.current = null;
+        for (const stateChange of pending) {
+          callbacksRef.current.onStateChanged?.(stateChange);
+        }
       }, DEBOUNCE_MS);
+    });
+
+    source.addEventListener('topic_run_changed', (ev: MessageEvent) => {
+      try {
+        const data = JSON.parse(ev.data) as CompanyTopicRunChangedData;
+        callbacksRef.current.onTopicRunChanged?.(data);
+      } catch {
+        // malformed payload — ignore
+      }
     });
 
     source.addEventListener('notification', (ev: MessageEvent) => {
@@ -75,8 +106,7 @@ export function useCompanyStream(
     source.onopen = () => {
       console.info(`[useCompanyStream] connected @${new Date().toISOString()} url=${url}`);
       setIsConnected(true);
-      // Re-poll on reconnect to catch anything missed while disconnected
-      callbacksRef.current.onStateChanged();
+      callbacksRef.current.onReconnect?.();
     };
 
     source.onerror = () => {

@@ -18,6 +18,7 @@ class BriefPipelineStatus(str, Enum):
     GAP_ANALYSIS_PENDING = "gap_analysis_pending"  # GA queued, preflight running
     GAP_ANALYSIS = "gap_analysis"  # GA S1-S8 running
     GAP_ANALYSIS_COMPLETE = "gap_analysis_complete"  # GA done, awaiting "Start Production"
+    CONTENT_QUEUED = "content_queued"  # Production accepted, waiting for shared CE capacity
 
     # Triage column
     SUGGESTED = "suggested"  # Initial state, awaiting user/planner approval

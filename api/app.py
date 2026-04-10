@@ -137,6 +137,19 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Using RedisEventBus (Redis Streams)")
 
+    redis_client = getattr(app.state, "redis", None)
+    if redis_client is None or not getattr(app.state, "redis_healthy", False):
+        raise RuntimeError(
+            "REDIS_URL is required and Redis must be healthy for company event streaming."
+        )
+    from core.events.company_event_bus import company_event_bus
+
+    company_event_bus.configure(
+        redis=redis_client,
+        loop=asyncio.get_running_loop(),
+    )
+    logger.info("Using CompanyEventBus (Redis Streams)")
+
     # Only set defaults if not already overridden (e.g., by tests)
     if not hasattr(app.state, "task_store") or app.state.task_store is None:
         app.state.task_store = await _init_task_store(app)

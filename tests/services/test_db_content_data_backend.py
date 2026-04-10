@@ -7,7 +7,9 @@ instead of raw filesystem Path operations.  They do NOT require a database
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -73,6 +75,65 @@ class TestGapContextUsesBackend:
                 assert first_arg is mock_backend, (
                     f"Expected StorageBackend, got {type(first_arg)}"
                 )
+
+    @pytest.mark.asyncio
+    async def test_load_ga_phase_cards_includes_timestamps(self, tmp_path):
+        """GA cards returned from Redis carry timestamps through to the brief list contract."""
+        assignment_id = str(uuid.uuid4())
+        mock_backend = MagicMock()
+        svc = DbContentDataService(
+            content_repo=AsyncMock(),
+            pipeline_repo=AsyncMock(),
+            artifacts_root=tmp_path,
+            backend=mock_backend,
+        )
+
+        class _SessionContext:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _Repo:
+            def __init__(self, session):
+                self.session = session
+
+            async def get_by_ids(self, ta_ids):
+                return [
+                    SimpleNamespace(
+                        id=uuid.UUID(assignment_id),
+                        status=SimpleNamespace(value="in_gap_analysis"),
+                    ),
+                ]
+
+        with patch("core.config.settings.settings.redis_pipeline_state", True), patch(
+            "core.config.settings.settings.redis_url", "redis://localhost:6379/0",
+        ), patch(
+            "core.redis.get_redis_or_none", return_value=object(),
+        ), patch(
+            "core.content_engine.state_redis.read_ga_phase_cards_async",
+            AsyncMock(return_value=[{
+                "id": f"ta-{assignment_id}",
+                "status": "gap_analysis_complete",
+                "title": "How AP Works",
+                "display_id": "WE-101",
+                "topic_assignment_id": assignment_id,
+                "created_at": "2026-04-10T07:00:00+00:00",
+                "updated_at": "2026-04-10T07:05:00+00:00",
+            }]),
+        ), patch(
+            "core.db.engine.get_session_factory",
+            return_value=lambda: _SessionContext(),
+        ), patch(
+            "core.db.repositories.topic_discovery_repo.TopicAssignmentRepository",
+            _Repo,
+        ):
+            cards = await svc._load_ga_phase_cards("test-co")
+
+        assert len(cards) == 1
+        assert cards[0].created_at == "2026-04-10T07:00:00+00:00"
+        assert cards[0].updated_at == "2026-04-10T07:05:00+00:00"
 
 
 # ── Blueprint fallback ───────────────────────────────────────────────

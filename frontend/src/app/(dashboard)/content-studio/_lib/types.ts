@@ -184,6 +184,8 @@ export interface PipelineRunResponseAPI {
   status: string;
   entry_mode: string;
   message?: string;
+  batch_run_id?: string | null;
+  topic_runs?: TopicRunSummaryAPI[];
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +285,59 @@ export interface CompanyStateChangedData {
   changed: string[];
   hint: string;
 }
+
+export interface TopicRunSummaryAPI {
+  topic_run_id: string;
+  batch_run_id: string;
+  topic_assignment_id: string;
+  display_id: string;
+  topic_text: string;
+  brief_id: string;
+  ga_run_id?: string | null;
+  pipeline_task_id?: string | null;
+  status: string;
+  stage: string;
+  seq: number;
+  content_piece_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  effective_slug?: string;
+}
+
+export interface TopicRunListResponseAPI {
+  effective_slug: string;
+  total: number;
+  items: TopicRunSummaryAPI[];
+}
+
+export interface TopicRunEventAPI {
+  topic_event_id: string;
+  topic_run_id: string;
+  topic_assignment_id: string;
+  display_id: string;
+  brief_id: string;
+  event_type: string;
+  stage: string;
+  status: string;
+  seq: number;
+  content_piece_id?: string | null;
+  pipeline_task_id?: string | null;
+  payload_json: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface TopicRunEventListResponseAPI {
+  effective_slug: string;
+  topic_run_id: string;
+  topic_assignment_id: string;
+  display_id: string;
+  topic_text: string;
+  brief_id: string;
+  total: number;
+  items: TopicRunEventAPI[];
+}
+
+export interface CompanyTopicRunChangedData extends TopicRunSummaryAPI {}
 
 export interface CompanyNotification {
   type: 'hitl_review_needed' | 'pipeline_complete' | 'pipeline_error';

@@ -14,6 +14,8 @@ import type {
   PipelineRunResponseAPI,
   ApprovalResponseAPI,
   GapSummaryResponseAPI,
+  TopicRunListResponseAPI,
+  TopicRunEventListResponseAPI,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -241,6 +243,33 @@ export function fetchGapSummary(
   return api.get<GapSummaryResponseAPI>(
     `/api/v1/companies/${encodeURIComponent(slug)}/gap-analysis/summary`,
     Object.keys(params).length > 0 ? params : undefined,
+    signal,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Durable topic-run list (TD-entry live state reconciliation)
+// ---------------------------------------------------------------------------
+
+export function fetchTopicRuns(
+  effectiveSlug: string,
+  signal?: AbortSignal,
+): Promise<TopicRunListResponseAPI> {
+  return api.get<TopicRunListResponseAPI>(
+    `/api/v1/content/v13/${encodeURIComponent(effectiveSlug)}/topic-runs`,
+    undefined,
+    signal,
+  );
+}
+
+export function fetchTopicRunEvents(
+  effectiveSlug: string,
+  topicRunId: string,
+  signal?: AbortSignal,
+): Promise<TopicRunEventListResponseAPI> {
+  return api.get<TopicRunEventListResponseAPI>(
+    `/api/v1/content/v13/${encodeURIComponent(effectiveSlug)}/topic-runs/${encodeURIComponent(topicRunId)}/events`,
+    undefined,
     signal,
   );
 }

@@ -189,10 +189,12 @@ export function ContentCardItem({ card, onClick }: { card: ContentCard; onClick:
       )}
 
       {/* GA-phase: analysis complete */}
-      {card.status === 'gap_analysis_complete' && (
+      {(card.status === 'gap_analysis_complete' || card.status === 'content_queued') && (
         <div className="flex items-center gap-1.5 mt-3">
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block' }} />
-          <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 500 }}>Analysis ready</span>
+          <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 500 }}>
+            {card.status === 'content_queued' ? 'Queued for production' : 'Analysis ready'}
+          </span>
         </div>
       )}
 

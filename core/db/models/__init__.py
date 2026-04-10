@@ -7,6 +7,7 @@ from core.db.models import (  # noqa: F401
     cache,
     cms,
     content,
+    content_engine_runs,
     content_inventory,
     content_inventory_prompt,
     cost,

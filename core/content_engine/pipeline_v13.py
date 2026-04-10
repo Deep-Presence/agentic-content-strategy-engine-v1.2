@@ -452,6 +452,7 @@ async def _rebrief_and_rerun(
     task_id: Optional[str] = None,
     redis_client: Optional[Any] = None,
     slug: Optional[str] = None,
+    session_factory: Any = None,
 ) -> Optional[tuple]:
     """Re-brief a piece via Agent 2 and re-run the full worker+evaluator chain.
 
@@ -499,7 +500,11 @@ async def _rebrief_and_rerun(
             rationale=f"Re-brief after rejection: {user_comment[:200]}",
         )
 
-        rebrief_id = f"rebrief-{uuid.uuid4().hex[:8]}"
+        rebrief_id = (
+            blueprint.brief_id
+            if input_data.entry_mode == EntryMode.TOPIC_DISCOVERY
+            else f"rebrief-{uuid.uuid4().hex[:8]}"
+        )
         new_blueprints = await build_briefs_parallel(
             contexts=worker_contexts,
             topics=[rebrief_topic],
@@ -536,6 +541,7 @@ async def _rebrief_and_rerun(
             task_id=task_id,
             redis_client=redis_client,
             effective_slug=slug,
+            session_factory=session_factory,
         )
 
         if not formatted_list:
@@ -562,6 +568,7 @@ async def _rebrief_and_rerun(
             task_id=task_id,
             redis_client=redis_client,
             effective_slug=slug,
+            session_factory=session_factory,
         )
 
         return (final_content, history, feedback_route)
@@ -991,6 +998,7 @@ async def _run_pipeline_stages(
                 task_id=task_id,
                 redis_client=redis_client,
                 effective_slug=slug,
+                session_factory=session_factory,
             )
 
         else:
@@ -1057,6 +1065,7 @@ async def _run_pipeline_stages(
                 task_id=task_id,
                 redis_client=redis_client,
                 effective_slug=slug,
+                session_factory=session_factory,
             )
 
             # HITL Checkpoint 2: Brief Approval (per blueprint) with feedback loop
@@ -1075,6 +1084,7 @@ async def _run_pipeline_stages(
                         task_id=task_id,
                         redis_client=redis_client,
                         effective_slug=slug,
+                        session_factory=session_factory,
                     )
                     _emit_company(_company_slug, "notification", {
                         "type": "hitl_review_needed",
@@ -1107,7 +1117,7 @@ async def _run_pipeline_stages(
                         if feedback:
                             bp.user_feedback = feedback
                         approved_blueprints.append(bp)
-                        await _write_pipeline_state_async(artifact_dir, [bp.brief_id], "approved", task_id=task_id, redis_client=redis_client, effective_slug=slug)
+                        await _write_pipeline_state_async(artifact_dir, [bp.brief_id], "approved", task_id=task_id, redis_client=redis_client, effective_slug=slug, session_factory=session_factory)
                         brief_decision_log.append({
                             "brief_id": bp.brief_id,
                             "decision": "approve",
@@ -1338,7 +1348,7 @@ async def _run_pipeline_stages(
             _manual_brief_id = f"brief-{_next_idx:03d}"
 
         # Mark brief as "briefing" for Kanban sync — Brief Builder is about to run
-        await _write_pipeline_state_async(artifact_dir, [_manual_brief_id], "briefing", task_id=task_id, redis_client=redis_client, effective_slug=slug)
+        await _write_pipeline_state_async(artifact_dir, [_manual_brief_id], "briefing", task_id=task_id, redis_client=redis_client, effective_slug=slug, session_factory=session_factory)
 
         blueprints = await build_briefs_parallel(
             contexts=worker_contexts,
@@ -1361,7 +1371,7 @@ async def _run_pipeline_stages(
         )
 
         # Write "brief_review" state — brief is built, pending HITL-2 review
-        await _write_pipeline_state_async(artifact_dir, [bp.brief_id for bp in blueprints], "brief_review", task_id=task_id, redis_client=redis_client, effective_slug=slug)
+        await _write_pipeline_state_async(artifact_dir, [bp.brief_id for bp in blueprints], "brief_review", task_id=task_id, redis_client=redis_client, effective_slug=slug, session_factory=session_factory)
 
         # HITL Checkpoint 2: Brief Approval (per blueprint) with feedback loop
         # Same as autonomous mode — user reviews the generated blueprint before
@@ -1612,6 +1622,7 @@ async def _run_pipeline_stages(
                     task_id=task_id,
                     redis_client=redis_client,
                     effective_slug=slug,
+                    session_factory=session_factory,
                 )
                 _MAX_BRIEF_FEEDBACK_RETRIES = 1
                 brief_decision_log: list[dict] = []
@@ -1626,6 +1637,7 @@ async def _run_pipeline_stages(
                             task_id=task_id,
                             redis_client=redis_client,
                             effective_slug=slug,
+                            session_factory=session_factory,
                         )
                         _emit_company(_company_slug, "notification", {
                             "type": "hitl_review_needed",
@@ -1658,7 +1670,7 @@ async def _run_pipeline_stages(
                             if feedback:
                                 bp.user_feedback = feedback
                             approved_blueprints.append(bp)
-                            await _write_pipeline_state_async(artifact_dir, [bp.brief_id], "approved", task_id=task_id, redis_client=redis_client, effective_slug=slug)
+                            await _write_pipeline_state_async(artifact_dir, [bp.brief_id], "approved", task_id=task_id, redis_client=redis_client, effective_slug=slug, session_factory=session_factory)
                             brief_decision_log.append({
                                 "brief_id": bp.brief_id,
                                 "decision": "approve",
@@ -1861,6 +1873,15 @@ async def _run_pipeline_stages(
 
             # H2 FIX: Surface worker failures as rejected pieces + SSE events
             for wf in worker_failures:
+                await _write_pipeline_state_async(
+                    artifact_dir,
+                    [wf["brief_id"]],
+                    "failed",
+                    task_id=task_id,
+                    redis_client=redis_client,
+                    effective_slug=slug,
+                    session_factory=session_factory,
+                )
                 pieces.append(ContentPiece(
                     brief_id=wf["brief_id"],
                     title=f"[Worker Failed] {wf['brief_id']}",
@@ -1905,7 +1926,7 @@ async def _run_pipeline_stages(
                     )
                     continue
                 # Mark brief as "evaluating" for Kanban sync
-                await _write_pipeline_state_async(artifact_dir, [brief_id], "evaluating", task_id=task_id, redis_client=redis_client, effective_slug=slug)
+                await _write_pipeline_state_async(artifact_dir, [brief_id], "evaluating", task_id=task_id, redis_client=redis_client, effective_slug=slug, session_factory=session_factory)
                 _emit(event_bus, task_id, "worker_progress", {
                     "brief_id": brief_id, "step": "evaluating",
                 })
@@ -1926,6 +1947,7 @@ async def _run_pipeline_stages(
                     task_id=task_id,
                     redis_client=redis_client,
                     effective_slug=slug,
+                    session_factory=session_factory,
                 )
                 evaluated.append((brief_id, final_content, history, feedback_route))
 
@@ -1940,6 +1962,7 @@ async def _run_pipeline_stages(
                 task_id=task_id,
                 redis_client=redis_client,
                 effective_slug=slug,
+                session_factory=session_factory,
             )
         else:
             evaluated = [
@@ -2002,6 +2025,7 @@ async def _run_pipeline_stages(
                         task_id=task_id,
                         redis_client=redis_client,
                         slug=slug,
+                        session_factory=session_factory,
                     )
                     if rebriefed:
                         final_content, history, feedback_route = rebriefed
@@ -2036,6 +2060,7 @@ async def _run_pipeline_stages(
                         task_id=task_id,
                         redis_client=redis_client,
                         effective_slug=slug,
+                        session_factory=session_factory,
                     )
                     _emit_company(_company_slug, "notification", {
                         "type": "hitl_review_needed",
@@ -2113,14 +2138,14 @@ async def _run_pipeline_stages(
                                 topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
                             )
                         )
-                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "completed", task_id=task_id, redis_client=redis_client, effective_slug=slug)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "completed", task_id=task_id, redis_client=redis_client, effective_slug=slug, session_factory=session_factory)
                         piece_resolved = True
 
                     elif content_decision == "edit" and edit_count < _MAX_EDIT_ATTEMPTS:
                         # Edit → drafter revision with human notes → fact checker → re-present
                         edit_count += 1
                         # Mark as revising for Kanban sync (tile moves back to Generating)
-                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "revising", task_id=task_id, redis_client=redis_client, effective_slug=slug)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "revising", task_id=task_id, redis_client=redis_client, effective_slug=slug, session_factory=session_factory)
                         _emit(event_bus, task_id, "worker_progress", {
                             "brief_id": final_content.brief_id, "step": "revising",
                             "edit_attempt": edit_count,
@@ -2162,6 +2187,7 @@ async def _run_pipeline_stages(
                                 task_id=task_id,
                                 redis_client=redis_client,
                                 effective_slug=slug,
+                                session_factory=session_factory,
                             )
                         # Loop back to re-present at HITL-3
 
@@ -2174,7 +2200,7 @@ async def _run_pipeline_stages(
                         # Reject + rethink → re-brief with user comment → re-run full chain
                         rebrief_count += 1
                         # Mark as "briefing" for Kanban sync (tile moves back to Brief column)
-                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "briefing", task_id=task_id, redis_client=redis_client, effective_slug=slug)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "briefing", task_id=task_id, redis_client=redis_client, effective_slug=slug, session_factory=session_factory)
                         _emit(event_bus, task_id, "worker_progress", {
                             "brief_id": final_content.brief_id, "step": "briefing",
                             "rebrief_attempt": rebrief_count,
@@ -2201,6 +2227,7 @@ async def _run_pipeline_stages(
                             task_id=task_id,
                             redis_client=redis_client,
                             slug=slug,
+                            session_factory=session_factory,
                         )
                         if rebriefed:
                             final_content, history, feedback_route = rebriefed
@@ -2223,7 +2250,7 @@ async def _run_pipeline_stages(
 
                     else:
                         # Exhausted edit/rebrief attempts or explicit reject — permanent rejection
-                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "rejected", task_id=task_id, redis_client=redis_client, effective_slug=slug)
+                        await _write_pipeline_state_async(artifact_dir, [final_content.brief_id], "rejected", task_id=task_id, redis_client=redis_client, effective_slug=slug, session_factory=session_factory)
                         _emit(event_bus, task_id, "brief_rejected", {
                             "brief_id": final_content.brief_id,
                         })

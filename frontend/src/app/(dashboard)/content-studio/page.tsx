@@ -41,7 +41,16 @@ const ARTICLE_STATUSES: BriefPipelineStatus[] = [
 
 export default function ContentStudioPage() {
   const { companyName, companySlug } = useAuth();
-  const { cards, isLoading, error, isEmpty, refetch, updateCard } = useContentBriefs();
+  const {
+    cards,
+    isLoading,
+    error,
+    isEmpty,
+    refetch,
+    updateCard,
+    applyTopicRunChanged,
+    applyStateChanged,
+  } = useContentBriefs();
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   // Derive selectedCard from live cards array so it stays in sync after polls
   const selectedCard = useMemo(
@@ -62,11 +71,17 @@ export default function ContentStudioPage() {
     return null;
   }, [cards]);
 
-  // Company-wide SSE stream — triggers re-poll on any pipeline state change.
-  // This is the primary mechanism for keeping the kanban in sync.
+  // Company-wide SSE stream — authoritative topic_run_changed deltas update the
+  // normalized TD-entry store immediately. state_changed remains as a coarse
+  // compatibility path, while polling is only reconciliation.
   useCompanyStream(companySlug ?? null, {
-    onStateChanged: () => {
-      console.debug(`[CompanyStream] state_changed -> refetch @${new Date().toISOString()}`);
+    onStateChanged: (data) => {
+      applyStateChanged(data);
+    },
+    onTopicRunChanged: (data) => {
+      applyTopicRunChanged(data);
+    },
+    onReconnect: () => {
       refetch();
     },
     // onNotification can be wired to a toast system later
@@ -167,8 +182,8 @@ export default function ContentStudioPage() {
             );
             updateCard(selectedCard.id, {
               taskId: prodResult.run_id,
-              status: 'briefing',
-              agentProgress: { pct: 0, currentTask: 'Starting content production...' },
+              status: 'content_queued',
+              agentProgress: undefined,
             });
             break;
           }

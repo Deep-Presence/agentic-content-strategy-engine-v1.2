@@ -697,6 +697,10 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
           <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
             Gap analysis complete. Click &ldquo;Start Production&rdquo; to begin content creation.
           </p>
+        ) : card.status === 'content_queued' ? (
+          <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            Production request accepted. Waiting for shared Content Engine capacity before brief building starts.
+          </p>
         ) : card.status === 'gap_analysis' ? (
           <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
             Analyzing content gaps across AI search platforms for this topic.
@@ -719,7 +723,7 @@ interface LeftSidebarProps {
 
 export function LeftSidebar({ card, activeSection, onSectionClick }: LeftSidebarProps) {
   const column = getColumn(card.status);
-  const isGAPhase = card.status === 'gap_analysis_pending' || card.status === 'gap_analysis' || card.status === 'gap_analysis_complete';
+  const isGAPhase = card.status === 'gap_analysis_pending' || card.status === 'gap_analysis' || card.status === 'gap_analysis_complete' || card.status === 'content_queued';
   const showBrief = card.status === 'brief_review' || card.status === 'pending_brief_approval';
   const showArticle = card.status === 'review' || card.status === 'pending_content_approval';
 

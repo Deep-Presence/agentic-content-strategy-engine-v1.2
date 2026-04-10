@@ -4,8 +4,14 @@ import { useState } from 'react';
 import { Check, Download, ExternalLink, Copy } from 'lucide-react';
 import type { ContentCard, ContentMetadata } from './types';
 import type { GapSummaryResponseAPI } from '../_lib/types';
+import {
+  formatCardActivityDetail,
+  formatCardActivityLabel,
+  type CardActivityItem,
+  type CardActivitySourceKind,
+} from '../_lib/card-activity';
 
-type Tab = 'metrics' | 'seo' | 'links' | 'export';
+type Tab = 'metrics' | 'activity' | 'seo' | 'links' | 'export';
 
 const ENGINE_DOMAINS: Record<string, string> = {
   ChatGPT: 'openai.com',
@@ -611,19 +617,117 @@ function ExportTab({ onPublish }: { onPublish: () => void }) {
   );
 }
 
+function ActivityTab({
+  card,
+  items,
+  isLoading,
+  sourceKind,
+}: {
+  card: ContentCard;
+  items: CardActivityItem[];
+  isLoading: boolean;
+  sourceKind: CardActivitySourceKind;
+}) {
+  if (sourceKind === 'unavailable') {
+    return (
+      <div className="p-4 flex flex-col items-center justify-center" style={{ paddingTop: 48, color: 'var(--text-tertiary)', fontSize: 12 }}>
+        Durable card activity is available for TD-entry cards today. Manual and prompt-entry cards will plug into this same tab once their runtime log source lands.
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="p-4 flex flex-col items-center justify-center" style={{ paddingTop: 48, color: 'var(--text-tertiary)', fontSize: 12 }}>
+        Loading activity…
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <div className="p-4 flex flex-col items-center justify-center" style={{ paddingTop: 48, color: 'var(--text-tertiary)', fontSize: 12 }}>
+        No durable activity has been recorded for this card yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-3 space-y-3 overflow-y-auto flex-1">
+      <div className="px-1" style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)' }}>
+        {(card.displayId || card.id)} activity
+      </div>
+      {items.map((event) => {
+        const detail = formatCardActivityDetail(event);
+        return (
+          <div
+            key={event.activityId}
+            className="flex gap-3 p-3"
+            style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg)' }}
+          >
+            <div className="flex flex-col items-center" style={{ paddingTop: 2 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
+              <span style={{ width: 1, flex: 1, background: 'var(--border)', marginTop: 4 }} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
+                  {formatCardActivityLabel(event)}
+                </span>
+                <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>
+                  #{event.seq}
+                </span>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                {new Date(event.createdAt).toLocaleString()}
+              </div>
+              <div className="flex flex-wrap gap-1" style={{ marginTop: 8 }}>
+                <span style={{ fontSize: 9, fontWeight: 600, textTransform: 'uppercase', padding: '1px 6px', borderRadius: 'var(--radius-full)', background: 'var(--accent-subtle)', color: 'var(--accent)' }}>
+                  {event.status.replace(/_/g, ' ')}
+                </span>
+                <span style={{ fontSize: 9, fontWeight: 600, textTransform: 'uppercase', padding: '1px 6px', borderRadius: 'var(--radius-full)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                  {event.eventType.replace(/_/g, ' ')}
+                </span>
+              </div>
+              {detail && (
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 8 }}>
+                  {detail}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 interface RightSidebarProps {
   card: ContentCard;
   gapSummary?: GapSummaryResponseAPI;
+  activityItems: CardActivityItem[];
+  activityLoading: boolean;
+  activitySourceKind: CardActivitySourceKind;
   metadata?: ContentMetadata;
   onMetadataChange: (m: ContentMetadata) => void;
   onPublish: () => void;
 }
 
-export function RightSidebar({ card, gapSummary, metadata, onMetadataChange, onPublish }: RightSidebarProps) {
+export function RightSidebar({
+  card,
+  gapSummary,
+  activityItems,
+  activityLoading,
+  activitySourceKind,
+  metadata,
+  onMetadataChange,
+  onPublish,
+}: RightSidebarProps) {
   const [activeTab, setActiveTab] = useState<Tab>('metrics');
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'metrics', label: 'Metrics' },
+    { id: 'activity', label: 'Activity' },
     { id: 'seo', label: 'SEO' },
     { id: 'links', label: 'Links' },
     { id: 'export', label: 'Export' },
@@ -660,6 +764,14 @@ export function RightSidebar({ card, gapSummary, metadata, onMetadataChange, onP
 
       <div className="flex-1 overflow-y-auto">
         {activeTab === 'metrics' && <MetricsTab card={card} gapSummary={gapSummary} />}
+        {activeTab === 'activity' && (
+          <ActivityTab
+            card={card}
+            items={activityItems}
+            isLoading={activityLoading}
+            sourceKind={activitySourceKind}
+          />
+        )}
         {activeTab === 'seo' && <SEOTab metadata={metadata} onChange={onMetadataChange} />}
         {activeTab === 'links' && <LinksTab card={card} />}
         {activeTab === 'export' && <ExportTab onPublish={onPublish} />}

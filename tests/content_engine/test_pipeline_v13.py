@@ -6,6 +6,7 @@ Uses tmp_path for artifact directories.
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -970,6 +971,141 @@ class TestRebriefContextExtraction:
         fallback_qid = "rebrief-brief-002"
         assert fallback_qid in contexts, f"Fallback key '{fallback_qid}' must exist"
         assert contexts[fallback_qid].query_gap["query_text"] == "Startup Funding Guide"
+
+    @pytest.mark.asyncio
+    async def test_td_rebrief_preserves_brief_id_and_threads_session_factory(self, tmp_path):
+        """TD rebriefs must keep the stable brief/display id and forward session_factory."""
+        from core.content_engine.pipeline_v13 import _rebrief_and_rerun
+
+        gap_ctx = WorkerQueryContext(
+            query_gap={"query_id": "q-equity-001", "query_text": "equity dilution"},
+        )
+        bp = ContentBlueprint(
+            brief_id="WE-003",
+            title="Equity Dilution Guide",
+            content_format="long_blog",
+            cluster_name="equity",
+            gap_context=gap_ctx,
+        )
+        input_data = _make_input(tmp_path, entry_mode=EntryMode.TOPIC_DISCOVERY)
+        input_data.topic_assignment_ids = ["ta-1"]
+        formatted = _make_formatted(brief_id="WE-003")
+        history = RevisionHistory(brief_id="WE-003", final_passed=True)
+        session_factory = MagicMock()
+
+        with patch(
+            "core.content_engine.pipeline_v13.build_briefs_parallel",
+            new_callable=AsyncMock,
+            return_value=[bp],
+        ) as mock_build, patch(
+            "core.content_engine.workers.dispatcher.dispatch_workers_v13",
+            new_callable=AsyncMock,
+            return_value=[[(formatted.brief_id, formatted)], []],
+        ) as mock_dispatch, patch(
+            "core.content_engine.evaluator.loop.evaluate_and_optimize",
+            new_callable=AsyncMock,
+            return_value=(formatted, history, "pass"),
+        ) as mock_evaluate:
+            result = await _rebrief_and_rerun(
+                blueprint=bp,
+                user_comment="Focus on anti-dilution clauses",
+                input_data=input_data,
+                company_context_md="Company context",
+                persona_mds=[],
+                style_guide_md="",
+                analysis_json={},
+                artifact_dir=tmp_path,
+                session_id="test-session",
+                session_factory=session_factory,
+                task_id="task-1",
+                slug="test-co",
+            )
+
+        assert result is not None
+        assert mock_build.call_args.kwargs["brief_id_overrides"] == ["WE-003"]
+        assert mock_dispatch.call_args.kwargs["session_factory"] is session_factory
+        assert mock_evaluate.call_args.kwargs["session_factory"] is session_factory
+
+    @pytest.mark.asyncio
+    async def test_td_worker_failure_writes_explicit_failed_state(self, tmp_path):
+        assignment = MagicMock()
+        assignment.id = "ta-1"
+        assignment.display_id = "WE-003"
+        assignment.topic_text = "Equity Dilution Guide"
+
+        worker_context = WorkerQueryContext(
+            query_gap={"query_id": "q-equity-001", "query_text": "equity dilution"},
+        )
+        blueprint = ContentBlueprint(
+            brief_id="WE-003",
+            title="Equity Dilution Guide",
+            content_format="long_blog",
+            cluster_name="equity",
+        )
+        input_data = _make_input(tmp_path, entry_mode=EntryMode.TOPIC_DISCOVERY)
+        input_data.topic_assignment_ids = ["ta-1"]
+
+        with patch(
+            "core.content_engine.pipeline_v13._ensure_artifact_dir",
+            return_value=tmp_path,
+        ), patch(
+            "core.topic_discovery.db_ops.db_read_assignments_by_ids",
+            new_callable=AsyncMock,
+            return_value=[assignment],
+        ), patch(
+            "core.content_engine.context_router.extract_topic_contexts",
+            return_value={"q-equity-001": worker_context},
+        ), patch(
+            "core.content_engine.context_router.topic_assignment_to_selection",
+            return_value=TopicSelection(
+                rank=0,
+                query_ids=["q-equity-001"],
+                query_texts=["equity dilution"],
+                cluster_name="equity",
+                rationale="High gap",
+            ),
+        ), patch(
+            "core.content_engine.pipeline_v13.build_briefs_parallel",
+            new_callable=AsyncMock,
+            return_value=[blueprint],
+        ), patch(
+            "core.content_engine.pipeline_v13.persist_blueprints_early",
+            new_callable=AsyncMock,
+        ), patch(
+            "core.content_engine.pipeline_v13._merge_and_write_blueprints",
+        ), patch(
+            "core.redis.get_sync_redis_or_none",
+            return_value=None,
+        ), patch(
+            "core.content_engine.pipeline_v13.persist_content_pieces",
+            new_callable=AsyncMock,
+        ), patch(
+            "core.content_engine.pipeline_v13.persist_content_run_summary",
+            new_callable=AsyncMock,
+        ), patch(
+            "core.content_engine.pipeline_v13._cleanup_pipeline_state_async",
+            new_callable=AsyncMock,
+        ), patch(
+            "core.content_engine.workers.dispatcher.dispatch_workers_v13",
+            new_callable=AsyncMock,
+            return_value=([], [{"brief_id": "WE-003", "error": "worker exploded"}]),
+        ), patch(
+            "core.content_engine.pipeline_v13._write_pipeline_state_async",
+            new_callable=AsyncMock,
+        ) as mock_write_state:
+            result = await run_content_generation_v13(
+                input_data,
+                task_id="task-1",
+                session_factory=MagicMock(),
+                run_id=uuid.uuid4(),
+                company_id=uuid.uuid4(),
+            )
+
+        assert result.total_rejected == 1
+        assert any(
+            call.args[1] == ["WE-003"] and call.args[2] == "failed"
+            for call in mock_write_state.await_args_list
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════

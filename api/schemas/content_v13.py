@@ -141,6 +141,25 @@ class ContentApprovalRequestV13(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class TopicRunSummaryV13(BaseModel):
+    """Durable topic-run summary for TD-entry Content Engine flows."""
+
+    topic_run_id: str = ""
+    batch_run_id: str = ""
+    topic_assignment_id: str = ""
+    display_id: str = ""
+    topic_text: str = ""
+    brief_id: str = ""
+    ga_run_id: Optional[str] = None
+    pipeline_task_id: Optional[str] = None
+    status: str = ""
+    stage: str = ""
+    seq: int = 0
+    content_piece_id: Optional[str] = None
+    created_at: str = ""
+    updated_at: str = ""
+
+
 class PipelineRunResponseV13(BaseModel):
     """Response after starting the v1.3 pipeline."""
 
@@ -148,6 +167,8 @@ class PipelineRunResponseV13(BaseModel):
     status: str = "started"
     entry_mode: str = "autonomous"
     message: Optional[str] = None
+    batch_run_id: Optional[str] = None
+    topic_runs: List[TopicRunSummaryV13] = Field(default_factory=list)
 
 
 class ApprovalResponseV13(BaseModel):
@@ -275,3 +296,42 @@ class TopicContentStatusResponse(BaseModel):
     effective_slug: str
     total_assignments: int = 0
     items: List[TopicContentStatusItem] = Field(default_factory=list)
+
+
+class TopicRunListResponseV13(BaseModel):
+    """List response for TD-entry durable topic runs."""
+
+    effective_slug: str = ""
+    total: int = 0
+    items: List[TopicRunSummaryV13] = Field(default_factory=list)
+
+
+class TopicRunEventV13(BaseModel):
+    """Durable append-only event for one TD-entry topic run."""
+
+    topic_event_id: str = ""
+    topic_run_id: str = ""
+    topic_assignment_id: str = ""
+    display_id: str = ""
+    brief_id: str = ""
+    event_type: str = ""
+    stage: str = ""
+    status: str = ""
+    seq: int = 0
+    content_piece_id: Optional[str] = None
+    pipeline_task_id: Optional[str] = None
+    payload_json: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+
+
+class TopicRunEventListResponseV13(BaseModel):
+    """List response for one durable TD-entry topic-run event stream."""
+
+    effective_slug: str = ""
+    topic_run_id: str = ""
+    topic_assignment_id: str = ""
+    display_id: str = ""
+    topic_text: str = ""
+    brief_id: str = ""
+    total: int = 0
+    items: List[TopicRunEventV13] = Field(default_factory=list)
