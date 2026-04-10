@@ -1,74 +1,306 @@
 {
   "current_sprint": "td-entry-parallel-execution",
-  "last_updated": "2026-04-10",
+  "last_updated": "2026-04-11",
   "test_count": 2103,
   "completed_sprints_summary": {
     "total_tasks_completed": 48,
     "sprints": [
-      {"sprint": "td-entry-parallel-execution-phase3b", "date": "2026-04-10", "summary": "TD-entry production queue semantics + recency hardening. Added a real `content_queued` pre-brief state for TD start-production, with backend preflight conflict rejection when the same topic is already queued/running for the same GA run. HTTP start-production now persists queue state before the runner competes for the global semaphore, and the frontend moves cards to `content_queued` instead of falsely showing `briefing`. Also removed client-authored `updatedAt` bumps from `useContentBriefs` optimistic/state-changed paths so stale local CE/HITL states no longer outrank newer backend truth. Validation: `tests/api/test_content_v13_ga_endpoints.py -q`, `tests/content_engine/test_state_redis_ga.py -q`, and `frontend npx tsc --noEmit`."},
-      {"sprint": "v3-async", "date": "2026-02-15", "summary": "Async pipeline conversion (12 tasks), Playwright CF bypass, content engine v1.0"},
-      {"sprint": "v3-signals", "date": "2026-02-18", "summary": "Structural Signal Overhaul — S4 dual-soup, ~45 signals, GapContentBrief, 3-tier output"},
-      {"sprint": "api-v1", "date": "2026-02-24", "summary": "FastAPI REST API, SSE events, HITL fix, Codex review fixes, approval flow"},
-      {"sprint": "front-back-integration", "date": "2026-02-26", "summary": "Auth foundation, gap/content/brand data endpoints, research tests (109), product pipeline (5 phases), review fixes"},
-      {"sprint": "route-protection", "date": "2026-02-27", "summary": "Default-deny ASGI middleware, RBAC, tenant isolation, invite flow, stream tokens, security fixes"},
-      {"sprint": "settings-knowledge-docs", "date": "2026-02-27", "summary": "Settings API (team/profile/pipeline-defaults), knowledge doc upload + s1 integration"},
-      {"sprint": "sqlalchemy-migration", "date": "2026-02-27", "summary": "Phase 1 — 31 ORM tables, Alembic migrations, 8 repos, DI wiring"},
-      {"sprint": "auth-migration-phase2", "date": "2026-02-28", "summary": "AuthServiceProtocol, JsonAuthService, DbAuthService, utility extraction, DI switch"},
-      {"sprint": "service-layer-phase3", "date": "2026-02-28", "summary": "3 service protocols, 6 implementations (Json+Db), 2 new repos, backfill script"},
-      {"sprint": "cleanup-taskstore-migration", "date": "2026-02-28", "summary": "TaskStoreProtocol, DbTaskStore write-through, ApiTaskModel ORM, startup recovery"},
-      {"sprint": "phase4-persistence", "date": "2026-02-28", "summary": "Pipeline DB write hooks (persist_s1-s8, content persistence), backfill spec fields"},
-      {"sprint": "site-audit", "date": "2026-03-01", "summary": "Pipeline 0 — 6-step deterministic audit, 8 dimensions, penalty scoring, async crawler, 636 tests"},
-      {"sprint": "content-engine-v13", "date": "2026-03-02", "summary": "v1.3 pipeline (6 stages, LiteLLM, E-E-A-T, 3 HITL, linker agent, 10-phase refactor), LangSmith migration"},
-      {"sprint": "knowledge-base-v1-v5", "date": "2026-03-06", "summary": "KB phases 1-5: 17 models, KBStorage, 6 agents, DAG orchestrator, 3 HITL, API router, staleness tracking, delta synthesis. 260 KB tests"},
-      {"sprint": "audience-persona-v6-a-c", "date": "2026-03-06", "summary": "AP phases A-C: 9 Pydantic models, PersonaStorage, 2 agents (suggester + generator), 2 HITL graphs, prompts. 187 AP tests"},
-      {"sprint": "research-orchestrator-v13", "date": "2026-03-11", "summary": "Research Orchestrator — KB→AP→VSG sequential DAG. 67 tests."},
-      {"sprint": "td-content-integration-v1.2.0", "date": "2026-03-15", "summary": "TD→GA→CE integration — 8-phase plan. ~44 new tests."},
-      {"sprint": "daily-tracker-db-persistence-v15", "date": "2026-03-15", "summary": "Daily Tracker DB persistence — 6-phase plan. 392 DT tests."},
-      {"sprint": "pgvector-migration-v16", "date": "2026-03-15", "summary": "ChromaDB→pgvector migration — 8-phase plan. 429 GA tests."},
-      {"sprint": "structured-logging-v17", "date": "2026-03-15", "summary": "Structured Logging Foundation (Layer 1). 22 new tests."},
-      {"sprint": "structured-logging-layer2-v18", "date": "2026-03-15", "summary": "Structured Logging Layer 2 — Correlation & Context. 48 new tests."},
-      {"sprint": "redis-session-0", "date": "2026-03-22", "summary": "Redis Infrastructure Foundation — core/redis.py (async+sync lazy singletons), settings, health check, DI. 13 tests."},
-      {"sprint": "redis-session-1", "date": "2026-03-22", "summary": "RedisEventBus — Redis Streams SSE, atomic Lua INCR+XADD, EventBusProtocol, thread-safe mirror with eviction. 37 tests."},
-      {"sprint": "redis-session-2", "date": "2026-03-22", "summary": "Pipeline State (Redis Hashes) + Distributed Locks. 36 tests."},
-      {"sprint": "redis-session-3", "date": "2026-03-22", "summary": "HITL RedisSaver — replace MemorySaver with RedisSaver across 12 graph builders. 7 tests."},
-      {"sprint": "redis-session-4", "date": "2026-03-22", "summary": "Redis Approval Queues — BRPOP/LPUSH in DbTaskStore. 13 tests."},
-      {"sprint": "redis-session-5", "date": "2026-03-22", "summary": "Redis Distributed Semaphore — atomic Lua acquire (Sorted Set). 11 tests."},
-      {"sprint": "redis-codex-fixes-phase2", "date": "2026-03-27", "summary": "6 critical Redis bug fixes. 17 new tests."},
-      {"sprint": "r2-blob-storage-phase3", "date": "2026-03-27", "summary": "R2 Blob Storage Redis Cache Layer — CachedStorageBackend, mtime removal. 25 new tests."},
-      {"sprint": "r2-blob-storage-phase5", "date": "2026-03-27", "summary": "Phase 5 StorageBackend Migration — Reader-side services migrated from direct filesystem."},
-      {"sprint": "redis-phase6-remove-fallbacks", "date": "2026-03-27", "summary": "Phase 6 Remove Filesystem Fallbacks — deleted JSON TaskStore, EventBus, JsonAuthService. ~1300 lines removed."},
-      {"sprint": "openrouter-phase1", "date": "2026-03-29", "summary": "OpenRouter Phase 1 — Migrate 3 LLM wrappers to OpenRouter. ~32 call sites, 18 files, 386 tests passing."},
-      {"sprint": "openrouter-phase2", "date": "2026-03-30", "summary": "OpenRouter Phase 2 — Migrate 4 direct SDK calls. 8 source + 3 test files. 1865 tests passing."},
-      {"sprint": "frontend-auth-integration-security-hardening", "date": "2026-04-03", "summary": "Frontend auth integration + security hardening. BFF proxy, httpOnly cookies, CSP nonces, 20 new files."},
-      {"sprint": "frontend-shared-components-integration-readiness", "date": "2026-04-03", "summary": "Integration readiness audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer)."},
-      {"sprint": "frontend-brand-hub-integration", "date": "2026-04-04", "summary": "Brand Hub (/artifacts) fully integrated with backend API. KB, VSG, AP fetched from real endpoints. Version history dropdown. Upload modal. Auth login fixes. Dead code data loaders removed."},
-      {"sprint": "query-fanout-data-retention", "date": "2026-04-04", "summary": "Query fanout generation (OpenRouter/Claude Sonnet, 6 intent axes, 12-18 variants per prompt). Self-referential FK on tracked_prompts. 30-day response text cleanup. 9 new API endpoints (fanout CRUD, answer history, cleanup). 394 DT tests passing."},
-      {"sprint": "prompt-tracking-enriched", "date": "2026-04-04", "summary": "Prompt tracking backend data layer — enriched prompt list (per-prompt mentionRate/citationRate/delta/sparkline/fanoutCount), per-prompt drawer analytics, 3 foundation bug fixes (N+1 query, days filter, _row_to_dict), 3 new composite indexes, 2 new endpoints, 6 new Pydantic models. 414 DT tests passing (20 new)."},
-      {"sprint": "prompt-tracking-frontend-integration", "date": "2026-04-04", "summary": "Prompt Tracking frontend-backend integration — 4-layer pattern (types/api/adapters/hooks). 8 new frontend files, 3 refactored components, 2 deleted mock files. Backend: start_date/end_date params on 3 endpoints. PB-95 (tenant isolation) added to backlog. 67 DT tests passing. Build clean."},
-      {"sprint": "content-inventory-phase1", "date": "2026-04-04", "summary": "Content Inventory Phase 1 Foundation — universal CMS-agnostic content registry. ContentInventoryModel (26 cols, pgvector embedding), Alembic 0026, ContentInventoryRepository (upsert/bulk/similarity/pagination), ContentInventoryService (5 ingestion + 3 similarity methods), URL normalization, 3 Pydantic DTOs, DI wiring, CMS FK. 67 new tests (39 unit + 14 service + 14 DB). 1623 existing tests passing."},
-      {"sprint": "prompt-tracking-frontend-integration-extended", "date": "2026-04-04", "summary": "Prompt Tracking full frontend integration + Brand Hub regeneration. Add Prompt modal (POST /prompts), Run All Prompts (POST /runs with persistent status banner, localStorage, polling), fanout generation animation (shimmer + polling), auto-run daily checkbox. Brand Hub: Re-generate buttons wired for KB/AP/VSG (auto-approve), Re-run Pipeline button calls Research Orchestrator (KB→AP→VSG DAG, auto-approve all). Two-pass competitor extraction: Haiku extracts structured JSON from KB markdown, daily tracker auto-resolves competitors from KB sidecar. PB-95 (tenant isolation) CRITICAL. 16 new extraction tests. Model fix (claude-haiku-4.5). LangSmith tracing on extraction. 683 tests passing."},
-      {"sprint": "settings-page-integration", "date": "2026-04-04", "summary": "Settings page (/settings) frontend-backend integration. Team tab: real API (member list, role updates superuser-gated, invite code generation). Integrations tab: WordPress CMS connect/disconnect via modal form, GA4 Analytics full OAuth flow (authorize → Google consent → BFF callback → property selection → sync → disconnect w/ purge). BFF callback route bypasses catch-all proxy auth. api.del() enhanced with params. Role mapping layer (superuser↔Admin, member↔Editor, viewer↔Viewer). Models/Billing/Notifications tabs remain dummy. 8 new files, 3 modified. TypeScript clean, build clean."},
-      {"sprint": "planner-integration", "date": "2026-04-04", "summary": "Content Planner (/planner) frontend-backend integration. 4 new backend endpoints (summary, assignments CRUD, custom create). TopicAssignmentStatus enum expanded (approved/rejected). Frontend: _lib/ (types, api, adapters) + usePlannerData hook + component updates. Initiatives sidebar stays dummy. 59 new tests. GA4 OAuth redirect fix. GA4 disconnect reconnect bug fix (active_only=False). Expand Topic button on Cluster Explorer."},
-      {"sprint": "td-db-only-migration", "date": "2026-04-05", "summary": "Eliminate JSON filesystem from Topic Discovery pipelines — DB-only storage. New db_ops.py (13 async functions replacing TopicDiscoveryStorage). Pipeline A & B rewritten. DbTopicDiscoveryDataService JSON fallback removed. TD→Content orchestrator reads from DB. Router/guard uses DB queries. pipeline_state.json writes conditional on Redis. Migration 0029 (scoring_json, persona_affinity_index_json). 1588 tests passing."},
-      {"sprint": "td-additive-upsert", "date": "2026-04-05", "summary": "Refactor topic expansion (Pipeline B) to additive per-subdomain DB upserts. 5 new db_ops functions (claim, mark, write-per-subdomain, rebuild-tree-json, reset-stale). Pipeline B rewritten: per-subdomain expand+persist with retry/backoff, circuit breaker, crash recovery. Per-assignment persona affinity scoring. db_read_taxonomy fallback for NULL tree_json. allow_parallel=True for concurrent expansions (DB optimistic lock replaces Redis slug lock). 3 tree CRUD API endpoints. Frontend: persona affinity in cluster header, target persona in drawer, auto-refresh via task polling, concurrent expansion support. Migration 0031. 18 new tests. 647 TD+API tests passing."},
-      {"sprint": "content-studio-status-enum", "date": "2026-04-05", "summary": "Content Studio stage-status enum resolution. Replaced 8-value ContentStage + 3-value Column with 17-value BriefPipelineStatus (mirrors backend) + 4-value KanbanColumn. New _lib/status-adapter.ts with pure mapping functions (getColumn, getDisplay, getHITLActions, getWorkerStepIndex). 4 Kanban columns (triage/human/agent/done). Pipeline stepper aligned with backend worker chain (6 steps). 1 new file, 7 modified. TypeScript clean, build clean."},
-      {"sprint": "td-ga-ce-two-phase-split", "date": "2026-04-06", "summary": "Two-phase TD→GA→CE pipeline split. Split run_td_to_content_pipeline into run_td_gap_analysis_only (Phase 1: GA with SSE instrumentation, ga_step_start/ga_step_complete at all 8 S-steps) and run_td_content_production_only (Phase 2: CE from pre-computed GA). 3 new BriefPipelineStatus (gap_analysis_pending/gap_analysis/gap_analysis_complete). GA-phase Redis state layer (ta-{id} keys in pipeline_state:{slug} hash). DbContentDataService.get_briefs() merges GA cards before DB briefs. 2 new runner tasks, 2 new endpoints (POST /from-topics/gap-analysis, POST /from-topics/start-production). TopicContentProductionRequest schema. Alembic 0032. Frontend: types+adapter+api+hooks+visual components for GA phase (8-step stepper, 'Start Production' CTA). Planner handleApprove wires to GA pipeline. 49 new tests. Codex gpt-5.3-codex audit: 7 findings fixed (H1-H4, M1-M2). 85 tests passing. Build clean."},
-      {"sprint": "content-inventory-structural-signals", "date": "2026-04-06", "summary": "Content Inventory enhanced: Gap Analysis S1 as second ingestion source (gap_analysis_crawl enum), 45-field structural_signals JSONB column, Site Audit HTML pass-through via _html_map_out for signal computation. Migration 0033. Codex gpt-5.3-codex review: 10 findings, 5 addressed. 9 new tests. 138 passing."},
-      {"sprint": "content-to-prompt-pipeline", "date": "2026-04-06", "summary": "Content-to-Prompt pipeline — generates k AI visibility prompts per content inventory page for daily tracker monitoring. Join table content_inventory_prompts (migration 0034), ContentToPromptService (LLM via OpenRouter Sonnet), ContentToPromptOrchestrator (dedup + persist + approve), 6 API endpoints, enrich_thin_pages(), PromptSource.CONTENT_INVENTORY. Codex gpt-5.3-codex critical review: 8 findings incorporated. 42 new tests. Post-review security hardening: 6 critical fixes (tenant isolation on all endpoints via company_uuid validation, prompt injection mitigation with XML tags, dedup TOCTOU race condition fix). Model registration fix (__init__.py). Structural composite score (compute_structural_score 0-100 from 24 signals, 4 categories) added to ContentPerformanceRow + ContentDetailResponse. 17 structural score tests. Content Performance page readiness audit completed: 5/8 table columns ready, 3/9 drawer sections ready, citation-matching service identified as biggest gap."},
-      {"sprint": "content-performance-gaps", "date": "2026-04-06", "summary": "Content Performance 4-gap fill: citations (total cited count per page), platforms (5 per-engine booleans via bool_or), queries_covered (gap analysis queries targeting page via URL match), citation_timeline (daily timeseries for drawer). 3 new repo methods (batch citations, timeline, gap query count). Service layer enriched (Optional repos, backward compat). DI wiring. Frontend: types, adapters (3 hardcoded→API), ContentDrawer Section A live chart. Codex gpt-5.3-codex reviewed (5 concerns addressed). 5 new tests. 63 total passing."},
-      {"sprint": "cannibalization-detection", "date": "2026-04-07", "summary": "Content cannibalization detection module (two surfaces) + json_repair integration. Proactive: Pipeline B checks new topic assignments vs content inventory embeddings during expansion — enriched query text (topic+description+keywords), piecewise priority penalty (0% at 0.80, 20% at 0.90, 35% cap), stored in metadata_json. Retroactive: GET /{inventory_id}/similar endpoint (pgvector cosine, self-excluding, embeddings_ready flag, Generate Embeddings CTA). Frontend: overlap badges on Planner rows, cannibalization section in Planner DetailDrawer, Content Performance drawer Section F live. json_repair library replaces hand-rolled _repair_json() in safe_parse() + 3 evaluator judges. Codex gpt-5.3-codex reviewed. 34 new tests. 73 total passing. 21 files changed."},
-      {"sprint": "cms-auto-sync-prompt-gen", "date": "2026-04-07", "summary": "CMS auto-sync + incremental upsert tracking + auto-prompt generation. Feature 1: Auto-sync on first CMS connect (POST /connect triggers run_cms_sync_task if last_sync_at is None, TaskConflictError idempotency guard, sync_task_id in response). Feature 2: Incremental upsert with new page detection (get_existing_urls() pre-collect, ingest_from_cms_sync returns (pairs, new_page_ids) tuple). Feature 3: Auto-prompt generation for new pages chained in run_cms_sync_task Phase 2 (_run_auto_prompt_generation helper, ContentToPromptOrchestrator, auto_approve=True, cap at auto_prompt_max_pages=50, error isolation, SSE events for prompt_generation phase). Codex gpt-5.3-codex reviewed: idempotency guard, deterministic page selection, observability for partial success incorporated. 13 new tests. 106 targeted tests passing. 1979 total passing. 8 files changed."},
-      {"sprint": "content-studio-architecture-fix", "date": "2026-04-07", "summary": "Content Studio 3-phase architecture fix. Phase 1: Bug 1 (TD HITL-2 bypass — dead else branch replaced with full HITL checkpoint pattern in pipeline_v13.py), Bug 2 (OpenRouter model ID fix: claude-haiku-4.5→claude-haiku-4-5 in settings.py), Bug 3 (GA→CE card snap-back — added 'briefing' to _GA_PHASES, in_content_production enum+migration 0036, orchestrator transition step 2a). Phase 2: Bug 4 (polling overwrites SSE — version-aware merge using updatedAt in useContentBriefs.ts, adaptive polling 5s/60s/none). Phase 3: Company-wide SSE stream — CompanyEventBus (in-memory pub/sub per company, core/events/company_event_bus.py), SSE endpoint (api/routers/company_stream.py), _emit_company helper (state_helpers.py), 8+ emit points in pipeline_v13.py, 3 emit points in td_content_orchestrator.py, useCompanyStream hook (300ms debounce), page.tsx wired. 9 EventBus tests. CRITICAL BUG FOUND IN REVIEW: _company_slug NameError in _run_pipeline_stages and _finalize_pipeline (variable defined in caller function, not passed as parameter). 5 additional issues identified (see failures.json F17-F18)."},
-      {"sprint": "kanban-sync-lag-fix", "date": "2026-04-08", "summary": "Fix Content Studio Kanban 4-minute sync lag (Codex audit R1). 4 fixes: (1) CRITICAL — centralized _emit_company() inside _write_pipeline_state_async() so every status write (outlining/drafting/linking/enriching) auto-broadcasts company SSE state_changed event; (2) GA-phase cleanup log level debug→warning; (3) Approve button in-flight guard (isSubmitting + handleActionGuarded prevents 409 double-click); (4) Optimistic updatedAt bump in updateCard so version-aware merge correctly keeps local status during 15s grace period. 7 new tests (test_state_helpers.py). Codex gpt-5.3-codex reviewed: R1 PASS, 2 pre-existing architectural items (file fallback non-atomic, in-memory CompanyEventBus) noted as DEFERRED. 624/625 content_engine tests passing (1 pre-existing). TypeScript clean."},
-      {"sprint": "universal-display-id-part2", "date": "2026-04-08", "summary": "Universal Display ID Part 2 — pipeline propagation + frontend + 6 audit fixes. display_id flows TD→Orchestrator→GA Redis→CE pipeline→Content Data Service→Frontend. H1: brief_id_hint regex relaxed. H2: build_briefs_parallel index preservation (all 7 callers). M1: JSON service regex. M2: GA card dedup by topic_assignment_id. M3: _brief_dir path sanitization. L1: frontend fallback numbering from max(existing)+1. 2 Codex gpt-5.3-codex reviews PASS. 37 new tests. 240 affected tests passing. TypeScript clean. 3 LOW-risk findings deferred (legacy pipeline.py _brief_dir, derive_prefix digit guard, return type annotation)."},
-      {"sprint": "structured-output-layer1", "date": "2026-04-08", "summary": "Layer 1 Constrained Decoding — OpenRouter json_schema strict mode on 14 LLM call sites (6 CE + 8 TD). 13 schema models. build_response_format() helper. All Dict[str, Any] replaced with typed sub-models. Perplexity/raw-markdown excluded. 43 new tests. Codex gpt-5.3-codex critical review: 9 findings (1 CRITICAL source_personas key mismatch, 3 HIGH require_parameters location + hierarchy key names + target_keywords shape, 3 MEDIUM reading_hierarchy casing + no graceful downgrade + token overhead, 1 LOW prompt field suppression, 1 MEDIUM test gaps). Findings 1-5 need fixes before production."},
-      {"sprint": "planner-studio-pipeline-fixes", "date": "2026-04-09", "summary": "Content Planner→Studio pipeline debugging + 6 bug fixes via Playwright E2E testing. Issue 1 (CRITICAL): Silent 409 on duplicate GA launch — frontend revert+error toast (page.tsx, usePlannerData.ts). Issue 2: Empty brief detail at HITL-1 — store key_topics/key_angles/word_count_range in evaluation_results JSONB during persist_blueprints_early (persistence.py). Issue 5: Stale ta-* Redis keys — unconditional cleanup safety net in orchestrator (td_content_orchestrator.py). Issue 6: Orphaned ta-* from 409'd batches — self-healing validation in _load_ga_phase_cards cross-references DB assignment statuses (db_content_data.py). Issue 7: Empty sidebar during agent work — resolved by Issue 2 fix. Topic-scoped GA detail view: ga_run_id query param added across 7 files (protocol→service→endpoint→frontend) so Content Studio shows topic-specific GA metrics instead of company-wide. 3 Codex gpt-5.3-codex findings fixed (slug validation, stale cache invalidation, scoped report loading). allow_parallel=True on start-production + 3 supporting fixes (runner.py, db_task_store.py). All tests passing (224 gap, 121 content-data, 669 content-engine, 25 TD). TypeScript clean. Remaining: Issue 3 (approved topics in planner queue), Issue 4 (no bulk Start Production), Issue 8 (score/gap=0 on cards), Issue 10 (progress stuck 0%). Also discovered: stale Redis semaphore entries block new pipelines after server restart — needs cleanup at startup."}
+      {
+        "sprint": "td-entry-parallel-execution-phase3b",
+        "date": "2026-04-10",
+        "summary": "TD-entry production queue semantics + recency hardening. Added a real `content_queued` pre-brief state for TD start-production, with backend preflight conflict rejection when the same topic is already queued/running for the same GA run. HTTP start-production now persists queue state before the runner competes for the global semaphore, and the frontend moves cards to `content_queued` instead of falsely showing `briefing`. Also removed client-authored `updatedAt` bumps from `useContentBriefs` optimistic/state-changed paths so stale local CE/HITL states no longer outrank newer backend truth. Validation: `tests/api/test_content_v13_ga_endpoints.py -q`, `tests/content_engine/test_state_redis_ga.py -q`, and `frontend npx tsc --noEmit`."
+      },
+      {
+        "sprint": "v3-async",
+        "date": "2026-02-15",
+        "summary": "Async pipeline conversion (12 tasks), Playwright CF bypass, content engine v1.0"
+      },
+      {
+        "sprint": "v3-signals",
+        "date": "2026-02-18",
+        "summary": "Structural Signal Overhaul \u2014 S4 dual-soup, ~45 signals, GapContentBrief, 3-tier output"
+      },
+      {
+        "sprint": "api-v1",
+        "date": "2026-02-24",
+        "summary": "FastAPI REST API, SSE events, HITL fix, Codex review fixes, approval flow"
+      },
+      {
+        "sprint": "front-back-integration",
+        "date": "2026-02-26",
+        "summary": "Auth foundation, gap/content/brand data endpoints, research tests (109), product pipeline (5 phases), review fixes"
+      },
+      {
+        "sprint": "route-protection",
+        "date": "2026-02-27",
+        "summary": "Default-deny ASGI middleware, RBAC, tenant isolation, invite flow, stream tokens, security fixes"
+      },
+      {
+        "sprint": "settings-knowledge-docs",
+        "date": "2026-02-27",
+        "summary": "Settings API (team/profile/pipeline-defaults), knowledge doc upload + s1 integration"
+      },
+      {
+        "sprint": "sqlalchemy-migration",
+        "date": "2026-02-27",
+        "summary": "Phase 1 \u2014 31 ORM tables, Alembic migrations, 8 repos, DI wiring"
+      },
+      {
+        "sprint": "auth-migration-phase2",
+        "date": "2026-02-28",
+        "summary": "AuthServiceProtocol, JsonAuthService, DbAuthService, utility extraction, DI switch"
+      },
+      {
+        "sprint": "service-layer-phase3",
+        "date": "2026-02-28",
+        "summary": "3 service protocols, 6 implementations (Json+Db), 2 new repos, backfill script"
+      },
+      {
+        "sprint": "cleanup-taskstore-migration",
+        "date": "2026-02-28",
+        "summary": "TaskStoreProtocol, DbTaskStore write-through, ApiTaskModel ORM, startup recovery"
+      },
+      {
+        "sprint": "phase4-persistence",
+        "date": "2026-02-28",
+        "summary": "Pipeline DB write hooks (persist_s1-s8, content persistence), backfill spec fields"
+      },
+      {
+        "sprint": "site-audit",
+        "date": "2026-03-01",
+        "summary": "Pipeline 0 \u2014 6-step deterministic audit, 8 dimensions, penalty scoring, async crawler, 636 tests"
+      },
+      {
+        "sprint": "content-engine-v13",
+        "date": "2026-03-02",
+        "summary": "v1.3 pipeline (6 stages, LiteLLM, E-E-A-T, 3 HITL, linker agent, 10-phase refactor), LangSmith migration"
+      },
+      {
+        "sprint": "knowledge-base-v1-v5",
+        "date": "2026-03-06",
+        "summary": "KB phases 1-5: 17 models, KBStorage, 6 agents, DAG orchestrator, 3 HITL, API router, staleness tracking, delta synthesis. 260 KB tests"
+      },
+      {
+        "sprint": "audience-persona-v6-a-c",
+        "date": "2026-03-06",
+        "summary": "AP phases A-C: 9 Pydantic models, PersonaStorage, 2 agents (suggester + generator), 2 HITL graphs, prompts. 187 AP tests"
+      },
+      {
+        "sprint": "research-orchestrator-v13",
+        "date": "2026-03-11",
+        "summary": "Research Orchestrator \u2014 KB\u2192AP\u2192VSG sequential DAG. 67 tests."
+      },
+      {
+        "sprint": "td-content-integration-v1.2.0",
+        "date": "2026-03-15",
+        "summary": "TD\u2192GA\u2192CE integration \u2014 8-phase plan. ~44 new tests."
+      },
+      {
+        "sprint": "daily-tracker-db-persistence-v15",
+        "date": "2026-03-15",
+        "summary": "Daily Tracker DB persistence \u2014 6-phase plan. 392 DT tests."
+      },
+      {
+        "sprint": "pgvector-migration-v16",
+        "date": "2026-03-15",
+        "summary": "ChromaDB\u2192pgvector migration \u2014 8-phase plan. 429 GA tests."
+      },
+      {
+        "sprint": "structured-logging-v17",
+        "date": "2026-03-15",
+        "summary": "Structured Logging Foundation (Layer 1). 22 new tests."
+      },
+      {
+        "sprint": "structured-logging-layer2-v18",
+        "date": "2026-03-15",
+        "summary": "Structured Logging Layer 2 \u2014 Correlation & Context. 48 new tests."
+      },
+      {
+        "sprint": "redis-session-0",
+        "date": "2026-03-22",
+        "summary": "Redis Infrastructure Foundation \u2014 core/redis.py (async+sync lazy singletons), settings, health check, DI. 13 tests."
+      },
+      {
+        "sprint": "redis-session-1",
+        "date": "2026-03-22",
+        "summary": "RedisEventBus \u2014 Redis Streams SSE, atomic Lua INCR+XADD, EventBusProtocol, thread-safe mirror with eviction. 37 tests."
+      },
+      {
+        "sprint": "redis-session-2",
+        "date": "2026-03-22",
+        "summary": "Pipeline State (Redis Hashes) + Distributed Locks. 36 tests."
+      },
+      {
+        "sprint": "redis-session-3",
+        "date": "2026-03-22",
+        "summary": "HITL RedisSaver \u2014 replace MemorySaver with RedisSaver across 12 graph builders. 7 tests."
+      },
+      {
+        "sprint": "redis-session-4",
+        "date": "2026-03-22",
+        "summary": "Redis Approval Queues \u2014 BRPOP/LPUSH in DbTaskStore. 13 tests."
+      },
+      {
+        "sprint": "redis-session-5",
+        "date": "2026-03-22",
+        "summary": "Redis Distributed Semaphore \u2014 atomic Lua acquire (Sorted Set). 11 tests."
+      },
+      {
+        "sprint": "redis-codex-fixes-phase2",
+        "date": "2026-03-27",
+        "summary": "6 critical Redis bug fixes. 17 new tests."
+      },
+      {
+        "sprint": "r2-blob-storage-phase3",
+        "date": "2026-03-27",
+        "summary": "R2 Blob Storage Redis Cache Layer \u2014 CachedStorageBackend, mtime removal. 25 new tests."
+      },
+      {
+        "sprint": "r2-blob-storage-phase5",
+        "date": "2026-03-27",
+        "summary": "Phase 5 StorageBackend Migration \u2014 Reader-side services migrated from direct filesystem."
+      },
+      {
+        "sprint": "redis-phase6-remove-fallbacks",
+        "date": "2026-03-27",
+        "summary": "Phase 6 Remove Filesystem Fallbacks \u2014 deleted JSON TaskStore, EventBus, JsonAuthService. ~1300 lines removed."
+      },
+      {
+        "sprint": "openrouter-phase1",
+        "date": "2026-03-29",
+        "summary": "OpenRouter Phase 1 \u2014 Migrate 3 LLM wrappers to OpenRouter. ~32 call sites, 18 files, 386 tests passing."
+      },
+      {
+        "sprint": "openrouter-phase2",
+        "date": "2026-03-30",
+        "summary": "OpenRouter Phase 2 \u2014 Migrate 4 direct SDK calls. 8 source + 3 test files. 1865 tests passing."
+      },
+      {
+        "sprint": "frontend-auth-integration-security-hardening",
+        "date": "2026-04-03",
+        "summary": "Frontend auth integration + security hardening. BFF proxy, httpOnly cookies, CSP nonces, 20 new files."
+      },
+      {
+        "sprint": "frontend-shared-components-integration-readiness",
+        "date": "2026-04-03",
+        "summary": "Integration readiness audit + 3 shared components (DateRangePicker, BrandLogo, SlideDrawer)."
+      },
+      {
+        "sprint": "frontend-brand-hub-integration",
+        "date": "2026-04-04",
+        "summary": "Brand Hub (/artifacts) fully integrated with backend API. KB, VSG, AP fetched from real endpoints. Version history dropdown. Upload modal. Auth login fixes. Dead code data loaders removed."
+      },
+      {
+        "sprint": "query-fanout-data-retention",
+        "date": "2026-04-04",
+        "summary": "Query fanout generation (OpenRouter/Claude Sonnet, 6 intent axes, 12-18 variants per prompt). Self-referential FK on tracked_prompts. 30-day response text cleanup. 9 new API endpoints (fanout CRUD, answer history, cleanup). 394 DT tests passing."
+      },
+      {
+        "sprint": "prompt-tracking-enriched",
+        "date": "2026-04-04",
+        "summary": "Prompt tracking backend data layer \u2014 enriched prompt list (per-prompt mentionRate/citationRate/delta/sparkline/fanoutCount), per-prompt drawer analytics, 3 foundation bug fixes (N+1 query, days filter, _row_to_dict), 3 new composite indexes, 2 new endpoints, 6 new Pydantic models. 414 DT tests passing (20 new)."
+      },
+      {
+        "sprint": "prompt-tracking-frontend-integration",
+        "date": "2026-04-04",
+        "summary": "Prompt Tracking frontend-backend integration \u2014 4-layer pattern (types/api/adapters/hooks). 8 new frontend files, 3 refactored components, 2 deleted mock files. Backend: start_date/end_date params on 3 endpoints. PB-95 (tenant isolation) added to backlog. 67 DT tests passing. Build clean."
+      },
+      {
+        "sprint": "content-inventory-phase1",
+        "date": "2026-04-04",
+        "summary": "Content Inventory Phase 1 Foundation \u2014 universal CMS-agnostic content registry. ContentInventoryModel (26 cols, pgvector embedding), Alembic 0026, ContentInventoryRepository (upsert/bulk/similarity/pagination), ContentInventoryService (5 ingestion + 3 similarity methods), URL normalization, 3 Pydantic DTOs, DI wiring, CMS FK. 67 new tests (39 unit + 14 service + 14 DB). 1623 existing tests passing."
+      },
+      {
+        "sprint": "prompt-tracking-frontend-integration-extended",
+        "date": "2026-04-04",
+        "summary": "Prompt Tracking full frontend integration + Brand Hub regeneration. Add Prompt modal (POST /prompts), Run All Prompts (POST /runs with persistent status banner, localStorage, polling), fanout generation animation (shimmer + polling), auto-run daily checkbox. Brand Hub: Re-generate buttons wired for KB/AP/VSG (auto-approve), Re-run Pipeline button calls Research Orchestrator (KB\u2192AP\u2192VSG DAG, auto-approve all). Two-pass competitor extraction: Haiku extracts structured JSON from KB markdown, daily tracker auto-resolves competitors from KB sidecar. PB-95 (tenant isolation) CRITICAL. 16 new extraction tests. Model fix (claude-haiku-4.5). LangSmith tracing on extraction. 683 tests passing."
+      },
+      {
+        "sprint": "settings-page-integration",
+        "date": "2026-04-04",
+        "summary": "Settings page (/settings) frontend-backend integration. Team tab: real API (member list, role updates superuser-gated, invite code generation). Integrations tab: WordPress CMS connect/disconnect via modal form, GA4 Analytics full OAuth flow (authorize \u2192 Google consent \u2192 BFF callback \u2192 property selection \u2192 sync \u2192 disconnect w/ purge). BFF callback route bypasses catch-all proxy auth. api.del() enhanced with params. Role mapping layer (superuser\u2194Admin, member\u2194Editor, viewer\u2194Viewer). Models/Billing/Notifications tabs remain dummy. 8 new files, 3 modified. TypeScript clean, build clean."
+      },
+      {
+        "sprint": "planner-integration",
+        "date": "2026-04-04",
+        "summary": "Content Planner (/planner) frontend-backend integration. 4 new backend endpoints (summary, assignments CRUD, custom create). TopicAssignmentStatus enum expanded (approved/rejected). Frontend: _lib/ (types, api, adapters) + usePlannerData hook + component updates. Initiatives sidebar stays dummy. 59 new tests. GA4 OAuth redirect fix. GA4 disconnect reconnect bug fix (active_only=False). Expand Topic button on Cluster Explorer."
+      },
+      {
+        "sprint": "td-db-only-migration",
+        "date": "2026-04-05",
+        "summary": "Eliminate JSON filesystem from Topic Discovery pipelines \u2014 DB-only storage. New db_ops.py (13 async functions replacing TopicDiscoveryStorage). Pipeline A & B rewritten. DbTopicDiscoveryDataService JSON fallback removed. TD\u2192Content orchestrator reads from DB. Router/guard uses DB queries. pipeline_state.json writes conditional on Redis. Migration 0029 (scoring_json, persona_affinity_index_json). 1588 tests passing."
+      },
+      {
+        "sprint": "td-additive-upsert",
+        "date": "2026-04-05",
+        "summary": "Refactor topic expansion (Pipeline B) to additive per-subdomain DB upserts. 5 new db_ops functions (claim, mark, write-per-subdomain, rebuild-tree-json, reset-stale). Pipeline B rewritten: per-subdomain expand+persist with retry/backoff, circuit breaker, crash recovery. Per-assignment persona affinity scoring. db_read_taxonomy fallback for NULL tree_json. allow_parallel=True for concurrent expansions (DB optimistic lock replaces Redis slug lock). 3 tree CRUD API endpoints. Frontend: persona affinity in cluster header, target persona in drawer, auto-refresh via task polling, concurrent expansion support. Migration 0031. 18 new tests. 647 TD+API tests passing."
+      },
+      {
+        "sprint": "content-studio-status-enum",
+        "date": "2026-04-05",
+        "summary": "Content Studio stage-status enum resolution. Replaced 8-value ContentStage + 3-value Column with 17-value BriefPipelineStatus (mirrors backend) + 4-value KanbanColumn. New _lib/status-adapter.ts with pure mapping functions (getColumn, getDisplay, getHITLActions, getWorkerStepIndex). 4 Kanban columns (triage/human/agent/done). Pipeline stepper aligned with backend worker chain (6 steps). 1 new file, 7 modified. TypeScript clean, build clean."
+      },
+      {
+        "sprint": "td-ga-ce-two-phase-split",
+        "date": "2026-04-06",
+        "summary": "Two-phase TD\u2192GA\u2192CE pipeline split. Split run_td_to_content_pipeline into run_td_gap_analysis_only (Phase 1: GA with SSE instrumentation, ga_step_start/ga_step_complete at all 8 S-steps) and run_td_content_production_only (Phase 2: CE from pre-computed GA). 3 new BriefPipelineStatus (gap_analysis_pending/gap_analysis/gap_analysis_complete). GA-phase Redis state layer (ta-{id} keys in pipeline_state:{slug} hash). DbContentDataService.get_briefs() merges GA cards before DB briefs. 2 new runner tasks, 2 new endpoints (POST /from-topics/gap-analysis, POST /from-topics/start-production). TopicContentProductionRequest schema. Alembic 0032. Frontend: types+adapter+api+hooks+visual components for GA phase (8-step stepper, 'Start Production' CTA). Planner handleApprove wires to GA pipeline. 49 new tests. Codex gpt-5.3-codex audit: 7 findings fixed (H1-H4, M1-M2). 85 tests passing. Build clean."
+      },
+      {
+        "sprint": "content-inventory-structural-signals",
+        "date": "2026-04-06",
+        "summary": "Content Inventory enhanced: Gap Analysis S1 as second ingestion source (gap_analysis_crawl enum), 45-field structural_signals JSONB column, Site Audit HTML pass-through via _html_map_out for signal computation. Migration 0033. Codex gpt-5.3-codex review: 10 findings, 5 addressed. 9 new tests. 138 passing."
+      },
+      {
+        "sprint": "content-to-prompt-pipeline",
+        "date": "2026-04-06",
+        "summary": "Content-to-Prompt pipeline \u2014 generates k AI visibility prompts per content inventory page for daily tracker monitoring. Join table content_inventory_prompts (migration 0034), ContentToPromptService (LLM via OpenRouter Sonnet), ContentToPromptOrchestrator (dedup + persist + approve), 6 API endpoints, enrich_thin_pages(), PromptSource.CONTENT_INVENTORY. Codex gpt-5.3-codex critical review: 8 findings incorporated. 42 new tests. Post-review security hardening: 6 critical fixes (tenant isolation on all endpoints via company_uuid validation, prompt injection mitigation with XML tags, dedup TOCTOU race condition fix). Model registration fix (__init__.py). Structural composite score (compute_structural_score 0-100 from 24 signals, 4 categories) added to ContentPerformanceRow + ContentDetailResponse. 17 structural score tests. Content Performance page readiness audit completed: 5/8 table columns ready, 3/9 drawer sections ready, citation-matching service identified as biggest gap."
+      },
+      {
+        "sprint": "content-performance-gaps",
+        "date": "2026-04-06",
+        "summary": "Content Performance 4-gap fill: citations (total cited count per page), platforms (5 per-engine booleans via bool_or), queries_covered (gap analysis queries targeting page via URL match), citation_timeline (daily timeseries for drawer). 3 new repo methods (batch citations, timeline, gap query count). Service layer enriched (Optional repos, backward compat). DI wiring. Frontend: types, adapters (3 hardcoded\u2192API), ContentDrawer Section A live chart. Codex gpt-5.3-codex reviewed (5 concerns addressed). 5 new tests. 63 total passing."
+      },
+      {
+        "sprint": "cannibalization-detection",
+        "date": "2026-04-07",
+        "summary": "Content cannibalization detection module (two surfaces) + json_repair integration. Proactive: Pipeline B checks new topic assignments vs content inventory embeddings during expansion \u2014 enriched query text (topic+description+keywords), piecewise priority penalty (0% at 0.80, 20% at 0.90, 35% cap), stored in metadata_json. Retroactive: GET /{inventory_id}/similar endpoint (pgvector cosine, self-excluding, embeddings_ready flag, Generate Embeddings CTA). Frontend: overlap badges on Planner rows, cannibalization section in Planner DetailDrawer, Content Performance drawer Section F live. json_repair library replaces hand-rolled _repair_json() in safe_parse() + 3 evaluator judges. Codex gpt-5.3-codex reviewed. 34 new tests. 73 total passing. 21 files changed."
+      },
+      {
+        "sprint": "cms-auto-sync-prompt-gen",
+        "date": "2026-04-07",
+        "summary": "CMS auto-sync + incremental upsert tracking + auto-prompt generation. Feature 1: Auto-sync on first CMS connect (POST /connect triggers run_cms_sync_task if last_sync_at is None, TaskConflictError idempotency guard, sync_task_id in response). Feature 2: Incremental upsert with new page detection (get_existing_urls() pre-collect, ingest_from_cms_sync returns (pairs, new_page_ids) tuple). Feature 3: Auto-prompt generation for new pages chained in run_cms_sync_task Phase 2 (_run_auto_prompt_generation helper, ContentToPromptOrchestrator, auto_approve=True, cap at auto_prompt_max_pages=50, error isolation, SSE events for prompt_generation phase). Codex gpt-5.3-codex reviewed: idempotency guard, deterministic page selection, observability for partial success incorporated. 13 new tests. 106 targeted tests passing. 1979 total passing. 8 files changed."
+      },
+      {
+        "sprint": "content-studio-architecture-fix",
+        "date": "2026-04-07",
+        "summary": "Content Studio 3-phase architecture fix. Phase 1: Bug 1 (TD HITL-2 bypass \u2014 dead else branch replaced with full HITL checkpoint pattern in pipeline_v13.py), Bug 2 (OpenRouter model ID fix: claude-haiku-4.5\u2192claude-haiku-4-5 in settings.py), Bug 3 (GA\u2192CE card snap-back \u2014 added 'briefing' to _GA_PHASES, in_content_production enum+migration 0036, orchestrator transition step 2a). Phase 2: Bug 4 (polling overwrites SSE \u2014 version-aware merge using updatedAt in useContentBriefs.ts, adaptive polling 5s/60s/none). Phase 3: Company-wide SSE stream \u2014 CompanyEventBus (in-memory pub/sub per company, core/events/company_event_bus.py), SSE endpoint (api/routers/company_stream.py), _emit_company helper (state_helpers.py), 8+ emit points in pipeline_v13.py, 3 emit points in td_content_orchestrator.py, useCompanyStream hook (300ms debounce), page.tsx wired. 9 EventBus tests. CRITICAL BUG FOUND IN REVIEW: _company_slug NameError in _run_pipeline_stages and _finalize_pipeline (variable defined in caller function, not passed as parameter). 5 additional issues identified (see failures.json F17-F18)."
+      },
+      {
+        "sprint": "kanban-sync-lag-fix",
+        "date": "2026-04-08",
+        "summary": "Fix Content Studio Kanban 4-minute sync lag (Codex audit R1). 4 fixes: (1) CRITICAL \u2014 centralized _emit_company() inside _write_pipeline_state_async() so every status write (outlining/drafting/linking/enriching) auto-broadcasts company SSE state_changed event; (2) GA-phase cleanup log level debug\u2192warning; (3) Approve button in-flight guard (isSubmitting + handleActionGuarded prevents 409 double-click); (4) Optimistic updatedAt bump in updateCard so version-aware merge correctly keeps local status during 15s grace period. 7 new tests (test_state_helpers.py). Codex gpt-5.3-codex reviewed: R1 PASS, 2 pre-existing architectural items (file fallback non-atomic, in-memory CompanyEventBus) noted as DEFERRED. 624/625 content_engine tests passing (1 pre-existing). TypeScript clean."
+      },
+      {
+        "sprint": "universal-display-id-part2",
+        "date": "2026-04-08",
+        "summary": "Universal Display ID Part 2 \u2014 pipeline propagation + frontend + 6 audit fixes. display_id flows TD\u2192Orchestrator\u2192GA Redis\u2192CE pipeline\u2192Content Data Service\u2192Frontend. H1: brief_id_hint regex relaxed. H2: build_briefs_parallel index preservation (all 7 callers). M1: JSON service regex. M2: GA card dedup by topic_assignment_id. M3: _brief_dir path sanitization. L1: frontend fallback numbering from max(existing)+1. 2 Codex gpt-5.3-codex reviews PASS. 37 new tests. 240 affected tests passing. TypeScript clean. 3 LOW-risk findings deferred (legacy pipeline.py _brief_dir, derive_prefix digit guard, return type annotation)."
+      },
+      {
+        "sprint": "structured-output-layer1",
+        "date": "2026-04-08",
+        "summary": "Layer 1 Constrained Decoding \u2014 OpenRouter json_schema strict mode on 14 LLM call sites (6 CE + 8 TD). 13 schema models. build_response_format() helper. All Dict[str, Any] replaced with typed sub-models. Perplexity/raw-markdown excluded. 43 new tests. Codex gpt-5.3-codex critical review: 9 findings (1 CRITICAL source_personas key mismatch, 3 HIGH require_parameters location + hierarchy key names + target_keywords shape, 3 MEDIUM reading_hierarchy casing + no graceful downgrade + token overhead, 1 LOW prompt field suppression, 1 MEDIUM test gaps). Findings 1-5 need fixes before production."
+      },
+      {
+        "sprint": "planner-studio-pipeline-fixes",
+        "date": "2026-04-09",
+        "summary": "Content Planner\u2192Studio pipeline debugging + 6 bug fixes via Playwright E2E testing. Issue 1 (CRITICAL): Silent 409 on duplicate GA launch \u2014 frontend revert+error toast (page.tsx, usePlannerData.ts). Issue 2: Empty brief detail at HITL-1 \u2014 store key_topics/key_angles/word_count_range in evaluation_results JSONB during persist_blueprints_early (persistence.py). Issue 5: Stale ta-* Redis keys \u2014 unconditional cleanup safety net in orchestrator (td_content_orchestrator.py). Issue 6: Orphaned ta-* from 409'd batches \u2014 self-healing validation in _load_ga_phase_cards cross-references DB assignment statuses (db_content_data.py). Issue 7: Empty sidebar during agent work \u2014 resolved by Issue 2 fix. Topic-scoped GA detail view: ga_run_id query param added across 7 files (protocol\u2192service\u2192endpoint\u2192frontend) so Content Studio shows topic-specific GA metrics instead of company-wide. 3 Codex gpt-5.3-codex findings fixed (slug validation, stale cache invalidation, scoped report loading). allow_parallel=True on start-production + 3 supporting fixes (runner.py, db_task_store.py). All tests passing (224 gap, 121 content-data, 669 content-engine, 25 TD). TypeScript clean. Remaining: Issue 3 (approved topics in planner queue), Issue 4 (no bulk Start Production), Issue 8 (score/gap=0 on cards), Issue 10 (progress stuck 0%). Also discovered: stale Redis semaphore entries block new pipelines after server restart \u2014 needs cleanup at startup."
+      }
     ]
   },
   "completed": [
     {
       "id": "T-webflow-content-engine-runtime-reset",
-      "task": "Operational reset — clear prior Webflow content-engine runtime state before the next TD-entry test pass",
+      "task": "Operational reset \u2014 clear prior Webflow content-engine runtime state before the next TD-entry test pass",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -78,7 +310,7 @@
     },
     {
       "id": "T-td-ga-card-timestamp-reconciliation",
-      "task": "TD-entry GA card reconciliation — persist GA-card timestamps so polling can repair missed live transitions",
+      "task": "TD-entry GA card reconciliation \u2014 persist GA-card timestamps so polling can repair missed live transitions",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -93,7 +325,7 @@
     },
     {
       "id": "T-company-sse-timeout-hardening",
-      "task": "Company SSE Redis Streams transport — prevent XREAD heartbeat timeouts from tearing down the stream",
+      "task": "Company SSE Redis Streams transport \u2014 prevent XREAD heartbeat timeouts from tearing down the stream",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -106,7 +338,7 @@
     },
     {
       "id": "T-td-entry-card-activity-abstraction",
-      "task": "TD-entry parallel execution — enrich durable event payloads and lift the Activity tab to a generic card-activity contract",
+      "task": "TD-entry parallel execution \u2014 enrich durable event payloads and lift the Activity tab to a generic card-activity contract",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -126,7 +358,7 @@
     },
     {
       "id": "T-td-entry-topic-log",
-      "task": "TD-entry parallel execution — expose the durable topic-level execution log in Content Studio",
+      "task": "TD-entry parallel execution \u2014 expose the durable topic-level execution log in Content Studio",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -148,7 +380,7 @@
     },
     {
       "id": "T-td-entry-correctness-hardening",
-      "task": "TD-entry parallel execution — harden router/live-state correctness before topic-level logging",
+      "task": "TD-entry parallel execution \u2014 harden router/live-state correctness before topic-level logging",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -167,7 +399,7 @@
     },
     {
       "id": "T-td-entry-ce-transition-coverage",
-      "task": "TD-entry parallel execution — finish remaining CE transition coverage across review/edit/rebrief loops",
+      "task": "TD-entry parallel execution \u2014 finish remaining CE transition coverage across review/edit/rebrief loops",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -183,7 +415,7 @@
     },
     {
       "id": "T-td-entry-frontend-topic-run-store",
-      "task": "TD-entry parallel execution — frontend normalized topic-run store and authoritative SSE consumption",
+      "task": "TD-entry parallel execution \u2014 frontend normalized topic-run store and authoritative SSE consumption",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -201,7 +433,7 @@
     },
     {
       "id": "T-td-entry-ce-stage-propagation",
-      "task": "TD-entry parallel execution — fine-grained CE stage propagation and authoritative company topic_run_changed events",
+      "task": "TD-entry parallel execution \u2014 fine-grained CE stage propagation and authoritative company topic_run_changed events",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -219,7 +451,7 @@
     },
     {
       "id": "T-td-entry-run-identity-hardening",
-      "task": "TD-entry parallel execution — durable topic-run identity hardening + execution-timed production start",
+      "task": "TD-entry parallel execution \u2014 durable topic-run identity hardening + execution-timed production start",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -235,7 +467,7 @@
     },
     {
       "id": "T-structured-output-layer1",
-      "task": "Layer 1 Constrained Decoding — json_schema strict mode on 14 LLM call sites",
+      "task": "Layer 1 Constrained Decoding \u2014 json_schema strict mode on 14 LLM call sites",
       "sprint": "structured-output-layer1",
       "status": "done",
       "completed_at": "2026-04-08",
@@ -257,11 +489,11 @@
         "tests/topic_discovery/test_structured_schemas.py",
         "tests/topic_discovery/test_agents_td.py"
       ],
-      "codex_review": "gpt-5.3-codex — 9 findings: F1 CRITICAL (source_personas key mismatch), F2 HIGH (require_parameters wrong location), F3 HIGH (hierarchy key names), F4 HIGH (target_keywords shape), F5 MEDIUM (reading_hierarchy casing), F6 MEDIUM (no graceful downgrade), F7 MEDIUM (token overhead), F8 LOW (prompt field suppression), F9 MEDIUM (test gaps)"
+      "codex_review": "gpt-5.3-codex \u2014 9 findings: F1 CRITICAL (source_personas key mismatch), F2 HIGH (require_parameters wrong location), F3 HIGH (hierarchy key names), F4 HIGH (target_keywords shape), F5 MEDIUM (reading_hierarchy casing), F6 MEDIUM (no graceful downgrade), F7 MEDIUM (token overhead), F8 LOW (prompt field suppression), F9 MEDIUM (test gaps)"
     },
     {
       "id": "T-universal-display-id-part2",
-      "task": "Universal Display ID Part 2 — pipeline propagation + frontend + 6 audit fixes",
+      "task": "Universal Display ID Part 2 \u2014 pipeline propagation + frontend + 6 audit fixes",
       "sprint": "universal-display-id-part2",
       "status": "done",
       "completed_at": "2026-04-08",
@@ -290,7 +522,7 @@
     },
     {
       "id": "T-kanban-sync-lag-fix",
-      "task": "Fix Content Studio Kanban 4-minute sync lag — centralize SSE emission in _write_pipeline_state_async",
+      "task": "Fix Content Studio Kanban 4-minute sync lag \u2014 centralize SSE emission in _write_pipeline_state_async",
       "sprint": "kanban-sync-lag-fix",
       "status": "done",
       "completed_at": "2026-04-08",
@@ -362,10 +594,10 @@
         "tests/api/test_content_performance.py"
       ],
       "details": {
-        "proactive_detection": "Pipeline B step 3b: _build_cannibal_query() enriches topic_text with description+keywords. check_cannibalization_batch() embeds + pgvector similarity. _apply_cannibalization_results() writes cannibalization_risk/matches to metadata, applies piecewise penalty (0-35%). Wrapped in try/except — never blocks expansion. On failure, risk=None (distinguishes 'not checked' from 'checked clean').",
+        "proactive_detection": "Pipeline B step 3b: _build_cannibal_query() enriches topic_text with description+keywords. check_cannibalization_batch() embeds + pgvector similarity. _apply_cannibalization_results() writes cannibalization_risk/matches to metadata, applies piecewise penalty (0-35%). Wrapped in try/except \u2014 never blocks expansion. On failure, risk=None (distinguishes 'not checked' from 'checked clean').",
         "retroactive_detection": "New repo method find_similar_to_page() (self-excluding cosine query). Service find_similar_pages(). GET /{inventory_id}/similar endpoint with embeddings_ready flag. count_with_embeddings() repo check (>=2 pages needed).",
         "frontend_planner": "CannibalizationMatchItem type + cannibalizationRisk/cannibalizationMatches on Assignment. Adapter extracts from metadata. PriorityQueue: red 'Near Dup' badge (>=0.90), amber 'Overlap' badge (>=0.80). DetailDrawer: cannibalization section with overlap score + matching pages list.",
-        "frontend_content_perf": "fetchSimilarContent() + generateEmbeddings() API. ContentDrawer Section F: 3 states (no embeddings → CTA button, loading, results table with color-coded overlap %).",
+        "frontend_content_perf": "fetchSimilarContent() + generateEmbeddings() API. ContentDrawer Section F: 3 states (no embeddings \u2192 CTA button, loading, results table with color-coded overlap %).",
         "json_repair": "Replaced _repair_json() regex (32 lines) with json_repair.loads() in safe_parse(). Also replaced json.loads() in factual_judge, style_judge, eeat_judge. Fixes brief builder 3/3 JSON parse failure (missing comma at line 107). PB-96 added to backlog for remaining pipelines.",
         "settings": "td_cannibalization_threshold (0.80), td_cannibalization_max_matches (5)",
         "codex_review": "gpt-5.3-codex reviewed architecture. 5 findings applied: piecewise penalty, include target_keywords, observability (risk=None), sequential pgvector acceptable at scale, endpoint location."
@@ -373,7 +605,7 @@
     },
     {
       "id": "T-content-performance-gaps",
-      "task": "Content Performance 4-gap fill — citations, platforms, queries_covered, citation_timeline",
+      "task": "Content Performance 4-gap fill \u2014 citations, platforms, queries_covered, citation_timeline",
       "sprint": "content-performance-gaps",
       "status": "done",
       "completed_at": "2026-04-06",
@@ -392,16 +624,16 @@
       "details": {
         "architecture": "3 new repo methods (get_citation_metrics_batch, get_citation_timeline, count_queries_targeting_inventory_batch). Service __init__ gains 2 optional repos (backward compat). DI wiring adds 2 repos to session.",
         "gap1_citations": "Batch COUNT(CASE WHEN jsonb_array_length(citations) > 0) from daily_run_responses via content_inventory_prompts join. Single query grouped by inventory_id.",
-        "gap2_platforms": "bool_or(engine = X AND citations > 0) per engine. Maps openai→chatgpt, google_ai derived from gemini.",
-        "gap3_queries_covered": "query_gaps → content_pieces via targeted_by_content_id FK. Python-side URL normalization match to content_inventory.url_normalized.",
+        "gap2_platforms": "bool_or(engine = X AND citations > 0) per engine. Maps openai\u2192chatgpt, google_ai derived from gemini.",
+        "gap3_queries_covered": "query_gaps \u2192 content_pieces via targeted_by_content_id FK. Python-side URL normalization match to content_inventory.url_normalized.",
         "gap4_citation_timeline": "GROUP BY date_trunc('day', created_at) for single-page drawer detail. AreaChart in ContentDrawer Section A.",
-        "codex_review": "gpt-5.3-codex reviewed. 5 concerns: cardinality risk (N/A — counting responses not prompts), GROUP BY correctness (inventory_id only), pages with 0 prompts (handled by lookup.get default), gap 404 risk (direct query, no _resolve_run_id), platforms schema looseness (changed to typed default factory).",
+        "codex_review": "gpt-5.3-codex reviewed. 5 concerns: cardinality risk (N/A \u2014 counting responses not prompts), GROUP BY correctness (inventory_id only), pages with 0 prompts (handled by lookup.get default), gap 404 risk (direct query, no _resolve_run_id), platforms schema looseness (changed to typed default factory).",
         "frontend": "3 hardcoded adapter values (citations, platforms, queriesCovered) replaced with row.X ?? fallback. New toDrawerCitationTimeline adapter. ContentDrawer Section A: live AreaChart replacing UnavailableSection placeholder."
       }
     },
     {
       "id": "T-content-to-prompt-pipeline",
-      "task": "Content-to-Prompt pipeline — generate k AI visibility prompts per content inventory page",
+      "task": "Content-to-Prompt pipeline \u2014 generate k AI visibility prompts per content inventory page",
       "sprint": "content-to-prompt-pipeline",
       "status": "done",
       "completed_at": "2026-04-06",
@@ -434,17 +666,17 @@
         "dedup": "Tier 1: exact text match via exists_by_text(). Duplicate found = link to existing prompt instead of creating new. Tier 2 (future): semantic embedding similarity.",
         "api_endpoints": "POST /generate, GET /pages/{id}/prompts, GET /pages/{id}/metrics, GET /pending, POST /approve, POST /regenerate/{id}",
         "regeneration": "Deletes non-user-edited links, deactivates orphaned prompts (zero remaining links), generates fresh prompts with dedup.",
-        "content_enrichment": "enrich_thin_pages() added to ContentInventoryService — trafilatura fetch for pages with <100 chars content_preview.",
+        "content_enrichment": "enrich_thin_pages() added to ContentInventoryService \u2014 trafilatura fetch for pages with <100 chars content_preview.",
         "codex_review": "gpt-5.3-codex critical review. Key findings: cascade safety (link CASCADE only), is_user_edited protection, 2-tier dedup, concurrency 8, partial failure model, cost tracking via track_llm_cost().",
-        "plan_comparison": "Evaluated join table (Plan A) vs FK on tracked_prompts (Plan B). Join table won 7/10 dimensions. Critical: tracked_prompts.company_id is String, content_inventory.company_id is UUID — join table sidesteps type mismatch.",
-        "security_review": "Post-implementation critical review found 6 issues. ALL FIXED: (1) CRITICAL: Model not registered in __init__.py — Alembic can't discover. (2) CRITICAL: No tenant isolation in /generate — attacker can generate prompts for other company's pages. (3) CRITICAL: No tenant isolation in /approve — can approve any company's links. (4) CRITICAL: No company validation in orchestrator page loading. (5) HIGH: Dedup TOCTOU race condition (exists_by_text → create). (6) MEDIUM: Prompt injection via page content. Fixes: company_uuid param on orchestrator, _resolve_company_uuid() helper using auth_service, XML tag wrapping for untrusted content, try/except for concurrent dedup.",
+        "plan_comparison": "Evaluated join table (Plan A) vs FK on tracked_prompts (Plan B). Join table won 7/10 dimensions. Critical: tracked_prompts.company_id is String, content_inventory.company_id is UUID \u2014 join table sidesteps type mismatch.",
+        "security_review": "Post-implementation critical review found 6 issues. ALL FIXED: (1) CRITICAL: Model not registered in __init__.py \u2014 Alembic can't discover. (2) CRITICAL: No tenant isolation in /generate \u2014 attacker can generate prompts for other company's pages. (3) CRITICAL: No tenant isolation in /approve \u2014 can approve any company's links. (4) CRITICAL: No company validation in orchestrator page loading. (5) HIGH: Dedup TOCTOU race condition (exists_by_text \u2192 create). (6) MEDIUM: Prompt injection via page content. Fixes: company_uuid param on orchestrator, _resolve_company_uuid() helper using auth_service, XML tag wrapping for untrusted content, try/except for concurrent dedup.",
         "structural_score": "compute_structural_score() added to content_performance_service.py. 24 signals across 4 categories (Text Composition 25pts, Structural Elements 21pts, Content Patterns 30pts, Factual Density 15pts). Boolean signals: full weight if True. Numeric: min(1.0, value/benchmark) * weight. Returns 0-100 int. Added to ContentPerformanceRow + ContentDetailResponse schemas. 17 new tests.",
-        "content_performance_audit": "Full audit of Content Performance page readiness. Table: 5/8 columns ready (structural_score now included). KPI: 3/6 ready. Drawer: 3/9 ready. Biggest gap: citation-matching service (~30%) — bridges daily tracker citations → content inventory pages via content_inventory_prompts. Also missing: cluster assignment (TD join), CPS batch scoring, query coverage (GA join), brief compliance."
+        "content_performance_audit": "Full audit of Content Performance page readiness. Table: 5/8 columns ready (structural_score now included). KPI: 3/6 ready. Drawer: 3/9 ready. Biggest gap: citation-matching service (~30%) \u2014 bridges daily tracker citations \u2192 content inventory pages via content_inventory_prompts. Also missing: cluster assignment (TD join), CPS batch scoring, query coverage (GA join), brief compliance."
       }
     },
     {
       "id": "T-content-inventory-structural-signals",
-      "task": "Content Inventory — Gap Analysis S1 ingestion + structural signals JSONB",
+      "task": "Content Inventory \u2014 Gap Analysis S1 ingestion + structural signals JSONB",
       "sprint": "content-inventory-structural-signals",
       "status": "done",
       "completed_at": "2026-04-06",
@@ -467,7 +699,7 @@
     },
     {
       "id": "T-td-ga-ce-two-phase-split",
-      "task": "Two-phase TD→GA→CE pipeline split — GA-only + CE-only with SSE, Redis state, frontend integration",
+      "task": "Two-phase TD\u2192GA\u2192CE pipeline split \u2014 GA-only + CE-only with SSE, Redis state, frontend integration",
       "sprint": "td-ga-ce-two-phase-split",
       "status": "done",
       "completed_at": "2026-04-06",
@@ -512,13 +744,13 @@
         "backend_ga_state": "GA-phase cards use ta-{uuid} keys in pipeline_state:{slug} Redis Hash. __tid: for task_id, __meta: for JSON metadata (title, cluster, priority, buyer_stage, ga_run_id). No JSON file fallback.",
         "backend_sse": "ga_step_start/ga_step_complete events at all 8 S-step boundaries in run_topic_scoped_gap_analysis. Each includes step, name, step_num, total_steps.",
         "backend_endpoints": "POST /from-topics/gap-analysis (Phase 1), POST /from-topics/start-production (Phase 2). Original POST /from-topics preserved.",
-        "frontend_flow": "Planner Approve → POST gap-analysis → card in Queue → SSE GA progress → gap_analysis_complete → user clicks Start Production → POST start-production → normal CE flow",
+        "frontend_flow": "Planner Approve \u2192 POST gap-analysis \u2192 card in Queue \u2192 SSE GA progress \u2192 gap_analysis_complete \u2192 user clicks Start Production \u2192 POST start-production \u2192 normal CE flow",
         "audit_fixes": "H1: ga_step_complete payload (step_num/total_steps). H2: CancelledError cleanup. H3: GA cleanup moved to post-CE-success. H4: effectiveSlug wired through card. M1: multi-card GA progress. M2: completed/failed SSE aliases."
       }
     },
     {
       "id": "T-content-studio-status-enum",
-      "task": "Content Studio stage-status enum resolution — replace frontend ContentStage/Column with backend-aligned BriefPipelineStatus/KanbanColumn, adapter layer, 4-column Kanban, aligned pipeline stepper",
+      "task": "Content Studio stage-status enum resolution \u2014 replace frontend ContentStage/Column with backend-aligned BriefPipelineStatus/KanbanColumn, adapter layer, 4-column Kanban, aligned pipeline stepper",
       "sprint": "content-studio-status-enum",
       "status": "done",
       "completed_at": "2026-04-05",
@@ -538,10 +770,10 @@
       "details": {
         "types_removed": "ContentStage (8 values), Column (3 values), stageLabel field",
         "types_added": "BriefPipelineStatus (17 values mirroring core/models/pipeline_status.py), KanbanColumn (4 values: triage/agent/human/done)",
-        "adapter": "status-adapter.ts — getColumn, getDisplay, getHITLActions, getWorkerStepIndex, isTerminal, isAgentProcessing",
+        "adapter": "status-adapter.ts \u2014 getColumn, getDisplay, getHITLActions, getWorkerStepIndex, isTerminal, isAgentProcessing",
         "kanban": "4 columns (16%/34%/34%/16%) replacing 3 columns (22%/39%/39%)",
-        "pipeline_stepper": "6 backend-aligned steps (Brief→Outline→Draft→Link→Enrich→Evaluate) replacing 4 frontend-invented stages",
-        "progress_sim": "Worker chain simulation advances through real statuses (outlining→drafting→linking→enriching→evaluating)"
+        "pipeline_stepper": "6 backend-aligned steps (Brief\u2192Outline\u2192Draft\u2192Link\u2192Enrich\u2192Evaluate) replacing 4 frontend-invented stages",
+        "progress_sim": "Worker chain simulation advances through real statuses (outlining\u2192drafting\u2192linking\u2192enriching\u2192evaluating)"
       }
     },
     {
@@ -578,7 +810,7 @@
     },
     {
       "id": "T-settings-page-integration",
-      "task": "Settings page (/settings) frontend-backend integration — Team tab (real API), Integrations tab (WordPress CMS + GA4 OAuth), BFF callback route, role mapping",
+      "task": "Settings page (/settings) frontend-backend integration \u2014 Team tab (real API), Integrations tab (WordPress CMS + GA4 OAuth), BFF callback route, role mapping",
       "sprint": "settings-page-integration",
       "status": "done",
       "completed_at": "2026-04-04",
@@ -599,16 +831,16 @@
         "frontend/src/app/(dashboard)/settings/_components/IntegrationsTab.tsx"
       ],
       "details": {
-        "team_tab": "Real API: member list from /companies/{slug}/settings/team, role updates (superuser only), invite code generation via /auth/invite. Role mapping: superuser↔Admin, member↔Editor, viewer↔Viewer.",
-        "integrations_tab": "WordPress: connect modal (site_url + username + api_key), connection info display, disconnect. GA4: full OAuth flow (authorize → Google consent → BFF callback → property select → sync). 5 other integrations show Coming Soon.",
-        "bff_callback": "Dedicated public BFF route at app/api/v1/analytics/google/callback/route.ts — bypasses catch-all proxy auth, uses redirect:manual to intercept backend 307, extracts Location header.",
+        "team_tab": "Real API: member list from /companies/{slug}/settings/team, role updates (superuser only), invite code generation via /auth/invite. Role mapping: superuser\u2194Admin, member\u2194Editor, viewer\u2194Viewer.",
+        "integrations_tab": "WordPress: connect modal (site_url + username + api_key), connection info display, disconnect. GA4: full OAuth flow (authorize \u2192 Google consent \u2192 BFF callback \u2192 property select \u2192 sync). 5 other integrations show Coming Soon.",
+        "bff_callback": "Dedicated public BFF route at app/api/v1/analytics/google/callback/route.ts \u2014 bypasses catch-all proxy auth, uses redirect:manual to intercept backend 307, extracts Location header.",
         "api_client": "api.del() enhanced with optional params arg for DELETE with query strings.",
         "dummy_tabs": "Models, Billing, Notifications tabs unchanged (no backend endpoints exist)."
       }
     },
     {
       "id": "T-content-inventory-phase1",
-      "task": "Content Inventory Phase 1 Foundation — DB schema, ORM model, repository, service, DI wiring, URL normalization, Pydantic DTOs, Alembic migration, CMS FK",
+      "task": "Content Inventory Phase 1 Foundation \u2014 DB schema, ORM model, repository, service, DI wiring, URL normalization, Pydantic DTOs, Alembic migration, CMS FK",
       "sprint": "content-inventory-phase1",
       "status": "done",
       "completed_at": "2026-04-04",
@@ -635,18 +867,18 @@
       ],
       "details": {
         "enum": "ContentIngestionSource (5 values: site_audit_crawl, cms_sync, csv_import, content_engine, manual)",
-        "model": "ContentInventoryModel — 26 columns, Vector(1536) nullable embedding, UniqueConstraint(company_id, url_normalized), 4 indexes + HNSW",
-        "migration": "0026 — table + enum + HNSW + cms_synced_posts.content_inventory_id FK (SET NULL)",
-        "url_utils": "normalize_url() — more aggressive than site audit (strips query params, forces https, strips www.)",
+        "model": "ContentInventoryModel \u2014 26 columns, Vector(1536) nullable embedding, UniqueConstraint(company_id, url_normalized), 4 indexes + HNSW",
+        "migration": "0026 \u2014 table + enum + HNSW + cms_synced_posts.content_inventory_id FK (SET NULL)",
+        "url_utils": "normalize_url() \u2014 more aggressive than site audit (strips query params, forces https, strips www.)",
         "dtos": "CrawledPageData, CannibalizationMatch, ExistingCoverageResult",
         "repo": "8 methods: upsert_page, bulk_upsert_from_crawl, update_embeddings_batch, find_similar, get_pages_missing_embeddings, get_by_company, get_stats, delete_by_company",
         "service": "8 methods: ingest_from_site_audit, ingest_from_cms_sync, ingest_from_csv, register_published_content, generate_embeddings_for_company, check_cannibalization, check_cannibalization_batch, find_existing_coverage",
-        "di": "get_content_inventory_service() — DB-only, no JSON fallback, follows get_cms_service() pattern"
+        "di": "get_content_inventory_service() \u2014 DB-only, no JSON fallback, follows get_cms_service() pattern"
       }
     },
     {
       "id": "T-prompt-tracking-frontend-integration",
-      "task": "Prompt Tracking page frontend-backend integration — replace all mock data with real API calls, 4-layer pattern, date range params, loading/error/empty states",
+      "task": "Prompt Tracking page frontend-backend integration \u2014 replace all mock data with real API calls, 4-layer pattern, date range params, loading/error/empty states",
       "sprint": "prompt-tracking-frontend-integration",
       "status": "done",
       "completed_at": "2026-04-04",
@@ -678,12 +910,12 @@
         "phase4_hooks": "usePromptTrackingData (main table, AbortController, debounced search), usePromptDetailData (drawer, 3 parallel fetches, per-section loading/error).",
         "phase5_skeletons": "PromptTableSkeleton (8 shimmer rows), PromptDrawerSkeleton (3 section shimmers).",
         "phase6_refactor": "PromptTrackingClient: DateRangePicker, hook, loading/error/empty states. PromptDetailDrawer: usePromptDetailData hook, shared BrandLogo, skeleton. AnswerDetailView: props-based, dynamic brandName, null fullAnswer handling.",
-        "backlog": "PB-95 [CRITICAL] — Tenant isolation gap on per-prompt endpoints (analytics, answers, fanouts). Added to .claude/sprints/pending/backlog.md."
+        "backlog": "PB-95 [CRITICAL] \u2014 Tenant isolation gap on per-prompt endpoints (analytics, answers, fanouts). Added to .claude/sprints/pending/backlog.md."
       }
     },
     {
       "id": "T-prompt-tracking-enriched",
-      "task": "Prompt tracking backend data layer — enriched prompt list with per-prompt metrics, per-prompt drawer analytics endpoint, foundation bug fixes, composite indexes",
+      "task": "Prompt tracking backend data layer \u2014 enriched prompt list with per-prompt metrics, per-prompt drawer analytics endpoint, foundation bug fixes, composite indexes",
       "sprint": "prompt-tracking-enriched",
       "status": "done",
       "completed_at": "2026-04-04",
@@ -702,15 +934,15 @@
       ],
       "details": {
         "phase0_foundation": "Fixed N+1 query in _DbResponseDataProvider (100 queries -> 1 JOIN), fixed days param silently ignored, fixed _row_to_dict missing timestamp/parent_prompt_id/run_id. New get_responses_by_company() repo method.",
-        "phase1_enriched_list": "GET /prompts/enriched — CTE-based SQL with COALESCE(parent_prompt_id, prompt_id) fanout rollup. Auto period-over-period deltas. Zero-filled sparkline. Redis cache (5min TTL) with invalidation on run completion.",
-        "phase2_drawer_analytics": "GET /prompts/{id}/analytics — single DB query returns competitor breakdown + platform breakdown. Existing analytics endpoints untouched.",
+        "phase1_enriched_list": "GET /prompts/enriched \u2014 CTE-based SQL with COALESCE(parent_prompt_id, prompt_id) fanout rollup. Auto period-over-period deltas. Zero-filled sparkline. Redis cache (5min TTL) with invalidation on run completion.",
+        "phase2_drawer_analytics": "GET /prompts/{id}/analytics \u2014 single DB query returns competitor breakdown + platform breakdown. Existing analytics endpoints untouched.",
         "phase3_answer_history": "Added persona field to AnswerRecord schema (default 'Default').",
         "migration_renumber": "Renumbered fanout_queries migration 0023->0024 (0023_llm_cost_events already applied). New indexes migration is 0025."
       }
     },
     {
       "id": "T-query-fanout-data-retention",
-      "task": "Query fanout generation + data retention for daily tracker — LLM-based intent-axis expansion, self-referential FK, fanout CRUD, answer history endpoint, 30-day cleanup",
+      "task": "Query fanout generation + data retention for daily tracker \u2014 LLM-based intent-axis expansion, self-referential FK, fanout CRUD, answer history endpoint, 30-day cleanup",
       "sprint": "query-fanout-data-retention",
       "status": "done",
       "completed_at": "2026-04-04",
@@ -739,7 +971,7 @@
     },
     {
       "id": "T-frontend-brand-hub-integration",
-      "task": "Brand Hub (/artifacts) API integration — replace filesystem reads with API calls, add version dropdown, upload modal, auth fixes",
+      "task": "Brand Hub (/artifacts) API integration \u2014 replace filesystem reads with API calls, add version dropdown, upload modal, auth fixes",
       "sprint": "frontend-brand-hub-integration",
       "status": "done",
       "completed_at": "2026-04-04",
@@ -783,7 +1015,7 @@
     },
     {
       "id": "T-openrouter-phase2",
-      "task": "OpenRouter Phase 2 — Migrate 4 direct SDK call sites to OpenRouter",
+      "task": "OpenRouter Phase 2 \u2014 Migrate 4 direct SDK call sites to OpenRouter",
       "sprint": "openrouter-phase2",
       "status": "done",
       "completed_at": "2026-03-30",
@@ -806,7 +1038,7 @@
     },
     {
       "id": "T-openrouter-phase1",
-      "task": "OpenRouter Phase 1 — Migrate 3 centralized LLM wrappers to OpenRouter",
+      "task": "OpenRouter Phase 1 \u2014 Migrate 3 centralized LLM wrappers to OpenRouter",
       "sprint": "openrouter-phase1",
       "status": "done",
       "completed_at": "2026-03-29",
@@ -842,7 +1074,7 @@
   "in_progress": [
     {
       "id": "T-td-entry-parallel-execution-phase2",
-      "task": "Codex Phase 2 — Redis-backed company event transport",
+      "task": "Codex Phase 2 \u2014 Redis-backed company event transport",
       "sprint": "td-entry-parallel-execution",
       "status": "in_progress",
       "started_at": "2026-04-10",
@@ -874,7 +1106,7 @@
     },
     {
       "id": "T-td-entry-parallel-execution-phase1",
-      "task": "Codex Phase 1 — durable TD-entry batch/topic-run foundation + parallel GA task creation",
+      "task": "Codex Phase 1 \u2014 durable TD-entry batch/topic-run foundation + parallel GA task creation",
       "sprint": "td-entry-parallel-execution",
       "status": "in_progress",
       "started_at": "2026-04-09",
@@ -915,7 +1147,7 @@
     },
     {
       "id": "T-content-studio-arch-fix-remaining",
-      "task": "Content Studio architecture fix — 6 remaining issues from critical review",
+      "task": "Content Studio architecture fix \u2014 6 remaining issues from critical review",
       "sprint": "content-studio-architecture-fix",
       "status": "in_progress",
       "started_at": "2026-04-07",
@@ -923,7 +1155,7 @@
         {
           "severity": "CRITICAL",
           "id": "CSAF-1",
-          "issue": "_company_slug NameError in _run_pipeline_stages() and _finalize_pipeline() — variable defined at pipeline_v13.py:720 in run_content_generation_v13() but used in 2 separate functions that don't receive it as a parameter. Causes runtime crash at 12+ emit points.",
+          "issue": "_company_slug NameError in _run_pipeline_stages() and _finalize_pipeline() \u2014 variable defined at pipeline_v13.py:720 in run_content_generation_v13() but used in 2 separate functions that don't receive it as a parameter. Causes runtime crash at 12+ emit points.",
           "fix": "Add _company_slug = slug.split('__')[0] at top of _run_pipeline_stages (after line 793) and _finalize_pipeline (after line 588)"
         },
         {
@@ -941,13 +1173,13 @@
         {
           "severity": "HIGH",
           "id": "CSAF-4",
-          "issue": "agentProgress wiped by version-aware merge in useContentBriefs.ts:52-53. Server card wins merge but replaces existing card entirely — agentProgress (local-only field set by useContentPipeline) lost. Progress bar flickers every 5s poll.",
+          "issue": "agentProgress wiped by version-aware merge in useContentBriefs.ts:52-53. Server card wins merge but replaces existing card entirely \u2014 agentProgress (local-only field set by useContentPipeline) lost. Progress bar flickers every 5s poll.",
           "fix": "When server wins: merged.push({ ...card, agentProgress: existing.agentProgress })"
         },
         {
           "severity": "MEDIUM",
           "id": "CSAF-5",
-          "issue": "All-rejected TD HITL-2 triggers misleading error 'Brief Builder produced zero blueprints — LLM failure or invalid input' at pipeline_v13.py:1691-1707. User explicitly rejected all briefs but error says LLM failed.",
+          "issue": "All-rejected TD HITL-2 triggers misleading error 'Brief Builder produced zero blueprints \u2014 LLM failure or invalid input' at pipeline_v13.py:1691-1707. User explicitly rejected all briefs but error says LLM failed.",
           "fix": "Add check to distinguish user-rejected-all from zero-blueprint LLM failure in TD entry mode"
         },
         {
@@ -967,7 +1199,7 @@
     },
     {
       "id": "T-td-entry-ce-pool-split",
-      "task": "TD-entry parallel execution — split CE concurrency into a per-company pool",
+      "task": "TD-entry parallel execution \u2014 split CE concurrency into a per-company pool",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -985,7 +1217,7 @@
     },
     {
       "id": "T-td-entry-phase3-dispatcher",
-      "task": "TD-entry parallel execution — Phase 3 durable per-topic queue and dispatcher",
+      "task": "TD-entry parallel execution \u2014 Phase 3 durable per-topic queue and dispatcher",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -1002,7 +1234,7 @@
     },
     {
       "id": "T-td-entry-phase4-hitl-slot-release",
-      "task": "TD-entry parallel execution — Phase 4 release/reclaim CE slots around HITL waits",
+      "task": "TD-entry parallel execution \u2014 Phase 4 release/reclaim CE slots around HITL waits",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -1020,7 +1252,7 @@
     },
     {
       "id": "T-td-entry-phase5-durable-continuations",
-      "task": "TD-entry parallel execution — Phase 5 dedicated scheduler columns plus durable approval continuations",
+      "task": "TD-entry parallel execution \u2014 Phase 5 dedicated scheduler columns plus durable approval continuations",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -1044,7 +1276,7 @@
     },
     {
       "id": "T-td-entry-phase5-review-hardening",
-      "task": "TD-entry parallel execution — harden durable approval/start-production commit ordering after Phase 5 review",
+      "task": "TD-entry parallel execution \u2014 harden durable approval/start-production commit ordering after Phase 5 review",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -1063,7 +1295,7 @@
     },
     {
       "id": "T-td-entry-phase6-startup-recovery",
-      "task": "TD-entry parallel execution — Phase 6 startup reconciliation and auto-dispatch after restart",
+      "task": "TD-entry parallel execution \u2014 Phase 6 startup reconciliation and auto-dispatch after restart",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -1079,7 +1311,7 @@
     },
     {
       "id": "T-td-entry-resume-claim-detection-fix",
-      "task": "TD-entry parallel execution — fix resume claim detection so brief approvals reuse the paused task instead of restarting from briefing",
+      "task": "TD-entry parallel execution \u2014 fix resume claim detection so brief approvals reuse the paused task instead of restarting from briefing",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -1092,7 +1324,7 @@
     },
     {
       "id": "T-td-entry-stale-runtime-cleanup-we114-we118-we119-we175",
-      "task": "TD-entry parallel execution — clear poisoned runtime state for WE-114/WE-118/WE-119/WE-175 after the pre-fix resume-loop bug",
+      "task": "TD-entry parallel execution \u2014 clear poisoned runtime state for WE-114/WE-118/WE-119/WE-175 after the pre-fix resume-loop bug",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -1106,7 +1338,7 @@
     },
     {
       "id": "T-content-studio-review-fallback-and-brief-poll-hotpath",
-      "task": "Content Studio — restore visible agent-stage labels, add non-blank final-review fallback, and reduce `/content/briefs` DB poll pressure",
+      "task": "Content Studio \u2014 restore visible agent-stage labels, add non-blank final-review fallback, and reduce `/content/briefs` DB poll pressure",
       "sprint": "td-entry-parallel-execution",
       "status": "done",
       "completed_at": "2026-04-10",
@@ -1121,6 +1353,73 @@
         "tests/services/test_db_content_data_backend.py"
       ],
       "codex_review": "Addressed two manual-QA anomalies plus the hottest backend contributor to slow Content Studio renders. First, `ContentCardItem` now renders the stage label for active agent cards even when `agentProgress` is absent, so cards keep showing `Briefing`, `Outlining`, `Drafting`, etc. from `card.status` instead of going visually blank. Second, the final review screen no longer renders an empty pane when review-stage article content is slow or missing: `useBriefDetail` now surfaces article-load failures, `FullPageView` renders a dedicated review fallback shell, and `RightSidebar` guards metrics math against empty arrays/zero targets to avoid `NaN` warnings. On the backend, `DbContentDataService.get_briefs()` now skips `_resolve_run_id()` unless the slug-scoped `content_pieces` query is empty, and the default async DB pool was raised from `5/10` to `15/20` to better tolerate concurrent poll traffic during TD QA. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py -q` (9 passed), `cd frontend && npx tsc --noEmit` (clean), and `venv/bin/python -m py_compile core/services/db_content_data.py core/config/settings.py`."
+    },
+    {
+      "id": "T-td-ga-card-gap-context-end-to-end",
+      "task": "TD queue/detail view \u2014 wire topic-specific gap_context into GA card payload end-to-end",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 3,
+      "files_modified": [
+        "core/orchestration/td_content_orchestrator.py",
+        "core/content_engine/state_redis.py",
+        "core/services/db_content_data.py",
+        "tests/orchestration/test_td_ga_only.py",
+        "tests/content_engine/test_state_redis_ga.py",
+        "tests/services/test_db_content_data_backend.py"
+      ],
+      "codex_review": "Fixed the remaining topic-scoped GA detail gap for Queue-column TD cards. After the frontend stopped using the batch-level `ga_run_id` summary, GA-complete `ta-*` cards still rendered blank metrics because the backend never serialized topic-level `gap_context` onto the GA card payload. The TD GA-only orchestrator now reads the topic-scoped `analysis.json` artifact through `StorageBackend`, derives one summarized `GapContextSummary` per assignment from `extract_topic_contexts(...)`, attaches that summary during the final `gap_analysis_complete` Redis write, and the GA card read path now passes `gap_context` through `state_redis` and `DbContentDataService._load_ga_phase_cards()` into `ContentBriefListItem.gap_context`. Validation: `venv/bin/pytest tests/content_engine/test_state_redis_ga.py tests/services/test_db_content_data_backend.py -q` (29 passed), `venv/bin/pytest tests/orchestration/test_td_ga_only.py -k gap_analysis_complete_write_includes_topic_gap_context -q` (1 passed), and `venv/bin/python -m py_compile core/orchestration/td_content_orchestrator.py core/content_engine/state_redis.py core/services/db_content_data.py` (clean)."
+    },
+    {
+      "id": "T-content-studio-active-sidebar-topic-context",
+      "task": "Content Studio detail view \u2014 show Topic Discovery assignment context in left sidebar for active TD content cards",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 0,
+      "files_modified": [
+        "frontend/src/app/(dashboard)/content-studio/_components/LeftSidebar.tsx"
+      ],
+      "codex_review": "Reused the existing Topic Discovery sidebar sections (Topic, buyer stage, intent, content spec, target keywords, Why This Topic, and persona context) inside CE-stage detail views so active TD-entry cards keep the same planner assignment context visible in the left rail while the center panel shows pipeline progress. The same topic-assignment block now also appears during brief approval views, while final article review still keeps the article section navigator. Validation: `cd frontend && npx tsc --noEmit`."
+    },
+    {
+      "id": "T-content-studio-active-metrics-gap-context",
+      "task": "Content Studio detail view \u2014 preserve topic-specific GA metrics in the right sidebar after TD cards enter active CE stages",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 2,
+      "files_modified": [
+        "core/content_engine/persistence.py",
+        "core/services/db_content_data.py",
+        "tests/content_engine/test_persistence.py",
+        "tests/services/test_db_content_data_backend.py"
+      ],
+      "codex_review": "Fixed the missing right-sidebar GA metrics for active TD-entry CE cards. The frontend Metrics tab already rendered `gapContext`, but DB-backed cards lost that field after the pipeline moved from Redis GA cards to `content_pieces` because `persist_content_pieces()` overwrote `evaluation_results` without preserving the blueprint-level `gap_context`, and `DbContentDataService.get_briefs()` was not feeding embedded `evaluation_results.gap_context` into `extract_gap_context()`. `persist_blueprints_early()` now stores blueprint `gap_context`, `persist_content_pieces()` preserves an existing `evaluation_results.gap_context` on updates when the new eval summary omits it, and the DB brief read path prefers that embedded topic-level context so active CE and approval views keep showing the same topic-specific gap metrics as Queue-column cards. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py tests/content_engine/test_persistence.py -q` (37 passed), `venv/bin/python -m py_compile core/content_engine/persistence.py core/services/db_content_data.py tests/services/test_db_content_data_backend.py tests/content_engine/test_persistence.py` (clean), and `cd frontend && npx tsc --noEmit` (clean)."
+    },
+    {
+      "id": "T-content-studio-review-draft-persistence",
+      "task": "Content Studio final approval editor \u2014 preserve user edits locally, autosave server drafts, and approve the edited markdown",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 4,
+      "files_modified": [
+        "api/schemas/content_v13.py",
+        "api/routers/content_v13.py",
+        "core/content_engine/pipeline_v13.py",
+        "frontend/src/app/(dashboard)/content-studio/_components/ArticleEditor.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+        "frontend/src/app/(dashboard)/content-studio/page.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
+        "tests/api/test_content_v13.py",
+        "tests/content_engine/test_pipeline_v13.py"
+      ],
+      "codex_review": "Implemented the 3-layer draft-persistence contract for HITL-3 article editing. Backend: added `GET/PUT /api/v1/content/v13/{run_id}/draft/content`, extended `ContentApprovalRequestV13` with additive `content_markdown`, and changed the Stage 5 approve path so edited review markdown is promoted to `final.md` and `ContentPiece.final_markdown` instead of silently approving the pre-edit artifact. Frontend: `ArticleEditor` now emits markdown changes, `FullPageView` persists review drafts in localStorage keyed by company+brief+run, loads the saved backend draft on reopen, autosaves dirty drafts to the backend every 5 minutes, and sends the latest edited markdown on approve/send-back/publish. Validation: `venv/bin/pytest tests/api/test_content_v13.py -k 'ReviewDraftContent or td_content_review_routes_to_durable_resume_queue' -q` (4 passed), `venv/bin/pytest tests/api/test_content_v13.py tests/content_engine/test_pipeline_v13.py -k 'approve_content or ReviewDraftContent or edited_markdown_from_review_state' -q` (7 passed), `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k edited_markdown_from_review_state -q` (1 passed), `venv/bin/python -m py_compile api/schemas/content_v13.py api/routers/content_v13.py core/content_engine/pipeline_v13.py` (clean), and `cd frontend && npx tsc --noEmit` (clean)."
     }
   ],
   "pending": [

@@ -197,7 +197,14 @@ class DbContentDataService:
             cluster = piece.cluster_name or ""
 
             # Gap context for sidebar (filesystem-based enrichment)
-            brief_dict = {"title": piece.title or "", "target_cluster": cluster}
+            brief_dict = {
+                "title": piece.title or "",
+                "target_cluster": cluster,
+            }
+            if piece.evaluation_results and isinstance(piece.evaluation_results, dict):
+                embedded_gap_ctx = piece.evaluation_results.get("gap_context")
+                if embedded_gap_ctx is not None:
+                    brief_dict["gap_context"] = embedded_gap_ctx
             gap_ctx = extract_gap_context(brief_dict, analysis_json)
 
             # Use filesystem brief_id when available — this is what the pipeline,
@@ -369,6 +376,7 @@ class DbContentDataService:
                 description=card.get("description"),
                 target_keywords=card.get("target_keywords"),
                 content_angle=card.get("content_angle"),
+                gap_context=card.get("gap_context"),
             ))
         return items
 

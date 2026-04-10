@@ -199,6 +199,17 @@ export interface ApprovalResponseAPI {
   message?: string;
 }
 
+export interface ContentDraftResponseAPI {
+  brief_id: string;
+  content_markdown: string;
+}
+
+export interface ContentDraftSaveResponseAPI {
+  status: string;
+  brief_id: string;
+  storage_key?: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Add brief (POST /companies/{slug}/content/briefs)
 // ---------------------------------------------------------------------------

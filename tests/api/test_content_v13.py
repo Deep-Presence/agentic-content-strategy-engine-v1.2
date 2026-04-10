@@ -494,6 +494,7 @@ class TestApproveContent:
                     "brief_id": "WE-177",
                     "decision": "edit",
                     "editor_notes": "Tighten the intro",
+                    "content_markdown": "# Edited\n\nLatest approved draft",
                 },
             )
 
@@ -506,6 +507,7 @@ class TestApproveContent:
                 "editor_notes": "Tighten the intro",
                 "rethink": False,
                 "brief_id": "WE-177",
+                "content_markdown": "# Edited\n\nLatest approved draft",
             },
         )
         dispatch_mock.assert_awaited_once()
@@ -553,6 +555,81 @@ class TestApproveContent:
         assert second.status_code == 200
         assert len(task.approval_history) == 1
         assert task.approval_history[0].decision == "edit"
+
+
+class TestReviewDraftContent:
+    """Tests for GET/PUT /api/v1/content/v13/{run_id}/draft/content."""
+
+    def test_get_review_draft_content(self, client: TestClient, task_store):
+        task = task_store.create_task(pipeline="td_content", company_slug="test-co")
+        task.effective_slug = "test-co"
+
+        with patch(
+            "api.routers.content_v13._load_review_draft_content",
+            new_callable=AsyncMock,
+            return_value="# Draft\n\nHello world",
+        ) as load_mock:
+            resp = client.get(
+                f"/api/v1/content/v13/{task.task_id}/draft/content",
+                params={"brief_id": "WE-001"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "brief_id": "WE-001",
+            "content_markdown": "# Draft\n\nHello world",
+        }
+        load_mock.assert_awaited_once_with(
+            app=client.app,
+            effective_slug="test-co",
+            brief_id="WE-001",
+        )
+
+    def test_get_review_draft_content_404_when_missing(self, client: TestClient, task_store):
+        task = task_store.create_task(pipeline="td_content", company_slug="test-co")
+        task.effective_slug = "test-co"
+
+        with patch(
+            "api.routers.content_v13._load_review_draft_content",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            resp = client.get(
+                f"/api/v1/content/v13/{task.task_id}/draft/content",
+                params={"brief_id": "WE-001"},
+            )
+
+        assert resp.status_code == 404
+
+    def test_put_review_draft_content(self, client: TestClient, task_store):
+        task = task_store.create_task(pipeline="td_content", company_slug="test-co")
+        task.effective_slug = "test-co"
+
+        with patch(
+            "api.routers.content_v13._save_review_draft_content",
+            new_callable=AsyncMock,
+            return_value="content/test-co/content/WE-001/review_draft.md",
+        ) as save_mock:
+            resp = client.put(
+                f"/api/v1/content/v13/{task.task_id}/draft/content",
+                json={
+                    "brief_id": "WE-001",
+                    "content_markdown": "# Draft\n\nAutosaved",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "status": "saved",
+            "brief_id": "WE-001",
+            "storage_key": "content/test-co/content/WE-001/review_draft.md",
+        }
+        save_mock.assert_awaited_once_with(
+            app=client.app,
+            effective_slug="test-co",
+            brief_id="WE-001",
+            content_markdown="# Draft\n\nAutosaved",
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════

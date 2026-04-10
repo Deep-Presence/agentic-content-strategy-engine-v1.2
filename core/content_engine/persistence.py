@@ -117,6 +117,8 @@ async def persist_blueprints_early(
                     eval_data["priority_score"] = _bp_dict["priority_score"]
                 if _bp_dict.get("structural_targets") is not None:
                     eval_data["structural_targets"] = _bp_dict["structural_targets"]
+                if _bp_dict.get("gap_context") is not None:
+                    eval_data["gap_context"] = _bp_dict["gap_context"]
 
                 existing = await repo.get_by_slug_and_brief_id(slug, brief_id)
                 if existing:
@@ -183,6 +185,7 @@ async def persist_content_pieces(
                 eval_summary = getattr(piece, "eval_summary", None)
                 if eval_summary and hasattr(eval_summary, "model_dump"):
                     eval_summary = eval_summary.model_dump(mode="json")
+                eval_summary = dict(eval_summary or {})
 
                 ta_id_raw = getattr(piece, "topic_assignment_id", None)
                 ta_id: _uuid.UUID | None = None
@@ -198,12 +201,18 @@ async def persist_content_pieces(
                 # Upsert: find existing by (slug, brief_id), patch fields, preserve ID
                 existing = await repo.get_by_slug_and_brief_id(slug, piece.brief_id)
                 if existing:
+                    if (
+                        existing.evaluation_results
+                        and existing.evaluation_results.get("gap_context") is not None
+                        and eval_summary.get("gap_context") is None
+                    ):
+                        eval_summary["gap_context"] = existing.evaluation_results["gap_context"]
                     existing.run_id = run_id
                     existing.title = piece.title
                     existing.status = mapped_status
                     existing.storage_key = getattr(piece, "artifact_path", None)
                     existing.word_count = word_count
-                    existing.evaluation_results = eval_summary
+                    existing.evaluation_results = eval_summary or None
                     existing.topic_assignment_id = ta_id
                     existing.company_id = company_id
                     await session.flush()
@@ -217,7 +226,7 @@ async def persist_content_pieces(
                         status=mapped_status,
                         storage_key=getattr(piece, "artifact_path", None),
                         word_count=word_count,
-                        evaluation_results=eval_summary,
+                        evaluation_results=eval_summary or None,
                         revision_count=0,
                         topic_assignment_id=ta_id,
                     )

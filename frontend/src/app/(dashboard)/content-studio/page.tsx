@@ -152,7 +152,10 @@ export default function ContentStudioPage() {
   const domain = companySlug ? `${companySlug}.com` : '';
 
   const handleAction = useCallback(
-    async (action: 'start' | 'start_production' | 'approve_brief' | 'approve_article' | 'publish' | 'send_back' | 'cancel' | 'retry', data?: { editorNotes?: string }) => {
+    async (
+      action: 'start' | 'start_production' | 'approve_brief' | 'approve_article' | 'publish' | 'send_back' | 'cancel' | 'retry',
+      data?: { editorNotes?: string; contentMarkdown?: string },
+    ) => {
       if (!selectedCard || !companyName) return;
 
       try {
@@ -200,7 +203,14 @@ export default function ContentStudioPage() {
           case 'approve_article':
           case 'publish': {
             if (!selectedCard.taskId) return;
-            await approveContent(selectedCard.taskId, selectedCard.id, 'approve');
+            await approveContent(
+              selectedCard.taskId,
+              selectedCard.id,
+              'approve',
+              undefined,
+              undefined,
+              data?.contentMarkdown,
+            );
             updateCard(selectedCard.id, { status: 'completed', agentProgress: undefined });
             break;
           }
@@ -214,7 +224,14 @@ export default function ContentStudioPage() {
                 agentProgress: { pct: 0, currentTask: 'Incorporating feedback...' },
               });
             } else {
-              await approveContent(selectedCard.taskId, selectedCard.id, 'edit', data?.editorNotes || 'Needs revision');
+              await approveContent(
+                selectedCard.taskId,
+                selectedCard.id,
+                'edit',
+                data?.editorNotes || 'Needs revision',
+                undefined,
+                data?.contentMarkdown,
+              );
               updateCard(selectedCard.id, {
                 status: 'revising',
                 agentProgress: { pct: 0, currentTask: 'Revising article...' },

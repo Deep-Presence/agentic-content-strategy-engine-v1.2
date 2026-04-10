@@ -2250,6 +2250,19 @@ async def _run_pipeline_stages(
                     content_decision = review_state.get("content_decision", "approve")
 
                     if content_decision == "approve" or review_state.get("finalized"):
+                        approved_markdown = str(
+                            review_state.get("content_markdown")
+                            or final_content.markdown
+                        )
+                        if approved_markdown != final_content.markdown:
+                            final_content = final_content.model_copy(
+                                update={
+                                    "markdown": approved_markdown,
+                                    "word_count": len(
+                                        approved_markdown.split()
+                                    ),
+                                }
+                            )
                         # Emit brief completion event for Kanban sync
                         _emit(event_bus, task_id, "brief_completed", {
                             "brief_id": final_content.brief_id, "decision": "approve",
@@ -2275,17 +2288,17 @@ async def _run_pipeline_stages(
                                 piece_id=piece_id_map.get(final_content.brief_id),
                                 stage=_CAS.final,
                                 relative_path=final_rel_path,
-                                content=final_content.markdown,
+                                content=approved_markdown,
                             )
                         else:
                             bd = _brief_dir(artifact_dir, final_content.brief_id)
-                            (bd / "final.md").write_text(final_content.markdown, encoding="utf-8")
+                            (bd / "final.md").write_text(approved_markdown, encoding="utf-8")
                         pieces.append(
                             ContentPiece(
                                 brief_id=final_content.brief_id,
                                 title=final_content.title,
                                 status=ContentStatus.APPROVED,
-                                final_markdown=final_content.markdown,
+                                final_markdown=approved_markdown,
                                 eval_summary=eval_summary,
                                 human_notes=review_state.get("editor_notes"),
                                 artifact_path=final_rel_path,

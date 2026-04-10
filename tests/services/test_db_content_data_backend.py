@@ -179,6 +179,151 @@ class TestGapContextUsesBackend:
         assert cards[0].created_at == "2026-04-10T07:00:00+00:00"
         assert cards[0].updated_at == "2026-04-10T07:05:00+00:00"
 
+    @pytest.mark.asyncio
+    async def test_load_ga_phase_cards_includes_gap_context(self, tmp_path):
+        """GA queue cards expose topic-specific gap_context for the detail view."""
+        assignment_id = str(uuid.uuid4())
+        svc = DbContentDataService(
+            content_repo=AsyncMock(),
+            pipeline_repo=AsyncMock(),
+            artifacts_root=tmp_path,
+            backend=MagicMock(),
+        )
+
+        class _SessionContext:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _Repo:
+            def __init__(self, session):
+                self.session = session
+
+            async def get_by_ids(self, ta_ids):
+                return [
+                    SimpleNamespace(
+                        id=uuid.UUID(assignment_id),
+                        status=SimpleNamespace(value="gap_analysis_complete"),
+                    ),
+                ]
+
+        gap_context = {
+            "gap_score": 0.37,
+            "classification": "significant_gap",
+            "company_similarity": 0.22,
+            "citation_similarity": 0.59,
+            "company_cited": False,
+            "company_best_url": "https://test.co/pricing",
+            "why_picked": ["Large citation gap"],
+            "success_indicators": [{"label": "Gap Score", "value": "0.3700", "sub": "significant gap"}],
+            "exemplars": [{"url": "https://example.com/pricing"}],
+        }
+
+        with patch("core.config.settings.settings.redis_pipeline_state", True), patch(
+            "core.config.settings.settings.redis_url", "redis://localhost:6379/0",
+        ), patch(
+            "core.redis.get_redis_or_none", return_value=object(),
+        ), patch(
+            "core.content_engine.state_redis.read_ga_phase_cards_async",
+            AsyncMock(return_value=[{
+                "id": f"ta-{assignment_id}",
+                "status": "gap_analysis_complete",
+                "title": "Pricing for agencies",
+                "display_id": "WE-205",
+                "topic_assignment_id": assignment_id,
+                "created_at": "2026-04-10T07:00:00+00:00",
+                "updated_at": "2026-04-10T07:05:00+00:00",
+                "gap_context": gap_context,
+            }]),
+        ), patch(
+            "core.db.engine.get_session_factory",
+            return_value=lambda: _SessionContext(),
+        ), patch(
+            "core.db.repositories.topic_discovery_repo.TopicAssignmentRepository",
+            _Repo,
+        ):
+            cards = await svc._load_ga_phase_cards("test-co")
+
+        assert len(cards) == 1
+        assert cards[0].gap_context is not None
+        assert cards[0].gap_context.gap_score == 0.37
+        assert cards[0].gap_context.company_best_url == "https://test.co/pricing"
+
+    @pytest.mark.asyncio
+    async def test_db_backed_piece_uses_embedded_topic_gap_context(self, tmp_path):
+        """DB-backed CE cards preserve topic-specific gap metrics from persisted blueprint gap_context."""
+        mock_backend = MagicMock()
+        piece = MagicMock()
+        piece.id = uuid.uuid4()
+        piece.brief_id = "WE-001"
+        piece.title = "No-Code Web Development in the Enterprise"
+        piece.status = SimpleNamespace(value="drafting")
+        piece.content_type = "how_to"
+        piece.word_count = 1800
+        piece.citability_score = 0.54
+        piece.cluster_name = "Definition"
+        piece.run_id = uuid.uuid4()
+        piece.created_at = None
+        piece.updated_at = None
+        piece.published_url = None
+        piece.published_at = None
+        piece.topic_assignment_id = uuid.uuid4()
+        piece.evaluation_results = {
+            "gap_context": {
+                "query_gap": {
+                    "gap": 0.28,
+                    "interpretation": "significant_gap",
+                    "best_company_similarity": 0.12,
+                    "avg_citation_similarity": 0.49,
+                    "company_cited": False,
+                    "best_company_url": "https://test.co/no-code",
+                },
+                "exemplars": [
+                    {
+                        "url": "https://competitor.example/no-code",
+                        "domain": "competitor.example",
+                        "similarity": 0.52,
+                        "word_count": 2100,
+                        "authority_type": "editorial",
+                    }
+                ],
+                "cluster_spec": {
+                    "word_count_range": [1600, 2200],
+                },
+            }
+        }
+
+        content_repo = AsyncMock()
+        content_repo.list_by_slug = AsyncMock(return_value=[piece])
+        content_repo.list_by_run = AsyncMock(return_value=[])
+        pipeline_repo = AsyncMock()
+        pipeline_repo.get_latest_completed = AsyncMock(return_value=None)
+
+        svc = DbContentDataService(
+            content_repo=content_repo,
+            pipeline_repo=pipeline_repo,
+            artifacts_root=tmp_path,
+            backend=mock_backend,
+        )
+
+        with patch(
+            "core.services.db_content_data.load_analysis_json",
+            return_value=None,
+        ), patch(
+            "core.config.settings.settings.redis_pipeline_state", False,
+        ), patch(
+            "core.config.settings.settings.redis_url", None,
+        ):
+            resp = await svc.get_briefs("test-co")
+
+        assert resp.total == 1
+        assert resp.briefs[0].gap_context is not None
+        assert resp.briefs[0].gap_context.gap_score == 0.28
+        assert resp.briefs[0].gap_context.classification == "significant_gap"
+        assert resp.briefs[0].gap_context.company_best_url == "https://test.co/no-code"
+
 
 # ── Blueprint fallback ───────────────────────────────────────────────
 

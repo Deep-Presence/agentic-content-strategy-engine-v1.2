@@ -133,58 +133,27 @@ export function ContentCardItem({ card, onClick }: { card: ContentCard; onClick:
         </span>
       </div>
 
-      {/* GA-phase: active analysis progress */}
-      {card.status === 'gap_analysis' && card.agentProgress && (
-        <div className="mt-3">
-          <div className="flex items-center justify-between">
-            <span
-              style={{
-                fontSize: 10,
-                fontWeight: 500,
-                color: 'var(--warning)',
-                animation: 'typing 1.8s ease-in-out infinite',
-              }}
-            >
-              {display.label}
-            </span>
-            <div className="flex items-center gap-1">
-              {card.agentProgress.gaStepName && (
-                <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>
-                  {card.agentProgress.gaStepNum}/{card.agentProgress.gaTotalSteps}
-                </span>
-              )}
-              <span
-                style={{
-                  fontSize: 10,
-                  fontFamily: 'var(--font-mono)',
-                  color: 'var(--text-tertiary)',
-                }}
-              >
-                {card.agentProgress.pct}%
-              </span>
-            </div>
-          </div>
-          <div
-            className="mt-1"
+      {/* GA-phase: active analysis */}
+      {card.status === 'gap_analysis' && (
+        <div className="flex items-center gap-1.5 mt-3">
+          <span
             style={{
-              width: '100%',
-              height: 4,
-              background: 'var(--border)',
-              borderRadius: 2,
-              overflow: 'hidden',
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: 'var(--warning)',
+              display: 'inline-block',
+            }}
+          />
+          <span
+            style={{
+              fontSize: 11,
+              color: 'var(--warning)',
+              fontWeight: 500,
             }}
           >
-            <div
-              style={{
-                width: `${card.agentProgress.pct}%`,
-                height: '100%',
-                borderRadius: 2,
-                background: progressColor(card.agentProgress.pct),
-                animation: 'progressPulse 2.5s ease-in-out infinite',
-                transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
-              }}
-            />
-          </div>
+            {display.label}
+          </span>
         </div>
       )}
 

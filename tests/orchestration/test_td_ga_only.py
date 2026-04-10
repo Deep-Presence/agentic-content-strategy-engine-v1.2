@@ -8,6 +8,7 @@ real pipeline functions, validate preflight checks, and verify status updates.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -232,6 +233,74 @@ class TestGaOnlyExecution:
         last_call = mock_update.call_args_list[-1]
         assert last_call[0][1] == ["ta-1"]
         assert last_call[0][2] == TopicAssignmentStatus.gap_analysis_complete
+
+    @pytest.mark.asyncio
+    async def test_gap_analysis_complete_write_includes_topic_gap_context(self, tmp_path: Path) -> None:
+        """Final GA Redis write should carry a summarized topic-level gap_context payload."""
+        assignment = _make_assignment("ta-1", BuyerStage.MOFU, IntentType.commercial)
+        matrix = _make_matrix([assignment])
+        mock_report = GapReport(report_md="# Test")
+        mock_tqm = {"ta-1": ["tq_1"]}
+        mock_sf = AsyncMock()
+        mock_storage = MagicMock()
+        mock_storage.read.return_value = json.dumps({"gaps": [], "cluster_specs": []})
+        fake_ctx = MagicMock()
+        fake_ctx.model_dump.return_value = {
+            "query_gap": {
+                "gap": 0.34,
+                "interpretation": "significant_gap",
+                "best_company_similarity": 0.21,
+                "avg_citation_similarity": 0.57,
+                "company_cited": False,
+                "best_company_url": "https://test.co/page",
+            },
+            "cluster_spec": {"avg_word_count": 1600},
+            "exemplars": [{"url": "https://example.com"}],
+            "gap_content_brief": None,
+            "company_best_text": "",
+            "company_best_url": "https://test.co/page",
+        }
+
+        with patch(
+            "core.orchestration.td_content_orchestrator._PROJECT_ROOT", tmp_path,
+        ), patch(
+            "core.orchestration.td_content_orchestrator._validate_preflight_db",
+            new_callable=AsyncMock,
+            return_value=matrix,
+        ), patch(
+            "core.orchestration.td_content_orchestrator._update_assignment_statuses_db",
+            new_callable=AsyncMock,
+        ), patch(
+            "core.orchestration.td_content_orchestrator.PersonaStorage"
+        ) as mock_ps, patch(
+            "core.orchestration.td_content_orchestrator.run_topic_scoped_gap_analysis",
+            new_callable=AsyncMock,
+            return_value=(mock_report, mock_tqm),
+        ), patch(
+            "core.orchestration.td_content_orchestrator.get_storage_backend",
+            return_value=mock_storage,
+        ), patch(
+            "core.orchestration.td_content_orchestrator.extract_topic_contexts",
+            return_value={"tq_1": fake_ctx},
+        ), patch(
+            "core.orchestration.td_content_orchestrator._write_ga_phase_redis",
+        ) as mock_write:
+            mock_ps.return_value.list_persona_paths.return_value = ["p1.md"]
+
+            await run_td_gap_analysis_only(
+                effective_slug="test-co",
+                topic_assignment_ids=["ta-1"],
+                company_name="Test Co",
+                domain="test.co",
+                session_factory=mock_sf,
+            )
+
+        final_call = mock_write.call_args_list[-1]
+        assert final_call.args[2] == "gap_analysis_complete"
+        gap_ctx = final_call.kwargs["gap_context_by_assignment"]["ta-1"]
+        assert gap_ctx["gap_score"] == 0.34
+        assert gap_ctx["classification"] == "significant_gap"
+        assert gap_ctx["company_best_url"] == "https://test.co/page"
 
 
 # ---------------------------------------------------------------------------

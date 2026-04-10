@@ -18,6 +18,7 @@ Usage:
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -28,6 +29,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from core.content_engine.context_router import extract_topic_contexts
 from core.gap_analysis.pipeline import run_topic_scoped_gap_analysis
 from core.models.content_generation import ContentGenerationOutput
 from core.models.content_generation_v13 import (
@@ -41,6 +43,8 @@ from core.models.topic_discovery import (
     TopicAssignmentStatus,
 )
 from core.research.audience_persona.storage import PersonaStorage
+from core.services.gap_context_helper import extract_gap_context
+from core.storage import get_storage_backend
 from core.topic_discovery.db_ops import db_read_latest_matrix, db_read_manifest
 
 logger = logging.getLogger(__name__)
@@ -64,6 +68,58 @@ class TDContentPipelineError(RuntimeError):
 
 def _derive_slug(company_name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", company_name.lower()).strip("-")
+
+
+def _load_topic_gap_context_summaries(
+    effective_slug: str,
+    ga_run_id: str,
+    assignments: List[TopicAssignment],
+    topic_query_map: Dict[str, List[str]],
+) -> Dict[str, Dict[str, Any]]:
+    """Build per-assignment GapContextSummary payloads from topic-scoped analysis."""
+    if not topic_query_map:
+        return {}
+
+    storage = get_storage_backend(_PROJECT_ROOT / "artifacts")
+    analysis_key = f"gap_analysis/{effective_slug}/topic_scoped/{ga_run_id}/analysis.json"
+    raw_analysis = storage.read(analysis_key)
+    if raw_analysis is None:
+        logger.warning(
+            "Topic-scoped analysis missing while building GA card gap_context: %s",
+            analysis_key,
+        )
+        return {}
+
+    try:
+        analysis_json = json.loads(raw_analysis)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        logger.warning(
+            "Topic-scoped analysis JSON invalid while building GA card gap_context: %s",
+            analysis_key,
+            exc_info=True,
+        )
+        return {}
+
+    topic_contexts = extract_topic_contexts(analysis_json, topic_query_map)
+    summaries: Dict[str, Dict[str, Any]] = {}
+    for assignment in assignments:
+        query_ids = topic_query_map.get(assignment.id) or []
+        if not query_ids:
+            continue
+        topic_ctx = topic_contexts.get(query_ids[0])
+        if topic_ctx is None:
+            continue
+        gap_summary = extract_gap_context(
+            {
+                "title": assignment.topic_text or "",
+                "target_cluster": getattr(assignment, "subdomain_name", "") or "",
+                "gap_context": topic_ctx.model_dump(mode="json"),
+            },
+            None,
+        )
+        if gap_summary is not None:
+            summaries[assignment.id] = gap_summary.model_dump(mode="json")
+    return summaries
 
 
 async def _update_assignment_statuses_db(
@@ -450,9 +506,17 @@ async def run_td_gap_analysis_only(
         _PROJECT_ROOT / "artifacts" / "gap_analysis" / effective_slug
         / "topic_scoped" / str(ga_run_id) / "analysis.json"
     )
+    gap_context_by_assignment = _load_topic_gap_context_summaries(
+        effective_slug,
+        str(ga_run_id),
+        valid_assignments,
+        topic_query_map,
+    )
     _write_ga_phase_redis(
         effective_slug, valid_assignments, "gap_analysis_complete",
-        task_id=task_id, ga_run_id=str(ga_run_id),
+        task_id=task_id,
+        ga_run_id=str(ga_run_id),
+        gap_context_by_assignment=gap_context_by_assignment,
     )
     _emit_company_event(effective_slug, "state_changed", {
         "changed": [a.id for a in valid_assignments], "hint": "gap_analysis_complete",
@@ -646,6 +710,7 @@ def _write_ga_phase_redis(
     *,
     task_id: Optional[str] = None,
     ga_run_id: Optional[str] = None,
+    gap_context_by_assignment: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> None:
     """Write GA-phase state for topic assignment cards to Redis.
 
@@ -683,6 +748,9 @@ def _write_ga_phase_redis(
                 "target_keywords": meta.get("target_keywords"),
                 "content_angle": meta.get("angle"),
             }
+            gap_context = (gap_context_by_assignment or {}).get(a.id)
+            if gap_context is not None:
+                topic_data[a.id]["gap_context"] = gap_context
 
         write_ga_phase_state(
             rc, slug,

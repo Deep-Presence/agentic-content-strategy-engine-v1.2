@@ -405,6 +405,43 @@ class TestContentReview:
         assert "Test Content" in final_path.read_text()
 
     @pytest.mark.asyncio
+    async def test_approved_content_uses_edited_markdown_from_review_state(self, tmp_path):
+        """HITL-3 approve with edited markdown should promote that edited content to final.md."""
+        input_data = _make_input(tmp_path)
+        blueprint = _make_blueprint()
+        formatted = _make_formatted()
+        history = RevisionHistory(brief_id="brief-001", final_passed=True)
+        edited_markdown = "# Edited Title\n\nApproved edited body."
+
+        with patch("core.content_engine.pipeline_v13.select_topics",
+                   new_callable=AsyncMock, return_value=_make_planner_output()), \
+             patch("core.content_engine.pipeline_v13.extract_scorecard", return_value=MagicMock()), \
+             patch("core.content_engine.pipeline_v13.extract_worker_context",
+                   return_value={"q-001": WorkerQueryContext(query_gap={"query_id": "q-001"})}), \
+             patch("core.content_engine.pipeline_v13.build_briefs_parallel",
+                   new_callable=AsyncMock, return_value=[blueprint]), \
+             patch("core.content_engine.workers.dispatcher.dispatch_workers_v13",
+                   new_callable=AsyncMock, return_value=([(formatted.brief_id, formatted)], [])), \
+             patch("core.content_engine.evaluator.loop.evaluate_and_optimize",
+                   new_callable=AsyncMock, return_value=(formatted, history, "pass")), \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock, side_effect=[
+                       {"topic_decision": "approve", "approved_topic_ranks": [0]},
+                       {"brief_decision": "approve"},
+                       {
+                           "content_decision": "approve",
+                           "finalized": True,
+                           "content_markdown": edited_markdown,
+                       },
+                   ]):
+            result = await run_content_generation_v13(input_data)
+
+        final_path = tmp_path / "artifacts" / "content" / "test-co" / "content" / "brief-001" / "final.md"
+        assert final_path.exists()
+        assert final_path.read_text() == edited_markdown
+        assert result.pieces[0].final_markdown == edited_markdown
+
+    @pytest.mark.asyncio
     async def test_rejected_content_no_artifact(self, tmp_path):
         """Rejected content has no artifact_path."""
         input_data = _make_input(tmp_path)

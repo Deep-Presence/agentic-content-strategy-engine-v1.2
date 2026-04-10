@@ -75,6 +75,8 @@ function BriefSidebar({ card }: { card: ContentCard }) {
 
   return (
     <div className="p-4 space-y-4">
+      <TopicAssignmentSidebarSections card={card} />
+
       <div>
         <div style={OVERLINE}>Brief Outline</div>
         <ol className="space-y-1" style={{ paddingLeft: 16 }}>
@@ -195,126 +197,135 @@ function AgentSidebar({ card }: { card: ContentCard }) {
   const progress = card.agentProgress;
   const display = getDisplay(card.status);
   const stepIndex = getWorkerStepIndex(card.status);
+  const showTopicAssignmentContext = Boolean(
+    card.topicAssignmentId || card.description || card.buyerStage || card.intentType || card.targetKeywords?.primary,
+  );
 
   return (
     <div className="p-4 space-y-4">
-      {/* Progress summary */}
-      <div>
-        <div style={OVERLINE}>Current Stage</div>
-        <div className="flex items-center gap-2 mb-2">
-          <span
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: '50%',
-              background: display.isAgentActive ? 'var(--warning)' : 'var(--border)',
-              animation: display.isAgentActive ? 'pulse 1.5s ease-in-out infinite' : undefined,
-            }}
-          />
-          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
-            {display.label}
-          </span>
-        </div>
-        {progress && (
-          <>
-            <div className="flex items-center gap-2">
-              <div className="flex-1" style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-                <div style={{
-                  width: `${progress.pct}%`,
-                  height: '100%',
-                  borderRadius: 2,
-                  background: progress.pct > 80 ? 'var(--success)' : progress.pct >= 50 ? 'var(--accent)' : 'var(--warning)',
-                  animation: 'progressPulse 2.5s ease-in-out infinite',
-                  transition: 'width 0.6s ease',
-                }} />
-              </div>
-              <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
-                {progress.pct}%
+      <TopicAssignmentSidebarSections card={card} />
+
+      {!showTopicAssignmentContext && (
+        <>
+          {/* Progress summary */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <div style={OVERLINE}>Current Stage</div>
+            <div className="flex items-center gap-2 mb-2">
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: display.isAgentActive ? 'var(--warning)' : 'var(--border)',
+                  animation: display.isAgentActive ? 'pulse 1.5s ease-in-out infinite' : undefined,
+                }}
+              />
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+                {display.label}
               </span>
             </div>
-            {progress.wordsCurrent !== undefined && (
-              <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                {progress.wordsCurrent.toLocaleString()} / {progress.wordsTarget?.toLocaleString()} words
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Pipeline stages */}
-      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-        <div style={OVERLINE}>Pipeline</div>
-        <div className="space-y-1">
-          {SIDEBAR_STEPS.map((stage, i) => {
-            const done = stepIndex > i;
-            const active = stage.key === card.status;
-
-            return (
-              <div key={stage.key} className="flex items-center gap-2 py-1.5">
-                <span style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: '50%',
-                  background: done ? 'var(--success)' : active ? 'var(--warning)' : 'var(--border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 9,
-                  fontWeight: 600,
-                  color: done || active ? '#fff' : 'var(--text-tertiary)',
-                  flexShrink: 0,
-                  animation: active ? 'pulse 2s ease-in-out infinite' : undefined,
-                }}>
-                  {done ? '\u2713' : i + 1}
-                </span>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: active ? 500 : 400, color: done || active ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
-                    {stage.label}
+            {progress && (
+              <>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1" style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{
+                      width: `${progress.pct}%`,
+                      height: '100%',
+                      borderRadius: 2,
+                      background: progress.pct > 80 ? 'var(--success)' : progress.pct >= 50 ? 'var(--accent)' : 'var(--warning)',
+                      animation: 'progressPulse 2.5s ease-in-out infinite',
+                      transition: 'width 0.6s ease',
+                    }} />
                   </div>
-                  <div style={{ fontSize: 9, color: 'var(--text-tertiary)' }}>{stage.desc}</div>
+                  <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)' }}>
+                    {progress.pct}%
+                  </span>
+                </div>
+                {progress.wordsCurrent !== undefined && (
+                  <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', marginTop: 4 }}>
+                    {progress.wordsCurrent.toLocaleString()} / {progress.wordsTarget?.toLocaleString()} words
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Pipeline stages */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <div style={OVERLINE}>Pipeline</div>
+            <div className="space-y-1">
+              {SIDEBAR_STEPS.map((stage, i) => {
+                const done = stepIndex > i;
+                const active = stage.key === card.status;
+
+                return (
+                  <div key={stage.key} className="flex items-center gap-2 py-1.5">
+                    <span style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: '50%',
+                      background: done ? 'var(--success)' : active ? 'var(--warning)' : 'var(--border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 9,
+                      fontWeight: 600,
+                      color: done || active ? '#fff' : 'var(--text-tertiary)',
+                      flexShrink: 0,
+                      animation: active ? 'pulse 2s ease-in-out infinite' : undefined,
+                    }}>
+                      {done ? '\u2713' : i + 1}
+                    </span>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: active ? 500 : 400, color: done || active ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                        {stage.label}
+                      </div>
+                      <div style={{ fontSize: 9, color: 'var(--text-tertiary)' }}>{stage.desc}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Current task */}
+          {progress && (
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+              <div style={OVERLINE}>Current Task</div>
+              <div className="flex items-start gap-2">
+                <span style={{
+                  width: 4, height: 4, borderRadius: '50%', background: 'var(--warning)',
+                  marginTop: 5, flexShrink: 0,
+                  animation: 'pulse 1.5s ease-in-out infinite',
+                }} />
+                <div style={{ fontSize: 11, color: 'var(--text-primary)', animation: 'typing 1.8s ease-in-out infinite', lineHeight: 1.5 }}>
+                  {progress.currentTask}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Current task */}
-      {progress && (
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-          <div style={OVERLINE}>Current Task</div>
-          <div className="flex items-start gap-2">
-            <span style={{
-              width: 4, height: 4, borderRadius: '50%', background: 'var(--warning)',
-              marginTop: 5, flexShrink: 0,
-              animation: 'pulse 1.5s ease-in-out infinite',
-            }} />
-            <div style={{ fontSize: 11, color: 'var(--text-primary)', animation: 'typing 1.8s ease-in-out infinite', lineHeight: 1.5 }}>
-              {progress.currentTask}
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* Stats */}
-      {progress?.sectionsComplete !== undefined && (
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-          <div style={OVERLINE}>Stats</div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="p-2" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)' }}>
-              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 2 }}>Sections</div>
-              <div style={{ fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                {progress.sectionsComplete}/{progress.sectionsTotal}
+          {/* Stats */}
+          {progress?.sectionsComplete !== undefined && (
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+              <div style={OVERLINE}>Stats</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-2" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)' }}>
+                  <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 2 }}>Sections</div>
+                  <div style={{ fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {progress.sectionsComplete}/{progress.sectionsTotal}
+                  </div>
+                </div>
+                <div className="p-2" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)' }}>
+                  <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 2 }}>Words</div>
+                  <div style={{ fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {(progress.wordsCurrent || 0).toLocaleString()}
+                  </div>
+                </div>
               </div>
             </div>
-            <div className="p-2" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)' }}>
-              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 2 }}>Words</div>
-              <div style={{ fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                {(progress.wordsCurrent || 0).toLocaleString()}
-              </div>
-            </div>
-          </div>
-        </div>
+          )}
+        </>
       )}
 
       {/* Brief content (shown during production stages when brief is available) */}
@@ -431,14 +442,9 @@ function formatPersonaName(raw: string): string {
   return raw.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function GapAnalysisSidebar({ card }: { card: ContentCard }) {
-  const progress = card.agentProgress;
-  const display = getDisplay(card.status);
-  const currentStepNum = progress?.gaStepNum ?? 0;
-
+function TopicAssignmentSidebarSections({ card }: { card: ContentCard }) {
   return (
-    <div className="p-4 space-y-4">
-      {/* Topic info */}
+    <>
       <div>
         <div style={OVERLINE}>Topic</div>
         <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1.4, marginBottom: 4 }}>
@@ -454,7 +460,6 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
         )}
       </div>
 
-      {/* Buyer stage + Intent type badges */}
       {(card.buyerStage || card.intentType) && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {card.buyerStage && (() => {
@@ -485,7 +490,6 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
         </div>
       )}
 
-      {/* Content Specification */}
       {(card.contentFormat || card.estimatedWordCount || card.citationOpp != null) && (
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
           <div style={OVERLINE}>Content Spec</div>
@@ -518,7 +522,6 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
         </div>
       )}
 
-      {/* Target Keywords */}
       {card.targetKeywords && (card.targetKeywords.primary || (card.targetKeywords.secondary && card.targetKeywords.secondary.length > 0)) && (
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
           <div style={OVERLINE}>Target Keywords</div>
@@ -553,7 +556,6 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
         </div>
       )}
 
-      {/* Why We Recommend (content angle + top priority factor) */}
       {(card.contentAngle || (card.priorityFactors && Object.keys(card.priorityFactors).length > 0)) && (
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
           <div style={OVERLINE}>Why This Topic</div>
@@ -590,7 +592,6 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
         </div>
       )}
 
-      {/* Persona Affinity */}
       {card.personaName && (
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
           <div style={OVERLINE}>Target Persona</div>
@@ -599,7 +600,7 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
               className="flex items-center justify-center rounded-full text-white shrink-0"
               style={{ width: 22, height: 22, fontSize: 9, fontWeight: 600, background: 'var(--accent)' }}
             >
-              {formatPersonaName(card.personaName).split(' ').map(w => w[0]).join('').slice(0, 2)}
+              {formatPersonaName(card.personaName).split(' ').map((w) => w[0]).join('').slice(0, 2)}
             </div>
             <div>
               <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>
@@ -629,6 +630,18 @@ function GapAnalysisSidebar({ card }: { card: ContentCard }) {
           )}
         </div>
       )}
+    </>
+  );
+}
+
+function GapAnalysisSidebar({ card }: { card: ContentCard }) {
+  const progress = card.agentProgress;
+  const display = getDisplay(card.status);
+  const currentStepNum = progress?.gaStepNum ?? 0;
+
+  return (
+    <div className="p-4 space-y-4">
+      <TopicAssignmentSidebarSections card={card} />
 
       {/* Current GA progress */}
       {card.status === 'gap_analysis' && progress && (

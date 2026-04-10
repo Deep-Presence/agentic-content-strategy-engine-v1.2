@@ -101,6 +101,7 @@ export interface InterlinkItem {
 }
 
 export interface ArticleContent {
+  markdown: string;
   wordCount: number;
   targetWords: number;
   voiceCompliance: number;

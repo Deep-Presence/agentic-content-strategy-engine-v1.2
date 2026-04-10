@@ -356,6 +356,55 @@ class TestPersistContentPieces:
         assert call_kwargs["evaluation_results"] is None
 
     @pytest.mark.asyncio
+    async def test_existing_gap_context_is_preserved_on_update(
+        self, run_id: uuid.UUID, company_id: uuid.UUID, slug: str
+    ) -> None:
+        """DB-backed CE updates must preserve persisted topic gap_context."""
+        factory, session = _make_session_factory()
+        piece = _make_piece(eval_summary={"score": 0.91})
+        piece.brief_id = "WE-001"
+        piece.content_format = "how_to"
+        piece.target_cluster = "Definition"
+        piece.topic_assignment_id = uuid.uuid4()
+
+        existing = MagicMock()
+        existing.evaluation_results = {
+            "gap_context": {
+                "query_gap": {
+                    "gap": 0.28,
+                    "interpretation": "significant_gap",
+                    "best_company_url": "https://test.co/no-code",
+                },
+            },
+        }
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_slug_and_brief_id = AsyncMock(return_value=existing)
+        mock_repo.create_piece = AsyncMock()
+
+        import core.db.repositories.content_repo as repo_mod
+
+        original_cls = repo_mod.ContentRepository
+        repo_mod.ContentRepository = lambda sess: mock_repo
+        try:
+            await persist_content_pieces(factory, run_id, company_id, slug, [piece])
+        finally:
+            repo_mod.ContentRepository = original_cls
+
+        mock_repo.create_piece.assert_not_called()
+        assert existing.evaluation_results == {
+            "score": 0.91,
+            "gap_context": {
+                "query_gap": {
+                    "gap": 0.28,
+                    "interpretation": "significant_gap",
+                    "best_company_url": "https://test.co/no-code",
+                },
+            },
+        }
+        session.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_exception_logged_not_raised(
         self, run_id: uuid.UUID, company_id: uuid.UUID, slug: str
     ) -> None:

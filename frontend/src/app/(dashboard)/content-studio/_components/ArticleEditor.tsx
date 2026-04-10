@@ -10,6 +10,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table';
 import { CommentMark } from './CommentMark';
 import { marked } from 'marked';
+import { defaultMarkdownSerializer } from 'prosemirror-markdown';
 import {
   Bold,
   Italic,
@@ -44,6 +45,10 @@ function sectionsToHTML(sections: ArticleSection[]): string {
     .join('\n\n---\n\n');
 
   return marked.parse(md, { async: false }) as string;
+}
+
+function markdownToHTML(markdown: string): string {
+  return marked.parse(markdown, { async: false }) as string;
 }
 
 // ---------------------------------------------------------------------------
@@ -496,23 +501,33 @@ function ToolbarDivider() {
 
 interface ArticleEditorProps {
   sections: ArticleSection[];
+  initialMarkdown?: string;
   isReviewMode?: boolean;
   comments?: ReviewComment[];
   onCommentsChange?: (comments: ReviewComment[]) => void;
   overallReview?: string;
   onOverallReviewChange?: (text: string) => void;
+  onMarkdownChange?: (markdown: string) => void;
 }
 
 export function ArticleEditor({
   sections,
+  initialMarkdown,
   isReviewMode,
   comments = [],
   onCommentsChange,
   overallReview = '',
   onOverallReviewChange,
+  onMarkdownChange,
 }: ArticleEditorProps) {
-  const initialHTML = useMemo(() => sectionsToHTML(sections), [sections]);
+  const initialHTML = useMemo(
+    () => (initialMarkdown && initialMarkdown.trim()
+      ? markdownToHTML(initialMarkdown)
+      : sectionsToHTML(sections)),
+    [initialMarkdown, sections],
+  );
   const [pendingComment, setPendingComment] = useState<PendingComment | null>(null);
+  const lastAppliedHTMLRef = useRef(initialHTML);
 
   const fallbackWordCount = useMemo(
     () => sections.reduce((s, sec) => s + sec.words, 0),
@@ -548,7 +563,17 @@ export function ArticleEditor({
         class: 'prose-editor focus:outline-none',
       },
     },
+    onUpdate: ({ editor: nextEditor }) => {
+      onMarkdownChange?.(defaultMarkdownSerializer.serialize(nextEditor.state.doc));
+    },
   });
+
+  useEffect(() => {
+    if (!editor) return;
+    if (lastAppliedHTMLRef.current === initialHTML) return;
+    editor.commands.setContent(initialHTML, { emitUpdate: false });
+    lastAppliedHTMLRef.current = initialHTML;
+  }, [editor, initialHTML]);
 
   const wordCount = editor
     ? editor.getText().split(/\s+/).filter(Boolean).length

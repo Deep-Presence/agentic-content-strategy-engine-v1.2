@@ -273,6 +273,37 @@ class TestReadGaPhaseCards:
         assert card["created_at"] == "2026-04-10T07:00:00+00:00"
         assert card["updated_at"] == "2026-04-10T07:05:00+00:00"
 
+    def test_passes_through_gap_context(self, mock_sync_redis: MagicMock) -> None:
+        """Topic-scoped GA card metadata includes summarized gap_context for Queue detail view."""
+        from core.content_engine.state_redis import read_ga_phase_cards
+
+        meta = {
+            "title": "How AP Works",
+            "cluster": "AP Automation",
+            "gap_context": {
+                "gap_score": 0.27,
+                "classification": "significant_gap",
+                "company_similarity": 0.31,
+                "citation_similarity": 0.58,
+                "company_cited": False,
+                "company_best_url": "https://test.co/ap",
+                "why_picked": ["Large citation gap"],
+                "success_indicators": [{"label": "Gap Score", "value": "0.2700", "sub": "significant gap"}],
+                "exemplars": [{"url": "https://a.com", "domain": "a.com"}],
+            },
+        }
+        mock_sync_redis.hgetall.return_value = {
+            "ta-aid-1": "gap_analysis_complete",
+            "__meta:ta-aid-1": json.dumps(meta),
+        }
+
+        cards = read_ga_phase_cards(mock_sync_redis, "ramp")
+
+        assert len(cards) == 1
+        assert cards[0]["gap_context"]["gap_score"] == 0.27
+        assert cards[0]["gap_context"]["classification"] == "significant_gap"
+        assert cards[0]["gap_context"]["company_best_url"] == "https://test.co/ap"
+
     def test_skips_non_ga_status_on_ta_keys(self, mock_sync_redis: MagicMock) -> None:
         """ta-* entries with non-GA status (e.g. 'generating') are filtered out."""
         from core.content_engine.state_redis import read_ga_phase_cards
@@ -365,6 +396,13 @@ class TestWriteReadRoundtrip:
                 "priority_score": 0.72,
                 "buyer_stage": "MOFU",
                 "ga_run_id": "run-123",
+                "gap_context": {
+                    "gap_score": 0.42,
+                    "classification": "significant_gap",
+                    "why_picked": ["Large citation gap"],
+                    "success_indicators": [{"label": "Gap Score", "value": "0.4200", "sub": "significant gap"}],
+                    "exemplars": [{"url": "https://example.com"}],
+                },
             }
         }
 
@@ -398,3 +436,4 @@ class TestWriteReadRoundtrip:
         assert card["buyer_stage"] == "MOFU"
         assert card["ga_run_id"] == "run-123"
         assert card["topic_assignment_id"] == "aid-1"
+        assert card["gap_context"]["gap_score"] == 0.42

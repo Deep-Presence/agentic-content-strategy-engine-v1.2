@@ -22,6 +22,9 @@ from api.dependencies import get_auth_service, get_event_bus, get_task_store
 from api.schemas.content_v13 import (
     ApprovalResponseV13,
     BriefApprovalRequest,
+    ContentDraftRequestV13,
+    ContentDraftResponseV13,
+    ContentDraftSaveResponseV13,
     ContentApprovalRequestV13,
     ContentStartRequestV13,
     PipelineRunResponseV13,
@@ -174,6 +177,42 @@ def _uses_td_durable_continuation(task: PipelineTask) -> bool:
     return bool(
         task.pipeline == "td_content"
         and isinstance(payload.get("continuation"), dict)
+    )
+
+
+def _review_draft_storage_key(*, effective_slug: str, brief_id: str) -> str:
+    return f"content/{effective_slug}/content/{brief_id}/review_draft.md"
+
+
+async def _load_review_draft_content(
+    *,
+    app,
+    effective_slug: str,
+    brief_id: str,
+) -> str | None:
+    storage = getattr(app.state, "storage_backend", None)
+    if storage is None:
+        from core.storage import get_storage_backend
+
+        storage = get_storage_backend(getattr(app.state, "artifacts_root", None))
+    return storage.read(_review_draft_storage_key(effective_slug=effective_slug, brief_id=brief_id))
+
+
+async def _save_review_draft_content(
+    *,
+    app,
+    effective_slug: str,
+    brief_id: str,
+    content_markdown: str,
+) -> str:
+    storage = getattr(app.state, "storage_backend", None)
+    if storage is None:
+        from core.storage import get_storage_backend
+
+        storage = get_storage_backend(getattr(app.state, "artifacts_root", None))
+    return storage.write(
+        _review_draft_storage_key(effective_slug=effective_slug, brief_id=brief_id),
+        content_markdown,
     )
 
 
@@ -556,6 +595,27 @@ async def approve_content(
         "rethink": body.rethink,
         "brief_id": body.brief_id,
     }
+    if body.content_markdown is not None:
+        approval_data["content_markdown"] = body.content_markdown
+
+    if body.content_markdown is not None:
+        try:
+            await _save_review_draft_content(
+                app=http_request.app,
+                effective_slug=task.effective_slug or user_company_slug,
+                brief_id=body.brief_id,
+                content_markdown=body.content_markdown,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to save review draft content for %s",
+                run_id,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to save review draft content",
+            )
 
     if _uses_td_durable_continuation(task):
         session_factory = getattr(http_request.app.state, "db_session_factory", None)
@@ -666,6 +726,72 @@ async def approve_content(
         stage="content_review",
         brief_id=body.brief_id,
         message=f"Content {body.brief_id} {body.decision} submitted",
+    )
+
+
+@router.get("/{run_id}/draft/content")
+async def get_review_draft_content(
+    run_id: str,
+    brief_id: str,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+) -> ContentDraftResponseV13:
+    task = task_store.get_task(run_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {run_id}")
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if task.company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    content_markdown = await _load_review_draft_content(
+        app=http_request.app,
+        effective_slug=task.effective_slug or user_company_slug,
+        brief_id=brief_id,
+    )
+    if content_markdown is None:
+        raise HTTPException(status_code=404, detail="Review draft not found")
+
+    return ContentDraftResponseV13(
+        brief_id=brief_id,
+        content_markdown=content_markdown,
+    )
+
+
+@router.put("/{run_id}/draft/content")
+async def save_review_draft_content(
+    run_id: str,
+    body: ContentDraftRequestV13,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+) -> ContentDraftSaveResponseV13:
+    task = task_store.get_task(run_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {run_id}")
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if task.company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        storage_key = await _save_review_draft_content(
+            app=http_request.app,
+            effective_slug=task.effective_slug or user_company_slug,
+            brief_id=body.brief_id,
+            content_markdown=body.content_markdown,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to persist review draft content for %s",
+            run_id,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=503, detail="Failed to save review draft content")
+
+    return ContentDraftSaveResponseV13(
+        status="saved",
+        brief_id=body.brief_id,
+        storage_key=storage_key,
     )
 
 

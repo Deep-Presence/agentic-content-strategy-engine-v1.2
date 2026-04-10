@@ -332,6 +332,7 @@ export function assembleArticleContent(
   const { compliance, eeat, voiceCompliance } = adaptEvalMetrics(detail.eval_history);
 
   return {
+    markdown,
     wordCount,
     targetWords: detail.target_word_count.max || 0,
     voiceCompliance,

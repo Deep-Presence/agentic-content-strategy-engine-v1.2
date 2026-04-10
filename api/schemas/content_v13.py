@@ -130,10 +130,33 @@ class ContentApprovalRequestV13(BaseModel):
     brief_id: str
     decision: Literal["approve", "edit", "reject"]
     editor_notes: Optional[str] = Field(default=None, max_length=5000)
+    content_markdown: Optional[str] = Field(default=None)
     rethink: bool = Field(
         default=False,
         description="If true on reject, trigger major direction change (re-brief).",
     )
+
+
+class ContentDraftRequestV13(BaseModel):
+    """Save a user-edited review draft for a final content piece."""
+
+    brief_id: str
+    content_markdown: str = Field(default="")
+
+
+class ContentDraftResponseV13(BaseModel):
+    """Review draft payload returned by draft save/load endpoints."""
+
+    brief_id: str = ""
+    content_markdown: str = ""
+
+
+class ContentDraftSaveResponseV13(BaseModel):
+    """Review draft save acknowledgement."""
+
+    status: str = "saved"
+    brief_id: str = ""
+    storage_key: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

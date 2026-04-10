@@ -13,6 +13,8 @@ import type {
   StageContentResponseAPI,
   PipelineRunResponseAPI,
   ApprovalResponseAPI,
+  ContentDraftResponseAPI,
+  ContentDraftSaveResponseAPI,
   GapSummaryResponseAPI,
   TopicRunListResponseAPI,
   TopicRunEventListResponseAPI,
@@ -126,10 +128,40 @@ export function approveContent(
   decision: 'approve' | 'edit' | 'reject',
   editorNotes?: string,
   rethink?: boolean,
+  contentMarkdown?: string,
 ): Promise<ApprovalResponseAPI> {
   return api.post<ApprovalResponseAPI>(
     `/api/v1/content/v13/${encodeURIComponent(runId)}/approve/content`,
-    { brief_id: briefId, decision, editor_notes: editorNotes, rethink },
+    {
+      brief_id: briefId,
+      decision,
+      editor_notes: editorNotes,
+      rethink,
+      content_markdown: contentMarkdown,
+    },
+  );
+}
+
+export function fetchReviewDraftContent(
+  runId: string,
+  briefId: string,
+  signal?: AbortSignal,
+): Promise<ContentDraftResponseAPI> {
+  return api.get<ContentDraftResponseAPI>(
+    `/api/v1/content/v13/${encodeURIComponent(runId)}/draft/content`,
+    { brief_id: briefId },
+    signal,
+  );
+}
+
+export function saveReviewDraftContent(
+  runId: string,
+  briefId: string,
+  contentMarkdown: string,
+): Promise<ContentDraftSaveResponseAPI> {
+  return api.put<ContentDraftSaveResponseAPI>(
+    `/api/v1/content/v13/${encodeURIComponent(runId)}/draft/content`,
+    { brief_id: briefId, content_markdown: contentMarkdown },
   );
 }
 
