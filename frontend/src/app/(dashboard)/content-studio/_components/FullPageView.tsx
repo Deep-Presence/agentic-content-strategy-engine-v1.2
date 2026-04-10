@@ -114,6 +114,7 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
     briefContent: loadedBrief,
     articleContent: loadedArticle,
     isLoading: detailLoading,
+    error: detailError,
   } = useBriefDetail(briefIdForDetail);
 
   // Use loaded data, falling back to card-level data (from SSE/mock)
@@ -150,7 +151,9 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
   const showGAPhase = isGAPhase;
   const showQueue = !isGAPhase && card.status === 'suggested';
   const showBrief = card.status === 'brief_review' || card.status === 'pending_brief_approval';
-  const showArticle = (card.status === 'review' || card.status === 'pending_content_approval') && articleContent;
+  const showReview = card.status === 'review' || card.status === 'pending_content_approval';
+  const showArticle = showReview && articleContent;
+  const showReviewFallback = showReview && !articleContent;
   const showAgent = !isGAPhase && column === 'agent';
   const showDone = column === 'done';
 
@@ -469,6 +472,13 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
               onOverallReviewChange={setOverallReview}
             />
           )}
+          {showReviewFallback && (
+            <ReviewContentFallback
+              title={card.title}
+              isLoading={detailLoading}
+              error={detailError}
+            />
+          )}
           {showAgent && <AgentContent card={card} />}
           {showDone && <DoneContent card={card} />}
         </div>
@@ -483,6 +493,50 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
           onMetadataChange={setMetadata}
           onPublish={() => onAction('publish')}
         />
+      </div>
+    </div>
+  );
+}
+
+function ReviewContentFallback({
+  title,
+  isLoading,
+  error,
+}: {
+  title: string;
+  isLoading: boolean;
+  error: string | null;
+}) {
+  return (
+    <div className="p-6" style={{ maxWidth: 720, margin: '0 auto' }}>
+      <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>
+        {title}
+      </h1>
+      <div
+        className="p-4"
+        style={{
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-md)',
+          background: 'var(--surface)',
+        }}
+      >
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 600,
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+            color: 'var(--text-tertiary)',
+            marginBottom: 8,
+          }}
+        >
+          Final Review
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+          {isLoading
+            ? 'Loading the final article for review...'
+            : error || 'The article is ready for review, but the final content has not loaded yet.'}
+        </div>
       </div>
     </div>
   );

@@ -1,5 +1,24 @@
 [
   {
+    "id": "D-TD-RESUME-CLAIM-DETECTION",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry dispatcher semantics for claimed approval continuations",
+    "decision": "Once a TD topic run has been claimed for dispatch, resume detection must not rely on `scheduler_state == 'resume_queued'` because the claim repo mutates queued rows to `claimed` before returning them. The dispatcher should treat any claimed topic run with a preserved `continuation_payload_json` as a resume continuation, reuse the paused `pipeline_task_id` when it still exists in the task store, and pass the stored resume payload/approval data through to `run_td_content_production_task()`.",
+    "rationale": "Live manual QA showed approved TD cards restarting from `Building brief ...` and later 409ing on stale brief-approval task ids. The durable topic run still held a `resume_stage='brief_approval'` continuation payload, but the dispatcher discarded it because the claim snapshot no longer said `resume_queued` after the DB claim step. Resume semantics in this architecture belong to the durable continuation payload, not to the transient post-claim scheduler string.",
+    "alternatives": [
+      "Continue keying resume detection off `scheduler_state == 'resume_queued'` — rejected because claimed rows no longer have that state by the time the dispatcher sees them",
+      "Change the repo to return pre-claim state strings in the snapshot — possible, but rejected for this fix because the continuation payload already provides the stable signal and keeps the change smaller",
+      "Always create a fresh task for every resume — rejected because it restarts TD pipelines from the top and invalidates frontend HITL task ids"
+    ],
+    "files_affected": [
+      "api/tasks/runner.py",
+      "tests/api/test_content_v13_ga_endpoints.py"
+    ],
+    "outcome": "Implemented on 2026-04-10. Claimed TD resume rows are now detected via non-empty continuation payloads, paused task ids are reused, and the stored `td_resume_payload` / `td_resume_approval` flow back into `run_td_content_production_task()`. Validation: `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -k 'resume_claim_reuses_existing_task_id' -q` (1 passed), `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q` (33 passed, 2 pre-existing warnings), `venv/bin/pytest tests/api/test_content_v13.py -q` (75 passed, 13 pre-existing warnings), `venv/bin/pytest tests/content_engine/test_topic_run_service.py -q` (6 passed).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
     "id": "D-TD-CONTENT-QUEUED-CLAIM-SEMANTICS",
     "timestamp": "2026-04-10",
     "task": "TD-entry start-production semantics under shared CE semaphore pressure",
@@ -1509,6 +1528,178 @@
       "tests/events/test_company_event_bus.py"
     ],
     "outcome": "Company event transport now uses Redis Streams in production. Startup config wires the singleton with app.state.redis and the running loop. SSE responses now carry id fields and support Last-Event-ID replay. Targeted validation: 80 passed.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CE-PER-COMPANY-SEMAPHORE-POOL",
+    "timestamp": "2026-04-10",
+    "task": "Phase 2 concurrency split for Content Engine parallelism",
+    "decision": "Content Engine concurrency is now isolated from the shared singleton-pipeline pool and capped per company, not globally across all tenants. `DbTaskStore` keeps the existing shared Redis semaphore `semaphore:pipelines` for singleton workloads, but CE pipelines (`content`, `content_v13`, and `td_content`, including TD start-production) now acquire a separate semaphore named `semaphore:content_engine:{company_slug}` with default capacity 15. HITL heartbeat renewal and startup orphan cleanup route to the correct semaphore family based on the persisted task pipeline.",
+    "rationale": "The prior global semaphore let one tenant's CE traffic block unrelated companies and unrelated singleton pipelines. The user clarified that CE apparent parallelism should scale per tenant while company-scoped singleton pipelines remain exclusive. Splitting the pools is the smallest safe Phase 2 change that removes cross-company CE interference without yet redesigning CE scheduling around topic-run claims.",
+    "alternatives": [
+      "Raise the shared global semaphore limit for everyone — rejected because it still lets one company starve another and mixes CE with singleton workloads",
+      "Move directly to the full topic-run dispatcher before splitting pools — rejected for this step because it is a larger Phase 3 scheduler change and would delay the immediate per-tenant throughput fix",
+      "Key CE semaphores by effective_slug/product — rejected because the requirement is tenant/company capacity, not per-product isolation"
+    ],
+    "files_affected": [
+      "api/config.py",
+      "api/app.py",
+      "api/tasks/runner.py",
+      "core/services/db_task_store.py",
+      "core/services/task_store.py",
+      "tests/services/test_redis_semaphore.py",
+      "tests/services/test_heartbeat_renewal.py"
+    ],
+    "outcome": "Phase 2 implemented. CE runners now request the company-scoped pool, while singleton pipelines remain on the shared pool. Validation: `venv/bin/pytest tests/services/test_redis_semaphore.py tests/services/test_heartbeat_renewal.py -q` (31 passed) and `venv/bin/pytest tests/services/test_db_task_store.py tests/api/test_content.py tests/api/test_gap_runner.py tests/api/test_content_v13_ga_endpoints.py -q` (94 passed, pre-existing warnings). Phase 3 still needs the durable topic-run dispatcher, topic-level active claims, and slot release/reclaim around HITL waits.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-CONTENT-DISPATCHER-PHASE3",
+    "timestamp": "2026-04-10",
+    "task": "Phase 3 TD-entry scheduler — durable per-topic queue plus dispatcher",
+    "decision": "TD `start-production` no longer maps one request to one long-lived CE task. The route now queues the existing durable `content_engine_topic_runs` rows by setting them to `content_queued` with persisted `launch_context`, then immediately asks a dispatcher to claim queued rows up to the company CE capacity. Claims are company-wide and durable: `ContentEngineTopicRunRepository.claim_queued_runs_for_company()` uses `FOR UPDATE SKIP LOCKED` over `content_queued` rows whose `metadata_json.dispatch_state` is `queued` or unset. Each claimed topic run gets its own `td_content` task and pipeline_task_id, so TD production is now task-per-topic rather than task-per-click. Response payloads return additive `topic_runs` snapshots, and the frontend now reads the per-topic `pipeline_task_id` from those snapshots instead of trusting a single route-level `run_id`.",
+    "rationale": "The Phase 2 per-company CE semaphore fixed cross-tenant interference but still left the product in a runner-per-click model. That model makes overflow work sit behind semaphores as invisible waiting tasks and does not express the durable queue at the topic/card level. The durable topic-run table already exists and is the right queue primitive for TD-entry. Using it as the dispatch source is the smallest Phase 3 step that introduces real topic/card queue semantics without yet tackling Phase 4 slot release around HITL.",
+    "alternatives": [
+      "Keep spawning one CE task per request and let extra tasks wait behind the semaphore — rejected because it still hides the queue in task runtime rather than durable card state",
+      "Jump straight to Phase 4 slot release/reclaim around HITL — rejected for this slice because Phase 3 first needs durable per-topic dispatch and one-task-per-topic execution units",
+      "Add brand-new scheduler tables — rejected because `content_engine_topic_runs` already carries the durable per-card identity and state we need"
+    ],
+    "files_affected": [
+      "api/routers/content_v13.py",
+      "api/tasks/runner.py",
+      "core/db/repositories/content_engine_run_repo.py",
+      "core/services/content_engine_topic_runs.py",
+      "frontend/src/app/(dashboard)/content-studio/page.tsx",
+      "tests/api/test_content_v13_ga_endpoints.py"
+    ],
+    "outcome": "Phase 3 slice implemented. Start-production now queues topic runs durably, dispatches claimed rows up to available company CE capacity, and launches one `td_content` task per claimed topic. Runner completion triggers another dispatch pass so queued topics drain automatically as slots free up. Validation: `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q` (28 passed, 2 pre-existing warnings), `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/services/test_redis_semaphore.py tests/services/test_heartbeat_renewal.py tests/api/test_content_v13_ga_endpoints.py -q` (61 passed, 2 pre-existing warnings), and `cd frontend && npx tsc --noEmit` (clean). Phase 4 still needs slot release/reclaim around HITL waits and stronger claim-state persistence than JSON metadata.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CE-HITL-SLOT-SUSPEND",
+    "timestamp": "2026-04-10",
+    "task": "Phase 4 CE throughput fix — release company CE slots during HITL waits",
+    "decision": "CE tasks should not consume a company execution slot while they are blocked on human approval. `DbTaskStore.wait_for_approval()` now detects active CE tasks, suspends the active semaphore context before waiting, and reacquires that same company-scoped slot before handing the approval payload back to the graph. The tracked semaphore context supports suspend/resume for both Redis-backed and local asyncio fallback semaphores. While suspended, `_renew_leases()` skips semaphore renewal, and the TD dispatcher excludes `TaskStatus.PENDING_APPROVAL` CE tasks from `_count_active_company_ce_tasks()` so waiting-human cards do not count against the per-company runnable cap.",
+    "rationale": "Phase 3 introduced a durable topic-run queue and per-topic dispatcher, but CE slots were still held for the entire task lifetime because the semaphore wrapped the full runner and the approval wait loop kept renewing that lease. That meant a card sitting in `pending_brief_approval` or `pending_content_approval` still blocked queued topics from starting, which defeats the product goal of 15+ apparent parallel cards per company. Releasing the slot during HITL keeps the existing task/graph contract intact while materially increasing runnable throughput.",
+    "alternatives": [
+      "Keep renewing the semaphore during HITL and only raise the company cap — rejected because human waits would still waste capacity and the system would scale poorly at 15-30 topics",
+      "Move immediately to dedicated scheduler columns plus full continuation jobs for approval resumes — deferred to a later phase because the tracked-context suspend/resume change is smaller and safe on the current architecture",
+      "Exclude `PENDING_APPROVAL` from the dispatcher count without actually releasing the semaphore — rejected because queued tasks would still fail to acquire the underlying slot"
+    ],
+    "files_affected": [
+      "core/redis_semaphore.py",
+      "core/services/db_task_store.py",
+      "api/tasks/runner.py",
+      "tests/services/test_redis_semaphore.py",
+      "tests/services/test_heartbeat_renewal.py",
+      "tests/services/test_approval_queue_redis.py",
+      "tests/api/test_content_v13_ga_endpoints.py"
+    ],
+    "outcome": "Phase 4 slice implemented. CE approval waits now suspend/reacquire the active company semaphore slot, and queued TD topic runs can keep dispatching while another card is waiting on human input. Validation: `venv/bin/pytest tests/services/test_redis_semaphore.py tests/services/test_heartbeat_renewal.py tests/services/test_db_task_store.py tests/services/test_approval_queue_redis.py tests/api/test_content_v13_ga_endpoints.py -q` (115 passed, pre-existing warnings) and `venv/bin/python -m compileall core/services/db_task_store.py core/redis_semaphore.py api/tasks/runner.py`.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-DURABLE-CONTINUATIONS-PHASE5",
+    "timestamp": "2026-04-10",
+    "task": "Phase 5 TD-entry scheduler hardening — dedicated scheduler columns and durable approval continuations",
+    "decision": "TD scheduler state now belongs in first-class `content_engine_topic_runs` columns rather than `metadata_json`. Migration 0039 adds `scheduler_state`, `claim_token`, `queued_at`, `claimed_at`, `waiting_for_human_at`, and `continuation_payload_json`, and the repository/service claim path now uses those columns directly. TD HITL-2 and HITL-3 checkpoints no longer wait for approval inside the same worker task: `run_hitl_checkpoint(... external_resume=True)` raises `ApprovalPauseRequested` with a persisted continuation payload, the runner records the topic run as `waiting_human`, and the approval routes record the user decision with `delivery_mode='record_only'`, mark the topic run `resume_queued`, and immediately redispatch it. Resume claims reuse the same `td_content` task id and feed the stored LangGraph `thread_id` plus approval payload back into the graph so continuation picks up from the durable checkpoint instead of forking a new task identity.",
+    "rationale": "Phase 3 and 4 introduced per-topic dispatch plus slot release around HITL, but the scheduler still hid claim state inside JSON metadata and approvals still resumed inside the same long-lived task. That left the system brittle at approval boundaries and made the durable topic-run layer observational instead of authoritative. Moving scheduler state to dedicated columns and turning approvals into explicit queued continuations makes the TD runtime model align with the durable topic-run identity we want to generalize later for manual/prompt entry.",
+    "alternatives": [
+      "Keep `metadata_json.dispatch_state` as the scheduler source of truth and only add more helper methods around it — rejected because queue/claim/wait state is now a primary runtime concern, not incidental metadata",
+      "Continue resuming TD approvals inside the same task after Phase 4 semaphore suspend/reacquire — rejected because it still ties approval progression to one long-lived worker and blocks a clean durable scheduler model",
+      "Create a second continuation table for TD resumes — rejected because the topic-run row already owns the card identity and should remain the single durable scheduler record"
+    ],
+    "files_affected": [
+      "core/db/migrations/versions/0039_content_engine_scheduler_state.py",
+      "core/db/models/content_engine_runs.py",
+      "core/db/repositories/content_engine_run_repo.py",
+      "core/services/content_engine_topic_runs.py",
+      "core/content_engine/graph_v13.py",
+      "core/content_engine/pipeline_v13.py",
+      "core/orchestration/td_content_orchestrator.py",
+      "api/tasks/runner.py",
+      "api/routers/content_v13.py",
+      "tests/content_engine/test_graph_v13.py",
+      "tests/api/test_content_v13.py",
+      "tests/api/test_content_v13_ga_endpoints.py",
+      "tests/services/test_approval_queue_redis.py"
+    ],
+    "outcome": "Phase 5 implemented for TD-entry. Topic-run scheduler state is now column-backed, TD brief/content approvals become durable queued continuations, and dispatcher resume claims reuse the existing task id while resuming the LangGraph checkpoint from stored continuation payload. Also corrected a Phase 2 regression so singleton runners like `gap_analysis` and `site_audit` remain on the shared pool instead of the CE company pool. Validation: `venv/bin/pytest tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_graph_v13.py tests/services/test_approval_queue_redis.py -q` (179 passed, pre-existing warnings) and `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k 'test_td_worker_failure_writes_explicit_failed_state or test_td_rebrief_preserves_brief_id_and_threads_session_factory' -q` (2 passed, 1 pre-existing AsyncMock warning).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-SCHEDULER-COMMIT-ORDER-HARDENING",
+    "timestamp": "2026-04-10",
+    "task": "Phase 5 follow-up hardening — make TD durable scheduler transitions the commit point for approvals and start-production",
+    "decision": "TD approval routes must validate nonce/window first, then durably transition the matching topic run from `waiting_human` to `resume_queued`, and only after that record approval history on the task. TD routes no longer rely on `submit_approval(... delivery_mode='record_only')` because the Redis approval flag is not the correct duplicate guard for durable continuations. Duplicate or late TD approvals are now rejected by the durable scheduler state itself: `queue_topic_run_resume()` only succeeds for runs currently in `waiting_human`. Similarly, TD start-production must fail closed unless `queue_topic_runs_for_dispatch()` actually queued at least one durable topic run; mirroring `content_queued` to GA Redis now happens only after durable queue success. Scheduler update APIs now use explicit tri-state field semantics so requeueing can clear stale nullable runtime fields such as `pipeline_task_id`, `claimed_at`, and `waiting_for_human_at`.",
+    "rationale": "The initial Phase 5 continuation implementation left the durable scheduler as a best-effort sidecar after task-store mutation. That created three review regressions: approvals could become permanently un-retryable if the durable queue step failed after `approval:flag:{task_id}` was set, start-production could still return 202 when no durable work was queued, and queued retries could leak stale task ids back to the frontend because `None` meant 'leave unchanged' rather than 'clear'. Once `content_engine_topic_runs` owns scheduling, router truthfulness must be anchored to the durable scheduler transition itself.",
+    "alternatives": [
+      "Keep using `submit_approval(... record_only)` for TD and try to clear Redis approval flags on downstream failures — rejected because it still treats the task-store flag as primary instead of the durable scheduler state",
+      "Continue returning 202 after any queue/dispatch exception and rely on later dispatcher passes — rejected because the route would still be lying when no durable queue exists at all",
+      "Use booleans like `clear_pipeline_task_id=True` for every nullable scheduler field — rejected in favor of a generic tri-state update contract that can be reused for other scheduler fields"
+    ],
+    "files_affected": [
+      "api/routers/content_v13.py",
+      "core/services/db_task_store.py",
+      "core/services/task_store.py",
+      "core/services/content_engine_topic_runs.py",
+      "tests/api/test_content_v13.py",
+      "tests/api/test_content_v13_ga_endpoints.py",
+      "tests/content_engine/test_topic_run_service.py",
+      "tests/services/test_approval_queue_redis.py"
+    ],
+    "outcome": "Follow-up hardening implemented. TD approvals now queue the durable continuation before recording approval history, start-production returns failure if no durable queue was created, and requeueing clears stale task ids/claim timestamps before serializing queued topic runs back to the frontend. Validation: `venv/bin/pytest tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py tests/services/test_approval_queue_redis.py -q` (131 passed, pre-existing warnings), `venv/bin/pytest tests/services/test_db_task_store.py tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py tests/services/test_approval_queue_redis.py -q` (166 passed, pre-existing warnings), and `venv/bin/python -m py_compile api/routers/content_v13.py core/services/db_task_store.py core/services/task_store.py core/services/content_engine_topic_runs.py tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py`.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-STARTUP-RECOVERY-PHASE6",
+    "timestamp": "2026-04-10",
+    "task": "Phase 6 TD-entry scheduler hardening — startup reconciliation and auto-dispatch after restart",
+    "decision": "`content_engine_topic_runs` is now the startup recovery source of truth for TD-entry. On FastAPI boot, the app gathers recovered task rows from `DbTaskStore`, runs a scheduler reconciliation pass over topic runs in `queued`, `resume_queued`, `claimed`, `running`, and `waiting_human`, then auto-dispatches each company that still has recoverable queued work. Recovery rules are state-aware: `waiting_human` stays intact; `queued` / `resume_queued` clear stale `pipeline_task_id` values if the referenced task no longer exists; `claimed` / `running` with a failed/missing/cancelled task and a continuation payload are repaired to `resume_queued`; `claimed` / `running` with a failed-restart task carrying approval checkpoint data are restored to `waiting_human`; and plain stranded `claimed` / `running` rows without a continuation are requeued back to `content_queued`.",
+    "rationale": "By the end of Phase 5, normal TD approval/resume flow was durable, but restart behavior was still incomplete. A process death between durable queueing and dispatch, or during `claimed` / `running`, could leave topic runs stranded until some later user action happened to trigger dispatch again. The task store already marks orphaned tasks `failed_restart`, but task recovery and topic-run recovery were still separate systems. Phase 6 closes that gap by reconciling durable topic-run scheduler state against recovered task state at boot and treating the topic run, not the task row, as the durable runtime authority.",
+    "alternatives": [
+      "Rely only on task-store startup recovery and wait for users to retrigger dispatch manually — rejected because queued/resume-queued cards could remain stranded indefinitely after restart",
+      "Treat every non-terminal `claimed` / `running` row as immediately requeueable on startup — rejected because a second worker/process may still legitimately own a live running task",
+      "Add a separate recovery queue/table for paused TD approvals — rejected because the topic-run row already owns the durable scheduler identity and continuation payload"
+    ],
+    "files_affected": [
+      "api/app.py",
+      "core/db/repositories/content_engine_run_repo.py",
+      "core/services/content_engine_topic_runs.py",
+      "tests/content_engine/test_topic_run_service.py",
+      "tests/api/test_lifespan_task_store.py"
+    ],
+    "outcome": "Phase 6 implemented. Startup now repairs stranded TD scheduler rows, restores failed-restart approval checkpoints back to `waiting_human`, requeues stranded continuations as `resume_queued`, requeues plain stranded runs as `content_queued`, clears stale task ids on queued work, and immediately auto-dispatches companies with recovered queueable work. Validation: `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/api/test_lifespan_task_store.py -q` (10 passed), `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/api/test_lifespan_task_store.py tests/api/test_content_v13_ga_endpoints.py -q` (44 passed, 2 pre-existing warnings), and `venv/bin/pytest tests/api/test_lifespan_task_store.py tests/services/test_db_task_store.py tests/services/test_approval_queue_redis.py tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py -q` (174 passed, 35 pre-existing warnings).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-REVIEW-FALLBACK-HOTPATH",
+    "timestamp": "2026-04-10",
+    "task": "Content Studio agent-stage visibility and final-review loading resilience during TD QA",
+    "decision": "The Content Studio board should always render visible agent-stage text from the authoritative card status, even when per-task `agentProgress` metadata is missing. `agentProgress` is now treated as an optional enhancement for percentages and progress bars rather than the prerequisite for showing `Briefing`, `Outlining`, `Drafting`, and similar stage labels. Review/pending-content-approval detail views must also render a non-blank fallback shell whenever article content is still loading or the stage-content fetch failed. On the backend, `DbContentDataService.get_briefs()` should not query `PipelineRepository.get_latest_completed()` in the common case where slug-scoped `content_pieces` already exist, and the default async DB pool was raised from `5/10` to `15/20` to better match concurrent local QA polling.",
+    "rationale": "Manual QA showed that the backend and company stream were already emitting correct stage transitions, but the board hid them whenever `agentProgress` was absent because that metadata only comes from the per-task SSE path. The same session showed blank final-review detail panes even though the backend brief/enriched endpoints returned 200s; the frontend was failing soft to `articleContent = null` and then rendering nothing. Backend pool-exhaustion logs showed that repeated `/content/briefs` polling was also paying for an avoidable latest-run lookup on every poll, worsening the perceived delay.",
+    "alternatives": [
+      "Keep stage text coupled to `agentProgress` and rely on per-task SSE to always be present — rejected because the company-stream/status path already carries enough information to label the card",
+      "Keep swallowing stage-content fetch failures and accept a blank review pane — rejected because users need a visible loading/error state during HITL-3",
+      "Only raise the DB pool size without reducing hot-path work — rejected because the avoidable `get_latest_completed()` query would still scale poorly with poll traffic"
+    ],
+    "files_affected": [
+      "frontend/src/app/(dashboard)/content-studio/_components/ContentCardItem.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_hooks/useBriefDetail.ts",
+      "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx",
+      "core/services/db_content_data.py",
+      "core/config/settings.py",
+      "tests/services/test_db_content_data_backend.py"
+    ],
+    "outcome": "Implemented on 2026-04-10. Active agent cards now show a visible stage label even without `agentProgress`, review-stage detail views render a fallback instead of a blank pane when final content is unavailable, metrics math no longer emits `NaN` for empty arrays/zero targets, `/content/briefs` skips the latest-run lookup when slug-scoped pieces exist, and the default DB pool is larger for concurrent QA traffic. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py -q` (9 passed), `cd frontend && npx tsc --noEmit` (clean), and `venv/bin/python -m py_compile core/services/db_content_data.py core/config/settings.py`.",
     "reversible": true,
     "approved_by": "Aryan"
   }

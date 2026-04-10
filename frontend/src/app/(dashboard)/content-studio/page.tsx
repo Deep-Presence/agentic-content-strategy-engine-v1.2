@@ -180,8 +180,9 @@ export default function ContentStudioPage() {
               [selectedCard.topicAssignmentId],
               selectedCard.gaRunId,
             );
+            const dispatchedTaskId = prodResult.topic_runs?.[0]?.pipeline_task_id ?? undefined;
             updateCard(selectedCard.id, {
-              taskId: prodResult.run_id,
+              taskId: dispatchedTaskId,
               status: 'content_queued',
               agentProgress: undefined,
             });

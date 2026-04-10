@@ -112,10 +112,16 @@ class ContentEngineTopicRunModel(UUIDPKMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(64), nullable=False)
     current_stage: Mapped[str] = mapped_column(String(64), nullable=False)
     status_seq: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    scheduler_state: Mapped[str] = mapped_column(String(64), nullable=False, default="idle")
+    claim_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    waiting_for_human_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    continuation_payload_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 

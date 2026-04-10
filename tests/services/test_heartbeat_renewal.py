@@ -73,7 +73,7 @@ def store_with_redis(
 def _seed_task(
     store: DbTaskStore,
     task_id: str = "task-001",
-    pipeline: str = "content_v13",
+    pipeline: str = "gap_analysis",
     company_slug: str = "test-co",
     effective_slug: str = "test-co",
     with_lock: bool = True,
@@ -168,7 +168,7 @@ class TestRenewLeases:
         store_with_redis._renew_leases("task-001")
 
         store_with_redis._renew_lock_script.assert_called_once_with(
-            keys=["lock:content_v13:test-co"],
+            keys=["lock:gap_analysis:test-co"],
             args=["task-001", 7200],
         )
 
@@ -184,6 +184,45 @@ class TestRenewLeases:
         store_with_redis._renew_leases("task-001")
 
         store_with_redis._redis_semaphore.renew.assert_called_once_with("task-001")
+
+    def test_renew_leases_refreshes_company_content_engine_semaphore(
+        self, mock_session_factory: MagicMock
+    ) -> None:
+        """CE tasks renew the company-scoped semaphore instead of the shared pool."""
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.brpop = MagicMock(return_value=None)
+        mock_sync_redis.delete = MagicMock(return_value=1)
+        mock_sync_redis.register_script = MagicMock(
+            side_effect=lambda _script: MagicMock(return_value=1)
+        )
+        store = DbTaskStore(
+            session_factory=mock_session_factory,
+            max_concurrent=3,
+            redis_client=mock_sync_redis,
+        )
+        mock_sync_redis.register_script = MagicMock(
+            side_effect=lambda _script: MagicMock(return_value=1)
+        )
+        _seed_task(
+            store,
+            "task-001",
+            pipeline="content_v13",
+            company_slug="test-co",
+            effective_slug="test-co__widget",
+            with_lock=False,
+        )
+        store.pipeline_semaphore(
+            "task-001",
+            pool="content_engine",
+            company_slug="test-co",
+        )
+        store._redis_semaphore.renew = MagicMock(return_value=True)
+        store._content_engine_semaphores["test-co"].renew = MagicMock(return_value=True)
+
+        store._renew_leases("task-001")
+
+        store._content_engine_semaphores["test-co"].renew.assert_called_once_with("task-001")
+        store._redis_semaphore.renew.assert_not_called()
 
     def test_renew_leases_skips_lock_for_parallel_task(
         self, store_with_redis: DbTaskStore
@@ -260,6 +299,51 @@ class TestHeartbeatBrpopIntegration:
     @pytest.mark.asyncio
     @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
     @patch("core.services.db_task_store.asyncio.to_thread", side_effect=_sync_to_thread)
+    async def test_wait_for_approval_releases_and_reacquires_content_engine_slot(
+        self,
+        _mock_to_thread: MagicMock,
+        mock_session_factory: MagicMock,
+        mock_sync_redis: MagicMock,
+    ) -> None:
+        """CE HITL waits should free the company slot until approval resumes work."""
+        store = DbTaskStore(
+            session_factory=mock_session_factory,
+            max_concurrent=3,
+            redis_client=mock_sync_redis,
+        )
+        mock_sync_redis.register_script = MagicMock(
+            side_effect=lambda _script: MagicMock(return_value=1)
+        )
+        _seed_task(
+            store,
+            "task-001",
+            pipeline="td_content",
+            company_slug="test-co",
+            effective_slug="test-co__widget",
+            with_lock=False,
+        )
+        sem_ctx = store.pipeline_semaphore(
+            "task-001",
+            pool="content_engine",
+            company_slug="test-co",
+        )
+        sem = store._content_engine_semaphores["test-co"]
+        sem.try_acquire = MagicMock(return_value=True)
+        sem.release = MagicMock()
+
+        approval_payload = json.dumps({"decision": "approve"})
+        mock_sync_redis.brpop.side_effect = [("approval:task-001", approval_payload)]
+
+        async with sem_ctx:
+            result = await store.wait_for_approval("task-001")
+
+        assert result["decision"] == "approve"
+        assert sem.try_acquire.call_count == 2
+        assert sem.release.call_count == 2
+
+    @pytest.mark.asyncio
+    @patch("core.services.db_task_store.asyncio.create_task", new=MagicMock())
+    @patch("core.services.db_task_store.asyncio.to_thread", side_effect=_sync_to_thread)
     async def test_heartbeat_fires_during_brpop_loop(
         self,
         _mock_to_thread: MagicMock,
@@ -280,7 +364,7 @@ class TestHeartbeatBrpopIntegration:
         assert result["decision"] == "approve"
         # Heartbeat should have fired once (at iteration 60)
         store_with_redis._renew_lock_script.assert_called_once_with(
-            keys=["lock:content_v13:test-co"],
+            keys=["lock:gap_analysis:test-co"],
             args=["task-001", 7200],
         )
         store_with_redis._redis_semaphore.renew.assert_called_once_with("task-001")

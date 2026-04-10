@@ -243,8 +243,8 @@ class Settings(BaseSettings):
     # --- Database (PostgreSQL) ---
     database_url: str | None = None  # postgresql+asyncpg://localhost:5432/deep_presence
     database_echo: bool = False  # SQL logging
-    database_pool_size: int = 5
-    database_max_overflow: int = 10
+    database_pool_size: int = 15
+    database_max_overflow: int = 20
 
     # --- Redis ---
     redis_url: str | None = None  # redis://localhost:6379/0

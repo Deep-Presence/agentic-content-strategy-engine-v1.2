@@ -148,6 +148,21 @@ class ContentEngineTopicRunRepository(SQLAlchemyRepository[ContentEngineTopicRun
         result = await self._session.execute(stmt)
         return result.scalars().first()
 
+    async def get_by_pipeline_task_id(
+        self,
+        pipeline_task_id: str,
+        *,
+        effective_slug: str | None = None,
+    ) -> ContentEngineTopicRunModel | None:
+        stmt = select(ContentEngineTopicRunModel).where(
+            ContentEngineTopicRunModel.pipeline_task_id == pipeline_task_id
+        )
+        if effective_slug is not None:
+            stmt = stmt.where(ContentEngineTopicRunModel.effective_slug == effective_slug)
+        stmt = stmt.order_by(ContentEngineTopicRunModel.updated_at.desc()).limit(1)
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
     async def count_by_batch(self, batch_run_id: _uuid.UUID | str) -> int:
         pk = _uuid.UUID(str(batch_run_id)) if isinstance(batch_run_id, str) else batch_run_id
         stmt = select(func.count(ContentEngineTopicRunModel.id)).where(
@@ -155,6 +170,58 @@ class ContentEngineTopicRunRepository(SQLAlchemyRepository[ContentEngineTopicRun
         )
         result = await self._session.execute(stmt)
         return int(result.scalar() or 0)
+
+    async def claim_queued_runs_for_company(
+        self,
+        *,
+        company_id: _uuid.UUID,
+        limit: int,
+        claim_token: str,
+    ) -> Sequence[ContentEngineTopicRunModel]:
+        if limit <= 0:
+            return []
+
+        stmt = (
+            select(ContentEngineTopicRunModel)
+            .where(
+                ContentEngineTopicRunModel.company_id == company_id,
+                ContentEngineTopicRunModel.scheduler_state.in_(
+                    ("queued", "resume_queued")
+                ),
+            )
+            .order_by(
+                ContentEngineTopicRunModel.scheduler_state.desc(),
+                ContentEngineTopicRunModel.updated_at.asc(),
+                ContentEngineTopicRunModel.created_at.asc(),
+            )
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        result = await self._session.execute(stmt)
+        rows = list(result.scalars().all())
+        now = datetime.now(timezone.utc)
+        for row in rows:
+            row.scheduler_state = "claimed"
+            row.claim_token = claim_token
+            row.claimed_at = now
+        await self._session.flush()
+        return rows
+
+    async def list_recovery_candidates(self) -> Sequence[ContentEngineTopicRunModel]:
+        stmt = (
+            select(ContentEngineTopicRunModel)
+            .where(
+                ContentEngineTopicRunModel.scheduler_state.in_(
+                    ("queued", "resume_queued", "claimed", "running", "waiting_human")
+                )
+            )
+            .order_by(
+                ContentEngineTopicRunModel.updated_at.asc(),
+                ContentEngineTopicRunModel.created_at.asc(),
+            )
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
 
 
 class ContentEngineTopicEventRepository(SQLAlchemyRepository[ContentEngineTopicEventModel]):

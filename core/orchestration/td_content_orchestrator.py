@@ -493,6 +493,8 @@ async def run_td_content_production_only(
     session_factory: async_sessionmaker = None,  # type: ignore[assignment]
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
+    td_resume_payload: Optional[dict[str, Any]] = None,
+    td_resume_approval: Optional[dict[str, Any]] = None,
 ) -> ContentGenerationOutput:
     """Phase 2: Run Content Engine from pre-computed GA results.
 
@@ -500,6 +502,7 @@ async def run_td_content_production_only(
     (cards graduate to real CE briefs), runs CE in TOPIC_DISCOVERY mode,
     and updates assignment status to content_produced.
     """
+    from core.content_engine.graph_v13 import ApprovalPauseRequested
     from core.content_engine.pipeline_v13 import run_content_generation_v13
     from core.redis import get_redis_or_none as _get_async_redis
 
@@ -574,7 +577,11 @@ async def run_td_content_production_only(
             run_id=run_id,
             company_id=company_id,
             redis_client=_redis_async,
+            td_resume_payload=td_resume_payload,
+            td_resume_approval=td_resume_approval,
         )
+    except ApprovalPauseRequested:
+        raise
     except Exception:
         # CE failed — rollback: revert Redis GA-phase cards and DB status
         # so the card returns to gap_analysis_complete (retryable).

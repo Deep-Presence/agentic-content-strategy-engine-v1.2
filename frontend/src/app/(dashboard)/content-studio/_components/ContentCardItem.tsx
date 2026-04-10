@@ -206,7 +206,7 @@ export function ContentCardItem({ card, onClick }: { card: ContentCard; onClick:
       )}
 
       {/* Agent progress (agent column with active processing) */}
-      {display.isAgentActive && card.status !== 'gap_analysis' && card.agentProgress && (
+      {display.isAgentActive && card.status !== 'gap_analysis' && (
         <div className="mt-3">
           <div className="flex items-center justify-between">
             <span
@@ -219,52 +219,68 @@ export function ContentCardItem({ card, onClick }: { card: ContentCard; onClick:
             >
               {display.label}
             </span>
-            <span
-              style={{
-                fontSize: 10,
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--text-tertiary)',
-              }}
-            >
-              {card.agentProgress.pct}%
-            </span>
+            {card.agentProgress && (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--text-tertiary)',
+                }}
+              >
+                {card.agentProgress.pct}%
+              </span>
+            )}
           </div>
-          <div
-            className="mt-1"
-            style={{
-              width: '100%',
-              height: 4,
-              background: 'var(--border)',
-              borderRadius: 2,
-              overflow: 'hidden',
-            }}
-          >
-            <div
-              style={{
-                width: `${card.agentProgress.pct}%`,
-                height: '100%',
-                borderRadius: 2,
-                background: progressColor(card.agentProgress.pct),
-                animation: 'progressPulse 2.5s ease-in-out infinite',
-                transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
-              }}
-            />
-          </div>
-          {(card.agentProgress.wordsCurrent !== undefined || card.agentProgress.sectionsComplete !== undefined) && (
+          {card.agentProgress ? (
+            <>
+              <div
+                className="mt-1"
+                style={{
+                  width: '100%',
+                  height: 4,
+                  background: 'var(--border)',
+                  borderRadius: 2,
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${card.agentProgress.pct}%`,
+                    height: '100%',
+                    borderRadius: 2,
+                    background: progressColor(card.agentProgress.pct),
+                    animation: 'progressPulse 2.5s ease-in-out infinite',
+                    transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
+                  }}
+                />
+              </div>
+              {(card.agentProgress.wordsCurrent !== undefined || card.agentProgress.sectionsComplete !== undefined) && (
+                <div
+                  className="mt-1"
+                  style={{
+                    fontSize: 10,
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--text-tertiary)',
+                  }}
+                >
+                  {card.agentProgress.wordsCurrent !== undefined && (
+                    <span>{card.agentProgress.wordsCurrent.toLocaleString()} / {card.agentProgress.wordsTarget?.toLocaleString()} words</span>
+                  )}
+                  {card.agentProgress.sectionsComplete !== undefined && (
+                    <span> · {card.agentProgress.sectionsComplete}/{card.agentProgress.sectionsTotal} sections</span>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
             <div
               className="mt-1"
               style={{
                 fontSize: 10,
-                fontFamily: 'var(--font-mono)',
                 color: 'var(--text-tertiary)',
               }}
             >
-              {card.agentProgress.wordsCurrent !== undefined && (
-                <span>{card.agentProgress.wordsCurrent.toLocaleString()} / {card.agentProgress.wordsTarget?.toLocaleString()} words</span>
-              )}
-              {card.agentProgress.sectionsComplete !== undefined && (
-                <span> · {card.agentProgress.sectionsComplete}/{card.agentProgress.sectionsTotal} sections</span>
-              )}
+              Agent active...
             </div>
           )}
         </div>

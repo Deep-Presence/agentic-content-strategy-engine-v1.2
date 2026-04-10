@@ -78,13 +78,14 @@ export function useBriefDetail(briefId: string | null) {
 
             setArticleContent(assembleArticleContent(detail, markdown));
           } catch {
-            // Stage content not available — article stays null
             if (!controller.signal.aborted) {
               setArticleContent(null);
+              setError('Failed to load article content for review.');
             }
           }
         } else {
           setArticleContent(null);
+          setError('Final article content is not available yet.');
         }
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === 'AbortError') return;

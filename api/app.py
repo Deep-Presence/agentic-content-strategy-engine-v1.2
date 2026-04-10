@@ -79,6 +79,9 @@ async def _init_task_store(app: FastAPI):
     db_store = DbTaskStore(
         session_factory=session_factory,
         max_concurrent=api_settings.max_concurrent_pipelines,
+        max_concurrent_content_engine_per_company=(
+            api_settings.max_concurrent_content_engine_per_company
+        ),
         redis_client=redis_sync,
         worker_id=_generate_worker_id(),
     )
@@ -87,6 +90,40 @@ async def _init_task_store(app: FastAPI):
         "Using DbTaskStore (recovered %d orphans)", orphan_count
     )
     return db_store
+
+
+async def _recover_td_entry_scheduler(app: FastAPI) -> None:
+    task_store = getattr(app.state, "task_store", None)
+    session_factory = getattr(app.state, "db_session_factory", None)
+    event_bus = getattr(app.state, "event_bus", None)
+    if task_store is None or session_factory is None or event_bus is None:
+        return
+
+    from api.tasks.runner import dispatch_queued_td_content_runs
+    from core.services.content_engine_topic_runs import ContentEngineTopicRunService
+
+    service = ContentEngineTopicRunService(session_factory)
+    tasks = task_store.list_tasks()
+    recovery = await service.reconcile_startup_scheduler(
+        task_by_id={task.task_id: task for task in tasks},
+    )
+
+    for company_slug in recovery.companies_to_dispatch:
+        await dispatch_queued_td_content_runs(
+            company_slug=company_slug,
+            task_store=task_store,
+            event_bus=event_bus,
+            session_factory=session_factory,
+        )
+
+    logger.info(
+        "TD scheduler recovery completed: queued_ready=%d requeued=%d waiting_human_restored=%d stale_task_ids_cleared=%d companies_dispatched=%d",
+        recovery.queued_ready_count,
+        recovery.requeued_count,
+        recovery.waiting_human_restored_count,
+        recovery.stale_task_ids_cleared_count,
+        len(recovery.companies_to_dispatch),
+    )
 
 
 @asynccontextmanager
@@ -225,6 +262,11 @@ async def lifespan(app: FastAPI):
             logger.exception("DB health check failed — DB may be unreachable")
     else:
         logger.info("DB health check: skipped (no DATABASE_URL)")
+
+    try:
+        await _recover_td_entry_scheduler(app)
+    except Exception:
+        logger.exception("TD scheduler startup recovery failed")
 
     logger.info(
         "API started — task store: %s", type(app.state.task_store).__name__

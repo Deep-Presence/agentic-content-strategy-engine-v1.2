@@ -77,6 +77,50 @@ class TestGapContextUsesBackend:
                 )
 
     @pytest.mark.asyncio
+    async def test_skips_latest_run_lookup_when_slug_pieces_exist(self, tmp_path):
+        piece = MagicMock()
+        piece.brief_id = "WE-105"
+        piece.id = uuid.uuid4()
+        piece.title = "Visual Web Design 101"
+        piece.status = SimpleNamespace(value="planned")
+        piece.content_type = "long_blog"
+        piece.word_count = 1200
+        piece.citability_score = 0.61
+        piece.cluster_name = "Definition"
+        piece.run_id = uuid.uuid4()
+        piece.created_at = None
+        piece.updated_at = None
+        piece.published_url = None
+        piece.published_at = None
+
+        content_repo = AsyncMock()
+        content_repo.list_by_slug = AsyncMock(return_value=[piece])
+        content_repo.list_by_run = AsyncMock(return_value=[])
+        pipeline_repo = AsyncMock()
+        pipeline_repo.get_latest_completed = AsyncMock(return_value=None)
+
+        svc = DbContentDataService(
+            content_repo=content_repo,
+            pipeline_repo=pipeline_repo,
+            artifacts_root=tmp_path,
+            backend=MagicMock(),
+        )
+
+        with patch(
+            "core.services.db_content_data.load_analysis_json",
+            return_value=None,
+        ), patch(
+            "core.config.settings.settings.redis_pipeline_state", False,
+        ), patch(
+            "core.config.settings.settings.redis_url", None,
+        ):
+            resp = await svc.get_briefs("test-co")
+
+        assert resp.total == 1
+        pipeline_repo.get_latest_completed.assert_not_awaited()
+        content_repo.list_by_run.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_load_ga_phase_cards_includes_timestamps(self, tmp_path):
         """GA cards returned from Redis carry timestamps through to the brief list contract."""
         assignment_id = str(uuid.uuid4())

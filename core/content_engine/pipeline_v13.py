@@ -33,6 +33,7 @@ from core.config.settings import settings
 from core.content_engine.brief_builder import build_briefs_parallel
 from core.content_engine.context_router import extract_scorecard, extract_worker_context
 from core.content_engine.graph_v13 import (
+    ApprovalPauseRequested,
     build_brief_approval_graph,
     build_content_review_graph,
     build_topic_approval_graph,
@@ -102,6 +103,50 @@ _STAGE_NAMES_V13: Dict[int, str] = {
 
 
 # ── Artifact helpers ──────────────────────────────────────────────────
+
+
+def _build_td_brief_continuation_payload(
+    *,
+    blueprint: ContentBlueprint,
+    thread_id: str,
+    brief_feedback_count: int,
+) -> Dict[str, Any]:
+    return {
+        "resume_stage": "brief_approval",
+        "topic_assignment_id": blueprint.topic_assignment_id,
+        "brief_id": blueprint.brief_id,
+        "thread_id": thread_id,
+        "brief_feedback_count": brief_feedback_count,
+        "blueprint": blueprint.model_dump(mode="json"),
+    }
+
+
+def _build_td_content_review_continuation_payload(
+    *,
+    blueprint: ContentBlueprint,
+    final_content: FormattedContent,
+    history: RevisionHistory,
+    feedback_route: str,
+    thread_id: str,
+    edit_count: int,
+    rebrief_count: int,
+    cps_data: Optional[Dict[str, Any]],
+    piece_id: Any,
+) -> Dict[str, Any]:
+    return {
+        "resume_stage": "content_review",
+        "topic_assignment_id": blueprint.topic_assignment_id,
+        "brief_id": final_content.brief_id,
+        "thread_id": thread_id,
+        "edit_count": edit_count,
+        "rebrief_count": rebrief_count,
+        "feedback_route": feedback_route,
+        "cps_data": cps_data or {},
+        "piece_id": str(piece_id) if piece_id else None,
+        "blueprint": blueprint.model_dump(mode="json"),
+        "final_content": final_content.model_dump(mode="json"),
+        "history": history.model_dump(mode="json"),
+    }
 
 
 def _load_artifact_text(path: Optional[str], *, storage: Optional[Any] = None) -> str:
@@ -704,6 +749,8 @@ async def run_content_generation_v13(
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
     redis_client: Optional[Any] = None,
+    td_resume_payload: Optional[Dict[str, Any]] = None,
+    td_resume_approval: Optional[Dict[str, Any]] = None,
 ) -> ContentGenerationOutput:
     """Run the v1.3 content generation pipeline.
 
@@ -774,7 +821,11 @@ async def run_content_generation_v13(
             run_id=run_id,
             company_id=company_id,
             redis_client=redis_client,
+            td_resume_payload=td_resume_payload,
+            td_resume_approval=td_resume_approval,
         )
+    except ApprovalPauseRequested:
+        raise
     except Exception as exc:
         error_msg = str(exc)[:500]
         logger.exception("v1.3 pipeline failed with unhandled exception: %s", error_msg)
@@ -806,6 +857,8 @@ async def _run_pipeline_stages(
     run_id: Optional[uuid.UUID] = None,
     company_id: Optional[uuid.UUID] = None,
     redis_client: Optional[Any] = None,
+    td_resume_payload: Optional[Dict[str, Any]] = None,
+    td_resume_approval: Optional[Dict[str, Any]] = None,
 ) -> ContentGenerationOutput:
     """Internal stage execution — called by run_content_generation_v13 inside try/except."""
 
@@ -831,6 +884,11 @@ async def _run_pipeline_stages(
     stages_actually_executed: set[int] = {0}  # Stage 0 (Entry Router) always executes
 
     approved_blueprints: List[ContentBlueprint] = []
+    td_resume_stage = (
+        str((td_resume_payload or {}).get("resume_stage") or "")
+        if input_data.entry_mode == EntryMode.TOPIC_DISCOVERY
+        else ""
+    )
 
     if input_data.entry_mode == EntryMode.AUTONOMOUS:
         # ── Stage 1: Strategic Planner + HITL-1 ───────────────────
@@ -1551,7 +1609,17 @@ async def _run_pipeline_stages(
             ts = topic_assignment_to_selection(assignment, qids, qtexts, rank=rank_idx)
             approved_topics.append(ts)
 
-        if approved_topics and worker_contexts:
+        blueprints: list[ContentBlueprint] = []
+        if td_resume_stage in {"brief_approval", "content_review"}:
+            resumed_blueprint = ContentBlueprint.model_validate(
+                (td_resume_payload or {}).get("blueprint", {})
+            )
+            if td_resume_payload and td_resume_payload.get("topic_assignment_id"):
+                resumed_blueprint.topic_assignment_id = str(
+                    td_resume_payload["topic_assignment_id"]
+                )
+            blueprints = [resumed_blueprint]
+        elif approved_topics and worker_contexts:
             # Use display_id as brief_id when available (TD-originated).
             # Fall back to brief-{N} for assignments without display_id.
             _td_overrides = [
@@ -1609,7 +1677,8 @@ async def _run_pipeline_stages(
                     except Exception:
                         logger.warning("GA-phase cleanup before HITL-2 failed", exc_info=True)
 
-            if input_data.auto_approve:
+        if blueprints:
+            if input_data.auto_approve or td_resume_stage == "content_review":
                 approved_blueprints = blueprints
             else:
                 # HITL-2: Brief Approval (per blueprint) with feedback loop
@@ -1628,7 +1697,17 @@ async def _run_pipeline_stages(
                 brief_decision_log: list[dict] = []
 
                 for bp in blueprints:
-                    brief_feedback_count = 0
+                    resume_brief_approval = (
+                        td_resume_approval
+                        if td_resume_stage == "brief_approval"
+                        and bp.brief_id == (td_resume_payload or {}).get("brief_id")
+                        else None
+                    )
+                    brief_feedback_count = (
+                        int((td_resume_payload or {}).get("brief_feedback_count", 0))
+                        if resume_brief_approval is not None
+                        else 0
+                    )
 
                     while True:
                         await _write_pipeline_state_async(
@@ -1651,18 +1730,31 @@ async def _run_pipeline_stages(
                         })
                         set_current_span(pipeline_trace)
                         brief_graph = build_brief_approval_graph()
+                        brief_thread_id = (
+                            str((td_resume_payload or {}).get("thread_id") or "")
+                            if resume_brief_approval is not None
+                            else f"{task_id or 'cli'}-brief-approval-{bp.brief_id}-f{brief_feedback_count}"
+                        )
                         brief_state = await run_hitl_checkpoint(
                             graph=brief_graph,
                             initial_state={
                                 "blueprint": bp.model_dump(mode="json"),
                                 "auto_approve": input_data.auto_approve,
                             },
-                            thread_id=f"{task_id or 'cli'}-brief-approval-{bp.brief_id}-f{brief_feedback_count}",
+                            thread_id=brief_thread_id,
                             task_store=task_store,
                             event_bus=event_bus,
                             task_id=task_id,
-                            stage_name=f"Brief Approval ({bp.brief_id})",
+                            stage_name="brief_approval",
+                            initial_resume_approval=resume_brief_approval,
+                            external_resume=True,
+                            continuation_payload=_build_td_brief_continuation_payload(
+                                blueprint=bp,
+                                thread_id=brief_thread_id,
+                                brief_feedback_count=brief_feedback_count,
+                            ),
                         )
+                        resume_brief_approval = None
 
                         brief_decision = brief_state.get("brief_decision", "approve")
                         if brief_decision == "approve":
@@ -1832,13 +1924,20 @@ async def _run_pipeline_stages(
                 await _sess.commit()
         except Exception:
             logger.warning("Failed to create early ContentPieceModel rows", exc_info=True)
+    if td_resume_stage == "content_review" and td_resume_payload:
+        piece_id = td_resume_payload.get("piece_id")
+        brief_id = td_resume_payload.get("brief_id")
+        if piece_id and brief_id:
+            piece_id_map[str(brief_id)] = uuid.UUID(str(piece_id))
 
     # Clear stale step_name left by bind_context() in stages 1/2
     bind_context(step_name=None)
 
     # ── Stage 3: Content Workers ──────────────────────────────────
     with scoped_bind(step_name="stage_3_content_workers"):
-        if 3 not in input_data.skip_stages and approved_blueprints:
+        if td_resume_stage == "content_review":
+            formatted_contents = []
+        elif 3 not in input_data.skip_stages and approved_blueprints:
             stage3_span = create_span(pipeline_trace, "stage/3-content-workers")
             _update_task(task_store, task_id, progress={"stage": 3, "stage_name": "Content Workers"})
             _emit(event_bus, task_id, "stage_started", {"stage": 3, "name": "Content Workers"})
@@ -1908,7 +2007,20 @@ async def _run_pipeline_stages(
 
     # ── Stage 4: Evaluator with Dual Feedback ─────────────────────
     with scoped_bind(step_name="stage_4_evaluator"):
-        if 4 not in input_data.skip_stages and formatted_contents:
+        if td_resume_stage == "content_review" and td_resume_payload:
+            evaluated = [
+                (
+                    str(td_resume_payload.get("brief_id") or ""),
+                    FormattedContent.model_validate(
+                        td_resume_payload.get("final_content", {})
+                    ),
+                    RevisionHistory.model_validate(
+                        td_resume_payload.get("history", {})
+                    ),
+                    str(td_resume_payload.get("feedback_route") or "pass"),
+                )
+            ]
+        elif 4 not in input_data.skip_stages and formatted_contents:
             stage4_span = create_span(pipeline_trace, "stage/4-evaluator")
             _update_task(task_store, task_id, progress={"stage": 4, "stage_name": "Evaluator"})
             _emit(event_bus, task_id, "stage_started", {"stage": 4, "name": "Evaluator"})
@@ -1972,7 +2084,12 @@ async def _run_pipeline_stages(
 
     # ── Stage 4.5: CPS Scoring ───────────────────────────────────
     cps_results: Dict[str, Dict[str, Any]] = {}
-    if evaluated:
+    if td_resume_stage == "content_review" and td_resume_payload:
+        brief_id = str(td_resume_payload.get("brief_id") or "")
+        cps_data = td_resume_payload.get("cps_data")
+        if brief_id and isinstance(cps_data, dict) and cps_data:
+            cps_results[brief_id] = cps_data
+    elif evaluated:
         try:
             _bp_map = {bp.brief_id: bp for bp in approved_blueprints}
             cps_results = await _score_cps_batch(
@@ -2000,8 +2117,26 @@ async def _run_pipeline_stages(
             _bp_by_id = {bp.brief_id: bp for bp in approved_blueprints}
             for brief_id, final_content, history, feedback_route in evaluated:
                 blueprint = _bp_by_id.get(brief_id)
-                rebrief_count = 0
-                edit_count = 0
+                if blueprint is None:
+                    raise RuntimeError(
+                        f"Missing blueprint for final review brief_id={brief_id}"
+                    )
+                resume_review_approval = (
+                    td_resume_approval
+                    if td_resume_stage == "content_review"
+                    and brief_id == (td_resume_payload or {}).get("brief_id")
+                    else None
+                )
+                rebrief_count = (
+                    int((td_resume_payload or {}).get("rebrief_count", 0))
+                    if resume_review_approval is not None
+                    else 0
+                )
+                edit_count = (
+                    int((td_resume_payload or {}).get("edit_count", 0))
+                    if resume_review_approval is not None
+                    else 0
+                )
 
                 # Handle evaluator major_change signal → immediate re-brief
                 if feedback_route == "major_change" and blueprint and rebrief_count < _MAX_REBRIEFS:
@@ -2074,6 +2209,11 @@ async def _run_pipeline_stages(
                     })
                     set_current_span(stage5_span)
                     review_graph = build_content_review_graph()
+                    review_thread_id = (
+                        str((td_resume_payload or {}).get("thread_id") or "")
+                        if resume_review_approval is not None
+                        else f"{task_id or 'cli'}-content-review-{final_content.brief_id}-e{edit_count}-r{rebrief_count}"
+                    )
                     review_state = await run_hitl_checkpoint(
                         graph=review_graph,
                         initial_state={
@@ -2086,12 +2226,26 @@ async def _run_pipeline_stages(
                             "eval_summary": eval_summary,
                             "auto_approve": input_data.auto_approve,
                         },
-                        thread_id=f"{task_id or 'cli'}-content-review-{final_content.brief_id}-e{edit_count}-r{rebrief_count}",
+                        thread_id=review_thread_id,
                         task_store=task_store,
                         event_bus=event_bus,
                         task_id=task_id,
-                        stage_name=f"Content Review ({final_content.brief_id})",
+                        stage_name="content_review",
+                        initial_resume_approval=resume_review_approval,
+                        external_resume=True,
+                        continuation_payload=_build_td_content_review_continuation_payload(
+                            blueprint=blueprint,
+                            final_content=final_content,
+                            history=history,
+                            feedback_route=feedback_route,
+                            thread_id=review_thread_id,
+                            edit_count=edit_count,
+                            rebrief_count=rebrief_count,
+                            cps_data=cps_results.get(brief_id),
+                            piece_id=piece_id_map.get(final_content.brief_id),
+                        ) if blueprint is not None else None,
                     )
+                    resume_review_approval = None
 
                     content_decision = review_state.get("content_decision", "approve")
 

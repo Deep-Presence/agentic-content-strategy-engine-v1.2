@@ -1,9 +1,9 @@
 {
   "current_sprint": "td-entry-parallel-execution",
   "last_updated": "2026-04-10",
-  "test_count": 2098,
+  "test_count": 2103,
   "completed_sprints_summary": {
-    "total_tasks_completed": 47,
+    "total_tasks_completed": 48,
     "sprints": [
       {"sprint": "td-entry-parallel-execution-phase3b", "date": "2026-04-10", "summary": "TD-entry production queue semantics + recency hardening. Added a real `content_queued` pre-brief state for TD start-production, with backend preflight conflict rejection when the same topic is already queued/running for the same GA run. HTTP start-production now persists queue state before the runner competes for the global semaphore, and the frontend moves cards to `content_queued` instead of falsely showing `briefing`. Also removed client-authored `updatedAt` bumps from `useContentBriefs` optimistic/state-changed paths so stale local CE/HITL states no longer outrank newer backend truth. Validation: `tests/api/test_content_v13_ga_endpoints.py -q`, `tests/content_engine/test_state_redis_ga.py -q`, and `frontend npx tsc --noEmit`."},
       {"sprint": "v3-async", "date": "2026-02-15", "summary": "Async pipeline conversion (12 tasks), Playwright CF bypass, content engine v1.0"},
@@ -964,6 +964,163 @@
         "frontend/src/app/(dashboard)/content-studio/_hooks/useContentBriefs.ts",
         "frontend/src/app/(dashboard)/content-studio/_hooks/useCompanyStream.ts"
       ]
+    },
+    {
+      "id": "T-td-entry-ce-pool-split",
+      "task": "TD-entry parallel execution — split CE concurrency into a per-company pool",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 3,
+      "files_modified": [
+        "api/config.py",
+        "api/app.py",
+        "api/tasks/runner.py",
+        "core/services/db_task_store.py",
+        "core/services/task_store.py",
+        "tests/services/test_redis_semaphore.py",
+        "tests/services/test_heartbeat_renewal.py"
+      ],
+      "codex_review": "Implemented the first throughput unlock after the WE-177 semaphore diagnosis. Singleton pipelines still use the shared Redis semaphore, but CE runners (`content`, `content_v13`, `td_content`) now route through a company-scoped semaphore keyed as `semaphore:content_engine:{company_slug}` with default cap 15. `DbTaskStore` heartbeat renewal and startup orphan cleanup now renew/release the correct semaphore family based on the persisted task pipeline. Validation: `venv/bin/pytest tests/services/test_redis_semaphore.py tests/services/test_heartbeat_renewal.py -q` (31 passed) and `venv/bin/pytest tests/services/test_db_task_store.py tests/api/test_content.py tests/api/test_gap_runner.py tests/api/test_content_v13_ga_endpoints.py -q` (94 passed, pre-existing warnings)."
+    },
+    {
+      "id": "T-td-entry-phase3-dispatcher",
+      "task": "TD-entry parallel execution — Phase 3 durable per-topic queue and dispatcher",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 2,
+      "files_modified": [
+        "api/routers/content_v13.py",
+        "api/tasks/runner.py",
+        "core/db/repositories/content_engine_run_repo.py",
+        "core/services/content_engine_topic_runs.py",
+        "frontend/src/app/(dashboard)/content-studio/page.tsx",
+        "tests/api/test_content_v13_ga_endpoints.py"
+      ],
+      "codex_review": "Implemented the Phase 3 scheduler slice on top of the durable topic-run foundation. TD `start-production` now queues existing `content_engine_topic_runs` with persisted launch context, then dispatches claimed `content_queued` rows up to available company CE capacity. Claims use `FOR UPDATE SKIP LOCKED` against topic runs whose `metadata_json.dispatch_state` is `queued`/unset, each claimed topic gets its own `td_content` task and `pipeline_task_id`, and runner completion triggers another dispatch pass so queued cards drain automatically. The frontend start-production path now reads `topic_runs[0].pipeline_task_id` instead of trusting a single shared `run_id`. Validation: `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q` (28 passed, 2 pre-existing warnings), `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/services/test_redis_semaphore.py tests/services/test_heartbeat_renewal.py tests/api/test_content_v13_ga_endpoints.py -q` (61 passed, 2 pre-existing warnings), and `cd frontend && npx tsc --noEmit` (clean)."
+    },
+    {
+      "id": "T-td-entry-phase4-hitl-slot-release",
+      "task": "TD-entry parallel execution — Phase 4 release/reclaim CE slots around HITL waits",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 3,
+      "files_modified": [
+        "core/redis_semaphore.py",
+        "core/services/db_task_store.py",
+        "api/tasks/runner.py",
+        "tests/services/test_redis_semaphore.py",
+        "tests/services/test_heartbeat_renewal.py",
+        "tests/services/test_approval_queue_redis.py",
+        "tests/api/test_content_v13_ga_endpoints.py"
+      ],
+      "codex_review": "Implemented the first Phase 4 throughput fix without changing the external TD/HITL contract. `DbTaskStore.wait_for_approval()` now suspends the active company CE semaphore context for CE tasks while a card is waiting in HITL, then reacquires the slot before returning approval back to the graph. The tracked semaphore context supports suspend/resume for both Redis and local asyncio fallback modes, `_renew_leases()` skips semaphore renewal while a CE task is intentionally suspended, and the TD dispatcher no longer counts `PENDING_APPROVAL` CE tasks against the per-company runnable-cap calculation. Validation: `venv/bin/pytest tests/services/test_redis_semaphore.py tests/services/test_heartbeat_renewal.py tests/services/test_db_task_store.py tests/services/test_approval_queue_redis.py tests/api/test_content_v13_ga_endpoints.py -q` (115 passed, pre-existing warnings) and `venv/bin/python -m compileall core/services/db_task_store.py core/redis_semaphore.py api/tasks/runner.py`."
+    },
+    {
+      "id": "T-td-entry-phase5-durable-continuations",
+      "task": "TD-entry parallel execution — Phase 5 dedicated scheduler columns plus durable approval continuations",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 5,
+      "files_modified": [
+        "core/db/migrations/versions/0039_content_engine_scheduler_state.py",
+        "core/db/models/content_engine_runs.py",
+        "core/db/repositories/content_engine_run_repo.py",
+        "core/services/content_engine_topic_runs.py",
+        "core/content_engine/graph_v13.py",
+        "core/content_engine/pipeline_v13.py",
+        "core/orchestration/td_content_orchestrator.py",
+        "api/tasks/runner.py",
+        "api/routers/content_v13.py",
+        "tests/content_engine/test_graph_v13.py",
+        "tests/api/test_content_v13.py",
+        "tests/api/test_content_v13_ga_endpoints.py",
+        "tests/services/test_approval_queue_redis.py"
+      ],
+      "codex_review": "Phase 5 moved TD scheduler state out of `metadata_json.dispatch_state` into dedicated `content_engine_topic_runs` columns (`scheduler_state`, `claim_token`, queue/claim/wait timestamps, `continuation_payload_json`) via migration 0039. TD brief/content HITL checkpoints now raise `ApprovalPauseRequested` with persisted continuation payloads instead of waiting inside the same task; approval routes record the decision with `delivery_mode='record_only'`, queue the matching topic run as `resume_queued`, and immediately redispatch it. Resume claims reuse the existing `td_content` task id and feed the stored LangGraph `thread_id` plus approval payload back into the graph, so the resumed worker continues from the durable checkpoint instead of recreating a fresh pipeline task. This phase also corrected a Phase 2 regression so singleton runners like `gap_analysis` and `site_audit` stay on the shared semaphore pool rather than the company CE pool. Validation: `venv/bin/pytest tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_graph_v13.py tests/services/test_approval_queue_redis.py -q` (179 passed, pre-existing coroutine warnings from older router tests) and `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k 'test_td_worker_failure_writes_explicit_failed_state or test_td_rebrief_preserves_brief_id_and_threads_session_factory' -q` (2 passed, 1 pre-existing AsyncMock warning)."
+    },
+    {
+      "id": "T-td-entry-phase5-review-hardening",
+      "task": "TD-entry parallel execution — harden durable approval/start-production commit ordering after Phase 5 review",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 5,
+      "files_modified": [
+        "api/routers/content_v13.py",
+        "core/services/db_task_store.py",
+        "core/services/task_store.py",
+        "core/services/content_engine_topic_runs.py",
+        "tests/api/test_content_v13.py",
+        "tests/api/test_content_v13_ga_endpoints.py",
+        "tests/content_engine/test_topic_run_service.py",
+        "tests/services/test_approval_queue_redis.py"
+      ],
+      "codex_review": "Addressed the three Phase 5 review findings as one scheduler-commit-order hardening slice. TD approval routes now validate nonce/window first, durably queue `waiting_human -> resume_queued` continuations, and only then record approval history on the task; duplicate or late TD approvals are rejected by durable scheduler state rather than by a prematurely set Redis approval flag. TD start-production now requires durable queue success before returning 202 and mirrors `content_queued` to GA Redis only after the durable queue exists. `advance_topic_runs*()` now use explicit tri-state field updates so requeueing clears stale `pipeline_task_id`, `claimed_at`, and `waiting_for_human_at` values instead of leaking old task identities back to the frontend. Validation: `venv/bin/pytest tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py tests/services/test_approval_queue_redis.py -q` (131 passed, pre-existing warnings), `venv/bin/pytest tests/services/test_db_task_store.py tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py tests/services/test_approval_queue_redis.py -q` (166 passed, pre-existing warnings), and `venv/bin/python -m py_compile api/routers/content_v13.py core/services/db_task_store.py core/services/task_store.py core/services/content_engine_topic_runs.py tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py`."
+    },
+    {
+      "id": "T-td-entry-phase6-startup-recovery",
+      "task": "TD-entry parallel execution — Phase 6 startup reconciliation and auto-dispatch after restart",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 4,
+      "files_modified": [
+        "api/app.py",
+        "core/db/repositories/content_engine_run_repo.py",
+        "core/services/content_engine_topic_runs.py",
+        "tests/content_engine/test_topic_run_service.py",
+        "tests/api/test_lifespan_task_store.py"
+      ],
+      "codex_review": "Implemented the Phase 6 restart-recovery slice with `content_engine_topic_runs` as the startup recovery source of truth. Added repository enumeration of queued/claimed/running/waiting-human scheduler rows, a `reconcile_startup_scheduler()` service pass that repairs stranded TD topic runs from recovered task state, preserves `waiting_human`, restores failed-restart approval checkpoints back to `waiting_human`, requeues stranded continuations as `resume_queued`, requeues plain stranded runs as `content_queued`, clears stale task ids on queued work, and emits durable `topic_run_recovered` events. FastAPI lifespan now runs that reconciliation on boot and auto-dispatches companies with recovered queued work. Validation: `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/api/test_lifespan_task_store.py -q` (10 passed), `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/api/test_lifespan_task_store.py tests/api/test_content_v13_ga_endpoints.py -q` (44 passed, 2 pre-existing warnings), and `venv/bin/pytest tests/api/test_lifespan_task_store.py tests/services/test_db_task_store.py tests/services/test_approval_queue_redis.py tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py -q` (174 passed, 35 pre-existing warnings)."
+    },
+    {
+      "id": "T-td-entry-resume-claim-detection-fix",
+      "task": "TD-entry parallel execution — fix resume claim detection so brief approvals reuse the paused task instead of restarting from briefing",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 1,
+      "files_modified": [
+        "api/tasks/runner.py",
+        "tests/api/test_content_v13_ga_endpoints.py"
+      ],
+      "codex_review": "Diagnosed the live WE-175/WE-119/WE-114/WE-118 briefing loop after manual QA. Root cause: `claim_queued_runs_for_company()` mutates `resume_queued` rows to `claimed` before `dispatch_queued_td_content_runs()` builds its launch snapshots, and the dispatcher was keying resume detection off `claim.scheduler_state == 'resume_queued'`. That caused durable approval continuations to be launched as fresh tasks with `td_resume_payload=None`, restarting the TD pipeline at `Building brief ...`, replacing the topic run's `pipeline_task_id`, and leaving the frontend approving stale task ids that 409ed. Fixed by treating any claimed topic run with a preserved continuation payload as a resume claim, reusing the paused task id and forwarding the stored `td_resume_payload`/approval payload back into `run_td_content_production_task()`. Validation: `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -k 'resume_claim_reuses_existing_task_id' -q` (1 passed), `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q` (33 passed, 2 pre-existing warnings), `venv/bin/pytest tests/api/test_content_v13.py -q` (75 passed, 13 pre-existing warnings), and `venv/bin/pytest tests/content_engine/test_topic_run_service.py -q` (6 passed)."
+    },
+    {
+      "id": "T-td-entry-stale-runtime-cleanup-we114-we118-we119-we175",
+      "task": "TD-entry parallel execution — clear poisoned runtime state for WE-114/WE-118/WE-119/WE-175 after the pre-fix resume-loop bug",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 0,
+      "files_modified": [
+        "_memory/progress.json",
+        "_memory/failures.json",
+        "_memory/context.json"
+      ],
+      "codex_review": "After the dispatcher resume-detection fix, the already-corrupted WE-114/WE-118/WE-119/WE-175 cards were still untestable because durable topic runs had been rebound to new `td_content` task ids while Redis `pipeline_state:webflow` still held stale `WE-*` / `__tid:WE-*` mappings for the older paused tasks. First cleaned the poisoned runtime records: deleted 53 `content_engine_topic_events`, 4 `content_engine_topic_runs`, and 7 related `api_tasks`; reset the 4 `topic_assignments` back to `gap_analysis_complete`; and removed the stale `WE-*`, `__tid:WE-*`, `ta-*`, `__tid:ta-*`, and `__meta:ta-*` fields from `pipeline_state:webflow`. Then removed the remaining persisted `content_pieces` rows for `WE-114`, `WE-118`, `WE-119`, and `WE-175`, because `/content/briefs` is DB-backed and those rows would otherwise keep the cards visible as suggested/planned cards even after runtime state was gone. Verified that the assignments are reset, no durable runtime rows remain, no `content_pieces` rows remain for those brief ids, and Redis no longer returns task mappings for those cards."
+    },
+    {
+      "id": "T-content-studio-review-fallback-and-brief-poll-hotpath",
+      "task": "Content Studio — restore visible agent-stage labels, add non-blank final-review fallback, and reduce `/content/briefs` DB poll pressure",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-10",
+      "tests_added": 1,
+      "files_modified": [
+        "frontend/src/app/(dashboard)/content-studio/_components/ContentCardItem.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_hooks/useBriefDetail.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx",
+        "core/services/db_content_data.py",
+        "core/config/settings.py",
+        "tests/services/test_db_content_data_backend.py"
+      ],
+      "codex_review": "Addressed two manual-QA anomalies plus the hottest backend contributor to slow Content Studio renders. First, `ContentCardItem` now renders the stage label for active agent cards even when `agentProgress` is absent, so cards keep showing `Briefing`, `Outlining`, `Drafting`, etc. from `card.status` instead of going visually blank. Second, the final review screen no longer renders an empty pane when review-stage article content is slow or missing: `useBriefDetail` now surfaces article-load failures, `FullPageView` renders a dedicated review fallback shell, and `RightSidebar` guards metrics math against empty arrays/zero targets to avoid `NaN` warnings. On the backend, `DbContentDataService.get_briefs()` now skips `_resolve_run_id()` unless the slug-scoped `content_pieces` query is empty, and the default async DB pool was raised from `5/10` to `15/20` to better tolerate concurrent poll traffic during TD QA. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py -q` (9 passed), `cd frontend && npx tsc --noEmit` (clean), and `venv/bin/python -m py_compile core/services/db_content_data.py core/config/settings.py`."
     }
   ],
   "pending": [

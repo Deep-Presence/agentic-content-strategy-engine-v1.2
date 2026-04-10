@@ -176,7 +176,9 @@ function MetricsTab({ card, gapSummary }: { card: ContentCard; gapSummary?: GapS
 
   // article is guaranteed non-null here (both !article paths returned above)
   const art = article!;
-  const avgScore = Math.round(art.citPrediction.reduce((a, b) => a + b.score, 0) / art.citPrediction.length);
+  const avgScore = art.citPrediction.length > 0
+    ? Math.round(art.citPrediction.reduce((a, b) => a + b.score, 0) / art.citPrediction.length)
+    : 0;
 
   return (
     <div className="p-3 space-y-4 overflow-y-auto flex-1">
@@ -222,7 +224,7 @@ function MetricsTab({ card, gapSummary }: { card: ContentCard; gapSummary?: GapS
         </div>
         <div className="px-3 py-2 space-y-2.5">
           {art.compliance.map((c) => {
-            const pct = Math.round((c.current / c.target) * 100);
+            const pct = c.target > 0 ? Math.round((c.current / c.target) * 100) : 0;
             const isGood = pct >= 85;
             return (
               <div key={c.label}>

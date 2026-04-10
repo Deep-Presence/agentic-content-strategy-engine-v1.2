@@ -37,6 +37,71 @@ def _generate_worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
+class _AsyncioSemaphoreContext:
+    """Suspendable context manager for local asyncio.Semaphore fallback."""
+
+    def __init__(self, sem: asyncio.Semaphore) -> None:
+        self._sem = sem
+        self._held = False
+        self._closed = False
+
+    async def __aenter__(self) -> "_AsyncioSemaphoreContext":
+        await self._sem.acquire()
+        self._held = True
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        self._closed = True
+        if self._held:
+            self._sem.release()
+            self._held = False
+        return False
+
+    async def suspend(self) -> bool:
+        if self._closed or not self._held:
+            return False
+        self._sem.release()
+        self._held = False
+        return True
+
+    async def resume(self, timeout: float | None = None) -> bool:
+        if self._closed:
+            return False
+        if self._held:
+            return True
+        if timeout is None:
+            await self._sem.acquire()
+        else:
+            await asyncio.wait_for(self._sem.acquire(), timeout=timeout)
+        self._held = True
+        return True
+
+
+class _TrackedSemaphoreContext:
+    """Registers the active semaphore context so HITL waits can suspend it."""
+
+    def __init__(self, store: "DbTaskStore", task_id: str, inner: Any) -> None:
+        self._store = store
+        self._task_id = task_id
+        self._inner = inner
+
+    async def __aenter__(self) -> "_TrackedSemaphoreContext":
+        await self._inner.__aenter__()
+        self._store._active_semaphore_contexts[self._task_id] = self
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        self._store._active_semaphore_contexts.pop(self._task_id, None)
+        self._store._suspended_semaphore_tasks.discard(self._task_id)
+        return await self._inner.__aexit__(exc_type, exc, tb)
+
+    async def suspend(self) -> bool:
+        return await self._inner.suspend()
+
+    async def resume(self, timeout: float | None = None) -> bool:
+        return await self._inner.resume(timeout=timeout)
+
+
 class DbTaskStore:
     """Write-through DB-backed task store.
 
@@ -71,11 +136,15 @@ end
 
     # Heartbeat interval: renew leases every ~60 BRPOP iterations (~60s)
     _LEASE_RENEWAL_INTERVAL = 60
+    _DEFAULT_SEMAPHORE_POOL = "default"
+    _CONTENT_ENGINE_SEMAPHORE_POOL = "content_engine"
+    _CONTENT_ENGINE_PIPELINES = {"content", "content_v13", "td_content"}
 
     def __init__(
         self,
         session_factory: Callable[..., AsyncSession],
         max_concurrent: int = 10,
+        max_concurrent_content_engine_per_company: int = 15,
         redis_client: Optional[Any] = None,
         worker_id: Optional[str] = None,
     ) -> None:
@@ -83,9 +152,15 @@ end
         self._session_factory = session_factory
         self._slug_locks: Dict[str, str] = {}  # "pipeline:effective_slug" -> task_id
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._content_engine_semaphores: Dict[str, Any] = {}
         self._approval_queues: Dict[str, asyncio.Queue] = {}
         self._task_handles: Dict[str, asyncio.Task] = {}
+        self._active_semaphore_contexts: Dict[str, _TrackedSemaphoreContext] = {}
+        self._suspended_semaphore_tasks: set[str] = set()
         self._max_concurrent = max_concurrent
+        self._max_concurrent_content_engine_per_company = (
+            max_concurrent_content_engine_per_company
+        )
         self._worker_id = worker_id or _generate_worker_id()
         # Pending DB writes for durability (Session 3 — Fix 1d)
         self._pending_creates: Dict[str, asyncio.Task] = {}
@@ -116,15 +191,46 @@ end
     def semaphore(self) -> asyncio.Semaphore:
         return self._semaphore
 
-    def pipeline_semaphore(self, task_id: str):
-        """Return an async context manager for the pipeline concurrency semaphore.
+    def pipeline_semaphore(
+        self,
+        task_id: str,
+        *,
+        pool: str = _DEFAULT_SEMAPHORE_POOL,
+        company_slug: Optional[str] = None,
+    ):
+        """Return an async context manager for the requested concurrency pool."""
+        if pool == self._CONTENT_ENGINE_SEMAPHORE_POOL:
+            company = company_slug or self._company_slug_for_task(task_id)
+            if not company:
+                raise ValueError(
+                    "company_slug is required for the content_engine semaphore pool"
+                )
+            if self._redis_sync is not None:
+                sem = self._get_or_create_content_engine_semaphore(company)
+                return _TrackedSemaphoreContext(
+                    self,
+                    task_id,
+                    sem.acquire_context(task_id),
+                )
 
-        With Redis: returns RedisSemaphore context (distributed, atomic).
-        Without Redis: returns asyncio.Semaphore (process-local fallback).
-        """
+            sem = self._get_or_create_content_engine_semaphore(company)
+            return _TrackedSemaphoreContext(
+                self,
+                task_id,
+                _AsyncioSemaphoreContext(sem),
+            )
+
         if self._redis_semaphore is not None:
-            return self._redis_semaphore.acquire_context(task_id)
-        return self._semaphore
+            return _TrackedSemaphoreContext(
+                self,
+                task_id,
+                self._redis_semaphore.acquire_context(task_id),
+            )
+        return _TrackedSemaphoreContext(
+            self,
+            task_id,
+            _AsyncioSemaphoreContext(self._semaphore),
+        )
 
     # ── Startup recovery ──────────────────────────────────────────────
 
@@ -214,13 +320,92 @@ end
         cleaned = 0
         for tid in task_ids:
             try:
-                self._redis_semaphore.release(tid)
-                cleaned += 1
+                if self._release_semaphore_slot(tid):
+                    cleaned += 1
             except Exception:
                 logger.warning(
                     "Failed to release semaphore for %s", tid, exc_info=True
                 )
         return cleaned
+
+    def _company_slug_for_task(self, task_id: str) -> Optional[str]:
+        task = self._tasks.get(task_id)
+        if task is None:
+            return None
+        return task.company_slug or (
+            task.effective_slug.split("__", 1)[0]
+            if task.effective_slug
+            else None
+        )
+
+    def _uses_content_engine_pool(self, task: Optional[PipelineTask]) -> bool:
+        return bool(task and task.pipeline in self._CONTENT_ENGINE_PIPELINES)
+
+    def _get_or_create_content_engine_semaphore(self, company_slug: str):
+        sem = self._content_engine_semaphores.get(company_slug)
+        if sem is not None:
+            return sem
+        if self._redis_sync is not None:
+            from core.redis_semaphore import RedisSemaphore
+
+            sem = RedisSemaphore(
+                redis_sync=self._redis_sync,
+                name=f"content_engine:{company_slug}",
+                max_concurrent=self._max_concurrent_content_engine_per_company,
+            )
+        else:
+            sem = asyncio.Semaphore(
+                self._max_concurrent_content_engine_per_company
+            )
+        self._content_engine_semaphores[company_slug] = sem
+        return sem
+
+    def _semaphore_for_task(self, task_id: str):
+        task = self._tasks.get(task_id)
+        if self._uses_content_engine_pool(task):
+            company = self._company_slug_for_task(task_id)
+            if company is None:
+                return None
+            return self._get_or_create_content_engine_semaphore(company)
+        return self._redis_semaphore
+
+    def _release_semaphore_slot(self, task_id: str) -> bool:
+        sem = self._semaphore_for_task(task_id)
+        if sem is None:
+            return False
+        if hasattr(sem, "release"):
+            sem.release(task_id)
+        return True
+
+    async def _suspend_semaphore_for_hitl_wait(self, task_id: str) -> bool:
+        task = self._tasks.get(task_id)
+        if not self._uses_content_engine_pool(task):
+            return False
+        ctx = self._active_semaphore_contexts.get(task_id)
+        if ctx is None:
+            return False
+        suspended = await ctx.suspend()
+        if suspended:
+            self._suspended_semaphore_tasks.add(task_id)
+        return suspended
+
+    async def _resume_semaphore_after_hitl_wait(
+        self,
+        task_id: str,
+        *,
+        timeout: float = 300.0,
+    ) -> bool:
+        if task_id not in self._suspended_semaphore_tasks:
+            return False
+        ctx = self._active_semaphore_contexts.get(task_id)
+        if ctx is None:
+            self._suspended_semaphore_tasks.discard(task_id)
+            return False
+        try:
+            resumed = await ctx.resume(timeout=timeout)
+        finally:
+            self._suspended_semaphore_tasks.discard(task_id)
+        return resumed
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
@@ -534,27 +719,32 @@ end
     async def wait_for_approval(
         self, task_id: str, timeout: float = 86400
     ) -> Dict[str, Any]:
-        if self._redis_sync is not None:
-            return await self._wait_for_approval_redis(task_id, timeout)
-        # Fallback: existing asyncio.Queue logic
-        if task_id not in self._approval_queues:
-            self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
+        released_ce_slot = await self._suspend_semaphore_for_hitl_wait(task_id)
         try:
-            data = await asyncio.wait_for(
-                self._approval_queues[task_id].get(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Approval timed out after %.0fs for task %s — auto-rejecting",
-                timeout,
-                task_id,
-            )
-            data = {
-                "decision": "reject",
-                "revision_note": f"Approval timed out after {int(timeout)}s",
-            }
-        self._approval_queues.pop(task_id, None)
-        return data
+            if self._redis_sync is not None:
+                return await self._wait_for_approval_redis(task_id, timeout)
+            # Fallback: existing asyncio.Queue logic
+            if task_id not in self._approval_queues:
+                self._approval_queues[task_id] = asyncio.Queue(maxsize=1)
+            try:
+                data = await asyncio.wait_for(
+                    self._approval_queues[task_id].get(), timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Approval timed out after %.0fs for task %s — auto-rejecting",
+                    timeout,
+                    task_id,
+                )
+                data = {
+                    "decision": "reject",
+                    "revision_note": f"Approval timed out after {int(timeout)}s",
+                }
+            self._approval_queues.pop(task_id, None)
+            return data
+        finally:
+            if released_ce_slot:
+                await self._resume_semaphore_after_hitl_wait(task_id)
 
     async def _wait_for_approval_redis(
         self, task_id: str, timeout: float
@@ -716,9 +906,14 @@ end
                 )
 
         # 2. Semaphore — atomic Lua renewal (ZSCORE + ZADD)
-        if self._redis_semaphore is not None:
+        sem = self._semaphore_for_task(task_id)
+        if (
+            sem is not None
+            and self._redis_sync is not None
+            and task_id not in self._suspended_semaphore_tasks
+        ):
             try:
-                renewed = self._redis_semaphore.renew(task_id)
+                renewed = sem.renew(task_id)
                 if renewed:
                     logger.debug("Heartbeat: renewed semaphore for %s", task_id)
                 else:
@@ -740,37 +935,14 @@ end
         stage: Optional[str] = None,
         approval_data: Optional[Dict[str, Any]] = None,
         expected_nonce: Optional[str] = None,
+        delivery_mode: str = "queue",
     ) -> None:
-        if task_id not in self._tasks:
-            raise TaskNotFoundError(task_id)
+        self.validate_approval_submission(
+            task_id,
+            expected_nonce=expected_nonce,
+        )
 
         task = self._tasks[task_id]
-
-        # Nonce validation — Redis-first if available
-        if expected_nonce is not None:
-            if self._redis_sync is not None:
-                try:
-                    current_nonce = self._redis_sync.get(
-                        f"approval:nonce:{task_id}"
-                    )
-                except Exception:
-                    logger.warning(
-                        "Redis nonce read failed for %s — falling back to local",
-                        task_id,
-                        exc_info=True,
-                    )
-                    current_nonce = (task.approval_payload or {}).get(
-                        "checkpoint_nonce"
-                    )
-            else:
-                current_nonce = (task.approval_payload or {}).get(
-                    "checkpoint_nonce"
-                )
-            if current_nonce != expected_nonce:
-                raise ApprovalWindowError(
-                    f"Stale or replayed approval: nonce mismatch "
-                    f"(expected {expected_nonce}, current {current_nonce})"
-                )
 
         # Duplicate submission check — Redis flag (atomic SET NX)
         if self._redis_sync is not None:
@@ -794,7 +966,9 @@ end
         payload = approval_data if approval_data is not None else {"decision": decision, "revision_note": revision_note}
 
         # ── Deliver payload (must succeed before recording history) ──
-        if self._redis_sync is not None:
+        if delivery_mode == "record_only":
+            pass
+        elif self._redis_sync is not None:
             key = f"approval:{task_id}"
             try:
                 self._redis_sync.lpush(key, json.dumps(payload))
@@ -833,7 +1007,62 @@ end
                     f"Approval already submitted for task {task_id} — queue full"
                 )
 
-        # ── Record approval history (only after successful delivery) ──
+        self.record_approval_submission(
+            task_id,
+            decision=decision,
+            revision_note=revision_note,
+            stage=stage,
+        )
+
+    def validate_approval_submission(
+        self,
+        task_id: str,
+        *,
+        expected_nonce: Optional[str] = None,
+    ) -> None:
+        if task_id not in self._tasks:
+            raise TaskNotFoundError(task_id)
+
+        task = self._tasks[task_id]
+
+        # Nonce validation — Redis-first if available
+        if expected_nonce is not None:
+            if self._redis_sync is not None:
+                try:
+                    current_nonce = self._redis_sync.get(
+                        f"approval:nonce:{task_id}"
+                    )
+                except Exception:
+                    logger.warning(
+                        "Redis nonce read failed for %s — falling back to local",
+                        task_id,
+                        exc_info=True,
+                    )
+                    current_nonce = (task.approval_payload or {}).get(
+                        "checkpoint_nonce"
+                    )
+            else:
+                current_nonce = (task.approval_payload or {}).get(
+                    "checkpoint_nonce"
+                )
+            if current_nonce != expected_nonce:
+                raise ApprovalWindowError(
+                    f"Stale or replayed approval: nonce mismatch "
+                    f"(expected {expected_nonce}, current {current_nonce})"
+                )
+
+    def record_approval_submission(
+        self,
+        task_id: str,
+        *,
+        decision: str,
+        revision_note: Optional[str] = None,
+        stage: Optional[str] = None,
+    ) -> None:
+        if task_id not in self._tasks:
+            raise TaskNotFoundError(task_id)
+        task = self._tasks[task_id]
+
         resolved_stage = (
             stage
             or (task.approval_payload or {}).get("stage")

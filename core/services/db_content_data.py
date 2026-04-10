@@ -108,14 +108,14 @@ class DbContentDataService:
                 "GA-phase card load failed for %s", effective_slug, exc_info=True,
             )
 
-        # Resolve run_id for cycle_id display (may be None for pre-pipeline briefs)
-        run_id = await self._resolve_run_id(effective_slug)
-
         # Query by effective_slug to include run_id=NULL pieces from add_brief()
         pieces = await self._content_repo.list_by_slug(effective_slug)
-        if not pieces and run_id:
+        resolved_run_id: Optional[str] = None
+        if not pieces:
+            resolved_run_id = await self._resolve_run_id(effective_slug)
+        if not pieces and resolved_run_id:
             # Fallback: try run-scoped query for backward compat
-            pieces = await self._content_repo.list_by_run(run_id)
+            pieces = await self._content_repo.list_by_run(resolved_run_id)
         if not pieces and not ga_cards:
             return ContentBriefListResponse(briefs=[], total=0)
         if not pieces:
@@ -214,7 +214,11 @@ class DbContentDataService:
                 cluster=cluster,
                 target_word_count=word_count,
                 citability_score=citability,
-                cycle_id=str(run_id) if run_id else str(piece.run_id or ""),
+                cycle_id=(
+                    str(piece.run_id)
+                    if piece.run_id
+                    else (resolved_run_id or "")
+                ),
                 task_id=task_id_map.get(brief_id),
                 created_at=piece.created_at.isoformat() if piece.created_at else "",
                 updated_at=(

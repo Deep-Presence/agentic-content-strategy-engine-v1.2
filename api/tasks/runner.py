@@ -11,7 +11,9 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from api.config import api_settings
 from api.tasks.event_bus import EventBusProtocol
+from api.tasks.models import PipelineTask
 from api.tasks.models import TaskStatus
 from core.services.task_store import TaskStoreProtocol
 from core.gap_analysis.pipeline import run_gap_analysis
@@ -24,6 +26,13 @@ from core.redis import get_sync_redis_or_none
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]  # content-strategy-engine/
+_CONTENT_ENGINE_TASK_PIPELINES = {"content", "content_v13", "td_content"}
+_TERMINAL_TASK_STATUSES = {
+    TaskStatus.COMPLETED,
+    TaskStatus.FAILED,
+    TaskStatus.CANCELLED,
+    TaskStatus.FAILED_RESTART,
+}
 
 
 # ── Scope resolution ──────────────────────────────────────────────────
@@ -686,7 +695,11 @@ async def run_content_pipeline_task(
 
     bind_context(task_id=task_id, pipeline_name="content", company_slug=company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.pipeline_semaphore(task_id):
+        async with task_store.pipeline_semaphore(
+            task_id,
+            pool="content_engine",
+            company_slug=company_slug,
+        ):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "content"})
 
             output = await run_content_generation(
@@ -753,7 +766,7 @@ async def run_content_v13_pipeline_task(
     """Background task wrapper for v1.3 content generation pipeline.
 
     Follows the same semaphore + slug-lock + handle pattern as
-    run_content_pipeline_task. Enforces the global max-3-concurrent
+    run_content_pipeline_task. Uses the company-scoped content-engine
     semaphore and registers the task handle for cancellation.
 
     Args:
@@ -800,7 +813,11 @@ async def run_content_v13_pipeline_task(
         pass
 
     try:
-        async with task_store.pipeline_semaphore(task_id):
+        async with task_store.pipeline_semaphore(
+            task_id,
+            pool="content_engine",
+            company_slug=company_slug,
+        ):
             event_bus.publish(task_id, "pipeline_start", {"pipeline": "content_v13"})
 
             output = await run_content_generation_v13(
@@ -1857,6 +1874,197 @@ async def run_td_gap_analysis_task(
 # ── TD → Content production-only pipeline runner ─────────────────────
 
 
+def _count_active_company_ce_tasks(
+    task_store: TaskStoreProtocol,
+    *,
+    company_slug: str,
+) -> int:
+    tasks = task_store.list_tasks(company_slug=company_slug)
+    return sum(
+        1
+        for task in tasks
+        if task.pipeline in _CONTENT_ENGINE_TASK_PIPELINES
+        and task.status != TaskStatus.PENDING_APPROVAL
+        and task.status not in _TERMINAL_TASK_STATUSES
+    )
+
+
+async def _create_td_content_dispatch_task(
+    *,
+    task_store: TaskStoreProtocol,
+    company_slug: str,
+    product_slug: str | None,
+) -> PipelineTask | None:
+    task = task_store.create_task(
+        "td_content",
+        company_slug,
+        product_slug,
+        allow_parallel=True,
+    )
+    try:
+        await task_store.ensure_created(task.task_id)
+    except Exception:
+        logger.exception(
+            "Failed to persist dispatched td_content task for %s",
+            company_slug,
+        )
+        if hasattr(task_store, "rollback_create"):
+            task_store.rollback_create(task.task_id)
+        return None
+    return task
+
+
+def _reuse_td_content_dispatch_task(
+    *,
+    task_store: TaskStoreProtocol,
+    task_id: str,
+) -> PipelineTask | None:
+    try:
+        return task_store.get_task(task_id)
+    except Exception:
+        logger.warning("Queued TD continuation task missing from task store", extra={"task_id": task_id})
+        return None
+
+
+async def dispatch_queued_td_content_runs(
+    *,
+    company_slug: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBusProtocol,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+) -> list[dict[str, str]]:
+    """Claim queued TD production topic runs and launch up to company capacity."""
+    if session_factory is None:
+        return []
+
+    available_slots = max(
+        api_settings.max_concurrent_content_engine_per_company
+        - _count_active_company_ce_tasks(task_store, company_slug=company_slug),
+        0,
+    )
+    if available_slots <= 0:
+        return []
+
+    from core.services.content_engine_topic_runs import ContentEngineTopicRunService
+
+    service = ContentEngineTopicRunService(session_factory)
+    claims = await service.claim_queued_topic_runs(
+        company_slug=company_slug,
+        limit=available_slots,
+    )
+    if not claims:
+        return []
+
+    dispatched_topic_runs: dict[str, str] = {}
+    launch_payloads: list[tuple[Any, PipelineTask, dict[str, Any] | None]] = []
+    undispatched_claim_ids: list[str] = []
+
+    for claim in claims:
+        launch_context = claim.launch_context or {}
+        company_name = launch_context.get("company_name")
+        domain = launch_context.get("domain")
+        if not company_name or not domain or not claim.ga_run_id:
+            undispatched_claim_ids.append(claim.topic_run_id)
+            logger.warning(
+                "Skipping queued TD topic run without launch context",
+                extra={
+                    "company_slug": company_slug,
+                    "topic_run_id": claim.topic_run_id,
+                    "display_id": claim.display_id,
+                },
+            )
+            continue
+
+        is_resume = bool(claim.continuation_payload)
+        resume_payload = claim.continuation_payload if is_resume else None
+        if is_resume and claim.pipeline_task_id:
+            task = _reuse_td_content_dispatch_task(
+                task_store=task_store,
+                task_id=claim.pipeline_task_id,
+            )
+        else:
+            task = await _create_td_content_dispatch_task(
+                task_store=task_store,
+                company_slug=company_slug,
+                product_slug=launch_context.get("product_slug"),
+            )
+        if task is None:
+            undispatched_claim_ids.append(claim.topic_run_id)
+            continue
+
+        dispatched_topic_runs[claim.topic_run_id] = task.task_id
+        launch_payloads.append((claim, task, resume_payload))
+
+    if undispatched_claim_ids:
+        await service.release_topic_run_claims(topic_run_ids=undispatched_claim_ids)
+
+    if not dispatched_topic_runs:
+        return []
+
+    try:
+        await service.mark_claimed_topic_runs_dispatched(
+            topic_run_task_ids=dispatched_topic_runs,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to mark claimed TD topic runs as dispatched",
+            extra={"company_slug": company_slug},
+        )
+        await service.release_topic_run_claims(
+            topic_run_ids=list(dispatched_topic_runs.keys())
+        )
+        for _claim, task, _resume_payload in launch_payloads:
+            task_store.update_task(
+                task.task_id,
+                status=TaskStatus.FAILED,
+                error="Dispatcher failed before task launch",
+            )
+            await task_store.flush_terminal(task.task_id)
+        return []
+
+    results: list[dict[str, str]] = []
+    for claim, task, resume_payload in launch_payloads:
+        launch_context = claim.launch_context or {}
+        if resume_payload is not None:
+            task_store.update_task(
+                task.task_id,
+                status=TaskStatus.RUNNING,
+                error=None,
+                approval_payload=None,
+            )
+        handle = asyncio.create_task(
+            run_td_content_production_task(
+                task_id=task.task_id,
+                effective_slug=claim.effective_slug,
+                topic_assignment_ids=[claim.topic_assignment_id],
+                company_name=launch_context["company_name"],
+                domain=launch_context["domain"],
+                ga_run_id=claim.ga_run_id or "",
+                task_store=task_store,
+                event_bus=event_bus,
+                product_slug=launch_context.get("product_slug"),
+                product_name=launch_context.get("product_name"),
+                product_description=launch_context.get("product_description"),
+                auto_approve=bool(launch_context.get("auto_approve", False)),
+                td_resume_payload=resume_payload,
+                td_resume_approval=(
+                    dict(resume_payload.get("approval_data", {}))
+                    if resume_payload
+                    else None
+                ),
+            )
+        )
+        task_store.register_task_handle(task.task_id, handle)
+        results.append(
+            {
+                "topic_run_id": claim.topic_run_id,
+                "topic_assignment_id": claim.topic_assignment_id,
+                "task_id": task.task_id,
+            }
+        )
+    return results
+
+
 async def run_td_content_production_task(
     task_id: str,
     effective_slug: str,
@@ -1871,6 +2079,8 @@ async def run_td_content_production_task(
     product_name: Optional[str] = None,
     product_description: Optional[str] = None,
     auto_approve: bool = False,
+    td_resume_payload: Optional[Dict[str, Any]] = None,
+    td_resume_approval: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Background task wrapper for the TD → Content production-only orchestrator (Phase 2).
 
@@ -1883,6 +2093,7 @@ async def run_td_content_production_task(
         _update_ga_phase_status,
         _emit_company_event,
     )
+    from core.content_engine.graph_v13 import ApprovalPauseRequested
     from core.models.topic_discovery import TopicAssignmentStatus
     from core.services.content_engine_topic_runs import ContentEngineTopicRunService
 
@@ -1904,8 +2115,12 @@ async def run_td_content_production_task(
 
     bind_context(task_id=task_id, pipeline_name="td_content_production", company_slug=company_slug, run_id=str(run_id) if run_id else None)
     try:
-        async with task_store.pipeline_semaphore(task_id):
-            if topic_run_service is not None:
+        async with task_store.pipeline_semaphore(
+            task_id,
+            pool="content_engine",
+            company_slug=company_slug,
+        ):
+            if topic_run_service is not None and td_resume_payload is None:
                 try:
                     await topic_run_service.advance_topic_runs(
                         effective_slug=effective_slug,
@@ -1941,6 +2156,8 @@ async def run_td_content_production_task(
                 session_factory=session_factory,
                 run_id=run_id,
                 company_id=company_id,
+                td_resume_payload=td_resume_payload,
+                td_resume_approval=td_resume_approval,
             )
 
             result = {
@@ -1974,6 +2191,31 @@ async def run_td_content_production_task(
                 except Exception:
                     logger.warning("Failed to persist durable production completion state", exc_info=True)
 
+    except ApprovalPauseRequested as exc:
+        logger.info(
+            "TD→Content production paused for approval",
+            extra={"task_id": task_id, "company_slug": company_slug},
+        )
+        continuation_payload = dict(exc.approval_payload.get("continuation") or {})
+        if topic_run_service is not None and continuation_payload:
+            try:
+                await topic_run_service.mark_topic_run_waiting_human(
+                    effective_slug=effective_slug,
+                    pipeline_task_id=task_id,
+                    status=str(exc.approval_payload.get("status") or "pending_approval"),
+                    stage=str(exc.approval_payload.get("stage") or "pending_approval"),
+                    continuation_payload=continuation_payload,
+                    payload_json={
+                        "source": "td_content_production",
+                        "note": "Waiting for human approval before continuing",
+                        "approval_stage": exc.approval_payload.get("stage"),
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to persist durable approval wait state",
+                    exc_info=True,
+                )
     except asyncio.CancelledError:
         logger.info("TD→Content production pipeline cancelled: task_id=%s", task_id)
         _cleanup_stale_pipeline_state(_PROJECT_ROOT / "artifacts", effective_slug, redis_client=get_sync_redis_or_none(), task_id=task_id)
@@ -2039,6 +2281,19 @@ async def run_td_content_production_task(
                 cache_delete_pattern(_rc, f"cache:content:{effective_slug}:*")
         except Exception:
             pass
+        try:
+            await dispatch_queued_td_content_runs(
+                company_slug=company_slug,
+                task_store=task_store,
+                event_bus=event_bus,
+                session_factory=session_factory,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to dispatch queued TD content runs after task completion",
+                extra={"company_slug": company_slug, "task_id": task_id},
+                exc_info=True,
+            )
         # No slug lock to release — start-production uses allow_parallel=True.
         # Calling release_slug_lock here would pop a *different* locked run's
         # entry from _slug_locks, causing cross-talk (Codex finding).

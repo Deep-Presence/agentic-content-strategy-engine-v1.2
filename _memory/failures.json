@@ -1,5 +1,79 @@
 [
   {
+    "id": "F28",
+    "timestamp": "2026-04-10",
+    "what_broke": "During TD-entry manual QA, cards in `Agent work` sometimes stopped showing the visible stage text even though the backend and console were still emitting statuses like `outlining`, `drafting`, and `revising`. Final HITL-3 review pages could also render as a blank main pane while the backend detail endpoints were still returning 200s.",
+    "root_cause": "Two frontend contracts were too strict. `ContentCardItem` only rendered the agent-stage block when `card.agentProgress` existed, even though the board already had the authoritative stage in `card.status`, so active cards without per-task progress metadata appeared blank. Separately, `useBriefDetail()` swallowed stage-content fetch failures and left `articleContent = null`, while `FullPageView` only rendered the article pane when review/pending-content-approval status had a non-null `articleContent`; that produced an empty main pane instead of a loading or error fallback. The same QA session also hit SQLAlchemy pool exhaustion on `/content/briefs`, which amplified the latency that made this frontend weakness visible.",
+    "fix_applied": "Fixed on 2026-04-10. Active agent cards now always render the stage label from `card.status`, with `agentProgress` treated as an optional enhancement for percent/bars. `useBriefDetail()` now surfaces article-load failures, `FullPageView` renders a non-blank review fallback shell when article content is missing, and `RightSidebar` guards metrics calculations against empty arrays / zero targets. On the backend, `DbContentDataService.get_briefs()` now skips `_resolve_run_id()` unless the slug-scoped query is empty, and the default async DB pool was raised from `5/10` to `15/20` to reduce poll-path starvation during local QA.",
+    "lesson": "Content Studio board/status rendering must anchor on authoritative card status, not on optional per-task progress metadata. Review-stage detail views must never render an empty pane when article content is late or missing; they need explicit loading/error fallbacks. On the backend, hot poll paths like `/content/briefs` should avoid extra DB queries in the common case because frontend polling magnifies even one unnecessary query into pool pressure under concurrent pipeline load.",
+    "files_affected": [
+      "frontend/src/app/(dashboard)/content-studio/_components/ContentCardItem.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_hooks/useBriefDetail.ts",
+      "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx",
+      "core/services/db_content_data.py",
+      "core/config/settings.py"
+    ]
+  },
+  {
+    "id": "F27",
+    "timestamp": "2026-04-10",
+    "what_broke": "After the resume-loop bug had already poisoned live TD cards, restarting the app did not make WE-114/WE-118/WE-119/WE-175 approvable again. The frontend still sent `approve_brief` to old paused task ids and got `409 No topic run found for pipeline task ...`.",
+    "root_cause": "The dispatcher bug had already rebound the durable `content_engine_topic_runs.pipeline_task_id` for those cards to newer restarted `td_content` tasks, but Redis `pipeline_state:{slug}` still contained stale brief-card keys (`WE-*`) and stale `__tid:WE-*` mappings for the old paused tasks. `/content/briefs` was therefore still surfacing the old task id for the brief card even though the durable topic run now belonged to a different task. Phase 6 startup reconciliation repaired topic-run scheduler rows, but it did not repair stale Redis brief/task mappings left behind by the earlier corrupted run.",
+    "fix_applied": "Runtime cleanup only on 2026-04-10 for the poisoned cards: deleted the affected topic-run rows/events and related `api_tasks`, reset the associated `topic_assignments` to `gap_analysis_complete`, and removed the stale `WE-*`, `__tid:WE-*`, `ta-*`, `__tid:ta-*`, and `__meta:ta-*` fields from `pipeline_state:webflow`. The underlying code-path hardening to make `/content/briefs` prefer durable topic-run task identity for TD brief cards is still pending.",
+    "lesson": "Once TD scheduling becomes durable-topic-run-led, Redis `__tid:WE-*` brief mappings are only a cache and can drift after a poisoned or partially repaired run. Approval routes and read paths must ultimately anchor on durable topic-run identity, or startup/cleanup code must repair Redis brief-card task ids from the durable source of truth before the frontend can trust them again.",
+    "files_affected": [
+      "core/services/db_content_data.py",
+      "core/content_engine/state_redis.py",
+      "api/app.py"
+    ]
+  },
+  {
+    "id": "F26",
+    "timestamp": "2026-04-10",
+    "what_broke": "Manual TD-entry QA showed WE-175/WE-119/WE-114/WE-118 looping `briefing -> pending_brief_approval -> outlining -> pending_brief_approval`, with later brief approvals failing as `409 No topic run found for pipeline task ...`.",
+    "root_cause": "Phase 5/6 durable continuations correctly stored `continuation_payload_json` on the topic run, but `claim_queued_runs_for_company()` flips `scheduler_state` from `resume_queued` to `claimed` before the dispatcher builds its launch snapshot. `dispatch_queued_td_content_runs()` was then checking `claim.scheduler_state == 'resume_queued'` to decide whether to reuse the paused task and pass `td_resume_payload`. Real claimed resume rows therefore looked like plain queued runs, so the dispatcher created a fresh `td_content` task, launched `run_td_content_production_task(... td_resume_payload=None)`, and the TD pipeline restarted at `Building brief ...` instead of resuming after HITL-2. Because the topic run's `pipeline_task_id` was replaced with the fresh task id, the frontend still holding the old paused task id started sending approvals to a task that no longer matched any waiting-human topic run, producing 409s.",
+    "fix_applied": "Fixed on 2026-04-10. `dispatch_queued_td_content_runs()` now treats any claimed topic run with a non-empty continuation payload as a resume claim, regardless of the post-claim `scheduler_state`, reuses the paused task id when present, and forwards the stored `td_resume_payload` / approval payload into `run_td_content_production_task()`. Added a regression test that uses the real claimed-snapshot shape instead of the idealized pre-claim `resume_queued` shape.",
+    "lesson": "If a queue/claim repo mutates scheduler state before returning rows to the dispatcher, resume detection cannot rely on the pre-claim state string anymore. Durable continuation dispatch should key off the preserved continuation payload or a dedicated immutable claim kind, otherwise claimed resume rows will silently degrade into fresh starts and invalidate frontend HITL task ids.",
+    "files_affected": [
+      "api/tasks/runner.py",
+      "tests/api/test_content_v13_ga_endpoints.py"
+    ]
+  },
+  {
+    "id": "F25",
+    "timestamp": "2026-04-10",
+    "what_broke": "After Phase 5, TD durable continuations were restart-durable in normal flow but not restart-self-healing. A process death between durable queueing and dispatch, or during `claimed` / `running`, could leave topic runs stranded until a later user action happened to trigger dispatch again.",
+    "root_cause": "The Phase 5 scheduler made `content_engine_topic_runs` the durable runtime record, but startup recovery still only repaired task rows. `DbTaskStore` could mark orphaned tasks `failed_restart`, yet nothing reconciled those task states back onto topic-run scheduler states on boot. There was also no startup sweep to clear stale queued task ids or auto-dispatch existing `queued` / `resume_queued` rows, so the durable continuation model still depended on incidental later traffic to wake the queue back up.",
+    "fix_applied": "Fixed on 2026-04-10 via Phase 6. Added startup reconciliation over topic runs in `queued`, `resume_queued`, `claimed`, `running`, and `waiting_human`, using recovered task rows as repair hints. The service now preserves `waiting_human`, restores failed-restart approval checkpoints back to `waiting_human`, requeues stranded continuations as `resume_queued`, requeues plain stranded runs as `content_queued`, clears stale queued task ids when the referenced task is gone, emits `topic_run_recovered` events, and FastAPI lifespan auto-dispatches companies with recovered queueable work.",
+    "lesson": "Once `content_engine_topic_runs` owns scheduling, restart recovery must also start from topic-run scheduler state rather than only from task rows. Durable continuations are not truly reliable until startup reconciliation can repair stranded scheduler states and drain recoverable queues automatically. `waiting_human` should be treated as a stable terminal-for-now scheduler state across restarts, while `claimed` / `running` require explicit reconciliation against recovered task health.",
+    "files_affected": [
+      "api/app.py",
+      "core/db/repositories/content_engine_run_repo.py",
+      "core/services/content_engine_topic_runs.py",
+      "tests/content_engine/test_topic_run_service.py",
+      "tests/api/test_lifespan_task_store.py"
+    ]
+  },
+  {
+    "id": "F24",
+    "timestamp": "2026-04-10",
+    "what_broke": "Phase 5 durable continuations left two router-level correctness holes: TD approvals could become permanently un-retryable after a downstream queue failure, and TD start-production could return 202 even when no durable work was queued. Requeued topic runs could also leak stale task ids back to the frontend.",
+    "root_cause": "The Phase 5 router still treated the durable scheduler as a sidecar. `approve_brief` / `approve_content` called `submit_approval(... delivery_mode='record_only')` before `queue_topic_run_resume()`, so Redis `approval:flag:{task_id}` and approval history were consumed before the durable `waiting_human -> resume_queued` transition existed. `start_from_topics_production` moved cards to `content_queued` and swallowed durable queue/dispatch exceptions even though there was no longer a fallback launcher outside that block. Separately, `advance_topic_runs()` only updated `pipeline_task_id` when a non-null value was provided, so requeueing a failed/completed topic could keep the old task id while exposing a fresh `content_queued` state.",
+    "fix_applied": "Fixed on 2026-04-10. Added a task-store split between nonce validation and approval-history recording so TD approval routes can validate first, then CAS the durable topic run from `waiting_human` to `resume_queued`, and only then record the approval decision. `queue_topic_run_resume()` now rejects duplicate/late submissions unless the run is genuinely `waiting_human`. `start_from_topics_production` now requires durable queue success before returning 202 and mirrors `content_queued` to GA Redis only after the queue is real. `advance_topic_runs*()` now use explicit tri-state field updates so requeue paths can clear stale `pipeline_task_id`, `claimed_at`, and `waiting_for_human_at` values.",
+    "lesson": "Once the durable topic-run scheduler becomes the real execution path, router/task-store side effects must commit after the durable scheduler transition, not before it. For TD approvals, the durable scheduler state (`waiting_human -> resume_queued`) is the true duplicate guard, not a Redis approval flag. For TD start-production, a 202 is truthful only if at least one durable topic run was actually queued. Nullable scheduler fields need explicit clear semantics; overloading `None` to mean both 'leave unchanged' and 'clear' leaks stale runtime identity back to the frontend.",
+    "files_affected": [
+      "api/routers/content_v13.py",
+      "core/services/db_task_store.py",
+      "core/services/task_store.py",
+      "core/services/content_engine_topic_runs.py",
+      "tests/api/test_content_v13.py",
+      "tests/api/test_content_v13_ga_endpoints.py",
+      "tests/content_engine/test_topic_run_service.py",
+      "tests/services/test_approval_queue_redis.py"
+    ]
+  },
+  {
     "id": "F22",
     "timestamp": "2026-04-10",
     "what_broke": "TD-entry `Start Production` for WE-177 was accepted multiple times, visually bounced between `briefing` and `gap_analysis_complete`, and only started much later after other runs progressed.",
