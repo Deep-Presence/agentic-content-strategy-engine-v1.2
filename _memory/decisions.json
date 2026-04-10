@@ -1865,5 +1865,66 @@
     "outcome": "Implemented on 2026-04-11. Review cards now restore local edits when reopened, autosave server-side draft content on an interval, and final approval promotes the edited markdown into the canonical final artifact. Validation: `venv/bin/pytest tests/api/test_content_v13.py -k 'ReviewDraftContent or td_content_review_routes_to_durable_resume_queue' -q` (4 passed), `venv/bin/pytest tests/api/test_content_v13.py tests/content_engine/test_pipeline_v13.py -k 'approve_content or ReviewDraftContent or edited_markdown_from_review_state' -q` (7 passed), `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k edited_markdown_from_review_state -q` (1 passed), `venv/bin/python -m py_compile api/schemas/content_v13.py api/routers/content_v13.py core/content_engine/pipeline_v13.py` (clean), and `cd frontend && npx tsc --noEmit` (clean).",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-DB-BRIEF-CARDS-PRESERVE-TD-METADATA",
+    "timestamp": "2026-04-11",
+    "task": "Content Studio detail view should keep topic-assignment descriptions and planner metadata after cards leave Queue",
+    "decision": "Treat `topic_assignments` as the durable source of planner/topic metadata for DB-backed Content Studio cards linked by `content_pieces.topic_assignment_id`. `DbContentDataService.get_briefs()` now bulk-loads the linked topic assignments and maps buyer stage, intent type, persona, priority factors, estimated word count, citation opportunity, description, target keywords, and content angle back onto each `ContentBriefListItem`, instead of assuming only GA Redis cards need that enrichment.",
+    "rationale": "The sidebar and Metrics tab were already rendering correctly when `ContentCard` carried planner metadata and `gapContext`, but once a card moved from Queue into `pending_brief_approval` or active CE, the selected card came from the DB-backed `/content/briefs` list payload, which was only returning `content_pieces` fields plus status overrides. That dropped the topic-assignment description and related planner context from the left sidebar. Rehydrating those fields from `topic_assignments` keeps the detail view consistent across Queue, brief review, and active production stages without depending on ephemeral Redis-only card metadata.",
+    "alternatives": [
+      "Persist all planner metadata redundantly into `content_pieces.evaluation_results` and read it only from there — rejected because the authoritative planner/topic-assignment source already exists and the card should survive metadata evolution without duplicating every field",
+      "Make the frontend fetch topic-assignment details separately after selecting a card — rejected because the selected card already comes from `/content/briefs`, and splitting this contract across another request would add latency and more state drift in the detail view",
+      "Keep the old runtime-only sidebar for active cards — rejected because it duplicated the center-panel pipeline state and hid the topic brief that users need while approving briefs or monitoring generation"
+    ],
+    "files_affected": [
+      "core/services/db_content_data.py",
+      "tests/services/test_db_content_data_backend.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. DB-backed `pending_brief_approval` and active CE cards now keep the same topic-assignment description and planner metadata that Queue cards expose, and the right sidebar continues to use the topic-focused gap context already attached to those cards. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py -q` (12 passed) and `venv/bin/python -m py_compile core/services/db_content_data.py tests/services/test_db_content_data_backend.py` (clean).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-REVIEW-METRICS-USE-CE-EVAL-SNAPSHOT",
+    "timestamp": "2026-04-11",
+    "task": "Content Studio right-sidebar structural compliance and E-E-A-T for content review/completed cards",
+    "decision": "Review and completed article detail views must source structural compliance, citation prediction, and E-E-A-T from the content-engine evaluator snapshot for that exact generated article, not from the site-audit module. `pipeline_v13.py` now persists a rich article-level eval snapshot (`eval_history`, `final_passed`, latest dimension summary, and `cps`) onto the linked `content_piece` before entering `pending_content_approval`, and approved-piece persistence keeps the same payload. `DbContentDataService.get_brief_detail()` returns both `eval_history` and `cps` from `evaluation_results`, which is the contract the frontend adapters already use to render structural compliance and E-E-A-T.",
+    "rationale": "The blank review sidebar was caused by a timing mismatch: the review UI reads from the DB-backed `content_piece`, but until this fix the pipeline only wrote a thin summary after final approval, so `pending_content_approval` cards still pointed at the early placeholder row with no evaluator history or CPS. Site-audit E-E-A-T is the wrong substitute because it measures page/site quality in a separate pipeline, while the review sidebar needs article-specific scores for the exact generated draft the human is approving.",
+    "alternatives": [
+      "Populate the review sidebar from site-audit scores — rejected because site-audit is page/site-level and can diverge materially from the generated article's evaluator result",
+      "Recompute structural compliance and E-E-A-T in the detail API on demand — rejected because the pipeline already has the authoritative evaluator output and recomputation would add latency and drift risk",
+      "Wait until final approval to persist evaluator history — rejected because `pending_content_approval` is itself a first-class detail view and must render the metrics before the user approves"
+    ],
+    "files_affected": [
+      "core/content_engine/pipeline_v13.py",
+      "core/services/db_content_data.py",
+      "tests/content_engine/test_pipeline_v13.py",
+      "tests/services/test_db_content_data_backend.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. `pending_content_approval` and completed article detail views now read article-level structural compliance, citation prediction, and E-E-A-T from the content-engine evaluator snapshot stored on the linked `content_piece`. Validation: `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k 'ContentReview or pending_content_review_persists_eval_snapshot_for_sidebar_metrics' -q` (5 passed), `venv/bin/pytest tests/services/test_db_content_data_backend.py -q` (13 passed), and `venv/bin/python -m py_compile core/content_engine/pipeline_v13.py core/services/db_content_data.py tests/content_engine/test_pipeline_v13.py tests/services/test_db_content_data_backend.py` (clean).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-PLANNER-PRIORITY-QUEUE-USES-QUEUEABLE-STATUSES-ONLY",
+    "timestamp": "2026-04-11",
+    "task": "Content Planner priority queue visibility after sending topics to Content Engine",
+    "decision": "Only the Priority Queue section should hide topics once they have been sent to Content Engine. The frontend assignment model now carries backend `status`, the Priority Queue view renders only queueable assignments (`not_started`), and `approveAssignments()` optimistically marks selected rows `approved` so they disappear immediately from Priority Queue while the GA launch runs. Other planner surfaces continue to receive the broader non-rejected assignment set, and pipeline-launch rollback restores the affected rows back to `not_started`.",
+    "rationale": "The previous planner data path dropped backend assignment status when adapting Topic Discovery assignments, so the Priority Queue could not distinguish unsent topics from already-approved/in-flight ones. As a result, topics remained visible in Priority Queue even after the user sent them to Content Engine. The user only requested this behavior change for the Priority Queue section, not for the rest of Planner, so a queue-only filter at the page/view layer preserves existing explorer behavior while making the priority list reflect actionable items only.",
+    "alternatives": [
+      "Filter all planner surfaces to queueable statuses only — rejected because the request was explicitly scoped to the Priority Queue section",
+      "Remove approved topics from the entire local assignment store after send — rejected because rollback and other planner views would lose state they may still need",
+      "Require a backend-only filtered endpoint just for Priority Queue — rejected because the existing assignment list already carries status and the queue-only distinction belongs at the UI section boundary"
+    ],
+    "files_affected": [
+      "frontend/src/app/(dashboard)/planner/_components/planner-data.ts",
+      "frontend/src/app/(dashboard)/planner/_lib/adapters.ts",
+      "frontend/src/app/(dashboard)/planner/_hooks/usePlannerData.ts",
+      "frontend/src/app/(dashboard)/planner/page.tsx"
+    ],
+    "outcome": "Implemented on 2026-04-11. Assignments now retain backend `status`, `approveAssignments()` optimistically flips selected rows to `approved`, rollback restores them to `not_started` if pipeline launch fails, and the Priority Queue section renders only `not_started` assignments so sent topics disappear immediately from that list. Validation: `cd frontend && npx tsc --noEmit`.",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]

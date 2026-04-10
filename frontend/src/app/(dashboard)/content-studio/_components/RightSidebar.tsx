@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Check, Download, ExternalLink, Copy } from 'lucide-react';
+import { marked } from 'marked';
 import type { ContentCard, ContentMetadata } from './types';
 import type { GapSummaryResponseAPI } from '../_lib/types';
 import {
@@ -46,6 +47,31 @@ const OVERLINE: React.CSSProperties = {
 const BAR_HEIGHT = 6;
 const BAR_RADIUS = 3;
 const BAR_BG = 'var(--border)';
+
+function toHtml(markdown: string): string {
+  return marked.parse(markdown, { async: false }) as string;
+}
+
+function toPlainText(markdown: string): string {
+  if (typeof window === 'undefined') {
+    return markdown.replace(/[#_*`>\-\[\]\(\)!]/g, '').trim();
+  }
+  const html = toHtml(markdown);
+  const doc = new window.DOMParser().parseFromString(html, 'text/html');
+  return doc.body.textContent?.trim() || '';
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string): void {
+  const blob = new Blob([content], { type: mimeType });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
 
 function GapAnalysisSection({ card, gapSummary }: { card: ContentCard; gapSummary?: GapSummaryResponseAPI }) {
   const ctx = card.gapContext;
@@ -496,15 +522,46 @@ function LinksTab({ card }: { card: ContentCard }) {
   );
 }
 
-function ExportTab({ onPublish }: { onPublish: () => void }) {
+function ExportTab({
+  onPublish,
+  title,
+  markdown,
+  isEnabled,
+}: {
+  onPublish: () => void;
+  title: string;
+  markdown: string | null;
+  isEnabled: boolean;
+}) {
   const [copied, setCopied] = useState<string | null>(null);
   const [showPublishForm, setShowPublishForm] = useState(false);
   const [publishUrl, setPublishUrl] = useState('');
 
-  function handleCopy(format: string) {
-    navigator.clipboard.writeText(`[${format} content would be copied here]`);
+  const safeBaseName = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'content';
+
+  function handleCopy(format: 'Markdown' | 'HTML' | 'Plain text') {
+    if (!isEnabled || !markdown) return;
+    const payload = format === 'Markdown'
+      ? markdown
+      : format === 'HTML'
+        ? toHtml(markdown)
+        : toPlainText(markdown);
+    navigator.clipboard.writeText(payload);
     setCopied(format);
     setTimeout(() => setCopied(null), 1500);
+  }
+
+  function handleDownload(format: '.md' | '.html') {
+    if (!isEnabled || !markdown) return;
+    if (format === '.md') {
+      downloadTextFile(`${safeBaseName}.md`, markdown, 'text/markdown;charset=utf-8');
+      return;
+    }
+    downloadTextFile(`${safeBaseName}.html`, toHtml(markdown), 'text/html;charset=utf-8');
   }
 
   const btnStyle: React.CSSProperties = {
@@ -514,16 +571,42 @@ function ExportTab({ onPublish }: { onPublish: () => void }) {
     width: '100%', display: 'flex', alignItems: 'center', gap: 8,
   };
 
+  const disabledBtnStyle: React.CSSProperties = {
+    ...btnStyle,
+    opacity: 0.45,
+    cursor: 'not-allowed',
+    color: 'var(--text-tertiary)',
+  };
+
   return (
     <div className="p-4 space-y-5 overflow-y-auto flex-1">
+      {!isEnabled && (
+        <div
+          className="p-3"
+          style={{
+            border: '1px dashed var(--border)',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: 11,
+            color: 'var(--text-tertiary)',
+            lineHeight: 1.5,
+          }}
+        >
+          Export actions unlock only after full content is produced. They become available during final content approval and after the card reaches the completed column.
+        </div>
+      )}
+
       <div>
         <div style={OVERLINE}>Copy</div>
         <div className="space-y-2">
-          {['Markdown', 'HTML', 'Plain text'].map((fmt) => (
+          {(['Markdown', 'HTML', 'Plain text'] as const).map((fmt) => (
             <button
               key={fmt}
               onClick={() => handleCopy(fmt)}
-              style={{ ...btnStyle, color: copied === fmt ? 'var(--success)' : 'var(--text-primary)' }}
+              disabled={!isEnabled || !markdown}
+              style={{
+                ...(isEnabled && markdown ? btnStyle : disabledBtnStyle),
+                color: copied === fmt && isEnabled ? 'var(--success)' : (isEnabled && markdown ? 'var(--text-primary)' : 'var(--text-tertiary)'),
+              }}
             >
               {copied === fmt ? <Check size={12} /> : <Copy size={12} />}
               {copied === fmt ? 'Copied' : `Copy as ${fmt}`}
@@ -535,8 +618,13 @@ function ExportTab({ onPublish }: { onPublish: () => void }) {
       <div>
         <div style={OVERLINE}>Download</div>
         <div className="space-y-2">
-          {['.md', '.html'].map((ext) => (
-            <button key={ext} style={{ ...btnStyle, color: 'var(--text-primary)' }}>
+          {(['.md', '.html'] as const).map((ext) => (
+            <button
+              key={ext}
+              onClick={() => handleDownload(ext)}
+              disabled={!isEnabled || !markdown}
+              style={{ ...(isEnabled && markdown ? btnStyle : disabledBtnStyle), color: isEnabled && markdown ? 'var(--text-primary)' : 'var(--text-tertiary)' }}
+            >
               <Download size={12} />
               Download {ext}
             </button>
@@ -549,12 +637,18 @@ function ExportTab({ onPublish }: { onPublish: () => void }) {
         {!showPublishForm ? (
           <>
             <button
-              onClick={() => setShowPublishForm(true)}
+              onClick={() => {
+                if (!isEnabled || !markdown) return;
+                setShowPublishForm(true);
+              }}
+              disabled={!isEnabled || !markdown}
               style={{
-                ...btnStyle,
-                background: 'var(--accent)',
-                color: 'var(--text-on-accent)',
-                border: 'none',
+                ...(isEnabled && markdown ? {
+                  ...btnStyle,
+                  background: 'var(--accent)',
+                  color: 'var(--text-on-accent)',
+                  border: 'none',
+                } : disabledBtnStyle),
                 justifyContent: 'center',
               }}
             >
@@ -713,6 +807,7 @@ interface RightSidebarProps {
   metadata?: ContentMetadata;
   onMetadataChange: (m: ContentMetadata) => void;
   onPublish: () => void;
+  exportMarkdown?: string | null;
 }
 
 export function RightSidebar({
@@ -724,8 +819,15 @@ export function RightSidebar({
   metadata,
   onMetadataChange,
   onPublish,
+  exportMarkdown,
 }: RightSidebarProps) {
   const [activeTab, setActiveTab] = useState<Tab>('metrics');
+  const exportEnabled = (
+    card.status === 'review'
+    || card.status === 'pending_content_approval'
+    || card.status === 'completed'
+    || card.status === 'published'
+  );
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'metrics', label: 'Metrics' },
@@ -776,7 +878,14 @@ export function RightSidebar({
         )}
         {activeTab === 'seo' && <SEOTab metadata={metadata} onChange={onMetadataChange} />}
         {activeTab === 'links' && <LinksTab card={card} />}
-        {activeTab === 'export' && <ExportTab onPublish={onPublish} />}
+        {activeTab === 'export' && (
+          <ExportTab
+            onPublish={onPublish}
+            title={card.title}
+            markdown={exportMarkdown ?? card.articleContent?.markdown ?? null}
+            isEnabled={exportEnabled}
+          />
+        )}
       </div>
     </div>
   );

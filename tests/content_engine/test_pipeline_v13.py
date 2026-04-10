@@ -17,6 +17,8 @@ from core.models.content_generation import (
     ContentGenerationOutput,
     ContentPiece,
     ContentStatus,
+    DimensionResult,
+    EvalResult,
     FormattedContent,
     RevisionHistory,
 )
@@ -440,6 +442,107 @@ class TestContentReview:
         assert final_path.exists()
         assert final_path.read_text() == edited_markdown
         assert result.pieces[0].final_markdown == edited_markdown
+
+    @pytest.mark.asyncio
+    async def test_pending_content_review_persists_eval_snapshot_for_sidebar_metrics(self, tmp_path):
+        """Review-state DB snapshot should carry eval_history + CPS for sidebar metrics."""
+        input_data = _make_input(tmp_path)
+        blueprint = _make_blueprint()
+        formatted = _make_formatted()
+        history = RevisionHistory(
+            brief_id="brief-001",
+            final_passed=True,
+            cycles=[
+                EvalResult(
+                    brief_id="brief-001",
+                    cycle=1,
+                    overall_passed=True,
+                    overall_score=0.84,
+                    dimensions=[
+                        DimensionResult(
+                            dimension="structural",
+                            passed=True,
+                            score=0.8,
+                            details={
+                                "header_count": {"actual": 7, "target": 6},
+                                "citation_count": {"actual": 5, "target": 4},
+                                "word_count": {"word_count": 2200, "range": [1800, 2400]},
+                            },
+                        ),
+                        DimensionResult(
+                            dimension="eeat",
+                            passed=True,
+                            score=0.86,
+                            details={
+                                "dimension_scores": {
+                                    "experience": 0.8,
+                                    "expertise": 0.9,
+                                    "authoritativeness": 0.83,
+                                    "trustworthiness": 0.91,
+                                }
+                            },
+                        ),
+                        DimensionResult(
+                            dimension="style",
+                            passed=True,
+                            score=0.88,
+                            details={},
+                        ),
+                    ],
+                )
+            ],
+        )
+        cps_data = {
+            "cps_score": 0.63,
+            "per_engine": {
+                "chatgpt_search": 0.61,
+                "perplexity": 0.66,
+            },
+        }
+        persist_pieces = AsyncMock()
+
+        with patch("core.content_engine.pipeline_v13.select_topics",
+                   new_callable=AsyncMock, return_value=_make_planner_output()), \
+             patch("core.content_engine.pipeline_v13.extract_scorecard", return_value=MagicMock()), \
+             patch("core.content_engine.pipeline_v13.extract_worker_context",
+                   return_value={"q-001": WorkerQueryContext(query_gap={"query_id": "q-001"})}), \
+             patch("core.content_engine.pipeline_v13.build_briefs_parallel",
+                   new_callable=AsyncMock, return_value=[blueprint]), \
+             patch("core.content_engine.pipeline_v13.persist_blueprints_early",
+                   new_callable=AsyncMock), \
+             patch("core.content_engine.pipeline_v13._merge_and_write_blueprints"), \
+             patch("core.content_engine.workers.dispatcher.dispatch_workers_v13",
+                   new_callable=AsyncMock, return_value=([(formatted.brief_id, formatted)], [])), \
+             patch("core.content_engine.evaluator.loop.evaluate_and_optimize",
+                   new_callable=AsyncMock, return_value=(formatted, history, "pass")), \
+             patch("core.content_engine.pipeline_v13._score_cps_batch",
+                   new_callable=AsyncMock, return_value={"brief-001": cps_data}), \
+             patch("core.content_engine.pipeline_v13.persist_content_pieces", persist_pieces), \
+             patch("core.content_engine.pipeline_v13.persist_content_run_summary",
+                   new_callable=AsyncMock), \
+             patch("core.content_engine.pipeline_v13._cleanup_pipeline_state_async",
+                   new_callable=AsyncMock), \
+             patch("core.content_engine.pipeline_v13.run_hitl_checkpoint",
+                   new_callable=AsyncMock, side_effect=[
+                       {"topic_decision": "approve", "approved_topic_ranks": [0]},
+                       {"brief_decision": "approve"},
+                       {"content_decision": "approve", "finalized": True},
+                   ]):
+            await run_content_generation_v13(
+                input_data,
+                session_factory=MagicMock(),
+                run_id=uuid.uuid4(),
+                company_id=uuid.uuid4(),
+            )
+
+        snapshot_call = next(
+            call for call in persist_pieces.await_args_list
+            if call.kwargs["pieces"] and call.kwargs["pieces"][0].status == ContentStatus.PENDING
+        )
+        snapshot_piece = snapshot_call.kwargs["pieces"][0]
+        assert snapshot_piece.eval_summary["final_passed"] is True
+        assert snapshot_piece.eval_summary["cps"] == cps_data
+        assert snapshot_piece.eval_summary["eval_history"][0]["dimensions"][1]["dimension"] == "eeat"
 
     @pytest.mark.asyncio
     async def test_rejected_content_no_artifact(self, tmp_path):

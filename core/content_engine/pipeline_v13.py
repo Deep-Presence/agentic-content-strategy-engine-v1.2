@@ -149,6 +149,33 @@ def _build_td_content_review_continuation_payload(
     }
 
 
+def _build_eval_snapshot(
+    *,
+    history: RevisionHistory,
+    cps_data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the persisted evaluator snapshot used by review/completed detail views."""
+    eval_summary: Dict[str, Any] = {
+        "eval_history": [cycle.model_dump(mode="json") for cycle in history.cycles],
+        "final_passed": history.final_passed,
+    }
+    if history.cycles:
+        last_eval = history.cycles[-1]
+        eval_summary.update(
+            {
+                "overall_score": last_eval.overall_score,
+                "overall_passed": last_eval.overall_passed,
+                "dimensions": {
+                    d.dimension: {"score": d.score, "passed": d.passed}
+                    for d in last_eval.dimensions
+                },
+            }
+        )
+    if cps_data:
+        eval_summary["cps"] = cps_data
+    return eval_summary
+
+
 def _load_artifact_text(path: Optional[str], *, storage: Optional[Any] = None) -> str:
     """Load a text artifact via StorageBackend (preferred) or filesystem fallback."""
     if not path:
@@ -2168,23 +2195,30 @@ async def _run_pipeline_stages(
                 # HITL-3 review loop (edit/reject with bounded retries)
                 piece_resolved = False
                 while not piece_resolved:
-                    # Build eval summary
-                    eval_summary = {}
-                    if history.cycles:
-                        last_eval = history.cycles[-1]
-                        eval_summary = {
-                            "overall_score": last_eval.overall_score,
-                            "overall_passed": last_eval.overall_passed,
-                            "dimensions": {
-                                d.dimension: {"score": d.score, "passed": d.passed}
-                                for d in last_eval.dimensions
-                            },
-                        }
+                    cps_data = cps_results.get(brief_id)
                     # CPS scored at Stage 4.5; may be stale after edit/rebrief loops
                     # (acceptable for v1 — CPS is informational, not a gate)
-                    cps_data = cps_results.get(brief_id)
-                    if cps_data:
-                        eval_summary["cps"] = cps_data
+                    eval_summary = _build_eval_snapshot(
+                        history=history,
+                        cps_data=cps_data,
+                    )
+
+                    await persist_content_pieces(
+                        session_factory=session_factory,
+                        run_id=run_id,
+                        company_id=company_id,
+                        slug=slug,
+                        pieces=[
+                            ContentPiece(
+                                brief_id=final_content.brief_id,
+                                title=final_content.title,
+                                status=ContentStatus.PENDING,
+                                final_markdown=final_content.markdown,
+                                eval_summary=eval_summary,
+                                topic_assignment_id=_bp_ta_map.get(final_content.brief_id),
+                            )
+                        ],
+                    )
 
                     # HITL Checkpoint 3: Final Content Review
                     # Write pending state BEFORE graph starts so polling also
@@ -2453,20 +2487,11 @@ async def _run_pipeline_stages(
                 else:
                     bd = _brief_dir(artifact_dir, final_content.brief_id)
                     (bd / "final.md").write_text(final_content.markdown, encoding="utf-8")
-                auto_eval: Dict[str, Any] = {}
-                if history.cycles:
-                    last_eval = history.cycles[-1]
-                    auto_eval = {
-                        "overall_score": last_eval.overall_score,
-                        "overall_passed": last_eval.overall_passed,
-                        "dimensions": {
-                            d.dimension: {"score": d.score, "passed": d.passed}
-                            for d in last_eval.dimensions
-                        },
-                    }
                 cps_data = cps_results.get(_brief_id)
-                if cps_data:
-                    auto_eval["cps"] = cps_data
+                auto_eval = _build_eval_snapshot(
+                    history=history,
+                    cps_data=cps_data,
+                )
                 pieces.append(
                     ContentPiece(
                         brief_id=final_content.brief_id,

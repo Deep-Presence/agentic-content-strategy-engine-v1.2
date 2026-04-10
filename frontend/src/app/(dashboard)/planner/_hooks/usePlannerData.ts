@@ -247,8 +247,13 @@ export function usePlannerData(): PlannerData {
       if (!companySlug) return;
       const idSet = new Set(ids);
 
-      // Optimistic: just keep them in active list (status change is invisible in UI)
+      // Optimistic: mark selected assignments approved so queue-only views drop them immediately.
       const prevAssignments = assignments;
+      setAssignments((prev) =>
+        prev.map((assignment) =>
+          idSet.has(assignment.id) ? { ...assignment, status: 'approved' } : assignment,
+        ),
+      );
 
       // Fire API calls in background
       const results = await Promise.allSettled(
@@ -270,6 +275,12 @@ export function usePlannerData(): PlannerData {
   const revertAssignments = useCallback(
     async (ids: string[]) => {
       if (!companySlug) return;
+      const idSet = new Set(ids);
+      setAssignments((prev) =>
+        prev.map((assignment) =>
+          idSet.has(assignment.id) ? { ...assignment, status: 'not_started' } : assignment,
+        ),
+      );
       // Revert assignments back to not_started (used when pipeline launch fails)
       await Promise.allSettled(
         ids.map((id) => updateAssignmentStatus(companySlug, id, 'not_started')),
@@ -331,6 +342,7 @@ export function usePlannerData(): PlannerData {
       // Create a minimal Assignment for the restored item
       const restored: Assignment = {
         id: item.id,
+        status: 'not_started',
         displayId: formatDisplayId(prefixRef.current, assignments.length + 1),
         title: item.title,
         description: '',
@@ -384,6 +396,7 @@ export function usePlannerData(): PlannerData {
       const taxonomyMap = buildTaxonomyMap(rootNodesRef.current);
       const newAssignment: Assignment = {
         id: created.id,
+        status: created.status,
         displayId: created.display_id || formatDisplayId(prefixRef.current, assignments.length + rejected.length + 1),
         title: created.topic_text,
         description: '',

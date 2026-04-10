@@ -1420,6 +1420,49 @@
         "tests/content_engine/test_pipeline_v13.py"
       ],
       "codex_review": "Implemented the 3-layer draft-persistence contract for HITL-3 article editing. Backend: added `GET/PUT /api/v1/content/v13/{run_id}/draft/content`, extended `ContentApprovalRequestV13` with additive `content_markdown`, and changed the Stage 5 approve path so edited review markdown is promoted to `final.md` and `ContentPiece.final_markdown` instead of silently approving the pre-edit artifact. Frontend: `ArticleEditor` now emits markdown changes, `FullPageView` persists review drafts in localStorage keyed by company+brief+run, loads the saved backend draft on reopen, autosaves dirty drafts to the backend every 5 minutes, and sends the latest edited markdown on approve/send-back/publish. Validation: `venv/bin/pytest tests/api/test_content_v13.py -k 'ReviewDraftContent or td_content_review_routes_to_durable_resume_queue' -q` (4 passed), `venv/bin/pytest tests/api/test_content_v13.py tests/content_engine/test_pipeline_v13.py -k 'approve_content or ReviewDraftContent or edited_markdown_from_review_state' -q` (7 passed), `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k edited_markdown_from_review_state -q` (1 passed), `venv/bin/python -m py_compile api/schemas/content_v13.py api/routers/content_v13.py core/content_engine/pipeline_v13.py` (clean), and `cd frontend && npx tsc --noEmit` (clean)."
+    },
+    {
+      "id": "T-content-studio-db-backed-topic-assignment-sidebar-contract",
+      "task": "Content Studio detail view \u2014 keep topic-assignment descriptions and planner metadata visible after cards leave Queue",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 1,
+      "files_modified": [
+        "core/services/db_content_data.py",
+        "tests/services/test_db_content_data_backend.py"
+      ],
+      "codex_review": "Fixed the DB-backed card contract so active CE and pending brief-approval cards keep the same planner/topic-assignment context that Queue cards have. The sidebar components were already rendering `description`, buyer stage, intent, keywords, and content angle when those fields existed, but `DbContentDataService.get_briefs()` only enriched GA Redis cards and dropped that metadata once the card moved into `content_pieces`. The service now bulk-loads linked `topic_assignments` by `topic_assignment_id` and merges buyer stage, intent type, persona, priority factors, estimated word count, citation opportunity, description, target keywords, and content angle into each DB-backed `ContentBriefListItem`, while preserving topic-focused `gap_context` for the right sidebar Metrics tab. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py -q` (12 passed) and `venv/bin/python -m py_compile core/services/db_content_data.py tests/services/test_db_content_data_backend.py` (clean)."
+    },
+    {
+      "id": "T-content-studio-review-metrics-evaluator-snapshot",
+      "task": "Content Studio detail view \u2014 show structural compliance, citation prediction, and E-E-A-T on content review/completed cards",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 2,
+      "files_modified": [
+        "core/content_engine/pipeline_v13.py",
+        "core/services/db_content_data.py",
+        "tests/content_engine/test_pipeline_v13.py",
+        "tests/services/test_db_content_data_backend.py"
+      ],
+      "codex_review": "Fixed the empty structural compliance / E-E-A-T / citation prediction panels on `pending_content_approval` and completed article detail views. The frontend sidebar already rendered those widgets from `articleContent`, but the backend only persisted a thin evaluator summary and waited until finalization to touch `content_pieces`, so review-state cards were still backed by the early placeholder row with no evaluator snapshot. `pipeline_v13.py` now builds a full article-level eval snapshot (`eval_history`, `final_passed`, latest dimension summary, and `cps`) and refreshes the existing DB `content_piece` via `persist_content_pieces()` immediately before the HITL-3 pause, while approved-piece persistence now keeps the same richer snapshot. `DbContentDataService.get_brief_detail()` now returns `cps` from `evaluation_results` alongside `eval_history`, which lets the existing sidebar adapters render structural compliance, article-level E-E-A-T, and citation prediction from the content-engine evaluator instead of borrowing site-audit scores. Validation: `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k 'ContentReview or pending_content_review_persists_eval_snapshot_for_sidebar_metrics' -q` (5 passed), `venv/bin/pytest tests/services/test_db_content_data_backend.py -q` (13 passed), and `venv/bin/python -m py_compile core/content_engine/pipeline_v13.py core/services/db_content_data.py tests/content_engine/test_pipeline_v13.py tests/services/test_db_content_data_backend.py` (clean)."
+    },
+    {
+      "id": "T-planner-priority-queue-hide-sent-topics",
+      "task": "Content Planner priority queue \u2014 remove topics from Priority Queue once they are sent to Content Engine",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 0,
+      "files_modified": [
+        "frontend/src/app/(dashboard)/planner/_components/planner-data.ts",
+        "frontend/src/app/(dashboard)/planner/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/planner/_hooks/usePlannerData.ts",
+        "frontend/src/app/(dashboard)/planner/page.tsx"
+      ],
+      "codex_review": "Fixed the Priority Queue-only visibility contract in Content Planner. The frontend assignment model now preserves backend `status`, `approveAssignments()` optimistically flips selected rows to `approved`, and the Priority Queue section filters to queueable assignments only (`not_started`). That means topics disappear from the Priority Queue as soon as they are successfully sent to Content Engine, while the broader planner data model still keeps non-rejected assignments available for other planner surfaces and rollback can restore `not_started` if the GA launch fails. Validation: `cd frontend && npx tsc --noEmit`."
     }
   ],
   "pending": [

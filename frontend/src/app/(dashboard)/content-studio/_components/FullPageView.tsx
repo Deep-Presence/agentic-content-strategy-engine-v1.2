@@ -512,52 +512,17 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
         </div>
       </div>
 
-      {/* Agent working banner */}
-      {display.isAgentActive && card.agentProgress && (
-        <div
-          className="flex items-center gap-3 px-4 flex-shrink-0"
-          style={{
-            height: 40,
-            background: 'var(--warning-subtle)',
-            borderBottom: '1px solid var(--border)',
-          }}
-        >
-          <span
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: '50%',
-              background: 'var(--warning)',
-              animation: 'pulse 1.5s ease-in-out infinite',
-              flexShrink: 0,
-            }}
-          />
-          <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--warning)' }}>Agent working:</span>
-          <span style={{ fontSize: 11, color: 'var(--text-primary)', animation: 'typing 1.8s ease-in-out infinite' }}>
-            {card.agentProgress.currentTask}
-          </span>
-          <div className="flex-1" />
-          <div style={{ width: 200, height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-            <div
-              style={{
-                width: `${card.agentProgress.pct}%`,
-                height: '100%',
-                background: 'var(--warning)',
-                borderRadius: 2,
-                animation: 'progressPulse 2.5s ease-in-out infinite',
-                transition: 'width 0.6s ease',
-              }}
-            />
-          </div>
-          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--warning)' }}>
-            {card.agentProgress.pct}%
-          </span>
-        </div>
-      )}
-
       {/* Main content area */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <LeftSidebar card={{ ...card, briefContent: briefContent ?? undefined }} activeSection={activeSection} onSectionClick={setActiveSection} />
+        <LeftSidebar
+          card={{
+            ...card,
+            briefContent: briefContent ?? undefined,
+            articleContent: articleContent ?? undefined,
+          }}
+          activeSection={activeSection}
+          onSectionClick={setActiveSection}
+        />
 
         <div className="flex-1 overflow-y-auto">
           {detailLoading && !showQueue && !showAgent && !showGAPhase && (
@@ -602,6 +567,7 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
           onPublish={() => onAction('publish', {
             contentMarkdown: currentReviewMarkdown ?? undefined,
           })}
+          exportMarkdown={currentReviewMarkdown ?? articleContent?.markdown ?? null}
         />
       </div>
     </div>
@@ -908,7 +874,6 @@ const AGENT_LOGS: Record<string, string[]> = {
 
 function AgentContent({ card }: { card: ContentCard }) {
   const progress = card.agentProgress;
-  const display = getDisplay(card.status);
   const stepIndex = getWorkerStepIndex(card.status);
 
   const currentLogs = AGENT_LOGS[card.status] || AGENT_LOGS.drafting;
@@ -921,32 +886,6 @@ function AgentContent({ card }: { card: ContentCard }) {
       <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 20 }}>
         {card.title}
       </h1>
-
-      {/* Progress header */}
-      {progress && (
-        <div className="p-4 mb-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--warning)', animation: 'pulse 1.5s ease-in-out infinite' }} />
-              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{display.label}</span>
-            </div>
-            <span style={{ fontSize: 22, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>{progress.pct}%</span>
-          </div>
-          <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden', marginBottom: 10 }}>
-            <div style={{
-              width: `${progress.pct}%`, height: '100%',
-              background: progress.pct > 80 ? 'var(--success)' : progress.pct >= 50 ? 'var(--accent)' : 'var(--warning)',
-              borderRadius: 3, animation: 'progressPulse 2.5s ease-in-out infinite', transition: 'width 0.6s ease',
-            }} />
-          </div>
-          {progress.wordsCurrent !== undefined && (
-            <div className="flex items-center gap-4" style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-              <span>{progress.wordsCurrent.toLocaleString()} / {progress.wordsTarget?.toLocaleString()} words</span>
-              {progress.sectionsComplete !== undefined && <span>{progress.sectionsComplete}/{progress.sectionsTotal} sections</span>}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Pipeline stages — aligned with backend worker chain */}
       <div className="p-4 mb-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>

@@ -278,6 +278,7 @@ export function adaptAssignment(
 
   return {
     id: item.id,
+    status: item.status,
     displayId: item.display_id || '', // from backend; hook fills fallback if empty
     title: item.topic_text,
     description: (meta.description as string) ?? '',

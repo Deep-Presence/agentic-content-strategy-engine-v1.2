@@ -10,7 +10,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table';
 import { CommentMark } from './CommentMark';
 import { marked } from 'marked';
-import { defaultMarkdownSerializer } from 'prosemirror-markdown';
+import { MarkdownSerializer } from 'prosemirror-markdown';
 import {
   Bold,
   Italic,
@@ -50,6 +50,124 @@ function sectionsToHTML(sections: ArticleSection[]): string {
 function markdownToHTML(markdown: string): string {
   return marked.parse(markdown, { async: false }) as string;
 }
+
+function backticksFor(text: string, side: -1 | 1): string {
+  const matches = text.match(/`+/g) || [];
+  const len = matches.reduce((max, part) => Math.max(max, part.length), 0);
+  let result = len > 0 && side > 0 ? ' `' : '`';
+  for (let i = 0; i < len; i += 1) result += '`';
+  if (len > 0 && side < 0) result += ' ';
+  return result;
+}
+
+const tiptapMarkdownSerializer = new MarkdownSerializer(
+  {
+    blockquote(state, node) {
+      state.wrapBlock('> ', null, node, () => state.renderContent(node));
+    },
+    bulletList(state, node) {
+      state.renderList(node, '  ', () => '* ');
+    },
+    orderedList(state, node) {
+      const start = Number(node.attrs.start || node.attrs.order || 1);
+      const maxWidth = String(start + node.childCount - 1).length;
+      const space = ' '.repeat(maxWidth + 2);
+      state.renderList(node, space, (index) => {
+        const value = String(start + index);
+        return `${' '.repeat(maxWidth - value.length)}${value}. `;
+      });
+    },
+    listItem(state, node) {
+      state.renderContent(node);
+    },
+    paragraph(state, node) {
+      state.renderInline(node);
+      state.closeBlock(node);
+    },
+    heading(state, node) {
+      state.write(`${'#'.repeat(node.attrs.level)} `);
+      state.renderInline(node, false);
+      state.closeBlock(node);
+    },
+    hardBreak(state, node, parent, index) {
+      for (let i = index + 1; i < parent.childCount; i += 1) {
+        if (parent.child(i).type !== node.type) {
+          state.write('\\\n');
+          return;
+        }
+      }
+    },
+    horizontalRule(state, node) {
+      state.write(node.attrs.markup || '---');
+      state.closeBlock(node);
+    },
+    codeBlock(state, node) {
+      const backticks = node.textContent.match(/`{3,}/gm);
+      const fence = backticks ? `${backticks.sort().slice(-1)[0]}\`` : '```';
+      state.write(`${fence}${node.attrs.language || node.attrs.params || ''}\n`);
+      state.text(node.textContent, false);
+      state.write('\n');
+      state.write(fence);
+      state.closeBlock(node);
+    },
+    table(state, node) {
+      const rows: string[][] = [];
+      node.forEach((row) => {
+        const cells: string[] = [];
+        row.forEach((cell) => {
+          const text = cell.textContent.replace(/\n+/g, ' ').trim();
+          cells.push(text);
+        });
+        rows.push(cells);
+      });
+      if (rows.length === 0) {
+        state.closeBlock(node);
+        return;
+      }
+      const header = rows[0];
+      state.write(`| ${header.join(' | ')} |\n`);
+      state.write(`| ${header.map(() => '---').join(' | ')} |\n`);
+      rows.slice(1).forEach((row) => {
+        state.write(`| ${row.join(' | ')} |\n`);
+      });
+      state.closeBlock(node);
+    },
+    tableRow() {},
+    tableCell(state, node) {
+      state.renderInline(node, false);
+    },
+    tableHeader(state, node) {
+      state.renderInline(node, false);
+    },
+    text(state, node) {
+      state.text(node.text ?? '', false);
+    },
+  },
+  {
+    italic: { open: '*', close: '*', mixable: true, expelEnclosingWhitespace: true },
+    bold: { open: '**', close: '**', mixable: true, expelEnclosingWhitespace: true },
+    strike: { open: '~~', close: '~~', mixable: true, expelEnclosingWhitespace: true },
+    link: {
+      open: '[',
+      close(_state, mark) {
+        const title = mark.attrs.title ? ` "${String(mark.attrs.title).replace(/"/g, '\\"')}"` : '';
+        return `](${String(mark.attrs.href).replace(/[\(\)"]/g, '\\$&')}${title})`;
+      },
+      mixable: true,
+    },
+    code: {
+      open(_state, mark, parent, index) {
+        return backticksFor(parent.child(index).text ?? '', -1);
+      },
+      close(_state, _mark, parent, index) {
+        return backticksFor(parent.child(index - 1).text ?? '', 1);
+      },
+      escape: false,
+    },
+    underline: { open: '', close: '', mixable: true },
+    comment: { open: '', close: '', mixable: true },
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Bubble menu — appears on text selection (like Linear)
@@ -564,7 +682,11 @@ export function ArticleEditor({
       },
     },
     onUpdate: ({ editor: nextEditor }) => {
-      onMarkdownChange?.(defaultMarkdownSerializer.serialize(nextEditor.state.doc));
+      try {
+        onMarkdownChange?.(tiptapMarkdownSerializer.serialize(nextEditor.state.doc));
+      } catch (error) {
+        console.error('Failed to serialize editor markdown draft', error);
+      }
     },
   });
 

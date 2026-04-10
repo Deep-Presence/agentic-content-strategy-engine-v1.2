@@ -22,6 +22,8 @@ type PersonaFilter = string; // 'all' or any dynamic persona_id
 type SourceFilter = 'all' | 'gap' | 'strategic' | 'custom';
 type IntentFilter = 'all' | 'Informational' | 'Commercial' | 'Navigational' | 'Transactional';
 
+const PRIORITY_QUEUE_VISIBLE_STATUSES = new Set(['not_started']);
+
 interface Toast {
   id: number;
   message: string;
@@ -62,6 +64,11 @@ export default function ContentPlannerPage() {
       return true;
     });
   }, [assignments, stageFilter, personaFilter, sourceFilter, intentFilter]);
+
+  const priorityQueueAssignments = useMemo(
+    () => filtered.filter((assignment) => PRIORITY_QUEUE_VISIBLE_STATUSES.has(assignment.status)),
+    [filtered],
+  );
 
   const hasActiveFilters = stageFilter !== 'all' || personaFilter !== 'all' || sourceFilter !== 'all' || intentFilter !== 'all';
 
@@ -283,7 +290,7 @@ export default function ContentPlannerPage() {
           </div>
         )}
         {!isLoading && !isEmpty && !error && view === 'queue' && (
-          <PriorityQueue assignments={filtered} onRowClick={setDrawerAssignment} onApprove={handleApprove} onReject={handleReject} />
+          <PriorityQueue assignments={priorityQueueAssignments} onRowClick={setDrawerAssignment} onApprove={handleApprove} onReject={handleReject} />
         )}
         {!isLoading && !isEmpty && !error && view === 'explorer' && (
           <ClusterExplorer assignments={filtered} clusters={clusters} onRowClick={setDrawerAssignment} onApprove={handleApprove} onReject={handleReject} onExpandSubdomain={plannerData.expandSubdomain} />

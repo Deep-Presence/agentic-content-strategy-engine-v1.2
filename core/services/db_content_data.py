@@ -89,6 +89,75 @@ class DbContentDataService:
         )
         return str(run.id) if run else None
 
+    async def _load_topic_assignment_metadata(
+        self,
+        pieces: List[Any],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Bulk-load planner metadata for DB-backed cards linked to topic assignments."""
+        assignment_ids: List[_uuid.UUID] = []
+        for piece in pieces:
+            raw_assignment_id = getattr(piece, "topic_assignment_id", None)
+            if not raw_assignment_id:
+                continue
+            try:
+                assignment_ids.append(
+                    raw_assignment_id
+                    if isinstance(raw_assignment_id, _uuid.UUID)
+                    else _uuid.UUID(str(raw_assignment_id)),
+                )
+            except (ValueError, TypeError, AttributeError):
+                continue
+
+        if not assignment_ids:
+            return {}
+
+        try:
+            from core.db.engine import get_session_factory
+            from core.db.repositories.topic_discovery_repo import TopicAssignmentRepository
+
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                repo = TopicAssignmentRepository(session)
+                assignments = await repo.get_by_ids(assignment_ids)
+
+            metadata_by_assignment: Dict[str, Dict[str, Any]] = {}
+            for assignment in assignments:
+                raw_meta = getattr(assignment, "metadata_json", None) or {}
+                if not isinstance(raw_meta, dict):
+                    raw_meta = {}
+                priority_factors = getattr(assignment, "priority_factors", None) or {}
+                if not isinstance(priority_factors, dict):
+                    priority_factors = {}
+
+                buyer_stage = getattr(assignment, "buyer_stage", None)
+                intent_type = getattr(assignment, "intent_type", None)
+                metadata_by_assignment[str(assignment.id)] = {
+                    "topic_assignment_id": str(assignment.id),
+                    "buyer_stage": getattr(buyer_stage, "value", buyer_stage),
+                    "intent_type": getattr(intent_type, "value", intent_type),
+                    "persona_name": getattr(assignment, "persona_name", None),
+                    "persona_id": getattr(assignment, "persona_id", None),
+                    "persona_affinity": getattr(assignment, "persona_affinity_json", None) or {},
+                    "priority_factors": priority_factors,
+                    "content_format": raw_meta.get("content_format"),
+                    "estimated_word_count": raw_meta.get("estimated_word_count"),
+                    "citation_opportunity": priority_factors.get(
+                        "citation_opportunity",
+                        getattr(assignment, "priority_score", None),
+                    ),
+                    "description": raw_meta.get("description"),
+                    "target_keywords": raw_meta.get("target_keywords"),
+                    "content_angle": raw_meta.get("angle"),
+                }
+            return metadata_by_assignment
+        except Exception:
+            logger.warning(
+                "Topic-assignment metadata load failed for %d pieces",
+                len(assignment_ids),
+                exc_info=True,
+            )
+            return {}
+
     # ── Brief List (DB-backed) ───────────────────────────────────────
 
     async def get_briefs(
@@ -121,6 +190,10 @@ class DbContentDataService:
         if not pieces:
             # Only GA-phase cards exist — return them
             return ContentBriefListResponse(briefs=ga_cards, total=len(ga_cards))
+
+        topic_assignment_metadata = await self._load_topic_assignment_metadata(
+            list(pieces),
+        )
 
         # Load gap analysis data for sidebar enrichment via StorageBackend
         # Derive base company slug from effective_slug for gap analysis lookup
@@ -211,6 +284,9 @@ class DbContentDataService:
             # artifact directories, and HITL approval endpoints use. Fall back
             # to DB UUID only when brief_id was never set.
             display_id = piece.brief_id or str(piece.id)
+            piece_assignment_id = getattr(piece, "topic_assignment_id", None)
+            piece_assignment_key = str(piece_assignment_id) if piece_assignment_id else ""
+            assignment_meta = topic_assignment_metadata.get(piece_assignment_key, {})
 
             items.append(ContentBriefListItem(
                 id=display_id,
@@ -218,6 +294,11 @@ class DbContentDataService:
                 title=piece.title or "",
                 status=display_status,
                 content_type=content_type,
+                content_format=(
+                    assignment_meta.get("content_format")
+                    or piece.content_type
+                    or "long_blog"
+                ),
                 cluster=cluster,
                 target_word_count=word_count,
                 citability_score=citability,
@@ -234,6 +315,20 @@ class DbContentDataService:
                     else (piece.created_at.isoformat() if piece.created_at else "")
                 ),
                 gap_context=gap_ctx,
+                topic_assignment_id=assignment_meta.get("topic_assignment_id") or piece_assignment_key or None,
+                buyer_stage=assignment_meta.get("buyer_stage"),
+                source="planner" if assignment_meta else None,
+                effective_slug=effective_slug,
+                intent_type=assignment_meta.get("intent_type"),
+                persona_name=assignment_meta.get("persona_name"),
+                persona_id=assignment_meta.get("persona_id"),
+                persona_affinity=assignment_meta.get("persona_affinity"),
+                priority_factors=assignment_meta.get("priority_factors"),
+                estimated_word_count=assignment_meta.get("estimated_word_count"),
+                citation_opportunity=assignment_meta.get("citation_opportunity"),
+                description=assignment_meta.get("description"),
+                target_keywords=assignment_meta.get("target_keywords"),
+                content_angle=assignment_meta.get("content_angle"),
                 published_url=piece.published_url or "",
                 published_at=(
                     piece.published_at.isoformat()
@@ -422,6 +517,7 @@ class DbContentDataService:
         eval_results = piece.evaluation_results or {}
         eval_history = eval_results.get("eval_history", [])
         final_passed = eval_results.get("final_passed", False)
+        cps = eval_results.get("cps")
 
         # Citability
         citability: Optional[float] = None
@@ -481,7 +577,8 @@ class DbContentDataService:
             eval_history=eval_history,
             final_passed=final_passed,
             exemplars=exemplars,
-            available_stages=await self._get_available_stages(piece.id)
+            available_stages=await self._get_available_stages(piece.id),
+            cps=cps,
         )
 
     async def _get_available_stages(self, piece_id: _uuid.UUID) -> list[str]:
