@@ -267,7 +267,7 @@ export default function ContentStudioPage() {
       // Close detail view for most actions. For approvals, keep it open so the
       // user sees the card transition — closing immediately invites re-clicks
       // on the stale Kanban card which triggers 409 errors.
-      const keepOpen = action === 'approve_brief' || action === 'approve_article' || action === 'publish';
+      const keepOpen = action === 'approve_brief';
       if (!keepOpen) {
         setSelectedCardId(null);
       }
@@ -278,6 +278,7 @@ export default function ContentStudioPage() {
   // Filter and sort
   const displayCards = cards
     .filter((c) => {
+      if (isTerminal(c.status)) return false;
       if (filterKey === 'all') return true;
       if (filterKey === 'briefs') return BRIEF_STATUSES.includes(c.status);
       if (filterKey === 'articles') return ARTICLE_STATUSES.includes(c.status);

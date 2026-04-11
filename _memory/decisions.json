@@ -1926,5 +1926,50 @@
     "outcome": "Implemented on 2026-04-11. Assignments now retain backend `status`, `approveAssignments()` optimistically flips selected rows to `approved`, rollback restores them to `not_started` if pipeline launch fails, and the Priority Queue section renders only `not_started` assignments so sent topics disappear immediately from that list. Validation: `cd frontend && npx tsc --noEmit`.",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-COMPLETED-CARDS-REUSE-READONLY-ARTICLE-VIEW",
+    "timestamp": "2026-04-11",
+    "task": "Content Studio completed/published detail view article rendering",
+    "decision": "Completed and published Content Studio cards should reuse the final-article renderer rather than falling back to the generic done-state placeholder. `FullPageView` now treats `completed` and `published` as article-bearing states, and `ArticleEditor` supports a read-only mode that disables editing, review comments, and the bottom formatting toolbar while still rendering the full article body.",
+    "rationale": "The completed-column detail view was blank because the article body branch only ran for `review` and `pending_content_approval`; once a card entered `completed`, the UI switched to a generic placeholder view despite the final article being available. Reusing the same article renderer preserves consistent reading layout and left-sidebar outline behavior while avoiding a separate completed-only article component.",
+    "alternatives": [
+      "Build a second dedicated completed-article viewer — rejected because the existing article renderer already handles the layout and only needed a read-only switch",
+      "Keep completed cards on the placeholder done-state screen — rejected because users expect to read the final article from the completed column",
+      "Render the review editor unchanged for completed cards — rejected because completed/published detail views should not expose editing/comment controls"
+    ],
+    "files_affected": [
+      "frontend/src/app/(dashboard)/content-studio/_components/ArticleEditor.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx"
+    ],
+    "outcome": "Implemented on 2026-04-11. Completed and published cards now render the final article body in the center panel using `ArticleEditor` read-only mode, and the generic done placeholder is only used for non-article terminal states. Validation: `cd frontend && npx tsc --noEmit`.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-APPROVAL-HANDOFF-TO-CONTENT-PERFORMANCE",
+    "timestamp": "2026-04-11",
+    "task": "Approved content should leave the Content Studio kanban and enter a dedicated Unpublished Pages staging surface in Content Performance",
+    "decision": "Do not create a second backend staging model. Keep final approval writing the existing `completed` brief/content state, remove terminal approved/published cards from the Content Studio board, and make Content Performance responsible for the unpublished staging list by reusing the existing `/companies/{slug}/content/briefs` endpoint filtered to `status === completed && !published_url`. The only frontend surface that triggers CMS publish is the unpublished staging detail view, which reuses `FullPageView` in read-only mode and calls the existing `POST /api/v1/cms/publish` endpoint.",
+    "rationale": "The user wants a clear product distinction between approving content quality and publishing to the CMS. That distinction already exists in the backend data: approved-but-unpublished content appears as `completed` with no `published_url`, while published content already flips `content_pieces` to `published` and sets `published_url`/`published_at`. Reusing those fields avoids inventing a second staging lifecycle, keeps publish state single-sourced in the existing CMS path, and lets Content Performance act as the staging inventory for unpublished pages.",
+    "alternatives": [
+      "Add a brand-new backend `staged` / `unpublished` status and separate API surface — rejected because the existing `completed` + `published_url` contract already distinguishes approved-but-unpublished content and keeps the change smaller",
+      "Keep the approved column in Content Studio and also mirror approved cards into Content Performance — rejected because it duplicates the same staging inventory across two surfaces and muddies the handoff",
+      "Allow publish from both Content Studio review detail and Content Performance unpublished detail — rejected because the product requirement is to separate final approval from CMS publish and make Content Performance the post-approval staging area"
+    ],
+    "files_affected": [
+      "frontend/src/app/(dashboard)/content-studio/page.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_components/ColumnBoard.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
+      "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
+      "frontend/src/app/(dashboard)/content-performance/page.tsx",
+      "frontend/src/app/(dashboard)/content-performance/_lib/api.ts",
+      "frontend/src/app/(dashboard)/content-performance/_components/UnpublishedPagesTable.tsx"
+    ],
+    "outcome": "Implemented on 2026-04-11. Content Studio now removes terminal cards from the kanban and no longer exposes publish during `pending_content_approval`. Content Performance now has an `Unpublished Pages` tab backed by the briefs list, and its row detail view reuses the final-article renderer with a real CMS publish action wired to `/api/v1/cms/publish`. Validation: `cd frontend && npx tsc --noEmit`.",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]

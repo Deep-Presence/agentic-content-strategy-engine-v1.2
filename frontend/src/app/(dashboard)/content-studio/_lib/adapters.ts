@@ -118,6 +118,8 @@ export function adaptBriefToCard(item: ContentBriefListItemAPI): ContentCard {
     gapContext: item.gap_context ?? undefined,
     cycleId: item.cycle_id ?? undefined,
     targetWordCount: item.target_word_count,
+    publishedUrl: item.published_url || undefined,
+    publishedAt: item.published_at ?? undefined,
     createdAt: item.created_at,
     updatedAt: item.updated_at,
   };

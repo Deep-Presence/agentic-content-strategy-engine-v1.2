@@ -621,6 +621,7 @@ interface ArticleEditorProps {
   sections: ArticleSection[];
   initialMarkdown?: string;
   isReviewMode?: boolean;
+  readOnly?: boolean;
   comments?: ReviewComment[];
   onCommentsChange?: (comments: ReviewComment[]) => void;
   overallReview?: string;
@@ -632,6 +633,7 @@ export function ArticleEditor({
   sections,
   initialMarkdown,
   isReviewMode,
+  readOnly = false,
   comments = [],
   onCommentsChange,
   overallReview = '',
@@ -676,19 +678,21 @@ export function ArticleEditor({
       ...(isReviewMode ? [CommentMark] : []),
     ],
     content: initialHTML,
+    editable: !readOnly,
     editorProps: {
       attributes: {
         class: 'prose-editor focus:outline-none',
       },
     },
     onUpdate: ({ editor: nextEditor }) => {
+      if (readOnly) return;
       try {
         onMarkdownChange?.(tiptapMarkdownSerializer.serialize(nextEditor.state.doc));
       } catch (error) {
         console.error('Failed to serialize editor markdown draft', error);
       }
     },
-  });
+  }, [initialHTML, isReviewMode, onMarkdownChange, readOnly]);
 
   useEffect(() => {
     if (!editor) return;
@@ -802,7 +806,7 @@ export function ArticleEditor({
         >
           <BubbleMenuBar
             editor={editor}
-            isReviewMode={isReviewMode}
+            isReviewMode={isReviewMode && !readOnly}
             onAddComment={handleAddComment}
           />
           {pendingComment && (
@@ -816,7 +820,7 @@ export function ArticleEditor({
         </div>
 
         {/* Comment list + Overall review — inside scroll area */}
-        {isReviewMode && (
+        {isReviewMode && !readOnly && (
           <>
             <CommentListPanel
               comments={comments}
@@ -856,49 +860,51 @@ export function ArticleEditor({
       </div>
 
       {/* Fixed bottom toolbar */}
-      <div
-        className="flex-shrink-0 flex items-center gap-0.5 px-4"
-        style={{
-          height: 44,
-          background: 'var(--surface)',
-          borderTop: '1px solid var(--border)',
-          position: 'sticky',
-          bottom: 0,
-          zIndex: 10,
-        }}
-      >
-        <ToolbarButton icon={<Undo2 size={14} strokeWidth={1.5} />} label="Undo" disabled={!editor.can().undo()} onClick={() => editor.chain().focus().undo().run()} />
-        <ToolbarButton icon={<Redo2 size={14} strokeWidth={1.5} />} label="Redo" disabled={!editor.can().redo()} onClick={() => editor.chain().focus().redo().run()} />
-        <ToolbarDivider />
-        <ToolbarButton icon={<Type size={14} strokeWidth={1.5} />} label="Paragraph" active={!editor.isActive('heading')} onClick={() => editor.chain().focus().setParagraph().run()} />
-        <ToolbarButton icon={<Heading2 size={14} strokeWidth={1.5} />} label="Heading 2" active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} />
-        <ToolbarButton icon={<Heading3 size={14} strokeWidth={1.5} />} label="Heading 3" active={editor.isActive('heading', { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} />
-        <ToolbarDivider />
-        <ToolbarButton icon={<Bold size={14} strokeWidth={2} />} label="Bold" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()} />
-        <ToolbarButton icon={<Italic size={14} strokeWidth={1.5} />} label="Italic" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()} />
-        <ToolbarButton icon={<UnderlineIcon size={14} strokeWidth={1.5} />} label="Underline" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()} />
-        <ToolbarButton icon={<Strikethrough size={14} strokeWidth={1.5} />} label="Strikethrough" active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()} />
-        <ToolbarButton icon={<Code size={14} strokeWidth={1.5} />} label="Inline code" active={editor.isActive('code')} onClick={() => editor.chain().focus().toggleCode().run()} />
-        <ToolbarButton icon={<Link2 size={14} strokeWidth={1.5} />} label="Link" active={editor.isActive('link')} onClick={() => { if (editor.isActive('link')) { editor.chain().focus().unsetLink().run(); } else { const url = window.prompt('URL'); if (url) editor.chain().focus().setLink({ href: url }).run(); } }} />
-        <ToolbarDivider />
-        <ToolbarButton icon={<List size={14} strokeWidth={1.5} />} label="Bullet list" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()} />
-        <ToolbarButton icon={<ListOrdered size={14} strokeWidth={1.5} />} label="Numbered list" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()} />
-        <ToolbarButton icon={<Quote size={14} strokeWidth={1.5} />} label="Blockquote" active={editor.isActive('blockquote')} onClick={() => editor.chain().focus().toggleBlockquote().run()} />
-        <ToolbarDivider />
-        <ToolbarButton icon={<AlignLeft size={14} strokeWidth={1.5} />} label="Align left" active={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()} />
-        <ToolbarButton icon={<AlignCenter size={14} strokeWidth={1.5} />} label="Align center" active={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()} />
-        <ToolbarButton icon={<AlignRight size={14} strokeWidth={1.5} />} label="Align right" active={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()} />
-        <div className="ml-auto flex items-center gap-3">
-          {isReviewMode && comments.length > 0 && (
-            <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
-              {comments.length} comment{comments.length !== 1 ? 's' : ''}
+      {!readOnly && (
+        <div
+          className="flex-shrink-0 flex items-center gap-0.5 px-4"
+          style={{
+            height: 44,
+            background: 'var(--surface)',
+            borderTop: '1px solid var(--border)',
+            position: 'sticky',
+            bottom: 0,
+            zIndex: 10,
+          }}
+        >
+          <ToolbarButton icon={<Undo2 size={14} strokeWidth={1.5} />} label="Undo" disabled={!editor.can().undo()} onClick={() => editor.chain().focus().undo().run()} />
+          <ToolbarButton icon={<Redo2 size={14} strokeWidth={1.5} />} label="Redo" disabled={!editor.can().redo()} onClick={() => editor.chain().focus().redo().run()} />
+          <ToolbarDivider />
+          <ToolbarButton icon={<Type size={14} strokeWidth={1.5} />} label="Paragraph" active={!editor.isActive('heading')} onClick={() => editor.chain().focus().setParagraph().run()} />
+          <ToolbarButton icon={<Heading2 size={14} strokeWidth={1.5} />} label="Heading 2" active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} />
+          <ToolbarButton icon={<Heading3 size={14} strokeWidth={1.5} />} label="Heading 3" active={editor.isActive('heading', { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} />
+          <ToolbarDivider />
+          <ToolbarButton icon={<Bold size={14} strokeWidth={2} />} label="Bold" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()} />
+          <ToolbarButton icon={<Italic size={14} strokeWidth={1.5} />} label="Italic" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()} />
+          <ToolbarButton icon={<UnderlineIcon size={14} strokeWidth={1.5} />} label="Underline" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()} />
+          <ToolbarButton icon={<Strikethrough size={14} strokeWidth={1.5} />} label="Strikethrough" active={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()} />
+          <ToolbarButton icon={<Code size={14} strokeWidth={1.5} />} label="Inline code" active={editor.isActive('code')} onClick={() => editor.chain().focus().toggleCode().run()} />
+          <ToolbarButton icon={<Link2 size={14} strokeWidth={1.5} />} label="Link" active={editor.isActive('link')} onClick={() => { if (editor.isActive('link')) { editor.chain().focus().unsetLink().run(); } else { const url = window.prompt('URL'); if (url) editor.chain().focus().setLink({ href: url }).run(); } }} />
+          <ToolbarDivider />
+          <ToolbarButton icon={<List size={14} strokeWidth={1.5} />} label="Bullet list" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()} />
+          <ToolbarButton icon={<ListOrdered size={14} strokeWidth={1.5} />} label="Numbered list" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()} />
+          <ToolbarButton icon={<Quote size={14} strokeWidth={1.5} />} label="Blockquote" active={editor.isActive('blockquote')} onClick={() => editor.chain().focus().toggleBlockquote().run()} />
+          <ToolbarDivider />
+          <ToolbarButton icon={<AlignLeft size={14} strokeWidth={1.5} />} label="Align left" active={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()} />
+          <ToolbarButton icon={<AlignCenter size={14} strokeWidth={1.5} />} label="Align center" active={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()} />
+          <ToolbarButton icon={<AlignRight size={14} strokeWidth={1.5} />} label="Align right" active={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()} />
+          <div className="ml-auto flex items-center gap-3">
+            {isReviewMode && comments.length > 0 && (
+              <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
+                {comments.length} comment{comments.length !== 1 ? 's' : ''}
+              </span>
+            )}
+            <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>
+              {wordCount.toLocaleString()} words
             </span>
-          )}
-          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>
-            {wordCount.toLocaleString()} words
-          </span>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

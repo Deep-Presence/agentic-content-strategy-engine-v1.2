@@ -10,6 +10,7 @@ import type {
   SignalAveragesAPI,
   VelocityInsightsResponseAPI,
 } from './types';
+import type { ContentBriefListResponseAPI } from '../../content-studio/_lib/types';
 
 // ── Content Performance Detail ─────────────────────────
 
@@ -182,5 +183,43 @@ export function fetchSignalAverages(
     `/api/v1/companies/${slug}/gap-analysis/signals`,
     undefined,
     signal,
+  );
+}
+
+// ── Unpublished Pages (approved but not yet CMS-published) ──────────
+
+export function fetchUnpublishedBriefs(
+  slug: string,
+  signal?: AbortSignal,
+): Promise<ContentBriefListResponseAPI> {
+  return api.get<ContentBriefListResponseAPI>(
+    `/api/v1/companies/${encodeURIComponent(slug)}/content/briefs`,
+    undefined,
+    signal,
+  );
+}
+
+export interface CMSPublishResponseAPI {
+  cms_post_id: string;
+  url: string;
+  slug: string;
+  title: string;
+  status: string;
+  word_count: number;
+}
+
+export function publishContentBrief(
+  briefId: string,
+  effectiveSlug?: string,
+  signal?: AbortSignal,
+): Promise<CMSPublishResponseAPI> {
+  return api.post<CMSPublishResponseAPI>(
+    '/api/v1/cms/publish',
+    {
+      brief_id: briefId,
+      effective_slug: effectiveSlug,
+      status: 'publish',
+    },
+    signal ? { signal } : undefined,
   );
 }

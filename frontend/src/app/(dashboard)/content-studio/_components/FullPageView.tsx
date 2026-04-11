@@ -61,6 +61,9 @@ interface FullPageViewProps {
   card: ContentCard;
   onClose: () => void;
   onAction: (action: ActionType, data?: { editorNotes?: string; contentMarkdown?: string }) => void | Promise<void>;
+  onPublish?: (data?: { contentMarkdown?: string }) => void | Promise<void>;
+  publishLabel?: string;
+  isPublishPending?: boolean;
 }
 
 function compileEditorNotes(comments: ReviewComment[], overall: string): string {
@@ -83,7 +86,14 @@ function draftStorageKey(companySlug: string, briefId: string, runId: string): s
   return `content-studio:draft:${companySlug}:${briefId}:${runId}`;
 }
 
-export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
+export function FullPageView({
+  card,
+  onClose,
+  onAction,
+  onPublish,
+  publishLabel = 'Publish',
+  isPublishPending = false,
+}: FullPageViewProps) {
   const { companySlug } = useAuth();
   const [activeSection, setActiveSection] = useState(0);
   const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
@@ -167,8 +177,9 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
   const showQueue = !isGAPhase && card.status === 'suggested';
   const showBrief = card.status === 'brief_review' || card.status === 'pending_brief_approval';
   const showReview = card.status === 'review' || card.status === 'pending_content_approval';
-  const showArticle = showReview && articleContent;
-  const showReviewFallback = showReview && !articleContent;
+  const showReadOnlyArticle = card.status === 'completed' || card.status === 'published';
+  const showArticle = (showReview || showReadOnlyArticle) && articleContent;
+  const showReviewFallback = (showReview || showReadOnlyArticle) && !articleContent;
   const showAgent = !isGAPhase && column === 'agent';
   const showDone = column === 'done';
   const currentReviewMarkdown = articleDraftMarkdown ?? articleContent?.markdown ?? null;
@@ -445,27 +456,30 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
                 <CheckCircle size={11} strokeWidth={2} />
                 Approve
               </button>
-              <button
-                onClick={() => onAction('publish', {
-                  contentMarkdown: currentReviewMarkdown ?? undefined,
-                })}
-                className="flex items-center gap-1.5"
-                style={{
-                  height: 30,
-                  padding: '0 14px',
-                  fontSize: 12,
-                  fontWeight: 500,
-                  background: 'var(--success)',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 'var(--radius-sm)',
-                  cursor: 'pointer',
-                }}
-              >
-                <Upload size={11} strokeWidth={2} />
-                Publish
-              </button>
             </>
+          )}
+
+          {showReadOnlyArticle && onPublish && (
+            <button
+              onClick={() => onPublish({ contentMarkdown: currentReviewMarkdown ?? undefined })}
+              disabled={isPublishPending}
+              className="flex items-center gap-1.5"
+              style={{
+                height: 30,
+                padding: '0 14px',
+                fontSize: 12,
+                fontWeight: 500,
+                background: 'var(--success)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                cursor: isPublishPending ? 'not-allowed' : 'pointer',
+                opacity: isPublishPending ? 0.6 : undefined,
+              }}
+            >
+              <Upload size={11} strokeWidth={2} />
+              {publishLabel}
+            </button>
           )}
 
           {hitl.canRetry && (
@@ -538,6 +552,7 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
               sections={articleContent.sections}
               initialMarkdown={currentReviewMarkdown ?? articleContent.markdown}
               isReviewMode={hitl.canApproveContent}
+              readOnly={showReadOnlyArticle}
               comments={reviewComments}
               onCommentsChange={setReviewComments}
               overallReview={overallReview}
@@ -553,7 +568,7 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
             />
           )}
           {showAgent && <AgentContent card={card} />}
-          {showDone && <DoneContent card={card} />}
+          {showDone && !showReadOnlyArticle && <DoneContent card={card} />}
         </div>
 
         <RightSidebar
@@ -564,9 +579,9 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
           activitySourceKind={activitySourceKind}
           metadata={metadata}
           onMetadataChange={setMetadata}
-          onPublish={() => onAction('publish', {
+          onPublish={onPublish ? () => onPublish({
             contentMarkdown: currentReviewMarkdown ?? undefined,
-          })}
+          }) : undefined}
           exportMarkdown={currentReviewMarkdown ?? articleContent?.markdown ?? null}
         />
       </div>

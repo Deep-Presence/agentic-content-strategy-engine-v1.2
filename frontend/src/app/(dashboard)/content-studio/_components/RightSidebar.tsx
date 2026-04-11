@@ -44,9 +44,47 @@ const OVERLINE: React.CSSProperties = {
   marginBottom: 10,
 };
 
-const BAR_HEIGHT = 6;
+const BAR_HEIGHT = 5;
 const BAR_RADIUS = 3;
 const BAR_BG = 'var(--border)';
+
+function MetricProgressRow({
+  label,
+  valueLabel,
+  pct,
+  fill,
+  labelStyle,
+  valueStyle,
+}: {
+  label: string;
+  valueLabel: React.ReactNode;
+  pct: number;
+  fill: string;
+  labelStyle?: React.CSSProperties;
+  valueStyle?: React.CSSProperties;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span style={{ fontSize: 11, color: 'var(--text-secondary)', ...(labelStyle || {}) }}>{label}</span>
+        <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-secondary)', ...(valueStyle || {}) }}>
+          {valueLabel}
+        </span>
+      </div>
+      <div style={{ width: '100%', height: BAR_HEIGHT, minHeight: BAR_HEIGHT, maxHeight: BAR_HEIGHT, background: BAR_BG, borderRadius: BAR_RADIUS, overflow: 'hidden' }}>
+        <div
+          style={{
+            width: `${Math.min(Math.max(pct, 0), 100)}%`,
+            height: '100%',
+            background: fill,
+            borderRadius: BAR_RADIUS,
+            transition: 'width 0.6s ease',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
 
 function toHtml(markdown: string): string {
   return marked.parse(markdown, { async: false }) as string;
@@ -232,7 +270,7 @@ function MetricsTab({ card, gapSummary }: { card: ContentCard; gapSummary?: GapS
                 style={{ borderRadius: 2 }}
               />
               <span style={{ fontSize: 11, color: 'var(--text-secondary)', width: 60, flexShrink: 0 }}>{p.engine}</span>
-              <div className="flex-1" style={{ height: BAR_HEIGHT, background: BAR_BG, borderRadius: BAR_RADIUS, overflow: 'hidden' }}>
+              <div className="flex-1" style={{ height: BAR_HEIGHT, minHeight: BAR_HEIGHT, maxHeight: BAR_HEIGHT, background: BAR_BG, borderRadius: BAR_RADIUS, overflow: 'hidden' }}>
                 <div style={{ width: `${p.score}%`, height: '100%', background: 'var(--accent)', borderRadius: BAR_RADIUS, transition: 'width 0.6s ease', opacity: p.score >= 60 ? 1 : 0.6 }} />
               </div>
               <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)', width: 24, textAlign: 'right' }}>
@@ -253,17 +291,14 @@ function MetricsTab({ card, gapSummary }: { card: ContentCard; gapSummary?: GapS
             const pct = c.target > 0 ? Math.round((c.current / c.target) * 100) : 0;
             const isGood = pct >= 85;
             return (
-              <div key={c.label}>
-                <div className="flex items-center justify-between mb-1">
-                  <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{c.label}</span>
-                  <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: isGood ? 'var(--accent)' : 'var(--warning)' }}>
-                    {c.current}/{c.target}
-                  </span>
-                </div>
-                <div style={{ height: BAR_HEIGHT, background: BAR_BG, borderRadius: BAR_RADIUS, overflow: 'hidden' }}>
-                  <div style={{ width: `${Math.min(pct, 100)}%`, height: '100%', background: isGood ? 'var(--accent)' : 'var(--warning)', borderRadius: BAR_RADIUS, transition: 'width 0.6s ease' }} />
-                </div>
-              </div>
+              <MetricProgressRow
+                key={c.label}
+                label={c.label}
+                valueLabel={`${c.current}/${c.target}`}
+                pct={pct}
+                fill={isGood ? 'var(--accent)' : 'var(--warning)'}
+                valueStyle={{ color: isGood ? 'var(--accent)' : 'var(--warning)' }}
+              />
             );
           })}
         </div>
@@ -276,17 +311,13 @@ function MetricsTab({ card, gapSummary }: { card: ContentCard; gapSummary?: GapS
         </div>
         <div className="px-3 py-2 space-y-3">
           {/* Voice */}
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Voice compliance</span>
-              <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--accent)' }}>
-                {art.voiceCompliance}%
-              </span>
-            </div>
-            <div style={{ height: BAR_HEIGHT, background: BAR_BG, borderRadius: BAR_RADIUS, overflow: 'hidden' }}>
-              <div style={{ width: `${art.voiceCompliance}%`, height: '100%', background: 'var(--accent)', borderRadius: BAR_RADIUS }} />
-            </div>
-          </div>
+          <MetricProgressRow
+            label="Voice compliance"
+            valueLabel={`${art.voiceCompliance}%`}
+            pct={art.voiceCompliance}
+            fill="var(--accent)"
+            valueStyle={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)' }}
+          />
 
           {/* Divider */}
           <div style={{ borderTop: '1px solid var(--border)' }} />
@@ -305,17 +336,15 @@ function MetricsTab({ card, gapSummary }: { card: ContentCard; gapSummary?: GapS
               { label: 'Authority', value: art.eeat.authoritativeness },
               { label: 'Trust', value: art.eeat.trustworthiness },
             ].map((item) => (
-              <div key={item.label}>
-                <div className="flex items-center justify-between mb-1">
-                  <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{item.label}</span>
-                  <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-secondary)' }}>
-                    {item.value}
-                  </span>
-                </div>
-                <div style={{ height: 4, background: BAR_BG, borderRadius: 2, overflow: 'hidden' }}>
-                  <div style={{ width: `${item.value}%`, height: '100%', background: 'var(--accent)', borderRadius: 2, opacity: item.value >= 75 ? 1 : 0.6 }} />
-                </div>
-              </div>
+              <MetricProgressRow
+                key={item.label}
+                label={item.label}
+                valueLabel={item.value}
+                pct={item.value}
+                fill="var(--accent)"
+                labelStyle={{ fontSize: 10, color: 'var(--text-tertiary)' }}
+                valueStyle={{ fontSize: 10, opacity: item.value >= 75 ? 1 : 0.7 }}
+              />
             ))}
           </div>
         </div>
@@ -527,11 +556,13 @@ function ExportTab({
   title,
   markdown,
   isEnabled,
+  publishEnabled,
 }: {
-  onPublish: () => void;
+  onPublish?: () => void;
   title: string;
   markdown: string | null;
   isEnabled: boolean;
+  publishEnabled: boolean;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [showPublishForm, setShowPublishForm] = useState(false);
@@ -638,12 +669,12 @@ function ExportTab({
           <>
             <button
               onClick={() => {
-                if (!isEnabled || !markdown) return;
+                if (!publishEnabled || !markdown || !onPublish) return;
                 setShowPublishForm(true);
               }}
-              disabled={!isEnabled || !markdown}
+              disabled={!publishEnabled || !markdown || !onPublish}
               style={{
-                ...(isEnabled && markdown ? {
+                ...(publishEnabled && markdown && onPublish ? {
                   ...btnStyle,
                   background: 'var(--accent)',
                   color: 'var(--text-on-accent)',
@@ -694,7 +725,11 @@ function ExportTab({
                 Cancel
               </button>
               <button
-                onClick={() => { onPublish(); setShowPublishForm(false); }}
+                onClick={() => {
+                  if (!onPublish) return;
+                  onPublish();
+                  setShowPublishForm(false);
+                }}
                 className="flex items-center gap-1"
                 style={{
                   height: 26, padding: '0 10px', fontSize: 11, fontWeight: 500,
@@ -806,7 +841,7 @@ interface RightSidebarProps {
   activitySourceKind: CardActivitySourceKind;
   metadata?: ContentMetadata;
   onMetadataChange: (m: ContentMetadata) => void;
-  onPublish: () => void;
+  onPublish?: () => void;
   exportMarkdown?: string | null;
 }
 
@@ -828,6 +863,7 @@ export function RightSidebar({
     || card.status === 'completed'
     || card.status === 'published'
   );
+  const publishEnabled = !!onPublish && (card.status === 'completed' || card.status === 'published');
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'metrics', label: 'Metrics' },
@@ -884,6 +920,7 @@ export function RightSidebar({
             title={card.title}
             markdown={exportMarkdown ?? card.articleContent?.markdown ?? null}
             isEnabled={exportEnabled}
+            publishEnabled={publishEnabled}
           />
         )}
       </div>

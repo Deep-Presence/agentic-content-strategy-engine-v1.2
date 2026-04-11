@@ -5,10 +5,13 @@ import { Calendar, X, Search, RefreshCw, Loader2 } from 'lucide-react';
 import { MetricCard, FilterBar } from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import type { ContentPiece, StructuralSignal, ImpactLevel } from './_components/data';
+import type { ContentCard } from '../content-studio/_components/types';
+import { adaptBriefList } from '../content-studio/_lib/adapters';
+import { FullPageView } from '../content-studio/_components/FullPageView';
 import { formatTraffic } from './_components/data';
 import {
   fetchSignalAverages, fetchCMSConnection, triggerCMSSync,
-  generatePromptsForNewPages, fetchTaskStatus,
+  generatePromptsForNewPages, fetchTaskStatus, fetchUnpublishedBriefs, publishContentBrief,
 } from './_lib/api';
 import type { SignalAverageRow, SignalCorrelationRow } from './_lib/types';
 import { useContentPerformanceData } from './_hooks/useContentPerformanceData';
@@ -17,6 +20,7 @@ import { StructuralAlignment } from './_components/StructuralAlignment';
 import { ContentTable } from './_components/ContentTable';
 import { ContentDrawer } from './_components/ContentDrawer';
 import { LifecycleDistribution } from './_components/LifecycleDistribution';
+import { UnpublishedPagesTable } from './_components/UnpublishedPagesTable';
 
 const LIFECYCLE_OPTIONS = [
   { value: 'all', label: 'All Stages' },
@@ -27,7 +31,7 @@ const LIFECYCLE_OPTIONS = [
   { value: 'stale', label: 'Stale' },
 ];
 
-type Tab = 'pages' | 'insights';
+type Tab = 'pages' | 'unpublished' | 'insights';
 
 function deriveImpact(r: number): ImpactLevel {
   const absR = Math.abs(r);
@@ -61,12 +65,17 @@ function formatPeriodDate(iso: string): string {
 }
 
 export default function ContentPerformancePage() {
-  const { companySlug } = useAuth();
+  const { companySlug, isInitialized } = useAuth();
   const [cluster, setCluster] = useState('all');
   const [lifecycle, setLifecycle] = useState('all');
   const [selectedPiece, setSelectedPiece] = useState<ContentPiece | null>(null);
+  const [selectedUnpublishedCard, setSelectedUnpublishedCard] = useState<ContentCard | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('pages');
   const [searchQuery, setSearchQuery] = useState('');
+  const [unpublishedCards, setUnpublishedCards] = useState<ContentCard[]>([]);
+  const [unpublishedLoading, setUnpublishedLoading] = useState(true);
+  const [unpublishedError, setUnpublishedError] = useState<string | null>(null);
+  const [publishPendingId, setPublishPendingId] = useState<string | null>(null);
 
   // Real data from backend
   const {
@@ -89,6 +98,28 @@ export default function ContentPerformancePage() {
       .catch(() => setCmsConnected(false));
     return () => controller.abort();
   }, [companySlug]);
+
+  const loadUnpublishedCards = useCallback(async () => {
+    if (!companySlug) return;
+    setUnpublishedLoading(true);
+    setUnpublishedError(null);
+    try {
+      const response = await fetchUnpublishedBriefs(companySlug);
+      const adapted = adaptBriefList(response.briefs).filter(
+        (card) => card.status === 'completed' && !card.publishedUrl,
+      );
+      setUnpublishedCards(adapted);
+    } catch (err) {
+      setUnpublishedError(err instanceof Error ? err.message : 'Failed to load unpublished pages');
+    } finally {
+      setUnpublishedLoading(false);
+    }
+  }, [companySlug]);
+
+  useEffect(() => {
+    if (!isInitialized || !companySlug) return;
+    loadUnpublishedCards();
+  }, [isInitialized, companySlug, loadUnpublishedCards]);
 
   // CMS sync + prompt generation handler
   const handleSyncCMS = useCallback(async () => {
@@ -193,12 +224,28 @@ export default function ContentPerformancePage() {
     });
   }, [pieces, cluster, lifecycle]);
 
+  const filteredUnpublishedCards = useMemo(() => unpublishedCards, [unpublishedCards]);
+
   // KPI calculations
   const totalAIReferrals = filteredPieces.reduce((s, p) => s + p.aiReferrals, 0);
   const staleCount = filteredPieces.filter((p) => p.lifecycle === 'stale' || p.lifecycle === 'declining').length;
 
   const handleRowClick = useCallback((piece: ContentPiece) => setSelectedPiece(piece), []);
   const handleDrawerClose = useCallback(() => setSelectedPiece(null), []);
+  const handleUnpublishedRowClick = useCallback((card: ContentCard) => setSelectedUnpublishedCard(card), []);
+  const handleUnpublishedClose = useCallback(() => setSelectedUnpublishedCard(null), []);
+  const handlePublishUnpublished = useCallback(async () => {
+    if (!selectedUnpublishedCard) return;
+    setPublishPendingId(selectedUnpublishedCard.id);
+    try {
+      await publishContentBrief(selectedUnpublishedCard.id, selectedUnpublishedCard.effectiveSlug);
+      setSelectedUnpublishedCard(null);
+      await loadUnpublishedCards();
+      refetch();
+    } finally {
+      setPublishPendingId(null);
+    }
+  }, [selectedUnpublishedCard, loadUnpublishedCards, refetch]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -298,7 +345,11 @@ export default function ContentPerformancePage() {
         display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--border)', padding: '0 4px',
       }}>
         <div style={{ display: 'flex', gap: 0 }}>
-          {(['pages', 'insights'] as const).map((tab) => (
+          {([
+            ['pages', 'Pages'],
+            ['unpublished', 'Unpublished Pages'],
+            ['insights', 'Insights'],
+          ] as const).map(([tab, label]) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -315,11 +366,11 @@ export default function ContentPerformancePage() {
                 marginBottom: -1,
               }}
             >
-              {tab}
+              {label}
             </button>
           ))}
         </div>
-        {activeTab === 'pages' && (
+        {(activeTab === 'pages' || activeTab === 'unpublished') && (
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
             <div style={{
               display: 'flex', alignItems: 'center', gap: 6, height: 30,
@@ -329,7 +380,7 @@ export default function ContentPerformancePage() {
               <Search size={12} strokeWidth={1.5} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
               <input
                 type="text"
-                placeholder="Search content..."
+                placeholder={activeTab === 'unpublished' ? 'Search unpublished pages...' : 'Search content...'}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={{
@@ -344,7 +395,7 @@ export default function ContentPerformancePage() {
       </div>
 
       {/* Error state */}
-      {error && (
+      {activeTab !== 'unpublished' && error && (
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '12px 16px', border: '1px solid rgba(229,72,77,0.3)',
@@ -367,7 +418,7 @@ export default function ContentPerformancePage() {
       )}
 
       {/* Loading state */}
-      {isLoading && pieces.length === 0 && !error && (
+      {activeTab !== 'unpublished' && isLoading && pieces.length === 0 && !error && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 48, gap: 8 }}>
           <div style={{
             width: 24, height: 24, border: '2px solid var(--border)',
@@ -380,7 +431,7 @@ export default function ContentPerformancePage() {
       )}
 
       {/* Empty state */}
-      {!isLoading && !error && pieces.length === 0 && (
+      {activeTab !== 'unpublished' && !isLoading && !error && pieces.length === 0 && (
         <div style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           padding: 48, gap: 8, border: '1px solid var(--border)', borderRadius: 4,
@@ -395,6 +446,59 @@ export default function ContentPerformancePage() {
       {/* Pages tab: Content table as primary view */}
       {activeTab === 'pages' && filteredPieces.length > 0 && (
         <ContentTable pieces={filteredPieces} onRowClick={handleRowClick} searchQuery={searchQuery} />
+      )}
+
+      {activeTab === 'unpublished' && unpublishedError && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '12px 16px', border: '1px solid rgba(229,72,77,0.3)',
+          borderRadius: 4, background: 'rgba(229,72,77,0.04)',
+        }}>
+          <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{unpublishedError}</span>
+          <button
+            onClick={loadUnpublishedCards}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '4px 10px', fontSize: 12, fontWeight: 500,
+              border: '1px solid var(--border)', borderRadius: 4,
+              background: 'var(--surface)', color: 'var(--text-primary)',
+              cursor: 'pointer',
+            }}
+          >
+            <RefreshCw size={12} strokeWidth={1.5} /> Retry
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'unpublished' && unpublishedLoading && !unpublishedError && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 48, gap: 8 }}>
+          <div style={{
+            width: 24, height: 24, border: '2px solid var(--border)',
+            borderTopColor: 'var(--accent)', borderRadius: '50%',
+            animation: 'spin 0.8s linear infinite',
+          }} />
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Loading unpublished pages...</span>
+        </div>
+      )}
+
+      {activeTab === 'unpublished' && !unpublishedLoading && !unpublishedError && filteredUnpublishedCards.length === 0 && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          padding: 48, gap: 8, border: '1px solid var(--border)', borderRadius: 4,
+        }}>
+          <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>No unpublished pages</p>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', textAlign: 'center', maxWidth: 400 }}>
+            Final approvals from Content Studio land here until you publish them to the connected CMS.
+          </p>
+        </div>
+      )}
+
+      {activeTab === 'unpublished' && !unpublishedLoading && !unpublishedError && filteredUnpublishedCards.length > 0 && (
+        <UnpublishedPagesTable
+          cards={filteredUnpublishedCards}
+          searchQuery={searchQuery}
+          onRowClick={handleUnpublishedRowClick}
+        />
       )}
 
       {/* Insights tab: Charts + structural signals + lifecycle distribution */}
@@ -421,6 +525,16 @@ export default function ContentPerformancePage() {
 
       {/* Side Drawer */}
       <ContentDrawer piece={selectedPiece} onClose={handleDrawerClose} signalAverages={signalAverages} />
+      {selectedUnpublishedCard && (
+        <FullPageView
+          card={selectedUnpublishedCard}
+          onClose={handleUnpublishedClose}
+          onAction={async () => {}}
+          onPublish={handlePublishUnpublished}
+          publishLabel={publishPendingId === selectedUnpublishedCard.id ? 'Publishing...' : 'Publish'}
+          isPublishPending={publishPendingId === selectedUnpublishedCard.id}
+        />
+      )}
     </div>
   );
 }

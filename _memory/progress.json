@@ -1463,6 +1463,39 @@
         "frontend/src/app/(dashboard)/planner/page.tsx"
       ],
       "codex_review": "Fixed the Priority Queue-only visibility contract in Content Planner. The frontend assignment model now preserves backend `status`, `approveAssignments()` optimistically flips selected rows to `approved`, and the Priority Queue section filters to queueable assignments only (`not_started`). That means topics disappear from the Priority Queue as soon as they are successfully sent to Content Engine, while the broader planner data model still keeps non-rejected assignments available for other planner surfaces and rollback can restore `not_started` if the GA launch fails. Validation: `cd frontend && npx tsc --noEmit`."
+    },
+    {
+      "id": "T-content-studio-completed-card-article-view",
+      "task": "Content Studio detail view \u2014 render the final article body for completed and published cards",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 0,
+      "files_modified": [
+        "frontend/src/app/(dashboard)/content-studio/_components/ArticleEditor.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx"
+      ],
+      "codex_review": "Fixed the completed/published detail-view blank center panel. `FullPageView` was only rendering the article body for `review` and `pending_content_approval`, while completed/published cards fell into the generic done-state placeholder branch. The detail view now renders the same article body for completed/published cards using `ArticleEditor` in read-only mode, and the editor disables mutation-only behaviors (editing updates, review comments, and the bottom toolbar) when shown in that completed-state path. Validation: `cd frontend && npx tsc --noEmit`."
+    },
+    {
+      "id": "T-content-studio-unpublished-handoff",
+      "task": "Move approved content out of the Content Studio board and into a dedicated Unpublished Pages staging tab in Content Performance",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 0,
+      "files_modified": [
+        "frontend/src/app/(dashboard)/content-studio/page.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/ColumnBoard.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx",
+        "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/content-performance/page.tsx",
+        "frontend/src/app/(dashboard)/content-performance/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-performance/_components/UnpublishedPagesTable.tsx"
+      ],
+      "codex_review": "Implemented the staging handoff flow without adding a second backend state model. Content Studio now hides terminal approved/published cards from the kanban, removes the Completed column, and final content approval no longer exposes a publish button in the review-stage detail view. Content Performance now has an `Unpublished Pages` tab sourced from the existing `/companies/{slug}/content/briefs` contract, filtered to `status === completed && !published_url`, with row click reusing the existing `FullPageView` read-only article detail. Publishing from that staging detail uses the real `POST /api/v1/cms/publish` route, and the shared card contract now carries `publishedUrl` / `publishedAt` so the frontend can distinguish approved-but-unpublished from already-published content. Validation: `cd frontend && npx tsc --noEmit`."
     }
   ],
   "pending": [

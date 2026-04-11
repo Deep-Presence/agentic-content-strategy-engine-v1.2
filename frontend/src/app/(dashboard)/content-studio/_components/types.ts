@@ -192,6 +192,8 @@ export interface ContentCard {
   /** Backend cycle/session identifier */
   cycleId?: string;
   targetWordCount?: number;
+  publishedUrl?: string;
+  publishedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 

@@ -64,11 +64,10 @@ function Column({ title, subtitle, count, badgeColor, cards, onCardClick }: Colu
   );
 }
 
-const COLUMNS: { key: KanbanColumn; title: string; subtitle: string; badgeColor: string }[] = [
+const COLUMNS: { key: Exclude<KanbanColumn, 'done'>; title: string; subtitle: string; badgeColor: string }[] = [
   { key: 'triage', title: 'Queue', subtitle: 'Items from Content Planner', badgeColor: 'neutral' },
   { key: 'human', title: 'Your review', subtitle: 'Approve or send back', badgeColor: 'teal' },
   { key: 'agent', title: 'Agent work', subtitle: 'Automated generation in progress', badgeColor: 'amber' },
-  { key: 'done', title: 'Completed', subtitle: 'Published & archived', badgeColor: 'success' },
 ];
 
 interface ColumnBoardProps {
@@ -93,7 +92,7 @@ export function ColumnBoard({ cards, onCardClick }: ColumnBoardProps) {
     <div
       className="flex-1 grid min-h-0 overflow-hidden"
       style={{
-        gridTemplateColumns: '16% 34% 34% 16%',
+        gridTemplateColumns: '18% 41% 41%',
         border: '1px solid var(--border)',
         borderRadius: 'var(--radius-md)',
         background: 'var(--bg)',
