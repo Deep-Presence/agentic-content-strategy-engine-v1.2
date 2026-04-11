@@ -6,6 +6,7 @@ import type { ContentCard, BriefPipelineStatus } from './_components/types';
 import { getDisplay, isTerminal } from './_lib/status-adapter';
 import { useContentBriefs } from './_hooks/useContentBriefs';
 import { useContentPipeline } from './_hooks/useContentPipeline';
+import { useCompanyStream } from './_hooks/useCompanyStream';
 import type { SSEPendingApprovalData, SSEPipelineCompleteData } from './_lib/types';
 import {
   startPipeline,
@@ -40,8 +41,22 @@ const ARTICLE_STATUSES: BriefPipelineStatus[] = [
 
 export default function ContentStudioPage() {
   const { companyName, companySlug } = useAuth();
-  const { cards, isLoading, error, isEmpty, refetch, updateCard } = useContentBriefs();
-  const [selectedCard, setSelectedCard] = useState<ContentCard | null>(null);
+  const {
+    cards,
+    isLoading,
+    error,
+    isEmpty,
+    refetch,
+    updateCard,
+    applyTopicRunChanged,
+    applyStateChanged,
+  } = useContentBriefs();
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  // Derive selectedCard from live cards array so it stays in sync after polls
+  const selectedCard = useMemo(
+    () => (selectedCardId ? cards.find((c) => c.id === selectedCardId) ?? null : null),
+    [selectedCardId, cards],
+  );
   const [cycleOpen, setCycleOpen] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('priority');
   const [filterKey, setFilterKey] = useState<FilterKey>('all');
@@ -56,12 +71,29 @@ export default function ContentStudioPage() {
     return null;
   }, [cards]);
 
-  // SSE subscription for real-time pipeline progress
+  // Company-wide SSE stream — authoritative topic_run_changed deltas update the
+  // normalized TD-entry store immediately. state_changed remains as a coarse
+  // compatibility path, while polling is only reconciliation.
+  useCompanyStream(companySlug ?? null, {
+    onStateChanged: (data) => {
+      applyStateChanged(data);
+    },
+    onTopicRunChanged: (data) => {
+      applyTopicRunChanged(data);
+    },
+    onReconnect: () => {
+      refetch();
+    },
+    // onNotification can be wired to a toast system later
+  });
+
+  // Per-task SSE — provides real-time progress for detail/drawer view only.
+  // Does NOT write card status — the kanban reads status from polls triggered
+  // by the company stream above. Only writes agentProgress metadata.
   useContentPipeline(activeTaskId, {
-    onStatusChange: (briefId, status) => {
-      if (briefId) {
-        updateCard(briefId, { status });
-      }
+    onStatusChange: (_briefId, _status) => {
+      // No-op: card status is driven by poll (via company SSE trigger).
+      // The version-aware merge in useContentBriefs handles the rest.
     },
     onProgress: (briefId, progress) => {
       if (briefId) {
@@ -81,7 +113,6 @@ export default function ContentStudioPage() {
         );
         for (const gc of gaCards) {
           updateCard(gc.id, {
-            status: 'gap_analysis',  // transition pending → active
             agentProgress: {
               pct: progress.pct ?? 0,
               currentTask: progress.currentTask ?? '',
@@ -93,16 +124,15 @@ export default function ContentStudioPage() {
         }
       }
     },
-    onApprovalNeeded: (briefId: string, _stage: string, _data: SSEPendingApprovalData) => {
-      // Card status already updated via onStatusChange
-      // Could show a toast notification here
-      void briefId;
+    onApprovalNeeded: (_briefId: string, _stage: string, _data: SSEPendingApprovalData) => {
+      // Status will update via next poll (company SSE triggers it).
+      // Could show a toast notification here.
     },
     onBriefCompleted: (briefId) => {
-      updateCard(briefId, { status: 'completed', agentProgress: undefined });
+      updateCard(briefId, { agentProgress: undefined });
     },
     onBriefRejected: (briefId) => {
-      updateCard(briefId, { status: 'rejected', agentProgress: undefined });
+      updateCard(briefId, { agentProgress: undefined });
     },
     onCPSScores: (_scores) => {
       // CPS scores are loaded on demand via useBriefDetail
@@ -122,7 +152,10 @@ export default function ContentStudioPage() {
   const domain = companySlug ? `${companySlug}.com` : '';
 
   const handleAction = useCallback(
-    async (action: 'start' | 'start_production' | 'approve_brief' | 'approve_article' | 'publish' | 'send_back' | 'cancel' | 'retry', data?: { editorNotes?: string }) => {
+    async (
+      action: 'start' | 'start_production' | 'approve_brief' | 'approve_article' | 'publish' | 'send_back' | 'cancel' | 'retry',
+      data?: { editorNotes?: string; contentMarkdown?: string },
+    ) => {
       if (!selectedCard || !companyName) return;
 
       try {
@@ -150,10 +183,11 @@ export default function ContentStudioPage() {
               [selectedCard.topicAssignmentId],
               selectedCard.gaRunId,
             );
+            const dispatchedTaskId = prodResult.topic_runs?.[0]?.pipeline_task_id ?? undefined;
             updateCard(selectedCard.id, {
-              taskId: prodResult.run_id,
-              status: 'briefing',
-              agentProgress: { pct: 0, currentTask: 'Starting content production...' },
+              taskId: dispatchedTaskId,
+              status: 'content_queued',
+              agentProgress: undefined,
             });
             break;
           }
@@ -169,7 +203,14 @@ export default function ContentStudioPage() {
           case 'approve_article':
           case 'publish': {
             if (!selectedCard.taskId) return;
-            await approveContent(selectedCard.taskId, selectedCard.id, 'approve');
+            await approveContent(
+              selectedCard.taskId,
+              selectedCard.id,
+              'approve',
+              undefined,
+              undefined,
+              data?.contentMarkdown,
+            );
             updateCard(selectedCard.id, { status: 'completed', agentProgress: undefined });
             break;
           }
@@ -183,7 +224,14 @@ export default function ContentStudioPage() {
                 agentProgress: { pct: 0, currentTask: 'Incorporating feedback...' },
               });
             } else {
-              await approveContent(selectedCard.taskId, selectedCard.id, 'edit', data?.editorNotes || 'Needs revision');
+              await approveContent(
+                selectedCard.taskId,
+                selectedCard.id,
+                'edit',
+                data?.editorNotes || 'Needs revision',
+                undefined,
+                data?.contentMarkdown,
+              );
               updateCard(selectedCard.id, {
                 status: 'revising',
                 agentProgress: { pct: 0, currentTask: 'Revising article...' },
@@ -216,7 +264,13 @@ export default function ContentStudioPage() {
         // API error — could show toast
         console.error(`Action "${action}" failed:`, err);
       }
-      setSelectedCard(null);
+      // Close detail view for most actions. For approvals, keep it open so the
+      // user sees the card transition — closing immediately invites re-clicks
+      // on the stale Kanban card which triggers 409 errors.
+      const keepOpen = action === 'approve_brief' || action === 'approve_article' || action === 'publish';
+      if (!keepOpen) {
+        setSelectedCardId(null);
+      }
     },
     [selectedCard, companyName, companySlug, domain, updateCard],
   );
@@ -336,7 +390,7 @@ export default function ContentStudioPage() {
               <div style={{ fontSize: 13 }}>Start by adding topics from the Content Planner or create a brief manually.</div>
             </div>
           ) : (
-            <ColumnBoard cards={displayCards} onCardClick={setSelectedCard} />
+            <ColumnBoard cards={displayCards} onCardClick={(card) => setSelectedCardId(card.id)} />
           )}
         </div>
       </div>
@@ -344,7 +398,7 @@ export default function ContentStudioPage() {
       {selectedCard && (
         <FullPageView
           card={selectedCard}
-          onClose={() => setSelectedCard(null)}
+          onClose={() => setSelectedCardId(null)}
           onAction={handleAction}
         />
       )}

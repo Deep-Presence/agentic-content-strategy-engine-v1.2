@@ -1,15 +1,19 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { ArrowLeft, Play, CheckCircle, RotateCcw, Send, XCircle, Upload, RefreshCw } from 'lucide-react';
 import type { ContentCard, ContentMetadata, ReviewComment } from './types';
 import { getColumn, getDisplay, getHITLActions, getWorkerStepIndex } from '../_lib/status-adapter';
 import { useBriefDetail } from '../_hooks/useBriefDetail';
 import { useGapSummary } from '../_hooks/useGapSummary';
+import { useCardActivity } from '../_hooks/useCardActivity';
 import type { GapSummaryResponseAPI } from '../_lib/types';
+import { fetchReviewDraftContent, saveReviewDraftContent } from '../_lib/api';
 import { LeftSidebar } from './LeftSidebar';
 import { RightSidebar } from './RightSidebar';
 import { ArticleEditor } from './ArticleEditor';
+import { ApiError } from '@/lib/api-client';
+import { useAuth } from '@/hooks/useAuth';
 
 const TYPE_LABELS: Record<string, string> = {
   HOW_TO: 'HOW-TO',
@@ -56,7 +60,7 @@ type ActionType = 'start' | 'start_production' | 'approve_brief' | 'approve_arti
 interface FullPageViewProps {
   card: ContentCard;
   onClose: () => void;
-  onAction: (action: ActionType, data?: { editorNotes?: string }) => void;
+  onAction: (action: ActionType, data?: { editorNotes?: string; contentMarkdown?: string }) => void | Promise<void>;
 }
 
 function compileEditorNotes(comments: ReviewComment[], overall: string): string {
@@ -75,9 +79,28 @@ function compileEditorNotes(comments: ReviewComment[], overall: string): string 
   return parts.length > 0 ? parts.join('\n') : 'Needs revision';
 }
 
+function draftStorageKey(companySlug: string, briefId: string, runId: string): string {
+  return `content-studio:draft:${companySlug}:${briefId}:${runId}`;
+}
+
 export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
+  const { companySlug } = useAuth();
   const [activeSection, setActiveSection] = useState(0);
   const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleActionGuarded = useCallback(
+    async (action: ActionType, data?: { editorNotes?: string; contentMarkdown?: string }) => {
+      if (isSubmitting) return;
+      setIsSubmitting(true);
+      try {
+        await onAction(action, data);
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [isSubmitting, onAction],
+  );
   const [overallReview, setOverallReview] = useState('');
   const [metadata, setMetadata] = useState<ContentMetadata>(
     card.metadata || {
@@ -89,9 +112,13 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
       tags: [],
     }
   );
+  const [articleDraftMarkdown, setArticleDraftMarkdown] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [isDraftLoading, setIsDraftLoading] = useState(false);
+  const lastSavedDraftRef = useRef<string | null>(null);
 
   // Guard: GA-phase cards use ta-{uuid} IDs — no brief detail endpoint exists
-  const isGAPhase = card.status === 'gap_analysis_pending' || card.status === 'gap_analysis' || card.status === 'gap_analysis_complete';
+  const isGAPhase = card.status === 'gap_analysis_pending' || card.status === 'gap_analysis' || card.status === 'gap_analysis_complete' || card.status === 'content_queued';
   const briefIdForDetail = isGAPhase ? null : card.id;
 
   // Load brief detail + article content on demand
@@ -99,6 +126,7 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
     briefContent: loadedBrief,
     articleContent: loadedArticle,
     isLoading: detailLoading,
+    error: detailError,
   } = useBriefDetail(briefIdForDetail);
 
   // Use loaded data, falling back to card-level data (from SSE/mock)
@@ -109,13 +137,22 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
   const productSlug = card.effectiveSlug?.includes('__')
     ? card.effectiveSlug.split('__')[1]
     : undefined;
+  const shouldFetchGapSummary = !card.gapContext && (
+    card.status === 'gap_analysis_complete' || card.status === 'content_queued' || !isGAPhase
+  );
   const {
     data: gapSummary,
     isLoading: gapSummaryLoading,
   } = useGapSummary(
-    card.status === 'gap_analysis_complete' || !isGAPhase,
+    shouldFetchGapSummary,
     productSlug,
+    card.gaRunId,
   );
+  const {
+    items: activityItems,
+    isLoading: activityLoading,
+    sourceKind: activitySourceKind,
+  } = useCardActivity(card.effectiveSlug ?? null, card.topicRunId ?? null);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') onClose();
@@ -129,9 +166,95 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
   const showGAPhase = isGAPhase;
   const showQueue = !isGAPhase && card.status === 'suggested';
   const showBrief = card.status === 'brief_review' || card.status === 'pending_brief_approval';
-  const showArticle = (card.status === 'review' || card.status === 'pending_content_approval') && articleContent;
+  const showReview = card.status === 'review' || card.status === 'pending_content_approval';
+  const showArticle = showReview && articleContent;
+  const showReviewFallback = showReview && !articleContent;
   const showAgent = !isGAPhase && column === 'agent';
   const showDone = column === 'done';
+  const currentReviewMarkdown = articleDraftMarkdown ?? articleContent?.markdown ?? null;
+  const isDraftDirty = !!(
+    showReview &&
+    currentReviewMarkdown &&
+    currentReviewMarkdown !== lastSavedDraftRef.current
+  );
+
+  useEffect(() => {
+    if (!showReview || !articleContent?.markdown || !card.taskId || !companySlug) {
+      setArticleDraftMarkdown(null);
+      setDraftError(null);
+      setIsDraftLoading(false);
+      lastSavedDraftRef.current = articleContent?.markdown ?? null;
+      return;
+    }
+
+    const controller = new AbortController();
+    const taskId = card.taskId;
+    const storageKey = draftStorageKey(companySlug, card.id, taskId);
+    let isActive = true;
+
+    setIsDraftLoading(true);
+    setDraftError(null);
+
+    (async () => {
+      try {
+        const localDraft = window.localStorage.getItem(storageKey);
+        let remoteDraft: string | null = null;
+        try {
+          const remote = await fetchReviewDraftContent(taskId, card.id, controller.signal);
+          remoteDraft = remote.content_markdown;
+        } catch (err) {
+          if (!(err instanceof ApiError) || err.status !== 404) {
+            throw err;
+          }
+        }
+        if (!isActive || controller.signal.aborted) return;
+
+        const initialDraft = localDraft || remoteDraft || articleContent.markdown;
+        setArticleDraftMarkdown(initialDraft);
+        lastSavedDraftRef.current = remoteDraft || articleContent.markdown;
+      } catch (err) {
+        if (!isActive || (err instanceof DOMException && err.name === 'AbortError')) return;
+        const message = err instanceof Error ? err.message : 'Failed to load saved review draft.';
+        setDraftError(message);
+        setArticleDraftMarkdown(articleContent.markdown);
+        lastSavedDraftRef.current = articleContent.markdown;
+      } finally {
+        if (isActive && !controller.signal.aborted) {
+          setIsDraftLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      isActive = false;
+      controller.abort();
+    };
+  }, [showReview, articleContent?.markdown, card.id, card.taskId, companySlug]);
+
+  useEffect(() => {
+    if (!showReview || !articleDraftMarkdown || !card.taskId || !companySlug) return;
+    window.localStorage.setItem(
+      draftStorageKey(companySlug, card.id, card.taskId),
+      articleDraftMarkdown,
+    );
+  }, [showReview, articleDraftMarkdown, card.id, card.taskId, companySlug]);
+
+  useEffect(() => {
+    if (!showReview || !articleDraftMarkdown || !card.taskId || !isDraftDirty) return;
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        await saveReviewDraftContent(card.taskId!, card.id, articleDraftMarkdown);
+        lastSavedDraftRef.current = articleDraftMarkdown;
+        setDraftError(null);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to autosave review draft.';
+        setDraftError(message);
+      }
+    }, 5 * 60 * 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [showReview, articleDraftMarkdown, card.id, card.taskId, isDraftDirty]);
 
   return (
     <div
@@ -230,7 +353,8 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
           {hitl.canApproveBrief && (
             <>
               <button
-                onClick={() => onAction('send_back')}
+                onClick={() => handleActionGuarded('send_back')}
+                disabled={isSubmitting}
                 className="flex items-center gap-1.5"
                 style={{
                   height: 30,
@@ -241,14 +365,16 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
                   border: '1px solid var(--border)',
                   borderRadius: 'var(--radius-sm)',
                   color: 'var(--text-secondary)',
-                  cursor: 'pointer',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  opacity: isSubmitting ? 0.5 : undefined,
                 }}
               >
                 <RotateCcw size={11} strokeWidth={1.5} />
                 Send back
               </button>
               <button
-                onClick={() => onAction('approve_brief')}
+                onClick={() => handleActionGuarded('approve_brief')}
+                disabled={isSubmitting}
                 className="flex items-center gap-1.5"
                 style={{
                   height: 30,
@@ -259,7 +385,8 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
                   color: 'var(--text-on-accent)',
                   border: 'none',
                   borderRadius: 'var(--radius-sm)',
-                  cursor: 'pointer',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  opacity: isSubmitting ? 0.5 : undefined,
                 }}
               >
                 <CheckCircle size={11} strokeWidth={2} />
@@ -273,8 +400,12 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
               <button
                 onClick={() => {
                   const notes = compileEditorNotes(reviewComments, overallReview);
-                  onAction('send_back', { editorNotes: notes });
+                  handleActionGuarded('send_back', {
+                    editorNotes: notes,
+                    contentMarkdown: currentReviewMarkdown ?? undefined,
+                  });
                 }}
+                disabled={isSubmitting}
                 className="flex items-center gap-1.5"
                 style={{
                   height: 30,
@@ -285,14 +416,18 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
                   border: '1px solid var(--border)',
                   borderRadius: 'var(--radius-sm)',
                   color: 'var(--text-secondary)',
-                  cursor: 'pointer',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  opacity: isSubmitting ? 0.5 : undefined,
                 }}
               >
                 <Send size={11} strokeWidth={1.5} />
                 Send back
               </button>
               <button
-                onClick={() => onAction('approve_article')}
+                onClick={() => handleActionGuarded('approve_article', {
+                  contentMarkdown: currentReviewMarkdown ?? undefined,
+                })}
+                disabled={isSubmitting}
                 className="flex items-center gap-1.5"
                 style={{
                   height: 30,
@@ -303,14 +438,17 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
                   color: 'var(--text-on-accent)',
                   border: 'none',
                   borderRadius: 'var(--radius-sm)',
-                  cursor: 'pointer',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  opacity: isSubmitting ? 0.5 : undefined,
                 }}
               >
                 <CheckCircle size={11} strokeWidth={2} />
                 Approve
               </button>
               <button
-                onClick={() => onAction('publish')}
+                onClick={() => onAction('publish', {
+                  contentMarkdown: currentReviewMarkdown ?? undefined,
+                })}
                 className="flex items-center gap-1.5"
                 style={{
                   height: 30,
@@ -374,52 +512,17 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
         </div>
       </div>
 
-      {/* Agent working banner */}
-      {display.isAgentActive && card.agentProgress && (
-        <div
-          className="flex items-center gap-3 px-4 flex-shrink-0"
-          style={{
-            height: 40,
-            background: 'var(--warning-subtle)',
-            borderBottom: '1px solid var(--border)',
-          }}
-        >
-          <span
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: '50%',
-              background: 'var(--warning)',
-              animation: 'pulse 1.5s ease-in-out infinite',
-              flexShrink: 0,
-            }}
-          />
-          <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--warning)' }}>Agent working:</span>
-          <span style={{ fontSize: 11, color: 'var(--text-primary)', animation: 'typing 1.8s ease-in-out infinite' }}>
-            {card.agentProgress.currentTask}
-          </span>
-          <div className="flex-1" />
-          <div style={{ width: 200, height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-            <div
-              style={{
-                width: `${card.agentProgress.pct}%`,
-                height: '100%',
-                background: 'var(--warning)',
-                borderRadius: 2,
-                animation: 'progressPulse 2.5s ease-in-out infinite',
-                transition: 'width 0.6s ease',
-              }}
-            />
-          </div>
-          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--warning)' }}>
-            {card.agentProgress.pct}%
-          </span>
-        </div>
-      )}
-
       {/* Main content area */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <LeftSidebar card={{ ...card, briefContent: briefContent ?? undefined }} activeSection={activeSection} onSectionClick={setActiveSection} />
+        <LeftSidebar
+          card={{
+            ...card,
+            briefContent: briefContent ?? undefined,
+            articleContent: articleContent ?? undefined,
+          }}
+          activeSection={activeSection}
+          onSectionClick={setActiveSection}
+        />
 
         <div className="flex-1 overflow-y-auto">
           {detailLoading && !showQueue && !showAgent && !showGAPhase && (
@@ -433,11 +536,20 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
           {showArticle && articleContent && (
             <ArticleEditor
               sections={articleContent.sections}
+              initialMarkdown={currentReviewMarkdown ?? articleContent.markdown}
               isReviewMode={hitl.canApproveContent}
               comments={reviewComments}
               onCommentsChange={setReviewComments}
               overallReview={overallReview}
               onOverallReviewChange={setOverallReview}
+              onMarkdownChange={setArticleDraftMarkdown}
+            />
+          )}
+          {showReviewFallback && (
+            <ReviewContentFallback
+              title={card.title}
+              isLoading={detailLoading || isDraftLoading}
+              error={draftError || detailError}
             />
           )}
           {showAgent && <AgentContent card={card} />}
@@ -447,10 +559,60 @@ export function FullPageView({ card, onClose, onAction }: FullPageViewProps) {
         <RightSidebar
           card={{ ...card, articleContent: articleContent ?? undefined, briefContent: briefContent ?? undefined }}
           gapSummary={gapSummary ?? undefined}
+          activityItems={activityItems}
+          activityLoading={activityLoading}
+          activitySourceKind={activitySourceKind}
           metadata={metadata}
           onMetadataChange={setMetadata}
-          onPublish={() => onAction('publish')}
+          onPublish={() => onAction('publish', {
+            contentMarkdown: currentReviewMarkdown ?? undefined,
+          })}
+          exportMarkdown={currentReviewMarkdown ?? articleContent?.markdown ?? null}
         />
+      </div>
+    </div>
+  );
+}
+
+function ReviewContentFallback({
+  title,
+  isLoading,
+  error,
+}: {
+  title: string;
+  isLoading: boolean;
+  error: string | null;
+}) {
+  return (
+    <div className="p-6" style={{ maxWidth: 720, margin: '0 auto' }}>
+      <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>
+        {title}
+      </h1>
+      <div
+        className="p-4"
+        style={{
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-md)',
+          background: 'var(--surface)',
+        }}
+      >
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 600,
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+            color: 'var(--text-tertiary)',
+            marginBottom: 8,
+          }}
+        >
+          Final Review
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+          {isLoading
+            ? 'Loading the final article for review...'
+            : error || 'The article is ready for review, but the final content has not loaded yet.'}
+        </div>
       </div>
     </div>
   );
@@ -712,7 +874,6 @@ const AGENT_LOGS: Record<string, string[]> = {
 
 function AgentContent({ card }: { card: ContentCard }) {
   const progress = card.agentProgress;
-  const display = getDisplay(card.status);
   const stepIndex = getWorkerStepIndex(card.status);
 
   const currentLogs = AGENT_LOGS[card.status] || AGENT_LOGS.drafting;
@@ -725,32 +886,6 @@ function AgentContent({ card }: { card: ContentCard }) {
       <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 20 }}>
         {card.title}
       </h1>
-
-      {/* Progress header */}
-      {progress && (
-        <div className="p-4 mb-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--warning)', animation: 'pulse 1.5s ease-in-out infinite' }} />
-              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{display.label}</span>
-            </div>
-            <span style={{ fontSize: 22, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>{progress.pct}%</span>
-          </div>
-          <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden', marginBottom: 10 }}>
-            <div style={{
-              width: `${progress.pct}%`, height: '100%',
-              background: progress.pct > 80 ? 'var(--success)' : progress.pct >= 50 ? 'var(--accent)' : 'var(--warning)',
-              borderRadius: 3, animation: 'progressPulse 2.5s ease-in-out infinite', transition: 'width 0.6s ease',
-            }} />
-          </div>
-          {progress.wordsCurrent !== undefined && (
-            <div className="flex items-center gap-4" style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-              <span>{progress.wordsCurrent.toLocaleString()} / {progress.wordsTarget?.toLocaleString()} words</span>
-              {progress.sectionsComplete !== undefined && <span>{progress.sectionsComplete}/{progress.sectionsTotal} sections</span>}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Pipeline stages — aligned with backend worker chain */}
       <div className="p-4 mb-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>
@@ -968,7 +1103,7 @@ function GapAnalysisView({ card, onAction, gapSummary, gapSummaryLoading }: {
       )}
 
       {/* Analysis complete — rich metrics view */}
-      {card.status === 'gap_analysis_complete' && (() => {
+      {(card.status === 'gap_analysis_complete' || card.status === 'content_queued') && (() => {
         const ctx = card.gapContext;
         const classificationLabels: Record<string, { label: string; color: string }> = {
           significant_gap: { label: 'Significant Gap', color: 'var(--error, #e53e3e)' },
@@ -976,13 +1111,15 @@ function GapAnalysisView({ card, onAction, gapSummary, gapSummaryLoading }: {
           roughly_equal: { label: 'Roughly Equal', color: 'var(--accent)' },
           company_wins: { label: 'Company Wins', color: 'var(--success)' },
         };
-        const counts = gapSummary?.classification_counts;
-        const totalClassified = counts
-          ? counts.significant_gap + counts.gap_to_close + counts.roughly_equal + counts.company_wins
-          : 0;
         const uniqueDomains = ctx?.exemplars
           ? Array.from(new Set(ctx.exemplars.map((e) => e.domain).filter(Boolean)))
           : [];
+        const classification = ctx?.classification
+          ? classificationLabels[ctx.classification] ?? {
+              label: ctx.classification.replace(/_/g, ' '),
+              color: 'var(--text-secondary)',
+            }
+          : null;
 
         return (
           <div className="space-y-4">
@@ -1004,82 +1141,45 @@ function GapAnalysisView({ card, onAction, gapSummary, gapSummaryLoading }: {
                 &#10003;
               </div>
               <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-                Gap Analysis: Complete
+                {card.status === 'content_queued' ? 'Queued for Production' : 'Gap Analysis: Complete'}
               </span>
             </div>
 
             {/* KPI grid */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
               <div className="p-3" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface)' }}>
-                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Queries Analyzed</div>
+                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Gap Score</div>
                 <div style={{ fontSize: 20, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {gapSummaryLoading ? '—' : (gapSummary?.total_queries ?? '—')}
+                  {ctx ? `${Math.round(ctx.gap_score * 100)}%` : '—'}
                 </div>
               </div>
               <div className="p-3" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface)' }}>
-                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Avg Gap Score</div>
+                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Classification</div>
                 <div style={{ fontSize: 20, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {gapSummary ? `${Math.round(gapSummary.average_gap * 100)}%` : ctx ? `${Math.round(ctx.gap_score * 100)}%` : '—'}
+                  {classification?.label ?? '—'}
                 </div>
               </div>
               <div className="p-3" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface)' }}>
-                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Citations Found</div>
+                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Exemplars</div>
                 <div style={{ fontSize: 20, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {gapSummaryLoading ? '—' : (gapSummary?.total_citations ?? '—')}
+                  {ctx?.exemplars?.length ?? 0}
                 </div>
               </div>
             </div>
 
-            {/* Classification breakdown */}
-            {counts && totalClassified > 0 && (
-              <div className="p-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>
-                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 10 }}>
-                  Gap Severity Breakdown
-                </div>
-                {/* Stacked bar */}
-                <div className="flex" style={{ height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: 12 }}>
-                  {(['significant_gap', 'gap_to_close', 'roughly_equal', 'company_wins'] as const).map((key) => {
-                    const count = counts[key];
-                    if (!count) return null;
-                    return (
-                      <div
-                        key={key}
-                        style={{
-                          width: `${(count / totalClassified) * 100}%`,
-                          height: '100%',
-                          background: classificationLabels[key].color,
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-                {/* Legend */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                  {(['significant_gap', 'gap_to_close', 'roughly_equal', 'company_wins'] as const).map((key) => (
-                    <div key={key} className="flex items-center gap-2">
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: classificationLabels[key].color, flexShrink: 0 }} />
-                      <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{classificationLabels[key].label}</span>
-                      <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 500, color: 'var(--text-primary)', marginLeft: 'auto' }}>{counts[key]}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Platform coverage — company cited */}
-            {gapSummary && (
+            {/* Topic-specific signals */}
+            {ctx && (
               <div className="flex gap-3">
                 <div className="flex-1 p-3" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface)' }}>
                   <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Company Cited</div>
                   <div style={{ fontSize: 18, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {gapSummary.company_cited_count}
-                    <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-tertiary)', marginLeft: 4 }}>/ {gapSummary.total_queries}</span>
+                    {ctx.company_cited ? 'Yes' : 'No'}
                   </div>
                 </div>
                 <div className="flex-1 p-3" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface)' }}>
-                  <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Clusters</div>
+                  <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 4 }}>Best Company URL</div>
                   <div style={{ fontSize: 18, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {gapSummary.cluster_performance.length}
+                    {ctx.company_best_url ? 'Available' : '—'}
                   </div>
                 </div>
               </div>
@@ -1102,6 +1202,23 @@ function GapAnalysisView({ card, onAction, gapSummary, gapSummaryLoading }: {
                         style={{ borderRadius: 2 }}
                       />
                       {domain}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Why this topic */}
+            {ctx?.why_picked && ctx.why_picked.length > 0 && (
+              <div className="p-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', marginBottom: 10 }}>
+                  Why This Topic
+                </div>
+                <div className="space-y-2">
+                  {ctx.why_picked.map((reason, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--accent)', marginTop: 1 }}>{i + 1}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{reason}</span>
                     </div>
                   ))}
                 </div>

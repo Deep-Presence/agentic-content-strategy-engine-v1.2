@@ -11,21 +11,29 @@ import type { GapSummaryResponseAPI } from '../_lib/types';
  *
  * @param enabled  Only fetch when true (card is in GA-complete or later)
  * @param productSlug  Optional product slug parsed from effectiveSlug
+ * @param gaRunId  When provided, loads topic-scoped GA results instead of company-wide
  */
-export function useGapSummary(enabled: boolean, productSlug?: string) {
+export function useGapSummary(enabled: boolean, productSlug?: string, gaRunId?: string) {
   const { companySlug } = useAuth();
   const [data, setData] = useState<GapSummaryResponseAPI | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Track the params that produced the current data so we invalidate on change
+  const dataKeyRef = useRef<string>('');
 
   useEffect(() => {
     if (!enabled || !companySlug) {
       return;
     }
 
-    // Don't re-fetch if we already have data
-    if (data) return;
+    // Invalidate cached data when key params change (Codex finding #2)
+    const currentKey = `${companySlug}:${productSlug ?? ''}:${gaRunId ?? ''}`;
+    if (data && dataKeyRef.current === currentKey) return;
+    if (dataKeyRef.current !== currentKey) {
+      setData(null);
+      dataKeyRef.current = currentKey;
+    }
 
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -40,6 +48,7 @@ export function useGapSummary(enabled: boolean, productSlug?: string) {
           companySlug,
           productSlug,
           controller.signal,
+          gaRunId,
         );
         if (!controller.signal.aborted) {
           setData(result);
@@ -59,7 +68,7 @@ export function useGapSummary(enabled: boolean, productSlug?: string) {
     })();
 
     return () => controller.abort();
-  }, [enabled, companySlug, productSlug, data]);
+  }, [enabled, companySlug, productSlug, gaRunId, data]);
 
   return { data, isLoading, error };
 }

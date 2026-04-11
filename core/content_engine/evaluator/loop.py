@@ -299,6 +299,7 @@ async def evaluate_and_optimize(
     task_id: Optional[str] = None,
     redis_client: Any = None,
     effective_slug: Optional[str] = None,
+    session_factory: Any = None,
 ) -> Tuple[FormattedContent, RevisionHistory, FeedbackRoute]:
     """Run the evaluation-optimization loop for a single content piece.
 
@@ -466,7 +467,15 @@ async def evaluate_and_optimize(
         failed_dims = [d.dimension for d in dimensions if not d.passed]
 
         # Mark brief as "revising" for Kanban sync
-        await _write_pipeline_state_async(artifact_dir, [brief.brief_id], "revising", task_id=task_id, redis_client=redis_client, effective_slug=effective_slug)
+        await _write_pipeline_state_async(
+            artifact_dir,
+            [brief.brief_id],
+            "revising",
+            task_id=task_id,
+            redis_client=redis_client,
+            effective_slug=effective_slug,
+            session_factory=session_factory,
+        )
         _emit(event_bus, task_id, "worker_progress", {
             "brief_id": brief.brief_id, "step": "revising", "cycle": cycle + 1,
         })

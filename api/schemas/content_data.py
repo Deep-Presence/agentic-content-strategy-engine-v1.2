@@ -33,6 +33,7 @@ class ContentBriefListItem(BaseModel):
     """Summary item for the brief list view."""
 
     id: str  # brief_id
+    display_id: str = ""  # human-readable ID (e.g. "WE-003") from Topic Discovery
     title: str = ""
     status: str = "suggested"
     content_type: str = "blog"  # mapped from backend content_format

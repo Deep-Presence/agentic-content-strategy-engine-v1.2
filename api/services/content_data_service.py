@@ -90,14 +90,13 @@ def _load_pipeline_state(
     artifacts_root: Path, slug: str,
     *, storage: Optional[StorageBackend] = None,
 ) -> Dict[str, Any]:
-    """Load pipeline state from Redis (preferred) or StorageBackend (fallback).
+    """Load pipeline state from Redis only (no file fallback).
 
-    pipeline_state.json is ephemeral, sub-second writes during pipeline
-    execution.
+    When Redis is empty or unavailable, returns empty dict — status
+    falls through to file-based run_metadata inference (Phase 1/2).
 
-    When ``redis_pipeline_state`` is enabled and Redis is healthy, reads
-    from the ``pipeline_state:{slug}`` Redis Hash first. Falls back to
-    StorageBackend on Redis error, empty result, or when Redis is disabled.
+    File fallback removed: stale cross-run entries in pipeline_state.json
+    caused 4-min kanban sync lag. Redis is the sole runtime state store.
     """
     from core.config.settings import settings
 
@@ -107,32 +106,14 @@ def _load_pipeline_state(
 
             rc = get_sync_redis_or_none()
             if rc is not None:
-                result = read_pipeline_state_redis(rc, slug)
-                if result:
-                    return result
-                # Redis empty — check file too (migration window)
+                return read_pipeline_state_redis(rc, slug)
         except Exception:
             logger.warning(
-                "Redis pipeline state read failed — falling back to file",
+                "Redis pipeline state read failed for %s", slug,
                 exc_info=True,
             )
 
-    # StorageBackend fallback (R2 or local)
-    if storage is not None:
-        content = storage.read(f"content/{slug}/pipeline_state.json")
-        if content is not None:
-            try:
-                return json.loads(content)
-            except (json.JSONDecodeError, ValueError):
-                return {}
-        return {}
-
-    # Legacy local filesystem fallback (only when no storage injected)
-    state_path = artifacts_root / "content" / slug / "pipeline_state.json"
-    try:
-        return json.loads(state_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return {}
+    return {}
 
 
 # ── Storage resolution ───────────────────────────────────────────────
@@ -152,7 +133,7 @@ def _resolve_storage(
 
 # Accepts bare company slugs ("ramp") and effective product slugs ("ramp__card")
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
-_BRIEF_ID_PATTERN = re.compile(r"^brief-\d{1,4}$")
+_BRIEF_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,9}-\d{1,4}$")
 
 _VALID_STAGES = frozenset(
     {"outline", "draft", "enriched", "formatted", "eval_history", "final"}

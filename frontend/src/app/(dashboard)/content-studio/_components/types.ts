@@ -9,6 +9,7 @@ export type BriefPipelineStatus =
   | 'gap_analysis_pending'
   | 'gap_analysis'
   | 'gap_analysis_complete'
+  | 'content_queued'
   | 'briefing'
   | 'brief_review'
   | 'pending_brief_approval'
@@ -100,6 +101,7 @@ export interface InterlinkItem {
 }
 
 export interface ArticleContent {
+  markdown: string;
   wordCount: number;
   targetWords: number;
   voiceCompliance: number;
@@ -128,6 +130,14 @@ export interface ContentMetadata {
 
 export interface ContentCard {
   id: string;
+  /** Human-readable display ID from Topic Discovery (e.g. "WE-003") */
+  displayId?: string;
+  /** Durable TD-entry topic-run identity */
+  topicRunId?: string;
+  /** Durable TD-entry batch identity */
+  batchRunId?: string;
+  /** Monotonic durable topic-run sequence for out-of-order protection */
+  topicRunSeq?: number;
   title: string;
   type: ContentType;
   cluster: string;

@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.redis_semaphore import RedisSemaphore, _SemaphoreContext
-from core.services.db_task_store import DbTaskStore
+from core.services.db_task_store import (
+    DbTaskStore,
+    _AsyncioSemaphoreContext,
+    _TrackedSemaphoreContext,
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
@@ -264,7 +268,7 @@ class TestPipelineSemaphoreFallback:
     def test_pipeline_semaphore_returns_asyncio_semaphore_when_no_redis(
         self, mock_session_factory: AsyncMock,
     ) -> None:
-        """Without Redis, pipeline_semaphore returns asyncio.Semaphore."""
+        """Without Redis, pipeline_semaphore returns a tracked local context."""
         store = DbTaskStore(
             session_factory=mock_session_factory,
             max_concurrent=3,
@@ -273,12 +277,46 @@ class TestPipelineSemaphoreFallback:
 
         result = store.pipeline_semaphore("task-001")
 
-        assert isinstance(result, asyncio.Semaphore)
+        assert isinstance(result, _TrackedSemaphoreContext)
+        assert isinstance(result._inner, _AsyncioSemaphoreContext)
+
+    def test_content_engine_semaphore_is_scoped_per_company_without_redis(
+        self, mock_session_factory: AsyncMock,
+    ) -> None:
+        """Without Redis, CE semaphores are isolated per company."""
+        store = DbTaskStore(
+            session_factory=mock_session_factory,
+            max_concurrent=3,
+            redis_client=None,
+        )
+
+        acme_a = store.pipeline_semaphore(
+            "task-001",
+            pool="content_engine",
+            company_slug="acme",
+        )
+        acme_b = store.pipeline_semaphore(
+            "task-002",
+            pool="content_engine",
+            company_slug="acme",
+        )
+        beta = store.pipeline_semaphore(
+            "task-003",
+            pool="content_engine",
+            company_slug="beta",
+        )
+
+        assert isinstance(acme_a, _TrackedSemaphoreContext)
+        assert isinstance(acme_b, _TrackedSemaphoreContext)
+        assert isinstance(beta, _TrackedSemaphoreContext)
+        assert acme_a._inner._sem is acme_b._inner._sem
+        assert beta._inner._sem is not acme_a._inner._sem
+        assert store._content_engine_semaphores["acme"] is not store._content_engine_semaphores["beta"]
 
     def test_pipeline_semaphore_returns_context_when_redis_available(
         self, mock_session_factory: AsyncMock, mock_sync_redis: MagicMock,
     ) -> None:
-        """With Redis, pipeline_semaphore returns _SemaphoreContext."""
+        """With Redis, pipeline_semaphore returns a tracked Redis context."""
         store = DbTaskStore(
             session_factory=mock_session_factory,
             max_concurrent=3,
@@ -287,4 +325,43 @@ class TestPipelineSemaphoreFallback:
 
         result = store.pipeline_semaphore("task-001")
 
-        assert isinstance(result, _SemaphoreContext)
+        assert isinstance(result, _TrackedSemaphoreContext)
+        assert isinstance(result._inner, _SemaphoreContext)
+
+    def test_content_engine_semaphore_uses_company_scoped_redis_key(
+        self, mock_session_factory: AsyncMock,
+    ) -> None:
+        """With Redis, CE semaphores are keyed per company, not globally."""
+        mock_sync_redis = MagicMock()
+        mock_sync_redis.register_script = MagicMock(
+            side_effect=lambda _script: MagicMock(return_value=1)
+        )
+        store = DbTaskStore(
+            session_factory=mock_session_factory,
+            max_concurrent=3,
+            redis_client=mock_sync_redis,
+        )
+
+        first = store.pipeline_semaphore(
+            "task-001",
+            pool="content_engine",
+            company_slug="acme",
+        )
+        second = store.pipeline_semaphore(
+            "task-002",
+            pool="content_engine",
+            company_slug="acme",
+        )
+        other = store.pipeline_semaphore(
+            "task-003",
+            pool="content_engine",
+            company_slug="beta",
+        )
+
+        assert isinstance(first, _TrackedSemaphoreContext)
+        assert isinstance(second, _TrackedSemaphoreContext)
+        assert isinstance(other, _TrackedSemaphoreContext)
+        assert isinstance(first._inner, _SemaphoreContext)
+        assert store._content_engine_semaphores["acme"]._key == "semaphore:content_engine:acme"
+        assert store._content_engine_semaphores["beta"]._key == "semaphore:content_engine:beta"
+        assert store._content_engine_semaphores["acme"] is not store._content_engine_semaphores["beta"]

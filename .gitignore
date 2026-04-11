@@ -51,9 +51,12 @@ dashboard/.next/
 # Misc
 misc/
 
+
 CLAUDE.md
 RESTRUCTURING_ANALYSIS.md
 .claude/
+.codex/
+.playwright-mcp
 _memory/
 
 

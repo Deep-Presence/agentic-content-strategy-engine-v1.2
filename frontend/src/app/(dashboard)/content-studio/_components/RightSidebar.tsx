@@ -2,10 +2,17 @@
 
 import { useState } from 'react';
 import { Check, Download, ExternalLink, Copy } from 'lucide-react';
+import { marked } from 'marked';
 import type { ContentCard, ContentMetadata } from './types';
 import type { GapSummaryResponseAPI } from '../_lib/types';
+import {
+  formatCardActivityDetail,
+  formatCardActivityLabel,
+  type CardActivityItem,
+  type CardActivitySourceKind,
+} from '../_lib/card-activity';
 
-type Tab = 'metrics' | 'seo' | 'links' | 'export';
+type Tab = 'metrics' | 'activity' | 'seo' | 'links' | 'export';
 
 const ENGINE_DOMAINS: Record<string, string> = {
   ChatGPT: 'openai.com',
@@ -40,6 +47,31 @@ const OVERLINE: React.CSSProperties = {
 const BAR_HEIGHT = 6;
 const BAR_RADIUS = 3;
 const BAR_BG = 'var(--border)';
+
+function toHtml(markdown: string): string {
+  return marked.parse(markdown, { async: false }) as string;
+}
+
+function toPlainText(markdown: string): string {
+  if (typeof window === 'undefined') {
+    return markdown.replace(/[#_*`>\-\[\]\(\)!]/g, '').trim();
+  }
+  const html = toHtml(markdown);
+  const doc = new window.DOMParser().parseFromString(html, 'text/html');
+  return doc.body.textContent?.trim() || '';
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string): void {
+  const blob = new Blob([content], { type: mimeType });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}
 
 function GapAnalysisSection({ card, gapSummary }: { card: ContentCard; gapSummary?: GapSummaryResponseAPI }) {
   const ctx = card.gapContext;
@@ -170,7 +202,9 @@ function MetricsTab({ card, gapSummary }: { card: ContentCard; gapSummary?: GapS
 
   // article is guaranteed non-null here (both !article paths returned above)
   const art = article!;
-  const avgScore = Math.round(art.citPrediction.reduce((a, b) => a + b.score, 0) / art.citPrediction.length);
+  const avgScore = art.citPrediction.length > 0
+    ? Math.round(art.citPrediction.reduce((a, b) => a + b.score, 0) / art.citPrediction.length)
+    : 0;
 
   return (
     <div className="p-3 space-y-4 overflow-y-auto flex-1">
@@ -216,7 +250,7 @@ function MetricsTab({ card, gapSummary }: { card: ContentCard; gapSummary?: GapS
         </div>
         <div className="px-3 py-2 space-y-2.5">
           {art.compliance.map((c) => {
-            const pct = Math.round((c.current / c.target) * 100);
+            const pct = c.target > 0 ? Math.round((c.current / c.target) * 100) : 0;
             const isGood = pct >= 85;
             return (
               <div key={c.label}>
@@ -488,15 +522,46 @@ function LinksTab({ card }: { card: ContentCard }) {
   );
 }
 
-function ExportTab({ onPublish }: { onPublish: () => void }) {
+function ExportTab({
+  onPublish,
+  title,
+  markdown,
+  isEnabled,
+}: {
+  onPublish: () => void;
+  title: string;
+  markdown: string | null;
+  isEnabled: boolean;
+}) {
   const [copied, setCopied] = useState<string | null>(null);
   const [showPublishForm, setShowPublishForm] = useState(false);
   const [publishUrl, setPublishUrl] = useState('');
 
-  function handleCopy(format: string) {
-    navigator.clipboard.writeText(`[${format} content would be copied here]`);
+  const safeBaseName = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'content';
+
+  function handleCopy(format: 'Markdown' | 'HTML' | 'Plain text') {
+    if (!isEnabled || !markdown) return;
+    const payload = format === 'Markdown'
+      ? markdown
+      : format === 'HTML'
+        ? toHtml(markdown)
+        : toPlainText(markdown);
+    navigator.clipboard.writeText(payload);
     setCopied(format);
     setTimeout(() => setCopied(null), 1500);
+  }
+
+  function handleDownload(format: '.md' | '.html') {
+    if (!isEnabled || !markdown) return;
+    if (format === '.md') {
+      downloadTextFile(`${safeBaseName}.md`, markdown, 'text/markdown;charset=utf-8');
+      return;
+    }
+    downloadTextFile(`${safeBaseName}.html`, toHtml(markdown), 'text/html;charset=utf-8');
   }
 
   const btnStyle: React.CSSProperties = {
@@ -506,16 +571,42 @@ function ExportTab({ onPublish }: { onPublish: () => void }) {
     width: '100%', display: 'flex', alignItems: 'center', gap: 8,
   };
 
+  const disabledBtnStyle: React.CSSProperties = {
+    ...btnStyle,
+    opacity: 0.45,
+    cursor: 'not-allowed',
+    color: 'var(--text-tertiary)',
+  };
+
   return (
     <div className="p-4 space-y-5 overflow-y-auto flex-1">
+      {!isEnabled && (
+        <div
+          className="p-3"
+          style={{
+            border: '1px dashed var(--border)',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: 11,
+            color: 'var(--text-tertiary)',
+            lineHeight: 1.5,
+          }}
+        >
+          Export actions unlock only after full content is produced. They become available during final content approval and after the card reaches the completed column.
+        </div>
+      )}
+
       <div>
         <div style={OVERLINE}>Copy</div>
         <div className="space-y-2">
-          {['Markdown', 'HTML', 'Plain text'].map((fmt) => (
+          {(['Markdown', 'HTML', 'Plain text'] as const).map((fmt) => (
             <button
               key={fmt}
               onClick={() => handleCopy(fmt)}
-              style={{ ...btnStyle, color: copied === fmt ? 'var(--success)' : 'var(--text-primary)' }}
+              disabled={!isEnabled || !markdown}
+              style={{
+                ...(isEnabled && markdown ? btnStyle : disabledBtnStyle),
+                color: copied === fmt && isEnabled ? 'var(--success)' : (isEnabled && markdown ? 'var(--text-primary)' : 'var(--text-tertiary)'),
+              }}
             >
               {copied === fmt ? <Check size={12} /> : <Copy size={12} />}
               {copied === fmt ? 'Copied' : `Copy as ${fmt}`}
@@ -527,8 +618,13 @@ function ExportTab({ onPublish }: { onPublish: () => void }) {
       <div>
         <div style={OVERLINE}>Download</div>
         <div className="space-y-2">
-          {['.md', '.html'].map((ext) => (
-            <button key={ext} style={{ ...btnStyle, color: 'var(--text-primary)' }}>
+          {(['.md', '.html'] as const).map((ext) => (
+            <button
+              key={ext}
+              onClick={() => handleDownload(ext)}
+              disabled={!isEnabled || !markdown}
+              style={{ ...(isEnabled && markdown ? btnStyle : disabledBtnStyle), color: isEnabled && markdown ? 'var(--text-primary)' : 'var(--text-tertiary)' }}
+            >
               <Download size={12} />
               Download {ext}
             </button>
@@ -541,12 +637,18 @@ function ExportTab({ onPublish }: { onPublish: () => void }) {
         {!showPublishForm ? (
           <>
             <button
-              onClick={() => setShowPublishForm(true)}
+              onClick={() => {
+                if (!isEnabled || !markdown) return;
+                setShowPublishForm(true);
+              }}
+              disabled={!isEnabled || !markdown}
               style={{
-                ...btnStyle,
-                background: 'var(--accent)',
-                color: 'var(--text-on-accent)',
-                border: 'none',
+                ...(isEnabled && markdown ? {
+                  ...btnStyle,
+                  background: 'var(--accent)',
+                  color: 'var(--text-on-accent)',
+                  border: 'none',
+                } : disabledBtnStyle),
                 justifyContent: 'center',
               }}
             >
@@ -611,19 +713,125 @@ function ExportTab({ onPublish }: { onPublish: () => void }) {
   );
 }
 
+function ActivityTab({
+  card,
+  items,
+  isLoading,
+  sourceKind,
+}: {
+  card: ContentCard;
+  items: CardActivityItem[];
+  isLoading: boolean;
+  sourceKind: CardActivitySourceKind;
+}) {
+  if (sourceKind === 'unavailable') {
+    return (
+      <div className="p-4 flex flex-col items-center justify-center" style={{ paddingTop: 48, color: 'var(--text-tertiary)', fontSize: 12 }}>
+        Durable card activity is available for TD-entry cards today. Manual and prompt-entry cards will plug into this same tab once their runtime log source lands.
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="p-4 flex flex-col items-center justify-center" style={{ paddingTop: 48, color: 'var(--text-tertiary)', fontSize: 12 }}>
+        Loading activity…
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <div className="p-4 flex flex-col items-center justify-center" style={{ paddingTop: 48, color: 'var(--text-tertiary)', fontSize: 12 }}>
+        No durable activity has been recorded for this card yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-3 space-y-3 overflow-y-auto flex-1">
+      <div className="px-1" style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)' }}>
+        {(card.displayId || card.id)} activity
+      </div>
+      {items.map((event) => {
+        const detail = formatCardActivityDetail(event);
+        return (
+          <div
+            key={event.activityId}
+            className="flex gap-3 p-3"
+            style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg)' }}
+          >
+            <div className="flex flex-col items-center" style={{ paddingTop: 2 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
+              <span style={{ width: 1, flex: 1, background: 'var(--border)', marginTop: 4 }} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', textTransform: 'capitalize' }}>
+                  {formatCardActivityLabel(event)}
+                </span>
+                <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>
+                  #{event.seq}
+                </span>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                {new Date(event.createdAt).toLocaleString()}
+              </div>
+              <div className="flex flex-wrap gap-1" style={{ marginTop: 8 }}>
+                <span style={{ fontSize: 9, fontWeight: 600, textTransform: 'uppercase', padding: '1px 6px', borderRadius: 'var(--radius-full)', background: 'var(--accent-subtle)', color: 'var(--accent)' }}>
+                  {event.status.replace(/_/g, ' ')}
+                </span>
+                <span style={{ fontSize: 9, fontWeight: 600, textTransform: 'uppercase', padding: '1px 6px', borderRadius: 'var(--radius-full)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                  {event.eventType.replace(/_/g, ' ')}
+                </span>
+              </div>
+              {detail && (
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 8 }}>
+                  {detail}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 interface RightSidebarProps {
   card: ContentCard;
   gapSummary?: GapSummaryResponseAPI;
+  activityItems: CardActivityItem[];
+  activityLoading: boolean;
+  activitySourceKind: CardActivitySourceKind;
   metadata?: ContentMetadata;
   onMetadataChange: (m: ContentMetadata) => void;
   onPublish: () => void;
+  exportMarkdown?: string | null;
 }
 
-export function RightSidebar({ card, gapSummary, metadata, onMetadataChange, onPublish }: RightSidebarProps) {
+export function RightSidebar({
+  card,
+  gapSummary,
+  activityItems,
+  activityLoading,
+  activitySourceKind,
+  metadata,
+  onMetadataChange,
+  onPublish,
+  exportMarkdown,
+}: RightSidebarProps) {
   const [activeTab, setActiveTab] = useState<Tab>('metrics');
+  const exportEnabled = (
+    card.status === 'review'
+    || card.status === 'pending_content_approval'
+    || card.status === 'completed'
+    || card.status === 'published'
+  );
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'metrics', label: 'Metrics' },
+    { id: 'activity', label: 'Activity' },
     { id: 'seo', label: 'SEO' },
     { id: 'links', label: 'Links' },
     { id: 'export', label: 'Export' },
@@ -660,9 +868,24 @@ export function RightSidebar({ card, gapSummary, metadata, onMetadataChange, onP
 
       <div className="flex-1 overflow-y-auto">
         {activeTab === 'metrics' && <MetricsTab card={card} gapSummary={gapSummary} />}
+        {activeTab === 'activity' && (
+          <ActivityTab
+            card={card}
+            items={activityItems}
+            isLoading={activityLoading}
+            sourceKind={activitySourceKind}
+          />
+        )}
         {activeTab === 'seo' && <SEOTab metadata={metadata} onChange={onMetadataChange} />}
         {activeTab === 'links' && <LinksTab card={card} />}
-        {activeTab === 'export' && <ExportTab onPublish={onPublish} />}
+        {activeTab === 'export' && (
+          <ExportTab
+            onPublish={onPublish}
+            title={card.title}
+            markdown={exportMarkdown ?? card.articleContent?.markdown ?? null}
+            isEnabled={exportEnabled}
+          />
+        )}
       </div>
     </div>
   );

@@ -31,6 +31,14 @@ from core.content_engine.tracing_v13 import create_span, end_span, get_current_s
 logger = logging.getLogger(__name__)
 
 
+class ApprovalPauseRequested(Exception):
+    """Raised when a checkpoint is persisted for out-of-band continuation."""
+
+    def __init__(self, approval_payload: Dict[str, Any]) -> None:
+        super().__init__("Approval checkpoint persisted for continuation")
+        self.approval_payload = approval_payload
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # State schemas — TypedDict gives each key its own LangGraph channel,
 # fixing INVALID_CONCURRENT_GRAPH_UPDATE with StateGraph(dict).
@@ -428,6 +436,9 @@ async def run_hitl_checkpoint(
     event_bus: Optional[Any] = None,
     task_id: Optional[str] = None,
     stage_name: str = "",
+    initial_resume_approval: Optional[Dict[str, Any]] = None,
+    external_resume: bool = False,
+    continuation_payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run a HITL checkpoint graph, handling interrupt/resume.
 
@@ -441,6 +452,12 @@ async def run_hitl_checkpoint(
         event_bus: Optional event bus for SSE events.
         task_id: Optional task ID for task store updates.
         stage_name: Human-readable stage name for logging.
+        initial_resume_approval: Optional approval payload used to resume an
+            already-paused checkpoint instead of starting from initial_state.
+        external_resume: When True, persist the interrupt payload and raise
+            ApprovalPauseRequested instead of waiting inside the same task.
+        continuation_payload: Durable stage-specific context to persist into
+            the task approval payload when external_resume is enabled.
 
     Returns:
         Final state dict after all interrupts are resolved.
@@ -448,7 +465,23 @@ async def run_hitl_checkpoint(
     config = {"configurable": {"thread_id": thread_id}}
 
     # Initial invocation — M3 FIX: run in thread to avoid blocking event loop
-    result = await asyncio.to_thread(graph.invoke, initial_state, config)
+    if initial_resume_approval is not None:
+        if event_bus and task_id:
+            event_bus.publish(
+                task_id,
+                "approval_received",
+                {
+                    "stage": stage_name,
+                    "decision": initial_resume_approval.get("decision", "unknown"),
+                },
+            )
+        result = await asyncio.to_thread(
+            graph.invoke,
+            Command(resume=initial_resume_approval),
+            config,
+        )
+    else:
+        result = await asyncio.to_thread(graph.invoke, initial_state, config)
 
     # Handle interrupt loop
     while _has_interrupt(result):
@@ -463,17 +496,20 @@ async def run_hitl_checkpoint(
 
         # Generate a unique nonce per checkpoint interrupt for validation
         checkpoint_nonce = str(uuid.uuid4())
+        pending_payload = {
+            "stage": stage_name,
+            "checkpoint_nonce": checkpoint_nonce,
+            **interrupt_val,
+        }
+        if continuation_payload:
+            pending_payload["continuation"] = continuation_payload
 
         # Publish SSE event
         if event_bus and task_id:
             event_bus.publish(
                 task_id,
                 "pending_approval",
-                {
-                    "stage": stage_name,
-                    "checkpoint_nonce": checkpoint_nonce,
-                    **interrupt_val,
-                },
+                pending_payload,
             )
 
         # Update task store with pending status + interrupt payload + nonce
@@ -481,12 +517,11 @@ async def run_hitl_checkpoint(
             task_store.update_task(
                 task_id,
                 status=TaskStatus.PENDING_APPROVAL.value,
-                approval_payload={
-                    "stage": stage_name,
-                    "checkpoint_nonce": checkpoint_nonce,
-                    **interrupt_val,
-                },
+                approval_payload=pending_payload,
             )
+
+        if external_resume:
+            raise ApprovalPauseRequested(pending_payload)
 
         # Wait for human decision
         if task_store and task_id:

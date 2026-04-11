@@ -1243,6 +1243,7 @@ async def run_topic_expansion_pipeline(
                         count = await db_write_assignments_for_subdomain(
                             session_factory, discovery_id, sd_uuid,
                             assignments, mat_version, expansion_batch_id,
+                            company_id=company_id,
                         )
                         break
                     except Exception as db_exc:
@@ -1394,6 +1395,7 @@ async def run_topic_expansion_pipeline(
             if session_factory is not None and discovery_id is not None:
                 mat_version = await db_write_matrix(
                     session_factory, discovery_id, matrix, version=mat_version,
+                    company_id=company_id,
                 )
 
         _emit(event_bus, task_id, "td_phase_complete", {

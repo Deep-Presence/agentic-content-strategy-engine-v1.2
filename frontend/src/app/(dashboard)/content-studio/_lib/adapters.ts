@@ -88,6 +88,7 @@ export function deriveCompetitor(ctx: ContentBriefListItemAPI['gap_context']): s
 export function adaptBriefToCard(item: ContentBriefListItemAPI): ContentCard {
   return {
     id: item.id,
+    displayId: item.display_id || undefined,
     title: item.title,
     type: mapContentType(item.content_format),
     cluster: item.cluster,
@@ -331,6 +332,7 @@ export function assembleArticleContent(
   const { compliance, eeat, voiceCompliance } = adaptEvalMetrics(detail.eval_history);
 
   return {
+    markdown,
     wordCount,
     targetWords: detail.target_word_count.max || 0,
     voiceCompliance,

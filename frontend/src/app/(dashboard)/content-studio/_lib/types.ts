@@ -66,6 +66,7 @@ export interface GapSummaryResponseAPI {
 
 export interface ContentBriefListItemAPI {
   id: string;
+  display_id?: string;
   title: string;
   status: string;
   content_type: string;
@@ -183,6 +184,8 @@ export interface PipelineRunResponseAPI {
   status: string;
   entry_mode: string;
   message?: string;
+  batch_run_id?: string | null;
+  topic_runs?: TopicRunSummaryAPI[];
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +197,17 @@ export interface ApprovalResponseAPI {
   stage: string;
   brief_id?: string;
   message?: string;
+}
+
+export interface ContentDraftResponseAPI {
+  brief_id: string;
+  content_markdown: string;
+}
+
+export interface ContentDraftSaveResponseAPI {
+  status: string;
+  brief_id: string;
+  storage_key?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -272,4 +286,74 @@ export interface SSEGAStepData {
   step_num: number;
   total_steps: number;
   elapsed_s?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Company-wide SSE stream events
+// ---------------------------------------------------------------------------
+
+export interface CompanyStateChangedData {
+  changed: string[];
+  hint: string;
+}
+
+export interface TopicRunSummaryAPI {
+  topic_run_id: string;
+  batch_run_id: string;
+  topic_assignment_id: string;
+  display_id: string;
+  topic_text: string;
+  brief_id: string;
+  ga_run_id?: string | null;
+  pipeline_task_id?: string | null;
+  status: string;
+  stage: string;
+  seq: number;
+  content_piece_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  effective_slug?: string;
+}
+
+export interface TopicRunListResponseAPI {
+  effective_slug: string;
+  total: number;
+  items: TopicRunSummaryAPI[];
+}
+
+export interface TopicRunEventAPI {
+  topic_event_id: string;
+  topic_run_id: string;
+  topic_assignment_id: string;
+  display_id: string;
+  brief_id: string;
+  event_type: string;
+  stage: string;
+  status: string;
+  seq: number;
+  content_piece_id?: string | null;
+  pipeline_task_id?: string | null;
+  payload_json: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface TopicRunEventListResponseAPI {
+  effective_slug: string;
+  topic_run_id: string;
+  topic_assignment_id: string;
+  display_id: string;
+  topic_text: string;
+  brief_id: string;
+  total: number;
+  items: TopicRunEventAPI[];
+}
+
+export interface CompanyTopicRunChangedData extends TopicRunSummaryAPI {}
+
+export interface CompanyNotification {
+  type: 'hitl_review_needed' | 'pipeline_complete' | 'pipeline_error';
+  brief_id: string;
+  title: string;
+  checkpoint?: string;
+  message: string;
 }

@@ -44,6 +44,7 @@ export interface PlannerData {
   isExpanding: boolean;
   refetch: () => void;
   approveAssignments: (ids: string[]) => Promise<void>;
+  revertAssignments: (ids: string[]) => Promise<void>;
   rejectAssignments: (ids: string[]) => Promise<void>;
   restoreAssignment: (id: string) => Promise<void>;
   createAssignment: (data: CreateCustomAssignmentData) => Promise<void>;
@@ -164,13 +165,30 @@ export function usePlannerData(): PlannerData {
         }
       }
 
-      // Assign human-readable displayIds: sort by createdAt, then sequential
-      const prefix = prefixRef.current;
-      const sortedActive = [...active].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-      const idLookup = new Map<string, string>();
-      sortedActive.forEach((a, i) => idLookup.set(a.id, formatDisplayId(prefix, i + 1)));
-      for (const a of active) {
-        a.displayId = idLookup.get(a.id) ?? a.id;
+      // Use backend-supplied displayId when available; fall back to
+      // client-side sequential IDs for legacy data without display_id.
+      // Start fallback numbering AFTER the max existing backend number
+      // to avoid visual collisions (e.g., backend has WE-005, fallback
+      // should not also produce WE-001).
+      const needsFallback = active.some((a) => !a.displayId);
+      if (needsFallback) {
+        const prefix = prefixRef.current;
+        // Find max existing number from backend-supplied display_ids
+        let maxExisting = 0;
+        for (const a of active) {
+          if (a.displayId) {
+            const match = a.displayId.match(/-(\d+)$/);
+            if (match) {
+              const num = parseInt(match[1], 10);
+              if (num > maxExisting) maxExisting = num;
+            }
+          }
+        }
+        const missingItems = active.filter((a) => !a.displayId);
+        const sortedMissing = [...missingItems].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        sortedMissing.forEach((a, i) => {
+          a.displayId = formatDisplayId(prefix, maxExisting + i + 1);
+        });
       }
 
       setAssignments(active);
@@ -229,8 +247,13 @@ export function usePlannerData(): PlannerData {
       if (!companySlug) return;
       const idSet = new Set(ids);
 
-      // Optimistic: just keep them in active list (status change is invisible in UI)
+      // Optimistic: mark selected assignments approved so queue-only views drop them immediately.
       const prevAssignments = assignments;
+      setAssignments((prev) =>
+        prev.map((assignment) =>
+          idSet.has(assignment.id) ? { ...assignment, status: 'approved' } : assignment,
+        ),
+      );
 
       // Fire API calls in background
       const results = await Promise.allSettled(
@@ -247,6 +270,23 @@ export function usePlannerData(): PlannerData {
       }
     },
     [companySlug, assignments],
+  );
+
+  const revertAssignments = useCallback(
+    async (ids: string[]) => {
+      if (!companySlug) return;
+      const idSet = new Set(ids);
+      setAssignments((prev) =>
+        prev.map((assignment) =>
+          idSet.has(assignment.id) ? { ...assignment, status: 'not_started' } : assignment,
+        ),
+      );
+      // Revert assignments back to not_started (used when pipeline launch fails)
+      await Promise.allSettled(
+        ids.map((id) => updateAssignmentStatus(companySlug, id, 'not_started')),
+      );
+    },
+    [companySlug],
   );
 
   const rejectAssignments = useCallback(
@@ -302,6 +342,7 @@ export function usePlannerData(): PlannerData {
       // Create a minimal Assignment for the restored item
       const restored: Assignment = {
         id: item.id,
+        status: 'not_started',
         displayId: formatDisplayId(prefixRef.current, assignments.length + 1),
         title: item.title,
         description: '',
@@ -355,7 +396,8 @@ export function usePlannerData(): PlannerData {
       const taxonomyMap = buildTaxonomyMap(rootNodesRef.current);
       const newAssignment: Assignment = {
         id: created.id,
-        displayId: formatDisplayId(prefixRef.current, assignments.length + rejected.length + 1),
+        status: created.status,
+        displayId: created.display_id || formatDisplayId(prefixRef.current, assignments.length + rejected.length + 1),
         title: created.topic_text,
         description: '',
         cluster: taxonomyMap.get(created.subdomain_id)?.clusterName ?? 'Uncategorized',
@@ -463,6 +505,7 @@ export function usePlannerData(): PlannerData {
     isExpanding,
     refetch,
     approveAssignments,
+    revertAssignments,
     rejectAssignments,
     restoreAssignment,
     createAssignment,

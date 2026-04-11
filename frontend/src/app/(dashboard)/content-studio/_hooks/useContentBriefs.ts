@@ -1,26 +1,50 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { fetchBriefs } from '../_lib/api';
+import { fetchBriefs, fetchTopicRuns } from '../_lib/api';
 import { adaptBriefList } from '../_lib/adapters';
 import { isAgentProcessing } from '../_lib/status-adapter';
 import type { ContentCard } from '../_components/types';
+import type {
+  CompanyStateChangedData,
+  CompanyTopicRunChangedData,
+} from '../_lib/types';
+import {
+  EMPTY_TOPIC_RUN_STORE,
+  isBriefPipelineStatus,
+  mergeTopicRunSnapshots,
+  overlayTopicRunOnCard,
+  selectTopicRunForCard,
+} from '../_lib/topic-run-store';
 
-const POLL_INTERVAL_MS = 15_000;
+const POLL_FAST_MS = 5_000;
+const POLL_SLOW_MS = 60_000;
+/** How long optimistic updates are protected from poll overwrite (ms). */
+const OPTIMISTIC_GRACE_MS = 15_000;
 
 /**
  * Fetches briefs from GET /companies/{slug}/content/briefs and adapts
- * them into ContentCard[]. Polls every 15s when any card is in an
- * agent-active state. Stops polling when all cards are idle.
+ * them into ContentCard[]. Uses adaptive polling: 5s when any card is
+ * agent-active or HITL-waiting, 60s when all terminal/idle, no polling
+ * when zero cards.
+ *
+ * Optimistic grace: after updateCard() is called (user action), the
+ * affected card's status is protected from poll overwrite for 15s.
+ * This prevents stale server responses from reverting the UI while
+ * the pipeline processes the approval.
  */
 export function useContentBriefs() {
   const { companySlug, isInitialized } = useAuth();
-  const [cards, setCards] = useState<ContentCard[]>([]);
+  const [baseCards, setBaseCards] = useState<ContentCard[]>([]);
+  const [topicRunStore, setTopicRunStore] = useState(EMPTY_TOPIC_RUN_STORE);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevHasActiveRef = useRef<boolean | null>(null);
+  /** Map of cardId → timestamp when optimistic update was applied. */
+  const optimisticRef = useRef<Map<string, number>>(new Map());
 
   const doFetch = useCallback(async () => {
     if (!companySlug) return;
@@ -32,7 +56,85 @@ export function useContentBriefs() {
     try {
       const data = await fetchBriefs(companySlug, undefined, controller.signal);
       if (!controller.signal.aborted) {
-        setCards(adaptBriefList(data.briefs));
+        // Debug: log status values from API for kanban sync diagnosis
+        if (data.briefs.length > 0) {
+          console.debug(`[useContentBriefs] poll @${new Date().toISOString()}:`, data.briefs.map(b => `${b.id}:${b.status}`).join(', '));
+        }
+        const incoming = adaptBriefList(data.briefs);
+
+        setBaseCards((prevCards) => {
+          // On first load (no existing cards), skip merge overhead
+          if (prevCards.length === 0) return incoming;
+
+          const prevMap = new Map(prevCards.map((c) => [c.id, c]));
+          const merged: ContentCard[] = [];
+          const now = Date.now();
+          const ts = new Date().toISOString();
+
+          for (const card of incoming) {
+            const existing = prevMap.get(card.id);
+            if (!existing) {
+              console.debug(`[useContentBriefs] merge @${ts}: NEW ${card.id} status=${card.status}`);
+              merged.push(card); // new card from server
+              continue;
+            }
+
+            // Check optimistic grace period: if the card was recently
+            // updated by a user action, keep the local status and don't
+            // let the (potentially stale) server response overwrite it.
+            const optimisticTs = optimisticRef.current.get(card.id);
+            if (optimisticTs && now - optimisticTs < OPTIMISTIC_GRACE_MS) {
+              if (existing.status !== card.status) {
+                console.info(`[useContentBriefs] OPTIMISTIC PROTECTED @${ts}: ${card.id} keeping local=${existing.status} (server=${card.status}, grace=${Math.round((OPTIMISTIC_GRACE_MS - (now - optimisticTs)) / 1000)}s left)`);
+              }
+              // Take server data for non-status fields, but keep local status + agentProgress
+              merged.push({ ...card, status: existing.status, agentProgress: existing.agentProgress });
+              continue;
+            }
+
+            // Grace period expired or no optimistic update — normal merge
+            if (optimisticTs) {
+              optimisticRef.current.delete(card.id);
+            }
+
+            if ((card.updatedAt ?? '') >= (existing.updatedAt ?? '')) {
+              if (existing.status !== card.status) {
+                console.info(`[useContentBriefs] STATUS CHANGE @${ts}: ${card.id} ${existing.status} -> ${card.status} (server wins, updatedAt: ${existing.updatedAt} -> ${card.updatedAt})`);
+              }
+              merged.push(existing.agentProgress
+                ? { ...card, agentProgress: existing.agentProgress }
+                : card,
+              );
+            } else {
+              console.debug(`[useContentBriefs] merge @${ts}: LOCAL KEPT ${card.id} status=${existing.status} (server=${card.status}, local updatedAt=${existing.updatedAt} > server=${card.updatedAt})`);
+              merged.push(existing); // keep local (SSE was ahead)
+            }
+          }
+
+          // Don't keep local cards the server no longer returns
+          return merged;
+        });
+
+        const uniqueEffectiveSlugs = Array.from(new Set(
+          incoming
+            .map((card) => card.effectiveSlug)
+            .filter((slug): slug is string => Boolean(slug)),
+        ));
+        if (uniqueEffectiveSlugs.length > 0) {
+          const topicRunResponses = await Promise.allSettled(
+            uniqueEffectiveSlugs.map((effectiveSlug) => fetchTopicRuns(effectiveSlug, controller.signal)),
+          );
+          if (!controller.signal.aborted) {
+            const snapshots = topicRunResponses.flatMap((result) =>
+              result.status === 'fulfilled'
+                ? result.value.items.map((item) => ({ ...item, effective_slug: result.value.effective_slug }))
+                : [],
+            );
+            if (snapshots.length > 0) {
+              setTopicRunStore((prev) => mergeTopicRunSnapshots(prev, snapshots));
+            }
+          }
+        }
         setError(null);
       }
     } catch (err: unknown) {
@@ -57,22 +159,49 @@ export function useContentBriefs() {
     };
   }, [isInitialized, companySlug, doFetch]);
 
-  // Polling: re-fetch every 15s when any card is agent-active
-  useEffect(() => {
-    const hasActive = cards.some(
-      (c) => isAgentProcessing(c.status) || c.status === 'gap_analysis_pending',
-    );
+  // Derive stable booleans so the polling effect doesn't re-run on every fetch
+  const cards = useMemo(
+    () => baseCards.map((card) => {
+      const optimisticTs = optimisticRef.current.get(card.id);
+      const optimisticActive = Boolean(optimisticTs && Date.now() - optimisticTs < OPTIMISTIC_GRACE_MS);
+      if (optimisticActive) return card;
+      return overlayTopicRunOnCard(card, selectTopicRunForCard(card, topicRunStore));
+    }),
+    [baseCards, topicRunStore],
+  );
 
-    if (hasActive) {
-      if (!pollRef.current) {
-        pollRef.current = setInterval(doFetch, POLL_INTERVAL_MS);
-      }
-    } else {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+  const cardCount = cards.length;
+  const hasActive = useMemo(
+    () => cards.some((c) =>
+      isAgentProcessing(c.status)
+      || c.status === 'gap_analysis_pending'
+      || c.status === 'content_queued'
+      // HITL-waiting statuses still have an active pipeline behind them —
+      // poll fast so the UI catches auto-approvals and user actions quickly
+      || c.status === 'pending_brief_approval'
+      || c.status === 'pending_content_approval'
+      || c.status === 'brief_review'
+      || c.status === 'review'
+    ),
+    [cards],
+  );
+
+  // Adaptive polling: 5s when active/HITL, 60s when all terminal, none when empty
+  useEffect(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
     }
+
+    if (cardCount === 0) return;
+
+    if (prevHasActiveRef.current !== null && prevHasActiveRef.current !== hasActive) {
+      console.info(`[useContentBriefs] polling speed @${new Date().toISOString()}: ${hasActive ? 'FAST (5s) — active cards detected' : 'SLOW (60s) — all idle'}`);
+    }
+    prevHasActiveRef.current = hasActive;
+
+    const interval = hasActive ? POLL_FAST_MS : POLL_SLOW_MS;
+    pollRef.current = setInterval(doFetch, interval);
 
     return () => {
       if (pollRef.current) {
@@ -80,18 +209,44 @@ export function useContentBriefs() {
         pollRef.current = null;
       }
     };
-  }, [cards, doFetch]);
+  }, [hasActive, cardCount, doFetch]);
 
-  // Imperative card update (for SSE-driven status changes)
+  // Imperative card update (for SSE-driven status changes and user actions).
+  // Marks the card as "optimistically updated" so polls don't overwrite it
+  // for OPTIMISTIC_GRACE_MS.
   const updateCard = useCallback((cardId: string, updates: Partial<ContentCard>) => {
-    setCards((prev) =>
-      prev.map((c) => (c.id === cardId ? { ...c, ...updates } : c)),
+    if (updates.status) {
+      optimisticRef.current.set(cardId, Date.now());
+    }
+    setBaseCards((prev) =>
+      prev.map((c) => (c.id === cardId
+        ? { ...c, ...updates }
+        : c)),
     );
   }, []);
 
   // Add a new card to the list (for optimistic UI after addBrief)
   const addCard = useCallback((card: ContentCard) => {
-    setCards((prev) => [card, ...prev]);
+    setBaseCards((prev) => [card, ...prev]);
+  }, []);
+
+  const applyTopicRunChanged = useCallback((data: CompanyTopicRunChangedData) => {
+    if (!data.topic_run_id) return;
+    setTopicRunStore((prev) => mergeTopicRunSnapshots(prev, [data]));
+  }, []);
+
+  const applyStateChanged = useCallback((data: CompanyStateChangedData) => {
+    if (!isBriefPipelineStatus(data.hint)) return;
+    const nextStatus: ContentCard['status'] = data.hint;
+    const changed = new Set(data.changed);
+    setBaseCards((prev) => prev.map((card) => {
+      const matches = changed.has(card.id) || (card.topicAssignmentId ? changed.has(card.topicAssignmentId) : false);
+      if (!matches) return card;
+      return {
+        ...card,
+        status: nextStatus,
+      };
+    }));
   }, []);
 
   return {
@@ -102,5 +257,7 @@ export function useContentBriefs() {
     refetch: doFetch,
     updateCard,
     addCard,
+    applyTopicRunChanged,
+    applyStateChanged,
   };
 }

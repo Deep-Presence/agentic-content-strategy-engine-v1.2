@@ -45,8 +45,8 @@ class FallbackGapDataService:
                 return await getattr(self._json, method_name)(*args, **kwargs)
             raise
 
-    async def get_summary(self, effective_slug: str) -> GapSummaryResponse:
-        return await self._fallback("get_summary", effective_slug)
+    async def get_summary(self, effective_slug: str, *, ga_run_id: Optional[str] = None) -> GapSummaryResponse:
+        return await self._fallback("get_summary", effective_slug, ga_run_id=ga_run_id)
 
     async def get_queries(
         self,

@@ -38,9 +38,9 @@ class JsonGapDataService:
         self._storage = storage
         self._task_store = task_store
 
-    async def get_summary(self, effective_slug: str) -> GapSummaryResponse:
+    async def get_summary(self, effective_slug: str, *, ga_run_id: Optional[str] = None) -> GapSummaryResponse:
         return await asyncio.to_thread(
-            _gap_svc.get_summary, self._storage, effective_slug,
+            _gap_svc.get_summary, self._storage, effective_slug, ga_run_id=ga_run_id,
         )
 
     async def get_queries(

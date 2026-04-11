@@ -205,7 +205,7 @@ def _expansion_patches(
     async def _mock_db_write_manifest(sf, discovery_id, m):
         _manifest_state["current"] = copy.deepcopy(m)
 
-    async def _mock_db_write_matrix(sf, discovery_id, matrix, version=0):
+    async def _mock_db_write_matrix(sf, discovery_id, matrix, version=0, **kwargs):
         # Track matrix writes
         _manifest_state.setdefault("matrices", []).append(copy.deepcopy(matrix))
         return version + 1
@@ -220,6 +220,7 @@ def _expansion_patches(
 
     async def _mock_db_write_assignments_for_subdomain(
         sf, discovery_id, subdomain_node_id, assignments, matrix_version, batch_id,
+        **kwargs,
     ):
         # Track per-subdomain writes and accumulate into matrices list
         from core.models.topic_discovery import TopicAssignmentMatrix, TopicDiscoveryStatus

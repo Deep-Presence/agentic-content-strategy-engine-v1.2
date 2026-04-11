@@ -2,7 +2,7 @@
 
 Reads content brief metadata from content_pieces table via ContentRepository.
 Stage content reads via StorageBackend (R2 in prod, local in dev).
-pipeline_state.json remains on local filesystem (ephemeral, Redis migration later).
+Pipeline state is read from Redis exclusively (no file fallback).
 """
 from __future__ import annotations
 
@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 
 
 # Map ContentPieceStatus → frontend display status
+# Active pipeline statuses for GA-phase card validation (orphan cleanup)
+_ACTIVE_ASSIGNMENT_STATUSES = frozenset({
+    "approved", "in_gap_analysis", "gap_analysis_complete", "in_content_production",
+})
+
 _PIECE_STATUS_MAP = {
     "planned": "suggested",
     "drafting": "drafting",
@@ -84,6 +89,75 @@ class DbContentDataService:
         )
         return str(run.id) if run else None
 
+    async def _load_topic_assignment_metadata(
+        self,
+        pieces: List[Any],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Bulk-load planner metadata for DB-backed cards linked to topic assignments."""
+        assignment_ids: List[_uuid.UUID] = []
+        for piece in pieces:
+            raw_assignment_id = getattr(piece, "topic_assignment_id", None)
+            if not raw_assignment_id:
+                continue
+            try:
+                assignment_ids.append(
+                    raw_assignment_id
+                    if isinstance(raw_assignment_id, _uuid.UUID)
+                    else _uuid.UUID(str(raw_assignment_id)),
+                )
+            except (ValueError, TypeError, AttributeError):
+                continue
+
+        if not assignment_ids:
+            return {}
+
+        try:
+            from core.db.engine import get_session_factory
+            from core.db.repositories.topic_discovery_repo import TopicAssignmentRepository
+
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                repo = TopicAssignmentRepository(session)
+                assignments = await repo.get_by_ids(assignment_ids)
+
+            metadata_by_assignment: Dict[str, Dict[str, Any]] = {}
+            for assignment in assignments:
+                raw_meta = getattr(assignment, "metadata_json", None) or {}
+                if not isinstance(raw_meta, dict):
+                    raw_meta = {}
+                priority_factors = getattr(assignment, "priority_factors", None) or {}
+                if not isinstance(priority_factors, dict):
+                    priority_factors = {}
+
+                buyer_stage = getattr(assignment, "buyer_stage", None)
+                intent_type = getattr(assignment, "intent_type", None)
+                metadata_by_assignment[str(assignment.id)] = {
+                    "topic_assignment_id": str(assignment.id),
+                    "buyer_stage": getattr(buyer_stage, "value", buyer_stage),
+                    "intent_type": getattr(intent_type, "value", intent_type),
+                    "persona_name": getattr(assignment, "persona_name", None),
+                    "persona_id": getattr(assignment, "persona_id", None),
+                    "persona_affinity": getattr(assignment, "persona_affinity_json", None) or {},
+                    "priority_factors": priority_factors,
+                    "content_format": raw_meta.get("content_format"),
+                    "estimated_word_count": raw_meta.get("estimated_word_count"),
+                    "citation_opportunity": priority_factors.get(
+                        "citation_opportunity",
+                        getattr(assignment, "priority_score", None),
+                    ),
+                    "description": raw_meta.get("description"),
+                    "target_keywords": raw_meta.get("target_keywords"),
+                    "content_angle": raw_meta.get("angle"),
+                }
+            return metadata_by_assignment
+        except Exception:
+            logger.warning(
+                "Topic-assignment metadata load failed for %d pieces",
+                len(assignment_ids),
+                exc_info=True,
+            )
+            return {}
+
     # ── Brief List (DB-backed) ───────────────────────────────────────
 
     async def get_briefs(
@@ -103,19 +177,23 @@ class DbContentDataService:
                 "GA-phase card load failed for %s", effective_slug, exc_info=True,
             )
 
-        # Resolve run_id for cycle_id display (may be None for pre-pipeline briefs)
-        run_id = await self._resolve_run_id(effective_slug)
-
         # Query by effective_slug to include run_id=NULL pieces from add_brief()
         pieces = await self._content_repo.list_by_slug(effective_slug)
-        if not pieces and run_id:
+        resolved_run_id: Optional[str] = None
+        if not pieces:
+            resolved_run_id = await self._resolve_run_id(effective_slug)
+        if not pieces and resolved_run_id:
             # Fallback: try run-scoped query for backward compat
-            pieces = await self._content_repo.list_by_run(run_id)
+            pieces = await self._content_repo.list_by_run(resolved_run_id)
         if not pieces and not ga_cards:
             return ContentBriefListResponse(briefs=[], total=0)
         if not pieces:
             # Only GA-phase cards exist — return them
             return ContentBriefListResponse(briefs=ga_cards, total=len(ga_cards))
+
+        topic_assignment_metadata = await self._load_topic_assignment_metadata(
+            list(pieces),
+        )
 
         # Load gap analysis data for sidebar enrichment via StorageBackend
         # Derive base company slug from effective_slug for gap analysis lookup
@@ -124,8 +202,9 @@ class DbContentDataService:
             load_analysis_json, self._backend, base_slug,
         )
 
-        # Load pipeline state — Redis first (when configured), file fallback
-        content_root = self._artifacts_root / "content" / effective_slug
+        # Load pipeline state — Redis only (no file fallback).
+        # When Redis is empty/unavailable, status comes from DB content_pieces.status.
+        # File fallback removed: stale cross-run entries caused 4-min kanban lag.
         pipeline_state: Dict[str, Any] = {}
         from core.config.settings import settings as _cfg
 
@@ -139,21 +218,16 @@ class DbContentDataService:
                     pipeline_state = await read_pipeline_state_redis_async(rc, effective_slug)
             except Exception:
                 logger.warning(
-                    "Redis pipeline state read failed — falling back to file",
+                    "Redis pipeline state read failed for %s", effective_slug,
                     exc_info=True,
                 )
-        if not pipeline_state:
-            # StorageBackend fallback (R2 or local)
-            content = self._backend.read(
-                f"content/{effective_slug}/pipeline_state.json"
+        if pipeline_state:
+            logger.info(
+                "get_briefs: pipeline_state from Redis for %s: %s",
+                effective_slug,
+                {k: v for k, v in pipeline_state.items() if not k.startswith("__")},
             )
-            if content:
-                try:
-                    raw_ps = json.loads(content)
-                    if isinstance(raw_ps, dict):
-                        pipeline_state = raw_ps
-                except (json.JSONDecodeError, ValueError):
-                    pass
+
         # Extract brief_id → task_id mapping for frontend HITL approval calls
         task_id_map: Dict[str, str] = {}
         raw_task_ids = pipeline_state.get("__task_ids__")
@@ -162,7 +236,7 @@ class DbContentDataService:
 
         items: List[ContentBriefListItem] = []
         for piece in pieces:
-            # Status mapping: pipeline_state.json overrides DB status (Phase 0)
+            # Status mapping: Redis pipeline_state overrides DB status
             brief_id = piece.brief_id or ""
             ps_status = pipeline_state.get(brief_id)
             if isinstance(ps_status, str):
@@ -170,6 +244,10 @@ class DbContentDataService:
             else:
                 raw_status = piece.status.value if piece.status else "planned"
                 display_status = _PIECE_STATUS_MAP.get(raw_status, "suggested")
+                logger.debug(
+                    "get_briefs: brief %s — no Redis override, DB status=%s → display=%s",
+                    brief_id, raw_status, display_status,
+                )
 
             # Content type mapping
             content_type = _FORMAT_TO_TYPE.get(
@@ -192,23 +270,43 @@ class DbContentDataService:
             cluster = piece.cluster_name or ""
 
             # Gap context for sidebar (filesystem-based enrichment)
-            brief_dict = {"title": piece.title or "", "target_cluster": cluster}
+            brief_dict = {
+                "title": piece.title or "",
+                "target_cluster": cluster,
+            }
+            if piece.evaluation_results and isinstance(piece.evaluation_results, dict):
+                embedded_gap_ctx = piece.evaluation_results.get("gap_context")
+                if embedded_gap_ctx is not None:
+                    brief_dict["gap_context"] = embedded_gap_ctx
             gap_ctx = extract_gap_context(brief_dict, analysis_json)
 
             # Use filesystem brief_id when available — this is what the pipeline,
             # artifact directories, and HITL approval endpoints use. Fall back
             # to DB UUID only when brief_id was never set.
             display_id = piece.brief_id or str(piece.id)
+            piece_assignment_id = getattr(piece, "topic_assignment_id", None)
+            piece_assignment_key = str(piece_assignment_id) if piece_assignment_id else ""
+            assignment_meta = topic_assignment_metadata.get(piece_assignment_key, {})
 
             items.append(ContentBriefListItem(
                 id=display_id,
+                display_id=display_id,
                 title=piece.title or "",
                 status=display_status,
                 content_type=content_type,
+                content_format=(
+                    assignment_meta.get("content_format")
+                    or piece.content_type
+                    or "long_blog"
+                ),
                 cluster=cluster,
                 target_word_count=word_count,
                 citability_score=citability,
-                cycle_id=str(run_id) if run_id else str(piece.run_id or ""),
+                cycle_id=(
+                    str(piece.run_id)
+                    if piece.run_id
+                    else (resolved_run_id or "")
+                ),
                 task_id=task_id_map.get(brief_id),
                 created_at=piece.created_at.isoformat() if piece.created_at else "",
                 updated_at=(
@@ -217,6 +315,20 @@ class DbContentDataService:
                     else (piece.created_at.isoformat() if piece.created_at else "")
                 ),
                 gap_context=gap_ctx,
+                topic_assignment_id=assignment_meta.get("topic_assignment_id") or piece_assignment_key or None,
+                buyer_stage=assignment_meta.get("buyer_stage"),
+                source="planner" if assignment_meta else None,
+                effective_slug=effective_slug,
+                intent_type=assignment_meta.get("intent_type"),
+                persona_name=assignment_meta.get("persona_name"),
+                persona_id=assignment_meta.get("persona_id"),
+                persona_affinity=assignment_meta.get("persona_affinity"),
+                priority_factors=assignment_meta.get("priority_factors"),
+                estimated_word_count=assignment_meta.get("estimated_word_count"),
+                citation_opportunity=assignment_meta.get("citation_opportunity"),
+                description=assignment_meta.get("description"),
+                target_keywords=assignment_meta.get("target_keywords"),
+                content_angle=assignment_meta.get("content_angle"),
                 published_url=piece.published_url or "",
                 published_at=(
                     piece.published_at.isoformat()
@@ -224,6 +336,20 @@ class DbContentDataService:
                     else None
                 ),
             ))
+
+        # Dedup: filter out GA cards whose topic_assignment_id already has
+        # a DB content piece (prevents transient duplication when
+        # cleanup_ga_phase_state fails after persist_blueprints_early).
+        piece_ta_ids: set[str] = set()
+        for piece in pieces:
+            ta_id = getattr(piece, "topic_assignment_id", None)
+            if ta_id is not None:
+                piece_ta_ids.add(str(ta_id))
+        if piece_ta_ids:
+            ga_cards = [
+                card for card in ga_cards
+                if card.topic_assignment_id not in piece_ta_ids
+            ]
 
         # Prepend GA-phase cards (Queue column) before DB brief cards
         all_items = ga_cards + items
@@ -238,6 +364,10 @@ class DbContentDataService:
 
         These are cards for topics undergoing gap analysis that don't yet
         have content_pieces DB rows. They appear in the Content Studio Queue.
+
+        Self-healing: validates each card's topic assignment still has an
+        active pipeline status in the DB. Orphaned cards (assignment reverted
+        to not_started or rejected) are purged from Redis automatically.
         """
         from core.config.settings import settings as _cfg
 
@@ -245,7 +375,10 @@ class DbContentDataService:
             return []
 
         from core.redis import get_redis_or_none
-        from core.content_engine.state_redis import read_ga_phase_cards_async
+        from core.content_engine.state_redis import (
+            read_ga_phase_cards_async,
+            cleanup_ga_phase_state_async,
+        )
 
         rc = get_redis_or_none()
         if rc is None:
@@ -255,15 +388,71 @@ class DbContentDataService:
         if not raw_cards:
             return []
 
+        # Self-healing: cross-reference with DB assignment statuses.
+        # Cards whose assignments are not_started or rejected are orphaned
+        # (e.g. from a 409'd pipeline launch where statuses were reverted).
+        orphan_ids: List[str] = []
+        try:
+            import uuid as _uuid_mod
+            from core.db.repositories.topic_discovery_repo import TopicAssignmentRepository
+
+            ta_ids = []
+            for card in raw_cards:
+                ta_id = card.get("topic_assignment_id")
+                if ta_id:
+                    try:
+                        ta_ids.append(_uuid_mod.UUID(ta_id))
+                    except (ValueError, AttributeError):
+                        pass
+
+            if ta_ids:
+                from core.db.engine import get_session_factory
+                _sf = get_session_factory()
+                async with _sf() as session:
+                    repo = TopicAssignmentRepository(session)
+                    db_assignments = await repo.get_by_ids(ta_ids)
+                    active_ids = {
+                        str(a.id) for a in db_assignments
+                        if a.status and a.status.value in _ACTIVE_ASSIGNMENT_STATUSES
+                    }
+                    # Assignments not in DB at all or in inactive status are orphans
+                    for card in raw_cards:
+                        ta_id = card.get("topic_assignment_id")
+                        if ta_id and ta_id not in active_ids:
+                            orphan_ids.append(ta_id)
+        except Exception:
+            logger.debug(
+                "GA-phase card validation skipped for %s", effective_slug,
+                exc_info=True,
+            )
+
+        # Purge orphaned ta-* keys from Redis (best-effort, non-blocking)
+        if orphan_ids:
+            logger.info(
+                "Purging %d orphaned GA-phase cards for %s: %s",
+                len(orphan_ids), effective_slug, orphan_ids,
+            )
+            try:
+                await cleanup_ga_phase_state_async(rc, effective_slug, orphan_ids)
+            except Exception:
+                logger.debug("Orphan cleanup failed", exc_info=True)
+
+        # Filter out orphans from the result
+        orphan_set = set(orphan_ids)
         items: List[ContentBriefListItem] = []
         for card in raw_cards:
+            if card.get("topic_assignment_id") in orphan_set:
+                continue
             items.append(ContentBriefListItem(
                 id=card["id"],  # ta-{uuid}
+                display_id=card.get("display_id", ""),
                 title=card.get("title", ""),
                 status=card["status"],
                 content_type="blog",  # default, will be determined by Brief Builder later
                 cluster=card.get("cluster", ""),
                 task_id=card.get("task_id"),
+                created_at=card.get("created_at", ""),
+                updated_at=card.get("updated_at", card.get("created_at", "")),
                 priority_score=card.get("priority_score", 0.0),
                 topic_assignment_id=card.get("topic_assignment_id"),
                 buyer_stage=card.get("buyer_stage"),
@@ -282,6 +471,7 @@ class DbContentDataService:
                 description=card.get("description"),
                 target_keywords=card.get("target_keywords"),
                 content_angle=card.get("content_angle"),
+                gap_context=card.get("gap_context"),
             ))
         return items
 
@@ -327,6 +517,7 @@ class DbContentDataService:
         eval_results = piece.evaluation_results or {}
         eval_history = eval_results.get("eval_history", [])
         final_passed = eval_results.get("final_passed", False)
+        cps = eval_results.get("cps")
 
         # Citability
         citability: Optional[float] = None
@@ -386,7 +577,8 @@ class DbContentDataService:
             eval_history=eval_history,
             final_passed=final_passed,
             exemplars=exemplars,
-            available_stages=await self._get_available_stages(piece.id)
+            available_stages=await self._get_available_stages(piece.id),
+            cps=cps,
         )
 
     async def _get_available_stages(self, piece_id: _uuid.UUID) -> list[str]:

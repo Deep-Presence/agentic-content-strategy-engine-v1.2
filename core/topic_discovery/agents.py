@@ -154,7 +154,11 @@ async def _run_completion(
 ) -> Tuple[Any, str]:
     """Run OpenRouter completion via the async OpenAI client.
 
-    Returns (response, raw_text) tuple. Signature unchanged from LiteLLM era.
+    Args:
+        response_format: Optional dict (e.g. {"type": "json_object"}) passed
+            through as-is. None → no structured output constraint.
+
+    Returns (response, raw_text) tuple.
     """
     from core.shared_tools.openrouter_client import get_async_client
 
@@ -169,8 +173,12 @@ async def _run_completion(
     }
     if response_format is not None:
         completion_kwargs["response_format"] = response_format
+
+    extra_body: Dict[str, Any] = {}
     if metadata is not None:
-        completion_kwargs["extra_body"] = {"metadata": metadata}
+        extra_body["metadata"] = metadata
+    if extra_body:
+        completion_kwargs["extra_body"] = extra_body
 
     response = await asyncio.wait_for(
         client.chat.completions.create(**completion_kwargs),
@@ -338,6 +346,7 @@ async def run_source_a_company_brainstorm(
             }
             response, raw_text = await _run_completion(
                 model=model, messages=messages, timeout_s=timeout_s,
+                response_format={"type": "json_object"},
                 metadata=_meta_a,
             )
             log_generation(
@@ -476,6 +485,7 @@ async def run_source_b_persona_brainstorm(
             }
             response, raw_text = await _run_completion(
                 model=model, messages=messages, timeout_s=timeout_s,
+                response_format={"type": "json_object"},
                 metadata=_meta_b,
             )
             log_generation(
@@ -731,6 +741,7 @@ async def run_source_d_adversarial(
             }
             response, raw_text = await _run_completion(
                 model=model, messages=messages, timeout_s=timeout_s,
+                response_format={"type": "json_object"},
                 metadata=_meta_d,
             )
             log_generation(
@@ -904,7 +915,6 @@ async def run_hierarchy_construction(
 ) -> TaxonomyTree:
     """Organize flat subdomains into a hierarchical taxonomy tree via LLM.
 
-    Uses response_format=json_object to enforce valid JSON output.
     Retries once on parse failure with a repair prompt before raising.
     """
     model = model or settings.topic_discovery_brainstorm_model
@@ -1038,7 +1048,7 @@ async def run_unified_hierarchy_and_scoring(
         "company_slug": company_slug,
     }
 
-    # Attempt 1 — larger max_tokens for scoring + persona affinity output
+    # Attempt 1
     response, raw_text = await _run_completion(
         model=model,
         messages=messages,
@@ -1333,6 +1343,7 @@ async def run_relevance_filtering(
     }
     response, raw_text = await _run_completion(
         model=model, messages=messages, temperature=0.3, timeout_s=timeout_s,
+        response_format={"type": "json_object"},
         metadata=_meta_rf,
     )
     log_generation(
@@ -1390,6 +1401,7 @@ async def run_topic_generation(
     }
     response, raw_text = await _run_completion(
         model=model, messages=messages, timeout_s=timeout_s,
+        response_format={"type": "json_object"},
         metadata=_meta_tg,
     )
     log_generation(
@@ -1495,6 +1507,7 @@ async def run_subdomain_expansion(
     }
     response, raw_text = await _run_completion(
         model=model, messages=messages, timeout_s=timeout_s,
+        response_format={"type": "json_object"},
         metadata=_meta_exp,
     )
     log_generation(

@@ -5,6 +5,7 @@ Embedding projections remain filesystem-backed (pre-computed s7 blobs).
 """
 from __future__ import annotations
 
+import asyncio
 import math
 import re
 from collections import defaultdict
@@ -158,7 +159,11 @@ class DbGapDataService:
             )
         return run.id
 
-    async def get_summary(self, effective_slug: str) -> GapSummaryResponse:
+    async def get_summary(self, effective_slug: str, *, ga_run_id: Optional[str] = None) -> GapSummaryResponse:
+        # Topic-scoped GA: delegate to JSON/filesystem service (no DB tables for scoped runs)
+        if ga_run_id:
+            from api.services.gap_data_service import get_summary as _fs_get_summary
+            return await asyncio.to_thread(_fs_get_summary, self._storage, effective_slug, ga_run_id=ga_run_id)
         run_id = await self._resolve_run_id(effective_slug)
 
         # Parallel-ish fetches (serial in practice, but fast in SQL)

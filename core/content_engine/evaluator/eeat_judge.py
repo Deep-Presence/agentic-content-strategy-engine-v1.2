@@ -77,6 +77,7 @@ async def evaluate_eeat(
             user=user_prompt,
             max_tokens=2048,
             temperature=0.0,
+            response_format={"type": "json_object"},
             metadata={
                 "agent": "eeat_judge",
                 "brief_id": content.brief_id,

@@ -303,13 +303,12 @@ class TestLockTTLRefresh:
 
 
 class TestReadFallback:
-    def test_consults_file_when_redis_returns_empty(self, tmp_path: Path, mock_sync_redis: MagicMock) -> None:
-        """When Redis returns {}, file is consulted (migration window)."""
+    def test_returns_empty_when_redis_returns_empty(self, tmp_path: Path, mock_sync_redis: MagicMock) -> None:
+        """When Redis returns {}, result is empty (no file fallback)."""
         # Redis returns empty
         mock_sync_redis.hgetall.return_value = {}
 
-        # File has data — must match the path _load_pipeline_state constructs:
-        # artifacts_root / "content" / slug / "pipeline_state.json"
+        # File has stale data — must NOT be consulted
         state_dir = tmp_path / "content" / "ramp"
         state_dir.mkdir(parents=True)
         (state_dir / "pipeline_state.json").write_text(
@@ -323,7 +322,8 @@ class TestReadFallback:
                 from api.services.content_data_service import _load_pipeline_state
                 result = _load_pipeline_state(tmp_path, "ramp")
 
-        assert result.get("brief-001") == "generating"
+        # File fallback removed — stale file ignored, empty result
+        assert result == {}
 
 
 # ── state_helpers.py integration tests ─────────────────────────────

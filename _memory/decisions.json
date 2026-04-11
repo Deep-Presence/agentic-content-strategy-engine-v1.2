@@ -1,16 +1,326 @@
 [
   {
+    "id": "D-TD-RESUME-CLAIM-DETECTION",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry dispatcher semantics for claimed approval continuations",
+    "decision": "Once a TD topic run has been claimed for dispatch, resume detection must not rely on `scheduler_state == 'resume_queued'` because the claim repo mutates queued rows to `claimed` before returning them. The dispatcher should treat any claimed topic run with a preserved `continuation_payload_json` as a resume continuation, reuse the paused `pipeline_task_id` when it still exists in the task store, and pass the stored resume payload/approval data through to `run_td_content_production_task()`.",
+    "rationale": "Live manual QA showed approved TD cards restarting from `Building brief ...` and later 409ing on stale brief-approval task ids. The durable topic run still held a `resume_stage='brief_approval'` continuation payload, but the dispatcher discarded it because the claim snapshot no longer said `resume_queued` after the DB claim step. Resume semantics in this architecture belong to the durable continuation payload, not to the transient post-claim scheduler string.",
+    "alternatives": [
+      "Continue keying resume detection off `scheduler_state == 'resume_queued'` \u2014 rejected because claimed rows no longer have that state by the time the dispatcher sees them",
+      "Change the repo to return pre-claim state strings in the snapshot \u2014 possible, but rejected for this fix because the continuation payload already provides the stable signal and keeps the change smaller",
+      "Always create a fresh task for every resume \u2014 rejected because it restarts TD pipelines from the top and invalidates frontend HITL task ids"
+    ],
+    "files_affected": [
+      "api/tasks/runner.py",
+      "tests/api/test_content_v13_ga_endpoints.py"
+    ],
+    "outcome": "Implemented on 2026-04-10. Claimed TD resume rows are now detected via non-empty continuation payloads, paused task ids are reused, and the stored `td_resume_payload` / `td_resume_approval` flow back into `run_td_content_production_task()`. Validation: `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -k 'resume_claim_reuses_existing_task_id' -q` (1 passed), `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q` (33 passed, 2 pre-existing warnings), `venv/bin/pytest tests/api/test_content_v13.py -q` (75 passed, 13 pre-existing warnings), `venv/bin/pytest tests/content_engine/test_topic_run_service.py -q` (6 passed).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-CONTENT-QUEUED-CLAIM-SEMANTICS",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry start-production semantics under shared CE semaphore pressure",
+    "decision": "TD start-production should expose an explicit queue state before actual CE execution begins. The HTTP route now preflights Redis GA-card state for the requested `topic_assignment_id`s and rejects duplicates with 409 when the same topic is already `content_queued` or `briefing` for the same `ga_run_id`. On first acceptance it persists a visible `content_queued` state to GA Redis cards and durable topic runs, and the frontend reflects that queue state instead of optimistically switching the card to `briefing`. The durable `briefing` transition remains runner-owned after `task_store.pipeline_semaphore(task_id)` acquires capacity.",
+    "rationale": "The Webflow WE-177 test run proved that the old contract was lying to the user: a 202 response plus frontend optimistic `briefing` made a card look active even while the task was still waiting behind the global Redis semaphore for up to 300 seconds. Repeated clicks then created duplicate queued tasks for the same topic. A dedicated queue state is more truthful, prevents duplicate starts for the same card, and preserves the existing execution-timed rule that only the runner may advance to `briefing`.",
+    "alternatives": [
+      "Keep returning 202 + optimistic `briefing` and rely on polling to snap back \u2014 rejected: this is exactly the misleading bounce the user reported",
+      "Advance durable topic runs to `briefing` in the HTTP request handler \u2014 rejected: it breaks the rule that execution stages must only flip at true execution points after semaphore claim",
+      "Expose no queue state at all and only disable the button locally \u2014 rejected: backend still needs duplicate-start protection and the user still needs truthful queue visibility"
+    ],
+    "impact": "Patched `api/routers/content_v13.py`, `core/models/pipeline_status.py`, `core/content_engine/state_redis.py`, and the Content Studio status/UI files to add `content_queued` end to end. Added regression coverage in `tests/api/test_content_v13_ga_endpoints.py`. Validation: `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q`, `venv/bin/pytest tests/content_engine/test_state_redis_ga.py -q`, and `cd frontend && npx tsc --noEmit`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-DEV-CONTENT-ENGINE-RUNTIME-RESET-SCOPE",
+    "timestamp": "2026-04-10",
+    "task": "Operational cleanup boundary for resetting a company's Content Studio / TD-entry run history in local dev",
+    "decision": "When a local test account needs a clean Content Studio slate, clear the company-scoped runtime-driving records rather than deleting `pipeline_runs` directly. The safe reset slice is: `content_engine_batch_runs`, `content_engine_topic_runs`, `content_engine_topic_events`, `content_pieces`, `content_artifacts`, company `api_tasks` for content-engine pipelines, the Redis hash `pipeline_state:{company_slug}`, and any leftover task SSE keys for the removed tasks. Do not treat `pipeline_runs` as a first-pass cleanup target unless the script also deletes the dependent GA analytics tables (`run_queries`, `run_citations`, `query_gaps`, embeddings tables, etc.) in the same transaction.",
+    "rationale": "For the Webflow test account (`akeshri516@gmail.com`), the visible confusion in Content Studio came from stale runtime rows and Redis state, not from the deeper historical pipeline graph. A direct `pipeline_runs` delete failed immediately on `run_queries_run_id_fkey`, which confirmed that pipeline runs fan out into many analytics tables that are broader than the UI reset use case. Clearing the runtime-driving tables and Redis keys is enough to remove old cards, durable topic logs, and task records before a new TD-entry test pass while avoiding collateral damage to unrelated company data.",
+    "alternatives": [
+      "Delete all company `pipeline_runs` for content-related pipeline types \u2014 rejected: unsafe without deleting a much larger dependency graph in the same transaction",
+      "Clear only Redis `pipeline_state:{slug}` and leave the database rows \u2014 rejected: old cards and task history would be able to repopulate from Postgres-backed endpoints",
+      "Delete the entire company row and recreate the account \u2014 rejected: far broader than the user-visible Content Studio reset that was requested"
+    ],
+    "impact": "For the Webflow test account, the cleanup zeroed `content_engine_batch_runs`, `content_engine_topic_runs`, `content_engine_topic_events`, `content_pieces`, `content_artifacts`, and content-engine `api_tasks`, and removed `pipeline_state:webflow` plus the remaining Webflow `sse:*` task-stream keys. `pipeline_runs` and its analytics dependents were intentionally left intact.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-GA-CARD-TIMESTAMP-RECONCILIATION",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry GA card reconciliation \u2014 make poll responses authoritative after missed SSE transitions",
+    "decision": "GA-phase topic-assignment cards must carry server-authored `created_at` and `updated_at` timestamps in Redis metadata and in the `/companies/{slug}/content/briefs` response. `write_ga_phase_state()` and `write_ga_phase_state_async()` now always upsert `__meta:ta-*` with timestamps, preserving the original `created_at` and bumping `updated_at` on every phase transition, even for status-only writes with no fresh topic_data payload. `DbContentDataService._load_ga_phase_cards()` now passes those timestamps through to `ContentBriefListItem` so frontend poll reconciliation can compare server recency against any locally stamped SSE state.",
+    "rationale": "Live and poll paths were using different notions of recency. When a company SSE `state_changed` event updated a GA card locally, the frontend gave that card an `updatedAt`, but subsequent poll payloads for GA cards arrived with blank timestamps because the Redis-backed card serializer omitted them. The merge rule therefore kept stale local `gap_analysis` forever if the final `gap_analysis_complete` event was missed, leaving the card visually stuck in `Agent work` despite the backend having already persisted `gap_analysis_complete`. The fix belongs at the data source, not as a frontend-only exception, because any mixed live/poll path needs server timestamps to self-heal safely.",
+    "alternatives": [
+      "Patch the frontend merge rule to special-case blank GA-card timestamps \u2014 rejected: hides the contract bug and keeps future live/poll flows fragile",
+      "Trust local SSE state over poll forever for GA cards \u2014 rejected: missed or dropped live events would remain unrecoverable",
+      "Move GA cards entirely off the `/content/briefs` poll path \u2014 deferred: poll reconciliation is still needed as a safety net even with authoritative live updates"
+    ],
+    "impact": "Patched `core/content_engine/state_redis.py` and `core/services/db_content_data.py`, added regression coverage in `tests/content_engine/test_state_redis_ga.py` and `tests/services/test_db_content_data_backend.py`, and documented the mixed live/poll lesson in memory. Validation: `venv/bin/pytest tests/content_engine/test_state_redis_ga.py -q` and `venv/bin/pytest tests/services/test_db_content_data_backend.py -k 'load_ga_phase_cards_includes_timestamps or passes_backend_not_path' -q`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-COMPANY-SSE-XREAD-TIMEOUT-HARDENING",
+    "timestamp": "2026-04-10",
+    "task": "Company SSE Redis Streams transport \u2014 align XREAD heartbeats with Redis socket timeout",
+    "decision": "The company-wide SSE stream must never block Redis longer than the configured socket timeout, and Redis read timeouts during an otherwise healthy idle stream should be treated as heartbeat ticks rather than fatal transport errors. `CompanyEventBus.stream()` now computes a safe `XREAD BLOCK` below `settings.redis_socket_timeout` and catches `redis.exceptions.TimeoutError` inside the live-tail loop to yield a heartbeat (`None`) instead of closing the SSE stream.",
+    "rationale": "After migrating company SSE to Redis Streams, the company bus used `heartbeat_interval_s=30` directly as the Redis `XREAD BLOCK` value while the shared Redis client remained configured with `socket_timeout=20s`. Idle streams therefore timed out at the Redis socket layer first, producing repeated `Company event stream error ... closing SSE stream` log entries and forcing the frontend EventSource to reconnect even though nothing was actually wrong with the stream. The task SSE bus already avoided this class of issue by using a shorter block window, so the company bus needed the same transport discipline.",
+    "alternatives": [
+      "Increase the global Redis socket timeout above 30s \u2014 rejected: broad infrastructure change for a single stream-loop bug",
+      "Keep the 30s block and simply suppress the exception log \u2014 rejected: the connection would still be torn down and reconnect unnecessarily",
+      "Disable Redis Streams heartbeats and rely entirely on browser reconnects \u2014 rejected: degrades live UX and hides the transport mismatch instead of fixing it"
+    ],
+    "impact": "Patched `core/events/company_event_bus.py` to cap `XREAD` block duration below the Redis socket timeout and to treat Redis read timeouts as idle heartbeats. Added regression coverage in `tests/events/test_company_event_bus.py`. Validation: `venv/bin/pytest tests/events/test_company_event_bus.py -q`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-CARD-ACTIVITY-ABSTRACTION",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution \u2014 enrich durable topic events and lift the UI contract to generic card activity",
+    "decision": "Keep TD-entry durable activity sourced from `content_engine_topic_events`, but enrich each returned event payload with stable run context on the service read path (`brief_id`, `display_id`, `topic_text`, `entry_mode`, `buyer_stage`, `intent_type`, `effective_slug`, `batch_run_id`) and attach explicit human-readable `note` payloads on runner completion/rollback transitions. On the frontend, stop binding the detail-view activity tab directly to `topic_run_*` naming; instead, use a generic card-activity adapter and `useCardActivity` hook that currently map TD topic-run events into reusable card-level activity items.",
+    "rationale": "The TD topic log is now useful enough to become the base execution-log model, but the previous implementation still leaked TD-specific naming all the way into the UI and left too much interpretation to the frontend. Enriching the payload on read makes the append-only log more self-describing without requiring data backfills or new writes, and adding explicit notes on rollback/terminal transitions makes the user-visible timeline much clearer. Lifting the frontend boundary to a generic card-activity abstraction lets manual and future prompt-entry modes plug into the same tab and renderer later without forking a second logging experience before they have their own durable runtime source.",
+    "alternatives": [
+      "Introduce a brand-new generic backend `card-runs` endpoint immediately \u2014 rejected: manual/prompt modes do not yet have a settled durable runtime identity, so a generic route now would mostly be a TD alias with extra churn",
+      "Keep the UI and hook named around `topic_run_*` until manual mode arrives \u2014 rejected: bakes TD-specific transport details into the component boundary we already know needs to be shared",
+      "Persist a second enriched event row format to the database \u2014 rejected: the stable run context already exists on the run row, so enriching on read is lower risk and applies to historical events too"
+    ],
+    "impact": "Added runner payload notes for GA/prod start, terminal completion/rejection, and production rollback; enriched service event snapshots with stable run context; introduced frontend `card-activity` adapter + `useCardActivity`; and rewired the Content Studio `Activity` tab to consume generic card-activity items while keeping TD backed by `topic_run_id`. Validation: `venv/bin/pytest tests/content_engine/test_topic_run_service.py -q`, `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q`, `venv/bin/pytest tests/api/test_content_v13_from_topics.py -k 'TestGetTopicRunEvents' -q`, and `npx tsc --noEmit`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-TOPIC-LOG",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution \u2014 expose the durable topic-level execution log in Content Studio",
+    "decision": "The TD-entry card log is implemented as an additive read path over the existing durable `content_engine_topic_events` stream. The backend exposes `GET /api/v1/content/v13/{effective_slug}/topic-runs/{topic_run_id}/events`, scoped by the same exact company-boundary auth rules as `/topic-runs`, and the frontend loads that event list on demand inside the existing card detail view as a new `Activity` tab in the right sidebar. The log stays keyed by `topic_run_id` and preserves `display_id` as the visible identifier for the card.",
+    "rationale": "The durable append-only event table already existed and was being populated by `topic_run_changed` and `topic_run_created`. Reusing that source avoids inventing a second execution-log channel or re-deriving history from coarse `state_changed` hints. Keeping the UI inside the existing card detail view makes the TD-first slice low-risk and immediately useful, while still matching the future direction of a generalized card-level log model for manual and prompt-entry modes.",
+    "alternatives": [
+      "Build the topic log from company SSE replay instead of the durable event table \u2014 rejected: SSE is a transport, not the audit source of truth",
+      "Create a separate drawer/page for the log \u2014 rejected: unnecessary navigation churn; the existing card detail view is already the right execution context",
+      "Fetch activity by `display_id` alone \u2014 rejected: the durable runtime identity for TD-entry is `topic_run_id`, while `display_id` remains purely user-facing"
+    ],
+    "impact": "Added additive topic-event API schemas and route, a durable service read path over `content_engine_topic_events`, frontend API/types + `useTopicRunEvents`, and a new Content Studio `Activity` tab that renders the append-only event timeline for TD-entry cards. Validation: `venv/bin/pytest tests/api/test_content_v13_from_topics.py -q`, `venv/bin/pytest tests/api/test_content_v13.py -q`, and `npx tsc --noEmit`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-CORRECTNESS-HARDENING",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution \u2014 harden durable/live-state correctness before topic-level logs",
+    "decision": "TD-entry live state must be finalized per topic/card, not per batch. The topic-runs endpoint now enforces an exact company boundary (`company` or `company__product` only), production completion derives durable terminal states per `topic_assignment_id`, CE exception rollback mirrors the existing retryable `gap_analysis_complete` UX in durable topic runs, Stage 3 worker failures write an explicit durable `failed` transition immediately, and the frontend now treats run recency by `updated_at` while queuing debounced `state_changed` payloads instead of dropping earlier cards.",
+    "rationale": "The review surfaced three ship-blocking backend regressions and two frontend reconciliation bugs. Prefix-based topic-run authorization leaked tenant data across similarly prefixed slugs. Batch-level durable completion writes clobbered mixed terminal outcomes, and CE crash handling persisted `failed` even when the visible card rolled back to a retryable queue state. Separately, Stage 3 worker failures could leave durable rows stuck at the last in-flight stage, cross-run recency could prefer an older historical run because `seq` is only per-run, and the reused debounce path dropped earlier `state_changed` payloads. Hardening these semantics is a prerequisite for exposing topic-level execution logs because the log must reflect the same authoritative card truth the UI renders.",
+    "alternatives": [
+      "Proceed to topic-level logging first and clean up state correctness afterward \u2014 rejected: the log would amplify incorrect terminal state semantics",
+      "Keep batch-level terminal writes and let polling reconcile per-card truth \u2014 rejected: poll-only correction is exactly what the durable topic-run model is meant to replace",
+      "Preserve crash history by keeping durable live state at `failed` while the UI rolls back to queue state \u2014 rejected: authoritative live state must match the retryable UX; failure history belongs in events/payloads, not the current status field"
+    ],
+    "impact": "Patched router authorization, TD production finalization, rollback handling, Stage 3 worker failure propagation, and frontend topic-run reconciliation. Added regression coverage in `test_content_v13_from_topics.py`, `test_content_v13_ga_endpoints.py`, and `test_pipeline_v13.py`. Validation: `venv/bin/pytest tests/api/test_content_v13_from_topics.py -q`, `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q`, `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k 'td_worker_failure_writes_explicit_failed_state or TestRebriefContextExtraction or reject_with_rethink_triggers_rebrief or major_change_triggers_rebrief or max_rebriefs_then_rejected' -q`, and `npx tsc --noEmit`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-CE-TRANSITION-COVERAGE",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution \u2014 finish remaining durable CE transition coverage",
+    "decision": "TD-entry retry/rebrief/review/edit flows must preserve the original brief/display identity and must keep threading `session_factory` through every user-visible CE state write that depends on `_write_pipeline_state_async()`. In practice: TOPIC_DISCOVERY rebriefs reuse the existing `brief_id`/`display_id` instead of inventing a `rebrief-*` identity, and evaluator-driven `revising` plus rebrief worker/evaluator reruns now carry `session_factory` so the shared helper can keep appending durable topic-run events and emitting authoritative `topic_run_changed` payloads.",
+    "rationale": "The audit found three remaining gaps after the first CE propagation slice. First, the TD HITL-2 `brief_review` write still omitted `session_factory`, so the frontend only got legacy `state_changed`. Second, evaluator revision loops wrote `revising` without durable context, so edit/retry paths depended on polling. Third, `_rebrief_and_rerun()` generated a new `rebrief-*` brief_id for TD-entry runs, which broke the durable brief_id lookup and undercut the universal display ID contract. Keeping the stable brief identity and durable context in these loops is required for authoritative live updates.",
+    "alternatives": [
+      "Keep random `rebrief-*` IDs for TD-entry and rely on polling/state_changed to reconcile the UI \u2014 rejected: breaks durable brief_id matching and weakens the display_id contract",
+      "Patch the durable repo/service directly inside each retry branch \u2014 rejected: duplicates stage propagation logic instead of using the shared state-write helper",
+      "Scope the fix to only the initial HITL-2 branch and leave evaluator/rebrief loops coarse \u2014 rejected: users can see revising/rebrief/review transitions on the frontend, so those paths must be authoritative too"
+    ],
+    "impact": "Updated pipeline_v13 and evaluator loop call chains so TD `brief_review`, evaluator `revising`, and TD rebrief worker/evaluator reruns all preserve durable topic-run propagation. Added regression coverage in `test_td_hitl2.py`, `test_evaluator.py`, and `test_pipeline_v13.py`.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-FRONTEND-TOPIC-RUN-STORE",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution \u2014 frontend consumption of authoritative topic-run events",
+    "decision": "Introduce a normalized Content Studio topic-run store keyed by topic_run_id with secondary indexes by topic_assignment_id and brief_id. `useCompanyStream` now consumes `topic_run_changed` directly and `useContentBriefs` overlays the durable topic-run snapshot onto polled cards, while `state_changed` is reduced to a compatibility patch path and polling remains only a reconciliation mechanism. The page-level company SSE subscription no longer refetches the board on every state change.",
+    "rationale": "The previous frontend model treated company SSE as invalidation and depended on a refetch loop to discover the real state. That does not scale cleanly once multiple TD-entry runs are active in parallel and different cards can be in different CE stages simultaneously. The backend now emits durable, sequenced topic-run snapshots, so the frontend should consume them directly and only poll to self-heal missed events or non-TD state. A normalized store is required to handle out-of-order and duplicate updates safely.",
+    "alternatives": [
+      "Keep refetch-on-state_changed and just add topic_run_changed for debugging \u2014 rejected: preserves coarse invalidation semantics and misses the main benefit of durable eventing",
+      "Store topic-run state directly on each card without normalization \u2014 rejected: duplicate/out-of-order events become harder to reason about and reconcile",
+      "Adopt a new global state library for this slice \u2014 rejected: unnecessary churn; a local normalized store plus pure merge/select helpers is enough"
+    ],
+    "impact": "Added frontend topic-run API types and fetcher, new pure topic-run store/overlay helpers, updated company stream hook contract, and rewired the board page to apply authoritative live deltas instead of immediate refetch. Validation: `npx tsc --noEmit` clean.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-CE-STAGE-PROPAGATION",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution \u2014 fine-grained CE stage propagation and company-stream payloads",
+    "decision": "Use the shared `_write_pipeline_state_async()` path as the source of truth for brief-level CE stage propagation. For TD-entry runs only, each brief-level state write now performs a best-effort durable topic-run update keyed by `(effective_slug, brief_id, pipeline_task_id)` and emits authoritative `topic_run_changed` company events with the durable row snapshot, while preserving the existing `state_changed` event for backward compatibility. A new brief-id scoped repository/service path was added instead of trying to infer topic runs from generic pipeline artifacts.",
+    "rationale": "The shared state helper already sits on the hot path for `brief_review`, `pending_brief_approval`, worker stages like `drafting`/`linking`, evaluator transitions, and final completion/rejection states. Hooking durable propagation there keeps the CE runtime model aligned with the existing Redis/file state writes and avoids duplicating stage logic across many pipeline branches. Matching on task-scoped brief IDs is robust for TD-entry because `brief_id` is the display ID and the runner already rebinds the durable rows to the active production task before CE begins.",
+    "alternatives": [
+      "Emit authoritative topic-run events only from worker dispatcher \u2014 rejected: misses other CE stages like approval/review/revising/rebrief transitions already funneled through `_write_pipeline_state_async`",
+      "Infer topic-run changes from generic `state_changed` events in the frontend \u2014 rejected: keeps backend state implicit and reintroduces ordering/glitch risk",
+      "Update topic runs by brief_id without task scoping \u2014 rejected: unsafe under retries or reused display IDs across future flows"
+    ],
+    "impact": "Added brief-id scoped durable update path in content_engine_run_repo/topic_run_service, threaded session_factory into CE state-write call sites, and expanded state_helpers tests to assert authoritative `topic_run_changed` emission alongside legacy `state_changed` compatibility events.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-TD-ENTRY-RUN-IDENTITY-HARDENING",
+    "timestamp": "2026-04-10",
+    "task": "TD-entry parallel execution \u2014 harden durable topic-run identity and execution timing",
+    "decision": "Durable topic-run writes must match a specific in-flight run, not 'latest row for this topic'. ContentEngineTopicRunService.advance_topic_runs now supports explicit match scopes: match_pipeline_task_id for the GA task that created the rows, and match_ga_run_id for production updates after GA completion. The previous unscoped fallback by topic_assignment_id was removed. The HTTP start-production route no longer advances durable rows to briefing; that transition now happens inside the runner after pipeline_semaphore acquisition, which is the first true execution point.",
+    "rationale": "A topic_assignment_id can appear in multiple batches/retries. Updating by assignment alone can mutate the wrong historical run, especially once parallel TD-entry is enabled. GA completion is the moment the real ga_run_id becomes known, so that identifier must be bound back onto the exact rows originally created under the GA task. Separately, setting briefing in the request handler overstated progress while the job was still waiting for capacity, which would create frontend/backend drift under queueing pressure.",
+    "alternatives": [
+      "Keep fallback-to-latest and rely on created_at ordering \u2014 rejected: incorrect under retries/overlapping batches",
+      "Advance to briefing in the request handler for snappier UI \u2014 rejected: misrepresents queued work as actively executing",
+      "Require topic_run_id from the frontend immediately for all mutations \u2014 deferred: additive API already returns it, but backend scoping fixes the immediate correctness issue without blocking current clients"
+    ],
+    "impact": "Repository query scoping widened (pipeline_task_id + effective_slug filters), durable service matching semantics tightened, production route optimistic state write removed, runner start path owns the briefing transition, and a regression DB test now covers reused topic_assignment_id across two GA tasks.",
+    "approved_by": "Aryan",
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-STRUCTURED-OUTPUT-LAYER1",
+    "timestamp": "2026-04-08",
+    "task": "Layer 1 Constrained Decoding \u2014 add json_schema strict mode to 14 LLM call sites",
+    "decision": "Create dedicated schema models (not reuse domain models) for OpenRouter constrained decoding. CE schemas in core/content_engine/structured_schemas.py (6 models), TD schemas in core/topic_discovery/structured_schemas.py (7 models). Shared build_response_format() helper in core/shared_tools/structured_output.py. All Dict[str, Any/T] fields replaced with typed sub-models (strict mode requires additionalProperties: false). Perplexity calls (Source C, Fact Enricher, Linker) and raw-markdown calls (Drafter, Formatter) excluded. require_parameters=True on all json_schema calls for routing safety.",
+    "rationale": "Production crash on 2026-04-08: Brief Builder LLM returned content_format='technical_guide' instead of 5 allowed Literal values. Blind retries produced same invalid value. Zero blueprints. Pipeline failure. Constrained decoding prevents this class of error at the token level. Dedicated schema models chosen because: (1) domain models have post-parse fields (gap_context, id, embedding) that waste tokens and confuse the LLM, (2) Dict[str, Any] breaks strict mode, (3) clean contract for what LLM should output vs what system populates.",
+    "alternatives": [
+      "Reuse domain models directly as response_format \u2014 rejected: Dict[str, Any] fields break strict mode, post-parse fields waste tokens",
+      "Use client.beta.chat.completions.parse() for auto-parsing \u2014 rejected: changes LLMResponse return type, breaks all 11+ existing callers",
+      "Use json_object mode (no schema enforcement) \u2014 rejected: does not prevent invalid Literal values, just ensures valid JSON",
+      "Use instructor library for validation-driven re-prompting \u2014 considered as Layer 2, orthogonal to Layer 1"
+    ],
+    "impact": "6 new files + 10 modified files. 43 new tests. 14 LLM call sites wired. Token overhead: ~200-2000 tokens per request depending on schema complexity.",
+    "approved_by": "Aryan",
+    "codex_review": "gpt-5.3-codex critical review (473K tokens). 9 findings identified \u2014 see codex_findings below.",
+    "codex_findings": [
+      {
+        "id": "CF-1",
+        "severity": "CRITICAL",
+        "issue": "Source B source_personas vs target_personas key mismatch \u2014 prompt uses source_personas, schema enforces target_personas, parser reads source_personas \u2192 persona_ids resolve to empty under constrained decoding",
+        "status": "NEEDS_FIX"
+      },
+      {
+        "id": "CF-2",
+        "severity": "HIGH",
+        "issue": "require_parameters sent at top level of extra_body; OpenRouter docs define it under provider.require_parameters (nested)",
+        "status": "NEEDS_FIX"
+      },
+      {
+        "id": "CF-3",
+        "severity": "HIGH",
+        "issue": "Hierarchy/unified S2 prompt uses pillar_name/pillar_description/subdomains; schema uses name/description/children \u2014 material key name mismatch",
+        "status": "NEEDS_FIX"
+      },
+      {
+        "id": "CF-4",
+        "severity": "HIGH",
+        "issue": "target_keywords prompt expects {primary, secondary[]}, schema enforces List[str]; UI/API expect object shape",
+        "status": "NEEDS_FIX"
+      },
+      {
+        "id": "CF-5",
+        "severity": "MEDIUM",
+        "issue": "reading_hierarchy prompt uses H1/H2/H3 (uppercase), schema uses h1/h2/h3 (lowercase); to_domain_model() normalizes but build_brief() parses to ContentBlueprint directly, bypassing schema model",
+        "status": "NEEDS_FIX"
+      },
+      {
+        "id": "CF-6",
+        "severity": "MEDIUM",
+        "issue": "No graceful downgrade if provider rejects json_schema \u2014 fails hard, no fallback to json_object mode",
+        "status": "DEFERRED"
+      },
+      {
+        "id": "CF-7",
+        "severity": "MEDIUM",
+        "issue": "Non-trivial token overhead: CEContentBlueprintSchema ~2038 tokens, TDUnifiedHierarchySchema ~596 tokens",
+        "status": "MONITOR"
+      },
+      {
+        "id": "CF-8",
+        "severity": "LOW",
+        "issue": "Several prompt example fields now forbidden by schema (user_feedback, rationale, example_topics) \u2014 wasted prompt instructions",
+        "status": "DEFERRED"
+      },
+      {
+        "id": "CF-9",
+        "severity": "MEDIUM",
+        "issue": "Test suite passes but misses major prompt/schema contract regressions \u2014 need contract tests",
+        "status": "DEFERRED"
+      }
+    ],
+    "status": "IMPLEMENTATION_COMPLETE_NEEDS_FIXES"
+  },
+  {
+    "id": "D-DISPLAY-ID-PART2",
+    "timestamp": "2026-04-08",
+    "task": "Universal Display ID Part 2 \u2014 pipeline propagation + frontend + 6 audit fixes",
+    "decision": "Part 2: Propagate display_id through orchestrator\u2192Redis\u2192CE\u2192Content Data Service\u2192Frontend. 6 audit fixes: H1 (brief_id_hint regex ^[A-Za-z][A-Za-z0-9]{0,9}-\\d{1,4}$), H2 (build_briefs_parallel preserves None entries for index alignment; all 7 callers filter after), M1 (JSON service regex), M2 (GA card dedup by topic_assignment_id in get_briefs), M3 (_brief_dir path sanitization), L1 (frontend fallback numbering from max existing).",
+    "rationale": "H1: Content Studio 'Retry' button sends selectedCard.id (now WE-003) as brief_id_hint \u2014 old regex ^brief-\\d{1,4}$ would 422-reject. H2: Pre-existing bug \u2014 build_briefs_parallel filtered None entries, collapsing indices. When topic 1 fails, topic 2's blueprint gets topic 1's assignment data. Now Nones preserved, callers map by index THEN filter. M2: If cleanup_ga_phase_state fails, both ta-{uuid} and WE-003 appear \u2014 dedup by topic_assignment_id prevents duplication. M3: Defense-in-depth \u2014 brief_id used as path segment, reject /, \\, .., null. L1: Mixed backend/fallback display_ids could collide (both WE-001) \u2014 fallback now starts after max existing number.",
+    "alternatives": [
+      "Remove brief_id_hint validation entirely \u2014 rejected: loses path traversal protection",
+      "Fix only TD caller for H2, leave others \u2014 rejected: all 7 callers could receive Nones",
+      "Full dedup by ta_id + brief_id hash \u2014 over-engineering: topic_assignment_id is sufficient",
+      "Sanitize at derive_prefix instead of _brief_dir \u2014 rejected: defense-in-depth at consumption point is safer"
+    ],
+    "impact": "15 backend files + 7 frontend files modified, 3 new test files (37 tests). 240 affected tests passing. TypeScript clean.",
+    "approved_by": "Aryan",
+    "codex_review": "2 rounds of gpt-5.3-codex review. Round 1: 6 findings (2 HIGH, 2 MEDIUM, 2 LOW) \u2014 all 6 fixed. Round 2: 3 new findings (2 HIGH-theoretical, 1 LOW) \u2014 deferred as low real-world risk. 106 tests run by Codex, all passing.",
+    "deferred_findings": [
+      "Legacy pipeline.py _brief_dir has no sanitization (workers/dispatcher.py imports it) \u2014 LOW real risk, derive_prefix only produces [A-Z]",
+      "derive_prefix can produce digit-first prefix for digit-first company names (e.g. '3M' \u2192 '3M-001') which fails ^[A-Za-z] validator \u2014 extremely rare",
+      "build_briefs_parallel return type annotation says List[ContentBlueprint] but now includes None entries \u2014 type annotation drift"
+    ],
+    "status": "COMPLETE"
+  },
+  {
+    "id": "D-KANBAN-SYNC-LAG-FIX",
+    "timestamp": "2026-04-08",
+    "task": "Fix Content Studio Kanban 4-minute sync lag \u2014 Codex audit recommendation R1",
+    "decision": "Centralize _emit_company('state_changed') inside _write_pipeline_state_async() (after both Redis + file writes). Every status write automatically broadcasts a company SSE event. Frontend debounces at 300ms \u2192 single refetch per transition. Also: (1) GA-phase cleanup log debug\u2192warning, (2) isSubmitting guard on approve buttons, (3) optimistic updateCard bumps updatedAt.",
+    "rationale": "Codex audit identified that dispatcher worker transitions (outlining/drafting/linking/enriching) wrote to Redis but never emitted company SSE \u2014 frontend only discovered changes via poll. Production logs confirmed 4-minute lag. Centralizing emit in the state write function (rather than adding emit calls to each caller) ensures zero caller changes and future-proofs new call sites. Double-emit at HITL checkpoints is harmless due to 300ms debounce. File-based state non-atomicity and in-memory CompanyEventBus are pre-existing architectural issues explicitly deferred.",
+    "alternatives": [
+      "Add _emit_company to each dispatcher call site \u2014 rejected: 20+ call sites, fragile, misses future callers",
+      "Drop file fallback entirely (Codex R2) \u2014 deferred: breaks local dev without Redis",
+      "Replace CompanyEventBus with Redis Pub/Sub (Codex R3) \u2014 deferred: single-worker deployment for now"
+    ],
+    "impact": "4 files modified, 1 new test file (7 tests). state_helpers.py (SSE emit), pipeline_v13.py (log level), FullPageView.tsx (button guard), useContentBriefs.ts (updatedAt bump).",
+    "approved_by": "Aryan",
+    "status": "COMPLETE \u2014 Codex gpt-5.3-codex R1 PASS, 2 architectural items deferred"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-ARCH-FIX",
+    "timestamp": "2026-04-07",
+    "task": "Content Studio 3-phase architecture fix: 4 bug fixes + company-wide SSE stream",
+    "decision": "Phase 1: Fix 3 backend bugs (TD HITL-2 bypass via full checkpoint pattern mirror, OpenRouter model ID dot\u2192dash, GA\u2192CE snap-back via 'briefing' phase + in_content_production enum + Alembic 0036). Phase 2: Fix frontend poll-overwrites-SSE via version-aware merge (updatedAt comparison, Map-based O(1) lookup) + adaptive polling (5s active/60s idle/none empty). Phase 3: Company-wide SSE stream \u2014 in-memory CompanyEventBus singleton (sync emit via put_nowait, Queue maxsize=100, drop-oldest overflow), dedicated SSE endpoint at GET /companies/{slug}/stream (tenant isolation, 30s heartbeat), _emit_company helper in state_helpers.py (best-effort, lazy import), useCompanyStream hook (300ms debounce, EventSource auto-reconnect).",
+    "rationale": "In-memory bus chosen over Redis Pub/Sub for Phase 3 because: (1) single-worker dev mode is current deployment, (2) interface designed for Redis swap later (subscribe/unsubscribe/emit), (3) avoids adding Redis complexity to already-complex sprint. Sync emit chosen because 24+ existing emit sites are sync (pipeline helpers). Version-aware merge chosen over full SSE-driven state because poll endpoint is the trusted source of truth \u2014 SSE is just a nudge.",
+    "alternatives": [
+      "Redis Pub/Sub for CompanyEventBus \u2014 deferred: single-worker for now, interface ready for swap",
+      "Full card state in SSE events \u2014 rejected: poll endpoint is source of truth, SSE events are hints only",
+      "Remove periodic polling entirely \u2014 rejected: SSE can drop events, 60s safety heartbeat needed",
+      "Worker-step emit points \u2014 deferred: only major transitions emitted now, adaptive 5s polling compensates"
+    ],
+    "impact": "5 new files (core/events/*.py, api/routers/company_stream.py, useCompanyStream.ts, tests/events/*). 10+ modified files. 9 EventBus tests. Migration 0036. CRITICAL: _company_slug NameError must be fixed before merge.",
+    "approved_by": "Aryan",
+    "status": "MOSTLY FIXED \u2014 _company_slug NameError (F17) fixed, SSE centralized in kanban-sync-lag-fix sprint. F18 (Redis GA-phase revert on failure) still open."
+  },
+  {
     "id": "D-CMS-AUTO-SYNC-PROMPT-GEN",
     "timestamp": "2026-04-07",
     "task": "CMS auto-sync + incremental upsert + auto-prompt generation",
     "decision": "Three-feature chain: (1) Auto-sync via background task on first CMS connect (last_sync_at is None gate, TaskConflictError idempotency). (2) New page detection via pre-collected URL set in ingest_from_cms_sync (returns tuple). (3) Prompt generation chained as Phase 2 in run_cms_sync_task with separate session, error isolation, and cap.",
     "rationale": "Follows existing td_content_orchestrator synchronous chaining pattern. Slug lock is the idempotency guard (no schema changes needed). Pre-collect URLs approach is simpler than xmax system column (SQLAlchemy ORM compatibility). Error isolation ensures sync is always COMPLETED. Cap prevents runaway LLM costs.",
     "alternatives": [
-      "initial_sync_enqueued_at column — rejected: over-engineering, slug lock already prevents double sync",
-      "DB-native xmax insert detection — rejected: SQLAlchemy ORM RETURNING doesn't cleanly expose xmax",
-      "Event-driven subscriber pattern — rejected: no subscriber infrastructure exists, synchronous chaining is simpler",
-      "Separate background task for prompt gen — rejected: SSE would need two task IDs, unnecessarily complex",
-      "Prompt retry queue — rejected: manual /content-to-prompt/generate-new endpoint already exists"
+      "initial_sync_enqueued_at column \u2014 rejected: over-engineering, slug lock already prevents double sync",
+      "DB-native xmax insert detection \u2014 rejected: SQLAlchemy ORM RETURNING doesn't cleanly expose xmax",
+      "Event-driven subscriber pattern \u2014 rejected: no subscriber infrastructure exists, synchronous chaining is simpler",
+      "Separate background task for prompt gen \u2014 rejected: SSE would need two task IDs, unnecessarily complex",
+      "Prompt retry queue \u2014 rejected: manual /content-to-prompt/generate-new endpoint already exists"
     ],
     "impact": "8 backend files modified + 1 new test file. 106 targeted tests passing. 1979 total passing.",
     "reversible": true,
@@ -19,13 +329,13 @@
   {
     "id": "D-CONTENT-PERF-GAPS-ARCHITECTURE",
     "timestamp": "2026-04-06",
-    "task": "Content Performance 4-gap fill — citations, platforms, queries_covered, citation_timeline",
+    "task": "Content Performance 4-gap fill \u2014 citations, platforms, queries_covered, citation_timeline",
     "decision": "Extend existing repos with 3 new methods (no new services/tables). ContentPerformanceService gains 2 Optional repos (ci_prompt_repo, gap_repo) with None defaults for backward compat. Batch query for citations+platforms uses bool_or (existing pattern at gap_analysis_repo.py:246). Gap 3 (queries_covered) uses Python-side URL normalization matching (normalize_url from url_utils.py). google_ai platform derived from gemini engine (no distinct google_ai in daily_run_responses). platforms schema uses typed default_factory with all 5 keys = False.",
     "rationale": "Single batch query per company avoids N+1. Optional repos preserve 43 existing service tests unchanged. Python URL matching avoids duplicating normalization logic in SQL. bool_or is Postgres-native and already proven in codebase.",
     "alternatives": [
-      "New ContentPerformanceMetricsService — rejected: CLAUDE.md says no new services",
-      "per-page get_page_metrics N+1 calls — rejected: performance concern for 1000+ pages",
-      "SQL-side URL normalization for Gap 3 — rejected: normalize_url is complex Python-only logic"
+      "New ContentPerformanceMetricsService \u2014 rejected: CLAUDE.md says no new services",
+      "per-page get_page_metrics N+1 calls \u2014 rejected: performance concern for 1000+ pages",
+      "SQL-side URL normalization for Gap 3 \u2014 rejected: normalize_url is complex Python-only logic"
     ],
     "impact": "7 backend files + 3 frontend files modified. All 63 tests passing. No schema migration needed.",
     "reversible": true
@@ -34,12 +344,12 @@
     "id": "D-STRUCTURAL-COMPOSITE-SCORE",
     "timestamp": "2026-04-06",
     "task": "Structural composite score (0-100) for Content Performance table column",
-    "decision": "Pure computation from existing structural_signals JSONB — no new data, no new tables. 24 signals across 4 categories weighted by citation importance. Boolean signals: full weight if True. Numeric: min(1.0, value/benchmark) * weight. Normalization: round(raw/total_weight*100). Added to ContentPerformanceRow + ContentDetailResponse schemas. Total weight 91 points (not forced to 100 — normalization handles it).",
+    "decision": "Pure computation from existing structural_signals JSONB \u2014 no new data, no new tables. 24 signals across 4 categories weighted by citation importance. Boolean signals: full weight if True. Numeric: min(1.0, value/benchmark) * weight. Normalization: round(raw/total_weight*100). Added to ContentPerformanceRow + ContentDetailResponse schemas. Total weight 91 points (not forced to 100 \u2014 normalization handles it).",
     "rationale": "The structural_signals JSONB (45 fields from compute_structural_signals) already exists on every content_inventory row via Site Audit + GA S1 hydration. The gap_data_service already computes signal correlations with citation likelihood. The composite score distills these into a single 0-100 number for the table column. Benchmarks derived from cited exemplar averages. Content Patterns (boolean) weighted heaviest (30pts) because presence/absence of FAQ, key takeaways, etc. is the highest-signal predictor of citation likelihood.",
     "alternatives": [
-      "Use gap analysis correlation r-values as weights — rejected: correlations are per-company, vary by run, would need storage. Static weights are simpler and more stable.",
-      "Store composite score in DB column — rejected: computed field from JSONB, no need to persist. Recomputation is <1ms per page.",
-      "Equal weights across all signals — rejected: not all signals matter equally. has_faq_section and word_count are much stronger citation predictors than h4_count or code_block_count."
+      "Use gap analysis correlation r-values as weights \u2014 rejected: correlations are per-company, vary by run, would need storage. Static weights are simpler and more stable.",
+      "Store composite score in DB column \u2014 rejected: computed field from JSONB, no need to persist. Recomputation is <1ms per page.",
+      "Equal weights across all signals \u2014 rejected: not all signals matter equally. has_faq_section and word_count are much stronger citation predictors than h4_count or code_block_count."
     ],
     "approved_by": "Aryan",
     "codex_review": null
@@ -47,30 +357,30 @@
   {
     "id": "D-CONTENT-TO-PROMPT-PIPELINE",
     "timestamp": "2026-04-06",
-    "task": "Content-to-Prompt pipeline — architecture for generating AI visibility prompts from content inventory pages",
+    "task": "Content-to-Prompt pipeline \u2014 architecture for generating AI visibility prompts from content inventory pages",
     "decision": "Join table (content_inventory_prompts M:N) over FK column on tracked_prompts. Reuse BuyerStage enum (tofu/mofu/bofu) not new funnel_position naming. No modifications to existing content_inventory or tracked_prompts tables. External status tracking via pipeline_runs (not inline columns on content_inventory). 2-tier dedup: text hash + future semantic. Content enrichment as reusable enrich_thin_pages() on ContentInventoryService. 6 API endpoints (compromise between 4 and 9). Service+Orchestrator+Repository pattern matching existing codebase conventions.",
-    "rationale": "Join table needed for: (1) M:N — same prompt relevant to multiple pages via cross-page dedup, (2) per-link metadata (buyer_stage, intent_type, approved, is_user_edited), (3) company_id type mismatch — tracked_prompts uses String, content_inventory uses UUID — join table sidesteps by having both FKs point to UUID PKs, (4) content_inventory is a shared registry used by TD/GA/CE — shouldn't carry pipeline-specific status columns. Evaluated 10 dimensions against FK alternative.",
+    "rationale": "Join table needed for: (1) M:N \u2014 same prompt relevant to multiple pages via cross-page dedup, (2) per-link metadata (buyer_stage, intent_type, approved, is_user_edited), (3) company_id type mismatch \u2014 tracked_prompts uses String, content_inventory uses UUID \u2014 join table sidesteps by having both FKs point to UUID PKs, (4) content_inventory is a shared registry used by TD/GA/CE \u2014 shouldn't carry pipeline-specific status columns. Evaluated 10 dimensions against FK alternative.",
     "alternatives": [
-      "FK content_inventory_id on tracked_prompts (1:N) — rejected: no M:N, type mismatch, modifies shared table, inline status loses re-gen history",
-      "source_metadata JSONB only (no join table, no FK) — rejected: JSONB not indexable for JOIN-heavy aggregation queries",
-      "funnel_position (top_of_mind/middle_of_mind/bottom_of_mind) naming — rejected: BuyerStage enum already exists in core/db/enums.py, 25+ test files use tofu/mofu/bofu",
-      "Inline prompt_gen_status on content_inventory — rejected: only tracks last run, loses history, pollutes shared registry table",
-      "Single service class (no orchestrator) — rejected: inconsistent with codebase patterns (DailyTrackerOrchestrator + PromptLibraryService)"
+      "FK content_inventory_id on tracked_prompts (1:N) \u2014 rejected: no M:N, type mismatch, modifies shared table, inline status loses re-gen history",
+      "source_metadata JSONB only (no join table, no FK) \u2014 rejected: JSONB not indexable for JOIN-heavy aggregation queries",
+      "funnel_position (top_of_mind/middle_of_mind/bottom_of_mind) naming \u2014 rejected: BuyerStage enum already exists in core/db/enums.py, 25+ test files use tofu/mofu/bofu",
+      "Inline prompt_gen_status on content_inventory \u2014 rejected: only tracks last run, loses history, pollutes shared registry table",
+      "Single service class (no orchestrator) \u2014 rejected: inconsistent with codebase patterns (DailyTrackerOrchestrator + PromptLibraryService)"
     ],
     "approved_by": "Aryan",
-    "codex_review": "gpt-5.3-codex critical review on 8 dimensions. Key findings incorporated: (1) CASCADE safety — page delete cascades link rows only, not shared prompts, (2) generation_run_id nullable for manual links, (3) is_user_edited flag to protect manual edits from re-gen overwrite, (4) 2-tier dedup — text hash (free, 80% case) + semantic (future), (5) concurrency 8 with 429 backoff, (6) partial failure model with per-page error tracking, (7) cost tracking via existing track_llm_cost(), (8) 4-table JOIN fine at current scale with proper indexes."
+    "codex_review": "gpt-5.3-codex critical review on 8 dimensions. Key findings incorporated: (1) CASCADE safety \u2014 page delete cascades link rows only, not shared prompts, (2) generation_run_id nullable for manual links, (3) is_user_edited flag to protect manual edits from re-gen overwrite, (4) 2-tier dedup \u2014 text hash (free, 80% case) + semantic (future), (5) concurrency 8 with 429 backoff, (6) partial failure model with per-page error tracking, (7) cost tracking via existing track_llm_cost(), (8) 4-table JOIN fine at current scale with proper indexes."
   },
   {
     "id": "D-CONTENT-INVENTORY-STRUCTURAL-SIGNALS",
     "timestamp": "2026-04-06",
-    "task": "Content Inventory — Gap Analysis S1 ingestion + structural signals JSONB",
+    "task": "Content Inventory \u2014 Gap Analysis S1 ingestion + structural signals JSONB",
     "decision": "Add gap_analysis_crawl enum + structural_signals JSONB column. Surface HTML from run_site_audit() via optional _html_map_out dict param (not return type change). GA hydration reads company_page_analysis.json from storage (no embed_company_assets return change). Keep 4 legacy structural columns for API backward compat. Strip per_paragraph_word_counts from JSONB. Skip-step guarded (S1 skipped = no hydration). Last-writer-wins provenance for v1.",
-    "rationale": "run_site_audit() is called from 9 files (runner, onboarding orchestrator, CLI, ~20 tests). Changing return type would break all of them. _html_map_out dict param is zero-breakage. GA S1 already computes structural signals and writes company_page_analysis.json — reading from storage avoids changing embed_company_assets() return type. Legacy columns kept because API schemas, router, content_performance_service read them directly.",
+    "rationale": "run_site_audit() is called from 9 files (runner, onboarding orchestrator, CLI, ~20 tests). Changing return type would break all of them. _html_map_out dict param is zero-breakage. GA S1 already computes structural signals and writes company_page_analysis.json \u2014 reading from storage avoids changing embed_company_assets() return type. Legacy columns kept because API schemas, router, content_performance_service read them directly.",
     "alternatives": [
-      "SiteAuditPipelineOutput wrapper return type — rejected: breaks 9 callers, 20+ tests",
-      "Return page_analyses from embed_company_assets() — rejected: changes contract, ripples through callers",
-      "Drop 4 legacy columns — rejected: API schemas, router, content_performance_service read them directly",
-      "Store full per_paragraph_word_counts in JSONB — rejected: variable-length array bloats row size"
+      "SiteAuditPipelineOutput wrapper return type \u2014 rejected: breaks 9 callers, 20+ tests",
+      "Return page_analyses from embed_company_assets() \u2014 rejected: changes contract, ripples through callers",
+      "Drop 4 legacy columns \u2014 rejected: API schemas, router, content_performance_service read them directly",
+      "Store full per_paragraph_word_counts in JSONB \u2014 rejected: variable-length array bloats row size"
     ],
     "approved_by": "Aryan",
     "codex_review": "gpt-5.3-codex reviewed plan. 10 findings (4 high, 6 medium). 5 incorporated: D2 (keep legacy columns), D3 (strip per_paragraph_word_counts), D4 (skip-step guard), D5 (URL keying matches PageAuditResult.url), D6 (last-writer-wins acceptable for v1). Provenance history column deferred."
@@ -78,13 +388,13 @@
   {
     "id": "D-TD-GA-CE-TWO-PHASE-SPLIT",
     "timestamp": "2026-04-06",
-    "task": "TD→GA→CE two-phase pipeline split — Planner to Content Studio integration",
+    "task": "TD\u2192GA\u2192CE two-phase pipeline split \u2014 Planner to Content Studio integration",
     "decision": "Two separate tasks (GA-only + CE-only), each with own task_id/semaphore/SSE. GA-phase cards stored in existing pipeline_state:{slug} Redis Hash using ta-{uuid} keys. No JSON file fallback. DB+Redis only production path (DbContentDataService modified, JsonContentDataService untouched). GA cleanup moved to post-CE-success (not pre-CE). effectiveSlug wired end-to-end for product-scoped runs.",
     "rationale": "A single task with HITL pause would hold the semaphore slot indefinitely (hours/days), blocking other pipelines. Two tasks cleanly maps to the existing runner pattern. Reusing the same Redis Hash avoids a second state store. DB+Redis only aligns with the elimination of JSON-based services.",
     "alternatives": [
-      "One task with HITL pause between GA and CE — rejected: holds semaphore, impractical for indefinite wait",
-      "Separate Redis Hash ga_phase_state:{slug} — rejected: adds complexity, same hash with ta- prefix is simpler",
-      "JSON file fallback for GA-phase state — rejected: DB+Redis is sole production path per project direction"
+      "One task with HITL pause between GA and CE \u2014 rejected: holds semaphore, impractical for indefinite wait",
+      "Separate Redis Hash ga_phase_state:{slug} \u2014 rejected: adds complexity, same hash with ta- prefix is simpler",
+      "JSON file fallback for GA-phase state \u2014 rejected: DB+Redis is sole production path per project direction"
     ],
     "approved_by": "Aryan",
     "codex_review": "Codex gpt-5.3-codex found 12 findings (1 critical false-positive, 5 high, 3 medium, 3 low). 7 incorporated and fixed: H1 (ga_step_complete payload NaN), H2 (CancelledError cleanup), H3 (GA cleanup timing), H4 (effectiveSlug), M1 (multi-card progress), M2 (completed/failed SSE aliases). H5 verified correct (no fix needed). 85 tests passing post-fixes."
@@ -96,9 +406,9 @@
     "decision": "Two-tier model: store raw BriefPipelineStatus (17 values mirroring backend) on each ContentCard, derive column/label/badge via pure adapter functions. 4 Kanban columns (triage/agent/human/done) instead of backend's 5 logical groups or frontend's 3.",
     "rationale": "Users don't need 17 states; Kanban needs stable columns. Adding a 'done' column is higher-value than splitting agent work (Brief vs Generating). The adapter layer means adding a new backend worker step only requires one line change in the adapter, not a UI restructure.",
     "alternatives": [
-      "Direct adoption of all 17 statuses as Kanban columns — too many columns, poor scannability",
-      "Keep 3 frontend columns — loses the 'done' state, completed cards mixed with human review",
-      "5 columns matching backend comments — Brief and Generating are both agent work from user perspective"
+      "Direct adoption of all 17 statuses as Kanban columns \u2014 too many columns, poor scannability",
+      "Keep 3 frontend columns \u2014 loses the 'done' state, completed cards mixed with human review",
+      "5 columns matching backend comments \u2014 Brief and Generating are both agent work from user perspective"
     ],
     "impact": "Frontend-only, no backend changes. ContentStage and Column types removed. All stage/column references now derived from status via status-adapter.ts.",
     "reversible": true
@@ -107,12 +417,12 @@
     "id": "D-TD-ADDITIVE-UPSERT",
     "timestamp": "2026-04-05",
     "task": "Refactor Pipeline B (topic expansion) to additive per-subdomain DB upserts",
-    "decision": "Replace delete-all-reinsert-all pattern with per-subdomain atomic writes. Each expansion claims a subdomain via optimistic DB lock (UPDATE WHERE status IN eligible RETURNING), writes assignments atomically, marks node as expanded/failed. Redis slug lock replaced with allow_parallel=True + DB-level concurrency. tree_json set NULL during expansion, rebuilt lazily from flat nodes. Stale 'expanding' nodes auto-reset after 20 minutes. Per-assignment persona affinity computed from subdomain base + direct match boost + role-based buyer stage boost. Circuit breaker stops expansion after 5 consecutive failures. Retry with exponential backoff on LLM and DB transient errors. Re-expansion preserves assignments with status in_gap_analysis/content_produced/published (FK safety). Codex (gpt-5.3-codex) reviewed the plan — 8 findings incorporated.",
-    "rationale": "The delete-all-reinsert-all pattern was fundamentally incompatible with concurrent writes. With 20 parallel expansions, the last writer would win and intermediate writes would be destroyed. Additive per-subdomain writes eliminate this race condition. The DB optimistic lock (claim_for_expansion) is simpler and more precise than a Redis slug lock — it prevents double-expansion at the subdomain level while allowing different subdomains to expand concurrently.",
+    "decision": "Replace delete-all-reinsert-all pattern with per-subdomain atomic writes. Each expansion claims a subdomain via optimistic DB lock (UPDATE WHERE status IN eligible RETURNING), writes assignments atomically, marks node as expanded/failed. Redis slug lock replaced with allow_parallel=True + DB-level concurrency. tree_json set NULL during expansion, rebuilt lazily from flat nodes. Stale 'expanding' nodes auto-reset after 20 minutes. Per-assignment persona affinity computed from subdomain base + direct match boost + role-based buyer stage boost. Circuit breaker stops expansion after 5 consecutive failures. Retry with exponential backoff on LLM and DB transient errors. Re-expansion preserves assignments with status in_gap_analysis/content_produced/published (FK safety). Codex (gpt-5.3-codex) reviewed the plan \u2014 8 findings incorporated.",
+    "rationale": "The delete-all-reinsert-all pattern was fundamentally incompatible with concurrent writes. With 20 parallel expansions, the last writer would win and intermediate writes would be destroyed. Additive per-subdomain writes eliminate this race condition. The DB optimistic lock (claim_for_expansion) is simpler and more precise than a Redis slug lock \u2014 it prevents double-expansion at the subdomain level while allowing different subdomains to expand concurrently.",
     "alternatives_considered": [
-      "Quick fix with delete-all-per-version — rejected: still blocks parallelism, requires version coordination",
-      "Advisory locks per subdomain — rejected: optimistic UPDATE is simpler and self-documenting",
-      "Keep Redis slug lock + send multiple subdomain_ids in one call — rejected: user wants to click Expand on different subclusters independently"
+      "Quick fix with delete-all-per-version \u2014 rejected: still blocks parallelism, requires version coordination",
+      "Advisory locks per subdomain \u2014 rejected: optimistic UPDATE is simpler and self-documenting",
+      "Keep Redis slug lock + send multiple subdomain_ids in one call \u2014 rejected: user wants to click Expand on different subclusters independently"
     ],
     "impact": "2 new files, 18 modified files. Migration 0031 (3 columns, 4 indexes, 2 partial unique constraints). 18 new tests. 647 TD+API tests passing. Frontend: persona affinity display, auto-refresh polling, concurrent expansion support.",
     "reversible": true,
@@ -121,13 +431,13 @@
   {
     "id": "D-TD-DB-ONLY-MIGRATION",
     "timestamp": "2026-04-05",
-    "task": "Eliminate JSON filesystem from Topic Discovery pipelines — DB-only storage",
-    "decision": "Create core/topic_discovery/db_ops.py with 13 async functions that replace TopicDiscoveryStorage for pipeline use. Each function opens its own session, commits, and raises on failure (no graceful degradation). Pipeline A & B rewritten to use db_ops exclusively. DbTopicDiscoveryDataService JSON fallback removed. DI raises 503 without DB. TD→Content orchestrator reads from DB. Router guard queries DB. pipeline_state.json writes conditional on Redis. New migration 0029 adds scoring_json + persona_affinity_index_json JSONB columns.",
-    "rationale": "The JSON/DB UUID mismatch caused production bugs: expansion pipeline read taxonomy from JSON files (with one set of UUIDs), while the DB subdomain_nodes table had different UUIDs. Assignments generated from JSON IDs failed FK constraints on insert. Making DB the sole source of truth eliminates the mismatch permanently. Content markdown stays in blob storage — only metadata moves to DB.",
+    "task": "Eliminate JSON filesystem from Topic Discovery pipelines \u2014 DB-only storage",
+    "decision": "Create core/topic_discovery/db_ops.py with 13 async functions that replace TopicDiscoveryStorage for pipeline use. Each function opens its own session, commits, and raises on failure (no graceful degradation). Pipeline A & B rewritten to use db_ops exclusively. DbTopicDiscoveryDataService JSON fallback removed. DI raises 503 without DB. TD\u2192Content orchestrator reads from DB. Router guard queries DB. pipeline_state.json writes conditional on Redis. New migration 0029 adds scoring_json + persona_affinity_index_json JSONB columns.",
+    "rationale": "The JSON/DB UUID mismatch caused production bugs: expansion pipeline read taxonomy from JSON files (with one set of UUIDs), while the DB subdomain_nodes table had different UUIDs. Assignments generated from JSON IDs failed FK constraints on insert. Making DB the sole source of truth eliminates the mismatch permanently. Content markdown stays in blob storage \u2014 only metadata moves to DB.",
     "alternatives_considered": [
-      "Name-based fallback resolution (band-aid) — rejected: not scalable, name collisions possible, per-ID DB round-trip in pipeline hot path",
-      "Sync JSON→DB IDs on persist — rejected: complex, error-prone, still two sources of truth",
-      "Delete TopicDiscoveryStorage entirely — deferred: class kept for backward compat and tests, just not used in pipeline hot paths"
+      "Name-based fallback resolution (band-aid) \u2014 rejected: not scalable, name collisions possible, per-ID DB round-trip in pipeline hot path",
+      "Sync JSON\u2192DB IDs on persist \u2014 rejected: complex, error-prone, still two sources of truth",
+      "Delete TopicDiscoveryStorage entirely \u2014 deferred: class kept for backward compat and tests, just not used in pipeline hot paths"
     ],
     "impact": "2 new files, 8 modified production files, 7 modified test files. Migration 0029. 1588 tests passing (0 failures). Fixes PB-93 for Topic Discovery.",
     "reversible": true,
@@ -140,9 +450,9 @@
     "decision": "4 new backend endpoints (GET summary, GET assignments, PATCH status, POST create). Frontend adapter pattern (types/api/adapters/hooks). TopicAssignmentStatus enum expanded with approved/rejected. Optimistic updates for approve/reject. Initiatives sidebar stays dummy. Expand Topic button triggers Pipeline B.",
     "rationale": "Content Planner was 100% mock data. The adapter pattern (same as Brand Hub) transforms backend TopicAssignment shapes to frontend Assignment types without changing component props. Status-based rejection (not separate list) simplifies the data model. Client-side filtering matches current UX (matrix <200 items). Codex review incorporated: tenant ownership chain on PATCH, UUID transition, expanded test coverage.",
     "alternatives_considered": [
-      "Server-side filtering — rejected: matrix typically <200 assignments, client-side is faster UX",
-      "metadata.planner_decision instead of enum expansion — rejected: enum enables clean DB filtering (WHERE status = 'approved')",
-      "Separate rejected items table — rejected: status field on existing assignment is simpler"
+      "Server-side filtering \u2014 rejected: matrix typically <200 assignments, client-side is faster UX",
+      "metadata.planner_decision instead of enum expansion \u2014 rejected: enum enables clean DB filtering (WHERE status = 'approved')",
+      "Separate rejected items table \u2014 rejected: status field on existing assignment is simpler"
     ],
     "impact": "9 backend files changed, 3 new files. 10 frontend files changed, 4 new files. 59 new backend tests. Migration 0028. GA4 OAuth redirect fix (3 files). GA4 reconnect bug fix (2 files).",
     "reversible": true,
@@ -151,14 +461,14 @@
   {
     "id": "D-SETTINGS-PAGE-INTEGRATION",
     "timestamp": "2026-04-04",
-    "task": "Settings page frontend-backend integration — Team tab, Integrations tab (WordPress + GA4)",
-    "decision": "Role mapping via dedicated role-map.ts (superuser↔Admin, member↔Editor, viewer↔Viewer). GA4 OAuth callback gets dedicated BFF route (bypasses catch-all auth). api.del() enhanced with optional params. Invite flow is code-only (no email). Other 5 integrations shown as Coming Soon. Company Profile tab not added.",
-    "rationale": "Role mapping in a dedicated file keeps it testable and avoids string literals in components. GA4 callback must bypass auth because Google's redirect won't carry our httpOnly cookie — Next.js route specificity ensures the dedicated route matches before the catch-all. api.del() params needed for purge_data query string on GA4 disconnect. Backend invite API generates codes (no email infrastructure), so frontend displays code for manual sharing. Company Profile backend endpoints exist but weren't requested — fast follow-up.",
+    "task": "Settings page frontend-backend integration \u2014 Team tab, Integrations tab (WordPress + GA4)",
+    "decision": "Role mapping via dedicated role-map.ts (superuser\u2194Admin, member\u2194Editor, viewer\u2194Viewer). GA4 OAuth callback gets dedicated BFF route (bypasses catch-all auth). api.del() enhanced with optional params. Invite flow is code-only (no email). Other 5 integrations shown as Coming Soon. Company Profile tab not added.",
+    "rationale": "Role mapping in a dedicated file keeps it testable and avoids string literals in components. GA4 callback must bypass auth because Google's redirect won't carry our httpOnly cookie \u2014 Next.js route specificity ensures the dedicated route matches before the catch-all. api.del() params needed for purge_data query string on GA4 disconnect. Backend invite API generates codes (no email infrastructure), so frontend displays code for manual sharing. Company Profile backend endpoints exist but weren't requested \u2014 fast follow-up.",
     "alternatives_considered": [
-      "Inline role mapping in components — rejected: scatters string literals, not reusable",
-      "Modify catch-all proxy to allowlist GA4 callback — rejected: less clean, adds complexity to shared code",
-      "Optimistic role updates — rejected: roles are security-sensitive, server-confirmed state is safer",
-      "Add Company Profile tab — deferred: backend ready but not explicitly requested"
+      "Inline role mapping in components \u2014 rejected: scatters string literals, not reusable",
+      "Modify catch-all proxy to allowlist GA4 callback \u2014 rejected: less clean, adds complexity to shared code",
+      "Optimistic role updates \u2014 rejected: roles are security-sensitive, server-confirmed state is safer",
+      "Add Company Profile tab \u2014 deferred: backend ready but not explicitly requested"
     ],
     "impact": "8 new files, 3 modified. No backend changes. TypeScript clean, build clean.",
     "reversible": true,
@@ -167,13 +477,13 @@
   {
     "id": "D-CONTENT-INVENTORY-PHASE1",
     "timestamp": "2026-04-04",
-    "task": "Content Inventory Phase 1 Foundation — universal content registry for cannibalization detection",
+    "task": "Content Inventory Phase 1 Foundation \u2014 universal content registry for cannibalization detection",
     "decision": "Single content_inventory table with pgvector embedding, URL-based dedup, multi-source ingestion via ContentIngestionSource enum. CMS FK via nullable content_inventory_id on cms_synced_posts (SET NULL). DB-only service (no JSON fallback).",
     "rationale": "All pipelines need a common ground truth about existing content. URL normalization (aggressive: strip query params, force https, strip www.) enables cross-source dedup. pgvector embeddings enable semantic similarity for cannibalization detection. CMS stays as enrichment layer on top of universal registry.",
     "alternatives_considered": [
-      "Extend cms_synced_posts — rejected: CMS-specific lifecycle fields (staleness, refresh queue) don't belong in universal registry, and clients without CMS would have no content context",
-      "Separate embedding table — rejected: page-level embedding is 1:1 with inventory row, not worth the JOIN overhead",
-      "Protocol + Json + Db pattern — rejected: content inventory has no filesystem representation, DB-only is correct"
+      "Extend cms_synced_posts \u2014 rejected: CMS-specific lifecycle fields (staleness, refresh queue) don't belong in universal registry, and clients without CMS would have no content context",
+      "Separate embedding table \u2014 rejected: page-level embedding is 1:1 with inventory row, not worth the JOIN overhead",
+      "Protocol + Json + Db pattern \u2014 rejected: content inventory has no filesystem representation, DB-only is correct"
     ],
     "impact": "7 new files, 4 modified, migration 0026. No pipeline changes (Phase 2+). 67 new tests, 0 regressions.",
     "reversible": true,
@@ -182,19 +492,19 @@
   {
     "id": "D-PROMPT-TRACKING-ENRICHED",
     "timestamp": "2026-04-04",
-    "task": "Prompt Tracking Backend Data Layer — close all gaps between frontend and backend",
+    "task": "Prompt Tracking Backend Data Layer \u2014 close all gaps between frontend and backend",
     "decision": "SQL aggregation + Redis cache (not materialized views or pre-computed stats table)",
     "rationale": "At current scale (<500K responses/company), CTE-based SQL with proper indexes is sub-50ms. Redis cache (5min TTL) handles repeated reads. Materialized stats table is future upgrade path when a single company exceeds 500K responses.",
     "alternatives_considered": [
-      "Materialized view — full refresh every time, no incremental updates, harder in Alembic",
-      "Pre-computed prompt_daily_stats table — adds write-time complexity, premature at current scale",
-      "On-the-fly without cache — O(n) on every page load, unacceptable at scale"
+      "Materialized view \u2014 full refresh every time, no incremental updates, harder in Alembic",
+      "Pre-computed prompt_daily_stats table \u2014 adds write-time complexity, premature at current scale",
+      "On-the-fly without cache \u2014 O(n) on every page load, unacceptable at scale"
     ],
     "sub_decisions": [
       "Fanout responses roll up into parent via COALESCE(parent_prompt_id, prompt_id)",
       "Delta = auto period-over-period (days=7 compares last 7d vs prior 7d)",
       "Drawer uses 1 new focused endpoint (GET /prompts/{id}/analytics) + 2 existing (fanouts + answers) fired in parallel",
-      "Existing company-wide analytics endpoints stay completely untouched — no prompt_id param pollution",
+      "Existing company-wide analytics endpoints stay completely untouched \u2014 no prompt_id param pollution",
       "Migration renumbered: fanout_queries 0023->0024, indexes 0025 (0023_llm_cost_events already applied in DB)"
     ],
     "approved_by": "Aryan"
@@ -202,35 +512,35 @@
   {
     "id": "D-OPENROUTER-PHASE2",
     "timestamp": "2026-03-30",
-    "task": "Phase 2 — OpenRouter Migration (Direct SDK calls → OpenAI SDK pointed at OpenRouter)",
+    "task": "Phase 2 \u2014 OpenRouter Migration (Direct SDK calls \u2192 OpenAI SDK pointed at OpenRouter)",
     "decisions": [
-      "CE-0 planner: AsyncAnthropic().messages.create → get_async_client().chat.completions.create. Response extraction: content blocks → choices[0].message.content. Usage: input_tokens → prompt_tokens, output_tokens → completion_tokens. _retry_async_anthropic() preserved unchanged — already catches both Anthropic + OpenAI exceptions.",
-      "AP-1 persona suggester: google.genai.Client → get_async_client(). GenerateContentConfig(response_mime_type='application/json') → response_format={'type':'json_object'}. _get_gemini_api_key() deleted entirely — OpenRouter handles auth. Existing _parse_json_array() handles potential object-wrapper from json_object mode.",
-      "GA-S8 report: AsyncOpenAI().responses.create(input=prompt) → get_async_client().chat.completions.create(messages=[user]). response.output_text → response.choices[0].message.content. Lazy import pattern used for get_async_client inside _call_openai().",
-      "GA Perplexity engine: AsyncPerplexity → get_async_client(). Dual citation extraction: getattr(completion, 'citations') then model_extra fallback. Matches Phase 1 perplexity_client.py pattern.",
-      "S3 Perplexity client: Singleton get_async_client() NOT entered into AsyncExitStack — prevents premature close of shared client. Other engines (OpenAI, Claude, Gemini) still use exit-stack pattern.",
+      "CE-0 planner: AsyncAnthropic().messages.create \u2192 get_async_client().chat.completions.create. Response extraction: content blocks \u2192 choices[0].message.content. Usage: input_tokens \u2192 prompt_tokens, output_tokens \u2192 completion_tokens. _retry_async_anthropic() preserved unchanged \u2014 already catches both Anthropic + OpenAI exceptions.",
+      "AP-1 persona suggester: google.genai.Client \u2192 get_async_client(). GenerateContentConfig(response_mime_type='application/json') \u2192 response_format={'type':'json_object'}. _get_gemini_api_key() deleted entirely \u2014 OpenRouter handles auth. Existing _parse_json_array() handles potential object-wrapper from json_object mode.",
+      "GA-S8 report: AsyncOpenAI().responses.create(input=prompt) \u2192 get_async_client().chat.completions.create(messages=[user]). response.output_text \u2192 response.choices[0].message.content. Lazy import pattern used for get_async_client inside _call_openai().",
+      "GA Perplexity engine: AsyncPerplexity \u2192 get_async_client(). Dual citation extraction: getattr(completion, 'citations') then model_extra fallback. Matches Phase 1 perplexity_client.py pattern.",
+      "S3 Perplexity client: Singleton get_async_client() NOT entered into AsyncExitStack \u2014 prevents premature close of shared client. Other engines (OpenAI, Claude, Gemini) still use exit-stack pattern.",
       "_ensure_model_prefix() moved from core/content_engine/llm_client.py to core/shared_tools/openrouter_client.py. Backward-compat import alias retained in llm_client.py.",
-      "Settings defaults prefixed: content_engine_planner_model → 'anthropic/claude-opus-4-6', audience_persona_suggester_model → 'google/gemini-3-flash-preview', gap_analysis_report_model → 'openai/gpt-5.2-2025-12-11'. All protected by _ensure_model_prefix() at call site for backward compat.",
-      "VSG-1 EXCLUDED again — confirmed uses web_search_20250305 tool in actual code despite audit doc listing it as Phase 2 candidate. Stays on litellm.acompletion().",
-      "perplexityai package now unused after GA Perplexity engine migration — candidate for removal from requirements.txt (deferred to cleanup).",
+      "Settings defaults prefixed: content_engine_planner_model \u2192 'anthropic/claude-opus-4-6', audience_persona_suggester_model \u2192 'google/gemini-3-flash-preview', gap_analysis_report_model \u2192 'openai/gpt-5.2-2025-12-11'. All protected by _ensure_model_prefix() at call site for backward compat.",
+      "VSG-1 EXCLUDED again \u2014 confirmed uses web_search_20250305 tool in actual code despite audit doc listing it as Phase 2 candidate. Stays on litellm.acompletion().",
+      "perplexityai package now unused after GA Perplexity engine migration \u2014 candidate for removal from requirements.txt (deferred to cleanup).",
       "TestGetGeminiApiKey test class removed (tested deleted _get_gemini_api_key function)."
     ],
     "codex_review": {
       "findings_incorporated": [
-        "AP-1 json_object may return object wrapper — _parse_json_array() already handles this",
-        "S3 exit-stack lifecycle conflict — singleton must NOT be entered into AsyncExitStack",
-        "S3 test coupling — test_sdk_clients_entered_into_exit_stack mocks AsyncPerplexity",
-        "Daily Tracker downstream effect — DT reuses PerplexityEngine, gets migrated automatically",
-        "Implementation order: GA-PPLX first (lowest risk) → GA-S8 → CE-0 → AP-1 last (highest JSON sensitivity)"
+        "AP-1 json_object may return object wrapper \u2014 _parse_json_array() already handles this",
+        "S3 exit-stack lifecycle conflict \u2014 singleton must NOT be entered into AsyncExitStack",
+        "S3 test coupling \u2014 test_sdk_clients_entered_into_exit_stack mocks AsyncPerplexity",
+        "Daily Tracker downstream effect \u2014 DT reuses PerplexityEngine, gets migrated automatically",
+        "Implementation order: GA-PPLX first (lowest risk) \u2192 GA-S8 \u2192 CE-0 \u2192 AP-1 last (highest JSON sensitivity)"
       ],
       "findings_rejected": [
-        "Use json_schema for AP-1 — over-engineering, existing _parse_json_array() + validation + retry sufficient",
-        "Retry regression in CE-0 — _retry_async_anthropic already catches OpenAI exceptions",
-        "Planner response-shape break — already addressed in implementation plan"
+        "Use json_schema for AP-1 \u2014 over-engineering, existing _parse_json_array() + validation + retry sufficient",
+        "Retry regression in CE-0 \u2014 _retry_async_anthropic already catches OpenAI exceptions",
+        "Planner response-shape break \u2014 already addressed in implementation plan"
       ],
       "findings_deferred": [
-        "Health endpoint update — remove perplexity_api_key from _REQUIRED_KEYS or add openrouter_api_key",
-        "require_parameters provider constraint — OpenRouter feature for JSON mode enforcement"
+        "Health endpoint update \u2014 remove perplexity_api_key from _REQUIRED_KEYS or add openrouter_api_key",
+        "require_parameters provider constraint \u2014 OpenRouter feature for JSON mode enforcement"
       ]
     },
     "approved_by": "Aryan (via plan approval)",
@@ -251,36 +561,36 @@
   {
     "id": "D-OPENROUTER-PHASE1",
     "timestamp": "2026-03-29",
-    "task": "Phase 1 — OpenRouter Migration (LiteLLM + Perplexity SDK → OpenAI SDK pointed at OpenRouter)",
+    "task": "Phase 1 \u2014 OpenRouter Migration (LiteLLM + Perplexity SDK \u2192 OpenAI SDK pointed at OpenRouter)",
     "decisions": [
-      "Use openai SDK (already a dep) pointed at OpenRouter base_url — no new packages. AsyncOpenAI for async wrappers, OpenAI for sync Perplexity client.",
-      "Model strings need no transformation — OpenRouter uses same provider/model format as LiteLLM (e.g. anthropic/claude-sonnet-4-6). Kept _ensure_model_prefix() for bare names.",
+      "Use openai SDK (already a dep) pointed at OpenRouter base_url \u2014 no new packages. AsyncOpenAI for async wrappers, OpenAI for sync Perplexity client.",
+      "Model strings need no transformation \u2014 OpenRouter uses same provider/model format as LiteLLM (e.g. anthropic/claude-sonnet-4-6). Kept _ensure_model_prefix() for bare names.",
       "LangSmith tracing already handled at caller level via manual log_generation() calls. LiteLLM auto-callback was creating duplicate traces. Removing it is a cleanup.",
-      "Shared client factory in core/shared_tools/openrouter_client.py — singleton pattern with max_retries=0 to prevent retry multiplication with wrapper-level retries.",
-      "Perplexity client stays sync — all 7 callers use asyncio.to_thread(). openai.OpenAI replaces Perplexity() SDK. Citations extracted via model_extra fallback.",
-      "pause_turn continuation removed from _run_completion() — OpenRouter doesn't surface Anthropic's pause_turn finish reason. Codex verified Choice.finish_reason is Literal enum (stop/length/tool_calls/content_filter/function_call only).",
-      "configure_litellm_callbacks() → configure_openrouter() with backward-compatible alias. Existing pipeline startup sites and test patches updated to use new name.",
-      "VSG-1 author discovery EXCLUDED — uses Anthropic web_search_20250305 tool which OpenRouter cannot replicate. Stays on litellm.acompletion().",
-      "perplexityai and litellm deps STAY in requirements — GA engines still use AsyncPerplexity, VSG-1 still uses litellm.",
+      "Shared client factory in core/shared_tools/openrouter_client.py \u2014 singleton pattern with max_retries=0 to prevent retry multiplication with wrapper-level retries.",
+      "Perplexity client stays sync \u2014 all 7 callers use asyncio.to_thread(). openai.OpenAI replaces Perplexity() SDK. Citations extracted via model_extra fallback.",
+      "pause_turn continuation removed from _run_completion() \u2014 OpenRouter doesn't surface Anthropic's pause_turn finish reason. Codex verified Choice.finish_reason is Literal enum (stop/length/tool_calls/content_filter/function_call only).",
+      "configure_litellm_callbacks() \u2192 configure_openrouter() with backward-compatible alias. Existing pipeline startup sites and test patches updated to use new name.",
+      "VSG-1 author discovery EXCLUDED \u2014 uses Anthropic web_search_20250305 tool which OpenRouter cannot replicate. Stays on litellm.acompletion().",
+      "perplexityai and litellm deps STAY in requirements \u2014 GA engines still use AsyncPerplexity, VSG-1 still uses litellm.",
       "Typed OpenAI exceptions (AuthenticationError, RateLimitError) replace string-matching error handling in perplexity_client.",
-      "Perplexity model strings prefixed defensively in settings (sonar-deep-research → perplexity/sonar-deep-research) alongside runtime _ensure_model_prefix() handling."
+      "Perplexity model strings prefixed defensively in settings (sonar-deep-research \u2192 perplexity/sonar-deep-research) alongside runtime _ensure_model_prefix() handling."
     ],
     "codex_review": {
       "findings_incorporated": [
-        "VSG-1 uses web_search_20250305 tool — excluded from Phase 1",
-        "OpenAI SDK max_retries=2 default causes retry multiplication — set to 0",
-        "Choice.finish_reason is Literal enum — confirms pause_turn removal is correct",
+        "VSG-1 uses web_search_20250305 tool \u2014 excluded from Phase 1",
+        "OpenAI SDK max_retries=2 default causes retry multiplication \u2014 set to 0",
+        "Choice.finish_reason is Literal enum \u2014 confirms pause_turn removal is correct",
         "Citations via model_extra confirmed working (Codex verified with real code)",
-        "TD Source C citation format dependency — noted for lenient stripping",
-        "Typed OpenAI exceptions differ from LiteLLM — catch typed instead of string-matching"
+        "TD Source C citation format dependency \u2014 noted for lenient stripping",
+        "Typed OpenAI exceptions differ from LiteLLM \u2014 catch typed instead of string-matching"
       ],
       "findings_rejected": [
-        "Keep Perplexity SDK for fidelity — defeats cost tracking purpose",
-        "_hidden_params dependency — removing pause_turn makes this irrelevant"
+        "Keep Perplexity SDK for fidelity \u2014 defeats cost tracking purpose",
+        "_hidden_params dependency \u2014 removing pause_turn makes this irrelevant"
       ],
       "findings_deferred": [
-        "Timeout-leak tests (asyncio.wait_for + to_thread + client timeout) — pre-existing",
-        "LLMResponse.model format change — monitor in production"
+        "Timeout-leak tests (asyncio.wait_for + to_thread + client timeout) \u2014 pre-existing",
+        "LLMResponse.model format change \u2014 monitor in production"
       ]
     },
     "approved_by": "Aryan (via plan approval)",
@@ -301,66 +611,93 @@
   {
     "id": "D-REDIS-PHASE6",
     "timestamp": "2026-03-27",
-    "task": "Phase 6 — Remove Filesystem Fallbacks (DATABASE_URL + REDIS_URL mandatory)",
+    "task": "Phase 6 \u2014 Remove Filesystem Fallbacks (DATABASE_URL + REDIS_URL mandatory)",
     "decisions": [
-      "Exception classes (TaskNotFoundError, TaskConflictError, ApprovalWindowError, ApprovalDeliveryError) moved from api/tasks/store.py to api/tasks/exceptions.py — standalone module with zero internal imports, no circular dependency risk.",
+      "Exception classes (TaskNotFoundError, TaskConflictError, ApprovalWindowError, ApprovalDeliveryError) moved from api/tasks/store.py to api/tasks/exceptions.py \u2014 standalone module with zero internal imports, no circular dependency risk.",
       "EventBus class deleted from api/tasks/event_bus.py. EventBusProtocol and _format_sse helper kept. Production uses RedisEventBus exclusively.",
-      "All 12 routers + runner migrated from EventBus → EventBusProtocol type hints. events.py already used protocol.",
-      "TaskStore → TaskStoreProtocol migration in api/routers/companies.py, api/services/brand_data_service.py, core/services/json_brand_data.py, core/services/json_gap_data.py. The last two also fix existing core/ → api/ import violations.",
-      "_init_task_store() in api/app.py: JSON TaskStore fallback removed. Raises RuntimeError('DATABASE_URL is required') if not set. No try/except around DbTaskStore init — failures propagate.",
+      "All 12 routers + runner migrated from EventBus \u2192 EventBusProtocol type hints. events.py already used protocol.",
+      "TaskStore \u2192 TaskStoreProtocol migration in api/routers/companies.py, api/services/brand_data_service.py, core/services/json_brand_data.py, core/services/json_gap_data.py. The last two also fix existing core/ \u2192 api/ import violations.",
+      "_init_task_store() in api/app.py: JSON TaskStore fallback removed. Raises RuntimeError('DATABASE_URL is required') if not set. No try/except around DbTaskStore init \u2014 failures propagate.",
       "EventBus selection in lifespan: in-memory EventBus() fallback removed. Raises RuntimeError('REDIS_URL is required') if Redis not healthy.",
       "get_auth_service() in api/dependencies.py: JsonAuthService fallback removed. Raises RuntimeError if db_session_factory unavailable or DbAuthService construction fails.",
-      "get_checkpointer() in core/checkpointer.py: MemorySaver() fallback removed. Raises RuntimeError('REDIS_URL and REDIS_CHECKPOINTER=true required'). The override parameter still works — graph tests pass MemorySaver via override.",
+      "get_checkpointer() in core/checkpointer.py: MemorySaver() fallback removed. Raises RuntimeError('REDIS_URL and REDIS_CHECKPOINTER=true required'). The override parameter still works \u2014 graph tests pass MemorySaver via override.",
       "Test conftest strategy: DbTaskStore(session_factory=MagicMock()) with asyncio proxy that gracefully handles no-event-loop in sync tests. _db_create and _db_update patched as AsyncMock no-ops. TestAuthService injected via app.state.auth_service to bypass get_auth_service() DI.",
-      "Test-only EventBus: InMemoryEventBus in tests/_support/event_bus.py — exact copy of deleted EventBus, renamed. Satisfies EventBusProtocol. Used by conftest and ~5 test files with local fixtures.",
-      "Test-only AuthService: TestAuthService in tests/_support/auth_service.py — exact copy of deleted JsonAuthService, renamed. Wraps AuthStore for async interface.",
+      "Test-only EventBus: InMemoryEventBus in tests/_support/event_bus.py \u2014 exact copy of deleted EventBus, renamed. Satisfies EventBusProtocol. Used by conftest and ~5 test files with local fixtures.",
+      "Test-only AuthService: TestAuthService in tests/_support/auth_service.py \u2014 exact copy of deleted JsonAuthService, renamed. Wraps AuthStore for async interface.",
       "scripts/fake_onboarding_sse.py updated to use RedisEventBus instead of deleted EventBus."
     ],
     "approved_by": "Aryan (via plan approval)",
-    "files_affected": ["api/tasks/exceptions.py", "api/tasks/event_bus.py", "api/tasks/store.py (deleted)", "core/auth/json_service.py (deleted)", "api/app.py", "api/dependencies.py", "core/checkpointer.py", "tests/api/conftest.py", "tests/_support/event_bus.py", "tests/_support/auth_service.py"]
+    "files_affected": [
+      "api/tasks/exceptions.py",
+      "api/tasks/event_bus.py",
+      "api/tasks/store.py (deleted)",
+      "core/auth/json_service.py (deleted)",
+      "api/app.py",
+      "api/dependencies.py",
+      "core/checkpointer.py",
+      "tests/api/conftest.py",
+      "tests/_support/event_bus.py",
+      "tests/_support/auth_service.py"
+    ]
   },
   {
     "id": "D-R2-PHASE5",
     "timestamp": "2026-03-27",
-    "task": "Phase 5 — StorageBackend Migration for Reader-Side Services (9 files)",
+    "task": "Phase 5 \u2014 StorageBackend Migration for Reader-Side Services (9 files)",
     "decisions": [
-      "json_site_audit_data.py fully refactored: all 7 _sync_* helpers take StorageBackend instead of Path. _load_audit_result uses backend.read() instead of Path.read_text(). _discover_audit_ids uses backend.list_dir() with prefix stripping instead of Path.iterdir(). Removed _audit_dir and _company_audit_root (path construction no longer needed). In-memory _CACHE L2 kept — caches parsed JSON dicts, CachedStorageBackend only caches raw strings.",
-      "All _resolve_storage() fallbacks changed from LocalStorageBackend(root) to get_storage_backend(root) — respects STORAGE_BACKEND setting (R2 or local). Applies to content_data_service.py and brand_data_service.py.",
+      "json_site_audit_data.py fully refactored: all 7 _sync_* helpers take StorageBackend instead of Path. _load_audit_result uses backend.read() instead of Path.read_text(). _discover_audit_ids uses backend.list_dir() with prefix stripping instead of Path.iterdir(). Removed _audit_dir and _company_audit_root (path construction no longer needed). In-memory _CACHE L2 kept \u2014 caches parsed JSON dicts, CachedStorageBackend only caches raw strings.",
+      "All _resolve_storage() fallbacks changed from LocalStorageBackend(root) to get_storage_backend(root) \u2014 respects STORAGE_BACKEND setting (R2 or local). Applies to content_data_service.py and brand_data_service.py.",
       "_load_pipeline_state in content_data_service accepts optional storage= param. StorageBackend path tried first, legacy Path.read_text() kept as fallback when storage=None (migration window). db_content_data.py inline pipeline_state read also migrated to self._backend.read().",
-      "is_symlink() guard in content_data_service made conditional: only runs when backend is LocalStorageBackend (via getattr(sb, 'inner', sb) unwrap for CachedStorageBackend). R2 has no symlinks — StorageBackend._resolve() handles traversal protection.",
-      "prompt_library.py filesystem fallback replaced with get_storage_backend() factory call — no more hardcoded _PROJECT_ROOT / 'artifacts' path for queries.json reads.",
+      "is_symlink() guard in content_data_service made conditional: only runs when backend is LocalStorageBackend (via getattr(sb, 'inner', sb) unwrap for CachedStorageBackend). R2 has no symlinks \u2014 StorageBackend._resolve() handles traversal protection.",
+      "prompt_library.py filesystem fallback replaced with get_storage_backend() factory call \u2014 no more hardcoded _PROJECT_ROOT / 'artifacts' path for queries.json reads.",
       "PersonaStorage bypass in gap analysis pipeline.py fixed: _resolve_persona_paths now accepts storage= kwarg, passes backend=storage to PersonaStorage constructor. Both call sites (run_gap_analysis, run_topic_scoped_gap_analysis) updated.",
-      "b2b_queries_180.json in s2_generate_queries.py intentionally NOT migrated — static bundled code asset shipped with repo, not a runtime artifact.",
+      "b2b_queries_180.json in s2_generate_queries.py intentionally NOT migrated \u2014 static bundled code asset shipped with repo, not a runtime artifact.",
       "db_site_audit_data.py and db_content_data.py constructors now use get_storage_backend() factory when no backend injected, instead of ad-hoc LocalStorageBackend creation.",
       "DI wiring in dependencies.py: backend= param added to JsonSiteAuditDataService (2 locations), DbSiteAuditDataService (1 location), PromptLibraryService (2 locations)."
     ],
     "approved_by": "Aryan (via plan approval)",
-    "files_affected": ["core/gap_analysis/pipeline.py", "core/services/json_site_audit_data.py", "core/services/db_site_audit_data.py", "core/services/db_content_data.py", "api/services/content_data_service.py", "api/services/brand_data_service.py", "core/daily_tracker/prompt_library.py", "api/dependencies.py", "tests/core/test_site_audit/test_models.py"]
+    "files_affected": [
+      "core/gap_analysis/pipeline.py",
+      "core/services/json_site_audit_data.py",
+      "core/services/db_site_audit_data.py",
+      "core/services/db_content_data.py",
+      "api/services/content_data_service.py",
+      "api/services/brand_data_service.py",
+      "core/daily_tracker/prompt_library.py",
+      "api/dependencies.py",
+      "tests/core/test_site_audit/test_models.py"
+    ]
   },
   {
     "id": "D-R2-PHASE3",
     "timestamp": "2026-03-27",
-    "task": "Phase 3 — R2 Blob Storage Redis Cache Layer (4 changes)",
+    "task": "Phase 3 \u2014 R2 Blob Storage Redis Cache Layer (4 changes)",
     "decisions": [
-      "Change 3.1: Replace Path.stat().st_mtime with JSON completed_at/started_at for audit sorting. ISO 8601 strings sort lexicographically — no datetime parsing needed. _sync_list_audits now loads ALL audit JSON (cached) then sorts, instead of mtime-sort-then-load-top-N.",
-      "Change 3.2+3.4: CachedStorageBackend calls get_sync_redis_or_none() per-operation (not constructor injection) — matches all service patterns and enables graceful degradation if Redis dies after startup. read_bytes() NOT cached due to decode_responses=True on Redis client requiring base64 encoding (33% overhead). exists() NOT cached (boolean, cheap, invalidation complexity). 512KB size guard prevents Redis bloat from large audit JSON files. None reads NOT cached (avoids stale negative entries). Empty list_dir results ARE cached (prevents repeated R2 ListObjectsV2). Shallow parent-only invalidation for list_dir (acceptable because list_dir returns immediate children only).",
-      "Change 3.3: _resolve_storage() pattern in brand_data_service matches content_data_service pattern. _detect_artifact and _detect_personas made positional-required for backend param — both are module-private, only called from get_research_artifacts.",
-      "Double-caching accepted: CachedStorageBackend (artifact:*) caches raw text at StorageBackend level; service-level caches (cache:gap:*, cache:content:*) cache parsed JSON with domain-specific TTLs. Intentional layering — CachedStorageBackend is general-purpose, service caches are domain-specific. Acceptable at current scale (<100 cache keys).",
+      "Change 3.1: Replace Path.stat().st_mtime with JSON completed_at/started_at for audit sorting. ISO 8601 strings sort lexicographically \u2014 no datetime parsing needed. _sync_list_audits now loads ALL audit JSON (cached) then sorts, instead of mtime-sort-then-load-top-N.",
+      "Change 3.2+3.4: CachedStorageBackend calls get_sync_redis_or_none() per-operation (not constructor injection) \u2014 matches all service patterns and enables graceful degradation if Redis dies after startup. read_bytes() NOT cached due to decode_responses=True on Redis client requiring base64 encoding (33% overhead). exists() NOT cached (boolean, cheap, invalidation complexity). 512KB size guard prevents Redis bloat from large audit JSON files. None reads NOT cached (avoids stale negative entries). Empty list_dir results ARE cached (prevents repeated R2 ListObjectsV2). Shallow parent-only invalidation for list_dir (acceptable because list_dir returns immediate children only).",
+      "Change 3.3: _resolve_storage() pattern in brand_data_service matches content_data_service pattern. _detect_artifact and _detect_personas made positional-required for backend param \u2014 both are module-private, only called from get_research_artifacts.",
+      "Double-caching accepted: CachedStorageBackend (artifact:*) caches raw text at StorageBackend level; service-level caches (cache:gap:*, cache:content:*) cache parsed JSON with domain-specific TTLs. Intentional layering \u2014 CachedStorageBackend is general-purpose, service caches are domain-specific. Acceptable at current scale (<100 cache keys).",
       "Cache key schema: artifact:{path} for reads, artifact_ls:{prefix} for list_dir. Avoids collision with existing cache:* prefix keys."
     ],
     "approved_by": "Aryan (via plan approval)",
-    "files_affected": ["core/storage/cached_backend.py", "core/services/json_site_audit_data.py", "api/services/brand_data_service.py", "api/app.py", "core/storage/__init__.py"]
+    "files_affected": [
+      "core/storage/cached_backend.py",
+      "core/services/json_site_audit_data.py",
+      "api/services/brand_data_service.py",
+      "api/app.py",
+      "core/storage/__init__.py"
+    ]
   },
   {
     "id": "D-REDIS-CODEX-P2",
     "timestamp": "2026-03-27",
-    "task": "Phase 2 — Critical Redis Bug Fixes (6 fixes)",
+    "task": "Phase 2 \u2014 Critical Redis Bug Fixes (6 fixes)",
     "decisions": [
       "Fix 2.1: _init_attempted set AFTER success only; transient failures allow retry; connection_args passed to RedisSaver for timeout parity with core/redis.py",
       "Fix 2.2: Each close_redis() close isolated in try/except; sync.close() via asyncio.to_thread to avoid blocking event loop; errors collected and logged as warning",
       "Fix 2.3: Content cache key changed from cache:content:{full_path} to cache:content:{slug}:{colon-separated-relative} to match invalidation pattern; KEYS replaced with scan_iter+batched DELETE (500 batch size)",
       "Fix 2.4: cleanup_stale when task_id=None changed from DELETE (clobber) to warning+skip; callers MUST pass task_id for scoped cleanup",
-      "Fix 2.5: Background _renewal_loop added to _SemaphoreContext — renews every 60s, started on acquire, cancelled on release; all 15 runners get automatic renewal; HITL heartbeat renewal kept as belt-and-suspenders (also renews slug lock)",
+      "Fix 2.5: Background _renewal_loop added to _SemaphoreContext \u2014 renews every 60s, started on acquire, cancelled on release; all 15 runners get automatic renewal; HITL heartbeat renewal kept as belt-and-suspenders (also renews slug lock)",
       "Fix 2.6: _or_none helpers broadened from except RuntimeError to except Exception with logger.debug; prevents 20+ caller crash vectors"
     ],
     "rationale": "These are correctness bugs found by Codex audit that affect multi-worker deployments. Fixing before filesystem elimination phase to ensure Redis-first path is robust."
@@ -368,15 +705,15 @@
   {
     "id": "D-REDIS-SEM-5",
     "timestamp": "2026-03-22",
-    "task": "Redis Session 5 — Distributed Semaphore Design Decisions",
-    "approach": "Atomic Lua script for acquire (ZREMRANGEBYSCORE+ZCARD+ZADD in single call). Sorted Set with timestamp scores for self-healing. pipeline_semaphore(task_id) method (Option B from spec — explicit task_id, not context magic). 2h holder TTL without heartbeat. 1s polling interval without pub/sub wake-up.",
-    "rationale": "Codex review confirmed P0 race condition in spec's non-atomic acquire — Lua script prevents two workers both seeing capacity and both ZADD. Option B is explicit (task_id at each call site) vs Option C's contextvars magic. 2h TTL acceptable: pipelines run minutes-to-hours, max 3 concurrent, heartbeat adds complexity for marginal benefit. 1s polling irrelevant vs pipeline duration (minutes).",
+    "task": "Redis Session 5 \u2014 Distributed Semaphore Design Decisions",
+    "approach": "Atomic Lua script for acquire (ZREMRANGEBYSCORE+ZCARD+ZADD in single call). Sorted Set with timestamp scores for self-healing. pipeline_semaphore(task_id) method (Option B from spec \u2014 explicit task_id, not context magic). 2h holder TTL without heartbeat. 1s polling interval without pub/sub wake-up.",
+    "rationale": "Codex review confirmed P0 race condition in spec's non-atomic acquire \u2014 Lua script prevents two workers both seeing capacity and both ZADD. Option B is explicit (task_id at each call site) vs Option C's contextvars magic. 2h TTL acceptable: pipelines run minutes-to-hours, max 3 concurrent, heartbeat adds complexity for marginal benefit. 1s polling irrelevant vs pipeline duration (minutes).",
     "alternatives_rejected": [
-      "Non-atomic acquire (separate ZREMRANGEBYSCORE/ZCARD/ZADD) — race condition under contention",
-      "Short lease + heartbeat renew — over-engineering for max 3 pipelines running minutes-to-hours",
-      "Pub/Sub wake-up on release — adds failure modes (missed messages) for no practical gain",
-      "Fencing tokens — semaphore gates starts not shared mutable state, unnecessary",
-      "Option C (contextvars for task_id) — too magical, implicit coupling"
+      "Non-atomic acquire (separate ZREMRANGEBYSCORE/ZCARD/ZADD) \u2014 race condition under contention",
+      "Short lease + heartbeat renew \u2014 over-engineering for max 3 pipelines running minutes-to-hours",
+      "Pub/Sub wake-up on release \u2014 adds failure modes (missed messages) for no practical gain",
+      "Fencing tokens \u2014 semaphore gates starts not shared mutable state, unnecessary",
+      "Option C (contextvars for task_id) \u2014 too magical, implicit coupling"
     ],
     "outcome": "11 new tests, 14 runner call sites updated, 1 Codex P0 finding resolved, zero regressions. 9th Redis key in schema.",
     "reversible": true,
@@ -1087,11 +1424,11 @@
   {
     "id": "D-FANOUT-SELF-REF-FK",
     "timestamp": "2026-04-04",
-    "task": "Query Fanout — Schema design for fanout query variants",
-    "approach": "Self-referential FK on tracked_prompts (parent_prompt_id → tracked_prompts.id ON DELETE CASCADE)",
-    "rationale": "Fanout queries are conceptually just 'more prompts' with a parent link. Reusing tracked_prompts avoids breaking daily_run_responses FK, PlatformRunnerService, and MentionDetector — all prompt-agnostic. Filtering is a one-clause addition (WHERE parent_prompt_id IS NULL). Alternative (separate query_fanouts table) would require polymorphic FKs or response table duplication.",
+    "task": "Query Fanout \u2014 Schema design for fanout query variants",
+    "approach": "Self-referential FK on tracked_prompts (parent_prompt_id \u2192 tracked_prompts.id ON DELETE CASCADE)",
+    "rationale": "Fanout queries are conceptually just 'more prompts' with a parent link. Reusing tracked_prompts avoids breaking daily_run_responses FK, PlatformRunnerService, and MentionDetector \u2014 all prompt-agnostic. Filtering is a one-clause addition (WHERE parent_prompt_id IS NULL). Alternative (separate query_fanouts table) would require polymorphic FKs or response table duplication.",
     "alternatives_rejected": [
-      "Separate query_fanouts table — breaks daily_run_responses.prompt_id FK, requires separate repo + model + runner changes, polymorphic FK complexity"
+      "Separate query_fanouts table \u2014 breaks daily_run_responses.prompt_id FK, requires separate repo + model + runner changes, polymorphic FK complexity"
     ],
     "outcome": "Migration 0023 adds parent_prompt_id FK, fanout_axis, pinned to tracked_prompts. Denormalized parent_prompt_id on daily_run_responses for analytics. 394 DT tests passing.",
     "reversible": true,
@@ -1100,11 +1437,11 @@
   {
     "id": "D-FANOUT-BACKGROUND-TASK",
     "timestamp": "2026-04-04",
-    "task": "Query Fanout — Generation timing (inline vs background)",
+    "task": "Query Fanout \u2014 Generation timing (inline vs background)",
     "approach": "Background task via TaskStore. POST /prompts returns 201 immediately with fanout_task_id. LLM generation runs async.",
     "rationale": "Aryan chose background task over inline (2-4s blocking). Prompt creation is instant, fanouts appear after SSE completion. Frontend can poll or listen for fanout_complete event.",
     "alternatives_rejected": [
-      "Inline LLM call during POST /prompts — simpler but blocks prompt creation for 2-4s"
+      "Inline LLM call during POST /prompts \u2014 simpler but blocks prompt creation for 2-4s"
     ],
     "outcome": "run_fanout_generation_task() added to runner.py. POST /prompts returns CreatePromptResponse with optional fanout_task_id.",
     "reversible": true,
@@ -1113,12 +1450,12 @@
   {
     "id": "D-CLEANUP-BOTH-MODES",
     "timestamp": "2026-04-04",
-    "task": "Data Retention — Cleanup trigger mechanism",
+    "task": "Data Retention \u2014 Cleanup trigger mechanism",
     "approach": "Both automatic (daily cron) + manual (POST /admin/cleanup superuser endpoint)",
     "rationale": "Aryan chose both modes. API endpoint for ad-hoc runs, daily cron for zero-maintenance automated cleanup. Uses SET response_text = '' (not NULL, column is NOT NULL). Preserves all metric columns for trend analytics.",
     "alternatives_rejected": [
-      "Manual API trigger only — requires remembering to run it",
-      "Automatic daily cron only — no ad-hoc flexibility"
+      "Manual API trigger only \u2014 requires remembering to run it",
+      "Automatic daily cron only \u2014 no ad-hoc flexibility"
     ],
     "outcome": "cleanup.py module + POST /admin/cleanup endpoint. cleanup_old_response_text() function shared by both triggers.",
     "reversible": true,
@@ -1127,12 +1464,12 @@
   {
     "id": "D-ELIMINATE-EXCLUDED-COMBOS",
     "timestamp": "2026-04-06",
-    "task": "Eliminate all 6 excluded buyer_stage × intent_type combos from gap analysis",
-    "decision": "Add ClusterMapping entries for all 6 previously-excluded combos, empty _EXCLUDED_COMBOS dict, remove is_excluded_combo filter from orchestrator and S2 query gen. All 12 buyer_stage × intent_type cells now have valid cluster mappings.",
-    "why": "User wants any and all combos of content allowed for gap analysis and content production — no artificial restrictions.",
+    "task": "Eliminate all 6 excluded buyer_stage \u00d7 intent_type combos from gap analysis",
+    "decision": "Add ClusterMapping entries for all 6 previously-excluded combos, empty _EXCLUDED_COMBOS dict, remove is_excluded_combo filter from orchestrator and S2 query gen. All 12 buyer_stage \u00d7 intent_type cells now have valid cluster mappings.",
+    "why": "User wants any and all combos of content allowed for gap analysis and content production \u2014 no artificial restrictions.",
     "alternatives": [
       "Keep exclusions but add a force-override flag",
-      "Remove only the specific combo that was blocking (mofu × transactional)"
+      "Remove only the specific combo that was blocking (mofu \u00d7 transactional)"
     ],
     "outcome": "6 new ClusterMappings in topic_cluster_map.py (cells 7-12). _EXCLUDED_COMBOS emptied. Orchestrator filter loops removed from both run_td_to_content_pipeline and run_td_gap_analysis_only. is_excluded_combo check removed from s2_generate_queries. 43 tests updated and passing.",
     "reversible": true,
@@ -1142,7 +1479,7 @@
     "id": "D-GA-SIDEBAR-ENRICHMENT",
     "timestamp": "2026-04-06",
     "task": "Enrich GA-phase Content Studio sidebar with full topic assignment metadata",
-    "decision": "Pipe 11 additional fields from TopicAssignment through Redis __meta JSON → API schema → frontend ContentCard → redesigned GapAnalysisSidebar. Fields: intent_type, persona_name, persona_id, persona_affinity, priority_factors, content_format, estimated_word_count, citation_opportunity, description, target_keywords, content_angle.",
+    "decision": "Pipe 11 additional fields from TopicAssignment through Redis __meta JSON \u2192 API schema \u2192 frontend ContentCard \u2192 redesigned GapAnalysisSidebar. Fields: intent_type, persona_name, persona_id, persona_affinity, priority_factors, content_format, estimated_word_count, citation_opportunity, description, target_keywords, content_angle.",
     "why": "GA-phase cards in Content Studio only showed title/cluster/buyer_stage. User wants the same rich detail visible in the Planner drawer (content spec, keywords, persona affinity, priority factors, content angle).",
     "alternatives": [
       "Fetch assignment data from TD API at render time (adds network call + complexity)",
@@ -1155,13 +1492,13 @@
   {
     "id": "D-CONTENT-STUDIO-DETAIL-VIEW-REWORK",
     "timestamp": "2026-04-06",
-    "task": "Content Studio detail view rework — gap analysis metrics, brief flow, GA animation",
+    "task": "Content Studio detail view rework \u2014 gap analysis metrics, brief flow, GA animation",
     "decision": "Rich gap analysis metrics view for gap_analysis_complete center panel, persistent GapAnalysisSection in right sidebar Metrics tab, brief data in AgentSidebar during production, enhanced BriefContent with exemplar details. Abstract orbiting rings animation for active GA (replaces 8-step stepper that exposed S1-S8 internal step names).",
     "why": "gap_analysis_complete showed no useful data (just checkmark + button). Users need to see GA results before deciding to start production. Gap metrics should persist through all stages for reference. Brief data in sidebar during production gives context for what the agent is building. Step names exposed product internals.",
     "alternatives": [
-      "Show gap metrics only in center (not sidebar) — rejected because user navigates away from center view during production",
-      "Fetch per-query gap data instead of summary — too heavy for a summary view, summary endpoint is sufficient",
-      "Keep 8-step stepper with generic labels — still reveals number of steps, orbiting animation is more abstract"
+      "Show gap metrics only in center (not sidebar) \u2014 rejected because user navigates away from center view during production",
+      "Fetch per-query gap data instead of summary \u2014 too heavy for a summary view, summary endpoint is sufficient",
+      "Keep 8-step stepper with generic labels \u2014 still reveals number of steps, orbiting animation is more abstract"
     ],
     "outcome": "8 files (7 modified + 1 new hook). Types: gapContext on ContentCard, GapSummaryResponseAPI, extended BriefSource. Data: fetchGapSummary API fn, useGapSummary hook. UI: rich center metrics, sidebar gap section, brief in AgentSidebar, exemplars in BriefContent. tsc clean.",
     "reversible": true,
@@ -1171,11 +1508,11 @@
     "id": "D-ORCHESTRATOR-CARD-VANISH-FIX",
     "timestamp": "2026-04-06",
     "task": "Fix content card vanishing when production pipeline produces zero pieces",
-    "decision": "Check len(output.pieces) > 0 before cleaning up Redis GA-phase card and marking content_produced. Zero pieces → revert to gap_analysis_complete. Applied to both run_td_to_content_pipeline() and run_td_content_production_only().",
-    "why": "The orchestrator cleaned up the Redis card BEFORE confirming CE success. When CE failed (filesystem matrix lookup miss → zero blueprints), the card had nowhere to live: Redis card gone, no brief written, DB status unrecognized by frontend.",
+    "decision": "Check len(output.pieces) > 0 before cleaning up Redis GA-phase card and marking content_produced. Zero pieces \u2192 revert to gap_analysis_complete. Applied to both run_td_to_content_pipeline() and run_td_content_production_only().",
+    "why": "The orchestrator cleaned up the Redis card BEFORE confirming CE success. When CE failed (filesystem matrix lookup miss \u2192 zero blueprints), the card had nowhere to live: Redis card gone, no brief written, DB status unrecognized by frontend.",
     "alternatives": [
-      "Mark as 'failed' instead of reverting to gap_analysis_complete — rejected because failed has different semantics and the GA data is still valid, user should retry",
-      "Fix the root cause only (filesystem→DB migration) — too risky as a quick fix, needs full audit first"
+      "Mark as 'failed' instead of reverting to gap_analysis_complete \u2014 rejected because failed has different semantics and the GA data is still valid, user should retry",
+      "Fix the root cause only (filesystem\u2192DB migration) \u2014 too risky as a quick fix, needs full audit first"
     ],
     "outcome": "Defensive fix applied. Root cause (pipeline_v13.py filesystem read) documented in .claude/sprints/pending/td-filesystem-db-disconnect-audit.md for separate session.",
     "reversible": true,
@@ -1188,10 +1525,405 @@
     "decision": "Deferred to fresh session. Full audit documented with 6 gaps (2 critical, 2 medium, 2 low). Critical: pipeline_v13.py:1452-1465 and content_v13.py:690-702 still use TopicDiscoveryStorage.get_latest_matrix() instead of DB. Pre-req: add get_by_ids() to TopicAssignmentRepository.",
     "why": "Commit b36b53a migrated TD expansion WRITES to DB but left multiple READ paths on filesystem. When matrix version changes (re-expansion), old assignment IDs aren't found on disk even though they exist in DB.",
     "alternatives": [
-      "Fix inline this session — too risky without full test coverage of the affected paths",
-      "Add DB fallback only when filesystem returns empty — viable but masks the real issue"
+      "Fix inline this session \u2014 too risky without full test coverage of the affected paths",
+      "Add DB fallback only when filesystem returns empty \u2014 viable but masks the real issue"
     ],
     "outcome": "Audit saved to .claude/sprints/pending/td-filesystem-db-disconnect-audit.md. Includes 6 gaps, severity ratings, exact file/line references, available DB equivalents, and implementation order.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-DISPLAY-ID-SYSTEM",
+    "timestamp": "2026-04-08",
+    "task": "Universal Display ID System \u2014 backend-generated per-company IDs (WE-001, IH-042) for topic assignments",
+    "decision": "Per-company counter on companies table (display_id_prefix + display_id_counter) with SELECT FOR UPDATE for atomicity. backfill_display_ids() called after every bulk write. Gap-tolerant (Linear-style). display_id stored on topic_assignments. Carried through Pydantic model during delete+insert cycles. AUTONOMOUS/MANUAL CE modes keep brief-NNN fallback.",
+    "rationale": "User needs a single human-readable ID to track a topic from discovery through content production. Frontend-only IDs (computed at render time) reset on every page load and don't persist to Content Engine. brief-001 numbering resets every pipeline run and clobbers previous briefs. Codex reviewed plan: PASS \u2014 no CRITICAL/HIGH/MEDIUM findings.",
+    "alternatives": [
+      "Per-discovery counter \u2014 rejected: IDs not globally unique across expansions",
+      "Reuse deleted IDs \u2014 rejected: confusing for users, complex logic",
+      "Generate display_ids for AUTONOMOUS/MANUAL modes \u2014 deferred: no TopicAssignment exists"
+    ],
+    "files_affected": [
+      "core/topic_discovery/display_id.py (NEW)",
+      "core/db/migrations/versions/0037_add_display_id_system.py (NEW)",
+      "core/models/topic_discovery.py",
+      "core/db/models/topic_discovery.py",
+      "core/db/models/organization.py",
+      "core/topic_discovery/db_ops.py",
+      "core/topic_discovery/pipeline.py",
+      "core/services/db_topic_discovery_data.py"
+    ],
+    "outcome": "Part 1 (Backend Foundation) implemented. 3 new files, 7 modified, 20 new tests. 1401 API + 45 TD tests passing. Part 2 (Pipeline Propagation + Frontend) pending.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-ENTRY-TOPIC-RUN-FOUNDATION",
+    "timestamp": "2026-04-09",
+    "task": "Codex kickoff for TD-entry parallel execution architecture",
+    "decision": "Introduce durable content_engine_batch_runs + content_engine_topic_runs + content_engine_topic_events as the new execution spine for TD-entry Content Engine. Every topic-run row carries both topic_assignment_id and display_id, with display_id also copied into the event log. TD gap-analysis task creation now uses allow_parallel=True so company-level slug exclusivity no longer blocks parallel TD-entry batches. The global semaphore still caps overall pipeline concurrency.",
+    "rationale": "The existing system already had topic_assignment_id at the data layer and display_id as the human-facing identifier, but runtime execution was still primarily task-centric and partially lock-centric. The new requirement needs per-topic durability, parallel multi-batch execution, and a user-visible identity that remains display_id-first. Removing only the old lock without introducing durable topic-run records would make the frontend harder to reconcile and would not give us auditability.",
+    "alternatives": [
+      "Keep company-level slug lock and only allow parallelism inside a single batch \u2014 rejected because the user explicitly needs multiple batches in parallel",
+      "Use topic_assignment_id only and derive display_id at render time \u2014 rejected because display_id is the conversation and Kanban identity",
+      "Continue relying on file-backed pipeline state for the new flow \u2014 rejected because multi-worker consistency and replay become fragile"
+    ],
+    "files_affected": [
+      "core/db/migrations/versions/0038_content_engine_topic_runs.py (NEW)",
+      "core/db/models/content_engine_runs.py (NEW)",
+      "core/db/repositories/content_engine_run_repo.py (NEW)",
+      "core/services/content_engine_topic_runs.py (NEW)",
+      "api/routers/content_v13.py",
+      "api/schemas/content_v13.py",
+      "api/tasks/runner.py",
+      "tests/db/test_content_engine_run_repo.py"
+    ],
+    "outcome": "Foundation slice implemented on branch codex-td-entry-parallelism-plan. TD GA start now creates durable batch/topic-run rows best-effort and returns additive batch_run_id/topic_runs fields. Added GET /api/v1/content/v13/{effective_slug}/topic-runs. Coarse topic-run status advancement wired on GA/prod start and runner terminal paths. Targeted validation: 52 passed, 2 skipped.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-COMPANY-EVENT-TRANSPORT-REDIS",
+    "timestamp": "2026-04-10",
+    "task": "Replace process-local company event streaming with Redis Streams",
+    "decision": "Move CompanyEventBus from process-local queue fanout to Redis Streams-backed delivery in production, while preserving the same synchronous emit(company_slug, CompanyEvent(...)) publisher API. The /api/v1/companies/{company_slug}/stream SSE endpoint now reads sequenced company events from Redis Streams, includes SSE id values, and honors Last-Event-ID for replay. A small in-memory path remains only when CompanyEventBus is instantiated without Redis in tests.",
+    "rationale": "The Kanban and Content Studio rely on company-scoped state invalidation and notification events. In the old implementation those events only reached subscribers connected to the same worker process, which breaks in multi-worker deployment. Redis Streams aligns the company stream with the existing task SSE architecture and gives replay semantics needed for reconnect correctness.",
+    "alternatives": [
+      "Keep the in-memory company bus and rely on sticky sessions \u2014 rejected because it is not robust enough for enterprise multi-worker deployment",
+      "Use Redis Pub/Sub only \u2014 rejected because replay on reconnect is materially weaker",
+      "Move immediately to topic_run_changed-only events before transport replacement \u2014 rejected because transport correctness is the prerequisite"
+    ],
+    "files_affected": [
+      "core/events/company_event_bus.py",
+      "api/routers/company_stream.py",
+      "api/app.py",
+      "tests/events/test_company_event_bus.py"
+    ],
+    "outcome": "Company event transport now uses Redis Streams in production. Startup config wires the singleton with app.state.redis and the running loop. SSE responses now carry id fields and support Last-Event-ID replay. Targeted validation: 80 passed.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CE-PER-COMPANY-SEMAPHORE-POOL",
+    "timestamp": "2026-04-10",
+    "task": "Phase 2 concurrency split for Content Engine parallelism",
+    "decision": "Content Engine concurrency is now isolated from the shared singleton-pipeline pool and capped per company, not globally across all tenants. `DbTaskStore` keeps the existing shared Redis semaphore `semaphore:pipelines` for singleton workloads, but CE pipelines (`content`, `content_v13`, and `td_content`, including TD start-production) now acquire a separate semaphore named `semaphore:content_engine:{company_slug}` with default capacity 15. HITL heartbeat renewal and startup orphan cleanup route to the correct semaphore family based on the persisted task pipeline.",
+    "rationale": "The prior global semaphore let one tenant's CE traffic block unrelated companies and unrelated singleton pipelines. The user clarified that CE apparent parallelism should scale per tenant while company-scoped singleton pipelines remain exclusive. Splitting the pools is the smallest safe Phase 2 change that removes cross-company CE interference without yet redesigning CE scheduling around topic-run claims.",
+    "alternatives": [
+      "Raise the shared global semaphore limit for everyone \u2014 rejected because it still lets one company starve another and mixes CE with singleton workloads",
+      "Move directly to the full topic-run dispatcher before splitting pools \u2014 rejected for this step because it is a larger Phase 3 scheduler change and would delay the immediate per-tenant throughput fix",
+      "Key CE semaphores by effective_slug/product \u2014 rejected because the requirement is tenant/company capacity, not per-product isolation"
+    ],
+    "files_affected": [
+      "api/config.py",
+      "api/app.py",
+      "api/tasks/runner.py",
+      "core/services/db_task_store.py",
+      "core/services/task_store.py",
+      "tests/services/test_redis_semaphore.py",
+      "tests/services/test_heartbeat_renewal.py"
+    ],
+    "outcome": "Phase 2 implemented. CE runners now request the company-scoped pool, while singleton pipelines remain on the shared pool. Validation: `venv/bin/pytest tests/services/test_redis_semaphore.py tests/services/test_heartbeat_renewal.py -q` (31 passed) and `venv/bin/pytest tests/services/test_db_task_store.py tests/api/test_content.py tests/api/test_gap_runner.py tests/api/test_content_v13_ga_endpoints.py -q` (94 passed, pre-existing warnings). Phase 3 still needs the durable topic-run dispatcher, topic-level active claims, and slot release/reclaim around HITL waits.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-CONTENT-DISPATCHER-PHASE3",
+    "timestamp": "2026-04-10",
+    "task": "Phase 3 TD-entry scheduler \u2014 durable per-topic queue plus dispatcher",
+    "decision": "TD `start-production` no longer maps one request to one long-lived CE task. The route now queues the existing durable `content_engine_topic_runs` rows by setting them to `content_queued` with persisted `launch_context`, then immediately asks a dispatcher to claim queued rows up to the company CE capacity. Claims are company-wide and durable: `ContentEngineTopicRunRepository.claim_queued_runs_for_company()` uses `FOR UPDATE SKIP LOCKED` over `content_queued` rows whose `metadata_json.dispatch_state` is `queued` or unset. Each claimed topic run gets its own `td_content` task and pipeline_task_id, so TD production is now task-per-topic rather than task-per-click. Response payloads return additive `topic_runs` snapshots, and the frontend now reads the per-topic `pipeline_task_id` from those snapshots instead of trusting a single route-level `run_id`.",
+    "rationale": "The Phase 2 per-company CE semaphore fixed cross-tenant interference but still left the product in a runner-per-click model. That model makes overflow work sit behind semaphores as invisible waiting tasks and does not express the durable queue at the topic/card level. The durable topic-run table already exists and is the right queue primitive for TD-entry. Using it as the dispatch source is the smallest Phase 3 step that introduces real topic/card queue semantics without yet tackling Phase 4 slot release around HITL.",
+    "alternatives": [
+      "Keep spawning one CE task per request and let extra tasks wait behind the semaphore \u2014 rejected because it still hides the queue in task runtime rather than durable card state",
+      "Jump straight to Phase 4 slot release/reclaim around HITL \u2014 rejected for this slice because Phase 3 first needs durable per-topic dispatch and one-task-per-topic execution units",
+      "Add brand-new scheduler tables \u2014 rejected because `content_engine_topic_runs` already carries the durable per-card identity and state we need"
+    ],
+    "files_affected": [
+      "api/routers/content_v13.py",
+      "api/tasks/runner.py",
+      "core/db/repositories/content_engine_run_repo.py",
+      "core/services/content_engine_topic_runs.py",
+      "frontend/src/app/(dashboard)/content-studio/page.tsx",
+      "tests/api/test_content_v13_ga_endpoints.py"
+    ],
+    "outcome": "Phase 3 slice implemented. Start-production now queues topic runs durably, dispatches claimed rows up to available company CE capacity, and launches one `td_content` task per claimed topic. Runner completion triggers another dispatch pass so queued topics drain automatically as slots free up. Validation: `venv/bin/pytest tests/api/test_content_v13_ga_endpoints.py -q` (28 passed, 2 pre-existing warnings), `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/services/test_redis_semaphore.py tests/services/test_heartbeat_renewal.py tests/api/test_content_v13_ga_endpoints.py -q` (61 passed, 2 pre-existing warnings), and `cd frontend && npx tsc --noEmit` (clean). Phase 4 still needs slot release/reclaim around HITL waits and stronger claim-state persistence than JSON metadata.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CE-HITL-SLOT-SUSPEND",
+    "timestamp": "2026-04-10",
+    "task": "Phase 4 CE throughput fix \u2014 release company CE slots during HITL waits",
+    "decision": "CE tasks should not consume a company execution slot while they are blocked on human approval. `DbTaskStore.wait_for_approval()` now detects active CE tasks, suspends the active semaphore context before waiting, and reacquires that same company-scoped slot before handing the approval payload back to the graph. The tracked semaphore context supports suspend/resume for both Redis-backed and local asyncio fallback semaphores. While suspended, `_renew_leases()` skips semaphore renewal, and the TD dispatcher excludes `TaskStatus.PENDING_APPROVAL` CE tasks from `_count_active_company_ce_tasks()` so waiting-human cards do not count against the per-company runnable cap.",
+    "rationale": "Phase 3 introduced a durable topic-run queue and per-topic dispatcher, but CE slots were still held for the entire task lifetime because the semaphore wrapped the full runner and the approval wait loop kept renewing that lease. That meant a card sitting in `pending_brief_approval` or `pending_content_approval` still blocked queued topics from starting, which defeats the product goal of 15+ apparent parallel cards per company. Releasing the slot during HITL keeps the existing task/graph contract intact while materially increasing runnable throughput.",
+    "alternatives": [
+      "Keep renewing the semaphore during HITL and only raise the company cap \u2014 rejected because human waits would still waste capacity and the system would scale poorly at 15-30 topics",
+      "Move immediately to dedicated scheduler columns plus full continuation jobs for approval resumes \u2014 deferred to a later phase because the tracked-context suspend/resume change is smaller and safe on the current architecture",
+      "Exclude `PENDING_APPROVAL` from the dispatcher count without actually releasing the semaphore \u2014 rejected because queued tasks would still fail to acquire the underlying slot"
+    ],
+    "files_affected": [
+      "core/redis_semaphore.py",
+      "core/services/db_task_store.py",
+      "api/tasks/runner.py",
+      "tests/services/test_redis_semaphore.py",
+      "tests/services/test_heartbeat_renewal.py",
+      "tests/services/test_approval_queue_redis.py",
+      "tests/api/test_content_v13_ga_endpoints.py"
+    ],
+    "outcome": "Phase 4 slice implemented. CE approval waits now suspend/reacquire the active company semaphore slot, and queued TD topic runs can keep dispatching while another card is waiting on human input. Validation: `venv/bin/pytest tests/services/test_redis_semaphore.py tests/services/test_heartbeat_renewal.py tests/services/test_db_task_store.py tests/services/test_approval_queue_redis.py tests/api/test_content_v13_ga_endpoints.py -q` (115 passed, pre-existing warnings) and `venv/bin/python -m compileall core/services/db_task_store.py core/redis_semaphore.py api/tasks/runner.py`.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-DURABLE-CONTINUATIONS-PHASE5",
+    "timestamp": "2026-04-10",
+    "task": "Phase 5 TD-entry scheduler hardening \u2014 dedicated scheduler columns and durable approval continuations",
+    "decision": "TD scheduler state now belongs in first-class `content_engine_topic_runs` columns rather than `metadata_json`. Migration 0039 adds `scheduler_state`, `claim_token`, `queued_at`, `claimed_at`, `waiting_for_human_at`, and `continuation_payload_json`, and the repository/service claim path now uses those columns directly. TD HITL-2 and HITL-3 checkpoints no longer wait for approval inside the same worker task: `run_hitl_checkpoint(... external_resume=True)` raises `ApprovalPauseRequested` with a persisted continuation payload, the runner records the topic run as `waiting_human`, and the approval routes record the user decision with `delivery_mode='record_only'`, mark the topic run `resume_queued`, and immediately redispatch it. Resume claims reuse the same `td_content` task id and feed the stored LangGraph `thread_id` plus approval payload back into the graph so continuation picks up from the durable checkpoint instead of forking a new task identity.",
+    "rationale": "Phase 3 and 4 introduced per-topic dispatch plus slot release around HITL, but the scheduler still hid claim state inside JSON metadata and approvals still resumed inside the same long-lived task. That left the system brittle at approval boundaries and made the durable topic-run layer observational instead of authoritative. Moving scheduler state to dedicated columns and turning approvals into explicit queued continuations makes the TD runtime model align with the durable topic-run identity we want to generalize later for manual/prompt entry.",
+    "alternatives": [
+      "Keep `metadata_json.dispatch_state` as the scheduler source of truth and only add more helper methods around it \u2014 rejected because queue/claim/wait state is now a primary runtime concern, not incidental metadata",
+      "Continue resuming TD approvals inside the same task after Phase 4 semaphore suspend/reacquire \u2014 rejected because it still ties approval progression to one long-lived worker and blocks a clean durable scheduler model",
+      "Create a second continuation table for TD resumes \u2014 rejected because the topic-run row already owns the card identity and should remain the single durable scheduler record"
+    ],
+    "files_affected": [
+      "core/db/migrations/versions/0039_content_engine_scheduler_state.py",
+      "core/db/models/content_engine_runs.py",
+      "core/db/repositories/content_engine_run_repo.py",
+      "core/services/content_engine_topic_runs.py",
+      "core/content_engine/graph_v13.py",
+      "core/content_engine/pipeline_v13.py",
+      "core/orchestration/td_content_orchestrator.py",
+      "api/tasks/runner.py",
+      "api/routers/content_v13.py",
+      "tests/content_engine/test_graph_v13.py",
+      "tests/api/test_content_v13.py",
+      "tests/api/test_content_v13_ga_endpoints.py",
+      "tests/services/test_approval_queue_redis.py"
+    ],
+    "outcome": "Phase 5 implemented for TD-entry. Topic-run scheduler state is now column-backed, TD brief/content approvals become durable queued continuations, and dispatcher resume claims reuse the existing task id while resuming the LangGraph checkpoint from stored continuation payload. Also corrected a Phase 2 regression so singleton runners like `gap_analysis` and `site_audit` remain on the shared pool instead of the CE company pool. Validation: `venv/bin/pytest tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_graph_v13.py tests/services/test_approval_queue_redis.py -q` (179 passed, pre-existing warnings) and `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k 'test_td_worker_failure_writes_explicit_failed_state or test_td_rebrief_preserves_brief_id_and_threads_session_factory' -q` (2 passed, 1 pre-existing AsyncMock warning).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-SCHEDULER-COMMIT-ORDER-HARDENING",
+    "timestamp": "2026-04-10",
+    "task": "Phase 5 follow-up hardening \u2014 make TD durable scheduler transitions the commit point for approvals and start-production",
+    "decision": "TD approval routes must validate nonce/window first, then durably transition the matching topic run from `waiting_human` to `resume_queued`, and only after that record approval history on the task. TD routes no longer rely on `submit_approval(... delivery_mode='record_only')` because the Redis approval flag is not the correct duplicate guard for durable continuations. Duplicate or late TD approvals are now rejected by the durable scheduler state itself: `queue_topic_run_resume()` only succeeds for runs currently in `waiting_human`. Similarly, TD start-production must fail closed unless `queue_topic_runs_for_dispatch()` actually queued at least one durable topic run; mirroring `content_queued` to GA Redis now happens only after durable queue success. Scheduler update APIs now use explicit tri-state field semantics so requeueing can clear stale nullable runtime fields such as `pipeline_task_id`, `claimed_at`, and `waiting_for_human_at`.",
+    "rationale": "The initial Phase 5 continuation implementation left the durable scheduler as a best-effort sidecar after task-store mutation. That created three review regressions: approvals could become permanently un-retryable if the durable queue step failed after `approval:flag:{task_id}` was set, start-production could still return 202 when no durable work was queued, and queued retries could leak stale task ids back to the frontend because `None` meant 'leave unchanged' rather than 'clear'. Once `content_engine_topic_runs` owns scheduling, router truthfulness must be anchored to the durable scheduler transition itself.",
+    "alternatives": [
+      "Keep using `submit_approval(... record_only)` for TD and try to clear Redis approval flags on downstream failures \u2014 rejected because it still treats the task-store flag as primary instead of the durable scheduler state",
+      "Continue returning 202 after any queue/dispatch exception and rely on later dispatcher passes \u2014 rejected because the route would still be lying when no durable queue exists at all",
+      "Use booleans like `clear_pipeline_task_id=True` for every nullable scheduler field \u2014 rejected in favor of a generic tri-state update contract that can be reused for other scheduler fields"
+    ],
+    "files_affected": [
+      "api/routers/content_v13.py",
+      "core/services/db_task_store.py",
+      "core/services/task_store.py",
+      "core/services/content_engine_topic_runs.py",
+      "tests/api/test_content_v13.py",
+      "tests/api/test_content_v13_ga_endpoints.py",
+      "tests/content_engine/test_topic_run_service.py",
+      "tests/services/test_approval_queue_redis.py"
+    ],
+    "outcome": "Follow-up hardening implemented. TD approvals now queue the durable continuation before recording approval history, start-production returns failure if no durable queue was created, and requeueing clears stale task ids/claim timestamps before serializing queued topic runs back to the frontend. Validation: `venv/bin/pytest tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py tests/services/test_approval_queue_redis.py -q` (131 passed, pre-existing warnings), `venv/bin/pytest tests/services/test_db_task_store.py tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py tests/services/test_approval_queue_redis.py -q` (166 passed, pre-existing warnings), and `venv/bin/python -m py_compile api/routers/content_v13.py core/services/db_task_store.py core/services/task_store.py core/services/content_engine_topic_runs.py tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py`.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-STARTUP-RECOVERY-PHASE6",
+    "timestamp": "2026-04-10",
+    "task": "Phase 6 TD-entry scheduler hardening \u2014 startup reconciliation and auto-dispatch after restart",
+    "decision": "`content_engine_topic_runs` is now the startup recovery source of truth for TD-entry. On FastAPI boot, the app gathers recovered task rows from `DbTaskStore`, runs a scheduler reconciliation pass over topic runs in `queued`, `resume_queued`, `claimed`, `running`, and `waiting_human`, then auto-dispatches each company that still has recoverable queued work. Recovery rules are state-aware: `waiting_human` stays intact; `queued` / `resume_queued` clear stale `pipeline_task_id` values if the referenced task no longer exists; `claimed` / `running` with a failed/missing/cancelled task and a continuation payload are repaired to `resume_queued`; `claimed` / `running` with a failed-restart task carrying approval checkpoint data are restored to `waiting_human`; and plain stranded `claimed` / `running` rows without a continuation are requeued back to `content_queued`.",
+    "rationale": "By the end of Phase 5, normal TD approval/resume flow was durable, but restart behavior was still incomplete. A process death between durable queueing and dispatch, or during `claimed` / `running`, could leave topic runs stranded until some later user action happened to trigger dispatch again. The task store already marks orphaned tasks `failed_restart`, but task recovery and topic-run recovery were still separate systems. Phase 6 closes that gap by reconciling durable topic-run scheduler state against recovered task state at boot and treating the topic run, not the task row, as the durable runtime authority.",
+    "alternatives": [
+      "Rely only on task-store startup recovery and wait for users to retrigger dispatch manually \u2014 rejected because queued/resume-queued cards could remain stranded indefinitely after restart",
+      "Treat every non-terminal `claimed` / `running` row as immediately requeueable on startup \u2014 rejected because a second worker/process may still legitimately own a live running task",
+      "Add a separate recovery queue/table for paused TD approvals \u2014 rejected because the topic-run row already owns the durable scheduler identity and continuation payload"
+    ],
+    "files_affected": [
+      "api/app.py",
+      "core/db/repositories/content_engine_run_repo.py",
+      "core/services/content_engine_topic_runs.py",
+      "tests/content_engine/test_topic_run_service.py",
+      "tests/api/test_lifespan_task_store.py"
+    ],
+    "outcome": "Phase 6 implemented. Startup now repairs stranded TD scheduler rows, restores failed-restart approval checkpoints back to `waiting_human`, requeues stranded continuations as `resume_queued`, requeues plain stranded runs as `content_queued`, clears stale task ids on queued work, and immediately auto-dispatches companies with recovered queueable work. Validation: `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/api/test_lifespan_task_store.py -q` (10 passed), `venv/bin/pytest tests/content_engine/test_topic_run_service.py tests/api/test_lifespan_task_store.py tests/api/test_content_v13_ga_endpoints.py -q` (44 passed, 2 pre-existing warnings), and `venv/bin/pytest tests/api/test_lifespan_task_store.py tests/services/test_db_task_store.py tests/services/test_approval_queue_redis.py tests/api/test_content_v13.py tests/api/test_content_v13_ga_endpoints.py tests/content_engine/test_topic_run_service.py -q` (174 passed, 35 pre-existing warnings).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-REVIEW-FALLBACK-HOTPATH",
+    "timestamp": "2026-04-10",
+    "task": "Content Studio agent-stage visibility and final-review loading resilience during TD QA",
+    "decision": "The Content Studio board should always render visible agent-stage text from the authoritative card status, even when per-task `agentProgress` metadata is missing. `agentProgress` is now treated as an optional enhancement for percentages and progress bars rather than the prerequisite for showing `Briefing`, `Outlining`, `Drafting`, and similar stage labels. Review/pending-content-approval detail views must also render a non-blank fallback shell whenever article content is still loading or the stage-content fetch failed. On the backend, `DbContentDataService.get_briefs()` should not query `PipelineRepository.get_latest_completed()` in the common case where slug-scoped `content_pieces` already exist, and the default async DB pool was raised from `5/10` to `15/20` to better match concurrent local QA polling.",
+    "rationale": "Manual QA showed that the backend and company stream were already emitting correct stage transitions, but the board hid them whenever `agentProgress` was absent because that metadata only comes from the per-task SSE path. The same session showed blank final-review detail panes even though the backend brief/enriched endpoints returned 200s; the frontend was failing soft to `articleContent = null` and then rendering nothing. Backend pool-exhaustion logs showed that repeated `/content/briefs` polling was also paying for an avoidable latest-run lookup on every poll, worsening the perceived delay.",
+    "alternatives": [
+      "Keep stage text coupled to `agentProgress` and rely on per-task SSE to always be present \u2014 rejected because the company-stream/status path already carries enough information to label the card",
+      "Keep swallowing stage-content fetch failures and accept a blank review pane \u2014 rejected because users need a visible loading/error state during HITL-3",
+      "Only raise the DB pool size without reducing hot-path work \u2014 rejected because the avoidable `get_latest_completed()` query would still scale poorly with poll traffic"
+    ],
+    "files_affected": [
+      "frontend/src/app/(dashboard)/content-studio/_components/ContentCardItem.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_hooks/useBriefDetail.ts",
+      "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_components/RightSidebar.tsx",
+      "core/services/db_content_data.py",
+      "core/config/settings.py",
+      "tests/services/test_db_content_data_backend.py"
+    ],
+    "outcome": "Implemented on 2026-04-10. Active agent cards now show a visible stage label even without `agentProgress`, review-stage detail views render a fallback instead of a blank pane when final content is unavailable, metrics math no longer emits `NaN` for empty arrays/zero targets, `/content/briefs` skips the latest-run lookup when slug-scoped pieces exist, and the default DB pool is larger for concurrent QA traffic. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py -q` (9 passed), `cd frontend && npx tsc --noEmit` (clean), and `venv/bin/python -m py_compile core/services/db_content_data.py core/config/settings.py`.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-GA-CARD-GAP-CONTEXT-END-TO-END",
+    "timestamp": "2026-04-10",
+    "task": "Topic-scoped TD gap-analysis detail view for Queue-column cards",
+    "decision": "Queue/detail GA views for TD `ta-*` cards must use a topic-specific summarized `gap_context` carried on the GA card payload itself, not a batch-level `ga_run_id` summary lookup. The authoritative contract is now: at TD GA completion, the orchestrator loads the topic-scoped `analysis.json` artifact, derives one `GapContextSummary`-shaped payload per assignment from `extract_topic_contexts(...)`, writes that summary into the GA card Redis metadata, and `/content/briefs` passes it through to `ContentBriefListItem.gap_context` for the frontend detail view.",
+    "rationale": "Manual QA showed that after the frontend stopped using the batch-level summary for Queue/detail cards, topic-scoped GA cards still rendered blank metrics (`Gap Score \u2014`, `Classification \u2014`) because the backend never supplied topic-level `gap_context` on `ta-*` cards. Reusing the CE pipeline's topic-context extraction keeps the topic-scoped semantics correct, while serializing only the summarized `GapContextSummary` avoids leaking the full internal worker-context shape into the frontend contract.",
+    "alternatives": [
+      "Keep using `/gap-analysis/summary?ga_run_id=...` in the detail view \u2014 rejected because TD topic-scoped GA runs are batch-scoped and a single card should not display aggregated metrics for the whole batch",
+      "Serialize the full `WorkerQueryContext` into the card payload and let the frontend derive a summary \u2014 rejected because it would widen the frontend/backend contract unnecessarily and expose internal CE data structures",
+      "Leave topic-level metrics to a second on-demand detail endpoint \u2014 rejected because the Queue-column card already has a durable GA card identity and should be self-contained in `/content/briefs`"
+    ],
+    "files_affected": [
+      "core/orchestration/td_content_orchestrator.py",
+      "core/content_engine/state_redis.py",
+      "core/services/db_content_data.py",
+      "tests/orchestration/test_td_ga_only.py",
+      "tests/content_engine/test_state_redis_ga.py",
+      "tests/services/test_db_content_data_backend.py"
+    ],
+    "outcome": "Implemented on 2026-04-10. TD GA-complete writes now attach one summarized topic-level `gap_context` per assignment, the Redis GA card read path preserves that payload, and `DbContentDataService._load_ga_phase_cards()` exposes it on `ContentBriefListItem.gap_context` so Queue/detail views can render topic-scoped metrics immediately after Phase 1. Validation: `venv/bin/pytest tests/content_engine/test_state_redis_ga.py tests/services/test_db_content_data_backend.py -q` (29 passed), `venv/bin/pytest tests/orchestration/test_td_ga_only.py -k gap_analysis_complete_write_includes_topic_gap_context -q` (1 passed), and `venv/bin/python -m py_compile core/orchestration/td_content_orchestrator.py core/content_engine/state_redis.py core/services/db_content_data.py` (clean).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-ACTIVE-SIDEBAR-TOPIC-CONTEXT",
+    "timestamp": "2026-04-11",
+    "task": "Content Studio active TD-entry detail view sidebar content",
+    "decision": "For TD-entry cards that originated from Topic Discovery, the left sidebar in active CE and brief-approval detail views should preserve the Topic Discovery assignment context instead of showing only runtime pipeline telemetry. The planner-derived topic metadata block (topic description, buyer stage, intent, content spec, target keywords, topic angle, priority factors, and persona context) is now reused across GA, active CE, and brief-approval views. Final article-review views still keep the article section navigator because section jumping is more valuable there.",
+    "rationale": "Manual QA showed that once a TD card left Queue and entered active brief-building or later CE stages, the left sidebar lost the original planner assignment context even though that context is still what the user needs to judge whether the pipeline is on the right topic. The center panel already displays pipeline progress for active CE work, so the sidebar should carry forward the Topic Discovery framing rather than duplicating runtime telemetry.",
+    "alternatives": [
+      "Keep the old agent-only sidebar everywhere after Queue \u2014 rejected because it hides the original topic assignment context during the most important human supervision stages",
+      "Replace the sidebar even for final article review \u2014 rejected because section navigation remains the higher-value affordance while reviewing final article text",
+      "Create a second independent topic-context sidebar implementation for active CE views \u2014 rejected because the GA sidebar already defined the right contract and could be reused directly"
+    ],
+    "files_affected": [
+      "frontend/src/app/(dashboard)/content-studio/_components/LeftSidebar.tsx"
+    ],
+    "outcome": "Implemented on 2026-04-11. Active TD-entry detail views and brief-approval views now render the same topic-assignment metadata block that Queue/GA views use, while final review continues to use the article section navigator. Validation: `cd frontend && npx tsc --noEmit`.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-ACTIVE-METRICS-GAP-CONTEXT",
+    "timestamp": "2026-04-11",
+    "task": "Content Studio active TD-entry detail view right-sidebar metrics",
+    "decision": "Active TD-entry CE and approval views should keep rendering the same topic-specific gap-analysis metrics as Queue-column cards by sourcing `gap_context` from the persisted `content_pieces.evaluation_results` payload. Blueprint persistence now stores topic-level `gap_context` early, CE piece upserts preserve an existing `evaluation_results.gap_context` when later eval summaries do not include it, and `DbContentDataService.get_briefs()` passes any embedded `evaluation_results.gap_context` through `extract_gap_context()` before falling back to analysis-file lookups.",
+    "rationale": "The frontend Metrics sidebar already renders `GapAnalysisSection` whenever `card.gapContext` exists, so the blank metrics in active CE views were a backend contract problem, not a UI rendering gap. TD GA queue cards carried topic-specific `gap_context` through Redis, but once a topic moved into `content_pieces`, later persistence writes could erase that field and the DB-backed brief read path ignored any embedded gap context. Preserving `gap_context` at the DB piece layer keeps Queue, active CE, and approval views aligned on the same topic-scoped GA data without requiring another frontend-only special case.",
+    "alternatives": [
+      "Fetch batch-level gap-analysis summary again in active CE views — rejected because the user needs metrics for the specific topic assignment, not the whole TD GA batch",
+      "Teach the frontend to retain the old Queue-card `gapContext` in local state forever — rejected because reloading/polling would still lose the data and the backend contract would remain inconsistent",
+      "Persist the full internal worker context in a separate table just for sidebar metrics — rejected because `evaluation_results.gap_context` already provides the right durable hook with less churn"
+    ],
+    "files_affected": [
+      "core/content_engine/persistence.py",
+      "core/services/db_content_data.py",
+      "tests/content_engine/test_persistence.py",
+      "tests/services/test_db_content_data_backend.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. Topic-level `gap_context` now survives the transition from Redis GA cards into DB-backed `content_pieces`, and active CE right-sidebar Metrics views keep showing the same topic-specific GA metrics that Queue/detail views show. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py tests/content_engine/test_persistence.py -q` (37 passed), `venv/bin/python -m py_compile core/content_engine/persistence.py core/services/db_content_data.py tests/services/test_db_content_data_backend.py tests/content_engine/test_persistence.py` (clean), and `cd frontend && npx tsc --noEmit` (clean).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-REVIEW-DRAFT-PERSISTENCE",
+    "timestamp": "2026-04-11",
+    "task": "Content Studio HITL-3 editor persistence and approve-time content promotion",
+    "decision": "Treat the final-content approval editor as a client-primary draft flow with backend durability. The editor now keeps the latest review markdown in localStorage keyed by company slug + brief id + run id, periodically autosaves that markdown to a dedicated backend draft artifact (`review_draft.md`) every 5 minutes while the draft is dirty, and includes the latest `content_markdown` in approve/send-back/publish API calls. The backend exposes additive `GET/PUT /api/v1/content/v13/{run_id}/draft/content` endpoints and, on final approval, promotes `approval_data.content_markdown` into `final.md` and `ContentPiece.final_markdown` instead of approving the stale pre-edit article body.",
+    "rationale": "The previous editor was ephemeral: navigating away from the detail view unmounted Tiptap, the page reloaded article content only from the server artifact, and the approve route accepted only `editor_notes`. That meant user edits disappeared on reopen and the approved artifact never reflected the reviewed text. Making the client draft primary preserves fast local editing, while backend autosave plus approve-time promotion gives crash/reload durability and ensures the canonical final artifact matches what the reviewer actually approved.",
+    "alternatives": [
+      "Persist every keystroke directly to the canonical final artifact — rejected because it makes typing latency and accidental partial edits too expensive and blurs the difference between draft and approved content",
+      "Keep persistence client-only and rely on the browser cache/localStorage forever — rejected because refreshes across devices/processes and final approve semantics still need a durable server copy",
+      "Save only `editor_notes` and ignore edited content on approve — rejected because the approved article would still diverge from the text the reviewer edited in the UI"
+    ],
+    "files_affected": [
+      "api/schemas/content_v13.py",
+      "api/routers/content_v13.py",
+      "core/content_engine/pipeline_v13.py",
+      "frontend/src/app/(dashboard)/content-studio/_components/ArticleEditor.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+      "frontend/src/app/(dashboard)/content-studio/page.tsx",
+      "frontend/src/app/(dashboard)/content-studio/_lib/api.ts",
+      "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
+      "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
+      "frontend/src/app/(dashboard)/content-studio/_components/types.ts",
+      "tests/api/test_content_v13.py",
+      "tests/content_engine/test_pipeline_v13.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. Review cards now restore local edits when reopened, autosave server-side draft content on an interval, and final approval promotes the edited markdown into the canonical final artifact. Validation: `venv/bin/pytest tests/api/test_content_v13.py -k 'ReviewDraftContent or td_content_review_routes_to_durable_resume_queue' -q` (4 passed), `venv/bin/pytest tests/api/test_content_v13.py tests/content_engine/test_pipeline_v13.py -k 'approve_content or ReviewDraftContent or edited_markdown_from_review_state' -q` (7 passed), `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k edited_markdown_from_review_state -q` (1 passed), `venv/bin/python -m py_compile api/schemas/content_v13.py api/routers/content_v13.py core/content_engine/pipeline_v13.py` (clean), and `cd frontend && npx tsc --noEmit` (clean).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-DB-BRIEF-CARDS-PRESERVE-TD-METADATA",
+    "timestamp": "2026-04-11",
+    "task": "Content Studio detail view should keep topic-assignment descriptions and planner metadata after cards leave Queue",
+    "decision": "Treat `topic_assignments` as the durable source of planner/topic metadata for DB-backed Content Studio cards linked by `content_pieces.topic_assignment_id`. `DbContentDataService.get_briefs()` now bulk-loads the linked topic assignments and maps buyer stage, intent type, persona, priority factors, estimated word count, citation opportunity, description, target keywords, and content angle back onto each `ContentBriefListItem`, instead of assuming only GA Redis cards need that enrichment.",
+    "rationale": "The sidebar and Metrics tab were already rendering correctly when `ContentCard` carried planner metadata and `gapContext`, but once a card moved from Queue into `pending_brief_approval` or active CE, the selected card came from the DB-backed `/content/briefs` list payload, which was only returning `content_pieces` fields plus status overrides. That dropped the topic-assignment description and related planner context from the left sidebar. Rehydrating those fields from `topic_assignments` keeps the detail view consistent across Queue, brief review, and active production stages without depending on ephemeral Redis-only card metadata.",
+    "alternatives": [
+      "Persist all planner metadata redundantly into `content_pieces.evaluation_results` and read it only from there — rejected because the authoritative planner/topic-assignment source already exists and the card should survive metadata evolution without duplicating every field",
+      "Make the frontend fetch topic-assignment details separately after selecting a card — rejected because the selected card already comes from `/content/briefs`, and splitting this contract across another request would add latency and more state drift in the detail view",
+      "Keep the old runtime-only sidebar for active cards — rejected because it duplicated the center-panel pipeline state and hid the topic brief that users need while approving briefs or monitoring generation"
+    ],
+    "files_affected": [
+      "core/services/db_content_data.py",
+      "tests/services/test_db_content_data_backend.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. DB-backed `pending_brief_approval` and active CE cards now keep the same topic-assignment description and planner metadata that Queue cards expose, and the right sidebar continues to use the topic-focused gap context already attached to those cards. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py -q` (12 passed) and `venv/bin/python -m py_compile core/services/db_content_data.py tests/services/test_db_content_data_backend.py` (clean).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-STUDIO-REVIEW-METRICS-USE-CE-EVAL-SNAPSHOT",
+    "timestamp": "2026-04-11",
+    "task": "Content Studio right-sidebar structural compliance and E-E-A-T for content review/completed cards",
+    "decision": "Review and completed article detail views must source structural compliance, citation prediction, and E-E-A-T from the content-engine evaluator snapshot for that exact generated article, not from the site-audit module. `pipeline_v13.py` now persists a rich article-level eval snapshot (`eval_history`, `final_passed`, latest dimension summary, and `cps`) onto the linked `content_piece` before entering `pending_content_approval`, and approved-piece persistence keeps the same payload. `DbContentDataService.get_brief_detail()` returns both `eval_history` and `cps` from `evaluation_results`, which is the contract the frontend adapters already use to render structural compliance and E-E-A-T.",
+    "rationale": "The blank review sidebar was caused by a timing mismatch: the review UI reads from the DB-backed `content_piece`, but until this fix the pipeline only wrote a thin summary after final approval, so `pending_content_approval` cards still pointed at the early placeholder row with no evaluator history or CPS. Site-audit E-E-A-T is the wrong substitute because it measures page/site quality in a separate pipeline, while the review sidebar needs article-specific scores for the exact generated draft the human is approving.",
+    "alternatives": [
+      "Populate the review sidebar from site-audit scores — rejected because site-audit is page/site-level and can diverge materially from the generated article's evaluator result",
+      "Recompute structural compliance and E-E-A-T in the detail API on demand — rejected because the pipeline already has the authoritative evaluator output and recomputation would add latency and drift risk",
+      "Wait until final approval to persist evaluator history — rejected because `pending_content_approval` is itself a first-class detail view and must render the metrics before the user approves"
+    ],
+    "files_affected": [
+      "core/content_engine/pipeline_v13.py",
+      "core/services/db_content_data.py",
+      "tests/content_engine/test_pipeline_v13.py",
+      "tests/services/test_db_content_data_backend.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. `pending_content_approval` and completed article detail views now read article-level structural compliance, citation prediction, and E-E-A-T from the content-engine evaluator snapshot stored on the linked `content_piece`. Validation: `venv/bin/pytest tests/content_engine/test_pipeline_v13.py -k 'ContentReview or pending_content_review_persists_eval_snapshot_for_sidebar_metrics' -q` (5 passed), `venv/bin/pytest tests/services/test_db_content_data_backend.py -q` (13 passed), and `venv/bin/python -m py_compile core/content_engine/pipeline_v13.py core/services/db_content_data.py tests/content_engine/test_pipeline_v13.py tests/services/test_db_content_data_backend.py` (clean).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-PLANNER-PRIORITY-QUEUE-USES-QUEUEABLE-STATUSES-ONLY",
+    "timestamp": "2026-04-11",
+    "task": "Content Planner priority queue visibility after sending topics to Content Engine",
+    "decision": "Only the Priority Queue section should hide topics once they have been sent to Content Engine. The frontend assignment model now carries backend `status`, the Priority Queue view renders only queueable assignments (`not_started`), and `approveAssignments()` optimistically marks selected rows `approved` so they disappear immediately from Priority Queue while the GA launch runs. Other planner surfaces continue to receive the broader non-rejected assignment set, and pipeline-launch rollback restores the affected rows back to `not_started`.",
+    "rationale": "The previous planner data path dropped backend assignment status when adapting Topic Discovery assignments, so the Priority Queue could not distinguish unsent topics from already-approved/in-flight ones. As a result, topics remained visible in Priority Queue even after the user sent them to Content Engine. The user only requested this behavior change for the Priority Queue section, not for the rest of Planner, so a queue-only filter at the page/view layer preserves existing explorer behavior while making the priority list reflect actionable items only.",
+    "alternatives": [
+      "Filter all planner surfaces to queueable statuses only — rejected because the request was explicitly scoped to the Priority Queue section",
+      "Remove approved topics from the entire local assignment store after send — rejected because rollback and other planner views would lose state they may still need",
+      "Require a backend-only filtered endpoint just for Priority Queue — rejected because the existing assignment list already carries status and the queue-only distinction belongs at the UI section boundary"
+    ],
+    "files_affected": [
+      "frontend/src/app/(dashboard)/planner/_components/planner-data.ts",
+      "frontend/src/app/(dashboard)/planner/_lib/adapters.ts",
+      "frontend/src/app/(dashboard)/planner/_hooks/usePlannerData.ts",
+      "frontend/src/app/(dashboard)/planner/page.tsx"
+    ],
+    "outcome": "Implemented on 2026-04-11. Assignments now retain backend `status`, `approveAssignments()` optimistically flips selected rows to `approved`, rollback restores them to `not_started` if pipeline launch fails, and the Priority Queue section renders only `not_started` assignments so sent topics disappear immediately from that list. Validation: `cd frontend && npx tsc --noEmit`.",
     "reversible": true,
     "approved_by": "Aryan"
   }

@@ -24,7 +24,13 @@ class TaskStoreProtocol(Protocol):
     @property
     def semaphore(self) -> asyncio.Semaphore: ...
 
-    def pipeline_semaphore(self, task_id: str): ...  # Returns async context manager
+    def pipeline_semaphore(
+        self,
+        task_id: str,
+        *,
+        pool: str = "default",
+        company_slug: Optional[str] = None,
+    ): ...  # Returns async context manager
 
     # ── CRUD ──────────────────────────────────────────────────────
 
@@ -76,6 +82,23 @@ class TaskStoreProtocol(Protocol):
         stage: Optional[str] = None,
         approval_data: Optional[Dict[str, Any]] = None,
         expected_nonce: Optional[str] = None,
+        delivery_mode: str = "queue",
+    ) -> None: ...
+
+    def validate_approval_submission(
+        self,
+        task_id: str,
+        *,
+        expected_nonce: Optional[str] = None,
+    ) -> None: ...
+
+    def record_approval_submission(
+        self,
+        task_id: str,
+        *,
+        decision: str,
+        revision_note: Optional[str] = None,
+        stage: Optional[str] = None,
     ) -> None: ...
 
     # ── Durability (Session 3) ─────────────────────────────────────

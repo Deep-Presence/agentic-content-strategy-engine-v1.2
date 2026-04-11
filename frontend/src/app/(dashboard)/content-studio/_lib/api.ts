@@ -13,7 +13,11 @@ import type {
   StageContentResponseAPI,
   PipelineRunResponseAPI,
   ApprovalResponseAPI,
+  ContentDraftResponseAPI,
+  ContentDraftSaveResponseAPI,
   GapSummaryResponseAPI,
+  TopicRunListResponseAPI,
+  TopicRunEventListResponseAPI,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -124,10 +128,40 @@ export function approveContent(
   decision: 'approve' | 'edit' | 'reject',
   editorNotes?: string,
   rethink?: boolean,
+  contentMarkdown?: string,
 ): Promise<ApprovalResponseAPI> {
   return api.post<ApprovalResponseAPI>(
     `/api/v1/content/v13/${encodeURIComponent(runId)}/approve/content`,
-    { brief_id: briefId, decision, editor_notes: editorNotes, rethink },
+    {
+      brief_id: briefId,
+      decision,
+      editor_notes: editorNotes,
+      rethink,
+      content_markdown: contentMarkdown,
+    },
+  );
+}
+
+export function fetchReviewDraftContent(
+  runId: string,
+  briefId: string,
+  signal?: AbortSignal,
+): Promise<ContentDraftResponseAPI> {
+  return api.get<ContentDraftResponseAPI>(
+    `/api/v1/content/v13/${encodeURIComponent(runId)}/draft/content`,
+    { brief_id: briefId },
+    signal,
+  );
+}
+
+export function saveReviewDraftContent(
+  runId: string,
+  briefId: string,
+  contentMarkdown: string,
+): Promise<ContentDraftSaveResponseAPI> {
+  return api.put<ContentDraftSaveResponseAPI>(
+    `/api/v1/content/v13/${encodeURIComponent(runId)}/draft/content`,
+    { brief_id: briefId, content_markdown: contentMarkdown },
   );
 }
 
@@ -233,10 +267,41 @@ export function fetchGapSummary(
   slug: string,
   productSlug?: string,
   signal?: AbortSignal,
+  gaRunId?: string,
 ): Promise<GapSummaryResponseAPI> {
+  const params: Record<string, string> = {};
+  if (productSlug) params.product_slug = productSlug;
+  if (gaRunId) params.ga_run_id = gaRunId;
   return api.get<GapSummaryResponseAPI>(
     `/api/v1/companies/${encodeURIComponent(slug)}/gap-analysis/summary`,
-    productSlug ? { product_slug: productSlug } : undefined,
+    Object.keys(params).length > 0 ? params : undefined,
+    signal,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Durable topic-run list (TD-entry live state reconciliation)
+// ---------------------------------------------------------------------------
+
+export function fetchTopicRuns(
+  effectiveSlug: string,
+  signal?: AbortSignal,
+): Promise<TopicRunListResponseAPI> {
+  return api.get<TopicRunListResponseAPI>(
+    `/api/v1/content/v13/${encodeURIComponent(effectiveSlug)}/topic-runs`,
+    undefined,
+    signal,
+  );
+}
+
+export function fetchTopicRunEvents(
+  effectiveSlug: string,
+  topicRunId: string,
+  signal?: AbortSignal,
+): Promise<TopicRunEventListResponseAPI> {
+  return api.get<TopicRunEventListResponseAPI>(
+    `/api/v1/content/v13/${encodeURIComponent(effectiveSlug)}/topic-runs/${encodeURIComponent(topicRunId)}/events`,
+    undefined,
     signal,
   );
 }

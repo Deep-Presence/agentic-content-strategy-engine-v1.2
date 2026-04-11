@@ -149,7 +149,26 @@ class _SemaphoreContext:
         self._poll_interval = poll_interval
         self._timeout = timeout
         self._renewal_task: Optional[asyncio.Task] = None
+        self._held = False
+        self._closed = False
         self._released = False
+
+    async def _stop_renewal_task(self) -> None:
+        if self._renewal_task is None or self._renewal_task.done():
+            return
+        self._renewal_task.cancel()
+        try:
+            await self._renewal_task
+        except asyncio.CancelledError:
+            pass
+
+    def _start_renewal_task(self) -> None:
+        if self._renewal_task is not None and not self._renewal_task.done():
+            return
+        self._renewal_task = asyncio.create_task(
+            self._renewal_loop(),
+            name=f"semaphore-renew-{self._holder_id}",
+        )
 
     async def _renewal_loop(self) -> None:
         """Background coroutine: renew semaphore slot every 60s.
@@ -158,9 +177,9 @@ class _SemaphoreContext:
         HITL waits. Ensures non-HITL pipelines (gap analysis, site audit, KB,
         etc.) never have their slots expire mid-run.
         """
-        while not self._released:
+        while not self._closed and self._held:
             await asyncio.sleep(self._RENEWAL_INTERVAL)
-            if self._released:
+            if self._closed or not self._held:
                 break
             try:
                 renewed = await asyncio.to_thread(
@@ -192,10 +211,8 @@ class _SemaphoreContext:
                     "Semaphore acquired",
                     extra={"holder_id": self._holder_id, "key": self._sem._key},
                 )
-                self._renewal_task = asyncio.create_task(
-                    self._renewal_loop(),
-                    name=f"semaphore-renew-{self._holder_id}",
-                )
+                self._held = True
+                self._start_renewal_task()
                 return self
             if time.monotonic() >= deadline:
                 raise TimeoutError(
@@ -209,16 +226,53 @@ class _SemaphoreContext:
             await asyncio.sleep(self._poll_interval)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self._closed = True
         self._released = True
-        if self._renewal_task is not None and not self._renewal_task.done():
-            self._renewal_task.cancel()
-            try:
-                await self._renewal_task
-            except asyncio.CancelledError:
-                pass
+        await self._stop_renewal_task()
+        if self._held:
+            await asyncio.to_thread(self._sem.release, self._holder_id)
+            self._held = False
+            logger.debug(
+                "Semaphore released",
+                extra={"holder_id": self._holder_id, "key": self._sem._key},
+            )
+        return False  # Don't suppress exceptions
+
+    async def suspend(self) -> bool:
+        """Temporarily release the held slot without closing the context."""
+        if self._closed or not self._held:
+            return False
+        await self._stop_renewal_task()
         await asyncio.to_thread(self._sem.release, self._holder_id)
+        self._held = False
         logger.debug(
-            "Semaphore released",
+            "Semaphore suspended",
             extra={"holder_id": self._holder_id, "key": self._sem._key},
         )
-        return False  # Don't suppress exceptions
+        return True
+
+    async def resume(self, timeout: float | None = None) -> bool:
+        """Reacquire a previously suspended slot and restart renewal."""
+        if self._closed:
+            return False
+        if self._held:
+            return True
+
+        deadline = time.monotonic() + (timeout if timeout is not None else self._timeout)
+        while True:
+            acquired = await asyncio.to_thread(self._sem.try_acquire, self._holder_id)
+            if acquired:
+                self._held = True
+                self._start_renewal_task()
+                logger.debug(
+                    "Semaphore resumed",
+                    extra={"holder_id": self._holder_id, "key": self._sem._key},
+                )
+                return True
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Failed to reacquire pipeline semaphore within "
+                    f"{timeout if timeout is not None else self._timeout}s "
+                    f"(max_concurrent={self._sem._max})"
+                )
+            await asyncio.sleep(self._poll_interval)

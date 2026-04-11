@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -21,12 +22,19 @@ from api.dependencies import get_auth_service, get_event_bus, get_task_store
 from api.schemas.content_v13 import (
     ApprovalResponseV13,
     BriefApprovalRequest,
+    ContentDraftRequestV13,
+    ContentDraftResponseV13,
+    ContentDraftSaveResponseV13,
     ContentApprovalRequestV13,
     ContentStartRequestV13,
     PipelineRunResponseV13,
     TopicApprovalRequest,
     TopicContentProductionRequest,
     TopicContentStartRequest,
+    TopicRunListResponseV13,
+    TopicRunEventListResponseV13,
+    TopicRunEventV13,
+    TopicRunSummaryV13,
     TopicContentStatusItem,
     TopicContentStatusResponse,
 )
@@ -35,10 +43,10 @@ from api.tasks.models import PipelineTask, TaskStatus
 from api.tasks.runner import (
     _derive_slug,
     _resolve_scope_async,
+    dispatch_queued_td_content_runs,
     run_content_v13_pipeline_task,
     run_td_content_pipeline_task,
     run_td_gap_analysis_task,
-    run_td_content_production_task,
 )
 from api.routers._helpers import create_task_durable
 from core.auth.service import AuthServiceProtocol
@@ -53,11 +61,75 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/content/v13", tags=["content-v13"])
 
 _SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*(__[a-z0-9][a-z0-9-]*)?$")
+_TD_PRODUCTION_QUEUE_CONFLICT_STATES = frozenset({"content_queued", "briefing"})
 
 
 # ---------------------------------------------------------------------------
 # Approval Window Validation (C2 fix)
 # ---------------------------------------------------------------------------
+
+
+async def _try_create_td_batch_records(
+    request: Request,
+    *,
+    company_slug: str,
+    effective_slug: str,
+    topic_assignment_ids: list[str],
+    pipeline_task_id: str,
+    product_slug: str | None,
+    source_mode: str,
+    initial_status: str,
+    initial_stage: str,
+    ga_run_id: str | None = None,
+) -> tuple[str | None, list[TopicRunSummaryV13]]:
+    """Best-effort durable batch/topic-run creation for TD-entry flows."""
+    session_factory = getattr(request.app.state, "db_session_factory", None)
+    if session_factory is None:
+        return None, []
+
+    try:
+        from core.services.content_engine_topic_runs import ContentEngineTopicRunService
+
+        service = ContentEngineTopicRunService(session_factory)
+        batch, snapshots = await service.create_td_batch(
+            company_slug=company_slug,
+            effective_slug=effective_slug,
+            topic_assignment_ids=topic_assignment_ids,
+            pipeline_task_id=pipeline_task_id,
+            product_slug=product_slug,
+            source_mode=source_mode,
+            initial_status=initial_status,
+            initial_stage=initial_stage,
+            ga_run_id=ga_run_id,
+            metadata_json={"effective_slug": effective_slug},
+        )
+        return str(batch.id), [
+            TopicRunSummaryV13(
+                topic_run_id=s.topic_run_id,
+                batch_run_id=s.batch_run_id,
+                topic_assignment_id=s.topic_assignment_id,
+                display_id=s.display_id,
+                topic_text=s.topic_text,
+                brief_id=s.brief_id,
+                ga_run_id=s.ga_run_id,
+                pipeline_task_id=s.pipeline_task_id,
+                status=s.status,
+                stage=s.stage,
+                seq=s.seq,
+                content_piece_id=s.content_piece_id,
+                created_at=s.created_at,
+                updated_at=s.updated_at,
+            )
+            for s in snapshots
+        ]
+    except Exception:
+        logger.warning(
+            "Failed to create durable TD batch/topic runs for task=%s slug=%s",
+            pipeline_task_id,
+            effective_slug,
+            exc_info=True,
+        )
+        return None, []
 
 
 def _validate_approval_window(
@@ -98,6 +170,50 @@ def _validate_approval_window(
                 status_code=409,
                 detail=f"Brief ID mismatch (expected: {current_brief_id}, got: {expected_brief_id})",
             )
+
+
+def _uses_td_durable_continuation(task: PipelineTask) -> bool:
+    payload = task.approval_payload or {}
+    return bool(
+        task.pipeline == "td_content"
+        and isinstance(payload.get("continuation"), dict)
+    )
+
+
+def _review_draft_storage_key(*, effective_slug: str, brief_id: str) -> str:
+    return f"content/{effective_slug}/content/{brief_id}/review_draft.md"
+
+
+async def _load_review_draft_content(
+    *,
+    app,
+    effective_slug: str,
+    brief_id: str,
+) -> str | None:
+    storage = getattr(app.state, "storage_backend", None)
+    if storage is None:
+        from core.storage import get_storage_backend
+
+        storage = get_storage_backend(getattr(app.state, "artifacts_root", None))
+    return storage.read(_review_draft_storage_key(effective_slug=effective_slug, brief_id=brief_id))
+
+
+async def _save_review_draft_content(
+    *,
+    app,
+    effective_slug: str,
+    brief_id: str,
+    content_markdown: str,
+) -> str:
+    storage = getattr(app.state, "storage_backend", None)
+    if storage is None:
+        from core.storage import get_storage_backend
+
+        storage = get_storage_backend(getattr(app.state, "artifacts_root", None))
+    return storage.write(
+        _review_draft_storage_key(effective_slug=effective_slug, brief_id=brief_id),
+        content_markdown,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -330,23 +446,99 @@ async def approve_brief(
         "brief_id": body.brief_id,
     }
 
-    try:
-        task_store.submit_approval(
-            run_id, decision=body.decision, revision_note=body.feedback,
-            stage="brief_approval", approval_data=approval_data,
-            expected_nonce=nonce,
+    if _uses_td_durable_continuation(task):
+        session_factory = getattr(http_request.app.state, "db_session_factory", None)
+        if session_factory is None:
+            raise HTTPException(
+                status_code=503,
+                detail="TD continuation dispatcher is unavailable",
+            )
+        from core.services.content_engine_topic_runs import (
+            ContentEngineTopicRunService,
+            TopicRunResumeConflictError,
+            TopicRunResumeNotFoundError,
         )
-    except ApprovalWindowError as exc:
-        await log_hitl_decision(
-            user_id=_user.id,
-            run_id=run_id,
-            pipeline="content_v13",
+
+        try:
+            task_store.validate_approval_submission(
+                run_id,
+                expected_nonce=nonce,
+            )
+        except ApprovalWindowError as exc:
+            await log_hitl_decision(
+                user_id=_user.id,
+                run_id=run_id,
+                pipeline="content_v13",
+                stage="brief_approval",
+                decision="rejected",
+                company_slug=user_company_slug,
+                detail={"reason": str(exc)},
+            )
+            raise HTTPException(status_code=409, detail=str(exc))
+
+        service = ContentEngineTopicRunService(session_factory)
+        try:
+            await service.queue_topic_run_resume(
+                effective_slug=task.effective_slug or user_company_slug,
+                pipeline_task_id=run_id,
+                approval_data=approval_data,
+            )
+        except TopicRunResumeNotFoundError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=str(exc),
+            )
+        except TopicRunResumeConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except Exception:
+            logger.warning(
+                "Failed to queue TD brief approval continuation for %s",
+                run_id,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to queue TD brief approval continuation",
+            )
+
+        task_store.record_approval_submission(
+            run_id,
+            decision=body.decision,
+            revision_note=body.feedback,
             stage="brief_approval",
-            decision="rejected",
-            company_slug=user_company_slug,
-            detail={"reason": str(exc)},
         )
-        raise HTTPException(status_code=409, detail=str(exc))
+        try:
+            await dispatch_queued_td_content_runs(
+                company_slug=user_company_slug,
+                task_store=task_store,
+                event_bus=http_request.app.state.event_bus,
+                session_factory=session_factory,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to dispatch queued TD brief approval continuation for %s",
+                run_id,
+                exc_info=True,
+            )
+    else:
+        try:
+            task_store.submit_approval(
+                run_id, decision=body.decision, revision_note=body.feedback,
+                stage="brief_approval", approval_data=approval_data,
+                expected_nonce=nonce,
+                delivery_mode="queue",
+            )
+        except ApprovalWindowError as exc:
+            await log_hitl_decision(
+                user_id=_user.id,
+                run_id=run_id,
+                pipeline="content_v13",
+                stage="brief_approval",
+                decision="rejected",
+                company_slug=user_company_slug,
+                detail={"reason": str(exc)},
+            )
+            raise HTTPException(status_code=409, detail=str(exc))
 
     await log_hitl_decision(
         user_id=_user.id,
@@ -403,24 +595,121 @@ async def approve_content(
         "rethink": body.rethink,
         "brief_id": body.brief_id,
     }
+    if body.content_markdown is not None:
+        approval_data["content_markdown"] = body.content_markdown
 
-    try:
-        task_store.submit_approval(
-            run_id, decision=body.decision, revision_note=body.editor_notes,
-            stage="content_review", approval_data=approval_data,
-            expected_nonce=nonce,
+    if body.content_markdown is not None:
+        try:
+            await _save_review_draft_content(
+                app=http_request.app,
+                effective_slug=task.effective_slug or user_company_slug,
+                brief_id=body.brief_id,
+                content_markdown=body.content_markdown,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to save review draft content for %s",
+                run_id,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to save review draft content",
+            )
+
+    if _uses_td_durable_continuation(task):
+        session_factory = getattr(http_request.app.state, "db_session_factory", None)
+        if session_factory is None:
+            raise HTTPException(
+                status_code=503,
+                detail="TD continuation dispatcher is unavailable",
+            )
+        from core.services.content_engine_topic_runs import (
+            ContentEngineTopicRunService,
+            TopicRunResumeConflictError,
+            TopicRunResumeNotFoundError,
         )
-    except ApprovalWindowError as exc:
-        await log_hitl_decision(
-            user_id=_user.id,
-            run_id=run_id,
-            pipeline="content_v13",
+
+        try:
+            task_store.validate_approval_submission(
+                run_id,
+                expected_nonce=nonce,
+            )
+        except ApprovalWindowError as exc:
+            await log_hitl_decision(
+                user_id=_user.id,
+                run_id=run_id,
+                pipeline="content_v13",
+                stage="content_review",
+                decision="rejected",
+                company_slug=user_company_slug,
+                detail={"reason": str(exc)},
+            )
+            raise HTTPException(status_code=409, detail=str(exc))
+
+        service = ContentEngineTopicRunService(session_factory)
+        try:
+            await service.queue_topic_run_resume(
+                effective_slug=task.effective_slug or user_company_slug,
+                pipeline_task_id=run_id,
+                approval_data=approval_data,
+            )
+        except TopicRunResumeNotFoundError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=str(exc),
+            )
+        except TopicRunResumeConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except Exception:
+            logger.warning(
+                "Failed to queue TD content approval continuation for %s",
+                run_id,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to queue TD content approval continuation",
+            )
+
+        task_store.record_approval_submission(
+            run_id,
+            decision=body.decision,
+            revision_note=body.editor_notes,
             stage="content_review",
-            decision="rejected",
-            company_slug=user_company_slug,
-            detail={"reason": str(exc)},
         )
-        raise HTTPException(status_code=409, detail=str(exc))
+        try:
+            await dispatch_queued_td_content_runs(
+                company_slug=user_company_slug,
+                task_store=task_store,
+                event_bus=http_request.app.state.event_bus,
+                session_factory=session_factory,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to dispatch queued TD content approval continuation for %s",
+                run_id,
+                exc_info=True,
+            )
+    else:
+        try:
+            task_store.submit_approval(
+                run_id, decision=body.decision, revision_note=body.editor_notes,
+                stage="content_review", approval_data=approval_data,
+                expected_nonce=nonce,
+                delivery_mode="queue",
+            )
+        except ApprovalWindowError as exc:
+            await log_hitl_decision(
+                user_id=_user.id,
+                run_id=run_id,
+                pipeline="content_v13",
+                stage="content_review",
+                decision="rejected",
+                company_slug=user_company_slug,
+                detail={"reason": str(exc)},
+            )
+            raise HTTPException(status_code=409, detail=str(exc))
 
     await log_hitl_decision(
         user_id=_user.id,
@@ -437,6 +726,72 @@ async def approve_content(
         stage="content_review",
         brief_id=body.brief_id,
         message=f"Content {body.brief_id} {body.decision} submitted",
+    )
+
+
+@router.get("/{run_id}/draft/content")
+async def get_review_draft_content(
+    run_id: str,
+    brief_id: str,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+) -> ContentDraftResponseV13:
+    task = task_store.get_task(run_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {run_id}")
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if task.company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    content_markdown = await _load_review_draft_content(
+        app=http_request.app,
+        effective_slug=task.effective_slug or user_company_slug,
+        brief_id=brief_id,
+    )
+    if content_markdown is None:
+        raise HTTPException(status_code=404, detail="Review draft not found")
+
+    return ContentDraftResponseV13(
+        brief_id=brief_id,
+        content_markdown=content_markdown,
+    )
+
+
+@router.put("/{run_id}/draft/content")
+async def save_review_draft_content(
+    run_id: str,
+    body: ContentDraftRequestV13,
+    http_request: Request,
+    _user: UserProfile = Depends(require_role("member", "superuser")),
+    task_store: TaskStoreProtocol = Depends(get_task_store),
+) -> ContentDraftSaveResponseV13:
+    task = task_store.get_task(run_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {run_id}")
+    user_company_slug = getattr(http_request.state, "company_slug", None)
+    if task.company_slug != user_company_slug:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        storage_key = await _save_review_draft_content(
+            app=http_request.app,
+            effective_slug=task.effective_slug or user_company_slug,
+            brief_id=body.brief_id,
+            content_markdown=body.content_markdown,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to persist review draft content for %s",
+            run_id,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=503, detail="Failed to save review draft content")
+
+    return ContentDraftSaveResponseV13(
+        status="saved",
+        brief_id=body.brief_id,
+        storage_key=storage_key,
     )
 
 
@@ -545,6 +900,20 @@ async def start_from_topics_gap_analysis(
         pipeline="td_gap_analysis",
         company_slug=company_slug,
         product_slug=body.product_slug,
+        allow_parallel=True,
+    )
+
+    batch_run_id, topic_runs = await _try_create_td_batch_records(
+        http_request,
+        company_slug=company_slug,
+        effective_slug=body.effective_slug,
+        topic_assignment_ids=body.topic_assignment_ids,
+        pipeline_task_id=task.task_id,
+        product_slug=body.product_slug,
+        source_mode="td_entry_gap_analysis",
+        initial_status="gap_analysis_pending",
+        initial_stage="gap_analysis_pending",
+        ga_run_id=None,
     )
 
     handle = asyncio.create_task(
@@ -580,6 +949,8 @@ async def start_from_topics_gap_analysis(
         status="started",
         entry_mode="topic_discovery_ga",
         message=f"TD→GA pipeline started for {len(body.topic_assignment_ids)} topics",
+        batch_run_id=batch_run_id,
+        topic_runs=topic_runs,
     )
 
 
@@ -621,49 +992,178 @@ async def start_from_topics_production(
             detail=f"GA run {body.ga_run_id} analysis not found. Gap analysis may not have completed.",
         )
 
-    # Create task
-    task = await create_task_durable(
-        task_store,
-        pipeline="td_content",
-        company_slug=company_slug,
-        product_slug=body.product_slug,
-    )
+    try:
+        from core.redis import get_redis_or_none
+        from core.content_engine.state_redis import read_ga_phase_cards_async
 
-    handle = asyncio.create_task(
-        run_td_content_production_task(
-            task_id=task.task_id,
+        redis_client = get_redis_or_none()
+        if redis_client is not None:
+            queued_cards = await read_ga_phase_cards_async(redis_client, body.effective_slug)
+            conflicts = [
+                card.get("display_id") or card.get("topic_assignment_id") or ""
+                for card in queued_cards
+                if card.get("topic_assignment_id") in body.topic_assignment_ids
+                and card.get("status") in _TD_PRODUCTION_QUEUE_CONFLICT_STATES
+                and (
+                    not card.get("ga_run_id")
+                    or card.get("ga_run_id") == body.ga_run_id
+                )
+            ]
+            if conflicts:
+                conflict_list = ", ".join(conflicts)
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Content production is already queued or running for: {conflict_list}",
+                )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning(
+            "Failed to preflight queued production state for %s",
+            body.effective_slug,
+            exc_info=True,
+        )
+
+    session_factory = getattr(http_request.app.state, "db_session_factory", None)
+    if session_factory is None:
+        raise HTTPException(
+            status_code=503,
+            detail="TD content dispatcher is unavailable",
+        )
+
+    from core.services.content_engine_topic_runs import ContentEngineTopicRunService
+
+    service = ContentEngineTopicRunService(session_factory)
+    try:
+        queued_snapshots = await service.queue_topic_runs_for_dispatch(
             effective_slug=body.effective_slug,
             topic_assignment_ids=body.topic_assignment_ids,
-            company_name=body.company_name,
-            domain=body.domain,
             ga_run_id=body.ga_run_id,
+            match_ga_run_id=body.ga_run_id,
+            launch_context={
+                "company_name": body.company_name,
+                "domain": body.domain,
+                "product_slug": body.product_slug,
+                "product_name": body.product_name,
+                "product_description": body.product_description,
+                "auto_approve": body.auto_approve,
+            },
+        )
+    except Exception:
+        logger.warning(
+            "Failed to queue durable TD topic runs for %s",
+            body.effective_slug,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to queue TD content production",
+        )
+
+    if not queued_snapshots:
+        raise HTTPException(
+            status_code=409,
+            detail="No matching topic runs were queued for TD content production",
+        )
+
+    try:
+        from core.orchestration.td_content_orchestrator import _emit_company_event, _update_ga_phase_status
+
+        _update_ga_phase_status(
+            body.effective_slug,
+            body.topic_assignment_ids,
+            "content_queued",
+        )
+        _emit_company_event(
+            body.effective_slug,
+            "state_changed",
+            {"changed": body.topic_assignment_ids, "hint": "content_queued"},
+        )
+    except Exception:
+        logger.warning(
+            "Failed to persist queued GA-phase state for %s",
+            body.effective_slug,
+            exc_info=True,
+        )
+
+    topic_run_items = [
+        TopicRunSummaryV13(
+            topic_run_id=s.topic_run_id,
+            batch_run_id=s.batch_run_id,
+            topic_assignment_id=s.topic_assignment_id,
+            display_id=s.display_id,
+            topic_text=s.topic_text,
+            brief_id=s.brief_id,
+            ga_run_id=s.ga_run_id,
+            pipeline_task_id=s.pipeline_task_id,
+            status=s.status,
+            stage=s.stage,
+            seq=s.seq,
+            content_piece_id=s.content_piece_id,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in queued_snapshots
+    ]
+    dispatched = []
+    try:
+        dispatched = await dispatch_queued_td_content_runs(
+            company_slug=company_slug,
             task_store=task_store,
             event_bus=event_bus,
-            product_slug=body.product_slug,
-            product_name=body.product_name,
-            product_description=body.product_description,
-            auto_approve=body.auto_approve,
+            session_factory=session_factory,
         )
-    )
-    task_store.register_task_handle(task.task_id, handle)
-
-    await log_pipeline_launch(
-        user_id=_user.id,
-        pipeline="td_content",
-        company_slug=company_slug,
-        task_id=task.task_id,
-        detail={
-            "product_slug": body.product_slug,
-            "effective_slug": body.effective_slug,
-            "ga_run_id": body.ga_run_id,
-        },
-    )
+        if dispatched:
+            snapshots = await service.list_topic_runs_by_assignment_ids(
+                effective_slug=body.effective_slug,
+                topic_assignment_ids=body.topic_assignment_ids,
+                ga_run_id=body.ga_run_id,
+            )
+            topic_run_items = [
+                TopicRunSummaryV13(
+                    topic_run_id=s.topic_run_id,
+                    batch_run_id=s.batch_run_id,
+                    topic_assignment_id=s.topic_assignment_id,
+                    display_id=s.display_id,
+                    topic_text=s.topic_text,
+                    brief_id=s.brief_id,
+                    ga_run_id=s.ga_run_id,
+                    pipeline_task_id=s.pipeline_task_id,
+                    status=s.status,
+                    stage=s.stage,
+                    seq=s.seq,
+                    content_piece_id=s.content_piece_id,
+                    created_at=s.created_at,
+                    updated_at=s.updated_at,
+                )
+                for s in snapshots
+            ]
+    except Exception:
+        logger.warning(
+            "Failed to dispatch queued TD topic runs for %s",
+            body.effective_slug,
+            exc_info=True,
+        )
+    for dispatched_item in dispatched:
+        await log_pipeline_launch(
+            user_id=_user.id,
+            pipeline="td_content",
+            company_slug=company_slug,
+            task_id=dispatched_item["task_id"],
+            detail={
+                "product_slug": body.product_slug,
+                "effective_slug": body.effective_slug,
+                "ga_run_id": body.ga_run_id,
+                "topic_assignment_id": dispatched_item["topic_assignment_id"],
+            },
+        )
 
     return PipelineRunResponseV13(
-        run_id=task.task_id,
+        run_id=(topic_run_items[0].pipeline_task_id if topic_run_items else None) or "",
         status="started",
         entry_mode="topic_discovery",
-        message=f"TD→Content production started for {len(body.topic_assignment_ids)} topics (GA: {body.ga_run_id[:8]}...)",
+        message=f"TD→Content production queued for {len(body.topic_assignment_ids)} topics (GA: {body.ga_run_id[:8]}...)",
+        topic_runs=topic_run_items,
     )
 
 
@@ -714,4 +1214,140 @@ async def get_topic_content_status(
         effective_slug=effective_slug,
         total_assignments=len(items),
         items=items,
+    )
+
+
+@router.get("/{effective_slug}/topic-runs")
+async def get_topic_runs(
+    effective_slug: str,
+    http_request: Request,
+    _user: UserProfile = Depends(require_auth),
+) -> TopicRunListResponseV13:
+    """List durable TD-entry topic runs for Content Studio hydration."""
+    if not _SLUG_PATTERN.match(effective_slug):
+        raise HTTPException(status_code=400, detail="Invalid effective_slug format")
+
+    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        effective_slug != user_company_slug
+        and not effective_slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    session_factory = getattr(http_request.app.state, "db_session_factory", None)
+    if session_factory is None:
+        return TopicRunListResponseV13(effective_slug=effective_slug)
+
+    try:
+        from core.services.content_engine_topic_runs import ContentEngineTopicRunService
+
+        service = ContentEngineTopicRunService(session_factory)
+        items = await service.list_topic_runs(effective_slug=effective_slug)
+    except Exception:
+        logger.warning("Failed to list topic runs for %s", effective_slug, exc_info=True)
+        items = []
+
+    return TopicRunListResponseV13(
+        effective_slug=effective_slug,
+        total=len(items),
+        items=[
+            TopicRunSummaryV13(
+                topic_run_id=item.topic_run_id,
+                batch_run_id=item.batch_run_id,
+                topic_assignment_id=item.topic_assignment_id,
+                display_id=item.display_id,
+                topic_text=item.topic_text,
+                brief_id=item.brief_id,
+                ga_run_id=item.ga_run_id,
+                pipeline_task_id=item.pipeline_task_id,
+                status=item.status,
+                stage=item.stage,
+                seq=item.seq,
+                content_piece_id=item.content_piece_id,
+                created_at=item.created_at,
+                updated_at=item.updated_at,
+            )
+            for item in items
+        ],
+    )
+
+
+@router.get("/{effective_slug}/topic-runs/{topic_run_id}/events")
+async def get_topic_run_events(
+    effective_slug: str,
+    topic_run_id: str,
+    http_request: Request,
+    _user: UserProfile = Depends(require_auth),
+) -> TopicRunEventListResponseV13:
+    """List durable append-only execution events for one TD-entry topic run."""
+    if not _SLUG_PATTERN.match(effective_slug):
+        raise HTTPException(status_code=400, detail="Invalid effective_slug format")
+    try:
+        uuid.UUID(topic_run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid topic_run_id format") from exc
+
+    user_company_slug: Optional[str] = getattr(http_request.state, "company_slug", None)
+    if not user_company_slug or (
+        effective_slug != user_company_slug
+        and not effective_slug.startswith(f"{user_company_slug}__")
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    session_factory = getattr(http_request.app.state, "db_session_factory", None)
+    if session_factory is None:
+        return TopicRunEventListResponseV13(
+            effective_slug=effective_slug,
+            topic_run_id=topic_run_id,
+        )
+
+    try:
+        from core.services.content_engine_topic_runs import ContentEngineTopicRunService
+
+        service = ContentEngineTopicRunService(session_factory)
+        topic_run, items = await service.list_topic_run_events(
+            effective_slug=effective_slug,
+            topic_run_id=topic_run_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to list topic run events for %s/%s",
+            effective_slug,
+            topic_run_id,
+            exc_info=True,
+        )
+        topic_run, items = None, []
+
+    if topic_run is None:
+        return TopicRunEventListResponseV13(
+            effective_slug=effective_slug,
+            topic_run_id=topic_run_id,
+        )
+
+    return TopicRunEventListResponseV13(
+        effective_slug=effective_slug,
+        topic_run_id=topic_run.topic_run_id,
+        topic_assignment_id=topic_run.topic_assignment_id,
+        display_id=topic_run.display_id,
+        topic_text=topic_run.topic_text,
+        brief_id=topic_run.brief_id,
+        total=len(items),
+        items=[
+            TopicRunEventV13(
+                topic_event_id=item.topic_event_id,
+                topic_run_id=item.topic_run_id,
+                topic_assignment_id=item.topic_assignment_id,
+                display_id=item.display_id,
+                brief_id=item.brief_id,
+                event_type=item.event_type,
+                stage=item.stage,
+                status=item.status,
+                seq=item.seq,
+                content_piece_id=item.content_piece_id,
+                pipeline_task_id=item.pipeline_task_id,
+                payload_json=item.payload_json,
+                created_at=item.created_at,
+            )
+            for item in items
+        ],
     )

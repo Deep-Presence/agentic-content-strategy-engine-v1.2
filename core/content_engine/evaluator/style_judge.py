@@ -70,6 +70,7 @@ async def evaluate_style(
             system=STYLE_JUDGE_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=2048,
+            response_format={"type": "json_object"},
             metadata={
                 "agent": "style_judge",
                 "brief_id": content.brief_id,

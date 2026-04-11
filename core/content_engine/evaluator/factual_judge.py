@@ -72,6 +72,7 @@ async def evaluate_factual(
             system=FACTUAL_JUDGE_SYSTEM_PROMPT,
             user=user_prompt,
             max_tokens=2048,
+            response_format={"type": "json_object"},
             metadata={
                 "agent": "factual_judge",
                 "brief_id": content.brief_id,

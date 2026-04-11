@@ -172,6 +172,7 @@ class DbTopicDiscoveryDataService:
         result_items = [
             {
                 "id": str(r.id),
+                "display_id": r.display_id or "",
                 "topic_text": r.topic_text,
                 "buyer_stage": r.buyer_stage.value if r.buyer_stage else None,
                 "intent_type": r.intent_type.value if r.intent_type else None,
@@ -257,8 +258,20 @@ class DbTopicDiscoveryDataService:
         created = await self._assignment_repo.bulk_create([model])
         row = created[0]
 
+        # Backfill display_id for the newly created assignment.
+        # Uses the repo's session (same transaction) so the display_id
+        # is committed atomically with the assignment insert.
+        display_id = ""
+        if discovery.company_id is not None:
+            from core.topic_discovery.display_id import backfill_display_ids
+            session = self._assignment_repo._session
+            await backfill_display_ids(session, discovery.company_id, discovery.id)
+            await session.refresh(row)
+            display_id = row.display_id or ""
+
         return {
             "id": str(row.id),
+            "display_id": display_id,
             "topic_text": row.topic_text,
             "buyer_stage": row.buyer_stage.value if row.buyer_stage else "tofu",
             "intent_type": row.intent_type.value if row.intent_type else "informational",

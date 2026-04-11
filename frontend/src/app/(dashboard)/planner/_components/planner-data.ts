@@ -29,6 +29,7 @@ export interface CannibalizationMatchItem {
 
 export interface Assignment {
   id: string;
+  status: string;
   displayId: string;
   title: string;
   description: string;
@@ -116,6 +117,7 @@ export const INITIATIVES: Initiative[] = [
 export const ASSIGNMENTS: Assignment[] = [
   {
     id: 'mock-003',
+    status: 'not_started',
     displayId: 'IH-003',
     title: 'How to Connect External APIs in Lovable: A Developer\'s Guide',
     description: 'Step-by-step tutorial for integrating external REST APIs into Lovable-built applications.',
@@ -152,6 +154,7 @@ export const ASSIGNMENTS: Assignment[] = [
   },
   {
     id: 'mock-004',
+    status: 'not_started',
     displayId: 'IH-004',
     title: 'SOC 2 Compliance for AI-Built Applications: What Enterprise Buyers Need to Know',
     description: 'Comprehensive guide covering SOC 2 compliance requirements for applications built with AI platforms.',
@@ -188,6 +191,7 @@ export const ASSIGNMENTS: Assignment[] = [
   },
   {
     id: 'mock-005',
+    status: 'not_started',
     displayId: 'IH-005',
     title: 'Exporting and Customizing Code from Lovable: Full Ownership Guide',
     description: 'Guide addressing code ownership concerns for developers evaluating Lovable.',
@@ -224,6 +228,7 @@ export const ASSIGNMENTS: Assignment[] = [
   },
   {
     id: 'mock-007',
+    status: 'not_started',
     displayId: 'IH-007',
     title: 'GDPR Compliance for No-Code AI Platforms: A Complete Guide',
     description: 'Comprehensive GDPR compliance guide for AI-powered no-code platforms.',
@@ -260,6 +265,7 @@ export const ASSIGNMENTS: Assignment[] = [
   },
   {
     id: 'mock-009',
+    status: 'not_started',
     displayId: 'IH-009',
     title: 'Integrating Stripe Payments in Lovable Apps: Step-by-Step',
     description: 'Step-by-step tutorial for adding Stripe payment processing to Lovable applications.',
