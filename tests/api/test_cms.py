@@ -661,6 +661,17 @@ class TestCMSPublish:
         call_kwargs = mock_cms_service.publish_brief.call_args.kwargs
         assert call_kwargs.get("effective_slug") == "test-co__ramp-cards"
 
+    def test_publish_invalidates_ga4_caches(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = _mock_connection()
+        with patch("api.routers.cms.invalidate_all_ga4_caches") as mock_inv:
+            resp = client.post("/api/v1/cms/publish", json={
+                "brief_id": "brief-001",
+            })
+        assert resp.status_code == 200
+        mock_inv.assert_called_once_with("test-co")
+
 
 # ── 9. Refresh ────────────────────────────────────────────────────────
 
@@ -700,6 +711,17 @@ class TestCMSRefresh:
             "brief_id": "r",
         })
         assert resp.status_code == 403
+
+    def test_refresh_invalidates_ga4_caches(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = _mock_connection()
+        with patch("api.routers.cms.invalidate_all_ga4_caches") as mock_inv:
+            resp = client.post("/api/v1/cms/refresh/wp-456", json={
+                "brief_id": "refresh-001",
+            })
+        assert resp.status_code == 200
+        mock_inv.assert_called_once_with("test-co")
 
     def test_refresh_requires_auth(self, public_client: TestClient) -> None:
         resp = public_client.post("/api/v1/cms/refresh/wp-456", json={

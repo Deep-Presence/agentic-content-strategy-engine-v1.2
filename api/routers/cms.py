@@ -30,6 +30,7 @@ from core.services.cms_cache import (
     invalidate_connection_info,
     set_cached_connection_info,
 )
+from core.services.analytics_cache import invalidate_all_ga4_caches
 
 from api.auth.dependencies import require_auth, require_role
 from api.dependencies import get_auth_service, get_cms_service, get_event_bus, get_task_store
@@ -419,6 +420,8 @@ async def publish_to_cms(
     except CMSError as exc:
         raise _handle_cms_error(exc)
 
+    await asyncio.to_thread(invalidate_all_ga4_caches, company_slug)
+
     return CMSPublishResponse(
         cms_post_id=post.cms_id,
         url=post.url,
@@ -461,6 +464,8 @@ async def refresh_cms_post(
         )
     except CMSError as exc:
         raise _handle_cms_error(exc)
+
+    await asyncio.to_thread(invalidate_all_ga4_caches, company_slug)
 
     return CMSPublishResponse(
         cms_post_id=post.cms_id,

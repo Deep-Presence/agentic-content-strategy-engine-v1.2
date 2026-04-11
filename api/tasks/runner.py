@@ -3000,6 +3000,12 @@ async def run_cms_sync_task(
                 cache_delete_pattern(_rc, f"cache:cms:{company_slug}:*")
         except Exception:
             pass
+        try:
+            from core.services.analytics_cache import invalidate_all_ga4_caches
+
+            invalidate_all_ga4_caches(company_slug)
+        except Exception:
+            pass
         task_store.release_slug_lock(f"cms_sync:{company_slug}")
         task_store.remove_task_handle(task_id)
         clear_context()

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from api.tasks.runner import _run_auto_prompt_generation
+from api.tasks.runner import _run_auto_prompt_generation, run_cms_sync_task
 
 
 def _make_event_bus() -> MagicMock:
@@ -25,6 +25,18 @@ def _make_event_bus() -> MagicMock:
 def _make_task_store() -> MagicMock:
     ts = MagicMock()
     ts.update_task = MagicMock()
+    ts.release_slug_lock = MagicMock()
+    ts.remove_task_handle = MagicMock()
+    ts.flush_terminal = AsyncMock()
+
+    class _Semaphore:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    ts.pipeline_semaphore = MagicMock(return_value=_Semaphore())
     return ts
 
 
@@ -246,3 +258,47 @@ class TestAutoPromptGeneration:
 
         MockOrch.return_value.run_for_pages.assert_not_called()
         assert "prompts_created" not in result
+
+
+class TestCMSSyncTask:
+    @pytest.mark.asyncio
+    async def test_sync_invalidates_ga4_caches(self):
+        session = AsyncMock()
+        session_factory = MagicMock(return_value=session)
+        task_store = _make_task_store()
+        event_bus = _make_event_bus()
+
+        mock_connection = MagicMock()
+        mock_service = AsyncMock()
+        mock_service.get_connection = AsyncMock(return_value=mock_connection)
+        mock_service.sync_existing_content = AsyncMock(return_value={
+            "synced": 3,
+            "stale": 0,
+            "categories": 1,
+            "new_page_ids": [],
+        })
+
+        with (
+            patch("core.db.repositories.cms_repo.CMSConnectionRepository"),
+            patch("core.db.repositories.cms_repo.CMSPublishRecordRepository"),
+            patch("core.db.repositories.cms_repo.CMSSyncedPostRepository"),
+            patch("core.db.repositories.content_inventory_repo.ContentInventoryRepository"),
+            patch("core.services.content_inventory_service.ContentInventoryService"),
+            patch("core.services.cms_service.CMSService", return_value=mock_service),
+            patch("api.tasks.runner.get_sync_redis_or_none", return_value=None),
+            patch("core.services.analytics_cache.invalidate_all_ga4_caches") as mock_inv,
+        ):
+            await run_cms_sync_task(
+                task_id="task-1",
+                company_slug="test-co",
+                tenant_id="test-co",
+                task_store=task_store,
+                event_bus=event_bus,
+                session_factory=session_factory,
+                storage=MagicMock(),
+                fernet_key="secret",
+            )
+
+        mock_inv.assert_called_once_with("test-co")
+        session.commit.assert_awaited_once()
+        task_store.release_slug_lock.assert_called_once_with("cms_sync:test-co")

@@ -1997,5 +1997,26 @@
     "outcome": "Implemented on 2026-04-11. The detail view now hydrates SEO metadata from the backend, autosaves edits, and passes the same payload into CMS publish. The publish route and service were also extended so successful CMS publish immediately registers the page into Content Inventory, which makes the card leave the Unpublished Pages list without waiting for a later CMS sync. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py tests/api/test_cms.py tests/services/test_cms_service.py -q`, `venv/bin/pytest tests/api/test_content_data.py -q`, `venv/bin/pytest tests/cms/test_wordpress_adapter.py -q`, and `cd frontend && npx tsc --noEmit`.",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-PERFORMANCE-CACHE-INVALIDATED-ON-CMS-WRITES",
+    "timestamp": "2026-04-11",
+    "task": "Content Performance Pages visibility immediately after CMS publish/sync",
+    "decision": "Treat CMS publish, CMS refresh, and CMS sync as inventory-changing operations that must invalidate the GA4/content-performance cache family (`cache:ga4:{company_slug}:*`) in addition to the CMS cache family. The publish/refresh routers now invalidate GA4 caches after successful writes, and `run_cms_sync_task()` invalidates GA4 caches in its terminal cleanup path after sync commits.",
+    "rationale": "Live diagnosis on `webflow` showed the content was successfully published and present in `content_inventory`, but the Pages tab still rendered the old 2-page snapshot because Content Performance table/velocity responses are cached by company and lookback window, while the CMS flows only invalidated `cache:cms:*`. A user-visible Pages surface that is backed by `content_inventory` cannot wait for an unrelated GA4 cache TTL after the CMS mutates that inventory. Cache invalidation belongs in the CMS write paths that cause the inventory change.",
+    "alternatives": [
+      "Rely on the 5-10 minute GA4 cache TTL to self-heal — rejected because it makes successful publish look broken and forces the user to guess when the UI will catch up",
+      "Invalidate caches only from the frontend after publish — rejected because CMS sync runs in the backend task runner too, and cache ownership belongs server-side",
+      "Remove Content Performance caching entirely — rejected because the cached table/velocity responses are still useful once invalidation semantics are correct"
+    ],
+    "files_affected": [
+      "api/routers/cms.py",
+      "api/tasks/runner.py",
+      "tests/api/test_cms.py",
+      "tests/api/test_cms_sync_prompt_chain.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. Publish/refresh now invalidate GA4/content-performance caches immediately, and CMS sync does the same after completion. Validation: `venv/bin/pytest tests/api/test_cms.py tests/api/test_cms_sync_prompt_chain.py -q` (65 passed, 1 pre-existing warning).",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]

@@ -1635,6 +1635,21 @@
         "tests/services/test_cms_service.py"
       ],
       "codex_review": "Implemented the first real SEO-metadata and publish-flow slice for the approved-but-unpublished detail view. Content pieces now persist publish metadata inside `content_pieces.evaluation_results.publish_metadata`, the briefs API returns that payload (with safe defaults like slug/meta title/publish date), and a new `PUT /api/v1/companies/{slug}/content/briefs/{brief_id}/publish-metadata` route lets the shared `FullPageView` autosave sidebar edits. The CMS publish route now accepts `publish_metadata`, the WordPress adapter uses the supported subset immediately (`slug`, Yoast title/description/canonical, tags, publish date, numeric author IDs), and `cms_service.publish_brief()` now registers the published page into Content Inventory immediately so the page moves from Unpublished Pages into the published/inventory surfaces without waiting for a later CMS sync. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py tests/api/test_cms.py tests/services/test_cms_service.py -q` (94 passed, 1 pre-existing warning), `venv/bin/pytest tests/api/test_content_data.py -q` (95 passed), `venv/bin/pytest tests/cms/test_wordpress_adapter.py -q` (35 passed), and `cd frontend && npx tsc --noEmit` (clean)."
+    },
+    {
+      "id": "T-content-performance-cache-invalidation-on-cms-writes",
+      "task": "Content Performance Pages tab — invalidate GA4/content-performance caches when CMS publish, refresh, or sync changes content inventory",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 3,
+      "files_modified": [
+        "api/routers/cms.py",
+        "api/tasks/runner.py",
+        "tests/api/test_cms.py",
+        "tests/api/test_cms_sync_prompt_chain.py"
+      ],
+      "codex_review": "Diagnosed a post-publish visibility bug on Content Performance. Live logs and DB state showed `POST /api/v1/cms/publish` succeeded for `WE-147`, `content_pieces` was updated to `published`, and `content_inventory` already contained the newly published URL, but the Pages tab still showed the old snapshot because Content Performance responses are cached under `cache:ga4:{company}:*` and the CMS publish/refresh/sync flows were only invalidating CMS caches. Patched `api/routers/cms.py` to invalidate GA4/content-performance caches after publish and refresh, and patched `run_cms_sync_task()` to invalidate the same cache family after sync completion. Added API regressions for publish/refresh and a runner regression for CMS sync cache invalidation. Validation: `venv/bin/pytest tests/api/test_cms.py tests/api/test_cms_sync_prompt_chain.py -q` (65 passed, 1 pre-existing warning)."
     }
   ],
   "pending": [
