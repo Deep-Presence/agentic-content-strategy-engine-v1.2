@@ -287,6 +287,8 @@ async def persist_s4(
                         cit.structural_signals.content_type
                         if cit.structural_signals else None
                     ),
+                    "published_at": getattr(cit, "published_at", None),
+                    "modified_at": getattr(cit, "modified_at", None),
                     "paragraph_count": len(cit.paragraphs) if cit.paragraphs else 0,
                     "http_status": 200,
                     "scraped_at": datetime.now(tz=timezone.utc),

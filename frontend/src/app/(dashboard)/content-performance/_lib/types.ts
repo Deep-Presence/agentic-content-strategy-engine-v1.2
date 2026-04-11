@@ -29,10 +29,23 @@ export interface CitationTimelinePoint {
   total_responses: number;
 }
 
+export interface FreshnessAssessmentAPI {
+  content_age_days: number | null;
+  last_updated_age_days: number | null;
+  cited_exemplar_avg_age_days: number | null;
+  cited_exemplar_median_age_days: number | null;
+  benchmark_sample_size: number;
+  freshness_delta_days: number | null;
+  freshness_score: number | null;
+  freshness_status: string;
+  freshness_reason: string;
+}
+
 export interface ContentDetailAPI {
   inventory_id: string;
   url: string;
   title: string;
+  published_at: string | null;
   traffic: number;
   ai_referrals: number;
   velocity: number;
@@ -46,6 +59,7 @@ export interface ContentDetailAPI {
   structural_score: number;
   citation_timeline?: CitationTimelinePoint[];
   citations?: number;
+  freshness: FreshnessAssessmentAPI;
   platforms?: Record<string, boolean>;
   queries_covered?: number;
 }

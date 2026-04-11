@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
+import uuid
 
 import pytest
 
+from core.db.enums import ContentPieceStatus
 from core.db.enums import GapClassification
 from core.db.repositories.gap_analysis_repo import GapAnalysisRepository
 
@@ -178,3 +181,69 @@ async def test_get_cluster_specs(db_session, sample_pipeline_run):
     assert len(found) == 1
     assert found[0].query_count == 15
     assert found[0].total_citations_analyzed == 120
+
+
+async def test_get_cited_exemplar_dates_for_inventory_url(
+    db_session, sample_company, sample_pipeline_run
+):
+    """Returns modified/published benchmark dates for a targeted page URL."""
+    from core.db.models.cache import UrlEnrichmentCacheModel
+    from core.db.models.content import ContentPieceModel
+    from core.db.models.gap_analysis import QueryExemplarModel, QueryGapModel
+
+    piece = ContentPieceModel(
+        company_id=sample_company.id,
+        title="Published Page",
+        status=ContentPieceStatus.published,
+        published_url="https://example.com/blog/post/",
+        published_at=datetime.now(timezone.utc) - timedelta(days=120),
+    )
+    db_session.add(piece)
+    await db_session.flush()
+
+    gap = QueryGapModel(
+        run_id=sample_pipeline_run.id,
+        query_id="q-freshness",
+        query_text="freshness query",
+        cluster_name="cluster",
+        gap=0.4,
+        classification=GapClassification.gap_to_close,
+        targeted_by_content_id=piece.id,
+    )
+    db_session.add(gap)
+    await db_session.flush()
+
+    published_at = datetime.now(timezone.utc) - timedelta(days=50)
+    modified_at = datetime.now(timezone.utc) - timedelta(days=20)
+    enrichment = UrlEnrichmentCacheModel(
+        id=uuid.uuid4(),
+        url_hash="hash-freshness",
+        url="https://competitor.example.com/article",
+        final_url="https://competitor.example.com/article",
+        domain="competitor.example.com",
+        published_at=published_at,
+        modified_at=modified_at,
+        scraped_at=datetime.now(timezone.utc),
+    )
+    db_session.add(enrichment)
+    await db_session.flush()
+
+    exemplar = QueryExemplarModel(
+        query_gap_id=gap.id,
+        url_enrichment_id=enrichment.id,
+        url="https://competitor.example.com/article",
+        domain="competitor.example.com",
+        similarity=0.9,
+        rank=1,
+    )
+    db_session.add(exemplar)
+    await db_session.flush()
+
+    repo = GapAnalysisRepository(db_session)
+    result = await repo.get_cited_exemplar_dates_for_inventory_url(
+        sample_company.id,
+        "https://example.com/blog/post",
+        normalized_url="https://example.com/blog/post",
+    )
+
+    assert result == [modified_at]

@@ -16,7 +16,7 @@ import type { SignalAverageRow, ContentDetailAPI } from '../_lib/types';
 import {
   toDrawerTrafficTimeline,
   toDrawerTrafficSources,
-  toDrawerAIPlatforms,
+  toDrawerPlatformCoverage,
   toDrawerCitationTimeline,
 } from '../_lib/adapters';
 
@@ -121,6 +121,7 @@ export function ContentDrawer({ piece, onClose, signalAverages = [] }: ContentDr
   // Fetch full detail from API when drawer opens
   const [detailData, setDetailData] = useState<ContentDetailAPI | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!piece) { setDetailData(null); return; }
@@ -131,6 +132,7 @@ export function ContentDrawer({ piece, onClose, signalAverages = [] }: ContentDr
 
     const controller = new AbortController();
     setDetailLoading(true);
+    setDetailError(null);
     fetchContentDetail(invId, undefined, controller.signal)
       .then((detail) => {
         setDetailData(detail);
@@ -139,6 +141,7 @@ export function ContentDrawer({ piece, onClose, signalAverages = [] }: ContentDr
       .catch((err) => {
         if (err.name !== 'AbortError') {
           setDetailData(null);
+          setDetailError(err instanceof Error ? err.message : 'Failed to load page details');
           setDetailLoading(false);
         }
       });
@@ -211,23 +214,32 @@ export function ContentDrawer({ piece, onClose, signalAverages = [] }: ContentDr
 
   // AI platform breakdown from real detail
   const platformDetails = useMemo(
-    () => detailData?.ai_platform_breakdown ? toDrawerAIPlatforms(detailData.ai_platform_breakdown) : [],
+    () => detailData ? toDrawerPlatformCoverage(detailData.platforms, detailData.ai_platform_breakdown) : [],
     [detailData],
   );
+  const hasPlatformSignals = platformDetails.some((pd) => pd.citationPresent || pd.aiSessions > 0);
 
   // Citation timeline from real detail
   const citationTimeline = useMemo(
     () => detailData?.citation_timeline ? toDrawerCitationTimeline(detailData.citation_timeline) : [],
     [detailData],
   );
+  const queriesCovered = detailData?.queries_covered ?? piece?.queriesCovered ?? 0;
 
   if (!piece) return null;
 
-  const publishedDate = piece.publishedAt
-    ? new Date(piece.publishedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const publishedAtValue = detailData?.published_at ?? piece.publishedAt;
+  const publishedDate = publishedAtValue
+    ? new Date(publishedAtValue).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : '—';
-  const exemplarAvgAge = Math.round(piece.freshnessDays * 0.56);
-  const freshnessScore = Math.max(0, Math.min(100, 100 - Math.max(0, (piece.freshnessDays - exemplarAvgAge) - 10) * 2));
+  const freshness = detailData?.freshness;
+  const contentAgeDays = freshness?.content_age_days ?? null;
+  const lastUpdatedAgeDays = freshness?.last_updated_age_days ?? null;
+  const benchmarkAvgAgeDays = freshness?.cited_exemplar_avg_age_days ?? null;
+  const benchmarkMedianAgeDays = freshness?.cited_exemplar_median_age_days ?? null;
+  const freshnessScore = freshness?.freshness_score ?? null;
+  const freshnessStatus = freshness?.freshness_status ?? 'insufficient_data';
+  const freshnessReason = freshness?.freshness_reason ?? 'Freshness assessment is unavailable.';
 
   return (
     <AnimatePresence>
@@ -273,6 +285,13 @@ export function ContentDrawer({ piece, onClose, signalAverages = [] }: ContentDr
 
             {/* Scrollable content */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px 20px' }}>
+              {detailError && (
+                <div style={{ marginTop: 16, border: '1px solid rgba(229,72,77,0.24)', borderRadius: 4, background: 'rgba(229,72,77,0.04)', padding: 12 }}>
+                  <span style={{ fontSize: 12, color: '#B42318' }}>
+                    Failed to load the full page detail. The drawer is showing fallback empty states until the detail endpoint succeeds again.
+                  </span>
+                </div>
+              )}
 
               {/* A. CITATION TIMELINE */}
               <SectionHeader>A. Citation Timeline</SectionHeader>
@@ -344,25 +363,34 @@ export function ContentDrawer({ piece, onClose, signalAverages = [] }: ContentDr
                 <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Loading platform data...</span>
                 </div>
-              ) : platformDetails.length > 0 ? (
+              ) : hasPlatformSignals ? (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
                   {platformDetails.map((pd) => (
-                    <div key={pd.platform} style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 12, textAlign: 'center', opacity: pd.cited ? 1 : 0.5 }}>
+                    <div key={pd.platform} style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 12, textAlign: 'center', opacity: pd.citationPresent || pd.aiSessions > 0 ? 1 : 0.5 }}>
                       <img src={`https://www.google.com/s2/favicons?domain=${pd.domain}&sz=32`} alt={pd.platform} width={16} height={16} style={{ borderRadius: 3, margin: '0 auto' }} />
                       <p style={{ fontSize: 11, color: 'var(--text-primary)', marginTop: 6 }}>{pd.platform}</p>
-                      {pd.cited ? (
+                      {pd.citationPresent || pd.aiSessions > 0 ? (
                         <>
-                          <p style={{ fontSize: 16, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)', marginTop: 4 }}>{pd.citations}</p>
-                          <p style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 2 }}>sessions</p>
+                          <p style={{ fontSize: 10, color: pd.citationPresent ? 'var(--success)' : 'var(--text-tertiary)', marginTop: 8 }}>
+                            {pd.citationPresent ? 'Seen in citations' : 'No citation hits'}
+                          </p>
+                          {pd.aiSessions > 0 ? (
+                            <>
+                              <p style={{ fontSize: 16, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)', marginTop: 4 }}>{pd.aiSessions}</p>
+                              <p style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 2 }}>AI referral sessions</p>
+                            </>
+                          ) : (
+                            <p style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>No AI referrals</p>
+                          )}
                         </>
                       ) : (
-                        <p style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 8 }}>No referrals</p>
+                        <p style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 8 }}>No platform signal</p>
                       )}
                     </div>
                   ))}
                 </div>
               ) : (
-                <UnavailableSection message="No AI referral data available. Ensure GA4 is connected." />
+                <UnavailableSection message="No citation-platform matches or AI referral sessions are available yet. Run Daily Tracker and sync GA4." />
               )}
 
               {/* D. STRUCTURAL COMPLIANCE */}
@@ -403,9 +431,24 @@ export function ContentDrawer({ piece, onClose, signalAverages = [] }: ContentDr
                 <UnavailableSection message="No structural data available. Run a gap analysis to get signal averages." />
               )}
 
-              {/* E. QUERY COVERAGE — unavailable */}
               <SectionHeader>E. Query Coverage</SectionHeader>
-              <UnavailableSection message="Query coverage requires gap analysis &rarr; content inventory join (Phase 4)." />
+              {detailLoading ? (
+                <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Loading query coverage...</span>
+                </div>
+              ) : (
+                <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Gap-analysis queries currently targeting this published URL</span>
+                    <span style={{ fontSize: 16, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>{queriesCovered}</span>
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                    {queriesCovered > 0
+                      ? 'This page is already linked to tracked gap-analysis coverage.'
+                      : 'No gap-analysis queries currently target this page yet.'}
+                  </span>
+                </div>
+              )}
 
               {/* F. CANNIBALIZATION RISK */}
               <SectionHeader>F. Cannibalization Risk</SectionHeader>
@@ -468,44 +511,50 @@ export function ContentDrawer({ piece, onClose, signalAverages = [] }: ContentDr
                   <div>
                     <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Content Age</p>
                     <p style={{ marginTop: 2 }}>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 16, color: 'var(--text-primary)' }}>{piece.freshnessDays}</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 16, color: 'var(--text-primary)' }}>{contentAgeDays ?? '—'}</span>
                       <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 4 }}>days</span>
                       <span style={{ fontSize: 11, color: 'var(--text-tertiary)', marginLeft: 6 }}>(published {publishedDate})</span>
                     </p>
                   </div>
                   <div>
-                    <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Cited Exemplar Avg Age</p>
+                    <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Last Updated Age</p>
                     <p style={{ marginTop: 2 }}>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 16, color: 'var(--text-primary)' }}>{exemplarAvgAge}</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 16, color: 'var(--text-primary)' }}>{lastUpdatedAgeDays ?? '—'}</span>
                       <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 4 }}>days</span>
                     </p>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3 }}>Your content</div>
-                    <div style={{ width: '100%', height: 10, borderRadius: 5, background: 'var(--border)', overflow: 'hidden' }}>
-                      <div style={{ width: `${Math.min(100, (piece.freshnessDays / Math.max(piece.freshnessDays, exemplarAvgAge)) * 100)}%`, height: '100%', borderRadius: 5, background: piece.freshnessDays - exemplarAvgAge > 30 ? '#E5484D' : piece.freshnessDays - exemplarAvgAge > 0 ? '#F5A623' : 'var(--success)' }} />
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, marginBottom: 12 }}>
+                  <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 4, padding: 10 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4 }}>Benchmark Avg Age</div>
+                    <div style={{ fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {benchmarkAvgAgeDays ?? '—'}
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-sans)', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: 4 }}>days</span>
                     </div>
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3 }}>Cited avg</div>
-                    <div style={{ width: '100%', height: 10, borderRadius: 5, background: 'var(--border)', overflow: 'hidden' }}>
-                      <div style={{ width: `${Math.min(100, (exemplarAvgAge / Math.max(piece.freshnessDays, exemplarAvgAge)) * 100)}%`, height: '100%', borderRadius: 5, background: 'var(--success)' }} />
+                  <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 4, padding: 10 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4 }}>Benchmark Median Age</div>
+                    <div style={{ fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {benchmarkMedianAgeDays ?? '—'}
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-sans)', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: 4 }}>days</span>
                     </div>
                   </div>
                 </div>
-                {piece.freshnessDays > exemplarAvgAge && (
-                  <div style={{ background: 'rgba(245,166,35,0.06)', border: '1px solid rgba(245,166,35,0.2)', borderRadius: 4, padding: '8px 10px', marginBottom: 8 }}>
-                    <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                      &#9888; Your content is <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 500 }}>{piece.freshnessDays - exemplarAvgAge}</span> days older than the average cited piece. Consider refreshing with updated data and recent developments.
-                    </p>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Assessment Status</span>
+                  <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', fontWeight: 600, color: freshnessStatus === 'insufficient_data' ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
+                    {freshnessStatus}
+                  </span>
+                </div>
+                <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>
+                  {freshnessReason}
+                </p>
+                {freshnessScore !== null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Freshness Score</span>
+                    <span style={{ fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>{freshnessScore}/100</span>
                   </div>
                 )}
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Freshness Score</span>
-                  <span style={{ fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 600, color: freshnessScore >= 70 ? 'var(--success)' : freshnessScore >= 50 ? '#F5A623' : '#E5484D' }}>{freshnessScore}/100</span>
-                </div>
               </div>
 
               {/* I. TRAFFIC SOURCES */}

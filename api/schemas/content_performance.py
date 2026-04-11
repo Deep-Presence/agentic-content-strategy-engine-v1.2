@@ -111,12 +111,27 @@ class CitationTimelinePoint(BaseModel):
     total_responses: int = 0
 
 
+class FreshnessAssessment(BaseModel):
+    """Backend-owned freshness assessment for a content detail view."""
+
+    content_age_days: Optional[int] = None
+    last_updated_age_days: Optional[int] = None
+    cited_exemplar_avg_age_days: Optional[int] = None
+    cited_exemplar_median_age_days: Optional[int] = None
+    benchmark_sample_size: int = 0
+    freshness_delta_days: Optional[int] = None
+    freshness_score: Optional[int] = None
+    freshness_status: str = "insufficient_data"
+    freshness_reason: str = ""
+
+
 class ContentDetailResponse(BaseModel):
     """Detailed analytics for a single content piece."""
 
     inventory_id: str = ""
     url: str = ""
     title: str = ""
+    published_at: Optional[datetime] = None
     traffic: int = 0
     ai_referrals: int = 0
     velocity: float = 0.0
@@ -132,6 +147,7 @@ class ContentDetailResponse(BaseModel):
     structural_score: int = 0
     citation_timeline: list[CitationTimelinePoint] = Field(default_factory=list)
     citations: int = 0
+    freshness: FreshnessAssessment = Field(default_factory=FreshnessAssessment)
     platforms: dict[str, bool] = Field(
         default_factory=lambda: {
             "chatgpt": False,

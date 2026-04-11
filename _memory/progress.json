@@ -1,7 +1,7 @@
 {
   "current_sprint": "td-entry-parallel-execution",
   "last_updated": "2026-04-11",
-  "test_count": 2103,
+  "test_count": 2107,
   "completed_sprints_summary": {
     "total_tasks_completed": 48,
     "sprints": [
@@ -1650,6 +1650,83 @@
         "tests/api/test_cms_sync_prompt_chain.py"
       ],
       "codex_review": "Diagnosed a post-publish visibility bug on Content Performance. Live logs and DB state showed `POST /api/v1/cms/publish` succeeded for `WE-147`, `content_pieces` was updated to `published`, and `content_inventory` already contained the newly published URL, but the Pages tab still showed the old snapshot because Content Performance responses are cached under `cache:ga4:{company}:*` and the CMS publish/refresh/sync flows were only invalidating CMS caches. Patched `api/routers/cms.py` to invalidate GA4/content-performance caches after publish and refresh, and patched `run_cms_sync_task()` to invalidate the same cache family after sync completion. Added API regressions for publish/refresh and a runner regression for CMS sync cache invalidation. Validation: `venv/bin/pytest tests/api/test_cms.py tests/api/test_cms_sync_prompt_chain.py -q` (65 passed, 1 pre-existing warning)."
+    },
+    {
+      "id": "T-content-performance-publish-enrichment",
+      "task": "Content Performance page drawer — enrich newly published CMS pages with S4 structural signals, publish dates, and auto-generated prompt links",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 2,
+      "files_modified": [
+        "api/dependencies.py",
+        "core/services/cms_service.py",
+        "core/services/content_inventory_service.py",
+        "frontend/src/app/(dashboard)/content-performance/_components/ContentDrawer.tsx",
+        "tests/services/test_cms_service.py",
+        "tests/services/test_content_inventory_service.py"
+      ],
+      "codex_review": "Closed the biggest per-page drawer data gap for newly published Content Studio pages. `register_published_content()` now accepts publish-time metadata and reuses the gap-analysis S4 structural extractor on the rendered CMS HTML, storing the full rich structural-signals payload in `content_inventory` while also populating legacy columns like `published_at`, `heading_count`, `has_faq_section`, and `content_type_detected`. `CMSService.publish_brief()` now passes the rendered HTML and SEO metadata into inventory registration, uses the CMS-returned publish timestamp when available, and best-effort triggers content-to-prompt generation for the just-published inventory page through the same orchestrator used by CMS sync. On the frontend, the per-page drawer's Query Coverage section now renders the real backend `queries_covered` field instead of a hardcoded Phase 4 placeholder. Validation: `venv/bin/pytest tests/services/test_content_inventory_service.py tests/services/test_cms_service.py -q` (43 passed), `venv/bin/pytest tests/api/test_cms.py tests/api/test_content_performance.py -q` (84 passed, 1 pre-existing warning), and `cd frontend && npx tsc --noEmit` (clean)."
+    },
+    {
+      "id": "T-content-performance-drawer-platform-contract",
+      "task": "Content Performance per-page drawer — expose backend-owned published_at and split citation-platform coverage from GA4 AI referral sessions",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 2,
+      "files_modified": [
+        "api/schemas/content_performance.py",
+        "core/services/content_performance_service.py",
+        "frontend/src/app/(dashboard)/content-performance/_components/data.ts",
+        "frontend/src/app/(dashboard)/content-performance/_components/ContentDrawer.tsx",
+        "frontend/src/app/(dashboard)/content-performance/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/content-performance/_lib/types.ts",
+        "tests/api/test_content_performance.py",
+        "tests/services/test_content_performance_service.py"
+      ],
+      "codex_review": "Closed two remaining per-page drawer contract gaps. First, `GET /api/v1/content-performance/{inventory_id}` now includes backend-owned `published_at`, and the drawer header prefers that value instead of trusting the table row. Second, Platform Distribution no longer treats GA4 AI-referral sessions as if they were citation-platform coverage; the frontend now merges the real backend `platforms` booleans with `ai_platform_breakdown`, showing citation presence and AI-referral sessions as separate signals on each platform card. The drawer also now surfaces a top-level fetch-error banner so detail-load failures are distinguishable from genuine no-data states. Validation: `venv/bin/pytest tests/services/test_content_performance_service.py tests/api/test_content_performance.py -q` (79 passed) and `cd frontend && npx tsc --noEmit` (clean)."
+    },
+    {
+      "id": "T-content-performance-freshness-phase1",
+      "task": "Content Performance drawer freshness — replace synthetic frontend benchmark math with a backend-owned freshness contract",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 3,
+      "files_modified": [
+        "api/schemas/content_performance.py",
+        "core/services/content_performance_service.py",
+        "frontend/src/app/(dashboard)/content-performance/_components/ContentDrawer.tsx",
+        "frontend/src/app/(dashboard)/content-performance/_lib/types.ts",
+        "tests/api/test_content_performance.py",
+        "tests/services/test_content_performance_service.py"
+      ],
+      "codex_review": "Implemented freshness phase 1 so the drawer no longer invents comparative freshness metrics in the browser. The backend detail contract now includes a nested `freshness` object with observed page ages (`content_age_days`, `last_updated_age_days`) plus explicit benchmark placeholders (`cited_exemplar_*`, `freshness_score`, `freshness_delta_days`) that remain null until exemplar-date wiring exists. The backend marks the current state as `freshness_status='insufficient_data'` with an explanatory reason instead of fabricating a benchmark or score. The drawer now renders those backend-owned fields and removes the old `freshnessDays * 0.56` synthetic benchmark/score math entirely. Validation: `venv/bin/pytest tests/services/test_content_performance_service.py tests/api/test_content_performance.py -q` (81 passed) and `cd frontend && npx tsc --noEmit` (clean)."
+    },
+    {
+      "id": "T-content-performance-freshness-phase2",
+      "task": "Content Performance drawer freshness — benchmark page age against cited exemplar dates from gap analysis",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 4,
+      "files_modified": [
+        "core/models/gap_analysis.py",
+        "core/gap_analysis/steps/s4_enrich_citations.py",
+        "core/gap_analysis/persistence.py",
+        "core/db/models/cache.py",
+        "core/db/repositories/cache_repo.py",
+        "core/db/repositories/gap_analysis_repo.py",
+        "core/db/migrations/versions/0040_url_enrichment_freshness_dates.py",
+        "core/services/content_performance_service.py",
+        "tests/gap_analysis/steps/test_s4_enrich_citations.py",
+        "tests/gap_analysis/test_persistence.py",
+        "tests/services/test_content_performance_service.py",
+        "tests/db/test_cache_repo.py",
+        "tests/db/test_gap_analysis_repo.py"
+      ],
+      "codex_review": "Implemented freshness phase 2 by making gap-analysis S4 persist cited exemplar publish/modified dates into `url_enrichment_cache`, then teaching Content Performance to benchmark each page against those exemplar ages. `EnrichedCitation` now carries additive `published_at` / `modified_at` fields, S4 parses date metadata with the existing site-audit freshness helpers, persistence writes the dates through the cache repository, and `GapAnalysisRepository.get_cited_exemplar_dates_for_inventory_url()` returns benchmark dates for a targeted published page. The drawer freshness payload now computes benchmark avg/median ages, sample size, delta vs benchmark median, status, and a backend-owned score when exemplar data exists; otherwise it still returns an explicit insufficient-data state. Validation: `venv/bin/pytest tests/services/test_content_performance_service.py tests/api/test_content_performance.py -q` (82 passed) and `venv/bin/pytest tests/gap_analysis/test_persistence.py tests/gap_analysis/steps/test_s4_enrich_citations.py -q` (77 passed, 1 pre-existing warning)."
     }
   ],
   "pending": [

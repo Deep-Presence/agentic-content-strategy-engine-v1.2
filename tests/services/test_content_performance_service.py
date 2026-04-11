@@ -697,6 +697,7 @@ def ci_prompt_repo():
 def gap_repo():
     repo = AsyncMock()
     repo.count_queries_targeting_inventory_batch = AsyncMock(return_value={})
+    repo.get_cited_exemplar_dates_for_inventory_url = AsyncMock(return_value=[])
     return repo
 
 
@@ -800,7 +801,8 @@ class TestGetContentDetailCitationFields:
     ):
         cid = uuid.uuid4()
         inv_id = uuid.uuid4()
-        item = _make_inventory_item(company_id=cid, id_=inv_id)
+        published_at = datetime(2026, 3, 5, tzinfo=timezone.utc)
+        item = _make_inventory_item(company_id=cid, id_=inv_id, published_at=published_at)
         inventory_repo.get_by_id.return_value = item
 
         ci_prompt_repo.get_citation_timeline.return_value = [
@@ -829,6 +831,101 @@ class TestGetContentDetailCitationFields:
         assert result["platforms"]["chatgpt"] is True
         assert result["platforms"]["claude"] is True
         assert result["platforms"]["gemini"] is False
+        assert result["published_at"] == published_at.isoformat()
+
+
+class TestGetContentDetailFreshness:
+    """Tests for backend-owned freshness assessment in detail."""
+
+    @pytest.mark.asyncio
+    async def test_detail_includes_backend_freshness_assessment(
+        self, service, inventory_repo,
+    ):
+        cid = uuid.uuid4()
+        inv_id = uuid.uuid4()
+        published_at = datetime.now(timezone.utc) - timedelta(days=40)
+        modified_at = datetime.now(timezone.utc) - timedelta(days=7)
+        item = _make_inventory_item(
+            company_id=cid,
+            id_=inv_id,
+            published_at=published_at,
+            content_modified_at=modified_at,
+        )
+        inventory_repo.get_by_id.return_value = item
+
+        result = await service.get_content_detail(
+            cid, inv_id, date(2026, 3, 1), date(2026, 3, 28),
+        )
+
+        freshness = result["freshness"]
+        assert freshness["content_age_days"] >= 39
+        assert freshness["last_updated_age_days"] >= 6
+        assert freshness["cited_exemplar_avg_age_days"] is None
+        assert freshness["benchmark_sample_size"] == 0
+        assert freshness["freshness_score"] == 90
+        assert freshness["freshness_status"] == "heuristic_fresh"
+        assert "heuristic" in freshness["freshness_reason"].lower()
+        assert "benchmark" in freshness["freshness_reason"].lower()
+
+    @pytest.mark.asyncio
+    async def test_detail_freshness_uses_cited_exemplar_benchmark(
+        self, enriched_service, inventory_repo, gap_repo,
+    ):
+        cid = uuid.uuid4()
+        inv_id = uuid.uuid4()
+        published_at = datetime.now(timezone.utc) - timedelta(days=120)
+        modified_at = datetime.now(timezone.utc) - timedelta(days=90)
+        item = _make_inventory_item(
+            company_id=cid,
+            id_=inv_id,
+            published_at=published_at,
+            content_modified_at=modified_at,
+            url="https://example.com/blog/post",
+        )
+        inventory_repo.get_by_id.return_value = item
+        gap_repo.get_cited_exemplar_dates_for_inventory_url.return_value = [
+            datetime.now(timezone.utc) - timedelta(days=25),
+            datetime.now(timezone.utc) - timedelta(days=35),
+            datetime.now(timezone.utc) - timedelta(days=45),
+        ]
+
+        result = await enriched_service.get_content_detail(
+            cid, inv_id, date(2026, 3, 1), date(2026, 3, 28),
+        )
+
+        freshness = result["freshness"]
+        assert freshness["benchmark_sample_size"] == 3
+        assert freshness["cited_exemplar_avg_age_days"] is not None
+        assert freshness["cited_exemplar_median_age_days"] is not None
+        assert freshness["freshness_delta_days"] is not None
+        assert freshness["freshness_score"] is not None
+        assert freshness["freshness_status"] in {
+            "within_range",
+            "slightly_stale",
+            "stale",
+            "fresher_than_benchmark",
+        }
+        assert "benchmark" in freshness["freshness_reason"].lower()
+
+    @pytest.mark.asyncio
+    async def test_detail_freshness_handles_missing_dates(
+        self, service, inventory_repo,
+    ):
+        cid = uuid.uuid4()
+        inv_id = uuid.uuid4()
+        item = _make_inventory_item(company_id=cid, id_=inv_id)
+        item.published_at = None
+        item.content_modified_at = None
+        inventory_repo.get_by_id.return_value = item
+
+        result = await service.get_content_detail(
+            cid, inv_id, date(2026, 3, 1), date(2026, 3, 28),
+        )
+
+        freshness = result["freshness"]
+        assert freshness["content_age_days"] is None
+        assert freshness["last_updated_age_days"] is None
+        assert freshness["freshness_status"] == "insufficient_data"
 
     @pytest.mark.asyncio
     async def test_detail_graceful_without_repos(

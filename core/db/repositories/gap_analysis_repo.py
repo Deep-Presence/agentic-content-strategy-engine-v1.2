@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid as _uuid
+from datetime import datetime
 from typing import Any, Sequence
 
 from sqlalchemy import case, func, select
@@ -248,6 +249,65 @@ class GapAnalysisRepository(SQLAlchemyRepository[QueryGapModel]):
             for row in result.all()
             if row.published_url
         }
+
+    async def get_cited_exemplar_dates_for_inventory_url(
+        self,
+        company_id: _uuid.UUID,
+        inventory_url: str,
+        *,
+        normalized_url: str | None = None,
+    ) -> list[datetime]:
+        """Return cited exemplar modified/published datetimes for one content URL.
+
+        Matches targeted content by published URL and returns the exemplar's best
+        freshness date (modified first, then published) from url_enrichment_cache.
+        """
+        from core.db.models.cache import UrlEnrichmentCacheModel
+        from core.db.models.content import ContentPieceModel
+
+        candidates = {
+            inventory_url,
+            normalized_url or "",
+        }
+        cleaned_candidates: set[str] = set()
+        for url in candidates:
+            if not url:
+                continue
+            cleaned_candidates.add(url)
+            if url.endswith("/"):
+                cleaned_candidates.add(url.rstrip("/"))
+            else:
+                cleaned_candidates.add(f"{url}/")
+
+        stmt = (
+            select(
+                UrlEnrichmentCacheModel.modified_at,
+                UrlEnrichmentCacheModel.published_at,
+            )
+            .join(
+                QueryExemplarModel,
+                QueryExemplarModel.url_enrichment_id == UrlEnrichmentCacheModel.id,
+            )
+            .join(
+                QueryGapModel,
+                QueryGapModel.id == QueryExemplarModel.query_gap_id,
+            )
+            .join(
+                ContentPieceModel,
+                ContentPieceModel.id == QueryGapModel.targeted_by_content_id,
+            )
+            .where(
+                ContentPieceModel.company_id == company_id,
+                ContentPieceModel.published_url.in_(sorted(cleaned_candidates)),
+            )
+        )
+        result = await self._session.execute(stmt)
+        benchmark_dates: list[datetime] = []
+        for row in result.all():
+            best_date = row.modified_at or row.published_at
+            if best_date is not None:
+                benchmark_dates.append(best_date)
+        return benchmark_dates
 
     # ── Embedding Lab: cluster profiles & territory gaps ──────────────────
 

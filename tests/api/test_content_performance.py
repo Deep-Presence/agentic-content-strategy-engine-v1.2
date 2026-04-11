@@ -227,6 +227,7 @@ class TestGetContentDetail:
             "velocity_trend": "up",
             "freshness_days": 10,
             "lifecycle": "growing",
+            "published_at": "2026-03-05T00:00:00+00:00",
             "daily_traffic": [
                 {"date": "2026-03-27", "sessions": 100, "pageviews": 150, "ai_sessions": 15},
                 {"date": "2026-03-28", "sessions": 100, "pageviews": 150, "ai_sessions": 15},
@@ -240,6 +241,17 @@ class TestGetContentDetail:
                 {"platform": "openai", "sessions": 20},
                 {"platform": "anthropic", "sessions": 10},
             ],
+            "freshness": {
+                "content_age_days": 40,
+                "last_updated_age_days": 7,
+                "cited_exemplar_avg_age_days": None,
+                "cited_exemplar_median_age_days": None,
+                "benchmark_sample_size": 0,
+                "freshness_delta_days": None,
+                "freshness_score": None,
+                "freshness_status": "insufficient_data",
+                "freshness_reason": "Cited exemplar freshness benchmark is not available yet.",
+            },
         }
         resp = client.get(f"/api/v1/content-performance/{inv_id}")
         assert resp.status_code == 200
@@ -248,6 +260,8 @@ class TestGetContentDetail:
         assert len(data["daily_traffic"]) == 2
         assert len(data["source_breakdown"]) == 3
         assert len(data["ai_platform_breakdown"]) == 2
+        assert data["published_at"] == "2026-03-05T00:00:00Z"
+        assert data["freshness"]["last_updated_age_days"] == 7
 
     def test_detail_includes_structural_signals(self, client: TestClient, mock_perf_service):
         """structural_signals JSONB is returned when present."""

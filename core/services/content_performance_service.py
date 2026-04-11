@@ -9,6 +9,7 @@ and ``content_inventory`` live in PostgreSQL.
 from __future__ import annotations
 
 import logging
+import statistics
 import uuid as _uuid
 from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Sequence
@@ -116,6 +117,98 @@ def compute_structural_score(signals: dict[str, Any] | None) -> int:
     return max(0, min(100, normalized))
 
 
+def _compute_freshness_assessment(
+    item: Any,
+    exemplar_dates: Sequence[datetime] | None = None,
+) -> dict[str, Any]:
+    """Return a backend-owned freshness payload for a single inventory item.
+
+    Uses observed page dates plus cited exemplar dates when available.
+    """
+    today = date.today()
+    published_at = getattr(item, "published_at", None)
+    modified_at = getattr(item, "content_modified_at", None)
+
+    content_age_days = None
+    if published_at is not None:
+        content_age_days = (today - published_at.date()).days
+
+    reference_dt = modified_at or published_at
+    last_updated_age_days = None
+    if reference_dt is not None:
+        last_updated_age_days = (today - reference_dt.date()).days
+
+    exemplar_age_days = [
+        max((today - dt.date()).days, 0)
+        for dt in (exemplar_dates or [])
+        if dt is not None
+    ]
+    benchmark_sample_size = len(exemplar_age_days)
+    avg_age = None
+    median_age = None
+    freshness_delta_days = None
+    freshness_score = None
+    freshness_status = "insufficient_data"
+
+    if benchmark_sample_size > 0:
+        avg_age = round(sum(exemplar_age_days) / benchmark_sample_size)
+        median_age = round(statistics.median(exemplar_age_days))
+
+    if last_updated_age_days is None:
+        reason = (
+            "Published and modified dates are unavailable, so freshness cannot "
+            "be benchmarked yet."
+        )
+    elif benchmark_sample_size == 0 or median_age is None:
+        if last_updated_age_days <= 30:
+            freshness_status = "heuristic_fresh"
+            freshness_score = 90
+        elif last_updated_age_days <= 90:
+            freshness_status = "heuristic_recent"
+            freshness_score = 75
+        elif last_updated_age_days <= 180:
+            freshness_status = "heuristic_stale"
+            freshness_score = 55
+        else:
+            freshness_status = "heuristic_old"
+            freshness_score = 30
+        reason = (
+            "Cited exemplar freshness benchmark is not available yet, so this "
+            "uses a simple age-based heuristic from the page's last updated age."
+        )
+    else:
+        freshness_delta_days = last_updated_age_days - median_age
+        if freshness_delta_days <= -30:
+            freshness_status = "fresher_than_benchmark"
+            freshness_score = 95
+        elif abs(freshness_delta_days) <= 30:
+            freshness_status = "within_range"
+            freshness_score = 80
+        elif freshness_delta_days <= 90:
+            freshness_status = "slightly_stale"
+            freshness_score = 60
+        else:
+            freshness_status = "stale"
+            freshness_score = 35
+        reason = (
+            f"Freshness benchmark: last updated age is {last_updated_age_days} "
+            f"days versus a cited exemplar median of {median_age} days across "
+            f"{benchmark_sample_size} exemplars."
+        )
+
+    return {
+        "content_age_days": content_age_days,
+        "last_updated_age_days": last_updated_age_days,
+        "cited_exemplar_avg_age_days": avg_age,
+        "cited_exemplar_median_age_days": median_age,
+        "benchmark_sample_size": benchmark_sample_size,
+        "freshness_delta_days": freshness_delta_days,
+        "freshness_score": freshness_score,
+        "freshness_status": freshness_status,
+        "freshness_reason": reason,
+    }
+
+
 # ── Helpers ─────────────────────────────────────────────────────────
 
 
@@ -209,6 +302,15 @@ def _build_path_to_traffic(
                 "ai_sessions": int(row.ai_sessions or 0),
             }
     return lookup
+
+
+def _candidate_inventory_urls(item: Any) -> tuple[str, str | None]:
+    """Return exact and normalized inventory URLs for downstream matching."""
+    raw_url = (getattr(item, "url", None) or "").strip()
+    normalized_url = (getattr(item, "url_normalized", None) or "").strip()
+    if not normalized_url and raw_url:
+        normalized_url = normalize_url(raw_url)
+    return raw_url, normalized_url or None
 
 
 # ── Service ─────────────────────────────────────────────────────────
@@ -559,6 +661,15 @@ class ContentPerformanceService:
             freshness_days = (today - item.published_at.date()).days
 
         lifecycle = _classify_lifecycle(velocity, pct_change, freshness_days)
+        exemplar_dates: list[datetime] = []
+        if self._gap is not None:
+            raw_url, normalized_url = _candidate_inventory_urls(item)
+            exemplar_dates = await self._gap.get_cited_exemplar_dates_for_inventory_url(
+                company_id,
+                raw_url,
+                normalized_url=normalized_url,
+            )
+        freshness = _compute_freshness_assessment(item, exemplar_dates)
 
         # Daily traffic points
         daily_traffic = [
@@ -655,6 +766,7 @@ class ContentPerformanceService:
             "inventory_id": str(item.id),
             "url": item.url or "",
             "title": item.title or "",
+            "published_at": item.published_at.isoformat() if item.published_at else None,
             "traffic": total_sessions,
             "ai_referrals": total_ai,
             "velocity": round(velocity, 2),
@@ -670,6 +782,7 @@ class ContentPerformanceService:
             ),
             "citation_timeline": citation_timeline,
             "citations": total_cited,
+            "freshness": freshness,
             "platforms": platforms,
             "queries_covered": queries_covered,
         }
