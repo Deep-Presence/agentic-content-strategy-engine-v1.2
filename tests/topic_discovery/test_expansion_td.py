@@ -431,6 +431,8 @@ class TestApplyCannibalizationResults:
         a = TopicAssignment(topic_text="New Topic", priority_score=0.8, metadata={})
         _apply_cannibalization_results([a], ["New Topic"], {})
         assert a.metadata["cannibalization_risk"] == 0.0
+        assert a.metadata["cannibalization_risk_level"] == "none"
+        assert a.metadata["cannibalization_recommended_action"] == "safe_to_create_new"
         assert a.metadata["cannibalization_matches"] == []
         assert a.priority_score == 0.8  # Unchanged
 
@@ -439,9 +441,16 @@ class TestApplyCannibalizationResults:
         match = self._make_match(0.87)
         _apply_cannibalization_results([a], ["Topic A"], {"Topic A": [match]})
         assert a.metadata["cannibalization_risk"] == 0.87
+        assert a.metadata["cannibalization_risk_level"] in {"medium", "high"}
+        assert a.metadata["cannibalization_recommended_action"] in {
+            "differentiate_angle",
+            "merge_or_refresh_existing",
+        }
         assert len(a.metadata["cannibalization_matches"]) == 1
         assert a.metadata["cannibalization_matches"][0]["url"] == "https://example.com/blog/guide"
         assert a.metadata["cannibalization_matches"][0]["similarity"] == 0.87
+        assert "risk_score" in a.metadata["cannibalization_matches"][0]
+        assert "signals" in a.metadata["cannibalization_matches"][0]
 
     def test_penalty_zero_at_threshold(self):
         """Similarity at exactly the threshold (0.80) should produce no penalty."""

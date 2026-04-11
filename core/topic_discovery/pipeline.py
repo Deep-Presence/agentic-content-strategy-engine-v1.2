@@ -74,6 +74,9 @@ from core.topic_discovery.agents import (
     run_topic_generation,
     run_unified_hierarchy_and_scoring,
 )
+from core.topic_discovery.cannibalization_service import (
+    assess_assignment_cannibalization,
+)
 from core.topic_discovery.graph import (
     build_td_matrix_review_graph,
     build_td_subdomain_selection_graph,
@@ -841,36 +844,13 @@ def _apply_cannibalization_results(
     query_texts: List[str],
     cannibal_results: Dict[str, list],
 ) -> None:
-    """Enrich assignments with cannibalization data and adjust priority.
-
-    Piecewise penalty:
-      < 0.80: no penalty (filtered by pgvector threshold)
-      0.80-0.90: moderate (up to 20% reduction)
-      > 0.90: strong (20-35% reduction)
-    """
-    max_matches = settings.td_cannibalization_max_matches
+    """Enrich assignments with planner-ready cannibalization data."""
     for a, qt in zip(assignments, query_texts):
         matches = cannibal_results.get(qt, [])
-        if not matches:
-            a.metadata["cannibalization_risk"] = 0.0
-            a.metadata["cannibalization_matches"] = []
-            continue
-
-        max_sim = max(m.similarity for m in matches)
-        a.metadata["cannibalization_risk"] = round(max_sim, 4)
-        a.metadata["cannibalization_matches"] = [
-            {
-                "inventory_id": m.inventory_id,
-                "url": m.url,
-                "title": m.title,
-                "similarity": round(m.similarity, 4),
-                "word_count": m.word_count,
-                "content_type": m.content_type_detected,
-            }
-            for m in matches[:max_matches]
-        ]
+        a.metadata.update(assess_assignment_cannibalization(a, matches))
 
         # Piecewise priority penalty
+        max_sim = float(a.metadata.get("cannibalization_risk") or 0.0)
         if a.priority_score > 0 and max_sim > 0:
             threshold = settings.td_cannibalization_threshold
             if max_sim >= 0.90:

@@ -25,6 +25,10 @@ export interface CannibalizationMatchItem {
   similarity: number;
   wordCount: number;
   contentType: string;
+  riskScore?: number | null;
+  riskLevel?: 'none' | 'low' | 'medium' | 'high' | null;
+  reasons?: string[];
+  signals?: Record<string, number>;
 }
 
 export interface Assignment {
@@ -56,6 +60,10 @@ export interface Assignment {
   priorityFactors: Record<string, number>;
   cannibalizationRisk: number | null;
   cannibalizationMatches: CannibalizationMatchItem[];
+  cannibalizationRiskScore?: number | null;
+  cannibalizationRiskLevel?: 'none' | 'low' | 'medium' | 'high' | null;
+  cannibalizationRecommendedAction?: string | null;
+  cannibalizationReasons?: string[];
 }
 
 export interface Subcluster {

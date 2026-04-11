@@ -2108,5 +2108,65 @@
     "outcome": "Implemented on 2026-04-11. The drawer freshness payload now becomes benchmarked when cited exemplar dates exist, falls back to an explicit age-based heuristic when only the page's own dates are available, and still returns `insufficient_data` only when published/modified dates are missing entirely. Validation: `venv/bin/pytest tests/services/test_content_performance_service.py tests/api/test_content_performance.py -q` (82 passed, then targeted heuristic regression tests passed) and `venv/bin/pytest tests/gap_analysis/test_persistence.py tests/gap_analysis/steps/test_s4_enrich_citations.py -q` (77 passed, 1 pre-existing warning).",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-PERFORMANCE-COMPANY-ID-NORMALIZATION",
+    "timestamp": "2026-04-11",
+    "task": "Content Performance company ownership checks at auth/service boundary",
+    "decision": "Content Performance service methods must accept both UUID and string company identifiers and normalize them to UUID internally before repository calls or ownership comparisons.",
+    "rationale": "The production auth layer (`DbAuthService`) serializes `Company.id` as a string in the Pydantic company model, while ORM-backed inventory rows expose `company_id` as UUID. Comparing them directly in `get_content_detail()` caused false 404s in the per-page drawer for valid inventory pages. Normalizing inside the service is safer than relying on every router or caller to remember the auth-service serialization detail.",
+    "alternatives": [
+      "Patch only the content-performance router to coerce `company.id` back to UUID — rejected because other service callers would remain exposed to the same mismatch",
+      "Change `DbAuthService` to return UUID-typed company IDs — rejected for now because it would widen the contract change across many existing auth/router call sites"
+    ],
+    "files_affected": [
+      "core/services/content_performance_service.py",
+      "tests/services/test_content_performance_service.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. Content Performance now normalizes auth-service string IDs before readiness/table/detail/velocity logic, and the per-page drawer detail endpoint no longer falsely returns 404 for valid published pages owned by the current company. Validation: `venv/bin/pytest tests/services/test_content_performance_service.py -q` and `venv/bin/pytest tests/api/test_content_performance.py -q`.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-CONTENT-PERFORMANCE-OPTIONAL-FRESHNESS-BENCHMARK",
+    "timestamp": "2026-04-11",
+    "task": "Per-page drawer behavior when cited exemplar freshness columns are unavailable",
+    "decision": "The per-page Content Performance drawer must degrade gracefully when the cited-exemplar freshness benchmark query fails at the database layer. Missing additive freshness columns in `url_enrichment_cache` should not take down the full detail response; the service should log the DB error and fall back to heuristic freshness.",
+    "rationale": "The drawer detail endpoint depends on many optional enrichment pipelines. A missing migration in one optional benchmark path should not hide structural signals, traffic, citation timeline, or other detail data for the page. The local failure showed this clearly: `url_enrichment_cache.modified_at` was absent, and the whole drawer turned into a 500 even though the rest of the detail payload was available.",
+    "alternatives": [
+      "Require the migration and let the drawer 500 until every environment is updated — rejected because it breaks the page for an optional enhancement",
+      "Disable freshness entirely when benchmark columns are absent — rejected because the existing heuristic freshness path is still useful and already implemented"
+    ],
+    "files_affected": [
+      "core/services/content_performance_service.py",
+      "tests/services/test_content_performance_service.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. Detail fetch now catches SQLAlchemy errors from cited exemplar freshness lookup, logs a warning, and returns the normal page detail payload with heuristic freshness instead of a 500. Validation: `venv/bin/pytest tests/services/test_content_performance_service.py tests/api/test_content_performance.py -q` (84 passed).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-CANNIBALIZATION-PHASE1-METADATA",
+    "timestamp": "2026-04-11",
+    "task": "Planner cannibalization service roadmap phase 1",
+    "decision": "The first production-grade cannibalization upgrade should stay on the existing Topic Discovery Pipeline B metadata path and emit additive planner metadata instead of introducing a new persistence table immediately. The source of truth for this phase is `core/topic_discovery/cannibalization_service.py`, which sits on top of the existing content-inventory vector retrieval and classifies matches using semantic similarity plus deterministic lexical, inferred-intent, and format-overlap heuristics. Pipeline B must preserve the existing raw `cannibalization_risk` similarity field for backward compatibility and ranking penalty behavior, while adding `cannibalization_risk_score`, `cannibalization_risk_level`, `cannibalization_recommended_action`, `cannibalization_reasons`, and per-match signal breakdowns for the planner UI.",
+    "rationale": "The repo already had a working planner cannibalization path wired through assignment metadata and frontend adapters. Upgrading that path in place delivers a production-grade contract incrementally without a schema migration or a second planner-only service surface. Keeping raw similarity alongside richer metadata avoids breaking existing ranking behavior and makes it clear that phase 1 is still retrieval-plus-heuristics, not the final query-overlap model.",
+    "alternatives": [
+      "Add a dedicated `topic_assignment_cannibalization` table immediately — rejected for phase 1 because it adds migration and API complexity before the scoring contract itself is stabilized",
+      "Continue using raw similarity only — rejected because it is not explainable enough for planner decisions and does not support recommended actions or multi-signal reasoning",
+      "Wait for Daily Tracker fanout/query overlap before shipping any improvement — rejected because semantic-plus-heuristic scoring already raises the floor materially and keeps the UI honest about the signals it is using"
+    ],
+    "files_affected": [
+      "core/topic_discovery/cannibalization_service.py",
+      "core/topic_discovery/pipeline.py",
+      "core/config/settings.py",
+      "frontend/src/app/(dashboard)/planner/_components/planner-data.ts",
+      "frontend/src/app/(dashboard)/planner/_lib/adapters.ts",
+      "frontend/src/app/(dashboard)/planner/_components/PriorityQueue.tsx",
+      "frontend/src/app/(dashboard)/planner/_components/DetailDrawer.tsx"
+    ],
+    "outcome": "Implemented on 2026-04-11. Planner assignments now carry risk level, risk score, reasons, recommended action, and per-match signal breakdowns while keeping the legacy raw overlap score. Validation: `venv/bin/pytest tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py -q` (37 passed) and `frontend/./node_modules/.bin/tsc --noEmit`.",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]

@@ -266,6 +266,10 @@ export function adaptAssignment(
 
   // Cannibalization data (populated by Pipeline B when content inventory exists)
   const cannibRisk = (meta.cannibalization_risk as number) ?? null;
+  const cannibRiskScore = (meta.cannibalization_risk_score as number) ?? null;
+  const cannibRiskLevel = (meta.cannibalization_risk_level as Assignment['cannibalizationRiskLevel']) ?? null;
+  const cannibRecommendedAction = (meta.cannibalization_recommended_action as string) ?? null;
+  const cannibReasons = ((meta.cannibalization_reasons as string[]) ?? []).filter(Boolean);
   const cannibRawMatches = (meta.cannibalization_matches as Array<Record<string, unknown>>) ?? [];
   const cannibMatches: CannibalizationMatchItem[] = cannibRawMatches.map((m) => ({
     inventoryId: (m.inventory_id as string) ?? '',
@@ -274,6 +278,10 @@ export function adaptAssignment(
     similarity: (m.similarity as number) ?? 0,
     wordCount: (m.word_count as number) ?? 0,
     contentType: (m.content_type as string) ?? '',
+    riskScore: (m.risk_score as number) ?? null,
+    riskLevel: (m.risk_level as CannibalizationMatchItem['riskLevel']) ?? null,
+    reasons: ((m.reasons as string[]) ?? []).filter(Boolean),
+    signals: (m.signals as Record<string, number>) ?? {},
   }));
 
   return {
@@ -305,6 +313,10 @@ export function adaptAssignment(
     priorityFactors: factors,
     cannibalizationRisk: cannibRisk,
     cannibalizationMatches: cannibMatches,
+    cannibalizationRiskScore: cannibRiskScore,
+    cannibalizationRiskLevel: cannibRiskLevel,
+    cannibalizationRecommendedAction: cannibRecommendedAction,
+    cannibalizationReasons: cannibReasons,
   };
 }
 

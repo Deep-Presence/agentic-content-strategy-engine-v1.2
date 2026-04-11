@@ -1727,6 +1727,52 @@
         "tests/db/test_gap_analysis_repo.py"
       ],
       "codex_review": "Implemented freshness phase 2 by making gap-analysis S4 persist cited exemplar publish/modified dates into `url_enrichment_cache`, then teaching Content Performance to benchmark each page against those exemplar ages. `EnrichedCitation` now carries additive `published_at` / `modified_at` fields, S4 parses date metadata with the existing site-audit freshness helpers, persistence writes the dates through the cache repository, and `GapAnalysisRepository.get_cited_exemplar_dates_for_inventory_url()` returns benchmark dates for a targeted published page. The drawer freshness payload now computes benchmark avg/median ages, sample size, delta vs benchmark median, status, and a backend-owned score when exemplar data exists; otherwise it still returns an explicit insufficient-data state. Validation: `venv/bin/pytest tests/services/test_content_performance_service.py tests/api/test_content_performance.py -q` (82 passed) and `venv/bin/pytest tests/gap_analysis/test_persistence.py tests/gap_analysis/steps/test_s4_enrich_citations.py -q` (77 passed, 1 pre-existing warning)."
+    },
+    {
+      "id": "T-content-performance-detail-company-id-normalization",
+      "task": "Content Performance per-page drawer detail 404 for published pages",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 1,
+      "files_modified": [
+        "core/services/content_performance_service.py",
+        "tests/services/test_content_performance_service.py"
+      ],
+      "codex_review": "Fixed the per-page drawer detail 404 that affected real published pages already visible in the Content Performance table. Root cause: `DbAuthService.get_company_by_slug()` returns `Company.id` as a string, but `ContentPerformanceService.get_content_detail()` compared that directly against `content_inventory.company_id`, which is a UUID, causing a false company-mismatch and a 404. The service now normalizes inbound `company_id` values to UUID across its public methods before repository calls or ownership checks. Added a regression test covering the exact auth-service string-ID case. Validation: `venv/bin/pytest tests/services/test_content_performance_service.py -q` (58 passed) and `venv/bin/pytest tests/api/test_content_performance.py -q` (25 passed)."
+    },
+    {
+      "id": "T-content-performance-detail-fallback-on-missing-freshness-columns",
+      "task": "Content Performance per-page drawer 500 when freshness benchmark columns are missing locally",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 1,
+      "files_modified": [
+        "core/services/content_performance_service.py",
+        "tests/services/test_content_performance_service.py"
+      ],
+      "codex_review": "Fixed the post-404 per-page drawer failure where `GET /api/v1/content-performance/{inventory_id}` returned 500 after the detail lookup succeeded. Root cause from local logs: the freshness benchmark query in `GapAnalysisRepository.get_cited_exemplar_dates_for_inventory_url()` referenced `url_enrichment_cache.modified_at`, but the local database had not applied the additive freshness-columns migration yet. `ContentPerformanceService.get_content_detail()` now treats cited exemplar date lookup as optional and catches SQLAlchemy DB errors, logs a warning, and falls back to the existing heuristic freshness path instead of failing the entire drawer response. Validation: `venv/bin/pytest tests/services/test_content_performance_service.py tests/api/test_content_performance.py -q` (84 passed)."
+    },
+    {
+      "id": "T-topic-discovery-cannibalization-phase1",
+      "task": "Planner cannibalization service roadmap phase 1",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 3,
+      "files_modified": [
+        "core/topic_discovery/cannibalization_service.py",
+        "core/topic_discovery/pipeline.py",
+        "core/config/settings.py",
+        "tests/topic_discovery/test_cannibalization_service.py",
+        "tests/topic_discovery/test_expansion_td.py",
+        "frontend/src/app/(dashboard)/planner/_components/planner-data.ts",
+        "frontend/src/app/(dashboard)/planner/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/planner/_components/PriorityQueue.tsx",
+        "frontend/src/app/(dashboard)/planner/_components/DetailDrawer.tsx"
+      ],
+      "codex_review": "Implemented the first production-grade cannibalization slice on the existing Topic Discovery planner path instead of inventing a separate storage model. Added `core/topic_discovery/cannibalization_service.py`, which scores topic-assignment-vs-page matches using semantic similarity plus deterministic lexical, intent, and format heuristics, then emits additive metadata: `cannibalization_risk_score`, `cannibalization_risk_level`, `cannibalization_recommended_action`, `cannibalization_reasons`, and enriched per-match signals. Pipeline B now uses that scorer while preserving the existing raw `cannibalization_risk` field and priority penalty behavior. The planner adapter and drawer/queue UI now read and display the richer contract. This phase is metadata-first and still does not include Daily Tracker fanout/query overlap or page-strength weighting; those remain the next backend slice. Validation: `venv/bin/pytest tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py -q` (37 passed) and `frontend/./node_modules/.bin/tsc --noEmit`."
     }
   ],
   "pending": [

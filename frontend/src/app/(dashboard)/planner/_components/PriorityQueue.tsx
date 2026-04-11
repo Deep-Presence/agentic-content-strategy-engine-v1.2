@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, type CSSProperties } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowDown, ArrowUp, Check, X } from 'lucide-react';
 import type { Assignment } from './planner-data';
@@ -40,6 +40,50 @@ const intentStyles: Record<string, string> = {
   Transactional: 'bg-success-subtle text-success border-success/30',
 };
 const formatStyles = 'bg-[var(--surface)] text-text-secondary border-border';
+
+function getCannibalizationLevel(
+  assignment: Assignment,
+): 'none' | 'low' | 'medium' | 'high' | null {
+  if (assignment.cannibalizationRiskLevel) return assignment.cannibalizationRiskLevel;
+  if (assignment.cannibalizationRisk == null) return null;
+  if (assignment.cannibalizationRisk >= 0.90) return 'high';
+  if (assignment.cannibalizationRisk >= 0.80) return 'medium';
+  if (assignment.cannibalizationRisk > 0) return 'low';
+  return 'none';
+}
+
+function getCannibalizationBadge(
+  assignment: Assignment,
+): { label: string; title: string; style: CSSProperties } | null {
+  const level = getCannibalizationLevel(assignment);
+  const overlap = assignment.cannibalizationRisk != null
+    ? `${Math.round(assignment.cannibalizationRisk * 100)}% overlap with existing content`
+    : 'Cannibalization signal detected';
+
+  if (level === 'high') {
+    return {
+      label: 'High Risk',
+      title: overlap,
+      style: {
+        background: 'rgba(229,72,77,0.08)',
+        color: '#E5484D',
+        border: '1px solid rgba(229,72,77,0.25)',
+      },
+    };
+  }
+  if (level === 'medium') {
+    return {
+      label: 'Overlap',
+      title: overlap,
+      style: {
+        background: 'rgba(245,166,35,0.08)',
+        color: '#F5A623',
+        border: '1px solid rgba(245,166,35,0.25)',
+      },
+    };
+  }
+  return null;
+}
 
 export function PriorityQueue({ assignments, onRowClick, onApprove, onReject }: PriorityQueueProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -117,7 +161,9 @@ export function PriorityQueue({ assignments, onRowClick, onApprove, onReject }: 
         </div>
 
         {/* Rows */}
-        {sorted.map((a, idx) => (
+        {sorted.map((a, idx) => {
+          const cannibalBadge = getCannibalizationBadge(a);
+          return (
           <motion.div key={a.id} className="grid items-center cursor-pointer transition-colors duration-150"
             style={{ gridTemplateColumns: GRID_COLS, borderBottom: '1px solid var(--border)', background: selected.has(a.id) ? 'var(--accent-subtle)' : undefined, height: 48 }}
             initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.15, delay: idx * 0.03 }}
@@ -131,18 +177,11 @@ export function PriorityQueue({ assignments, onRowClick, onApprove, onReject }: 
             <div className="px-2 min-w-0 overflow-hidden">
               <div className="flex items-center gap-1.5">
                 <span className="text-[13px] font-medium text-text-primary truncate">{a.title}</span>
-                {a.cannibalizationRisk != null && a.cannibalizationRisk >= 0.90 && (
+                {cannibalBadge && (
                   <span className="shrink-0 inline-flex items-center px-1.5 py-px text-[9px] font-semibold uppercase rounded-full"
-                    style={{ background: 'rgba(229,72,77,0.08)', color: '#E5484D', border: '1px solid rgba(229,72,77,0.25)' }}
-                    title={`${Math.round(a.cannibalizationRisk * 100)}% overlap with existing content`}>
-                    Near Dup
-                  </span>
-                )}
-                {a.cannibalizationRisk != null && a.cannibalizationRisk >= 0.80 && a.cannibalizationRisk < 0.90 && (
-                  <span className="shrink-0 inline-flex items-center px-1.5 py-px text-[9px] font-semibold uppercase rounded-full"
-                    style={{ background: 'rgba(245,166,35,0.08)', color: '#F5A623', border: '1px solid rgba(245,166,35,0.25)' }}
-                    title={`${Math.round(a.cannibalizationRisk * 100)}% overlap with existing content`}>
-                    Overlap
+                    style={cannibalBadge.style}
+                    title={cannibalBadge.title}>
+                    {cannibalBadge.label}
                   </span>
                 )}
               </div>
@@ -173,7 +212,8 @@ export function PriorityQueue({ assignments, onRowClick, onApprove, onReject }: 
               <span className="font-mono text-[13px] text-text-primary">{(a.priorityScore * 100).toFixed(0)}</span>
             </div>
           </motion.div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="px-6 py-2 shrink-0" style={{ borderTop: '1px solid var(--border)' }}>

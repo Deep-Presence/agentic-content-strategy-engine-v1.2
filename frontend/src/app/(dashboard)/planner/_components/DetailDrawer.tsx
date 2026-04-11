@@ -42,6 +42,22 @@ const intentStyles: Record<string, string> = {
   Transactional: 'bg-success-subtle text-success border-success/30',
 };
 
+function getCannibalizationLevel(
+  assignment: Assignment,
+): 'none' | 'low' | 'medium' | 'high' | null {
+  if (assignment.cannibalizationRiskLevel) return assignment.cannibalizationRiskLevel;
+  if (assignment.cannibalizationRisk == null) return null;
+  if (assignment.cannibalizationRisk >= 0.90) return 'high';
+  if (assignment.cannibalizationRisk >= 0.80) return 'medium';
+  if (assignment.cannibalizationRisk > 0) return 'low';
+  return 'none';
+}
+
+function formatRecommendation(action: string | null | undefined): string {
+  if (!action) return 'Review overlap';
+  return action.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export function DetailDrawer({ assignment, onClose, onApprove, onReject }: DetailDrawerProps) {
   const [copied, setCopied] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -57,6 +73,14 @@ export function DetailDrawer({ assignment, onClose, onApprove, onReject }: Detai
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+
+  const cannibalizationLevel = assignment ? getCannibalizationLevel(assignment) : null;
+  const isHighCannibalizationRisk = cannibalizationLevel === 'high';
+  const cannibalizationAccent = isHighCannibalizationRisk ? '#E5484D' : '#F5A623';
+  const cannibalizationBackground = isHighCannibalizationRisk
+    ? 'rgba(229,72,77,0.04)'
+    : 'rgba(245,166,35,0.04)';
+  const cannibalizationReasons = assignment?.cannibalizationReasons ?? [];
 
   return (
     <AnimatePresence>
@@ -300,23 +324,49 @@ export function DetailDrawer({ assignment, onClose, onApprove, onReject }: Detai
                 {assignment.cannibalizationRisk != null && assignment.cannibalizationRisk > 0 && (
                   <>
                     <h3 className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-secondary mt-6 mb-3">Cannibalization Risk</h3>
-                    <div className="rounded-md overflow-hidden" style={{ border: `1px solid ${assignment.cannibalizationRisk >= 0.90 ? '#E5484D' : '#F5A623'}`, background: assignment.cannibalizationRisk >= 0.90 ? 'rgba(229,72,77,0.04)' : 'rgba(245,166,35,0.04)' }}>
+                    <div className="rounded-md overflow-hidden" style={{ border: `1px solid ${cannibalizationAccent}`, background: cannibalizationBackground }}>
                       <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
-                        <div className="flex items-center justify-between">
-                          <span className="text-[13px] text-text-secondary">Overlap Score</span>
-                          <span className="font-mono text-[14px] font-semibold" style={{ color: assignment.cannibalizationRisk >= 0.90 ? '#E5484D' : '#F5A623' }}>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <span className="text-[13px] text-text-secondary">Overlap Score</span>
+                            <p className="text-[12px] text-text-tertiary mt-1">
+                              {cannibalizationLevel ? `${cannibalizationLevel.charAt(0).toUpperCase()}${cannibalizationLevel.slice(1)} risk` : 'Cannibalization signal'}
+                              {assignment.cannibalizationRecommendedAction ? ` · ${formatRecommendation(assignment.cannibalizationRecommendedAction)}` : ''}
+                            </p>
+                          </div>
+                          <span className="font-mono text-[14px] font-semibold" style={{ color: cannibalizationAccent }}>
                             {Math.round(assignment.cannibalizationRisk * 100)}%
                           </span>
                         </div>
+                        {assignment.cannibalizationRiskScore != null && (
+                          <p className="text-[12px] text-text-tertiary mt-2">
+                            Composite risk score: {Math.round(assignment.cannibalizationRiskScore * 100)}%
+                          </p>
+                        )}
                         <p className="text-[12px] text-text-tertiary mt-1">
-                          This topic overlaps with {assignment.cannibalizationMatches.length} existing page{assignment.cannibalizationMatches.length !== 1 ? 's' : ''}. Consider consolidating or differentiating the angle.
+                          This topic overlaps with {assignment.cannibalizationMatches.length} existing page{assignment.cannibalizationMatches.length !== 1 ? 's' : ''}. Review the existing asset before creating a new one.
                         </p>
+                        {cannibalizationReasons.length > 0 && (
+                          <div className="mt-3 space-y-1.5">
+                            {cannibalizationReasons.map((reason) => (
+                              <p key={reason} className="text-[12px] text-text-secondary">
+                                {reason}
+                              </p>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       {assignment.cannibalizationMatches.map((match, i) => (
                         <div key={match.inventoryId} className="flex items-center justify-between px-4 py-2.5"
                           style={{ borderBottom: i < assignment.cannibalizationMatches.length - 1 ? '1px solid var(--border)' : undefined }}>
                           <div className="min-w-0 flex-1">
                             <p className="text-[13px] text-text-primary truncate">{match.title}</p>
+                            {match.riskLevel && match.riskLevel !== 'none' && (
+                              <p className="text-[11px] text-text-secondary mt-0.5">
+                                {match.riskLevel.charAt(0).toUpperCase() + match.riskLevel.slice(1)} risk
+                                {match.riskScore != null ? ` · ${Math.round(match.riskScore * 100)}% composite` : ''}
+                              </p>
+                            )}
                             <a href={match.url} target="_blank" rel="noopener noreferrer"
                               className="text-[11px] text-text-tertiary hover:text-accent truncate block">
                               {match.url}
