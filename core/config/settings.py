@@ -217,6 +217,7 @@ class Settings(BaseSettings):
     td_cannibalization_threshold: float = 0.80
     td_cannibalization_medium_risk_threshold: float = 0.70
     td_cannibalization_high_risk_threshold: float = 0.85
+    td_cannibalization_overlap_window_days: int = 30
     td_cannibalization_max_matches: int = 5
     # Source C: Perplexity deep research for competitive content landscape
     topic_discovery_source_c_model: str = "perplexity/sonar-deep-research"

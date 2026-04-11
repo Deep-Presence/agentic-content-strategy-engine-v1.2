@@ -1773,6 +1773,24 @@
         "frontend/src/app/(dashboard)/planner/_components/DetailDrawer.tsx"
       ],
       "codex_review": "Implemented the first production-grade cannibalization slice on the existing Topic Discovery planner path instead of inventing a separate storage model. Added `core/topic_discovery/cannibalization_service.py`, which scores topic-assignment-vs-page matches using semantic similarity plus deterministic lexical, intent, and format heuristics, then emits additive metadata: `cannibalization_risk_score`, `cannibalization_risk_level`, `cannibalization_recommended_action`, `cannibalization_reasons`, and enriched per-match signals. Pipeline B now uses that scorer while preserving the existing raw `cannibalization_risk` field and priority penalty behavior. The planner adapter and drawer/queue UI now read and display the richer contract. This phase is metadata-first and still does not include Daily Tracker fanout/query overlap or page-strength weighting; those remain the next backend slice. Validation: `venv/bin/pytest tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py -q` (37 passed) and `frontend/./node_modules/.bin/tsc --noEmit`."
+    },
+    {
+      "id": "T-topic-discovery-cannibalization-phase2-overlap-evidence",
+      "task": "Planner cannibalization service roadmap phase 2 fanout-aware overlap evidence",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 5,
+      "files_modified": [
+        "core/db/repositories/content_inventory_prompt_repo.py",
+        "core/topic_discovery/cannibalization_service.py",
+        "core/topic_discovery/pipeline.py",
+        "core/config/settings.py",
+        "tests/unit/test_content_inventory_prompt_repo.py",
+        "tests/topic_discovery/test_cannibalization_service.py",
+        "tests/topic_discovery/test_expansion_td.py"
+      ],
+      "codex_review": "Implemented phase 2 of the planner cannibalization roadmap by making page prompt scope fanout-aware and feeding overlap evidence into Topic Discovery scoring. `ContentInventoryPromptRepository` now exposes root prompt scope for a page, includes fanout child prompts in prompt-text coverage, computes deterministic query overlap signals from that scope, and rolls citation metrics/timelines up on `COALESCE(parent_prompt_id, prompt_id)` instead of direct prompt IDs only. Pipeline B now fetches recent fanout-aware citation metrics plus page query-overlap signals for matched inventory pages and passes them into `core/topic_discovery/cannibalization_service.py`, which now scores query overlap and citation overlap alongside semantic/lexical/intent/format signals. Validation: `venv/bin/pytest tests/unit/test_content_inventory_prompt_repo.py tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py -q` (43 passed)."
     }
   ],
   "pending": [

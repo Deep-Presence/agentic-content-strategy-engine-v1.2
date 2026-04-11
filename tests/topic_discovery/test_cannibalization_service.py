@@ -110,3 +110,55 @@ class TestAssessAssignmentCannibalization:
         top_match = result["cannibalization_matches"][0]
         assert top_match["risk_level"] in {"medium", "high"}
         assert top_match["signals"]["format_overlap"] < 1.0
+
+    def test_query_and_citation_overlap_raise_match_score(self):
+        assignment = TopicAssignment(
+            topic_text="Expense management software comparison",
+            intent_type=IntentType.commercial,
+            metadata={
+                "target_keywords": {
+                    "primary": "expense management software comparison",
+                    "secondary": ["best expense management software"],
+                },
+                "content_format": "comparison",
+            },
+        )
+
+        baseline = assess_assignment_cannibalization(
+            assignment,
+            [
+                _make_match(
+                    title="Expense software buyer guide",
+                    url="https://example.com/blog/expense-software-buyers-guide",
+                    similarity=0.82,
+                ),
+            ],
+        )
+        result = assess_assignment_cannibalization(
+            assignment,
+            [
+                _make_match(
+                    title="Expense software buyer guide",
+                    url="https://example.com/blog/expense-software-buyers-guide",
+                    similarity=0.82,
+                ),
+            ],
+            match_signal_overrides={
+                "inv-123": {
+                    "query_overlap_score": 0.9,
+                    "overlapping_query_count": 2,
+                    "matched_queries": [
+                        "expense management software comparison",
+                        "best expense management software",
+                    ],
+                    "citation_overlap_score": 0.8,
+                    "citation_count": 6,
+                },
+            },
+        )
+
+        top_match = result["cannibalization_matches"][0]
+        assert top_match["risk_score"] > baseline["cannibalization_matches"][0]["risk_score"]
+        assert top_match["signals"]["query_overlap"] == 0.9
+        assert top_match["signals"]["citation_overlap"] == 0.8
+        assert any("tracked query overlap" in reason.lower() for reason in top_match["reasons"])

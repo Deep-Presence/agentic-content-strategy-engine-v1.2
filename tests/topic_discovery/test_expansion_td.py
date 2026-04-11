@@ -537,3 +537,27 @@ class TestApplyCannibalizationResults:
             [a], ["T"], {"T": [self._make_match(0.95)]},
         )
         assert a.priority_score == 0.0
+
+    def test_signal_overrides_flow_into_match_metadata(self):
+        a = TopicAssignment(topic_text="T", priority_score=1.0, metadata={})
+        match = self._make_match(0.82)
+
+        _apply_cannibalization_results(
+            [a],
+            ["T"],
+            {"T": [match]},
+            signal_overrides_by_query={
+                "T": {
+                    "inv-123": {
+                        "query_overlap_score": 0.9,
+                        "citation_overlap_score": 0.8,
+                        "citation_count": 5,
+                        "matched_queries": ["expense management software"],
+                    },
+                },
+            },
+        )
+
+        top_match = a.metadata["cannibalization_matches"][0]
+        assert top_match["signals"]["query_overlap"] == pytest.approx(0.9)
+        assert top_match["signals"]["citation_overlap"] == pytest.approx(0.8)

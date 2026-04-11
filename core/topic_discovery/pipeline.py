@@ -24,7 +24,7 @@ import re
 import time
 import uuid as _uuid
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -76,6 +76,7 @@ from core.topic_discovery.agents import (
 )
 from core.topic_discovery.cannibalization_service import (
     assess_assignment_cannibalization,
+    build_assignment_candidate_queries,
 )
 from core.topic_discovery.graph import (
     build_td_matrix_review_graph,
@@ -843,11 +844,19 @@ def _apply_cannibalization_results(
     assignments: List[TopicAssignment],
     query_texts: List[str],
     cannibal_results: Dict[str, list],
+    *,
+    signal_overrides_by_query: Dict[str, Dict[str, dict[str, Any]]] | None = None,
 ) -> None:
     """Enrich assignments with planner-ready cannibalization data."""
     for a, qt in zip(assignments, query_texts):
         matches = cannibal_results.get(qt, [])
-        a.metadata.update(assess_assignment_cannibalization(a, matches))
+        a.metadata.update(
+            assess_assignment_cannibalization(
+                a,
+                matches,
+                match_signal_overrides=(signal_overrides_by_query or {}).get(qt, {}),
+            )
+        )
 
         # Piecewise priority penalty
         max_sim = float(a.metadata.get("cannibalization_risk") or 0.0)
@@ -1179,6 +1188,9 @@ async def run_topic_expansion_pipeline(
             # 3b. Cannibalization detection (batch)
             if session_factory is not None and company_id is not None and assignments:
                 try:
+                    from core.db.repositories.content_inventory_prompt_repo import (
+                        ContentInventoryPromptRepository,
+                    )
                     from core.db.repositories.content_inventory_repo import ContentInventoryRepository
                     from core.services.content_inventory_service import ContentInventoryService
 
@@ -1186,13 +1198,56 @@ async def run_topic_expansion_pipeline(
                         cannibal_svc = ContentInventoryService(
                             inventory_repo=ContentInventoryRepository(_cannibal_session),
                         )
+                        ci_prompt_repo = ContentInventoryPromptRepository(_cannibal_session)
                         query_texts = [_build_cannibal_query(a) for a in assignments]
                         cannibal_results = await cannibal_svc.check_cannibalization_batch(
                             company_id, query_texts,
                             threshold=settings.td_cannibalization_threshold,
                         )
+                        match_inventory_ids = {
+                            _uuid.UUID(match.inventory_id)
+                            for result_matches in cannibal_results.values()
+                            for match in result_matches
+                        }
+                        signal_overrides_by_query: Dict[str, Dict[str, dict[str, Any]]] = {}
+                        citation_lookup: dict[str, dict[str, Any]] = {}
+                        if match_inventory_ids:
+                            end_dt = datetime.now(timezone.utc)
+                            start_dt = end_dt - timedelta(
+                                days=settings.td_cannibalization_overlap_window_days,
+                            )
+                            citation_rows = await ci_prompt_repo.get_citation_metrics_batch(
+                                company_id,
+                                start_dt,
+                                end_dt,
+                                inventory_ids=list(match_inventory_ids),
+                            )
+                            citation_lookup = {
+                                str(row["inventory_id"]): row
+                                for row in citation_rows
+                            }
+
+                        for assignment, query_text in zip(assignments, query_texts):
+                            candidate_queries = build_assignment_candidate_queries(assignment)
+                            assignment_signal_overrides: Dict[str, dict[str, Any]] = {}
+                            for match in cannibal_results.get(query_text, []):
+                                query_overlap = await ci_prompt_repo.get_page_query_overlap_signals(
+                                    _uuid.UUID(match.inventory_id),
+                                    candidate_queries,
+                                )
+                                citation_metrics = citation_lookup.get(match.inventory_id, {})
+                                citation_count = int(citation_metrics.get("total_cited") or 0)
+                                assignment_signal_overrides[match.inventory_id] = {
+                                    **query_overlap,
+                                    "citation_count": citation_count,
+                                    "citation_overlap_score": min(citation_count / 5, 1.0),
+                                }
+                            signal_overrides_by_query[query_text] = assignment_signal_overrides
                         _apply_cannibalization_results(
-                            assignments, query_texts, cannibal_results,
+                            assignments,
+                            query_texts,
+                            cannibal_results,
+                            signal_overrides_by_query=signal_overrides_by_query,
                         )
                 except Exception:
                     logger.warning(

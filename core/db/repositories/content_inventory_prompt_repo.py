@@ -7,6 +7,7 @@ Transaction ownership: only ``session.flush()``, never ``session.commit()``.
 """
 from __future__ import annotations
 
+import re
 import uuid as _uuid
 from datetime import datetime
 from typing import Any, Sequence
@@ -17,6 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.db.models.content_inventory_prompt import ContentInventoryPromptModel
 from core.db.models.daily_tracker import DailyRunResponseModel, TrackedPromptModel
 from core.db.repositories.base import SQLAlchemyRepository
+
+_QUERY_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_QUERY_STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
+    "into", "is", "it", "of", "on", "or", "that", "the", "this", "to", "with",
+}
 
 
 class ContentInventoryPromptRepository(
@@ -241,6 +248,145 @@ class ContentInventoryPromptRepository(
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_page_root_prompt_ids(
+        self,
+        inventory_id: _uuid.UUID,
+    ) -> list[_uuid.UUID]:
+        """Return distinct root prompt IDs for a page, collapsing fanout children.
+
+        A directly linked fanout child maps back to its parent prompt so page-level
+        analytics can roll up the full prompt family.
+        """
+        root_prompt_id = func.coalesce(
+            TrackedPromptModel.parent_prompt_id,
+            TrackedPromptModel.id,
+        ).label("root_prompt_id")
+
+        stmt = (
+            select(root_prompt_id)
+            .join(
+                TrackedPromptModel,
+                ContentInventoryPromptModel.tracked_prompt_id == TrackedPromptModel.id,
+            )
+            .where(
+                and_(
+                    ContentInventoryPromptModel.content_inventory_id == inventory_id,
+                    ContentInventoryPromptModel.approved.is_(True),
+                ),
+            )
+            .distinct()
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_page_prompt_scope(
+        self,
+        inventory_id: _uuid.UUID,
+    ) -> dict[str, Any]:
+        """Return page prompt scope including parent prompts and fanout children."""
+        root_prompt_ids = await self.get_page_root_prompt_ids(inventory_id)
+        if not root_prompt_ids:
+            return {
+                "root_prompt_ids": [],
+                "prompt_ids": [],
+                "fanout_prompt_ids": [],
+                "prompt_texts": [],
+            }
+
+        scope_root_id = func.coalesce(
+            TrackedPromptModel.parent_prompt_id,
+            TrackedPromptModel.id,
+        ).label("root_prompt_id")
+        stmt = (
+            select(
+                TrackedPromptModel.id.label("prompt_id"),
+                scope_root_id,
+                TrackedPromptModel.text.label("text"),
+                TrackedPromptModel.parent_prompt_id.label("parent_prompt_id"),
+                TrackedPromptModel.active.label("active"),
+            )
+            .where(scope_root_id.in_(root_prompt_ids))
+            .order_by(scope_root_id, TrackedPromptModel.parent_prompt_id, TrackedPromptModel.created_at)
+        )
+        result = await self._session.execute(stmt)
+        rows = result.all()
+
+        prompt_ids: list[_uuid.UUID] = []
+        fanout_prompt_ids: list[_uuid.UUID] = []
+        prompt_texts: list[str] = []
+        for row in rows:
+            prompt_ids.append(row.prompt_id)
+            if row.parent_prompt_id is not None:
+                fanout_prompt_ids.append(row.prompt_id)
+            text = (row.text or "").strip()
+            if text:
+                prompt_texts.append(text)
+
+        return {
+            "root_prompt_ids": root_prompt_ids,
+            "prompt_ids": prompt_ids,
+            "fanout_prompt_ids": fanout_prompt_ids,
+            "prompt_texts": prompt_texts,
+        }
+
+    async def get_page_query_overlap_signals(
+        self,
+        inventory_id: _uuid.UUID,
+        candidate_queries: Sequence[str],
+    ) -> dict[str, Any]:
+        """Compute deterministic query overlap between an assignment and page scope.
+
+        Uses parent prompts plus fanout children as the query coverage scope.
+        """
+        scope = await self.get_page_prompt_scope(inventory_id)
+        queries = [query.strip() for query in candidate_queries if query and query.strip()]
+        if not queries or not scope["prompt_texts"]:
+            return {
+                "query_overlap_score": 0.0,
+                "overlapping_query_count": 0,
+                "matched_queries": [],
+                "matched_prompt_texts": [],
+                "root_prompt_count": len(scope["root_prompt_ids"]),
+                "prompt_scope_count": len(scope["prompt_ids"]),
+            }
+
+        prompt_token_map = {
+            prompt_text: _tokenize_query_text(prompt_text)
+            for prompt_text in scope["prompt_texts"]
+        }
+        matched_queries: list[str] = []
+        matched_prompt_texts: list[str] = []
+        per_query_scores: list[float] = []
+
+        for query in queries:
+            query_tokens = _tokenize_query_text(query)
+            if not query_tokens:
+                per_query_scores.append(0.0)
+                continue
+
+            best_score = 0.0
+            best_prompt = ""
+            for prompt_text, prompt_tokens in prompt_token_map.items():
+                score = _query_overlap_ratio(query_tokens, prompt_tokens)
+                if score > best_score:
+                    best_score = score
+                    best_prompt = prompt_text
+            per_query_scores.append(best_score)
+            if best_score >= 0.5:
+                matched_queries.append(query)
+                if best_prompt and best_prompt not in matched_prompt_texts:
+                    matched_prompt_texts.append(best_prompt)
+
+        overlap_score = sum(per_query_scores) / len(per_query_scores) if per_query_scores else 0.0
+        return {
+            "query_overlap_score": round(overlap_score, 4),
+            "overlapping_query_count": len(matched_queries),
+            "matched_queries": matched_queries,
+            "matched_prompt_texts": matched_prompt_texts,
+            "root_prompt_count": len(scope["root_prompt_ids"]),
+            "prompt_scope_count": len(scope["prompt_ids"]),
+        }
+
     async def get_page_metrics(
         self,
         inventory_id: _uuid.UUID,
@@ -254,8 +400,9 @@ class ContentInventoryPromptRepository(
                   total_responses, by_buyer_stage: [...]}
         """
         # Prompt counts
-        prompt_ids = await self.get_page_prompt_ids(inventory_id)
-        if not prompt_ids:
+        scope = await self.get_page_prompt_scope(inventory_id)
+        root_prompt_ids = scope["root_prompt_ids"]
+        if not root_prompt_ids:
             return {
                 "total_prompts": 0,
                 "active_prompts": 0,
@@ -266,9 +413,13 @@ class ContentInventoryPromptRepository(
             }
 
         # Active count
+        prompt_root_id = func.coalesce(
+            TrackedPromptModel.parent_prompt_id,
+            TrackedPromptModel.id,
+        )
         active_stmt = select(func.count()).where(
             and_(
-                TrackedPromptModel.id.in_(prompt_ids),
+                prompt_root_id.in_(root_prompt_ids),
                 TrackedPromptModel.active.is_(True),
             ),
         )
@@ -276,6 +427,10 @@ class ContentInventoryPromptRepository(
         active_count = active_result.scalar() or 0
 
         # Response aggregates (mention_rate, citation_rate)
+        response_root_id = func.coalesce(
+            DailyRunResponseModel.parent_prompt_id,
+            DailyRunResponseModel.prompt_id,
+        )
         resp_stmt = select(
             func.count().label("total"),
             func.sum(
@@ -289,7 +444,7 @@ class ContentInventoryPromptRepository(
             ).label("cited"),
         ).where(
             and_(
-                DailyRunResponseModel.prompt_id.in_(prompt_ids),
+                response_root_id.in_(root_prompt_ids),
                 DailyRunResponseModel.created_at >= start,
                 DailyRunResponseModel.created_at <= end,
             ),
@@ -326,7 +481,7 @@ class ContentInventoryPromptRepository(
         ]
 
         return {
-            "total_prompts": len(prompt_ids),
+            "total_prompts": len(scope["prompt_ids"]),
             "active_prompts": active_count,
             "mention_rate": round(mention_rate, 4),
             "citation_rate": round(citation_rate, 4),
@@ -341,6 +496,8 @@ class ContentInventoryPromptRepository(
         company_id: _uuid.UUID,
         start: datetime,
         end: datetime,
+        *,
+        inventory_ids: Sequence[_uuid.UUID] | None = None,
     ) -> list[dict[str, Any]]:
         """Batch-aggregate citation counts + per-engine presence for all pages.
 
@@ -354,10 +511,44 @@ class ContentInventoryPromptRepository(
         from core.db.models.content_inventory import ContentInventoryModel
 
         has_citations = func.jsonb_array_length(DailyRunResponseModel.citations) > 0
+        response_root_id = func.coalesce(
+            DailyRunResponseModel.parent_prompt_id,
+            DailyRunResponseModel.prompt_id,
+        )
+        linked_root_id = func.coalesce(
+            TrackedPromptModel.parent_prompt_id,
+            TrackedPromptModel.id,
+        )
+
+        linked_roots = (
+            select(
+                ContentInventoryPromptModel.content_inventory_id.label("inventory_id"),
+                linked_root_id.label("root_prompt_id"),
+            )
+            .join(
+                ContentInventoryModel,
+                ContentInventoryPromptModel.content_inventory_id == ContentInventoryModel.id,
+            )
+            .join(
+                TrackedPromptModel,
+                ContentInventoryPromptModel.tracked_prompt_id == TrackedPromptModel.id,
+            )
+            .where(
+                and_(
+                    ContentInventoryModel.company_id == company_id,
+                    ContentInventoryPromptModel.approved.is_(True),
+                ),
+            )
+        )
+        if inventory_ids:
+            linked_roots = linked_roots.where(
+                ContentInventoryPromptModel.content_inventory_id.in_(list(inventory_ids)),
+            )
+        linked_roots = linked_roots.distinct().subquery("linked_roots")
 
         stmt = (
             select(
-                ContentInventoryPromptModel.content_inventory_id.label("inventory_id"),
+                linked_roots.c.inventory_id.label("inventory_id"),
                 func.sum(
                     case((has_citations, 1), else_=0)
                 ).label("total_cited"),
@@ -375,26 +566,16 @@ class ContentInventoryPromptRepository(
                 ).label("cited_perplexity"),
             )
             .join(
-                ContentInventoryModel,
-                ContentInventoryPromptModel.content_inventory_id == ContentInventoryModel.id,
-            )
-            .join(
-                TrackedPromptModel,
-                ContentInventoryPromptModel.tracked_prompt_id == TrackedPromptModel.id,
-            )
-            .join(
                 DailyRunResponseModel,
-                DailyRunResponseModel.prompt_id == TrackedPromptModel.id,
+                response_root_id == linked_roots.c.root_prompt_id,
             )
             .where(
                 and_(
-                    ContentInventoryModel.company_id == company_id,
-                    ContentInventoryPromptModel.approved.is_(True),
                     DailyRunResponseModel.created_at >= start,
                     DailyRunResponseModel.created_at <= end,
                 ),
             )
-            .group_by(ContentInventoryPromptModel.content_inventory_id)
+            .group_by(linked_roots.c.inventory_id)
         )
 
         result = await self._session.execute(stmt)
@@ -423,9 +604,13 @@ class ContentInventoryPromptRepository(
         """
         has_citations = func.jsonb_array_length(DailyRunResponseModel.citations) > 0
         day_col = func.date_trunc("day", DailyRunResponseModel.created_at)
+        response_root_id = func.coalesce(
+            DailyRunResponseModel.parent_prompt_id,
+            DailyRunResponseModel.prompt_id,
+        )
 
-        prompt_ids = await self.get_page_prompt_ids(inventory_id)
-        if not prompt_ids:
+        root_prompt_ids = await self.get_page_root_prompt_ids(inventory_id)
+        if not root_prompt_ids:
             return []
 
         stmt = (
@@ -438,7 +623,7 @@ class ContentInventoryPromptRepository(
             )
             .where(
                 and_(
-                    DailyRunResponseModel.prompt_id.in_(prompt_ids),
+                    response_root_id.in_(root_prompt_ids),
                     DailyRunResponseModel.created_at >= start,
                     DailyRunResponseModel.created_at <= end,
                 ),
@@ -532,3 +717,21 @@ class ContentInventoryPromptRepository(
             }
             for row in result.all()
         ]
+
+
+def _tokenize_query_text(text: str) -> set[str]:
+    tokens: set[str] = set()
+    for token in _QUERY_TOKEN_RE.findall((text or "").lower()):
+        if len(token) < 3 or token in _QUERY_STOP_WORDS:
+            continue
+        tokens.add(token)
+    return tokens
+
+
+def _query_overlap_ratio(
+    query_tokens: set[str],
+    prompt_tokens: set[str],
+) -> float:
+    if not query_tokens or not prompt_tokens:
+        return 0.0
+    return len(query_tokens & prompt_tokens) / len(query_tokens)

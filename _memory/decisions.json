@@ -2168,5 +2168,26 @@
     "outcome": "Implemented on 2026-04-11. Planner assignments now carry risk level, risk score, reasons, recommended action, and per-match signal breakdowns while keeping the legacy raw overlap score. Validation: `venv/bin/pytest tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py -q` (37 passed) and `frontend/./node_modules/.bin/tsc --noEmit`.",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-CANNIBALIZATION-PHASE2-FANOUT-OVERLAP",
+    "timestamp": "2026-04-11",
+    "task": "Planner cannibalization service roadmap phase 2 overlap evidence",
+    "decision": "Page-level cannibalization overlap evidence must be computed on root prompt scope, not only directly linked prompt IDs. `ContentInventoryPromptRepository` should collapse linked prompts to root prompt IDs via `COALESCE(parent_prompt_id, id)`, include fanout child prompts in page prompt scope, compute deterministic query-overlap signals from that scope, and roll citation metrics/timelines against `COALESCE(daily_run_responses.parent_prompt_id, daily_run_responses.prompt_id)`. Topic Discovery Pipeline B should then enrich cannibalization matches with recent citation counts and page-scope query-overlap signals before final risk classification.",
+    "rationale": "Phase 1 improved explainability but still relied almost entirely on semantic similarity. The platform already stores richer page-query evidence in Daily Tracker fanouts; ignoring that kept planner cannibalization architecturally inconsistent with how query coverage is actually tracked. Root prompt scope is the correct joining grain because page links are on parent prompts while responses for fanouts arrive under child prompt IDs with denormalized `parent_prompt_id`.",
+    "alternatives": [
+      "Link every fanout child back into `content_inventory_prompts` and continue using direct prompt IDs — rejected because it duplicates linkage data and still fails when only parent links exist",
+      "Keep similarity-only planner scoring until a dedicated cannibalization table exists — rejected because the query/citation evidence is already available and materially improves decision quality now",
+      "Use citation counts only and skip query overlap — rejected because a page can be strategically risky before it has enough cited responses, and prompt-scope query overlap is the earlier signal"
+    ],
+    "files_affected": [
+      "core/db/repositories/content_inventory_prompt_repo.py",
+      "core/topic_discovery/cannibalization_service.py",
+      "core/topic_discovery/pipeline.py",
+      "core/config/settings.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. Planner cannibalization scoring now incorporates fanout-aware query-overlap and citation-overlap evidence in addition to semantic similarity. Validation: `venv/bin/pytest tests/unit/test_content_inventory_prompt_repo.py tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py -q` (43 passed).",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]

@@ -38,9 +38,28 @@ _CASE_STUDY_FAMILY = {"case_study"}
 _LANDING_FAMILY = {"docs", "landing_page", "navigational"}
 
 
+def build_assignment_candidate_queries(assignment: TopicAssignment) -> list[str]:
+    """Return deterministic candidate queries for overlap scoring."""
+    metadata = assignment.metadata or {}
+    queries: list[str] = []
+
+    if assignment.topic_text:
+        queries.append(assignment.topic_text.strip())
+
+    raw_keywords = metadata.get("target_keywords")
+    for query in _extract_keyword_strings(raw_keywords):
+        cleaned = query.strip()
+        if cleaned and cleaned not in queries:
+            queries.append(cleaned)
+
+    return queries
+
+
 def assess_assignment_cannibalization(
     assignment: TopicAssignment,
     matches: list[CannibalizationMatch],
+    *,
+    match_signal_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return planner-ready cannibalization metadata for one assignment."""
     if not matches:
@@ -54,7 +73,14 @@ def assess_assignment_cannibalization(
         }
 
     scored_matches = sorted(
-        (_score_match(assignment, match) for match in matches),
+        (
+            _score_match(
+                assignment,
+                match,
+                signal_override=(match_signal_overrides or {}).get(match.inventory_id, {}),
+            )
+            for match in matches
+        ),
         key=lambda item: (item["risk_score"], item["similarity"]),
         reverse=True,
     )
@@ -96,7 +122,10 @@ def assess_assignment_cannibalization(
 def _score_match(
     assignment: TopicAssignment,
     match: CannibalizationMatch,
+    *,
+    signal_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    signal_override = signal_override or {}
     assignment_tokens = _assignment_tokens(assignment)
     page_tokens = _page_tokens(match)
     lexical_overlap = _jaccard(assignment_tokens, page_tokens)
@@ -112,17 +141,32 @@ def _score_match(
     assignment_format = _normalize_assignment_format(assignment.metadata.get("content_format"))
     page_format = _normalize_page_format(match)
     format_overlap = _format_overlap_score(assignment_format, page_format)
+    query_overlap = float(signal_override.get("query_overlap_score") or 0.0)
+    citation_overlap = float(signal_override.get("citation_overlap_score") or 0.0)
+    citation_count = int(signal_override.get("citation_count") or 0)
+    matched_queries = [
+        str(query)
+        for query in (signal_override.get("matched_queries") or [])
+        if query
+    ]
 
     risk_score = min(
         1.0,
-        (match.similarity * 0.78)
-        + (lexical_overlap * 0.15)
-        + (intent_overlap * 0.07)
-        + (format_overlap * 0.03),
+        (match.similarity * 0.58)
+        + (lexical_overlap * 0.12)
+        + (intent_overlap * 0.05)
+        + (format_overlap * 0.03)
+        + (query_overlap * 0.14)
+        + (citation_overlap * 0.08),
     )
     if (
         match.similarity >= settings.td_cannibalization_high_risk_threshold
-        and (lexical_overlap >= 0.1 or intent_overlap >= 0.75)
+        and (
+            lexical_overlap >= 0.1
+            or intent_overlap >= 0.75
+            or query_overlap >= 0.5
+            or citation_overlap >= 0.3
+        )
     ):
         risk_score = max(
             risk_score,
@@ -142,6 +186,8 @@ def _score_match(
         "lexical_overlap": lexical_overlap,
         "intent_overlap": intent_overlap,
         "format_overlap": format_overlap,
+        "query_overlap": query_overlap,
+        "citation_overlap": citation_overlap,
     }
 
     reasons: list[str] = [
@@ -156,6 +202,15 @@ def _score_match(
     if format_overlap >= 1.0 and assignment_format:
         reasons.append(
             f"Both assets map to a similar {assignment_format.replace('_', ' ')} format."
+        )
+    if query_overlap >= 0.5 and matched_queries:
+        reasons.append(
+            f"Tracked query overlap is strong ({len(matched_queries)} matched query"
+            f"{'ies' if len(matched_queries) != 1 else 'y'} in the page prompt scope)."
+        )
+    if citation_overlap >= 0.3 and citation_count > 0:
+        reasons.append(
+            f"The existing page is already cited in Daily Tracker responses ({citation_count} cited responses in scope)."
         )
     if risk_level == "medium" and not lexical_overlap >= 0.2:
         reasons.append("Semantic similarity is real, but the surface angle still appears distinguishable.")
