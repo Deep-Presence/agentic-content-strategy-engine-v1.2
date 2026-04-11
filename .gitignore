@@ -67,3 +67,7 @@ node_modules
 .next
 
 run_logs/
+
+./backend-log.txt
+./console-log.txt
+frontend/tsconfig.tsbuildinfo

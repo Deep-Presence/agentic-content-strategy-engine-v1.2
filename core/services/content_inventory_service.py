@@ -320,16 +320,61 @@ class ContentInventoryService:
         title: str,
         word_count: int,
         content_text: str,
+        *,
+        content_html: str = "",
+        published_at: datetime | None = None,
+        h1_text: str = "",
+        meta_description: str = "",
+        categories: list[str] | None = None,
+        tags: list[str] | None = None,
+        seo_title: str = "",
+        seo_description: str = "",
+        has_schema_markup: bool = False,
     ) -> Any:
         """Register content published by Content Engine. Embeds inline."""
+        structural_signals_dict: dict[str, Any] | None = None
+        has_faq_section = False
+        heading_count = 0
+        content_type_detected = ""
+        derived_word_count = word_count
+
+        if content_html:
+            try:
+                _paragraphs, signals = await asyncio.to_thread(
+                    _compute_structural_signals, content_html,
+                )
+                structural_signals_dict = signals.model_dump(mode="json")
+                has_faq_section = signals.has_faq_section
+                heading_count = signals.header_count
+                content_type_detected = signals.content_type or ""
+                derived_word_count = signals.word_count or word_count
+            except Exception:
+                _logger.debug(
+                    "structural_signals failed for published page %s",
+                    url,
+                    exc_info=True,
+                )
+
         model = await self._repo.upsert_page(
             company_id=company_id,
             effective_slug=effective_slug,
             url=url,
             title=title,
             ingestion_source=ContentIngestionSource.content_engine,
-            word_count=word_count,
+            h1_text=h1_text,
+            meta_description=meta_description,
             content_preview=content_text[:500] if content_text else "",
+            word_count=derived_word_count,
+            categories=categories,
+            tags=tags,
+            seo_title=seo_title,
+            seo_description=seo_description,
+            published_at=published_at,
+            has_faq_section=has_faq_section,
+            has_schema_markup=has_schema_markup,
+            heading_count=heading_count,
+            content_type_detected=content_type_detected,
+            structural_signals=structural_signals_dict,
         )
 
         # Generate embedding inline for Content Engine output

@@ -108,8 +108,8 @@ export const PLATFORM_LIST: { key: keyof PlatformCitations; name: string; domain
 export interface PlatformDetail {
   platform: string;
   domain: string;
-  cited: boolean;
-  citations: number;
+  citationPresent: boolean;
+  aiSessions: number;
 }
 
 // --- Traffic sources for drawer ---

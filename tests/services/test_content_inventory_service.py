@@ -14,6 +14,7 @@ from core.content_inventory.models import (
     ExistingCoverageResult,
 )
 from core.db.enums import ContentIngestionSource
+from core.models.gap_analysis import StructuralSignals
 from core.services.content_inventory_service import ContentInventoryService
 
 
@@ -332,6 +333,75 @@ class TestRegisterPublishedContent:
         repo.upsert_page.assert_awaited_once()
         # Embedding should have been generated inline
         repo.update_embeddings_batch.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("core.services.content_inventory_service._compute_structural_signals")
+    @patch("core.shared_tools.async_embedding_client.async_embed_texts", new_callable=AsyncMock)
+    async def test_persists_rich_structural_signals_and_publish_metadata(
+        self,
+        mock_embed,
+        mock_compute_structural_signals,
+    ):
+        mock_embed.return_value = [[0.1] * 1536]
+        mock_compute_structural_signals.return_value = (
+            ["Opening paragraph", "Supporting paragraph"],
+            StructuralSignals(
+                word_count=1875,
+                header_count=7,
+                h1_count=1,
+                h2_count=4,
+                h3_count=2,
+                has_faq_section=True,
+                has_definition_opening=True,
+                has_key_takeaways=True,
+                has_step_by_step=True,
+                has_research_refs=True,
+                has_expert_quotes=True,
+                content_type="guide",
+                per_paragraph_word_counts=[42, 58],
+            ),
+        )
+        repo = _make_repo()
+        mock_model = MagicMock()
+        mock_model.id = uuid.uuid4()
+        repo.upsert_page = AsyncMock(return_value=mock_model)
+        svc = _make_service(repo)
+        published_at = datetime(2026, 4, 11, tzinfo=timezone.utc)
+
+        await svc.register_published_content(
+            company_id=uuid.uuid4(),
+            effective_slug="test-co",
+            url="https://example.com/new-article",
+            title="New Article",
+            word_count=2000,
+            content_text="# New Article\n\nFull article content here...",
+            content_html="<article><h1>New Article</h1><p>Full article content here...</p></article>",
+            published_at=published_at,
+            h1_text="New Article",
+            meta_description="A detailed guide.",
+            categories=["Guides"],
+            tags=["ai", "seo"],
+            seo_title="New Article | Deep Presence",
+            seo_description="A detailed guide.",
+            has_schema_markup=True,
+        )
+
+        kwargs = repo.upsert_page.await_args.kwargs
+        assert kwargs["published_at"] == published_at
+        assert kwargs["h1_text"] == "New Article"
+        assert kwargs["meta_description"] == "A detailed guide."
+        assert kwargs["categories"] == ["Guides"]
+        assert kwargs["tags"] == ["ai", "seo"]
+        assert kwargs["seo_title"] == "New Article | Deep Presence"
+        assert kwargs["seo_description"] == "A detailed guide."
+        assert kwargs["has_schema_markup"] is True
+        assert kwargs["has_faq_section"] is True
+        assert kwargs["heading_count"] == 7
+        assert kwargs["content_type_detected"] == "guide"
+        assert kwargs["word_count"] == 1875
+        assert kwargs["structural_signals"]["h2_count"] == 4
+        assert kwargs["structural_signals"]["has_key_takeaways"] is True
+        assert kwargs["structural_signals"]["per_paragraph_word_counts"] == [42, 58]
 
 
 # ── generate_embeddings_for_company ───────────────────────────────

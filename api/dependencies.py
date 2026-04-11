@@ -867,15 +867,31 @@ async def get_cms_service(
             CMSPublishRecordRepository,
             CMSSyncedPostRepository,
         )
+        from core.db.repositories.company_repo import CompanyRepository
         from core.db.repositories.content_inventory_repo import (
             ContentInventoryRepository,
         )
+        from core.db.repositories.content_inventory_prompt_repo import (
+            ContentInventoryPromptRepository,
+        )
         from core.db.repositories.content_repo import ContentRepository
+        from core.db.repositories.daily_tracker_repo import (
+            TrackedPromptRepository,
+        )
+        from core.daily_tracker.content_to_prompt import ContentToPromptService
+        from core.daily_tracker.content_to_prompt_orchestrator import (
+            ContentToPromptOrchestrator,
+        )
         from core.services.cms_service import CMSService
         from core.services.content_inventory_service import ContentInventoryService
 
-        inventory_svc = ContentInventoryService(
-            inventory_repo=ContentInventoryRepository(session),
+        inventory_repo = ContentInventoryRepository(session)
+        inventory_svc = ContentInventoryService(inventory_repo=inventory_repo)
+        prompt_orchestrator = ContentToPromptOrchestrator(
+            generator=ContentToPromptService(),
+            prompt_repo=TrackedPromptRepository(session),
+            link_repo=ContentInventoryPromptRepository(session),
+            inventory_repo=inventory_repo,
         )
 
         svc = CMSService(
@@ -886,6 +902,8 @@ async def get_cms_service(
             fernet_key=settings.cms_fernet_key,
             content_repo=ContentRepository(session),
             inventory_service=inventory_svc,
+            company_repo=CompanyRepository(session),
+            content_to_prompt_orchestrator=prompt_orchestrator,
         )
         yield svc
         await session.commit()

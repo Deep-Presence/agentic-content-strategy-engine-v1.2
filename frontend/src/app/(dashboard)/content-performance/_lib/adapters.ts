@@ -9,6 +9,7 @@ import type {
   SourceBreakdownItem,
   AIPlatformBreakdownItem,
   CitationTimelinePoint,
+  ContentDetailAPI,
 } from './types';
 import type {
   ContentPiece,
@@ -132,7 +133,8 @@ const PLATFORM_ALIAS: Record<string, string> = {
   gemini: 'gemini',
 };
 
-export function toDrawerAIPlatforms(
+export function toDrawerPlatformCoverage(
+  platforms: ContentDetailAPI['platforms'],
   aiBreakdown: AIPlatformBreakdownItem[],
 ): PlatformDetail[] {
   const sessionsByKey = new Map<string, number>();
@@ -143,12 +145,12 @@ export function toDrawerAIPlatforms(
   }
 
   return PLATFORM_LIST.map((p) => {
-    const sessions = sessionsByKey.get(p.key) ?? 0;
+    const aiSessions = sessionsByKey.get(p.key) ?? 0;
     return {
       platform: p.name,
       domain: p.domain,
-      cited: sessions > 0,
-      citations: sessions, // sessions used as proxy; renamed to "citations" for display compat
+      citationPresent: platforms?.[p.key] ?? false,
+      aiSessions,
     };
   });
 }

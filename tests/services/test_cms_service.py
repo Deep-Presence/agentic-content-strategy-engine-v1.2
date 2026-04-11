@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -300,7 +301,76 @@ class TestPublish:
         assert post_create.tags == ["no-code", "enterprise"]
         assert post_create.author == "42"
         assert post_create.published_at is not None
-        inventory_service.register_published_content.assert_awaited_once()
+        inventory_kwargs = inventory_service.register_published_content.await_args.kwargs
+        assert inventory_kwargs["content_html"]
+        assert inventory_kwargs["published_at"] is not None
+        assert inventory_kwargs["meta_description"] == "A plain-English guide to no-code for enterprise teams."
+        assert inventory_kwargs["seo_title"] == "No-Code Web Development in the Enterprise | Deep Presence"
+        assert inventory_kwargs["seo_description"] == "A plain-English guide to no-code for enterprise teams."
+        assert inventory_kwargs["tags"] == ["no-code", "enterprise"]
+
+    @pytest.mark.asyncio
+    async def test_publish_brief_enriches_inventory_and_generates_prompts(self) -> None:
+        md_content = "# Test Article\n\nSome content here."
+        storage = _make_mock_storage(md_content)
+        conn_repo, pub_repo, _ = _make_mock_repos()
+        pub_repo.create.return_value = MagicMock()
+        content_repo = AsyncMock()
+        content_repo.get_by_slug_and_brief_id.return_value = MagicMock(id=uuid.uuid4())
+        inventory_service = AsyncMock()
+        inventory_model = MagicMock(id=uuid.uuid4())
+        inventory_service.register_published_content.return_value = inventory_model
+        company_repo = AsyncMock()
+        company_repo.get_by_slug.return_value = SimpleNamespace(name="Deep Presence")
+        prompt_orchestrator = AsyncMock()
+
+        service = CMSService(
+            connection_repo=conn_repo,
+            publish_repo=pub_repo,
+            synced_post_repo=AsyncMock(),
+            storage=storage,
+            fernet_key=_TEST_FERNET_KEY,
+            content_repo=content_repo,
+            inventory_service=inventory_service,
+            company_repo=company_repo,
+            content_to_prompt_orchestrator=prompt_orchestrator,
+        )
+        conn = _mock_connection()
+        conn.company_id = uuid.uuid4()
+        expected_published_at = datetime(2026, 4, 11, tzinfo=timezone.utc)
+
+        published = CMSPost(
+            cms_id="123",
+            title="Test Article",
+            slug="test-article",
+            url="https://blog.example.com/test-article/",
+            word_count=50,
+            published_at=expected_published_at,
+        )
+        with patch(
+            "core.services.cms_service.create_cms_adapter"
+        ) as mock_factory:
+            mock_adapter = AsyncMock()
+            mock_adapter.publish_post.return_value = published
+            mock_factory.return_value = mock_adapter
+
+            await service.publish_brief(
+                company_slug="test-co",
+                brief_id="brief-001",
+                connection=conn,
+                effective_slug="test-co",
+                target_status="publish",
+            )
+
+        assert content_repo.update.await_args.kwargs["published_at"] == expected_published_at
+        prompt_orchestrator.run_for_pages.assert_awaited_once_with(
+            company_id="test-co",
+            company_uuid=conn.company_id,
+            page_ids=[inventory_model.id],
+            brand_name="Deep Presence",
+            k=6,
+            auto_approve=True,
+        )
 
 
 # ── Refresh Tests ─────────────────────────────────────────────────────
