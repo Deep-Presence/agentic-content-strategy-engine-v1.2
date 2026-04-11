@@ -100,6 +100,30 @@ export interface ContentPerformanceTableResponseAPI {
   total_items: number;
 }
 
+export interface PathMatchSampleItemAPI {
+  path: string;
+  sessions: number;
+}
+
+export interface ContentPerformanceReadinessAPI {
+  state: string;
+  message: string;
+  connection_active: boolean;
+  has_selected_property: boolean;
+  last_sync_at: string | null;
+  last_sync_status: string;
+  last_sync_error: string;
+  inventory_pages: number;
+  ga4_rows_total: number;
+  ga4_rows_in_window: number;
+  matched_inventory_pages: number;
+  matched_inventory_pages_in_window: number;
+  unmatched_ga4_paths_total: number;
+  unmatched_ga4_paths_in_window: number;
+  inventory_paths_sample: string[];
+  unmatched_ga4_paths_sample: PathMatchSampleItemAPI[];
+}
+
 // ── Velocity Insights (from /content-performance/insights/velocity) ──
 
 export interface VelocityInsightAPI {

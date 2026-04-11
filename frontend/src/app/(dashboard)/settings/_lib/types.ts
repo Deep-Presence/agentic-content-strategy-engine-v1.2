@@ -77,6 +77,7 @@ export interface GA4ConnectionResponseAPI {
   connected_at: string | null;
   last_sync_at: string | null;
   last_sync_status: string;
+  last_sync_error: string;
 }
 
 export interface GA4PropertyItemAPI {
@@ -102,11 +103,23 @@ export interface GA4DisconnectResponseAPI {
   error: string | null;
 }
 
+export interface GA4SyncRequestAPI {
+  start_date?: string;
+  end_date?: string;
+}
+
 export interface GA4SyncResponseAPI {
   run_id: string;
   pipeline: string;
   status: string;
   company_slug: string;
+}
+
+export interface TaskStatusAPI {
+  task_id: string;
+  pipeline: string;
+  status: string;
+  error?: string;
 }
 
 // ── Frontend display types ──────────────────────────────

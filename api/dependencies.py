@@ -1033,7 +1033,10 @@ async def get_content_performance_service(
 
     session = sf()
     try:
-        from core.db.repositories.analytics_repo import GA4TrafficDataRepository
+        from core.db.repositories.analytics_repo import (
+            AnalyticsConnectionRepository,
+            GA4TrafficDataRepository,
+        )
         from core.db.repositories.content_inventory_prompt_repo import (
             ContentInventoryPromptRepository,
         )
@@ -1048,6 +1051,7 @@ async def get_content_performance_service(
         svc = ContentPerformanceService(
             traffic_repo=GA4TrafficDataRepository(session),
             inventory_repo=ContentInventoryRepository(session),
+            connection_repo=AnalyticsConnectionRepository(session),
             ci_prompt_repo=ContentInventoryPromptRepository(session),
             gap_repo=GapAnalysisRepository(session),
         )

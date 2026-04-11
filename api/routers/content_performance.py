@@ -30,6 +30,7 @@ from api.dependencies import (
 from api.schemas.content_performance import (
     ContentDetailResponse,
     ContentPerformanceRow,
+    ContentPerformanceReadinessResponse,
     ContentPerformanceTableResponse,
     SimilarContentItem,
     SimilarContentResponse,
@@ -58,6 +59,19 @@ def _get_company_slug(request: Request) -> str:
     return slug
 
 
+def _get_tenant_id(request: Request) -> str:
+    """Resolve tenant_id for cache + connection lookups.
+
+    Auth middleware currently guarantees ``company_slug`` but does not set a
+    separate ``tenant_id`` field on request state. Content Performance should
+    therefore key off the authenticated company slug, matching Analytics/CMS.
+    """
+    tenant_id: Optional[str] = getattr(request.state, "tenant_id", None)
+    if tenant_id:
+        return tenant_id
+    return _get_company_slug(request)
+
+
 def _compute_dates(days: int) -> tuple[date, date]:
     """Compute (start_date, end_date) from a lookback period in days.
 
@@ -70,6 +84,31 @@ def _compute_dates(days: int) -> tuple[date, date]:
 
 
 # ── 1. Content Performance Table ────────────────────────────────────
+
+
+@router.get("/readiness", response_model=ContentPerformanceReadinessResponse)
+async def get_content_performance_readiness(
+    http_request: Request,
+    days: int = Query(default=28, ge=7, le=90, description="Lookback days"),
+    _user: UserProfile = Depends(require_auth),
+    perf_service: Any = Depends(get_content_performance_service),
+    auth_service: AuthServiceProtocol = Depends(get_auth_service),
+) -> ContentPerformanceReadinessResponse:
+    """Return GA4 readiness metadata for the Content Performance page."""
+    company_slug = _get_company_slug(http_request)
+    company = await auth_service.get_company_by_slug(company_slug)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    start_date, end_date = _compute_dates(days)
+    tenant_id = _get_tenant_id(http_request)
+    readiness = await perf_service.get_readiness(
+        company.id,
+        tenant_id=tenant_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    return ContentPerformanceReadinessResponse(**readiness)
 
 
 @router.get("/", response_model=ContentPerformanceTableResponse)
@@ -96,7 +135,7 @@ async def get_content_performance_table(
         set_cached_perf_table,
     )
 
-    tenant_id = getattr(http_request.state, "tenant_id", "") or ""
+    tenant_id = _get_tenant_id(http_request)
     cached = await asyncio.to_thread(
         get_cached_perf_table, company_slug, tenant_id, days,
     )
@@ -148,7 +187,7 @@ async def get_velocity_insights(
         set_cached_velocity,
     )
 
-    tenant_id = getattr(http_request.state, "tenant_id", "") or ""
+    tenant_id = _get_tenant_id(http_request)
     cached = await asyncio.to_thread(
         get_cached_velocity, company_slug, tenant_id, days,
     )
@@ -259,7 +298,7 @@ async def get_content_detail(
         set_cached_perf_detail,
     )
 
-    tenant_id = getattr(http_request.state, "tenant_id", "") or ""
+    tenant_id = _get_tenant_id(http_request)
     cached = await asyncio.to_thread(
         get_cached_perf_detail, company_slug, tenant_id, inventory_id, days,
     )

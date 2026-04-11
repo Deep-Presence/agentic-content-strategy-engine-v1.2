@@ -12,7 +12,7 @@ import hmac
 import json
 import logging
 import uuid as _uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from core.analytics.exceptions import GA4AuthError, GA4Error
@@ -303,10 +303,11 @@ class GA4AnalyticsService:
             raise GA4AuthError("No active analytics connection")
         if not conn.ga4_property_id:
             raise GA4Error("No GA4 property selected")
+        conn_id = conn.id
 
         # Mark in-progress
         await self._conn_repo.update_sync_status(
-            conn.id, status=AnalyticsSyncStatus.in_progress
+            conn_id, status=AnalyticsSyncStatus.in_progress
         )
 
         try:
@@ -362,7 +363,7 @@ class GA4AnalyticsService:
                     {
                         "connection_id": conn.id,
                         "company_id": conn.company_id,
-                        "date": row.date,
+                        "date": self._coerce_report_date(row.date),
                         "landing_page_url": row.landing_page_url,
                         "source": row.source,
                         "medium": row.medium,
@@ -389,7 +390,7 @@ class GA4AnalyticsService:
                     {
                         "connection_id": conn.id,
                         "company_id": conn.company_id,
-                        "date": row.date,
+                        "date": self._coerce_report_date(row.date),
                         "event_name": row.event_name,
                         "landing_page_url": row.landing_page_url,
                         "source": row.source,
@@ -416,7 +417,7 @@ class GA4AnalyticsService:
             # Mark success
             now = datetime.now(timezone.utc)
             await self._conn_repo.update_sync_status(
-                conn.id,
+                conn_id,
                 status=AnalyticsSyncStatus.success,
                 last_sync_at=now,
             )
@@ -440,16 +441,18 @@ class GA4AnalyticsService:
             return result
 
         except GA4AuthError:
+            await self._rollback_session()
             await self._conn_repo.update_sync_status(
-                conn.id,
+                conn_id,
                 status=AnalyticsSyncStatus.auth_revoked,
                 error="Token revoked or expired",
             )
-            await self._conn_repo.deactivate(conn.id)
+            await self._conn_repo.deactivate(conn_id)
             raise
         except Exception as exc:
+            await self._rollback_session()
             await self._conn_repo.update_sync_status(
-                conn.id,
+                conn_id,
                 status=AnalyticsSyncStatus.failed,
                 error=str(exc)[:1000],
             )
@@ -509,6 +512,21 @@ class GA4AnalyticsService:
         return Fernet(self._fernet_key.encode()).encrypt(
             plaintext.encode()
         ).decode()
+
+    async def _rollback_session(self) -> None:
+        """Best-effort rollback when a repo operation aborts the transaction."""
+        session = getattr(self._conn_repo, "_session", None)
+        rollback = getattr(session, "rollback", None)
+        if rollback is None:
+            return
+        await rollback()
+
+    @staticmethod
+    def _coerce_report_date(value: date | str) -> date:
+        """Convert GA4 report date values into concrete ``date`` objects."""
+        if isinstance(value, date):
+            return value
+        return date.fromisoformat(value)
 
     def _decrypt_token(self, ciphertext: str) -> str:
         """Decrypt a Fernet-encrypted token."""

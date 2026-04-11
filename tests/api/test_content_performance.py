@@ -22,6 +22,15 @@ def mock_perf_service(monkeypatch):
     svc.get_content_table = AsyncMock(return_value=[])
     svc.get_content_detail = AsyncMock(return_value=None)
     svc.get_velocity_insights = AsyncMock(return_value=[])
+    svc.get_readiness = AsyncMock(return_value={
+        "state": "not_connected",
+        "message": "Connect GA4",
+        "connection_active": False,
+        "has_selected_property": False,
+        "inventory_pages": 0,
+        "inventory_paths_sample": [],
+        "unmatched_ga4_paths_sample": [],
+    })
     return svc
 
 
@@ -106,6 +115,52 @@ class TestGetContentPerformanceTable:
     def test_unauthenticated(self, public_client: TestClient):
         resp = public_client.get("/api/v1/content-performance/")
         assert resp.status_code == 401
+
+
+class TestGetContentPerformanceReadiness:
+    """GET /api/v1/content-performance/readiness"""
+
+    def test_returns_readiness(self, client: TestClient, mock_perf_service):
+        mock_perf_service.get_readiness.return_value = {
+            "state": "ready",
+            "message": "Ready",
+            "connection_active": True,
+            "has_selected_property": True,
+            "inventory_pages": 2,
+            "ga4_rows_total": 42,
+            "ga4_rows_in_window": 9,
+            "matched_inventory_pages": 2,
+            "matched_inventory_pages_in_window": 1,
+            "unmatched_ga4_paths_total": 1,
+            "unmatched_ga4_paths_in_window": 1,
+            "inventory_paths_sample": ["/blog/post"],
+            "unmatched_ga4_paths_sample": [
+                {"path": "/", "sessions": 8},
+            ],
+            "last_sync_status": "success",
+            "last_sync_error": "",
+        }
+        resp = client.get("/api/v1/content-performance/readiness")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["state"] == "ready"
+        assert data["ga4_rows_total"] == 42
+        assert data["matched_inventory_pages"] == 2
+        assert data["unmatched_ga4_paths_sample"][0]["path"] == "/"
+
+    def test_readiness_requires_auth(self, public_client: TestClient):
+        resp = public_client.get("/api/v1/content-performance/readiness")
+        assert resp.status_code == 401
+
+    def test_readiness_uses_company_slug_for_tenant_lookup(
+        self,
+        client: TestClient,
+        mock_perf_service,
+    ):
+        resp = client.get("/api/v1/content-performance/readiness")
+        assert resp.status_code == 200
+        mock_perf_service.get_readiness.assert_called_once()
+        assert mock_perf_service.get_readiness.call_args.kwargs["tenant_id"] == "test-co"
 
 
 # ── 2. Velocity Insights ─────────────────────────────────────────────

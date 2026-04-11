@@ -17,7 +17,9 @@ import type {
   GA4PropertiesResponseAPI,
   GA4SelectPropertyRequestAPI,
   GA4DisconnectResponseAPI,
+  GA4SyncRequestAPI,
   GA4SyncResponseAPI,
+  TaskStatusAPI,
 } from './types';
 
 // ── Team ────────────────────────────────────────────────
@@ -121,6 +123,12 @@ export function selectGA4Property(
   );
 }
 
-export function triggerGA4Sync(): Promise<GA4SyncResponseAPI> {
-  return api.post<GA4SyncResponseAPI>('/api/v1/analytics/google/sync');
+export function triggerGA4Sync(
+  body?: GA4SyncRequestAPI,
+): Promise<GA4SyncResponseAPI> {
+  return api.post<GA4SyncResponseAPI>('/api/v1/analytics/google/sync', body);
+}
+
+export function fetchTaskStatus(taskId: string): Promise<TaskStatusAPI> {
+  return api.get<TaskStatusAPI>(`/api/v1/tasks/${taskId}`);
 }

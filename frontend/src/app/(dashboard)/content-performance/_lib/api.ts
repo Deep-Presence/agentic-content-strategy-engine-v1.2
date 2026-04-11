@@ -6,6 +6,7 @@
 import { api } from '@/lib/api-client';
 import type {
   ContentDetailAPI,
+  ContentPerformanceReadinessAPI,
   ContentPerformanceTableResponseAPI,
   SignalAveragesAPI,
   VelocityInsightsResponseAPI,
@@ -34,6 +35,17 @@ export function fetchContentTable(
 ): Promise<ContentPerformanceTableResponseAPI> {
   return api.get<ContentPerformanceTableResponseAPI>(
     '/api/v1/content-performance',
+    params,
+    signal,
+  );
+}
+
+export function fetchContentPerformanceReadiness(
+  params?: Record<string, string | number>,
+  signal?: AbortSignal,
+): Promise<ContentPerformanceReadinessAPI> {
+  return api.get<ContentPerformanceReadinessAPI>(
+    '/api/v1/content-performance/readiness',
     params,
     signal,
   );

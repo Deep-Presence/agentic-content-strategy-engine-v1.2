@@ -11,9 +11,14 @@ import { FullPageView } from '../content-studio/_components/FullPageView';
 import { formatTraffic } from './_components/data';
 import {
   fetchSignalAverages, fetchCMSConnection, triggerCMSSync,
+  fetchContentPerformanceReadiness,
   generatePromptsForNewPages, fetchTaskStatus, fetchUnpublishedBriefs, publishContentBrief,
 } from './_lib/api';
-import type { SignalAverageRow, SignalCorrelationRow } from './_lib/types';
+import type {
+  ContentPerformanceReadinessAPI,
+  SignalAverageRow,
+  SignalCorrelationRow,
+} from './_lib/types';
 import { useContentPerformanceData } from './_hooks/useContentPerformanceData';
 import { VelocityChart } from './_components/VelocityChart';
 import { StructuralAlignment } from './_components/StructuralAlignment';
@@ -30,6 +35,8 @@ const LIFECYCLE_OPTIONS = [
   { value: 'declining', label: 'Declining' },
   { value: 'stale', label: 'Stale' },
 ];
+
+const REPORTING_DAYS = 28;
 
 type Tab = 'pages' | 'unpublished' | 'insights';
 
@@ -64,6 +71,31 @@ function formatPeriodDate(iso: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function getReadinessTitle(state: string): string {
+  switch (state) {
+    case 'not_connected':
+      return 'Google Analytics not connected';
+    case 'property_required':
+      return 'GA4 property selection required';
+    case 'never_synced':
+      return 'Initial GA4 sync still pending';
+    case 'sync_failed':
+      return 'Latest GA4 sync failed';
+    case 'no_matching_pages':
+      return 'GA4 data is not matching your content inventory yet';
+    case 'no_recent_data':
+      return 'No matched GA4 page traffic in this reporting window';
+    case 'no_data':
+      return 'GA4 is connected but no traffic rows are available yet';
+    default:
+      return 'Analytics setup incomplete';
+  }
+}
+
+function formatPathSample(path: string): string {
+  return path || '/';
+}
+
 export default function ContentPerformancePage() {
   const { companySlug, isInitialized } = useAuth();
   const [cluster, setCluster] = useState('all');
@@ -81,7 +113,9 @@ export default function ContentPerformancePage() {
   const {
     pieces, velocityData, periodStart, periodEnd, totalItems,
     isLoading, error, refetch,
-  } = useContentPerformanceData({ days: 28 });
+  } = useContentPerformanceData({ days: REPORTING_DAYS });
+  const [analyticsReadiness, setAnalyticsReadiness] = useState<ContentPerformanceReadinessAPI | null>(null);
+  const readinessAbortRef = useRef<AbortController | null>(null);
 
   // CMS sync state
   const [cmsConnected, setCmsConnected] = useState<boolean | null>(null); // null = loading
@@ -98,6 +132,38 @@ export default function ContentPerformancePage() {
       .catch(() => setCmsConnected(false));
     return () => controller.abort();
   }, [companySlug]);
+
+  const loadAnalyticsReadiness = useCallback(async () => {
+    if (!companySlug) return;
+    readinessAbortRef.current?.abort();
+    const controller = new AbortController();
+    readinessAbortRef.current = controller;
+
+    try {
+      const readiness = await fetchContentPerformanceReadiness(
+        { days: REPORTING_DAYS },
+        controller.signal,
+      );
+      if (!controller.signal.aborted) {
+        setAnalyticsReadiness(readiness);
+      }
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') {
+        setAnalyticsReadiness(null);
+      }
+    }
+  }, [companySlug]);
+
+  useEffect(() => {
+    if (!isInitialized || !companySlug) return;
+    loadAnalyticsReadiness();
+    return () => readinessAbortRef.current?.abort();
+  }, [isInitialized, companySlug, loadAnalyticsReadiness]);
+
+  const refetchAll = useCallback(() => {
+    refetch();
+    loadAnalyticsReadiness();
+  }, [refetch, loadAnalyticsReadiness]);
 
   const loadUnpublishedCards = useCallback(async () => {
     if (!companySlug) return;
@@ -167,7 +233,7 @@ export default function ContentPerformancePage() {
       setSyncState('done');
 
       // Refresh the content table data
-      refetch();
+      refetchAll();
 
       // Reset after 5 seconds
       setTimeout(() => { setSyncState('idle'); setSyncMessage(''); }, 5000);
@@ -176,7 +242,7 @@ export default function ContentPerformancePage() {
       setSyncMessage(err instanceof Error ? err.message : 'Sync failed');
       setTimeout(() => { setSyncState('idle'); setSyncMessage(''); }, 5000);
     }
-  }, [syncState, cmsConnected, refetch]);
+  }, [syncState, cmsConnected, refetchAll]);
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -241,11 +307,14 @@ export default function ContentPerformancePage() {
       await publishContentBrief(selectedUnpublishedCard.id, selectedUnpublishedCard.effectiveSlug);
       setSelectedUnpublishedCard(null);
       await loadUnpublishedCards();
-      refetch();
+      refetchAll();
     } finally {
       setPublishPendingId(null);
     }
-  }, [selectedUnpublishedCard, loadUnpublishedCards, refetch]);
+  }, [selectedUnpublishedCard, loadUnpublishedCards, refetchAll]);
+
+  const hasSyncedGA4Rows = (analyticsReadiness?.ga4_rows_total ?? 0) > 0;
+  const showReadinessBanner = analyticsReadiness !== null && analyticsReadiness.state !== 'ready';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -333,12 +402,125 @@ export default function ContentPerformancePage() {
       {/* KPI Strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
         <MetricCard label="Published" value={filteredPieces.length} delta={`${totalItems} total`} deltaType="neutral" />
-        <MetricCard label="AI Referrals" value={formatTraffic(totalAIReferrals)} delta="from GA4 data" deltaType="positive" />
+        <MetricCard
+          label="AI Referrals"
+          value={formatTraffic(totalAIReferrals)}
+          delta={hasSyncedGA4Rows ? 'from GA4 data' : 'Awaiting GA4 sync'}
+          deltaType={hasSyncedGA4Rows ? 'positive' : 'neutral'}
+        />
         <MetricCard label="Avg CPS" value="—" delta="Needs CPS scoring" deltaType="neutral" />
         <MetricCard label="Utilization" value="—" delta="Needs citation data" deltaType="neutral" />
         <MetricCard label="Stale Alerts" value={staleCount} delta="velocity below threshold" deltaType={staleCount > 0 ? 'negative' : 'neutral'} />
-        <MetricCard label="AI Referral Est." value={totalAIReferrals > 0 ? `${formatTraffic(totalAIReferrals)}/mo` : '—'} delta={totalAIReferrals > 0 ? 'from GA4 AI referrals' : 'No GA4 data'} deltaType={totalAIReferrals > 0 ? 'positive' : 'neutral'} />
+        <MetricCard
+          label="AI Referral Est."
+          value={totalAIReferrals > 0 ? `${formatTraffic(totalAIReferrals)}/mo` : '—'}
+          delta={
+            totalAIReferrals > 0
+              ? 'from GA4 AI referrals'
+              : hasSyncedGA4Rows
+                ? 'No AI referrals detected'
+                : 'No GA4 data'
+          }
+          deltaType={totalAIReferrals > 0 ? 'positive' : 'neutral'}
+        />
       </div>
+
+      {showReadinessBanner && (
+        <div style={{
+          border: '1px solid rgba(245,166,35,0.35)',
+          background: 'rgba(245,166,35,0.06)',
+          borderRadius: 4,
+          padding: '12px 14px',
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: 16,
+        }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+              {getReadinessTitle(analyticsReadiness.state)}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 3, maxWidth: 760 }}>
+              {analyticsReadiness.message}
+            </div>
+            <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                Inventory pages: {analyticsReadiness.inventory_pages}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                GA4 rows: {analyticsReadiness.ga4_rows_total}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                Matched pages: {analyticsReadiness.matched_inventory_pages}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                Unmatched GA4 paths: {analyticsReadiness.unmatched_ga4_paths_in_window || analyticsReadiness.unmatched_ga4_paths_total}
+              </span>
+              {analyticsReadiness.last_sync_status && (
+                <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                  Last sync status: {analyticsReadiness.last_sync_status}
+                </span>
+              )}
+            </div>
+            {(analyticsReadiness.inventory_paths_sample.length > 0 || analyticsReadiness.unmatched_ga4_paths_sample.length > 0) && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, marginTop: 10 }}>
+                {analyticsReadiness.inventory_paths_sample.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+                      Inventory path sample
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {analyticsReadiness.inventory_paths_sample.map((path) => (
+                        <span key={path} style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+                          {formatPathSample(path)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {analyticsReadiness.unmatched_ga4_paths_sample.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+                      Top unmatched GA4 paths in this window
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {analyticsReadiness.unmatched_ga4_paths_sample.map((item) => (
+                        <span key={item.path} style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+                          {formatPathSample(item.path)} · {item.sessions} sessions
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {analyticsReadiness.last_sync_error && (
+              <div style={{ fontSize: 11, color: '#E5484D', marginTop: 6 }}>
+                {analyticsReadiness.last_sync_error}
+              </div>
+            )}
+          </div>
+          <a
+            href="/settings?tab=integrations"
+            style={{
+              flexShrink: 0,
+              display: 'inline-flex',
+              alignItems: 'center',
+              height: 30,
+              padding: '0 12px',
+              borderRadius: 4,
+              border: '1px solid var(--border)',
+              background: 'var(--surface)',
+              color: 'var(--text-primary)',
+              fontSize: 12,
+              fontWeight: 500,
+              textDecoration: 'none',
+            }}
+          >
+            Open Integrations
+          </a>
+        </div>
+      )}
 
       {/* Tab bar: Pages / Insights */}
       <div style={{
@@ -403,7 +585,7 @@ export default function ContentPerformancePage() {
         }}>
           <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{error}</span>
           <button
-            onClick={refetch}
+            onClick={refetchAll}
             style={{
               display: 'flex', alignItems: 'center', gap: 4,
               padding: '4px 10px', fontSize: 12, fontWeight: 500,

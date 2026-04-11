@@ -162,6 +162,7 @@ class TestGetConnection:
                 ga4_property_id="123456",
                 ga4_property_name="Test Property",
                 is_active=True,
+                last_sync_error="quota exceeded",
             )
         )
         resp = client.get("/api/v1/analytics/google/connection")
@@ -169,6 +170,7 @@ class TestGetConnection:
         data = resp.json()
         assert data["ga4_property_id"] == "123456"
         assert data["is_active"] is True
+        assert data["last_sync_error"] == "quota exceeded"
 
     def test_requires_auth(self, public_client: TestClient) -> None:
         resp = public_client.get("/api/v1/analytics/google/connection")

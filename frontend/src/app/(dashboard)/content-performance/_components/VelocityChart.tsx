@@ -31,7 +31,7 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
     >
       <p style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>{d.title}</p>
       <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
-        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 500 }}>{d.velocity}</span> citations/week
+        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 500 }}>{d.velocity}</span> sessions/week
       </p>
       <p style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{d.lifecycle}</p>
       <p style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2 }}>{d.cluster}</p>
@@ -48,10 +48,10 @@ export function VelocityChart({ data }: VelocityChartProps) {
   return (
     <div style={{ border: '1px solid var(--border)', background: 'var(--surface)', borderRadius: 4, padding: 12 }}>
       <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>
-        Citation Velocity by Content
+        Traffic Velocity by Content
       </h3>
       <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-        Citations per week by content piece — bars colored by lifecycle stage
+        Sessions per week by content piece — bars colored by lifecycle stage
       </p>
       <div style={{ height: 280, marginTop: 12 }}>
         <ResponsiveContainer width="100%" height="100%">

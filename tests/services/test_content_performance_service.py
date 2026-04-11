@@ -230,6 +230,8 @@ def traffic_repo():
     repo.get_daily_timeseries = AsyncMock(return_value=[])
     repo.get_source_breakdown = AsyncMock(return_value=[])
     repo.get_ai_platform_breakdown = AsyncMock(return_value=[])
+    repo.count_rows = AsyncMock(return_value=0)
+    repo.list_distinct_landing_page_urls = AsyncMock(return_value=[])
     return repo
 
 
@@ -242,10 +244,18 @@ def inventory_repo():
 
 
 @pytest.fixture
-def service(traffic_repo, inventory_repo):
+def connection_repo():
+    repo = AsyncMock()
+    repo.get_active_connection = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
+def service(traffic_repo, inventory_repo, connection_repo):
     return ContentPerformanceService(
         traffic_repo=traffic_repo,
         inventory_repo=inventory_repo,
+        connection_repo=connection_repo,
     )
 
 
@@ -360,6 +370,179 @@ class TestGetContentTable:
         )
         assert result[0]["url"] == "https://example.com/high"
         assert result[1]["url"] == "https://example.com/low"
+
+
+class TestGetReadiness:
+    """Tests for get_readiness()."""
+
+    @pytest.mark.asyncio
+    async def test_not_connected(self, service, inventory_repo):
+        cid = uuid.uuid4()
+        inventory_repo.get_by_company.return_value = (
+            [_make_inventory_item(company_id=cid)], 1,
+        )
+
+        result = await service.get_readiness(
+            cid,
+            tenant_id="webflow",
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 28),
+        )
+
+        assert result["state"] == "not_connected"
+        assert result["connection_active"] is False
+        assert result["inventory_pages"] == 1
+
+    @pytest.mark.asyncio
+    async def test_property_required(
+        self, service, inventory_repo, connection_repo,
+    ):
+        cid = uuid.uuid4()
+        inventory_repo.get_by_company.return_value = ([], 0)
+        connection_repo.get_active_connection.return_value = SimpleNamespace(
+            ga4_property_id="",
+            last_sync_at=None,
+            last_sync_status=None,
+            last_sync_error="",
+        )
+
+        result = await service.get_readiness(
+            cid,
+            tenant_id="webflow",
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 28),
+        )
+
+        assert result["state"] == "property_required"
+        assert result["has_selected_property"] is False
+
+    @pytest.mark.asyncio
+    async def test_never_synced(
+        self, service, inventory_repo, connection_repo,
+    ):
+        cid = uuid.uuid4()
+        inventory_repo.get_by_company.return_value = ([], 0)
+        connection_repo.get_active_connection.return_value = SimpleNamespace(
+            ga4_property_id="123",
+            last_sync_at=None,
+            last_sync_status=None,
+            last_sync_error="",
+        )
+
+        result = await service.get_readiness(
+            cid,
+            tenant_id="webflow",
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 28),
+        )
+
+        assert result["state"] == "never_synced"
+        assert result["ga4_rows_total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_no_matching_pages(
+        self, service, inventory_repo, connection_repo, traffic_repo,
+    ):
+        cid = uuid.uuid4()
+        inventory_repo.get_by_company.return_value = (
+            [_make_inventory_item(url="https://example.com/blog/post", company_id=cid)], 1,
+        )
+        connection_repo.get_active_connection.return_value = SimpleNamespace(
+            ga4_property_id="123",
+            last_sync_at=datetime.now(timezone.utc),
+            last_sync_status=SimpleNamespace(value="success"),
+            last_sync_error="",
+        )
+        traffic_repo.count_rows.side_effect = [10, 4]
+        traffic_repo.list_distinct_landing_page_urls.side_effect = [
+            ["/unmatched-page"],
+            ["/unmatched-page"],
+        ]
+
+        result = await service.get_readiness(
+            cid,
+            tenant_id="webflow",
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 28),
+        )
+
+        assert result["state"] == "no_matching_pages"
+        assert "page paths" in result["message"]
+        assert result["matched_inventory_pages"] == 0
+        assert result["unmatched_ga4_paths_total"] == 1
+        assert result["inventory_paths_sample"] == ["/blog/post"]
+        assert result["unmatched_ga4_paths_sample"] == [
+            {"path": "/unmatched-page", "sessions": 0},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_ready(
+        self, service, inventory_repo, connection_repo, traffic_repo,
+    ):
+        cid = uuid.uuid4()
+        inventory_repo.get_by_company.return_value = (
+            [_make_inventory_item(url="https://example.com/blog/post", company_id=cid)], 1,
+        )
+        connection_repo.get_active_connection.return_value = SimpleNamespace(
+            ga4_property_id="123",
+            last_sync_at=datetime.now(timezone.utc),
+            last_sync_status=SimpleNamespace(value="success"),
+            last_sync_error="",
+        )
+        traffic_repo.count_rows.side_effect = [10, 4]
+        traffic_repo.list_distinct_landing_page_urls.side_effect = [
+            ["/blog/post"],
+            ["/blog/post"],
+        ]
+
+        result = await service.get_readiness(
+            cid,
+            tenant_id="webflow",
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 28),
+        )
+
+        assert result["state"] == "ready"
+        assert result["matched_inventory_pages"] == 1
+        assert result["unmatched_ga4_paths_in_window"] == 0
+
+    @pytest.mark.asyncio
+    async def test_no_recent_data_returns_unmatched_window_sample(
+        self, service, inventory_repo, connection_repo, traffic_repo,
+    ):
+        cid = uuid.uuid4()
+        inventory_repo.get_by_company.return_value = (
+            [_make_inventory_item(url="https://example.com/blog/post", company_id=cid)], 1,
+        )
+        connection_repo.get_active_connection.return_value = SimpleNamespace(
+            ga4_property_id="123",
+            last_sync_at=datetime.now(timezone.utc),
+            last_sync_status=SimpleNamespace(value="success"),
+            last_sync_error="",
+        )
+        traffic_repo.count_rows.side_effect = [10, 2]
+        traffic_repo.list_distinct_landing_page_urls.side_effect = [
+            ["/blog/post", "/"],
+            ["/"],
+        ]
+        traffic_repo.get_per_page_aggregates.return_value = [
+            _make_traffic_row("/", total_sessions=8),
+        ]
+
+        result = await service.get_readiness(
+            cid,
+            tenant_id="webflow",
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 28),
+        )
+
+        assert result["state"] == "no_recent_data"
+        assert result["matched_inventory_pages"] == 1
+        assert result["matched_inventory_pages_in_window"] == 0
+        assert result["unmatched_ga4_paths_in_window"] == 1
+        assert result["unmatched_ga4_paths_sample"] == [
+            {"path": "/", "sessions": 8},
+        ]
 
 
 class TestGetContentDetail:

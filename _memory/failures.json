@@ -1,5 +1,31 @@
 [
   {
+    "id": "F30",
+    "timestamp": "2026-04-11",
+    "what_broke": "After GA4 property loading was fixed, selecting a property still ended with `Property saved, but the initial sync did not complete`. The backend sync task failed before any analytics data became usable on Content Performance.",
+    "root_cause": "Three issues stacked in the GA4 write path. First, `GA4TrafficDataRepository.bulk_upsert()` and `GA4ConversionEventRepository.bulk_upsert()` used `ON CONFLICT ON CONSTRAINT ...`, but migration `0027_analytics_integration` created named unique indexes, not constraints, so Postgres raised `UndefinedObjectError` for `uq_ga4_traffic_*` / `uq_ga4_conv_*`. After fixing that, the next live repro showed that GA4 report rows still carried `date` as strings like `2026-04-06`, and asyncpg rejected those for `DATE` bind params. Finally, after a failed write, `sync_data()` rolled the session back and then referenced `conn.id`; on a real ORM instance that can be expired by rollback, which risks follow-on loader errors when handling the failure.",
+    "fix_applied": "Fixed on 2026-04-11. Changed both analytics upsert repos to use `index_elements` targeting the existing unique indexes, coerced report dates to concrete `date` objects before insert, and captured `conn_id` before rollback for all sync status transitions. Added regression tests for the upsert SQL contract, date coercion, and rollback-safe failure handling. Live repro after the fix succeeded for `webflow` with 2 traffic rows and 7 conversion rows stored, and `last_sync_status` moved to `success`.",
+    "lesson": "Do not rely on index names as `ON CONFLICT ON CONSTRAINT` targets unless the database object is actually a named constraint. For bulk inserts through asyncpg, normalize typed fields like dates before binding instead of assuming the driver will coerce strings. In failure handlers around ORM-backed async sessions, capture identifiers before rollback because rollback may expire loaded state and make even simple attribute access unsafe.",
+    "files_affected": [
+      "core/db/repositories/analytics_repo.py",
+      "core/analytics/service.py",
+      "tests/analytics/test_repository_sql.py",
+      "tests/analytics/test_service.py"
+    ]
+  },
+  {
+    "id": "F29",
+    "timestamp": "2026-04-11",
+    "what_broke": "GA4 Settings showed a connected Google Analytics card, but clicking `Load Properties` consistently returned `502 Bad Gateway`, so no GA4 property dropdown ever appeared and the first-sync flow was blocked before property selection.",
+    "root_cause": "The GA4 Admin adapter had drifted from the installed Google SDK. `core/analytics/adapters/ga4.py` parsed `PropertySummary.property_`, but the current `google.analytics.admin_v1alpha` client exposes the field as `property`. Live calls to `list_account_summaries()` therefore raised `AttributeError: Unknown field for PropertySummary: property_`, which our adapter translated into a generic `GA4APIError` and the router surfaced as a 502. The existing adapter unit test used the same wrong mock field (`property_`), so the test suite falsely validated the broken contract and hid the regression.",
+    "fix_applied": "Fixed on 2026-04-11. Updated the adapter to read `prop.property`, corrected the adapter unit test to mirror the real SDK response shape, and re-ran both the mocked adapter tests and the live token-refresh + property-list flow against the local `webflow` connection. The live repro successfully returned GA4 property `531354380` after the fix.",
+    "lesson": "Third-party SDK response shapes are part of the production contract. For wrapper adapters like GA4 Admin, mocks must match the concrete SDK object fields exactly or they become self-fulfilling false positives. When an integration endpoint returns a generic 502, reproduce the real adapter flow against stored credentials before assuming OAuth or frontend wiring is missing.",
+    "files_affected": [
+      "core/analytics/adapters/ga4.py",
+      "tests/analytics/test_adapter.py"
+    ]
+  },
+  {
     "id": "F28",
     "timestamp": "2026-04-10",
     "what_broke": "During TD-entry manual QA, cards in `Agent work` sometimes stopped showing the visible stage text even though the backend and console were still emitting statuses like `outlining`, `drafting`, and `revising`. Final HITL-3 review pages could also render as a blank main pane while the backend detail endpoints were still returning 200s.",
@@ -280,5 +306,23 @@
     "fix_applied": "Converted test graph (test_hitl_interrupt_resume.py) and v1.0 production graph (core/content_engine/graph.py) from StateGraph(dict) to StateGraph(TypedDict). All production v1.3+ graphs already used TypedDict and were never affected.",
     "lesson": "Never use StateGraph(dict) with interrupt()/Command(resume=...) and a checkpointer. Always use StateGraph(TypedDict) so that __interrupt__ is correctly filtered as a special channel, not stored as state. This is a langgraph-checkpoint v4.0.0 behavioral change.",
     "files_affected": ["tests/api/test_hitl_interrupt_resume.py", "core/content_engine/graph.py"]
+  },
+  {
+    "id": "F31",
+    "timestamp": "2026-04-11",
+    "what_broke": "Content Performance showed 'Google Analytics not connected' even after GA4 property selection and successful sync.",
+    "root_cause": "api/routers/content_performance.py looked up GA4 readiness and cache entries with request.state.tenant_id, but AuthMiddleware only sets request.state.company_slug and never populates tenant_id. Analytics/CMS routes use tenant_id=company_slug, so Content Performance missed the live GA4 connection and fell back to a partial 'not_connected' response with zero GA4 counts.",
+    "fix_applied": "Added tenant resolution fallback in api/routers/content_performance.py so readiness/cache/detail routes use company_slug when tenant_id is absent. Added a regression test asserting the readiness route passes the authenticated company slug as tenant_id.",
+    "lesson": "Do not assume request.state.tenant_id exists on authenticated routes. In this codebase the auth middleware guarantees company_slug, so tenant-scoped lookups must either use company_slug directly or centralize a fallback helper.",
+    "files_affected": ["api/routers/content_performance.py", "tests/api/test_content_performance.py"]
+  },
+  {
+    "id": "F32",
+    "timestamp": "2026-04-11",
+    "what_broke": "Content Performance GA4 integration produced a structurally correct sync but zero article metrics because the traffic contract was based on `landingPage`.",
+    "root_cause": "The GA4 adapter requested the `landingPage` dimension and the service joined inventory against those values. That measures only session entry pages, not general page performance, so a content dashboard could show homepage `/` while article URLs remained unmatched even if the product intent was per-page traffic.",
+    "fix_applied": "Changed the GA4 traffic sync to request `pagePath` instead of `landingPage`, kept the existing storage field name for backward-compatible persistence, and updated readiness/service copy to refer to GA4 page paths.",
+    "lesson": "For per-page content analytics, do not use GA4 `landingPage` as the primary join key. Use `pagePath`/page-level dimensions for traffic and reserve landing-page data for session-entry metrics.",
+    "files_affected": ["core/analytics/adapters/ga4.py", "core/services/content_performance_service.py", "tests/analytics/test_adapter.py", "tests/services/test_content_performance_service.py"]
   }
 ]

@@ -44,7 +44,12 @@ class GA4TokenSet(BaseModel):
 
 
 class TrafficRow(BaseModel):
-    """Single row of GA4 traffic data (intermediate model for sync pipeline)."""
+    """Single row of GA4 traffic data (intermediate model for sync pipeline).
+
+    ``landing_page_url`` is a legacy field name kept for backward-compatible
+    storage. For Content Performance traffic syncs it now carries GA4
+    ``pagePath`` values.
+    """
 
     date: str = ""
     landing_page_url: str = ""

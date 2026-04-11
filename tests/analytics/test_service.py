@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -459,6 +459,10 @@ class TestSyncData:
         assert calls[0].kwargs["status"] == AnalyticsSyncStatus.in_progress
         assert calls[1].kwargs["status"] == AnalyticsSyncStatus.success
         assert result.errors == []
+        traffic_payload = traffic_repo.bulk_upsert.call_args.args[0]
+        conv_payload = conv_repo.bulk_upsert.call_args.args[0]
+        assert traffic_payload[0]["date"] == date(2026, 3, 15)
+        assert conv_payload[0]["date"] == date(2026, 3, 15)
 
     @pytest.mark.asyncio
     async def test_partial_failure_traffic_fails_conversions_succeed(self, fernet_key: str) -> None:
@@ -537,3 +541,108 @@ class TestSyncData:
 
             with pytest.raises(GA4AuthError, match="token revoked"):
                 await svc.sync_data(company_slug="test-co", tenant_id="test-co")
+
+    @pytest.mark.asyncio
+    async def test_generic_failure_rolls_back_before_marking_failed(self, fernet_key: str) -> None:
+        svc = _service(fernet_key)
+
+        conn = MagicMock()
+        conn.id = "conn-id"
+        conn.company_id = "company-id"
+        conn.is_active = True
+        conn.ga4_property_id = "123456"
+        conn.access_token_encrypted = svc._encrypt_token("ya29.access")
+        conn.token_expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+
+        conn_repo = AsyncMock()
+        conn_repo.get_by_company_slug = AsyncMock(return_value=conn)
+        conn_repo.update_sync_status = AsyncMock()
+        conn_repo._session = AsyncMock()
+        svc._conn_repo = conn_repo
+
+        traffic_repo = AsyncMock()
+        traffic_repo.bulk_upsert = AsyncMock(side_effect=RuntimeError("insert failed"))
+        svc._traffic_repo = traffic_repo
+
+        conv_repo = AsyncMock()
+        conv_repo.bulk_upsert = AsyncMock(return_value=0)
+        svc._conv_repo = conv_repo
+
+        mock_traffic = [
+            TrafficRow(
+                date="2026-03-15",
+                landing_page_url="/test",
+                source="google",
+                medium="organic",
+            )
+        ]
+
+        with patch.object(svc, "_build_adapter") as mock_build:
+            mock_adapter = AsyncMock()
+            mock_adapter.run_traffic_report = AsyncMock(return_value=mock_traffic)
+            mock_adapter.run_conversion_report = AsyncMock(return_value=[])
+            mock_build.return_value = mock_adapter
+
+            with pytest.raises(RuntimeError, match="insert failed"):
+                await svc.sync_data(company_slug="test-co", tenant_id="test-co")
+
+        conn_repo._session.rollback.assert_awaited_once()
+        calls = conn_repo.update_sync_status.call_args_list
+        assert calls[0].kwargs["status"] == AnalyticsSyncStatus.in_progress
+        assert calls[1].kwargs["status"] == AnalyticsSyncStatus.failed
+
+    @pytest.mark.asyncio
+    async def test_failure_uses_captured_connection_id_after_rollback(self, fernet_key: str) -> None:
+        svc = _service(fernet_key)
+
+        class _Conn:
+            def __init__(self) -> None:
+                self._expired = False
+                self.company_id = "company-id"
+                self.is_active = True
+                self.ga4_property_id = "123456"
+                self.access_token_encrypted = svc._encrypt_token("ya29.access")
+                self.token_expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+
+            @property
+            def id(self):
+                if self._expired:
+                    raise AssertionError("conn.id accessed after rollback")
+                return "conn-id"
+
+        conn = _Conn()
+        conn_repo = AsyncMock()
+        conn_repo.get_by_company_slug = AsyncMock(return_value=conn)
+        conn_repo.update_sync_status = AsyncMock()
+        conn_repo._session = AsyncMock()
+
+        async def _rollback():
+            conn._expired = True
+
+        conn_repo._session.rollback.side_effect = _rollback
+        svc._conn_repo = conn_repo
+
+        traffic_repo = AsyncMock()
+        traffic_repo.bulk_upsert = AsyncMock(side_effect=RuntimeError("insert failed"))
+        svc._traffic_repo = traffic_repo
+
+        with patch.object(svc, "_build_adapter") as mock_build:
+            mock_adapter = AsyncMock()
+            mock_adapter.run_traffic_report = AsyncMock(
+                return_value=[
+                    TrafficRow(
+                        date="2026-03-15",
+                        landing_page_url="/test",
+                        source="google",
+                        medium="organic",
+                    )
+                ]
+            )
+            mock_adapter.run_conversion_report = AsyncMock(return_value=[])
+            mock_build.return_value = mock_adapter
+
+            with pytest.raises(RuntimeError, match="insert failed"):
+                await svc.sync_data(company_slug="test-co", tenant_id="test-co")
+
+        failed_call = conn_repo.update_sync_status.call_args_list[1]
+        assert failed_call.args[0] == "conn-id"

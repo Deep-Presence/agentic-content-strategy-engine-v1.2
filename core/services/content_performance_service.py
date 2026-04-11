@@ -14,7 +14,10 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Sequence
 
 from core.content_inventory.url_utils import extract_url_path, normalize_url
-from core.db.repositories.analytics_repo import GA4TrafficDataRepository
+from core.db.repositories.analytics_repo import (
+    AnalyticsConnectionRepository,
+    GA4TrafficDataRepository,
+)
 from core.db.repositories.content_inventory_repo import ContentInventoryRepository
 
 if TYPE_CHECKING:
@@ -174,12 +177,18 @@ def _classify_channel(
     return "other"
 
 
+def _canonicalize_path(value: str) -> str:
+    """Normalize a URL or path into the comparable path form used for joins."""
+    return extract_url_path(value or "").lower().rstrip("/") or "/"
+
+
 def _build_path_to_traffic(
     rows: Sequence[Any],
 ) -> dict[str, dict[str, int]]:
-    """Build {landing_page_path: {total_sessions, total_pageviews, ai_sessions}} lookup.
+    """Build {page_path: {total_sessions, total_pageviews, ai_sessions}} lookup.
 
-    GA4 landing_page_url values are already paths (from GA4's landingPage dim).
+    ``landing_page_url`` is the legacy storage field name, but for Content
+    Performance traffic syncs it now contains GA4 ``pagePath`` values.
     We lowercase + strip trailing slash to match extract_url_path output.
     """
     lookup: dict[str, dict[str, int]] = {}
@@ -187,7 +196,7 @@ def _build_path_to_traffic(
         path = row.landing_page_url
         if not path or path == "(not set)":
             continue
-        path = path.lower().rstrip("/") or "/"
+        path = _canonicalize_path(path)
         existing = lookup.get(path)
         if existing:
             existing["total_sessions"] += int(row.total_sessions or 0)
@@ -213,13 +222,167 @@ class ContentPerformanceService:
         *,
         traffic_repo: GA4TrafficDataRepository,
         inventory_repo: ContentInventoryRepository,
+        connection_repo: AnalyticsConnectionRepository | None = None,
         ci_prompt_repo: "ContentInventoryPromptRepository | None" = None,
         gap_repo: "GapAnalysisRepository | None" = None,
     ) -> None:
         self._traffic = traffic_repo
         self._inventory = inventory_repo
+        self._connections = connection_repo
         self._ci_prompt = ci_prompt_repo
         self._gap = gap_repo
+
+    async def get_readiness(
+        self,
+        company_id: _uuid.UUID,
+        *,
+        tenant_id: str,
+        start_date: date,
+        end_date: date,
+    ) -> dict[str, Any]:
+        """Return readiness metadata for the Content Performance analytics chain."""
+        items, total_inventory = await self._inventory.get_by_company(
+            company_id, limit=1000, offset=0,
+        )
+        inventory_paths = {
+            _canonicalize_path(item.url_normalized or item.url or "")
+            for item in items
+        }
+        inventory_paths_sample = sorted(inventory_paths)[:5]
+
+        connection = None
+        if self._connections is not None:
+            connection = await self._connections.get_active_connection(
+                company_id, tenant_id,
+            )
+
+        if connection is None:
+            return {
+                "state": "not_connected",
+                "message": (
+                    "Connect Google Analytics 4 in Settings to load page traffic "
+                    "and AI referral data."
+                ),
+                "connection_active": False,
+                "has_selected_property": False,
+                "inventory_pages": int(total_inventory),
+            }
+
+        if not connection.ga4_property_id:
+            return {
+                "state": "property_required",
+                "message": (
+                    "Select a GA4 property in Settings to start syncing "
+                    "analytics data."
+                ),
+                "connection_active": True,
+                "has_selected_property": False,
+                "last_sync_at": connection.last_sync_at,
+                "last_sync_status": (
+                    connection.last_sync_status.value
+                    if connection.last_sync_status else ""
+                ),
+                "last_sync_error": connection.last_sync_error or "",
+                "inventory_pages": int(total_inventory),
+            }
+
+        ga4_rows_total = await self._traffic.count_rows(company_id)
+        ga4_rows_in_window = await self._traffic.count_rows(
+            company_id, start_date=start_date, end_date=end_date,
+        )
+        ga4_paths_total = {
+            _canonicalize_path(path)
+            for path in await self._traffic.list_distinct_landing_page_urls(company_id)
+        }
+        ga4_paths_window = {
+            _canonicalize_path(path)
+            for path in await self._traffic.list_distinct_landing_page_urls(
+                company_id, start_date=start_date, end_date=end_date,
+            )
+        }
+        matched_total = len(inventory_paths & ga4_paths_total)
+        matched_window = len(inventory_paths & ga4_paths_window)
+        unmatched_total = len(ga4_paths_total - inventory_paths)
+        unmatched_window = len(ga4_paths_window - inventory_paths)
+        window_aggregates = await self._traffic.get_per_page_aggregates(
+            company_id, start_date, end_date,
+        )
+        unmatched_window_sessions: dict[str, int] = {}
+        for row in window_aggregates:
+            path = _canonicalize_path(str(row.landing_page_url or ""))
+            if path in inventory_paths:
+                continue
+            unmatched_window_sessions[path] = (
+                unmatched_window_sessions.get(path, 0)
+                + int(row.total_sessions or 0)
+            )
+        unmatched_ga4_paths_sample = [
+            {"path": path, "sessions": sessions}
+            for path, sessions in sorted(
+                unmatched_window_sessions.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:5]
+        ]
+        if not unmatched_ga4_paths_sample and unmatched_window > 0:
+            unmatched_ga4_paths_sample = [
+                {"path": path, "sessions": 0}
+                for path in sorted(ga4_paths_window - inventory_paths)[:5]
+            ]
+
+        state = "ready"
+        message = "GA4 analytics is ready for Content Performance."
+
+        if connection.last_sync_status and connection.last_sync_status.value == "failed":
+            state = "sync_failed"
+            message = (
+                "The last GA4 sync failed. Fix the integration error in Settings "
+                "and run sync again."
+            )
+        elif connection.last_sync_at is None and ga4_rows_total == 0:
+            state = "never_synced"
+            message = (
+                "GA4 is connected and a property is selected, but the initial "
+                "sync has not completed yet."
+            )
+        elif ga4_rows_total == 0:
+            state = "no_data"
+            message = (
+                "GA4 is connected, but no traffic rows have been synced yet."
+            )
+        elif total_inventory > 0 and matched_total == 0:
+            state = "no_matching_pages"
+            message = (
+                "GA4 data exists, but none of the synced GA4 page paths match "
+                "your content inventory URLs yet."
+            )
+        elif ga4_rows_in_window == 0 or matched_window == 0:
+            state = "no_recent_data"
+            message = (
+                "GA4 is connected, but there is no matched page traffic in the "
+                "current reporting window."
+            )
+
+        return {
+            "state": state,
+            "message": message,
+            "connection_active": True,
+            "has_selected_property": True,
+            "last_sync_at": connection.last_sync_at,
+            "last_sync_status": (
+                connection.last_sync_status.value
+                if connection.last_sync_status else ""
+            ),
+            "last_sync_error": connection.last_sync_error or "",
+            "inventory_pages": int(total_inventory),
+            "ga4_rows_total": int(ga4_rows_total),
+            "ga4_rows_in_window": int(ga4_rows_in_window),
+            "matched_inventory_pages": int(matched_total),
+            "matched_inventory_pages_in_window": int(matched_window),
+            "unmatched_ga4_paths_total": int(unmatched_total),
+            "unmatched_ga4_paths_in_window": int(unmatched_window),
+            "inventory_paths_sample": inventory_paths_sample,
+            "unmatched_ga4_paths_sample": unmatched_ga4_paths_sample,
+        }
 
     async def get_content_table(
         self,

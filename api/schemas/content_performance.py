@@ -49,6 +49,36 @@ class ContentPerformanceTableResponse(BaseModel):
     total_items: int = 0
 
 
+class PathMatchSampleItem(BaseModel):
+    """A sampled GA4 path that does not currently match inventory."""
+
+    path: str = ""
+    sessions: int = 0
+
+
+class ContentPerformanceReadinessResponse(BaseModel):
+    """Readiness state for wiring GA4 analytics into content performance."""
+
+    state: str = "not_connected"
+    message: str = ""
+    connection_active: bool = False
+    has_selected_property: bool = False
+    last_sync_at: Optional[datetime] = None
+    last_sync_status: str = ""
+    last_sync_error: str = ""
+    inventory_pages: int = 0
+    ga4_rows_total: int = 0
+    ga4_rows_in_window: int = 0
+    matched_inventory_pages: int = 0
+    matched_inventory_pages_in_window: int = 0
+    unmatched_ga4_paths_total: int = 0
+    unmatched_ga4_paths_in_window: int = 0
+    inventory_paths_sample: list[str] = Field(default_factory=list)
+    unmatched_ga4_paths_sample: list[PathMatchSampleItem] = Field(
+        default_factory=list,
+    )
+
+
 class DailyTrafficPoint(BaseModel):
     """Single day in a traffic timeseries."""
 

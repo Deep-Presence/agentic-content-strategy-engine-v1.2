@@ -286,7 +286,7 @@ class TestListProperties:
 
         # Mock property summary
         mock_prop = MagicMock()
-        mock_prop.property_ = "properties/123456"
+        mock_prop.property = "properties/123456"
         mock_prop.display_name = "Test Property"
 
         mock_summary = MagicMock()
@@ -308,6 +308,34 @@ class TestListProperties:
         assert props[0].display_name == "Test Property"
         assert props[0].account_id == "789"
         assert props[0].account_display_name == "Test Account"
+
+
+class TestRunTrafficReport:
+    @pytest.mark.asyncio
+    async def test_requests_page_path_dimension(self) -> None:
+        adapter = _adapter()
+
+        fake_response = MagicMock()
+        fake_response.rows = []
+        fake_response.row_count = 0
+
+        with patch.object(adapter, "_run_report_with_retry", new=AsyncMock(return_value=fake_response)) as mock_run:
+            result = await adapter.run_traffic_report(
+                access_token="ya29.token",
+                property_id="123456",
+                start_date="2026-03-01",
+                end_date="2026-03-31",
+            )
+
+        assert result == []
+        request = mock_run.await_args.args[1]
+        assert [dim.name for dim in request.dimensions] == [
+            "date",
+            "pagePath",
+            "sessionSource",
+            "sessionMedium",
+            "sessionCampaignName",
+        ]
 
 
 class TestTranslateGoogleError:

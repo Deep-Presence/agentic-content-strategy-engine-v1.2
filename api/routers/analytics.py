@@ -183,6 +183,7 @@ async def get_connection(
         connected_at=info.connected_at,
         last_sync_at=info.last_sync_at,
         last_sync_status=info.last_sync_status,
+        last_sync_error=info.last_sync_error,
     )
 
     # Populate cache

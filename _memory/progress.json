@@ -1496,6 +1496,114 @@
         "frontend/src/app/(dashboard)/content-performance/_components/UnpublishedPagesTable.tsx"
       ],
       "codex_review": "Implemented the staging handoff flow without adding a second backend state model. Content Studio now hides terminal approved/published cards from the kanban, removes the Completed column, and final content approval no longer exposes a publish button in the review-stage detail view. Content Performance now has an `Unpublished Pages` tab sourced from the existing `/companies/{slug}/content/briefs` contract, filtered to `status === completed && !published_url`, with row click reusing the existing `FullPageView` read-only article detail. Publishing from that staging detail uses the real `POST /api/v1/cms/publish` route, and the shared card contract now carries `publishedUrl` / `publishedAt` so the frontend can distinguish approved-but-unpublished from already-published content. Validation: `cd frontend && npx tsc --noEmit`."
+    },
+    {
+      "id": "T-content-performance-ga4-readiness-first-sync",
+      "task": "Content Performance + GA4 integration hardening — surface readiness blockers and complete the first-sync loop after property selection",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 7,
+      "files_modified": [
+        "api/schemas/analytics.py",
+        "api/schemas/content_performance.py",
+        "api/routers/analytics.py",
+        "api/routers/content_performance.py",
+        "api/dependencies.py",
+        "core/db/repositories/analytics_repo.py",
+        "core/services/content_performance_service.py",
+        "tests/api/test_analytics.py",
+        "tests/api/test_content_performance.py",
+        "tests/services/test_content_performance_service.py",
+        "frontend/src/app/(dashboard)/settings/_lib/types.ts",
+        "frontend/src/app/(dashboard)/settings/_lib/api.ts",
+        "frontend/src/app/(dashboard)/settings/_hooks/useIntegrationsData.ts",
+        "frontend/src/app/(dashboard)/settings/_components/GA4ConnectFlow.tsx",
+        "frontend/src/app/(dashboard)/content-performance/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-performance/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-performance/page.tsx",
+        "frontend/src/app/(dashboard)/content-performance/_components/VelocityChart.tsx"
+      ],
+      "codex_review": "Closed the main silent-failure gap between GA4 integration and the Content Performance UI. Backend: added `/api/v1/content-performance/readiness`, exposed `last_sync_error` on the GA4 connection contract, and taught `ContentPerformanceService` to classify GA4 readiness states (`not_connected`, `property_required`, `never_synced`, `sync_failed`, `no_data`, `no_matching_pages`, `no_recent_data`, `ready`) from connection state, synced GA4 row counts, and inventory-to-landing-page matches. Frontend: Settings now auto-triggers and waits for the initial GA4 sync immediately after property selection, manual `Sync Now` waits for completion and refreshes connection state, sync errors are visible, and Content Performance now shows a readiness banner with blocker-specific messaging and counts instead of silently presenting zeroed analytics as if they were authoritative. Also corrected the Insights chart copy from citation velocity to traffic velocity so it matches the backend metric semantics. Validation: `venv/bin/pytest tests/services/test_content_performance_service.py -q` (53 passed), `venv/bin/pytest tests/api/test_content_performance.py -q` (24 passed), `venv/bin/pytest tests/api/test_analytics.py -q` (29 passed, 2 pre-existing coroutine warnings), and `cd frontend && npx tsc --noEmit` (clean)."
+    },
+    {
+      "id": "T-ga4-properties-sdk-field-fix",
+      "task": "GA4 Settings property loader — fix Google Admin SDK field mismatch that caused `/analytics/google/properties` to 502",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 0,
+      "files_modified": [
+        "core/analytics/adapters/ga4.py",
+        "tests/analytics/test_adapter.py"
+      ],
+      "codex_review": "Fixed the root cause behind the GA4 Settings `Load Properties` failure. The backend adapter was parsing `PropertySummary.property_`, but the installed Google Admin SDK exposes that field as `property`, so every `/api/v1/analytics/google/properties` call crashed with `AttributeError: Unknown field for PropertySummary: property_` and was translated to a 502. Updated the adapter to read `prop.property`, corrected the adapter unit test to match the real SDK shape, and validated both the mocked test path and the live integration path by refreshing the stored token and listing the accessible GA4 properties for `webflow`. Validation: `venv/bin/pytest tests/analytics/test_adapter.py -q` (20 passed), `venv/bin/pytest tests/api/test_analytics.py -q` (29 passed, 2 pre-existing coroutine warnings), and an elevated local repro of the real adapter flow returned `properties_ok 1` with property `531354380 | Deep Presence Blog Test | test-deeppresence`."
+    },
+    {
+      "id": "T-ga4-sync-write-path-fix",
+      "task": "GA4 initial sync — fix Postgres upsert target and date coercion so property selection can complete its first sync",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 3,
+      "files_modified": [
+        "core/db/repositories/analytics_repo.py",
+        "core/analytics/service.py",
+        "tests/analytics/test_repository_sql.py",
+        "tests/analytics/test_service.py"
+      ],
+      "codex_review": "Fixed the next GA4 blocker after property selection. The sync pipeline was failing during bulk upsert because the analytics repos used `ON CONFLICT ON CONSTRAINT ...` against names that exist in Postgres as unique indexes, not constraints, and the service was also passing report dates through as strings, which asyncpg rejects for `DATE` columns. After the first write failure, the session stayed aborted, and the failure handler could also trip on expired ORM state when reading `conn.id` after rollback. Updated both analytics bulk-upsert repos to target the existing unique indexes via `index_elements`, coerced GA4 report dates to concrete `date` objects before insert, and captured `conn_id` before rollback so failed sync status updates do not depend on expired ORM attributes. Validation: `venv/bin/pytest tests/analytics/test_service.py tests/analytics/test_repository_sql.py -q` (30 passed), `venv/bin/pytest tests/api/test_analytics.py -q` (29 passed, 2 pre-existing coroutine warnings), and an elevated live sync repro for `webflow` completed successfully with `traffic_rows_synced=2`, `conversion_rows_synced=7`, and `analytics_connections.last_sync_status='success'`."
+    },
+    {
+      "id": "T-ga4-backfill-matching-diagnostics",
+      "task": "GA4 integration hardening — add manual backfill controls and unmatched landing-page diagnostics for Content Performance",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 2,
+      "files_modified": [
+        "api/schemas/content_performance.py",
+        "core/services/content_performance_service.py",
+        "tests/services/test_content_performance_service.py",
+        "tests/api/test_content_performance.py",
+        "frontend/src/app/(dashboard)/settings/_lib/types.ts",
+        "frontend/src/app/(dashboard)/settings/_lib/api.ts",
+        "frontend/src/app/(dashboard)/settings/_hooks/useIntegrationsData.ts",
+        "frontend/src/app/(dashboard)/settings/_components/GA4ConnectFlow.tsx",
+        "frontend/src/app/(dashboard)/content-performance/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-performance/page.tsx"
+      ],
+      "codex_review": "Finished the next GA4 visibility slice. Backend readiness now returns sampled inventory paths plus sampled unmatched GA4 landing paths with session counts, so Content Performance can explain why synced data still does not attach to page rows. Frontend Settings now supports explicit GA4 backfills: property selection triggers an initial 30-day sync instead of the default 7-day window, and the connected GA4 card exposes `Backfill 30d` and `Backfill 90d` actions. Content Performance now shows the inventory-vs-GA4 mismatch directly in the readiness banner, including the top unmatched GA4 paths in the reporting window. Validation: `venv/bin/pytest tests/services/test_content_performance_service.py tests/api/test_content_performance.py tests/api/test_analytics.py tests/analytics/test_service.py tests/analytics/test_repository_sql.py -q` (137 passed, 1 pre-existing warning) and `cd frontend && npx tsc --noEmit` (clean). Elevated live validation also ran a real 90-day GA4 backfill for `webflow`, which succeeded but still returned only homepage path `/`, leaving readiness at `no_matching_pages` with inventory samples `/hello-world` and `/the-rise-of-aeo-startups-why-answer-engine-optimization-is-the-biggest-opportunity-in-search-since-seo` and unmatched GA4 sample `{'path': '/', 'sessions': 8}`."
+    },
+    {
+      "id": "T-content-performance-tenant-key-fix",
+      "task": "Content Performance GA4 readiness/cache lookup — use company slug tenant key so the dashboard sees the existing GA4 connection",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 1,
+      "files_modified": [
+        "api/routers/content_performance.py",
+        "tests/api/test_content_performance.py"
+      ],
+      "codex_review": "Fixed a router contract bug that made Content Performance claim Google Analytics was not connected even after GA4 property selection and a successful sync. The auth middleware sets `request.state.company_slug` but never sets `request.state.tenant_id`; Content Performance readiness, cache, and detail routes were looking up the GA4 connection under an empty tenant key, while the Analytics and CMS routers consistently use `tenant_id=company_slug`. Updated `api/routers/content_performance.py` to resolve tenant IDs from `company_slug` when request-state tenant_id is absent, matching the rest of the integration. Added a regression test asserting the readiness route passes `tenant_id='test-co'` into the service. Validation: `venv/bin/pytest tests/api/test_content_performance.py -q` (25 passed)."
+    },
+    {
+      "id": "T-ga4-page-path-sync",
+      "task": "Content Performance GA4 traffic contract — switch sync from landing-page dimension to page-path dimension",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 1,
+      "files_modified": [
+        "core/analytics/adapters/ga4.py",
+        "core/analytics/models.py",
+        "core/db/models/analytics.py",
+        "core/services/content_performance_service.py",
+        "tests/analytics/test_adapter.py",
+        "tests/services/test_content_performance_service.py"
+      ],
+      "codex_review": "Corrected the underlying GA4 traffic contract for Content Performance. The sync adapter had been requesting `landingPage`, which only measures session entry pages and is too narrow for a per-page content-performance dashboard. Updated the GA4 traffic report to request `pagePath` instead, while intentionally keeping the existing `landing_page_url` storage field as a legacy compatibility field to avoid a database migration in this slice. Also updated service/model comments and readiness copy to reflect GA4 page-path semantics instead of landing-page semantics. Validation: `venv/bin/pytest tests/analytics/test_adapter.py tests/services/test_content_performance_service.py -q` (75 passed), `venv/bin/pytest tests/analytics/test_service.py tests/api/test_content_performance.py tests/api/test_analytics.py -q` (82 passed, 1 pre-existing warning), and a real 90-day sync against the local `webflow` connection completed successfully. Live result after the code change still returned only `/` in `ga4_traffic_data`, confirming the remaining blocker is actual GA4 property coverage for article URLs rather than the old landing-page contract."
     }
   ],
   "pending": [

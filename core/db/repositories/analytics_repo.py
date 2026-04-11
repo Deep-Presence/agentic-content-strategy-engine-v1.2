@@ -221,7 +221,13 @@ class GA4TrafficDataRepository(
             return 0
         stmt = pg_insert(GA4TrafficDataModel).values(items)
         stmt = stmt.on_conflict_do_update(
-            constraint="uq_ga4_traffic_conn_date_page_src_med",
+            index_elements=[
+                "connection_id",
+                "date",
+                "landing_page_url",
+                "source",
+                "medium",
+            ],
             set_={
                 "campaign": stmt.excluded.campaign,
                 "sessions": stmt.excluded.sessions,
@@ -408,6 +414,58 @@ class GA4TrafficDataRepository(
         result = await self._session.execute(stmt)
         return result.all()
 
+    async def count_rows(
+        self,
+        company_id: _uuid.UUID | str,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> int:
+        """Return the number of GA4 traffic rows for a company."""
+        from sqlalchemy import func
+
+        cid = (
+            _uuid.UUID(str(company_id))
+            if isinstance(company_id, str)
+            else company_id
+        )
+        stmt = select(func.count()).select_from(GA4TrafficDataModel).where(
+            GA4TrafficDataModel.company_id == cid,
+        )
+        if start_date is not None:
+            stmt = stmt.where(GA4TrafficDataModel.date >= start_date)
+        if end_date is not None:
+            stmt = stmt.where(GA4TrafficDataModel.date <= end_date)
+        result = await self._session.execute(stmt)
+        return int(result.scalar() or 0)
+
+    async def list_distinct_landing_page_urls(
+        self,
+        company_id: _uuid.UUID | str,
+        *,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[str]:
+        """Return distinct GA4 landing page URLs for a company."""
+        cid = (
+            _uuid.UUID(str(company_id))
+            if isinstance(company_id, str)
+            else company_id
+        )
+        stmt = select(GA4TrafficDataModel.landing_page_url).where(
+            GA4TrafficDataModel.company_id == cid,
+        ).distinct()
+        if start_date is not None:
+            stmt = stmt.where(GA4TrafficDataModel.date >= start_date)
+        if end_date is not None:
+            stmt = stmt.where(GA4TrafficDataModel.date <= end_date)
+        result = await self._session.execute(stmt)
+        return [
+            str(value)
+            for value in result.scalars().all()
+            if value and value != "(not set)"
+        ]
+
     async def get_daily_timeseries(
         self,
         company_id: _uuid.UUID | str,
@@ -546,7 +604,14 @@ class GA4ConversionEventRepository(
             return 0
         stmt = pg_insert(GA4ConversionEventModel).values(items)
         stmt = stmt.on_conflict_do_update(
-            constraint="uq_ga4_conv_conn_date_evt_page_src_med",
+            index_elements=[
+                "connection_id",
+                "date",
+                "event_name",
+                "landing_page_url",
+                "source",
+                "medium",
+            ],
             set_={
                 "event_count": stmt.excluded.event_count,
                 "event_value": stmt.excluded.event_value,

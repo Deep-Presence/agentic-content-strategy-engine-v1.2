@@ -50,6 +50,7 @@ class ConnectionResponse(BaseModel):
     connected_at: Optional[datetime] = None
     last_sync_at: Optional[datetime] = None
     last_sync_status: str = ""
+    last_sync_error: str = ""
 
 
 class GA4PropertyItem(BaseModel):

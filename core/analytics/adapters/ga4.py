@@ -161,7 +161,7 @@ class GA4Adapter:
                 for prop in summary.property_summaries:
                     properties.append(
                         GA4Property(
-                            property_id=prop.property_.replace("properties/", ""),
+                            property_id=prop.property.replace("properties/", ""),
                             display_name=prop.display_name,
                             account_id=account_id,
                             account_display_name=account_name,
@@ -183,7 +183,12 @@ class GA4Adapter:
         start_date: str,
         end_date: str,
     ) -> list[TrafficRow]:
-        """Run the traffic-by-landing-page report (Report 1 from spec)."""
+        """Run the traffic-by-page-path report used by Content Performance.
+
+        We intentionally use ``pagePath`` here instead of ``landingPage``.
+        Content Performance needs traffic attributed to the page itself, not
+        only to sessions that started on that page.
+        """
         from google.analytics.data_v1beta import BetaAnalyticsDataClient
         from google.analytics.data_v1beta.types import (
             DateRange,
@@ -198,7 +203,7 @@ class GA4Adapter:
 
         dimensions = [
             Dimension(name="date"),
-            Dimension(name="landingPage"),
+            Dimension(name="pagePath"),
             Dimension(name="sessionSource"),
             Dimension(name="sessionMedium"),
             Dimension(name="sessionCampaignName"),

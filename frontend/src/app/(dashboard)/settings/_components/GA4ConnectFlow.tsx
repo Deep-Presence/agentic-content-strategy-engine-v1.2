@@ -12,7 +12,7 @@ interface GA4ConnectFlowProps {
   onDisconnect: (purgeData: boolean) => Promise<void>;
   onLoadProperties: () => Promise<void>;
   onSelectProperty: (body: GA4SelectPropertyRequestAPI) => Promise<void>;
-  onSync: () => Promise<unknown>;
+  onSync: (days?: number) => Promise<unknown>;
 }
 
 export function GA4ConnectFlow({
@@ -29,6 +29,7 @@ export function GA4ConnectFlow({
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
   const [purgeData, setPurgeData] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncLabel, setSyncLabel] = useState('Syncing...');
   const [selectedPropertyId, setSelectedPropertyId] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [toast, setToast] = useState({ open: false, message: '', variant: 'success' as 'success' | 'error' });
@@ -58,7 +59,7 @@ export function GA4ConnectFlow({
   // ── State: Connected, no property selected ───────────────
 
   if (!connection.ga4_property_id) {
-    const handleSelectProperty = async () => {
+      const handleSelectProperty = async () => {
       const prop = properties.find((p) => p.property_id === selectedPropertyId);
       if (!prop) return;
       setIsSaving(true);
@@ -68,9 +69,9 @@ export function GA4ConnectFlow({
           property_name: prop.display_name,
           account_id: prop.account_id,
         });
-        setToast({ open: true, message: 'Property selected', variant: 'success' });
+        setToast({ open: true, message: 'Property selected and initial sync completed', variant: 'success' });
       } catch {
-        setToast({ open: true, message: 'Failed to select property', variant: 'error' });
+        setToast({ open: true, message: 'Property saved, but the initial sync did not complete', variant: 'error' });
       } finally {
         setIsSaving(false);
       }
@@ -127,7 +128,7 @@ export function GA4ConnectFlow({
                 <ChevronDown size={14} strokeWidth={1.5} className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-text-tertiary" />
               </div>
               <Button size="sm" onClick={handleSelectProperty} disabled={!selectedPropertyId || isSaving}>
-                {isSaving ? 'Saving...' : 'Save'}
+                {isSaving ? 'Saving & syncing...' : 'Save'}
               </Button>
             </div>
             <Button
@@ -159,15 +160,25 @@ export function GA4ConnectFlow({
 
   // ── State: Fully connected ───────────────────────────────
 
-  const handleSync = async () => {
+  const handleSync = async (days?: number) => {
     setIsSyncing(true);
+    setSyncLabel(days ? `Backfilling ${days}d...` : 'Syncing...');
     try {
-      await onSync();
-      setToast({ open: true, message: 'Sync started', variant: 'success' });
+      await onSync(days);
+      setToast({
+        open: true,
+        message: days ? `Backfill ${days}d completed` : 'Sync completed',
+        variant: 'success',
+      });
     } catch {
-      setToast({ open: true, message: 'Sync failed', variant: 'error' });
+      setToast({
+        open: true,
+        message: days ? `Backfill ${days}d failed` : 'Sync failed',
+        variant: 'error',
+      });
     } finally {
       setIsSyncing(false);
+      setSyncLabel('Syncing...');
     }
   };
 
@@ -218,12 +229,23 @@ export function GA4ConnectFlow({
         <p className="text-[11px] text-text-tertiary">
           Last synced: {formatDate(connection.last_sync_at)}
         </p>
+        {connection.last_sync_error && (
+          <p className="text-[11px] text-error">
+            {connection.last_sync_error}
+          </p>
+        )}
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <Button variant="secondary" size="sm" onClick={handleSync} disabled={isSyncing}>
+        <Button variant="secondary" size="sm" onClick={() => handleSync()} disabled={isSyncing}>
           <RefreshCw size={13} strokeWidth={1.5} className={`mr-1.5 ${isSyncing ? 'animate-spin' : ''}`} />
-          {isSyncing ? 'Syncing...' : 'Sync Now'}
+          {isSyncing ? syncLabel : 'Sync Now'}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => handleSync(30)} disabled={isSyncing}>
+          Backfill 30d
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => handleSync(90)} disabled={isSyncing}>
+          Backfill 90d
         </Button>
 
         {!showDisconnectConfirm ? (
@@ -251,6 +273,9 @@ export function GA4ConnectFlow({
           </div>
         )}
       </div>
+      <p className="text-[11px] text-text-tertiary">
+        `Sync Now` uses the default recent window. Use backfill to import older GA4 traffic so existing pages can match Content Performance.
+      </p>
 
       <Toast open={toast.open} onClose={() => setToast({ ...toast, open: false })} variant={toast.variant} message={toast.message} />
     </div>

@@ -14,6 +14,7 @@ import {
   fetchGA4Properties,
   selectGA4Property,
   triggerGA4Sync,
+  fetchTaskStatus,
 } from '../_lib/api';
 import type {
   CMSConnectionInfoAPI,
@@ -21,7 +22,9 @@ import type {
   GA4ConnectionResponseAPI,
   GA4PropertyItemAPI,
   GA4SelectPropertyRequestAPI,
+  GA4SyncRequestAPI,
   GA4SyncResponseAPI,
+  TaskStatusAPI,
 } from '../_lib/types';
 
 interface UseIntegrationsDataReturn {
@@ -38,7 +41,7 @@ interface UseIntegrationsDataReturn {
   disconnectGA4Connection: (purgeData: boolean) => Promise<void>;
   loadGA4Properties: () => Promise<void>;
   selectProperty: (body: GA4SelectPropertyRequestAPI) => Promise<void>;
-  syncGA4: () => Promise<GA4SyncResponseAPI | null>;
+  syncGA4: (days?: number) => Promise<GA4SyncResponseAPI>;
   refetch: () => void;
 }
 
@@ -54,6 +57,41 @@ export function useIntegrationsData(): UseIntegrationsDataReturn {
   const [error, setError] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+
+  const buildBackfillRequest = useCallback((days: number): GA4SyncRequestAPI => {
+    const end = new Date();
+    end.setDate(end.getDate() - 1);
+    const start = new Date(end);
+    start.setDate(start.getDate() - (days - 1));
+
+    const formatDate = (value: Date) => {
+      const year = value.getFullYear();
+      const month = String(value.getMonth() + 1).padStart(2, '0');
+      const day = String(value.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    return {
+      start_date: formatDate(start),
+      end_date: formatDate(end),
+    };
+  }, []);
+
+  const waitForTaskCompletion = useCallback(async (taskId: string): Promise<TaskStatusAPI> => {
+    const startedAt = Date.now();
+    const timeoutMs = 5 * 60 * 1000;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const status = await fetchTaskStatus(taskId);
+      if (status.status === 'completed') return status;
+      if (status.status === 'failed') {
+        throw new Error(status.error || 'GA4 sync failed');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+
+    throw new Error('GA4 sync timed out');
+  }, []);
 
   const loadData = useCallback(async () => {
     abortRef.current?.abort();
@@ -193,24 +231,30 @@ export function useIntegrationsData(): UseIntegrationsDataReturn {
   const selectProperty = useCallback(async (body: GA4SelectPropertyRequestAPI) => {
     try {
       await selectGA4Property(body);
+      const sync = await triggerGA4Sync(buildBackfillRequest(30));
+      await waitForTaskCompletion(sync.run_id);
       refetch();
     } catch (err) {
-      const msg = err instanceof ApiError ? err.detail : 'Failed to select property';
+      const msg = err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Failed to select property';
       setError(msg);
       throw err;
     }
-  }, [refetch]);
+  }, [buildBackfillRequest, refetch, waitForTaskCompletion]);
 
-  const syncGA4 = useCallback(async (): Promise<GA4SyncResponseAPI | null> => {
+  const syncGA4 = useCallback(async (days?: number): Promise<GA4SyncResponseAPI> => {
     try {
-      const res = await triggerGA4Sync();
+      const res = await triggerGA4Sync(
+        days ? buildBackfillRequest(days) : undefined,
+      );
+      await waitForTaskCompletion(res.run_id);
+      refetch();
       return res;
     } catch (err) {
-      const msg = err instanceof ApiError ? err.detail : 'Failed to trigger sync';
+      const msg = err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Failed to trigger sync';
       setError(msg);
-      return null;
+      throw err;
     }
-  }, []);
+  }, [buildBackfillRequest, refetch, waitForTaskCompletion]);
 
   return {
     cmsConnection,

@@ -129,7 +129,11 @@ class AnalyticsConnectionModel(UUIDPKMixin, TimestampMixin, Base):
 
 
 class GA4TrafficDataModel(UUIDPKMixin, TimestampMixin, Base):
-    """GA4 traffic data by landing page + source/medium."""
+    """GA4 traffic data by page path + source/medium.
+
+    ``landing_page_url`` is the historical column name and currently stores the
+    GA4 path used for Content Performance joins.
+    """
 
     __tablename__ = "ga4_traffic_data"
     __table_args__ = (
