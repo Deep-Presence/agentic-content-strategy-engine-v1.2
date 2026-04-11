@@ -5,7 +5,7 @@ import { Calendar, X, Search, RefreshCw, Loader2 } from 'lucide-react';
 import { MetricCard, FilterBar } from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import type { ContentPiece, StructuralSignal, ImpactLevel } from './_components/data';
-import type { ContentCard } from '../content-studio/_components/types';
+import type { ContentCard, ContentMetadata } from '../content-studio/_components/types';
 import { adaptBriefList } from '../content-studio/_lib/adapters';
 import { FullPageView } from '../content-studio/_components/FullPageView';
 import { formatTraffic } from './_components/data';
@@ -300,11 +300,15 @@ export default function ContentPerformancePage() {
   const handleDrawerClose = useCallback(() => setSelectedPiece(null), []);
   const handleUnpublishedRowClick = useCallback((card: ContentCard) => setSelectedUnpublishedCard(card), []);
   const handleUnpublishedClose = useCallback(() => setSelectedUnpublishedCard(null), []);
-  const handlePublishUnpublished = useCallback(async () => {
+  const handlePublishUnpublished = useCallback(async (data?: { contentMarkdown?: string; metadata?: ContentMetadata }) => {
     if (!selectedUnpublishedCard) return;
     setPublishPendingId(selectedUnpublishedCard.id);
     try {
-      await publishContentBrief(selectedUnpublishedCard.id, selectedUnpublishedCard.effectiveSlug);
+      await publishContentBrief(
+        selectedUnpublishedCard.id,
+        selectedUnpublishedCard.effectiveSlug,
+        data?.metadata,
+      );
       setSelectedUnpublishedCard(null);
       await loadUnpublishedCards();
       refetchAll();

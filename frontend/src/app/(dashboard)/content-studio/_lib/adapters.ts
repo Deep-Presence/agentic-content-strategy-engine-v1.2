@@ -13,6 +13,7 @@ import type {
 } from './types';
 import type {
   ContentCard,
+  ContentMetadata,
   ContentType,
   Priority,
   BriefPipelineStatus,
@@ -81,6 +82,34 @@ export function deriveCompetitor(ctx: ContentBriefListItemAPI['gap_context']): s
   return '';
 }
 
+export function adaptPublishMetadata(
+  raw?: ContentBriefListItemAPI['publish_metadata'] | ContentBriefDetailResponseAPI['publish_metadata'] | null,
+): ContentMetadata {
+  return {
+    slug: raw?.slug || '',
+    metaTitle: raw?.meta_title || '',
+    metaDescription: raw?.meta_description || '',
+    canonicalUrl: raw?.canonical_url || '',
+    schemaMarkup: raw?.schema_markup || false,
+    publishDate: raw?.publish_date || '',
+    author: raw?.author || '',
+    tags: raw?.tags || [],
+  };
+}
+
+export function serializePublishMetadata(metadata?: ContentMetadata | null) {
+  return {
+    slug: metadata?.slug || '',
+    meta_title: metadata?.metaTitle || '',
+    meta_description: metadata?.metaDescription || '',
+    canonical_url: metadata?.canonicalUrl || '',
+    schema_markup: metadata?.schemaMarkup || false,
+    publish_date: metadata?.publishDate || '',
+    author: metadata?.author || '',
+    tags: metadata?.tags || [],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Brief list item → ContentCard
 // ---------------------------------------------------------------------------
@@ -115,6 +144,7 @@ export function adaptBriefToCard(item: ContentBriefListItemAPI): ContentCard {
     description: item.description ?? undefined,
     targetKeywords: item.target_keywords ?? undefined,
     contentAngle: item.content_angle ?? undefined,
+    metadata: adaptPublishMetadata(item.publish_metadata),
     gapContext: item.gap_context ?? undefined,
     cycleId: item.cycle_id ?? undefined,
     targetWordCount: item.target_word_count,

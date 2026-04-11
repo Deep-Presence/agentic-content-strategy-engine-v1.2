@@ -11,6 +11,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from api.schemas.content_data import ContentPublishMetadata
+
 
 # ── Request Schemas ───────────────────────────────────────────────────
 
@@ -33,6 +35,7 @@ class CMSPublishRequest(BaseModel):
     status: str = "draft"  # "draft" | "publish"
     slug_override: Optional[str] = None
     categories: list[str] = Field(default_factory=list)
+    publish_metadata: Optional[ContentPublishMetadata] = None
 
 
 class CMSRefreshRequest(BaseModel):

@@ -8,7 +8,7 @@ import { useBriefDetail } from '../_hooks/useBriefDetail';
 import { useGapSummary } from '../_hooks/useGapSummary';
 import { useCardActivity } from '../_hooks/useCardActivity';
 import type { GapSummaryResponseAPI } from '../_lib/types';
-import { fetchReviewDraftContent, saveReviewDraftContent } from '../_lib/api';
+import { fetchReviewDraftContent, savePublishMetadata, saveReviewDraftContent } from '../_lib/api';
 import { LeftSidebar } from './LeftSidebar';
 import { RightSidebar } from './RightSidebar';
 import { ArticleEditor } from './ArticleEditor';
@@ -61,7 +61,7 @@ interface FullPageViewProps {
   card: ContentCard;
   onClose: () => void;
   onAction: (action: ActionType, data?: { editorNotes?: string; contentMarkdown?: string }) => void | Promise<void>;
-  onPublish?: (data?: { contentMarkdown?: string }) => void | Promise<void>;
+  onPublish?: (data?: { contentMarkdown?: string; metadata?: ContentMetadata }) => void | Promise<void>;
   publishLabel?: string;
   isPublishPending?: boolean;
 }
@@ -122,6 +122,7 @@ export function FullPageView({
       tags: [],
     }
   );
+  const lastSavedMetadataRef = useRef<string>(JSON.stringify(card.metadata || {}));
   const [articleDraftMarkdown, setArticleDraftMarkdown] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [isDraftLoading, setIsDraftLoading] = useState(false);
@@ -190,6 +191,21 @@ export function FullPageView({
   );
 
   useEffect(() => {
+    const nextMetadata = card.metadata || {
+      slug: '',
+      metaTitle: card.title,
+      metaDescription: '',
+      canonicalUrl: '',
+      schemaMarkup: false,
+      publishDate: '',
+      author: '',
+      tags: [],
+    };
+    setMetadata(nextMetadata);
+    lastSavedMetadataRef.current = JSON.stringify(nextMetadata);
+  }, [card.id, card.metadata, card.title]);
+
+  useEffect(() => {
     if (!showReview || !articleContent?.markdown || !card.taskId || !companySlug) {
       setArticleDraftMarkdown(null);
       setDraftError(null);
@@ -249,6 +265,28 @@ export function FullPageView({
       articleDraftMarkdown,
     );
   }, [showReview, articleDraftMarkdown, card.id, card.taskId, companySlug]);
+
+  useEffect(() => {
+    if (!companySlug || isGAPhase) return;
+    const serialized = JSON.stringify(metadata);
+    if (serialized === lastSavedMetadataRef.current) return;
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        await savePublishMetadata(
+          companySlug,
+          card.id,
+          metadata,
+          card.effectiveSlug,
+        );
+        lastSavedMetadataRef.current = serialized;
+      } catch (err) {
+        console.error('Failed to save publish metadata:', err);
+      }
+    }, 500);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [companySlug, isGAPhase, metadata, card.id, card.effectiveSlug]);
 
   useEffect(() => {
     if (!showReview || !articleDraftMarkdown || !card.taskId || !isDraftDirty) return;
@@ -461,7 +499,7 @@ export function FullPageView({
 
           {showReadOnlyArticle && onPublish && (
             <button
-              onClick={() => onPublish({ contentMarkdown: currentReviewMarkdown ?? undefined })}
+              onClick={() => onPublish({ contentMarkdown: currentReviewMarkdown ?? undefined, metadata })}
               disabled={isPublishPending}
               className="flex items-center gap-1.5"
               style={{
@@ -581,6 +619,7 @@ export function FullPageView({
           onMetadataChange={setMetadata}
           onPublish={onPublish ? () => onPublish({
             contentMarkdown: currentReviewMarkdown ?? undefined,
+            metadata,
           }) : undefined}
           exportMarkdown={currentReviewMarkdown ?? articleContent?.markdown ?? null}
         />

@@ -622,6 +622,33 @@ class TestCMSPublish:
         call_kwargs = mock_cms_service.publish_brief.call_args.kwargs
         assert call_kwargs.get("slug_override") == "custom-slug"
 
+    def test_publish_with_publish_metadata(
+        self, client: TestClient, mock_cms_service: AsyncMock,
+    ) -> None:
+        mock_cms_service.get_connection.return_value = _mock_connection()
+        resp = client.post("/api/v1/cms/publish", json={
+            "brief_id": "brief-abc123",
+            "effective_slug": "test-co",
+            "status": "publish",
+            "publish_metadata": {
+                "slug": "no-code-web-development-enterprise-overview",
+                "meta_title": "No-Code Web Development in the Enterprise | Deep Presence",
+                "meta_description": "A plain-English guide to no-code for enterprise teams.",
+                "canonical_url": "https://blogs.example.com/no-code-web-development-enterprise-overview",
+                "schema_markup": True,
+                "publish_date": "2026-04-11",
+                "author": "Aryan Keshri",
+                "tags": ["no-code", "enterprise"],
+            },
+        })
+
+        assert resp.status_code == 200
+        call_kwargs = mock_cms_service.publish_brief.call_args.kwargs
+        assert call_kwargs["publish_metadata"].slug == "no-code-web-development-enterprise-overview"
+        assert call_kwargs["publish_metadata"].meta_title == "No-Code Web Development in the Enterprise | Deep Presence"
+        assert call_kwargs["publish_metadata"].canonical_url == "https://blogs.example.com/no-code-web-development-enterprise-overview"
+        assert call_kwargs["publish_metadata"].tags == ["no-code", "enterprise"]
+
     def test_publish_with_product_slug(
         self, client: TestClient, mock_cms_service: AsyncMock,
     ) -> None:

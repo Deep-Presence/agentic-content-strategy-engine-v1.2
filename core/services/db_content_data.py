@@ -9,13 +9,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid as _uuid
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
 from api.schemas.content_data import (
+    ContentPublishMetadata,
     ContentBriefDetailResponse,
     ContentBriefListItem,
     ContentBriefListResponse,
@@ -28,6 +31,28 @@ from core.db.repositories.content_repo import ContentRepository
 from core.db.repositories.pipeline_repo import PipelineRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")[:120]
+
+
+def _normalize_publish_metadata(
+    raw: Any,
+    *,
+    title: str = "",
+) -> ContentPublishMetadata:
+    data = raw if isinstance(raw, dict) else {}
+    return ContentPublishMetadata(
+        slug=str(data.get("slug") or _slugify(title) or ""),
+        meta_title=str(data.get("meta_title") or title or ""),
+        meta_description=str(data.get("meta_description") or ""),
+        canonical_url=str(data.get("canonical_url") or ""),
+        schema_markup=bool(data.get("schema_markup", False)),
+        publish_date=str(data.get("publish_date") or date.today().isoformat()),
+        author=str(data.get("author") or ""),
+        tags=[str(tag).strip() for tag in (data.get("tags") or []) if str(tag).strip()],
+    )
 
 
 # Map ContentPieceStatus → frontend display status
@@ -279,6 +304,12 @@ class DbContentDataService:
                 if embedded_gap_ctx is not None:
                     brief_dict["gap_context"] = embedded_gap_ctx
             gap_ctx = extract_gap_context(brief_dict, analysis_json)
+            publish_metadata = _normalize_publish_metadata(
+                (piece.evaluation_results or {}).get("publish_metadata")
+                if isinstance(piece.evaluation_results, dict)
+                else None,
+                title=piece.title or "",
+            )
 
             # Use filesystem brief_id when available — this is what the pipeline,
             # artifact directories, and HITL approval endpoints use. Fall back
@@ -329,6 +360,7 @@ class DbContentDataService:
                 description=assignment_meta.get("description"),
                 target_keywords=assignment_meta.get("target_keywords"),
                 content_angle=assignment_meta.get("content_angle"),
+                publish_metadata=publish_metadata,
                 published_url=piece.published_url or "",
                 published_at=(
                     piece.published_at.isoformat()
@@ -354,6 +386,34 @@ class DbContentDataService:
         # Prepend GA-phase cards (Queue column) before DB brief cards
         all_items = ga_cards + items
         return ContentBriefListResponse(briefs=all_items, total=len(all_items))
+
+    async def save_publish_metadata(
+        self,
+        effective_slug: str,
+        brief_id: str,
+        metadata: dict | ContentPublishMetadata,
+    ) -> ContentPublishMetadata:
+        """Persist SEO/publish metadata under content_pieces.evaluation_results."""
+        piece = await self._content_repo.get_by_slug_and_brief_id(
+            effective_slug,
+            brief_id,
+        )
+        if piece is None:
+            raise HTTPException(404, f"Brief '{brief_id}' not found")
+
+        normalized = _normalize_publish_metadata(
+            metadata.model_dump(mode="json")
+            if isinstance(metadata, ContentPublishMetadata)
+            else metadata,
+            title=piece.title or "",
+        )
+        merged_results = dict(piece.evaluation_results or {})
+        merged_results["publish_metadata"] = normalized.model_dump(mode="json")
+        await self._content_repo.update(
+            id=piece.id,
+            evaluation_results=merged_results,
+        )
+        return normalized
 
     # ── GA-phase card loader ─────────────────────────────────────────
 
@@ -579,6 +639,12 @@ class DbContentDataService:
             exemplars=exemplars,
             available_stages=await self._get_available_stages(piece.id),
             cps=cps,
+            publish_metadata=_normalize_publish_metadata(
+                eval_results.get("publish_metadata")
+                if isinstance(eval_results, dict)
+                else None,
+                title=piece.title or "",
+            ),
         )
 
     async def _get_available_stages(self, piece_id: _uuid.UUID) -> list[str]:

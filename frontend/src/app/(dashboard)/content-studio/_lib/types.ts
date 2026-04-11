@@ -98,6 +98,16 @@ export interface ContentBriefListItemAPI {
   description?: string;
   target_keywords?: { primary?: string; secondary?: string[] };
   content_angle?: string;
+  publish_metadata?: {
+    slug: string;
+    meta_title: string;
+    meta_description: string;
+    canonical_url: string;
+    schema_markup: boolean;
+    publish_date: string;
+    author: string;
+    tags: string[];
+  };
 }
 
 export interface ContentBriefListResponseAPI {
@@ -162,6 +172,16 @@ export interface ContentBriefDetailResponseAPI {
   exemplars: BriefExemplarAPI[];
   available_stages: string[];
   cps: CPSDetailAPI | null;
+  publish_metadata?: {
+    slug: string;
+    meta_title: string;
+    meta_description: string;
+    canonical_url: string;
+    schema_markup: boolean;
+    publish_date: string;
+    author: string;
+    tags: string[];
+  };
 }
 
 // ---------------------------------------------------------------------------

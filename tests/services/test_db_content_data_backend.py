@@ -461,6 +461,112 @@ class TestGapContextUsesBackend:
         assert item.gap_context.gap_score == 0.31
         assert item.gap_context.company_best_url == "https://test.co/visual-web-design"
 
+    @pytest.mark.asyncio
+    async def test_db_backed_piece_includes_publish_metadata(self, tmp_path):
+        piece = MagicMock()
+        piece.id = uuid.uuid4()
+        piece.brief_id = "WE-114"
+        piece.title = "No-Code Web Development in the Enterprise"
+        piece.status = SimpleNamespace(value="approved")
+        piece.content_type = "how_to"
+        piece.word_count = 2100
+        piece.citability_score = 0.66
+        piece.cluster_name = "Definition"
+        piece.run_id = uuid.uuid4()
+        piece.created_at = None
+        piece.updated_at = None
+        piece.published_url = None
+        piece.published_at = None
+        piece.topic_assignment_id = None
+        piece.evaluation_results = {
+            "publish_metadata": {
+                "slug": "no-code-web-development-enterprise-overview",
+                "meta_title": "No-Code Web Development in the Enterprise | Deep Presence",
+                "meta_description": "A plain-English guide to no-code for enterprise teams.",
+                "canonical_url": "https://blogs.example.com/no-code-web-development-enterprise-overview",
+                "schema_markup": True,
+                "publish_date": "2026-04-11",
+                "author": "Aryan Keshri",
+                "tags": ["no-code", "enterprise"],
+            },
+        }
+
+        content_repo = AsyncMock()
+        content_repo.list_by_slug = AsyncMock(return_value=[piece])
+        content_repo.list_by_run = AsyncMock(return_value=[])
+        pipeline_repo = AsyncMock()
+        pipeline_repo.get_latest_completed = AsyncMock(return_value=None)
+
+        svc = DbContentDataService(
+            content_repo=content_repo,
+            pipeline_repo=pipeline_repo,
+            artifacts_root=tmp_path,
+            backend=MagicMock(),
+        )
+
+        with patch(
+            "core.services.db_content_data.load_analysis_json",
+            return_value=None,
+        ), patch(
+            "core.config.settings.settings.redis_pipeline_state", False,
+        ), patch(
+            "core.config.settings.settings.redis_url", None,
+        ):
+            resp = await svc.get_briefs("test-co")
+
+        item = resp.briefs[0]
+        assert item.publish_metadata.slug == "no-code-web-development-enterprise-overview"
+        assert item.publish_metadata.meta_title == "No-Code Web Development in the Enterprise | Deep Presence"
+        assert item.publish_metadata.meta_description == "A plain-English guide to no-code for enterprise teams."
+        assert item.publish_metadata.canonical_url == "https://blogs.example.com/no-code-web-development-enterprise-overview"
+        assert item.publish_metadata.schema_markup is True
+        assert item.publish_metadata.publish_date == "2026-04-11"
+        assert item.publish_metadata.author == "Aryan Keshri"
+        assert item.publish_metadata.tags == ["no-code", "enterprise"]
+
+    @pytest.mark.asyncio
+    async def test_save_publish_metadata_merges_existing_evaluation_results(self, tmp_path):
+        piece = MagicMock()
+        piece.id = uuid.uuid4()
+        piece.title = "No-Code Web Development in the Enterprise"
+        piece.evaluation_results = {
+            "gap_context": {"query_gap": {"gap": 0.22}},
+            "publish_metadata": {"slug": "old-slug"},
+        }
+
+        content_repo = AsyncMock()
+        content_repo.get_by_slug_and_brief_id = AsyncMock(return_value=piece)
+        content_repo.update = AsyncMock(return_value=piece)
+        pipeline_repo = AsyncMock()
+
+        svc = DbContentDataService(
+            content_repo=content_repo,
+            pipeline_repo=pipeline_repo,
+            artifacts_root=tmp_path,
+            backend=MagicMock(),
+        )
+
+        result = await svc.save_publish_metadata(
+            "test-co",
+            "WE-114",
+            {
+                "slug": "no-code-web-development-enterprise-overview",
+                "meta_title": "No-Code Web Development in the Enterprise | Deep Presence",
+                "meta_description": "A plain-English guide to no-code for enterprise teams.",
+                "canonical_url": "https://blogs.example.com/no-code-web-development-enterprise-overview",
+                "schema_markup": True,
+                "publish_date": "2026-04-11",
+                "author": "Aryan Keshri",
+                "tags": ["no-code", "enterprise"],
+            },
+        )
+
+        assert result.slug == "no-code-web-development-enterprise-overview"
+        update_kwargs = content_repo.update.await_args.kwargs
+        assert update_kwargs["id"] == piece.id
+        assert update_kwargs["evaluation_results"]["gap_context"] == {"query_gap": {"gap": 0.22}}
+        assert update_kwargs["evaluation_results"]["publish_metadata"]["meta_title"] == "No-Code Web Development in the Enterprise | Deep Presence"
+
 
 # ── Blueprint fallback ───────────────────────────────────────────────
 

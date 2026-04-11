@@ -21,7 +21,13 @@ from typing import Any
 
 from core.cms.exceptions import CMSError
 from core.cms.factory import create_cms_adapter
-from core.cms.models import CMSConnectionConfig, CMSPost, CMSPostCreate, CMSPostUpdate
+from core.cms.models import (
+    CMSConnectionConfig,
+    CMSPost,
+    CMSPostCreate,
+    CMSPostUpdate,
+    CMSPublishMetadata,
+)
 from core.cms.protocols import CMSAdapterProtocol
 from core.db.enums import CMSPostStatus, CMSProvider, CMSPublishAction
 from core.db.models.cms import CMSConnectionModel
@@ -272,6 +278,7 @@ class CMSService:
         target_status: str = "draft",
         category_names: list[str] | None = None,
         slug_override: str | None = None,
+        publish_metadata: CMSPublishMetadata | None = None,
     ) -> CMSPost:
         """Read final.md from StorageBackend, convert to HTML, publish to CMS.
 
@@ -287,7 +294,15 @@ class CMSService:
             )
 
         title = self._extract_title(final_md)
-        slug = slug_override or self._generate_slug(title)
+        normalized_publish_metadata = self._normalize_publish_metadata(
+            publish_metadata,
+            title=title,
+        )
+        slug = (
+            slug_override
+            or normalized_publish_metadata.slug
+            or self._generate_slug(title)
+        )
         content_html = self._markdown_to_html(final_md)
 
         adapter = self._reconstruct_adapter(connection)
@@ -295,8 +310,18 @@ class CMSService:
             title=title,
             slug=slug,
             content_html=content_html,
+            excerpt=normalized_publish_metadata.meta_description,
             status=CMSPostStatus(target_status),
             categories=category_names or [],
+            tags=normalized_publish_metadata.tags,
+            seo_title=normalized_publish_metadata.meta_title,
+            seo_description=normalized_publish_metadata.meta_description,
+            canonical_url=normalized_publish_metadata.canonical_url,
+            published_at=self._parse_publish_date(
+                normalized_publish_metadata.publish_date,
+            ),
+            author=normalized_publish_metadata.author,
+            schema_markup=normalized_publish_metadata.schema_markup,
         )
         published_post = await adapter.publish_post(post_create)
 
@@ -329,11 +354,30 @@ class CMSService:
                 effective_slug, brief_id,
             )
             if piece:
+                merged_results = dict(piece.evaluation_results or {})
+                merged_results["publish_metadata"] = normalized_publish_metadata.model_dump(mode="json")
                 await self._content_repo.update(
                     piece.id,
                     published_url=published_post.url,
                     published_at=datetime.now(timezone.utc),
                     status=ContentPieceStatus.published,
+                    evaluation_results=merged_results,
+                )
+
+        if self._inventory_service is not None and connection.company_id:
+            try:
+                await self._inventory_service.register_published_content(
+                    company_id=connection.company_id,
+                    effective_slug=effective_slug,
+                    url=published_post.url,
+                    title=title,
+                    word_count=published_post.word_count,
+                    content_text=final_md,
+                )
+            except Exception:
+                logger.warning(
+                    "content_inventory.publish_register_failed",
+                    exc_info=True,
                 )
 
         return published_post
@@ -619,6 +663,37 @@ class CMSService:
         slug = re.sub(r"[\s]+", "-", slug)
         slug = slug.strip("-")
         return slug[:200]
+
+    @staticmethod
+    def _normalize_publish_metadata(
+        publish_metadata: CMSPublishMetadata | None,
+        *,
+        title: str,
+    ) -> CMSPublishMetadata:
+        if publish_metadata is None:
+            return CMSPublishMetadata(
+                slug=CMSService._generate_slug(title),
+                meta_title=title,
+            )
+        return CMSPublishMetadata(
+            slug=publish_metadata.slug or CMSService._generate_slug(title),
+            meta_title=publish_metadata.meta_title or title,
+            meta_description=publish_metadata.meta_description or "",
+            canonical_url=publish_metadata.canonical_url or "",
+            schema_markup=publish_metadata.schema_markup,
+            publish_date=publish_metadata.publish_date or "",
+            author=publish_metadata.author or "",
+            tags=publish_metadata.tags or [],
+        )
+
+    @staticmethod
+    def _parse_publish_date(publish_date: str) -> datetime | None:
+        if not publish_date:
+            return None
+        try:
+            return datetime.fromisoformat(f"{publish_date}T00:00:00+00:00")
+        except ValueError:
+            return None
 
     @staticmethod
     def _markdown_to_html(md_text: str) -> str:

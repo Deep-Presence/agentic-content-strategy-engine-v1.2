@@ -1971,5 +1971,31 @@
     "outcome": "Implemented on 2026-04-11. Content Studio now removes terminal cards from the kanban and no longer exposes publish during `pending_content_approval`. Content Performance now has an `Unpublished Pages` tab backed by the briefs list, and its row detail view reuses the final-article renderer with a real CMS publish action wired to `/api/v1/cms/publish`. Validation: `cd frontend && npx tsc --noEmit`.",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-PUBLISH-METADATA-STORED-ON-CONTENT-PIECE-EVAL-RESULTS",
+    "timestamp": "2026-04-11",
+    "task": "Approved-but-unpublished detail view SEO metadata persistence and CMS publish handoff",
+    "decision": "Persist the detail-view SEO/publish sidebar state under `content_pieces.evaluation_results.publish_metadata` for this slice instead of adding a new dedicated column/table. The content briefs API now surfaces that payload with defaults, the shared `FullPageView` autosaves edits through a new content-data endpoint, and the CMS publish route consumes the same payload so the sidebar is the single source of truth for slug/meta fields at publish time.",
+    "rationale": "The product gap was real but the fastest safe path did not require a schema migration. `content_pieces` already has a durable JSONB field (`evaluation_results`) attached to the exact approved/published artifact we need, and that field is already the source of truth for other post-generation sidebar data such as evaluator output and gap context. Using a nested `publish_metadata` object there let us add a durable API contract, frontend autosave, and publish-time metadata handoff immediately without waiting on database rollout. A later cleanup can move this payload into a dedicated publish-metadata column if the shape grows or cross-system querying becomes important.",
+    "alternatives": [
+      "Add a new `publish_metadata_json` or dedicated SEO columns on `content_pieces` now — rejected for this slice because it would require a DB migration before the user could use the flow locally",
+      "Keep the SEO sidebar as pure client state and only send it during publish — rejected because the user explicitly needs the fields connected to the backend and preserved before the publish click",
+      "Store the SEO payload on `content_engine_topic_runs.metadata_json` — rejected because publish state belongs to the durable content piece and should work for non-TD content paths too"
+    ],
+    "files_affected": [
+      "api/schemas/content_data.py",
+      "api/routers/content_data.py",
+      "core/services/content_data.py",
+      "core/services/json_content_data.py",
+      "core/services/db_content_data.py",
+      "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
+      "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
+      "frontend/src/app/(dashboard)/content-studio/_lib/api.ts",
+      "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx"
+    ],
+    "outcome": "Implemented on 2026-04-11. The detail view now hydrates SEO metadata from the backend, autosaves edits, and passes the same payload into CMS publish. The publish route and service were also extended so successful CMS publish immediately registers the page into Content Inventory, which makes the card leave the Unpublished Pages list without waiting for a later CMS sync. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py tests/api/test_cms.py tests/services/test_cms_service.py -q`, `venv/bin/pytest tests/api/test_content_data.py -q`, `venv/bin/pytest tests/cms/test_wordpress_adapter.py -q`, and `cd frontend && npx tsc --noEmit`.",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]

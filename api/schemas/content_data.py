@@ -29,6 +29,19 @@ class GapContextSummary(BaseModel):
     exemplars: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class ContentPublishMetadata(BaseModel):
+    """Persisted SEO/publish metadata for CMS publishing."""
+
+    slug: str = ""
+    meta_title: str = ""
+    meta_description: str = ""
+    canonical_url: str = ""
+    schema_markup: bool = False
+    publish_date: str = ""
+    author: str = ""
+    tags: List[str] = Field(default_factory=list)
+
+
 class ContentBriefListItem(BaseModel):
     """Summary item for the brief list view."""
 
@@ -67,6 +80,7 @@ class ContentBriefListItem(BaseModel):
     description: Optional[str] = None  # topic description
     target_keywords: Optional[Dict[str, Any]] = None  # {primary, secondary[]}
     content_angle: Optional[str] = None  # why this topic angle
+    publish_metadata: ContentPublishMetadata = Field(default_factory=ContentPublishMetadata)
 
 
 class ContentBriefListResponse(BaseModel):
@@ -84,6 +98,13 @@ class AddBriefRequest(BaseModel):
     description: str = ""
     source: str = "manual"  # "citation", "topic_discovery", "manual"
     gap_query_id: str = ""  # direct query_id for deterministic gap context lookup
+
+
+class SavePublishMetadataRequest(BaseModel):
+    """Request body for saving SEO/publish metadata on a brief."""
+
+    effective_slug: Optional[str] = None
+    publish_metadata: ContentPublishMetadata = Field(default_factory=ContentPublishMetadata)
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +169,7 @@ class ContentBriefDetailResponse(BaseModel):
     exemplars: List[BriefExemplar] = Field(default_factory=list)
     available_stages: List[str] = Field(default_factory=list)
     cps: Optional[CPSDetail] = None  # Per-engine citation prediction scores
+    publish_metadata: ContentPublishMetadata = Field(default_factory=ContentPublishMetadata)
 
 
 # ---------------------------------------------------------------------------

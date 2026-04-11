@@ -48,6 +48,7 @@ from api.schemas.cms import (
     StaleToTriageResponse,
 )
 from core.auth.service import AuthServiceProtocol
+from core.cms.models import CMSPublishMetadata
 from core.cms.exceptions import (
     CMSAuthError,
     CMSConnectionError,
@@ -409,6 +410,11 @@ async def publish_to_cms(
             target_status=body.status,
             category_names=body.categories or None,
             slug_override=body.slug_override,
+            publish_metadata=(
+                CMSPublishMetadata(**body.publish_metadata.model_dump(mode="json"))
+                if body.publish_metadata
+                else None
+            ),
         )
     except CMSError as exc:
         raise _handle_cms_error(exc)

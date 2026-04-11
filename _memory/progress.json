@@ -1604,6 +1604,37 @@
         "tests/services/test_content_performance_service.py"
       ],
       "codex_review": "Corrected the underlying GA4 traffic contract for Content Performance. The sync adapter had been requesting `landingPage`, which only measures session entry pages and is too narrow for a per-page content-performance dashboard. Updated the GA4 traffic report to request `pagePath` instead, while intentionally keeping the existing `landing_page_url` storage field as a legacy compatibility field to avoid a database migration in this slice. Also updated service/model comments and readiness copy to reflect GA4 page-path semantics instead of landing-page semantics. Validation: `venv/bin/pytest tests/analytics/test_adapter.py tests/services/test_content_performance_service.py -q` (75 passed), `venv/bin/pytest tests/analytics/test_service.py tests/api/test_content_performance.py tests/api/test_analytics.py -q` (82 passed, 1 pre-existing warning), and a real 90-day sync against the local `webflow` connection completed successfully. Live result after the code change still returned only `/` in `ga4_traffic_data`, confirming the remaining blocker is actual GA4 property coverage for article URLs rather than the old landing-page contract."
+    },
+    {
+      "id": "T-content-publish-metadata-flow",
+      "task": "Unpublished page detail view — persist SEO metadata, use it during CMS publish, and register newly published content in inventory immediately",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 4,
+      "files_modified": [
+        "api/schemas/content_data.py",
+        "api/schemas/cms.py",
+        "api/routers/content_data.py",
+        "api/routers/cms.py",
+        "core/services/content_data.py",
+        "core/services/json_content_data.py",
+        "core/services/db_content_data.py",
+        "core/cms/models.py",
+        "core/cms/adapters/wordpress.py",
+        "core/services/cms_service.py",
+        "frontend/src/app/(dashboard)/content-studio/_lib/types.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/adapters.ts",
+        "frontend/src/app/(dashboard)/content-studio/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-studio/_components/FullPageView.tsx",
+        "frontend/src/app/(dashboard)/content-studio/page.tsx",
+        "frontend/src/app/(dashboard)/content-performance/_lib/api.ts",
+        "frontend/src/app/(dashboard)/content-performance/page.tsx",
+        "tests/services/test_db_content_data_backend.py",
+        "tests/api/test_cms.py",
+        "tests/services/test_cms_service.py"
+      ],
+      "codex_review": "Implemented the first real SEO-metadata and publish-flow slice for the approved-but-unpublished detail view. Content pieces now persist publish metadata inside `content_pieces.evaluation_results.publish_metadata`, the briefs API returns that payload (with safe defaults like slug/meta title/publish date), and a new `PUT /api/v1/companies/{slug}/content/briefs/{brief_id}/publish-metadata` route lets the shared `FullPageView` autosave sidebar edits. The CMS publish route now accepts `publish_metadata`, the WordPress adapter uses the supported subset immediately (`slug`, Yoast title/description/canonical, tags, publish date, numeric author IDs), and `cms_service.publish_brief()` now registers the published page into Content Inventory immediately so the page moves from Unpublished Pages into the published/inventory surfaces without waiting for a later CMS sync. Validation: `venv/bin/pytest tests/services/test_db_content_data_backend.py tests/api/test_cms.py tests/services/test_cms_service.py -q` (94 passed, 1 pre-existing warning), `venv/bin/pytest tests/api/test_content_data.py -q` (95 passed), `venv/bin/pytest tests/cms/test_wordpress_adapter.py -q` (35 passed), and `cd frontend && npx tsc --noEmit` (clean)."
     }
   ],
   "pending": [

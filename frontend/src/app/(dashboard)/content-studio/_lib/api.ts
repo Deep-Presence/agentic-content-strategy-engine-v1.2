@@ -19,6 +19,8 @@ import type {
   TopicRunListResponseAPI,
   TopicRunEventListResponseAPI,
 } from './types';
+import type { ContentMetadata } from '../_components/types';
+import { serializePublishMetadata } from './adapters';
 
 // ---------------------------------------------------------------------------
 // Brief list
@@ -162,6 +164,53 @@ export function saveReviewDraftContent(
   return api.put<ContentDraftSaveResponseAPI>(
     `/api/v1/content/v13/${encodeURIComponent(runId)}/draft/content`,
     { brief_id: briefId, content_markdown: contentMarkdown },
+  );
+}
+
+export function savePublishMetadata(
+  slug: string,
+  briefId: string,
+  metadata: ContentMetadata,
+  effectiveSlug?: string,
+): Promise<{
+  slug: string;
+  meta_title: string;
+  meta_description: string;
+  canonical_url: string;
+  schema_markup: boolean;
+  publish_date: string;
+  author: string;
+  tags: string[];
+}> {
+  return api.put(
+    `/api/v1/companies/${encodeURIComponent(slug)}/content/briefs/${encodeURIComponent(briefId)}/publish-metadata`,
+    {
+      effective_slug: effectiveSlug,
+      publish_metadata: serializePublishMetadata(metadata),
+    },
+  );
+}
+
+export function publishContentToCMS(
+  briefId: string,
+  effectiveSlug?: string,
+  metadata?: ContentMetadata,
+): Promise<{
+  cms_post_id: string;
+  url: string;
+  slug: string;
+  title: string;
+  status: string;
+  word_count: number;
+}> {
+  return api.post(
+    '/api/v1/cms/publish',
+    {
+      brief_id: briefId,
+      effective_slug: effectiveSlug,
+      status: 'publish',
+      publish_metadata: metadata ? serializePublishMetadata(metadata) : undefined,
+    },
   );
 }
 

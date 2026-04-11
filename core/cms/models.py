@@ -23,6 +23,7 @@ __all__ = [
     "CMSMediaUpload",
     "CMSPost",
     "CMSPostCreate",
+    "CMSPublishMetadata",
     "CMSPostStatus",
     "CMSPostUpdate",
     "CMSProvider",
@@ -98,6 +99,10 @@ class CMSPostCreate(BaseModel):
     featured_image_id: str | None = None
     seo_title: str = ""
     seo_description: str = ""
+    canonical_url: str = ""
+    published_at: datetime | None = None
+    author: str = ""
+    schema_markup: bool = False
 
 
 class CMSPostUpdate(BaseModel):
@@ -112,6 +117,20 @@ class CMSPostUpdate(BaseModel):
     slug: str | None = None
     seo_title: str | None = None
     seo_description: str | None = None
+    canonical_url: str | None = None
+
+
+class CMSPublishMetadata(BaseModel):
+    """Normalized SEO/publish metadata provided by the product UI."""
+
+    slug: str = ""
+    meta_title: str = ""
+    meta_description: str = ""
+    canonical_url: str = ""
+    schema_markup: bool = False
+    publish_date: str = ""
+    author: str = ""
+    tags: list[str] = Field(default_factory=list)
 
 
 # ── Categories ────────────────────────────────────────────────────────

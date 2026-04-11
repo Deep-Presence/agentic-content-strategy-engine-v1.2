@@ -10,7 +10,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from core.cms.exceptions import CMSError
-from core.cms.models import CMSCategory, CMSConnectionStatus, CMSPost, CMSPostStatus
+from core.cms.models import CMSCategory, CMSConnectionStatus, CMSPost, CMSPostStatus, CMSPublishMetadata
 from core.db.enums import CMSProvider
 from core.services.cms_service import CMSService
 
@@ -238,6 +238,69 @@ class TestPublish:
                 connection=conn,
                 effective_slug="test-co",
             )
+
+    @pytest.mark.asyncio
+    async def test_publish_brief_uses_publish_metadata_and_registers_inventory(self) -> None:
+        md_content = "# Test Article\n\nSome content here."
+        storage = _make_mock_storage(md_content)
+        conn_repo, pub_repo, _ = _make_mock_repos()
+        pub_repo.create.return_value = MagicMock()
+        content_repo = AsyncMock()
+        content_repo.get_by_slug_and_brief_id.return_value = MagicMock(id=uuid.uuid4())
+        inventory_service = AsyncMock()
+
+        service = CMSService(
+            connection_repo=conn_repo,
+            publish_repo=pub_repo,
+            synced_post_repo=AsyncMock(),
+            storage=storage,
+            fernet_key=_TEST_FERNET_KEY,
+            content_repo=content_repo,
+            inventory_service=inventory_service,
+        )
+        conn = _mock_connection()
+        conn.company_id = uuid.uuid4()
+
+        published = CMSPost(
+            cms_id="123",
+            title="Test Article",
+            slug="no-code-web-development-enterprise-overview",
+            url="https://blog.example.com/no-code-web-development-enterprise-overview/",
+            word_count=50,
+        )
+        with patch(
+            "core.services.cms_service.create_cms_adapter"
+        ) as mock_factory:
+            mock_adapter = AsyncMock()
+            mock_adapter.publish_post.return_value = published
+            mock_factory.return_value = mock_adapter
+
+            await service.publish_brief(
+                company_slug="test-co",
+                brief_id="brief-001",
+                connection=conn,
+                effective_slug="test-co",
+                target_status="publish",
+                publish_metadata=CMSPublishMetadata(
+                    slug="no-code-web-development-enterprise-overview",
+                    meta_title="No-Code Web Development in the Enterprise | Deep Presence",
+                    meta_description="A plain-English guide to no-code for enterprise teams.",
+                    canonical_url="https://blog.example.com/no-code-web-development-enterprise-overview/",
+                    publish_date="2026-04-11",
+                    author="42",
+                    tags=["no-code", "enterprise"],
+                ),
+            )
+
+        post_create = mock_adapter.publish_post.await_args.args[0]
+        assert post_create.slug == "no-code-web-development-enterprise-overview"
+        assert post_create.seo_title == "No-Code Web Development in the Enterprise | Deep Presence"
+        assert post_create.seo_description == "A plain-English guide to no-code for enterprise teams."
+        assert post_create.canonical_url == "https://blog.example.com/no-code-web-development-enterprise-overview/"
+        assert post_create.tags == ["no-code", "enterprise"]
+        assert post_create.author == "42"
+        assert post_create.published_at is not None
+        inventory_service.register_published_content.assert_awaited_once()
 
 
 # ── Refresh Tests ─────────────────────────────────────────────────────

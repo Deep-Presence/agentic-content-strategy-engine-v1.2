@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo } from 'react';
 import { ChevronDown, Plus } from 'lucide-react';
-import type { ContentCard, BriefPipelineStatus } from './_components/types';
+import type { ContentCard, BriefPipelineStatus, ContentMetadata } from './_components/types';
 import { getDisplay, isTerminal } from './_lib/status-adapter';
 import { useContentBriefs } from './_hooks/useContentBriefs';
 import { useContentPipeline } from './_hooks/useContentPipeline';
@@ -14,6 +14,7 @@ import {
   approveBrief,
   approveContent,
   cancelTask,
+  publishContentToCMS,
 } from './_lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { MOCK_CYCLE, PAST_CYCLES } from './_components/mock-data';
@@ -52,6 +53,7 @@ export default function ContentStudioPage() {
     applyStateChanged,
   } = useContentBriefs();
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [publishPendingId, setPublishPendingId] = useState<string | null>(null);
   // Derive selectedCard from live cards array so it stays in sync after polls
   const selectedCard = useMemo(
     () => (selectedCardId ? cards.find((c) => c.id === selectedCardId) ?? null : null),
@@ -275,6 +277,32 @@ export default function ContentStudioPage() {
     [selectedCard, companyName, companySlug, domain, updateCard],
   );
 
+  const handlePublish = useCallback(
+    async (data?: { contentMarkdown?: string; metadata?: ContentMetadata }) => {
+      if (!selectedCard) return;
+      setPublishPendingId(selectedCard.id);
+      try {
+        const resp = await publishContentToCMS(
+          selectedCard.id,
+          selectedCard.effectiveSlug,
+          data?.metadata,
+        );
+        updateCard(selectedCard.id, {
+          status: 'published',
+          publishedUrl: resp.url,
+          publishedAt: new Date().toISOString(),
+          metadata: data?.metadata,
+        });
+        setSelectedCardId(null);
+      } catch (err) {
+        console.error('Publish failed:', err);
+      } finally {
+        setPublishPendingId(null);
+      }
+    },
+    [selectedCard, updateCard],
+  );
+
   // Filter and sort
   const displayCards = cards
     .filter((c) => {
@@ -401,6 +429,9 @@ export default function ContentStudioPage() {
           card={selectedCard}
           onClose={() => setSelectedCardId(null)}
           onAction={handleAction}
+          onPublish={handlePublish}
+          publishLabel={publishPendingId === selectedCard.id ? 'Publishing...' : 'Publish'}
+          isPublishPending={publishPendingId === selectedCard.id}
         />
       )}
     </>

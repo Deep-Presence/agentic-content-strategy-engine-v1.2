@@ -4,6 +4,8 @@
  */
 
 import { api } from '@/lib/api-client';
+import { serializePublishMetadata } from '../../content-studio/_lib/adapters';
+import type { ContentMetadata } from '../../content-studio/_components/types';
 import type {
   ContentDetailAPI,
   ContentPerformanceReadinessAPI,
@@ -223,6 +225,7 @@ export interface CMSPublishResponseAPI {
 export function publishContentBrief(
   briefId: string,
   effectiveSlug?: string,
+  metadata?: ContentMetadata,
   signal?: AbortSignal,
 ): Promise<CMSPublishResponseAPI> {
   return api.post<CMSPublishResponseAPI>(
@@ -231,6 +234,7 @@ export function publishContentBrief(
       brief_id: briefId,
       effective_slug: effectiveSlug,
       status: 'publish',
+      publish_metadata: metadata ? serializePublishMetadata(metadata) : undefined,
     },
     signal ? { signal } : undefined,
   );
