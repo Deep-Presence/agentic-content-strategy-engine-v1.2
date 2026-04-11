@@ -8,11 +8,14 @@ and ``content_inventory`` live in PostgreSQL.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import statistics
 import uuid as _uuid
 from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Sequence
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from core.content_inventory.url_utils import extract_url_path, normalize_url
 from core.db.repositories.analytics_repo import (
@@ -313,6 +316,33 @@ def _candidate_inventory_urls(item: Any) -> tuple[str, str | None]:
     return raw_url, normalized_url or None
 
 
+def _coerce_company_uuid(company_id: _uuid.UUID | str) -> _uuid.UUID:
+    """Normalize company identifiers from auth/service boundaries to UUID."""
+    return company_id if isinstance(company_id, _uuid.UUID) else _uuid.UUID(company_id)
+
+
+async def _rollback_repo_session(repo: Any) -> None:
+    """Rollback a repo-owned session after a handled DB error, if available."""
+    repo_dict = getattr(repo, "__dict__", {})
+    session = repo_dict.get("_session") if isinstance(repo_dict, dict) else None
+    if session is None:
+        return
+
+    rollback = getattr(session, "rollback", None)
+    if rollback is None:
+        return
+
+    try:
+        result = rollback()
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        logger.warning(
+            "content_performance.repo_rollback_failed",
+            exc_info=True,
+        )
+
+
 # ── Service ─────────────────────────────────────────────────────────
 
 
@@ -336,15 +366,16 @@ class ContentPerformanceService:
 
     async def get_readiness(
         self,
-        company_id: _uuid.UUID,
+        company_id: _uuid.UUID | str,
         *,
         tenant_id: str,
         start_date: date,
         end_date: date,
     ) -> dict[str, Any]:
         """Return readiness metadata for the Content Performance analytics chain."""
+        company_uuid = _coerce_company_uuid(company_id)
         items, total_inventory = await self._inventory.get_by_company(
-            company_id, limit=1000, offset=0,
+            company_uuid, limit=1000, offset=0,
         )
         inventory_paths = {
             _canonicalize_path(item.url_normalized or item.url or "")
@@ -355,7 +386,7 @@ class ContentPerformanceService:
         connection = None
         if self._connections is not None:
             connection = await self._connections.get_active_connection(
-                company_id, tenant_id,
+                company_uuid, tenant_id,
             )
 
         if connection is None:
@@ -388,18 +419,18 @@ class ContentPerformanceService:
                 "inventory_pages": int(total_inventory),
             }
 
-        ga4_rows_total = await self._traffic.count_rows(company_id)
+        ga4_rows_total = await self._traffic.count_rows(company_uuid)
         ga4_rows_in_window = await self._traffic.count_rows(
-            company_id, start_date=start_date, end_date=end_date,
+            company_uuid, start_date=start_date, end_date=end_date,
         )
         ga4_paths_total = {
             _canonicalize_path(path)
-            for path in await self._traffic.list_distinct_landing_page_urls(company_id)
+            for path in await self._traffic.list_distinct_landing_page_urls(company_uuid)
         }
         ga4_paths_window = {
             _canonicalize_path(path)
             for path in await self._traffic.list_distinct_landing_page_urls(
-                company_id, start_date=start_date, end_date=end_date,
+                company_uuid, start_date=start_date, end_date=end_date,
             )
         }
         matched_total = len(inventory_paths & ga4_paths_total)
@@ -407,7 +438,7 @@ class ContentPerformanceService:
         unmatched_total = len(ga4_paths_total - inventory_paths)
         unmatched_window = len(ga4_paths_window - inventory_paths)
         window_aggregates = await self._traffic.get_per_page_aggregates(
-            company_id, start_date, end_date,
+            company_uuid, start_date, end_date,
         )
         unmatched_window_sessions: dict[str, int] = {}
         for row in window_aggregates:
@@ -488,7 +519,7 @@ class ContentPerformanceService:
 
     async def get_content_table(
         self,
-        company_id: _uuid.UUID,
+        company_id: _uuid.UUID | str,
         start_date: date,
         end_date: date,
     ) -> list[dict[str, Any]]:
@@ -497,9 +528,10 @@ class ContentPerformanceService:
         Joins content_inventory rows with GA4 per-page aggregates.
         Computes velocity, velocity_trend, freshness_days, and lifecycle.
         """
+        company_uuid = _coerce_company_uuid(company_id)
         # Fetch inventory (all pages, no pagination limit for dashboard)
         items, _total = await self._inventory.get_by_company(
-            company_id, limit=1000, offset=0,
+            company_uuid, limit=1000, offset=0,
         )
         if not items:
             return []
@@ -509,7 +541,7 @@ class ContentPerformanceService:
 
         # Current period aggregates
         current_rows = await self._traffic.get_per_page_aggregates(
-            company_id, start_date, end_date,
+            company_uuid, start_date, end_date,
         )
         current_lookup = _build_path_to_traffic(current_rows)
 
@@ -517,7 +549,7 @@ class ContentPerformanceService:
         prev_end = start_date - timedelta(days=1)
         prev_start = prev_end - timedelta(days=period_days - 1)
         prev_rows = await self._traffic.get_per_page_aggregates(
-            company_id, prev_start, prev_end,
+            company_uuid, prev_start, prev_end,
         )
         prev_lookup = _build_path_to_traffic(prev_rows)
 
@@ -527,7 +559,7 @@ class ContentPerformanceService:
             start_dt = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
             end_dt = datetime.combine(end_date, time.max, tzinfo=timezone.utc)
             cit_rows = await self._ci_prompt.get_citation_metrics_batch(
-                company_id, start_dt, end_dt,
+                company_uuid, start_dt, end_dt,
             )
             citation_lookup = {str(r["inventory_id"]): r for r in cit_rows}
 
@@ -535,7 +567,7 @@ class ContentPerformanceService:
         url_to_queries: dict[str, int] = {}
         if self._gap is not None:
             pub_url_counts = await self._gap.count_queries_targeting_inventory_batch(
-                company_id,
+                company_uuid,
             )
             for pub_url, cnt in pub_url_counts.items():
                 norm = normalize_url(pub_url) if pub_url else ""
@@ -606,7 +638,7 @@ class ContentPerformanceService:
 
     async def get_content_detail(
         self,
-        company_id: _uuid.UUID,
+        company_id: _uuid.UUID | str,
         inventory_id: _uuid.UUID,
         start_date: date,
         end_date: date,
@@ -617,8 +649,9 @@ class ContentPerformanceService:
         Returns None if the inventory item doesn't exist or doesn't belong
         to the company.
         """
+        company_uuid = _coerce_company_uuid(company_id)
         item = await self._inventory.get_by_id(inventory_id)
-        if item is None or item.company_id != company_id:
+        if item is None or item.company_id != company_uuid:
             return None
 
         path = extract_url_path(item.url_normalized or item.url or "")
@@ -628,20 +661,20 @@ class ContentPerformanceService:
 
         # Fetch timeseries + source breakdown + AI platform breakdown
         timeseries = await self._traffic.get_daily_timeseries(
-            company_id, path, start_date, end_date,
+            company_uuid, path, start_date, end_date,
         )
         sources = await self._traffic.get_source_breakdown(
-            company_id, path, start_date, end_date,
+            company_uuid, path, start_date, end_date,
         )
         ai_platforms = await self._traffic.get_ai_platform_breakdown(
-            company_id, path, start_date, end_date,
+            company_uuid, path, start_date, end_date,
         )
 
         # Previous period for velocity trend
         prev_end = start_date - timedelta(days=1)
         prev_start = prev_end - timedelta(days=period_days - 1)
         prev_timeseries = await self._traffic.get_daily_timeseries(
-            company_id, path, prev_start, prev_end,
+            company_uuid, path, prev_start, prev_end,
         )
 
         # Aggregate current and previous totals
@@ -664,11 +697,23 @@ class ContentPerformanceService:
         exemplar_dates: list[datetime] = []
         if self._gap is not None:
             raw_url, normalized_url = _candidate_inventory_urls(item)
-            exemplar_dates = await self._gap.get_cited_exemplar_dates_for_inventory_url(
-                company_id,
-                raw_url,
-                normalized_url=normalized_url,
-            )
+            try:
+                exemplar_dates = await self._gap.get_cited_exemplar_dates_for_inventory_url(
+                    company_uuid,
+                    raw_url,
+                    normalized_url=normalized_url,
+                )
+            except SQLAlchemyError:
+                logger.warning(
+                    "content_performance.detail_exemplar_dates_unavailable",
+                    extra={
+                        "company_id": str(company_uuid),
+                        "inventory_id": str(item.id),
+                        "url": raw_url,
+                    },
+                    exc_info=True,
+                )
+                await _rollback_repo_session(self._gap)
         freshness = _compute_freshness_assessment(item, exemplar_dates)
 
         # Daily traffic points
@@ -738,7 +783,7 @@ class ContentPerformanceService:
             total_cited = sum(r["cited"] for r in timeline_rows)
             # Per-engine platforms
             cit_batch = await self._ci_prompt.get_citation_metrics_batch(
-                company_id, start_dt, end_dt,
+                company_uuid, start_dt, end_dt,
             )
             cit_data = {str(r["inventory_id"]): r for r in cit_batch}.get(
                 str(inventory_id), {},
@@ -755,7 +800,7 @@ class ContentPerformanceService:
         queries_covered = 0
         if self._gap is not None:
             pub_url_counts = await self._gap.count_queries_targeting_inventory_batch(
-                company_id,
+                company_uuid,
             )
             inv_norm = item.url_normalized or normalize_url(item.url or "")
             for pub_url, cnt in pub_url_counts.items():
@@ -789,7 +834,7 @@ class ContentPerformanceService:
 
     async def get_velocity_insights(
         self,
-        company_id: _uuid.UUID,
+        company_id: _uuid.UUID | str,
         start_date: date,
         end_date: date,
     ) -> list[dict[str, Any]]:

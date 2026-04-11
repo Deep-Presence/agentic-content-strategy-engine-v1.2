@@ -324,5 +324,19 @@
     "fix_applied": "Changed the GA4 traffic sync to request `pagePath` instead of `landingPage`, kept the existing storage field name for backward-compatible persistence, and updated readiness/service copy to refer to GA4 page paths.",
     "lesson": "For per-page content analytics, do not use GA4 `landingPage` as the primary join key. Use `pagePath`/page-level dimensions for traffic and reserve landing-page data for session-entry metrics.",
     "files_affected": ["core/analytics/adapters/ga4.py", "core/services/content_performance_service.py", "tests/analytics/test_adapter.py", "tests/services/test_content_performance_service.py"]
+  },
+  {
+    "id": "F33",
+    "timestamp": "2026-04-11",
+    "what_broke": "The Content Performance per-page drawer returned 500 for every detail request even though the service intended the cited-exemplar freshness lookup to be optional.",
+    "root_cause": "The local database was still on Alembic revision `0039`, so `url_enrichment_cache` did not yet have the additive `published_at` / `modified_at` columns introduced by migration `0040_url_enrichment_freshness_dates`. `GapAnalysisRepository.get_cited_exemplar_dates_for_inventory_url()` therefore raised `UndefinedColumnError` on `url_enrichment_cache.modified_at`. `ContentPerformanceService.get_content_detail()` caught that first SQLAlchemy error and logged a warning, but it reused the same request-scoped async SQLAlchemy session without rolling it back, so the subsequent citation-timeline query failed with `InFailedSQLTransactionError` and surfaced as a 500.",
+    "fix_applied": "Fixed on 2026-04-11. `ContentPerformanceService.get_content_detail()` now rolls back the repo-owned session after a handled cited-exemplar query failure before running follow-up drawer queries, so the endpoint degrades to heuristic freshness instead of crashing. Added a regression test asserting the rollback and confirming citation timeline/query coverage still return after the freshness lookup fails. The local schema is also confirmed to be on revision `0039`, so applying migration `0040` is still required to restore exemplar-date freshness benchmarking itself.",
+    "lesson": "If a request-scoped SQLAlchemy session hits a DB error, catching/logging the exception is not enough when more queries will run on that same session. Roll back immediately or every follow-up query will inherit an aborted transaction. Also, additive ORM fields backed by new migrations should be treated as optional in read paths until the environment is verified at the expected Alembic revision.",
+    "files_affected": [
+      "core/services/content_performance_service.py",
+      "tests/services/test_content_performance_service.py",
+      "core/db/repositories/gap_analysis_repo.py",
+      "core/db/migrations/versions/0040_url_enrichment_freshness_dates.py"
+    ]
   }
 ]

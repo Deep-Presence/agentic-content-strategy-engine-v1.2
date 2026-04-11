@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from core.content_inventory.url_utils import extract_url_path
 from core.services.content_performance_service import (
@@ -569,6 +570,23 @@ class TestGetContentDetail:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_accepts_string_company_id_from_auth_service(
+        self, service, inventory_repo,
+    ):
+        cid = uuid.uuid4()
+        item = _make_inventory_item(company_id=cid)
+        inventory_repo.get_by_id.return_value = item
+
+        result = await service.get_content_detail(
+            str(cid),
+            item.id,
+            date(2026, 3, 1), date(2026, 3, 28),
+        )
+
+        assert result is not None
+        assert result["inventory_id"] == str(item.id)
+
+    @pytest.mark.asyncio
     async def test_happy_path(self, service, inventory_repo, traffic_repo):
         cid = uuid.uuid4()
         item = _make_inventory_item(company_id=cid)
@@ -906,6 +924,83 @@ class TestGetContentDetailFreshness:
             "fresher_than_benchmark",
         }
         assert "benchmark" in freshness["freshness_reason"].lower()
+
+    @pytest.mark.asyncio
+    async def test_detail_freshness_falls_back_when_exemplar_query_fails(
+        self, enriched_service, inventory_repo, gap_repo,
+    ):
+        cid = uuid.uuid4()
+        inv_id = uuid.uuid4()
+        published_at = datetime.now(timezone.utc) - timedelta(days=40)
+        modified_at = datetime.now(timezone.utc) - timedelta(days=7)
+        item = _make_inventory_item(
+            company_id=cid,
+            id_=inv_id,
+            published_at=published_at,
+            content_modified_at=modified_at,
+            url="https://example.com/blog/post",
+        )
+        inventory_repo.get_by_id.return_value = item
+        gap_repo.get_cited_exemplar_dates_for_inventory_url.side_effect = (
+            SQLAlchemyError("missing freshness columns")
+        )
+
+        result = await enriched_service.get_content_detail(
+            cid, inv_id, date(2026, 3, 1), date(2026, 3, 28),
+        )
+
+        assert result is not None
+        freshness = result["freshness"]
+        assert freshness["benchmark_sample_size"] == 0
+        assert freshness["freshness_status"] == "heuristic_fresh"
+        assert freshness["freshness_score"] == 90
+
+    @pytest.mark.asyncio
+    async def test_detail_rolls_back_failed_freshness_query_before_followup_lookups(
+        self, enriched_service, inventory_repo, gap_repo, ci_prompt_repo,
+    ):
+        cid = uuid.uuid4()
+        inv_id = uuid.uuid4()
+        published_at = datetime.now(timezone.utc) - timedelta(days=40)
+        modified_at = datetime.now(timezone.utc) - timedelta(days=7)
+        item = _make_inventory_item(
+            company_id=cid,
+            id_=inv_id,
+            published_at=published_at,
+            content_modified_at=modified_at,
+            url="https://example.com/blog/post",
+        )
+        inventory_repo.get_by_id.return_value = item
+        gap_repo.get_cited_exemplar_dates_for_inventory_url.side_effect = (
+            SQLAlchemyError("missing freshness columns")
+        )
+        gap_repo.count_queries_targeting_inventory_batch.return_value = {
+            "https://example.com/blog/post": 4,
+        }
+        gap_repo._session = AsyncMock()
+        ci_prompt_repo.get_citation_timeline.return_value = [
+            {"day": date(2026, 3, 1), "cited": 1, "total_responses": 5},
+        ]
+        ci_prompt_repo.get_citation_metrics_batch.return_value = [
+            {
+                "inventory_id": inv_id,
+                "total_cited": 1,
+                "cited_openai": True,
+                "cited_claude": False,
+                "cited_gemini": False,
+                "cited_perplexity": False,
+            },
+        ]
+
+        result = await enriched_service.get_content_detail(
+            cid, inv_id, date(2026, 3, 1), date(2026, 3, 28),
+        )
+
+        assert result is not None
+        assert result["citation_timeline"][0]["cited"] == 1
+        assert result["citations"] == 1
+        assert result["queries_covered"] == 4
+        gap_repo._session.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_detail_freshness_handles_missing_dates(
