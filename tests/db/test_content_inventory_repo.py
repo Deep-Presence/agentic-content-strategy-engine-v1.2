@@ -218,6 +218,51 @@ class TestGetByCompany:
             sample_company.id, limit=2, offset=0
         )
         assert total == 5
+
+
+class TestFindSimilarBatch:
+    """Tests for batched similarity retrieval."""
+
+    @pytest.mark.asyncio
+    async def test_returns_top_matches_per_query_key(self, repo, sample_company):
+        page_a = await repo.upsert_page(
+            company_id=sample_company.id,
+            effective_slug="test-co",
+            url="https://example.com/a",
+            title="Page A",
+            ingestion_source=ContentIngestionSource.site_audit_crawl,
+        )
+        page_b = await repo.upsert_page(
+            company_id=sample_company.id,
+            effective_slug="test-co",
+            url="https://example.com/b",
+            title="Page B",
+            ingestion_source=ContentIngestionSource.site_audit_crawl,
+        )
+
+        emb_a = [1.0] + ([0.0] * 1535)
+        emb_b = [0.0, 1.0] + ([0.0] * 1534)
+        await repo.update_embeddings_batch(
+            [
+                (page_a.id, emb_a),
+                (page_b.id, emb_b),
+            ]
+        )
+
+        results = await repo.find_similar_batch(
+            sample_company.id,
+            {
+                "query-a": emb_a,
+                "query-b": emb_b,
+            },
+            threshold=0.5,
+            limit=1,
+        )
+
+        assert results["query-a"][0]["inventory_id"] == page_a.id
+        assert results["query-a"][0]["url"] == "https://example.com/a"
+        assert results["query-b"][0]["inventory_id"] == page_b.id
+        assert results["query-b"][0]["url"] == "https://example.com/b"
         assert len(items) == 2
 
 

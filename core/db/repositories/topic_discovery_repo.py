@@ -15,7 +15,7 @@ Six table-specific repositories:
 from __future__ import annotations
 
 import uuid as _uuid
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Any, List, Optional, Sequence, Tuple, Union
 
 from datetime import datetime, timezone
 
@@ -34,6 +34,7 @@ from core.db.models.topic_discovery import (
     SourceResultModel,
     SubdomainNodeModel,
     TaxonomyTreeModel,
+    TopicAssignmentCannibalizationModel,
     TopicAssignmentModel,
     TopicDiscoveryModel,
 )
@@ -69,6 +70,13 @@ class TopicDiscoveryRepository(SQLAlchemyRepository[TopicDiscoveryModel]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    async def get_latest_by_company(
+        self, company_id: _uuid.UUID | str
+    ) -> Optional[TopicDiscoveryModel]:
+        """Return the latest discovery row for a company."""
+        discoveries = await self.get_by_company(company_id)
+        return discoveries[0] if discoveries else None
 
     async def update_status(
         self, discovery_id: _uuid.UUID | str, status: TDStatus
@@ -503,6 +511,86 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def list_for_cannibalization(
+        self,
+        discovery_id: _uuid.UUID,
+        *,
+        matrix_version: int | None = None,
+        subdomain_node_id: _uuid.UUID | None = None,
+        expansion_batch_id: _uuid.UUID | None = None,
+        assignment_ids: Sequence[_uuid.UUID] | None = None,
+    ) -> Sequence[TopicAssignmentModel]:
+        """List assignments for durable cannibalization synchronization."""
+        stmt = select(TopicAssignmentModel).where(
+            TopicAssignmentModel.discovery_id == discovery_id
+        )
+        if matrix_version is not None:
+            stmt = stmt.where(TopicAssignmentModel.matrix_version == matrix_version)
+        if subdomain_node_id is not None:
+            stmt = stmt.where(TopicAssignmentModel.subdomain_node_id == subdomain_node_id)
+        if expansion_batch_id is not None:
+            stmt = stmt.where(TopicAssignmentModel.expansion_batch_id == expansion_batch_id)
+        if assignment_ids is not None:
+            assignment_id_list = list(dict.fromkeys(assignment_ids))
+            if not assignment_id_list:
+                return []
+            stmt = stmt.where(TopicAssignmentModel.id.in_(assignment_id_list))
+        stmt = stmt.order_by(TopicAssignmentModel.created_at.asc())
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def list_delta_recompute_assignment_ids(
+        self,
+        discovery_id: _uuid.UUID,
+        *,
+        matrix_version: int | None = None,
+        limit: int | None = None,
+    ) -> list[_uuid.UUID]:
+        """Return planner-open assignment IDs for capped delta recomputation.
+
+        This is intentionally narrower than the full assignment universe so
+        content inventory / prompt changes only re-evaluate current planner work.
+        """
+        stmt = select(TopicAssignmentModel.id).where(
+            TopicAssignmentModel.discovery_id == discovery_id,
+            TopicAssignmentModel.status.in_(
+                (
+                    TopicAssignmentStatus.not_started,
+                    TopicAssignmentStatus.approved,
+                    TopicAssignmentStatus.rejected,
+                    TopicAssignmentStatus.gap_analysis_complete,
+                )
+            ),
+        )
+        if matrix_version is not None:
+            stmt = stmt.where(TopicAssignmentModel.matrix_version == matrix_version)
+        stmt = stmt.order_by(
+            TopicAssignmentModel.priority_score.desc().nullslast(),
+            TopicAssignmentModel.created_at.asc(),
+        )
+        if limit is not None and limit > 0:
+            stmt = stmt.limit(limit)
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def bulk_merge_metadata(
+        self,
+        metadata_by_assignment_id: dict[_uuid.UUID, dict[str, Any]],
+    ) -> int:
+        """Merge additive metadata into assignment metadata_json."""
+        if not metadata_by_assignment_id:
+            return 0
+
+        rows = await self.get_by_ids(list(metadata_by_assignment_id))
+        for row in rows:
+            existing = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+            row.metadata_json = {
+                **existing,
+                **metadata_by_assignment_id.get(row.id, {}),
+            }
+        await self._session.flush()
+        return len(rows)
+
     async def update_assignment_status(
         self,
         assignment_id: _uuid.UUID | str,
@@ -660,6 +748,79 @@ class TopicAssignmentRepository(SQLAlchemyRepository[TopicAssignmentModel]):
             "by_relevance": await _group_by(TopicAssignmentModel.relevance),
             "by_status": await _group_by(TopicAssignmentModel.status),
         }
+
+
+class TopicAssignmentCannibalizationRepository(
+    SQLAlchemyRepository[TopicAssignmentCannibalizationModel]
+):
+    """Repository for durable topic assignment cannibalization assessments."""
+
+    model_class = TopicAssignmentCannibalizationModel
+
+    async def get_by_assignment_ids(
+        self,
+        assignment_ids: Sequence[_uuid.UUID],
+    ) -> Sequence[TopicAssignmentCannibalizationModel]:
+        """Fetch durable assessments for a set of assignments."""
+        if not assignment_ids:
+            return []
+        stmt = select(TopicAssignmentCannibalizationModel).where(
+            TopicAssignmentCannibalizationModel.assignment_id.in_(assignment_ids)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_assignment_ids_by_top_match_inventory_ids(
+        self,
+        inventory_ids: Sequence[_uuid.UUID],
+        *,
+        discovery_id: _uuid.UUID | None = None,
+    ) -> list[_uuid.UUID]:
+        """Return assignment IDs whose durable top match is in the given page set."""
+        inventory_id_list = list(dict.fromkeys(inventory_ids))
+        if not inventory_id_list:
+            return []
+
+        stmt = select(TopicAssignmentCannibalizationModel.assignment_id).where(
+            TopicAssignmentCannibalizationModel.top_match_inventory_id.in_(inventory_id_list)
+        )
+        if discovery_id is not None:
+            stmt = stmt.where(
+                TopicAssignmentCannibalizationModel.discovery_id == discovery_id
+            )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def bulk_upsert_assessments(
+        self,
+        assessments: list[dict[str, Any]],
+    ) -> int:
+        """Insert or update durable assessment rows keyed by assignment_id."""
+        if not assessments:
+            return 0
+
+        existing_rows = await self.get_by_assignment_ids(
+            [
+                item["assignment_id"]
+                for item in assessments
+                if item.get("assignment_id") is not None
+            ]
+        )
+        existing_by_assignment_id = {
+            row.assignment_id: row
+            for row in existing_rows
+        }
+
+        for item in assessments:
+            existing = existing_by_assignment_id.get(item["assignment_id"])
+            if existing is not None:
+                for key, value in item.items():
+                    setattr(existing, key, value)
+                continue
+            self._session.add(TopicAssignmentCannibalizationModel(**item))
+
+        await self._session.flush()
+        return len(assessments)
 
 
 class SourceResultRepository(SQLAlchemyRepository[SourceResultModel]):

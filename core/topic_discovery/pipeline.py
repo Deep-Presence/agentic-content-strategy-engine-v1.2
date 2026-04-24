@@ -76,7 +76,9 @@ from core.topic_discovery.agents import (
 )
 from core.topic_discovery.cannibalization_service import (
     assess_assignment_cannibalization,
+    build_assignment_assessments,
     build_assignment_candidate_queries,
+    build_assignment_similarity_query,
 )
 from core.topic_discovery.graph import (
     build_td_matrix_review_graph,
@@ -825,19 +827,8 @@ def _update_expansion_status(
 
 
 def _build_cannibal_query(assignment: TopicAssignment) -> str:
-    """Build enriched text for cannibalization similarity check.
-
-    Mirrors the content inventory embedding formula
-    (title | h1 | meta_description | preview) to produce better similarity.
-    """
-    parts = [assignment.topic_text]
-    meta = assignment.metadata or {}
-    if meta.get("description"):
-        parts.append(str(meta["description"]))
-    keywords = meta.get("target_keywords")
-    if keywords and isinstance(keywords, list):
-        parts.append(", ".join(str(k) for k in keywords[:10]))
-    return " | ".join(parts)
+    """Compatibility wrapper for the shared similarity query builder."""
+    return build_assignment_similarity_query(assignment)
 
 
 def _apply_cannibalization_results(
@@ -848,15 +839,14 @@ def _apply_cannibalization_results(
     signal_overrides_by_query: Dict[str, Dict[str, dict[str, Any]]] | None = None,
 ) -> None:
     """Enrich assignments with planner-ready cannibalization data."""
-    for a, qt in zip(assignments, query_texts):
-        matches = cannibal_results.get(qt, [])
-        a.metadata.update(
-            assess_assignment_cannibalization(
-                a,
-                matches,
-                match_signal_overrides=(signal_overrides_by_query or {}).get(qt, {}),
-            )
-        )
+    assessments = build_assignment_assessments(
+        assignments,
+        query_texts,
+        cannibal_results,
+        signal_overrides_by_query=signal_overrides_by_query,
+    )
+    for a in assignments:
+        a.metadata.update(assessments.get(a.id, {}))
 
         # Piecewise priority penalty
         max_sim = float(a.metadata.get("cannibalization_risk") or 0.0)
@@ -1190,6 +1180,7 @@ async def run_topic_expansion_pipeline(
                 try:
                     from core.db.repositories.content_inventory_prompt_repo import (
                         ContentInventoryPromptRepository,
+                        _compute_query_overlap_signals,
                     )
                     from core.db.repositories.content_inventory_repo import ContentInventoryRepository
                     from core.services.content_inventory_service import ContentInventoryService
@@ -1211,6 +1202,7 @@ async def run_topic_expansion_pipeline(
                         }
                         signal_overrides_by_query: Dict[str, Dict[str, dict[str, Any]]] = {}
                         citation_lookup: dict[str, dict[str, Any]] = {}
+                        page_scope_lookup: dict[_uuid.UUID, dict[str, Any]] = {}
                         if match_inventory_ids:
                             end_dt = datetime.now(timezone.utc)
                             start_dt = end_dt - timedelta(
@@ -1226,13 +1218,22 @@ async def run_topic_expansion_pipeline(
                                 str(row["inventory_id"]): row
                                 for row in citation_rows
                             }
+                            page_scope_lookup = await ci_prompt_repo.get_page_prompt_scopes_batch(
+                                list(match_inventory_ids)
+                            )
 
                         for assignment, query_text in zip(assignments, query_texts):
                             candidate_queries = build_assignment_candidate_queries(assignment)
                             assignment_signal_overrides: Dict[str, dict[str, Any]] = {}
                             for match in cannibal_results.get(query_text, []):
-                                query_overlap = await ci_prompt_repo.get_page_query_overlap_signals(
-                                    _uuid.UUID(match.inventory_id),
+                                inventory_uuid = _uuid.UUID(match.inventory_id)
+                                query_overlap = _compute_query_overlap_signals(
+                                    page_scope_lookup.get(inventory_uuid, {
+                                        "root_prompt_ids": [],
+                                        "prompt_ids": [],
+                                        "fanout_prompt_ids": [],
+                                        "prompt_texts": [],
+                                    }),
                                     candidate_queries,
                                 )
                                 citation_metrics = citation_lookup.get(match.inventory_id, {})

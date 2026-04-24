@@ -997,6 +997,9 @@ async def db_write_assignments_for_subdomain(
     )
     from core.db.models.topic_discovery import TopicAssignmentModel
     from core.db.repositories.topic_discovery_repo import TopicAssignmentRepository
+    from core.topic_discovery.cannibalization_service import (
+        persist_assignment_cannibalization_snapshots,
+    )
 
     # Statuses that indicate the assignment was consumed downstream —
     # deleting them would orphan content_pieces.topic_assignment_id (SET NULL).
@@ -1074,6 +1077,16 @@ async def db_write_assignments_for_subdomain(
             await backfill_display_ids(session, company_id, discovery_id)
 
         await session.commit()
+
+    if company_id is not None and assignments:
+        await persist_assignment_cannibalization_snapshots(
+            session_factory,
+            company_id=company_id,
+            discovery_id=discovery_id,
+            assignments=assignments,
+            source="td_expansion_snapshot",
+            matrix_version=matrix_version,
+        )
 
     logger.info(
         "db_write_assignments_for_subdomain: %d assignments for subdomain %s "

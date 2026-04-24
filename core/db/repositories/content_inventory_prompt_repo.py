@@ -279,25 +279,102 @@ class ContentInventoryPromptRepository(
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_inventory_ids_for_root_prompt_ids(
+        self,
+        root_prompt_ids: Sequence[_uuid.UUID],
+    ) -> list[_uuid.UUID]:
+        """Return page IDs linked to any prompt family rooted at these prompts."""
+        root_ids = list(dict.fromkeys(root_prompt_ids))
+        if not root_ids:
+            return []
+
+        linked_root_id = func.coalesce(
+            TrackedPromptModel.parent_prompt_id,
+            TrackedPromptModel.id,
+        )
+        stmt = (
+            select(ContentInventoryPromptModel.content_inventory_id)
+            .join(
+                TrackedPromptModel,
+                ContentInventoryPromptModel.tracked_prompt_id == TrackedPromptModel.id,
+            )
+            .where(
+                and_(
+                    ContentInventoryPromptModel.approved.is_(True),
+                    linked_root_id.in_(root_ids),
+                )
+            )
+            .distinct()
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_page_prompt_scope(
         self,
         inventory_id: _uuid.UUID,
     ) -> dict[str, Any]:
         """Return page prompt scope including parent prompts and fanout children."""
-        root_prompt_ids = await self.get_page_root_prompt_ids(inventory_id)
-        if not root_prompt_ids:
+        scopes = await self.get_page_prompt_scopes_batch([inventory_id])
+        return scopes.get(inventory_id, _empty_page_scope())
+
+    async def get_page_prompt_scopes_batch(
+        self,
+        inventory_ids: Sequence[_uuid.UUID],
+    ) -> dict[_uuid.UUID, dict[str, Any]]:
+        """Return prompt scopes for many pages in two DB round-trips."""
+        page_ids = list(dict.fromkeys(inventory_ids))
+        if not page_ids:
+            return {}
+
+        root_prompt_id = func.coalesce(
+            TrackedPromptModel.parent_prompt_id,
+            TrackedPromptModel.id,
+        ).label("root_prompt_id")
+
+        linked_roots_stmt = (
+            select(
+                ContentInventoryPromptModel.content_inventory_id.label("inventory_id"),
+                root_prompt_id,
+            )
+            .join(
+                TrackedPromptModel,
+                ContentInventoryPromptModel.tracked_prompt_id == TrackedPromptModel.id,
+            )
+            .where(
+                and_(
+                    ContentInventoryPromptModel.content_inventory_id.in_(page_ids),
+                    ContentInventoryPromptModel.approved.is_(True),
+                ),
+            )
+            .distinct()
+        )
+        linked_roots_result = await self._session.execute(linked_roots_stmt)
+        linked_root_rows = linked_roots_result.all()
+
+        root_ids_by_inventory: dict[_uuid.UUID, list[_uuid.UUID]] = {
+            inventory_id: []
+            for inventory_id in page_ids
+        }
+        all_root_ids: list[_uuid.UUID] = []
+        for row in linked_root_rows:
+            inventory_id = row.inventory_id
+            root_id = row.root_prompt_id
+            if root_id not in root_ids_by_inventory[inventory_id]:
+                root_ids_by_inventory[inventory_id].append(root_id)
+            if root_id not in all_root_ids:
+                all_root_ids.append(root_id)
+
+        if not all_root_ids:
             return {
-                "root_prompt_ids": [],
-                "prompt_ids": [],
-                "fanout_prompt_ids": [],
-                "prompt_texts": [],
+                inventory_id: _empty_page_scope()
+                for inventory_id in page_ids
             }
 
         scope_root_id = func.coalesce(
             TrackedPromptModel.parent_prompt_id,
             TrackedPromptModel.id,
         ).label("root_prompt_id")
-        stmt = (
+        scope_stmt = (
             select(
                 TrackedPromptModel.id.label("prompt_id"),
                 scope_root_id,
@@ -305,29 +382,24 @@ class ContentInventoryPromptRepository(
                 TrackedPromptModel.parent_prompt_id.label("parent_prompt_id"),
                 TrackedPromptModel.active.label("active"),
             )
-            .where(scope_root_id.in_(root_prompt_ids))
+            .where(scope_root_id.in_(all_root_ids))
             .order_by(scope_root_id, TrackedPromptModel.parent_prompt_id, TrackedPromptModel.created_at)
         )
-        result = await self._session.execute(stmt)
-        rows = result.all()
+        scope_result = await self._session.execute(scope_stmt)
+        scope_rows = scope_result.all()
 
-        prompt_ids: list[_uuid.UUID] = []
-        fanout_prompt_ids: list[_uuid.UUID] = []
-        prompt_texts: list[str] = []
-        for row in rows:
-            prompt_ids.append(row.prompt_id)
-            if row.parent_prompt_id is not None:
-                fanout_prompt_ids.append(row.prompt_id)
-            text = (row.text or "").strip()
-            if text:
-                prompt_texts.append(text)
+        prompt_rows_by_root: dict[_uuid.UUID, list[Any]] = {}
+        for row in scope_rows:
+            prompt_rows_by_root.setdefault(row.root_prompt_id, []).append(row)
 
-        return {
-            "root_prompt_ids": root_prompt_ids,
-            "prompt_ids": prompt_ids,
-            "fanout_prompt_ids": fanout_prompt_ids,
-            "prompt_texts": prompt_texts,
-        }
+        scopes: dict[_uuid.UUID, dict[str, Any]] = {}
+        for inventory_id in page_ids:
+            root_ids = root_ids_by_inventory.get(inventory_id, [])
+            rows: list[Any] = []
+            for root_id in root_ids:
+                rows.extend(prompt_rows_by_root.get(root_id, []))
+            scopes[inventory_id] = _build_page_scope(root_ids, rows)
+        return scopes
 
     async def get_page_query_overlap_signals(
         self,
@@ -339,53 +411,7 @@ class ContentInventoryPromptRepository(
         Uses parent prompts plus fanout children as the query coverage scope.
         """
         scope = await self.get_page_prompt_scope(inventory_id)
-        queries = [query.strip() for query in candidate_queries if query and query.strip()]
-        if not queries or not scope["prompt_texts"]:
-            return {
-                "query_overlap_score": 0.0,
-                "overlapping_query_count": 0,
-                "matched_queries": [],
-                "matched_prompt_texts": [],
-                "root_prompt_count": len(scope["root_prompt_ids"]),
-                "prompt_scope_count": len(scope["prompt_ids"]),
-            }
-
-        prompt_token_map = {
-            prompt_text: _tokenize_query_text(prompt_text)
-            for prompt_text in scope["prompt_texts"]
-        }
-        matched_queries: list[str] = []
-        matched_prompt_texts: list[str] = []
-        per_query_scores: list[float] = []
-
-        for query in queries:
-            query_tokens = _tokenize_query_text(query)
-            if not query_tokens:
-                per_query_scores.append(0.0)
-                continue
-
-            best_score = 0.0
-            best_prompt = ""
-            for prompt_text, prompt_tokens in prompt_token_map.items():
-                score = _query_overlap_ratio(query_tokens, prompt_tokens)
-                if score > best_score:
-                    best_score = score
-                    best_prompt = prompt_text
-            per_query_scores.append(best_score)
-            if best_score >= 0.5:
-                matched_queries.append(query)
-                if best_prompt and best_prompt not in matched_prompt_texts:
-                    matched_prompt_texts.append(best_prompt)
-
-        overlap_score = sum(per_query_scores) / len(per_query_scores) if per_query_scores else 0.0
-        return {
-            "query_overlap_score": round(overlap_score, 4),
-            "overlapping_query_count": len(matched_queries),
-            "matched_queries": matched_queries,
-            "matched_prompt_texts": matched_prompt_texts,
-            "root_prompt_count": len(scope["root_prompt_ids"]),
-            "prompt_scope_count": len(scope["prompt_ids"]),
-        }
+        return _compute_query_overlap_signals(scope, candidate_queries)
 
     async def get_page_metrics(
         self,
@@ -726,6 +752,92 @@ def _tokenize_query_text(text: str) -> set[str]:
             continue
         tokens.add(token)
     return tokens
+
+
+def _empty_page_scope() -> dict[str, Any]:
+    return {
+        "root_prompt_ids": [],
+        "prompt_ids": [],
+        "fanout_prompt_ids": [],
+        "prompt_texts": [],
+    }
+
+
+def _build_page_scope(
+    root_prompt_ids: Sequence[_uuid.UUID],
+    rows: Sequence[Any],
+) -> dict[str, Any]:
+    prompt_ids: list[_uuid.UUID] = []
+    fanout_prompt_ids: list[_uuid.UUID] = []
+    prompt_texts: list[str] = []
+
+    for row in rows:
+        prompt_ids.append(row.prompt_id)
+        if row.parent_prompt_id is not None:
+            fanout_prompt_ids.append(row.prompt_id)
+        text = (row.text or "").strip()
+        if text:
+            prompt_texts.append(text)
+
+    return {
+        "root_prompt_ids": list(root_prompt_ids),
+        "prompt_ids": prompt_ids,
+        "fanout_prompt_ids": fanout_prompt_ids,
+        "prompt_texts": prompt_texts,
+    }
+
+
+def _compute_query_overlap_signals(
+    scope: dict[str, Any],
+    candidate_queries: Sequence[str],
+) -> dict[str, Any]:
+    queries = [query.strip() for query in candidate_queries if query and query.strip()]
+    if not queries or not scope["prompt_texts"]:
+        return {
+            "query_overlap_score": 0.0,
+            "overlapping_query_count": 0,
+            "matched_queries": [],
+            "matched_prompt_texts": [],
+            "root_prompt_count": len(scope["root_prompt_ids"]),
+            "prompt_scope_count": len(scope["prompt_ids"]),
+        }
+
+    prompt_token_map = {
+        prompt_text: _tokenize_query_text(prompt_text)
+        for prompt_text in scope["prompt_texts"]
+    }
+    matched_queries: list[str] = []
+    matched_prompt_texts: list[str] = []
+    per_query_scores: list[float] = []
+
+    for query in queries:
+        query_tokens = _tokenize_query_text(query)
+        if not query_tokens:
+            per_query_scores.append(0.0)
+            continue
+
+        best_score = 0.0
+        best_prompt = ""
+        for prompt_text, prompt_tokens in prompt_token_map.items():
+            score = _query_overlap_ratio(query_tokens, prompt_tokens)
+            if score > best_score:
+                best_score = score
+                best_prompt = prompt_text
+        per_query_scores.append(best_score)
+        if best_score >= 0.5:
+            matched_queries.append(query)
+            if best_prompt and best_prompt not in matched_prompt_texts:
+                matched_prompt_texts.append(best_prompt)
+
+    overlap_score = sum(per_query_scores) / len(per_query_scores) if per_query_scores else 0.0
+    return {
+        "query_overlap_score": round(overlap_score, 4),
+        "overlapping_query_count": len(matched_queries),
+        "matched_queries": matched_queries,
+        "matched_prompt_texts": matched_prompt_texts,
+        "root_prompt_count": len(scope["root_prompt_ids"]),
+        "prompt_scope_count": len(scope["prompt_ids"]),
+    }
 
 
 def _query_overlap_ratio(

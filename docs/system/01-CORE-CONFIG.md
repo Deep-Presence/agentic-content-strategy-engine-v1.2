@@ -16,9 +16,9 @@ The configuration module provides centralized environment variable management vi
 .env / .env.local / .env.test.local
               │
               ▼
-    ┌─────────────────────┐
+    ┌─────────────────────────┐
     │  Settings(BaseSettings) │  ← 113 fields, 5 computed properties, 1 validator
-    └─────────┬───────────┘
+    └─────────┬───────────────┘
               │
               ▼
     settings = Settings()       ← Module-level singleton

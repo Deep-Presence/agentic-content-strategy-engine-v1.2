@@ -219,6 +219,8 @@ class Settings(BaseSettings):
     td_cannibalization_high_risk_threshold: float = 0.85
     td_cannibalization_overlap_window_days: int = 30
     td_cannibalization_max_matches: int = 5
+    td_cannibalization_delta_assignment_cap: int = 200
+    td_cannibalization_async_recompute_enabled: bool = True
     # Source C: Perplexity deep research for competitive content landscape
     topic_discovery_source_c_model: str = "perplexity/sonar-deep-research"
     topic_discovery_source_c_timeout_s: float = 900.0

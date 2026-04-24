@@ -2,12 +2,22 @@
 from __future__ import annotations
 
 import re
+import uuid as _uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 from urllib.parse import urlparse
+
+import structlog
 
 from core.config.settings import settings
 from core.content_inventory.models import CannibalizationMatch
 from core.models.topic_discovery import IntentType, TopicAssignment
+from core.shared_tools.structured_logging import scoped_bind
+from core.shared_tools.tracing import create_span, end_span
+
+from core.topic_discovery.db_ops import _db_row_to_pydantic_assignment
+
+logger = structlog.get_logger(__name__)
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _STOP_WORDS = {
@@ -36,6 +46,14 @@ _GUIDE_FAMILY = {
 _COMPARISON_FAMILY = {"comparison", "comparison_guide", "listicle"}
 _CASE_STUDY_FAMILY = {"case_study"}
 _LANDING_FAMILY = {"docs", "landing_page", "navigational"}
+_CANNIBALIZATION_METADATA_KEYS = (
+    "cannibalization_risk",
+    "cannibalization_risk_score",
+    "cannibalization_risk_level",
+    "cannibalization_recommended_action",
+    "cannibalization_reasons",
+    "cannibalization_matches",
+)
 
 
 def build_assignment_candidate_queries(assignment: TopicAssignment) -> list[str]:
@@ -53,6 +71,36 @@ def build_assignment_candidate_queries(assignment: TopicAssignment) -> list[str]
             queries.append(cleaned)
 
     return queries
+
+
+def build_assignment_similarity_query(assignment: TopicAssignment) -> str:
+    """Build enriched text for embedding-based cannibalization retrieval."""
+    parts = [assignment.topic_text]
+    meta = assignment.metadata or {}
+    if meta.get("description"):
+        parts.append(str(meta["description"]))
+    keywords = meta.get("target_keywords")
+    if keywords and isinstance(keywords, list):
+        parts.append(", ".join(str(k) for k in keywords[:10]))
+    return " | ".join(parts)
+
+
+def build_assignment_assessments(
+    assignments: list[TopicAssignment],
+    query_texts: list[str],
+    cannibal_results: dict[str, list[CannibalizationMatch]],
+    *,
+    signal_overrides_by_query: dict[str, dict[str, dict[str, Any]]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Build planner-ready assessments keyed by assignment id."""
+    assessments: dict[str, dict[str, Any]] = {}
+    for assignment, query_text in zip(assignments, query_texts):
+        assessments[assignment.id] = assess_assignment_cannibalization(
+            assignment,
+            cannibal_results.get(query_text, []),
+            match_signal_overrides=(signal_overrides_by_query or {}).get(query_text, {}),
+        )
+    return assessments
 
 
 def assess_assignment_cannibalization(
@@ -116,6 +164,370 @@ def assess_assignment_cannibalization(
             }
             for match in scored_matches[:settings.td_cannibalization_max_matches]
         ],
+    }
+
+
+async def persist_assignment_cannibalization_snapshots(
+    session_factory: Any,
+    *,
+    company_id: _uuid.UUID,
+    discovery_id: _uuid.UUID,
+    assignments: list[TopicAssignment],
+    source: str,
+    matrix_version: int | None = None,
+    parent_span: Any | None = None,
+) -> int:
+    """Persist already-computed assignment cannibalization metadata durably."""
+    assessments = {
+        assignment.id: _extract_persistable_metadata(assignment.metadata)
+        for assignment in assignments
+    }
+    return await _persist_assignment_assessments(
+        session_factory,
+        company_id=company_id,
+        discovery_id=discovery_id,
+        assignments=assignments,
+        assessments=assessments,
+        source=source,
+        matrix_version=matrix_version,
+        parent_span=parent_span,
+    )
+
+
+async def recalculate_assignment_cannibalization_records(
+    session_factory: Any,
+    *,
+    company_id: _uuid.UUID,
+    discovery_id: _uuid.UUID,
+    matrix_version: int | None = None,
+    subdomain_node_id: _uuid.UUID | None = None,
+    expansion_batch_id: _uuid.UUID | None = None,
+    assignment_ids: list[_uuid.UUID] | None = None,
+    source: str,
+    parent_span: Any | None = None,
+) -> int:
+    """Recompute durable cannibalization evidence from persisted assignments."""
+    from core.db.repositories.content_inventory_prompt_repo import (
+        ContentInventoryPromptRepository,
+        _compute_query_overlap_signals,
+    )
+    from core.db.repositories.content_inventory_repo import ContentInventoryRepository
+    from core.db.repositories.topic_discovery_repo import TopicAssignmentRepository
+    from core.services.content_inventory_service import ContentInventoryService
+
+    sync_span = create_span(
+        parent_span,
+        "td-cannibalization/recalculate",
+        metadata={
+            "source": source,
+            "embedding_model": settings.embedding_model,
+            "company_id": str(company_id),
+            "discovery_id": str(discovery_id),
+        },
+        input_data={
+            "matrix_version": matrix_version,
+            "subdomain_node_id": str(subdomain_node_id) if subdomain_node_id else None,
+            "expansion_batch_id": str(expansion_batch_id) if expansion_batch_id else None,
+            "assignment_count": len(assignment_ids or []),
+        },
+    )
+    with scoped_bind(
+        step_name="td_cannibalization_recalculate",
+        discovery_id=str(discovery_id),
+        company_id=str(company_id),
+        source=source,
+    ):
+        async with session_factory() as session:
+            assignment_repo = TopicAssignmentRepository(session)
+            assignment_rows = await assignment_repo.list_for_cannibalization(
+                discovery_id,
+                matrix_version=matrix_version,
+                subdomain_node_id=subdomain_node_id,
+                expansion_batch_id=expansion_batch_id,
+                assignment_ids=assignment_ids,
+            )
+
+        if not assignment_rows:
+            end_span(sync_span, output={"count": 0})
+            return 0
+
+        assignments = [
+            _db_row_to_pydantic_assignment(row)
+            for row in assignment_rows
+        ]
+        query_texts = [
+            build_assignment_similarity_query(assignment)
+            for assignment in assignments
+        ]
+
+        async with session_factory() as session:
+            ci_prompt_repo = ContentInventoryPromptRepository(session)
+            cannibal_svc = ContentInventoryService(
+                inventory_repo=ContentInventoryRepository(session),
+            )
+            cannibal_results = await cannibal_svc.check_cannibalization_batch(
+                company_id,
+                query_texts,
+                threshold=settings.td_cannibalization_threshold,
+                parent_span=sync_span,
+                trace_name="td-cannibalization/batch-embed",
+                trace_metadata={
+                    "source": source,
+                    "discovery_id": str(discovery_id),
+                    "matrix_version": matrix_version,
+                },
+            )
+            match_inventory_ids = {
+                _uuid.UUID(match.inventory_id)
+                for result_matches in cannibal_results.values()
+                for match in result_matches
+            }
+            citation_lookup: dict[str, dict[str, Any]] = {}
+            page_scope_lookup: dict[_uuid.UUID, dict[str, Any]] = {}
+            if match_inventory_ids:
+                end_dt = datetime.now(timezone.utc)
+                start_dt = end_dt - timedelta(
+                    days=settings.td_cannibalization_overlap_window_days,
+                )
+                citation_rows = await ci_prompt_repo.get_citation_metrics_batch(
+                    company_id,
+                    start_dt,
+                    end_dt,
+                    inventory_ids=list(match_inventory_ids),
+                )
+                citation_lookup = {
+                    str(row["inventory_id"]): row
+                    for row in citation_rows
+                }
+                page_scope_lookup = await ci_prompt_repo.get_page_prompt_scopes_batch(
+                    list(match_inventory_ids)
+                )
+
+            signal_overrides_by_query: dict[str, dict[str, dict[str, Any]]] = {}
+            for assignment, query_text in zip(assignments, query_texts):
+                candidate_queries = build_assignment_candidate_queries(assignment)
+                assignment_signal_overrides: dict[str, dict[str, Any]] = {}
+                for match in cannibal_results.get(query_text, []):
+                    inventory_uuid = _uuid.UUID(match.inventory_id)
+                    query_overlap = _compute_query_overlap_signals(
+                        page_scope_lookup.get(inventory_uuid, {
+                            "root_prompt_ids": [],
+                            "prompt_ids": [],
+                            "fanout_prompt_ids": [],
+                            "prompt_texts": [],
+                        }),
+                        candidate_queries,
+                    )
+                    citation_metrics = citation_lookup.get(match.inventory_id, {})
+                    citation_count = int(citation_metrics.get("total_cited") or 0)
+                    assignment_signal_overrides[match.inventory_id] = {
+                        **query_overlap,
+                        "citation_count": citation_count,
+                        "citation_overlap_score": min(citation_count / 5, 1.0),
+                    }
+                signal_overrides_by_query[query_text] = assignment_signal_overrides
+
+        assessments = build_assignment_assessments(
+            assignments,
+            query_texts,
+            cannibal_results,
+            signal_overrides_by_query=signal_overrides_by_query,
+        )
+        count = await _persist_assignment_assessments(
+            session_factory,
+            company_id=company_id,
+            discovery_id=discovery_id,
+            assignments=assignments,
+            assessments=assessments,
+            source=source,
+            matrix_version=matrix_version,
+            parent_span=sync_span,
+        )
+        end_span(sync_span, output={"count": count})
+        return count
+
+
+async def resolve_impacted_assignment_scope_for_inventory_changes(
+    session_factory: Any,
+    *,
+    company_id: _uuid.UUID,
+    inventory_ids: list[_uuid.UUID],
+    assignment_cap: int | None = None,
+) -> tuple[_uuid.UUID | None, list[_uuid.UUID]]:
+    """Resolve a narrow assignment slice affected by page/prompt changes.
+
+    Strategy:
+    - Always include assignments whose durable top match points at the changed pages.
+    - Also include a capped slice of planner-open assignments from the latest
+      discovery so newly added pages can affect current planning work even when
+      no durable top match exists yet.
+    """
+    from core.db.repositories.topic_discovery_repo import (
+        TopicAssignmentCannibalizationRepository,
+        TopicAssignmentRepository,
+        TopicDiscoveryRepository,
+    )
+
+    inventory_id_list = list(dict.fromkeys(inventory_ids))
+    if not inventory_id_list:
+        return None, []
+
+    effective_cap = assignment_cap or settings.td_cannibalization_delta_assignment_cap
+    async with session_factory() as session:
+        discovery_repo = TopicDiscoveryRepository(session)
+        latest_discovery = await discovery_repo.get_latest_by_company(company_id)
+        if latest_discovery is None:
+            return None, []
+
+        cannibal_repo = TopicAssignmentCannibalizationRepository(session)
+        assignment_repo = TopicAssignmentRepository(session)
+
+        affected_assignment_ids = await cannibal_repo.get_assignment_ids_by_top_match_inventory_ids(
+            inventory_id_list,
+            discovery_id=latest_discovery.id,
+        )
+        latest_planner_assignment_ids = await assignment_repo.list_delta_recompute_assignment_ids(
+            latest_discovery.id,
+            matrix_version=latest_discovery.matrix_version,
+            limit=effective_cap,
+        )
+
+    ordered_assignment_ids: list[_uuid.UUID] = []
+    for assignment_id in [*affected_assignment_ids, *latest_planner_assignment_ids]:
+        if assignment_id not in ordered_assignment_ids:
+            ordered_assignment_ids.append(assignment_id)
+
+    logger.info(
+        "td_cannibalization_delta_scope_resolved",
+        company_id=str(company_id),
+        discovery_id=str(latest_discovery.id),
+        inventory_count=len(inventory_id_list),
+        affected_count=len(affected_assignment_ids),
+        planner_candidate_count=len(latest_planner_assignment_ids),
+        assignment_count=len(ordered_assignment_ids),
+    )
+    return latest_discovery.id, ordered_assignment_ids
+
+
+async def _persist_assignment_assessments(
+    session_factory: Any,
+    *,
+    company_id: _uuid.UUID,
+    discovery_id: _uuid.UUID,
+    assignments: list[TopicAssignment],
+    assessments: dict[str, dict[str, Any]],
+    source: str,
+    matrix_version: int | None = None,
+    parent_span: Any | None = None,
+) -> int:
+    from core.db.repositories.topic_discovery_repo import (
+        TopicAssignmentCannibalizationRepository,
+        TopicAssignmentRepository,
+    )
+
+    persist_span = create_span(
+        parent_span,
+        "td-cannibalization/persist",
+        metadata={
+            "source": source,
+            "company_id": str(company_id),
+            "discovery_id": str(discovery_id),
+        },
+        input_data={"assignment_count": len(assignments)},
+    )
+    records = [
+        _build_durable_record(
+            assignment=assignment,
+            company_id=company_id,
+            discovery_id=discovery_id,
+            assessment=assessments.get(assignment.id, {}),
+            source=source,
+            matrix_version=matrix_version,
+        )
+        for assignment in assignments
+    ]
+    metadata_by_assignment_id = {
+        _uuid.UUID(assignment.id): assessments.get(assignment.id, {})
+        for assignment in assignments
+        if assignment.id in assessments
+    }
+
+    async with session_factory() as session:
+        assignment_repo = TopicAssignmentRepository(session)
+        cannibal_repo = TopicAssignmentCannibalizationRepository(session)
+        await assignment_repo.bulk_merge_metadata(metadata_by_assignment_id)
+        count = await cannibal_repo.bulk_upsert_assessments(records)
+        await session.commit()
+
+    logger.info(
+        "td_cannibalization_persisted",
+        source=source,
+        discovery_id=str(discovery_id),
+        company_id=str(company_id),
+        count=count,
+    )
+    end_span(persist_span, output={"count": count})
+    return count
+
+
+def _build_durable_record(
+    *,
+    assignment: TopicAssignment,
+    company_id: _uuid.UUID,
+    discovery_id: _uuid.UUID,
+    assessment: dict[str, Any],
+    source: str,
+    matrix_version: int | None,
+) -> dict[str, Any]:
+    top_match = (assessment.get("cannibalization_matches") or [None])[0]
+    top_match_inventory_id = None
+    if isinstance(top_match, dict) and top_match.get("inventory_id"):
+        try:
+            top_match_inventory_id = _uuid.UUID(str(top_match["inventory_id"]))
+        except (TypeError, ValueError):
+            top_match_inventory_id = None
+
+    return {
+        "assignment_id": _uuid.UUID(assignment.id),
+        "discovery_id": discovery_id,
+        "company_id": company_id,
+        "top_match_inventory_id": top_match_inventory_id,
+        "max_similarity": float(assessment.get("cannibalization_risk") or 0.0),
+        "risk_score": float(assessment.get("cannibalization_risk_score") or 0.0),
+        "risk_level": str(assessment.get("cannibalization_risk_level") or "none"),
+        "recommended_action": str(
+            assessment.get("cannibalization_recommended_action")
+            or "safe_to_create_new"
+        ),
+        "reasons_json": list(assessment.get("cannibalization_reasons") or []),
+        "matches_json": list(assessment.get("cannibalization_matches") or []),
+        "signals_json": (
+            (top_match or {}).get("signals")
+            if isinstance(top_match, dict)
+            else None
+        ),
+        "metadata_json": {
+            "source": source,
+            "matrix_version": matrix_version,
+            "embedding_model": settings.embedding_model,
+            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+
+
+def _extract_persistable_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(metadata, dict):
+        return {
+            "cannibalization_risk": 0.0,
+            "cannibalization_risk_score": 0.0,
+            "cannibalization_risk_level": "none",
+            "cannibalization_recommended_action": "safe_to_create_new",
+            "cannibalization_reasons": [],
+            "cannibalization_matches": [],
+        }
+    return {
+        key: metadata.get(key)
+        for key in _CANNIBALIZATION_METADATA_KEYS
     }
 
 

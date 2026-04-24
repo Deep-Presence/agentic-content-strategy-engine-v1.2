@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import structlog
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from api.config import api_settings
@@ -16,6 +17,7 @@ from api.tasks.event_bus import EventBusProtocol
 from api.tasks.models import PipelineTask
 from api.tasks.models import TaskStatus
 from core.services.task_store import TaskStoreProtocol
+from core.services.task_store import TaskConflictError
 from core.gap_analysis.pipeline import run_gap_analysis
 from core.auth.utils.domain import derive_slug
 from core.models.gap_analysis import GapAnalysisInput
@@ -24,6 +26,7 @@ from core.cache import cache_delete, cache_delete_pattern
 from core.redis import get_sync_redis_or_none
 
 logger = logging.getLogger(__name__)
+structured_logger = structlog.get_logger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]  # content-strategy-engine/
 _CONTENT_ENGINE_TASK_PIPELINES = {"content", "content_v13", "td_content"}
@@ -2780,6 +2783,197 @@ async def run_daily_tracker_task(
         clear_context()
 
 
+async def _spawn_td_cannibalization_recompute_task(
+    *,
+    company_slug: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBusProtocol,
+    source: str,
+    inventory_ids: list[uuid.UUID] | None = None,
+    discovery_id: uuid.UUID | None = None,
+    assignment_ids: list[uuid.UUID] | None = None,
+) -> str | None:
+    """Create and launch a durable cannibalization recompute task."""
+    from core.config.settings import settings
+
+    if not settings.td_cannibalization_async_recompute_enabled:
+        return None
+    if not inventory_ids and not assignment_ids:
+        return None
+
+    try:
+        task = task_store.create_task(
+            "td_cannibalization",
+            company_slug,
+            allow_parallel=False,
+        )
+    except TaskConflictError:
+        structured_logger.info(
+            "td_cannibalization_recompute_already_running",
+            company_slug=company_slug,
+            source=source,
+            inventory_count=len(inventory_ids or []),
+            assignment_count=len(assignment_ids or []),
+        )
+        return None
+
+    try:
+        await task_store.ensure_created(task.task_id)
+    except Exception:
+        structured_logger.exception(
+            "td_cannibalization_recompute_task_persist_failed",
+            company_slug=company_slug,
+            source=source,
+        )
+        if hasattr(task_store, "rollback_create"):
+            task_store.rollback_create(task.task_id)
+        return None
+
+    handle = asyncio.create_task(
+        run_td_cannibalization_recompute_task(
+            task_id=task.task_id,
+            company_slug=company_slug,
+            task_store=task_store,
+            event_bus=event_bus,
+            source=source,
+            inventory_ids=inventory_ids,
+            discovery_id=discovery_id,
+            assignment_ids=assignment_ids,
+        )
+    )
+    task_store.register_task_handle(task.task_id, handle)
+    return task.task_id
+
+
+async def run_td_cannibalization_recompute_task(
+    *,
+    task_id: str,
+    company_slug: str,
+    task_store: TaskStoreProtocol,
+    event_bus: EventBusProtocol,
+    source: str,
+    inventory_ids: list[uuid.UUID] | None = None,
+    discovery_id: uuid.UUID | None = None,
+    assignment_ids: list[uuid.UUID] | None = None,
+) -> None:
+    """Background task: recompute durable cannibalization for impacted assignments."""
+    bind_context(task_id=task_id, pipeline_name="td_cannibalization", company_slug=company_slug)
+    task_store.update_task(
+        task_id,
+        status=TaskStatus.RUNNING,
+        current_step="resolve_scope",
+    )
+    event_bus.publish(
+        task_id,
+        "pipeline_start",
+        {"pipeline": "td_cannibalization", "source": source},
+    )
+
+    try:
+        session_factory, _run_id, company_id = await _resolve_db_context(
+            company_slug,
+            company_slug,
+        )
+        if session_factory is None or company_id is None:
+            raise RuntimeError("TD cannibalization recompute requires DATABASE_URL")
+
+        resolved_assignment_ids = list(assignment_ids or [])
+        resolved_discovery_id = discovery_id
+        if inventory_ids:
+            task_store.update_task(
+                task_id,
+                current_step="resolve_impacted_assignments",
+            )
+            from core.config.settings import settings
+            from core.topic_discovery.cannibalization_service import (
+                resolve_impacted_assignment_scope_for_inventory_changes,
+            )
+
+            delta_discovery_id, delta_assignment_ids = (
+                await resolve_impacted_assignment_scope_for_inventory_changes(
+                    session_factory,
+                    company_id=company_id,
+                    inventory_ids=inventory_ids,
+                    assignment_cap=settings.td_cannibalization_delta_assignment_cap,
+                )
+            )
+            if resolved_discovery_id is None:
+                resolved_discovery_id = delta_discovery_id
+            if not resolved_assignment_ids:
+                resolved_assignment_ids = delta_assignment_ids
+
+        if resolved_discovery_id is None:
+            raise RuntimeError("TD cannibalization recompute could not resolve a discovery")
+
+        if not resolved_assignment_ids:
+            result = {
+                "source": source,
+                "discovery_id": str(resolved_discovery_id),
+                "recomputed_assignments": 0,
+                "persisted_records": 0,
+            }
+            task_store.update_task(
+                task_id,
+                status=TaskStatus.COMPLETED,
+                result=result,
+            )
+            event_bus.publish(
+                task_id,
+                "completed",
+                {"pipeline": "td_cannibalization", **result},
+            )
+            return
+
+        task_store.update_task(task_id, current_step="recompute")
+        from core.topic_discovery.cannibalization_service import (
+            recalculate_assignment_cannibalization_records,
+        )
+
+        count = await recalculate_assignment_cannibalization_records(
+            session_factory,
+            company_id=company_id,
+            discovery_id=resolved_discovery_id,
+            assignment_ids=resolved_assignment_ids,
+            source=source,
+        )
+        result = {
+            "source": source,
+            "discovery_id": str(resolved_discovery_id),
+            "recomputed_assignments": len(resolved_assignment_ids),
+            "persisted_records": count,
+        }
+        task_store.update_task(
+            task_id,
+            status=TaskStatus.COMPLETED,
+            result=result,
+        )
+        event_bus.publish(
+            task_id,
+            "completed",
+            {"pipeline": "td_cannibalization", **result},
+        )
+    except asyncio.CancelledError:
+        logger.info("TD cannibalization task %s cancelled", task_id)
+    except Exception as exc:
+        structured_logger.exception(
+            "td_cannibalization_recompute_failed",
+            company_slug=company_slug,
+            source=source,
+            task_id=task_id,
+        )
+        task_store.update_task(
+            task_id,
+            status=TaskStatus.FAILED,
+            error=str(exc),
+        )
+        event_bus.publish(task_id, "failed", {"error": str(exc)})
+    finally:
+        await task_store.flush_terminal(task_id)
+        task_store.release_slug_lock(f"td_cannibalization:{company_slug}")
+        task_store.remove_task_handle(task_id)
+        clear_context()
+
+
 # ── Query fanout generation runner ──────────────────────────────────
 
 
@@ -2825,6 +3019,9 @@ async def run_fanout_generation_task(
         from core.config.settings import settings
         from core.daily_tracker.query_fanout import QueryFanoutService
         from core.daily_tracker.prompt_library import PromptLibraryService
+        from core.db.repositories.content_inventory_prompt_repo import (
+            ContentInventoryPromptRepository,
+        )
         from core.db.repositories.daily_tracker_repo import TrackedPromptRepository
 
         # Fetch parent prompt text first
@@ -2849,15 +3046,29 @@ async def run_fanout_generation_task(
         )
 
         # Persist fanout queries as tracked_prompts children
+        impacted_inventory_ids: list[uuid.UUID] = []
         async with session_factory() as session:
             repo = TrackedPromptRepository(session)
             prompt_service = PromptLibraryService(prompt_repo=repo)
+            ci_prompt_repo = ContentInventoryPromptRepository(session)
             created = await prompt_service.create_fanout_queries(
                 parent_prompt_id=parent_prompt_id,
                 company_id=company_slug,
                 queries=gen_result.queries,
             )
+            impacted_inventory_ids = await ci_prompt_repo.get_inventory_ids_for_root_prompt_ids(
+                [uuid.UUID(parent_prompt_id)]
+            )
             await session.commit()
+
+        if impacted_inventory_ids:
+            await _spawn_td_cannibalization_recompute_task(
+                company_slug=company_slug,
+                task_store=task_store,
+                event_bus=event_bus,
+                source="daily_tracker_fanout_generation",
+                inventory_ids=impacted_inventory_ids,
+            )
 
         task_store.update_task(
             task_id, status=TaskStatus.COMPLETED,
@@ -3095,6 +3306,14 @@ async def _run_auto_prompt_generation(
             )
 
             await session.commit()
+
+            await _spawn_td_cannibalization_recompute_task(
+                company_slug=company_slug,
+                task_store=task_store,
+                event_bus=event_bus,
+                source="cms_sync_auto_prompt",
+                inventory_ids=capped_ids,
+            )
 
             # Merge prompt results into the sync result dict
             result["prompts_created"] = prompt_result.prompts_created

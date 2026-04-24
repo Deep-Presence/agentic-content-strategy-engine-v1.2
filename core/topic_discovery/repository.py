@@ -7,6 +7,7 @@ from core.db.repositories.topic_discovery_repo import (  # noqa: F401
     SourceResultRepository,
     SubdomainNodeRepository,
     TaxonomyTreeRepository,
+    TopicAssignmentCannibalizationRepository,
     TopicAssignmentRepository,
     TopicDiscoveryRepository,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "TaxonomyTreeRepository",
     "SubdomainNodeRepository",
     "TopicAssignmentRepository",
+    "TopicAssignmentCannibalizationRepository",
     "SourceResultRepository",
     "PersonaAffinityRepository",
 ]

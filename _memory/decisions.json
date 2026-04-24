@@ -2189,5 +2189,95 @@
     "outcome": "Implemented on 2026-04-11. Planner cannibalization scoring now incorporates fanout-aware query-overlap and citation-overlap evidence in addition to semantic similarity. Validation: `venv/bin/pytest tests/unit/test_content_inventory_prompt_repo.py tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py -q` (43 passed).",
     "reversible": true,
     "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-CANNIBALIZATION-PHASE3-DURABLE-SUBSYSTEM",
+    "timestamp": "2026-04-11",
+    "task": "Planner cannibalization service roadmap phase 3 durable persistence and recalculation orchestration",
+    "decision": "Cannibalization is no longer metadata-only planner state. The durable source of truth is now the additive `topic_assignment_cannibalization` table keyed by `topic_assignments.id`, while `topic_assignments.metadata_json` remains a compatibility mirror for existing planner readers. The Topic Discovery cannibalization service must support two entry points: persisting already-computed expansion snapshots after incremental subdomain writes, and recomputing durable assessments from persisted Topic Discovery assignments after full matrix persistence or future trigger-based recalculations.",
+    "rationale": "Phase 1 and phase 2 improved the scoring contract and evidence quality, but planner risk still lived only in assignment metadata and was effectively owned by Pipeline B. That made cannibalization hard to query independently, difficult to recompute from durable state, and fragile across write paths. A dedicated table solves durability and observability without breaking the current frontend contract, because the assignment metadata mirror can be preserved during the transition.",
+    "alternatives": [
+      "Keep metadata-only storage and add more recalculation logic into Pipeline B — rejected because the planner state would still not be durable or independently queryable",
+      "Persist only the top match inventory id and raw score — rejected because the product needs reasons, per-match breakdowns, and query/citation signals to remain explainable",
+      "Remove the assignment metadata mirror immediately — rejected because the current planner adapters still read that contract and should remain stable while the backend source of truth changes"
+    ],
+    "files_affected": [
+      "core/db/models/topic_discovery.py",
+      "core/db/repositories/topic_discovery_repo.py",
+      "core/db/migrations/versions/0041_topic_assignment_cannibalization.py",
+      "core/topic_discovery/cannibalization_service.py",
+      "core/topic_discovery/persistence.py",
+      "core/topic_discovery/db_ops.py",
+      "core/services/content_inventory_service.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. Topic Discovery now persists durable cannibalization rows and mirrors metadata for planner compatibility; full matrix persistence triggers a recomputation path and incremental expansion writes persist snapshot rows. The content-inventory embedding-based cannibalization/coverage calls used by this subsystem are wrapped in OpenRouter-only traced spans with structured metadata and structlog logging. Validation: `venv/bin/pytest tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py tests/topic_discovery/test_td_persistence.py tests/topic_discovery/test_db_ops_additive.py tests/topic_discovery/test_cannibalization_persistence.py tests/services/test_content_inventory_service.py -q` (135 passed).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-CANNIBALIZATION-SCALE-BATCH-PAGE-SCOPE",
+    "timestamp": "2026-04-11",
+    "task": "Planner cannibalization scalable architecture phase 1 batched overlap evidence",
+    "decision": "Prompt-scope loading and overlap computation are now separate concerns. The backend must batch-load prompt scope once per matched inventory page and compute query-overlap signals in memory, instead of issuing page-scope repository queries for every assignment-match pair. This applies to both live Pipeline B scoring and durable cannibalization recalculation.",
+    "rationale": "At realistic Topic Discovery volumes, one expanded subcluster can already produce around 60 assignments. With up to 5 matched pages per assignment, the previous phase 2 design could trigger hundreds of repeated page prompt-scope queries for a single subcluster. The page prompt scope is page-owned state and does not depend on the assignment, so repeated DB reads were unnecessary. Batching the scope load removes the worst avoidable DB fanout without changing the scoring contract.",
+    "alternatives": [
+      "Keep the per-match prompt-scope query path and rely on database horsepower — rejected because it scales poorly across subclusters and tenants",
+      "Defer optimization until bulk vector similarity is also redesigned — rejected because page-scope batching is low-risk and provides immediate wins now",
+      "Cache prompt scope in an external store before fixing query shape — rejected because the DB access pattern itself was the first problem to remove"
+    ],
+    "files_affected": [
+      "core/db/repositories/content_inventory_prompt_repo.py",
+      "core/topic_discovery/pipeline.py",
+      "core/topic_discovery/cannibalization_service.py",
+      "tests/unit/test_content_inventory_prompt_repo.py",
+      "tests/topic_discovery/test_cannibalization_persistence.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. Prompt scope is now batch-loaded once per matched page and reused across assignments during both live scoring and durable recalculation. Validation: `venv/bin/pytest tests/unit/test_content_inventory_prompt_repo.py tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py tests/topic_discovery/test_td_persistence.py tests/topic_discovery/test_db_ops_additive.py tests/topic_discovery/test_cannibalization_persistence.py tests/services/test_content_inventory_service.py -q` (140 passed).",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-CANNIBALIZATION-SCALE-BULK-SIMILARITY",
+    "timestamp": "2026-04-11",
+    "task": "Planner cannibalization scalable architecture phase 2 bulk similarity retrieval",
+    "decision": "The batch cannibalization path must use one pgvector similarity query for the whole assignment set, not one `find_similar()` query per assignment. The repository now owns a dedicated `find_similar_batch()` method that accepts many query embeddings keyed by assignment/query id and returns top-k matches per key in one PostgreSQL statement. The service batch path should use this method after the single batched embedding call.",
+    "rationale": "After batching page-scope overlap, the main remaining scaling problem was similarity retrieval itself. With realistic Topic Discovery volumes such as 60 assignments in one subcluster, the previous design still did 60 separate similarity queries after a single embedding batch. That is unnecessary because pgvector can evaluate many query vectors in one SQL statement, and the service only needs grouped top-k results per input key.",
+    "alternatives": [
+      "Keep one `find_similar()` query per assignment and rely only on the batched overlap optimization — rejected because it still leaves `O(assignments)` similarity queries in the hot path",
+      "Move all similarity retrieval to a separate async worker before fixing query shape — rejected because the query shape itself needed to improve regardless of orchestration",
+      "Batch only at the service layer with `asyncio.gather` over individual similarity queries — rejected because it reduces latency but not database work"
+    ],
+    "files_affected": [
+      "core/db/repositories/content_inventory_repo.py",
+      "core/services/content_inventory_service.py",
+      "tests/services/test_content_inventory_service.py",
+      "tests/db/test_content_inventory_repo.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. Batched cannibalization similarity is now `1 embedding call + 1 similarity query` for the assignment set instead of `1 embedding call + N similarity queries`. Validation: `venv/bin/pytest tests/services/test_content_inventory_service.py tests/topic_discovery/test_cannibalization_persistence.py tests/topic_discovery/test_expansion_td.py -q` (59 passed) and the broader 140-test cannibalization/content-inventory regression suite passed locally. The DB integration test file remains additive and skipped locally without `TEST_DATABASE_URL`.",
+    "reversible": true,
+    "approved_by": "Aryan"
+  },
+  {
+    "id": "D-TD-CANNIBALIZATION-SCALE-DELTA-ASYNC-RECOMPUTE",
+    "timestamp": "2026-04-11",
+    "task": "Planner cannibalization scalable architecture phase 3 delta-scoped recomputation and async trigger orchestration",
+    "decision": "Cannibalization recomputation triggered by content/prompt evidence changes should be delta-scoped and asynchronous. The durable recompute entrypoint now accepts explicit assignment IDs, and runner-side triggers should enqueue a dedicated per-company `td_cannibalization` background task that resolves impacted assignments at execution time from changed inventory pages. The impacted slice is defined as the union of: (1) assignments in the latest discovery whose durable top-match page is one of the changed inventory pages, and (2) a capped set of planner-open assignments from the latest discovery so new pages without prior matches can still affect current planning.",
+    "rationale": "After batching similarity retrieval and page-scope evidence, the next scaling risk was orchestration. CMS auto-prompt generation and fanout generation can change cannibalization evidence independently of Topic Discovery expansion, but recomputing an entire discovery inline on each of those events would reintroduce heavy load and make page-driven updates slow. Resolving the impacted slice at execution time preserves correctness against the latest durable state, keeps write-path latency low, and bounds recomputation to current planner work instead of historical assignment universes.",
+    "alternatives": [
+      "Keep synchronous full-discovery recomputation on every prompt/fanout change — rejected because it scales poorly and lengthens CMS/fanout write paths",
+      "Recompute only assignments whose durable top match already points at the changed page — rejected because new pages need a chance to affect planner-open assignments before any durable match exists",
+      "Allow unlimited parallel recompute tasks per company — rejected because overlapping page-change triggers would multiply load without improving correctness"
+    ],
+    "files_affected": [
+      "api/tasks/models.py",
+      "api/tasks/runner.py",
+      "core/config/settings.py",
+      "core/db/repositories/content_inventory_prompt_repo.py",
+      "core/db/repositories/topic_discovery_repo.py",
+      "core/topic_discovery/cannibalization_service.py"
+    ],
+    "outcome": "Implemented on 2026-04-11. CMS auto-prompt completion and Daily Tracker fanout completion now enqueue a durable `td_cannibalization` background task, and that task resolves a narrow assignment slice from the latest discovery before calling the durable recompute path. Validation: `venv/bin/pytest tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py tests/topic_discovery/test_td_persistence.py tests/topic_discovery/test_db_ops_additive.py tests/topic_discovery/test_cannibalization_persistence.py tests/services/test_content_inventory_service.py tests/api/test_cms_sync_prompt_chain.py tests/api/test_td_cannibalization_runner.py -q` (145 passed).",
+    "reversible": true,
+    "approved_by": "Aryan"
   }
 ]

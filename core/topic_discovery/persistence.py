@@ -292,6 +292,9 @@ async def persist_td_assignments(
             TopicAssignmentRepository,
             TopicDiscoveryRepository,
         )
+        from core.topic_discovery.cannibalization_service import (
+            recalculate_assignment_cannibalization_records,
+        )
 
         async with session_factory() as session:
             assign_repo = TopicAssignmentRepository(session)
@@ -354,6 +357,21 @@ async def persist_td_assignments(
             )
 
             await session.commit()
+
+        try:
+            await recalculate_assignment_cannibalization_records(
+                session_factory,
+                company_id=company_id,
+                discovery_id=discovery_id,
+                matrix_version=version,
+                source="td_matrix_persist",
+            )
+        except Exception:
+            logger.warning(
+                "persist_td_assignments cannibalization sync failed for discovery %s",
+                discovery_id,
+                exc_info=True,
+            )
 
         logger.info(
             "persist_td_assignments: v%d stored for discovery %s (%d assignments)",

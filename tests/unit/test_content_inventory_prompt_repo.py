@@ -42,7 +42,12 @@ class TestContentInventoryPromptRepository:
         fanout_prompt_id = uuid.uuid4()
 
         root_result = MagicMock()
-        root_result.scalars.return_value.all.return_value = [root_prompt_id]
+        root_result.all.return_value = [
+            SimpleNamespace(
+                inventory_id=inventory_id,
+                root_prompt_id=root_prompt_id,
+            )
+        ]
 
         scope_result = MagicMock()
         scope_result.all.return_value = [
@@ -98,6 +103,52 @@ class TestContentInventoryPromptRepository:
         assert result["overlapping_query_count"] == 1
         assert "best expense management software" in result["matched_queries"]
         assert any("startups" in text for text in result["matched_prompt_texts"])
+
+    @pytest.mark.asyncio
+    async def test_get_page_prompt_scopes_batch_reuses_scope_rows(
+        self, repo: ContentInventoryPromptRepository, session: AsyncMock
+    ) -> None:
+        inventory_a = uuid.uuid4()
+        inventory_b = uuid.uuid4()
+        shared_root_prompt_id = uuid.uuid4()
+        fanout_prompt_id = uuid.uuid4()
+
+        roots_result = MagicMock()
+        roots_result.all.return_value = [
+            SimpleNamespace(
+                inventory_id=inventory_a,
+                root_prompt_id=shared_root_prompt_id,
+            ),
+            SimpleNamespace(
+                inventory_id=inventory_b,
+                root_prompt_id=shared_root_prompt_id,
+            ),
+        ]
+
+        scope_result = MagicMock()
+        scope_result.all.return_value = [
+            SimpleNamespace(
+                prompt_id=shared_root_prompt_id,
+                root_prompt_id=shared_root_prompt_id,
+                text="expense management software",
+                parent_prompt_id=None,
+                active=True,
+            ),
+            SimpleNamespace(
+                prompt_id=fanout_prompt_id,
+                root_prompt_id=shared_root_prompt_id,
+                text="best expense management software for startups",
+                parent_prompt_id=shared_root_prompt_id,
+                active=True,
+            ),
+        ]
+        session.execute.side_effect = [roots_result, scope_result]
+
+        result = await repo.get_page_prompt_scopes_batch([inventory_a, inventory_b])
+
+        assert session.execute.await_count == 2
+        assert result[inventory_a]["prompt_ids"] == [shared_root_prompt_id, fanout_prompt_id]
+        assert result[inventory_b]["prompt_ids"] == [shared_root_prompt_id, fanout_prompt_id]
 
     @pytest.mark.asyncio
     async def test_get_citation_timeline_uses_root_prompt_rollup_sql(

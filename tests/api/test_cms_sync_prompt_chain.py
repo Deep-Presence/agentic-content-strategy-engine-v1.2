@@ -56,6 +56,7 @@ _PT_PROMPT_REPO = "core.db.repositories.daily_tracker_repo.TrackedPromptReposito
 _PT_LINK_REPO = "core.db.repositories.content_inventory_prompt_repo.ContentInventoryPromptRepository"
 _PT_INV_REPO = "core.db.repositories.content_inventory_repo.ContentInventoryRepository"
 _PT_COMPANY_REPO = "core.db.repositories.company_repo.CompanyRepository"
+_PT_SPAWN_RECOMPUTE = "api.tasks.runner._spawn_td_cannibalization_recompute_task"
 
 
 # ── Tests ────────────────────────────────────────────────────────────
@@ -92,6 +93,7 @@ class TestAutoPromptGeneration:
             patch(_PT_LINK_REPO),
             patch(_PT_INV_REPO),
             patch(_PT_COMPANY_REPO) as MockCompanyRepo,
+            patch(_PT_SPAWN_RECOMPUTE, new_callable=AsyncMock) as mock_spawn,
         ):
             mock_settings.auto_prompt_max_pages = 50
             MockCompanyRepo.return_value.get_by_slug = AsyncMock(return_value=company)
@@ -113,6 +115,9 @@ class TestAutoPromptGeneration:
         assert result["prompts_created"] == 12
         assert result["prompts_deduplicated"] == 3
         session.commit.assert_awaited_once()
+        mock_spawn.assert_awaited_once()
+        assert mock_spawn.await_args.kwargs["source"] == "cms_sync_auto_prompt"
+        assert mock_spawn.await_args.kwargs["inventory_ids"] == call_kwargs["page_ids"]
 
     @pytest.mark.asyncio
     async def test_no_prompt_gen_when_cap_is_zero(self):

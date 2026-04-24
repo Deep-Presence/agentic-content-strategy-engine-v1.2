@@ -6,11 +6,13 @@ Injected via FastAPI dependency (DB-only, no JSON fallback).
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid as _uuid
 from datetime import datetime
 from typing import Any
 
+import structlog
+
+from core.config.settings import settings
 from core.gap_analysis.steps.s4_enrich_citations import (
     compute_structural_signals as _compute_structural_signals,
 )
@@ -23,8 +25,11 @@ from core.content_inventory.models import (
 from core.content_inventory.url_utils import normalize_url
 from core.db.enums import ContentIngestionSource
 from core.db.repositories.content_inventory_repo import ContentInventoryRepository
+from core.shared_tools.openrouter_client import _ensure_model_prefix
+from core.shared_tools.structured_logging import scoped_bind
+from core.shared_tools.tracing import build_llm_metadata, create_span, end_span, extract_provider
 
-_logger = logging.getLogger(__name__)
+_logger = structlog.get_logger(__name__)
 
 # Embedding text formula per design doc Section 10.1
 _EMBED_TEMPLATE = "{title} | {h1_text} | {meta_description} | {content_preview}"
@@ -43,6 +48,57 @@ class ContentInventoryService:
         inventory_repo: ContentInventoryRepository,
     ) -> None:
         self._repo = inventory_repo
+
+    async def _embed_texts(
+        self,
+        texts: list[str],
+        *,
+        trace_parent: Any | None = None,
+        trace_name: str,
+        trace_metadata: dict[str, Any] | None = None,
+    ) -> list[list[float]]:
+        """Embed texts through OpenRouter with optional LangSmith span metadata."""
+        from core.shared_tools.async_embedding_client import async_embed_texts
+
+        model = _ensure_model_prefix(settings.embedding_model)
+        provider = extract_provider(model)
+        span = create_span(
+            trace_parent,
+            trace_name,
+            metadata=build_llm_metadata(
+                pipeline="content_inventory",
+                pipeline_step=trace_name,
+                provider=provider,
+                model=model,
+                **(trace_metadata or {}),
+            ),
+            input_data={"text_count": len(texts)},
+        )
+        with scoped_bind(
+            step_name=trace_name,
+            embedding_model=model,
+        ):
+            try:
+                embeddings = await async_embed_texts(texts)
+            except Exception as exc:
+                end_span(span, error=str(exc))
+                _logger.warning(
+                    "content_inventory_embedding_failed",
+                    trace_name=trace_name,
+                    model=model,
+                    text_count=len(texts),
+                    error=str(exc),
+                )
+                raise
+
+        end_span(
+            span,
+            output={
+                "text_count": len(texts),
+                "embedding_count": len(embeddings),
+            },
+        )
+        return embeddings
 
     # ── Ingestion ─────────────────────────────────────────────────
 
@@ -380,15 +436,20 @@ class ContentInventoryService:
         # Generate embedding inline for Content Engine output
         if content_text:
             try:
-                from core.shared_tools.async_embedding_client import async_embed_texts
-
                 embed_text = _EMBED_TEMPLATE.format(
                     title=title,
                     h1_text="",
                     meta_description="",
                     content_preview=content_text[:_EMBED_PREVIEW_LIMIT],
                 )
-                embeddings = await async_embed_texts([embed_text])
+                embeddings = await self._embed_texts(
+                    [embed_text],
+                    trace_name="content-inventory/register-published-embed",
+                    trace_metadata={
+                        "inventory_id": str(model.id),
+                        "company_id": str(company_id),
+                    },
+                )
                 if embeddings and embeddings[0]:
                     await self._repo.update_embeddings_batch(
                         [(model.id, embeddings[0])]
@@ -416,8 +477,6 @@ class ContentInventoryService:
         currently only fills missing).
         Returns count of embeddings generated.
         """
-        from core.shared_tools.async_embedding_client import async_embed_texts
-
         pages = await self._repo.get_pages_missing_embeddings(
             company_id, limit=1000
         )
@@ -439,7 +498,11 @@ class ContentInventoryService:
             page_ids.append(page.id)
 
         # Batch embed
-        embeddings = await async_embed_texts(texts)
+        embeddings = await self._embed_texts(
+            texts,
+            trace_name="content-inventory/generate-embeddings",
+            trace_metadata={"company_id": str(company_id), "force": force},
+        )
 
         # Build update pairs
         updates: list[tuple[_uuid.UUID, list[float]]] = []
@@ -463,14 +526,24 @@ class ContentInventoryService:
         topic_text: str,
         *,
         threshold: float = 0.82,
+        parent_span: Any | None = None,
+        trace_name: str = "content-inventory/check-cannibalization",
+        trace_metadata: dict[str, Any] | None = None,
     ) -> list[CannibalizationMatch]:
         """Check if a topic assignment overlaps with existing content.
 
         Returns list of matches with similarity scores and URLs.
         """
-        from core.shared_tools.async_embedding_client import async_embed_texts
-
-        embeddings = await async_embed_texts([topic_text])
+        embeddings = await self._embed_texts(
+            [topic_text],
+            trace_parent=parent_span,
+            trace_name=trace_name,
+            trace_metadata={
+                "company_id": str(company_id),
+                "threshold": threshold,
+                **(trace_metadata or {}),
+            },
+        )
         if not embeddings or not embeddings[0]:
             return []
 
@@ -497,6 +570,9 @@ class ContentInventoryService:
         topics: list[str],
         *,
         threshold: float = 0.82,
+        parent_span: Any | None = None,
+        trace_name: str = "content-inventory/check-cannibalization-batch",
+        trace_metadata: dict[str, Any] | None = None,
     ) -> dict[str, list[CannibalizationMatch]]:
         """Batch cannibalization check for multiple topics.
 
@@ -505,30 +581,46 @@ class ContentInventoryService:
         if not topics:
             return {}
 
-        from core.shared_tools.async_embedding_client import async_embed_texts
+        embeddings = await self._embed_texts(
+            topics,
+            trace_parent=parent_span,
+            trace_name=trace_name,
+            trace_metadata={
+                "company_id": str(company_id),
+                "threshold": threshold,
+                "topic_count": len(topics),
+                **(trace_metadata or {}),
+            },
+        )
 
-        embeddings = await async_embed_texts(topics)
+        valid_query_embeddings = {
+            topic: emb
+            for topic, emb in zip(topics, embeddings)
+            if emb
+        }
+        if not valid_query_embeddings:
+            return {topic: [] for topic in topics}
+
+        similar_by_topic = await self._repo.find_similar_batch(
+            company_id,
+            valid_query_embeddings,
+            threshold=threshold,
+        )
 
         result: dict[str, list[CannibalizationMatch]] = {}
-        for topic, emb in zip(topics, embeddings):
-            if not emb:
-                result[topic] = []
-                continue
-
-            similar = await self._repo.find_similar(
-                company_id, emb, threshold=threshold
-            )
+        for topic in topics:
+            similar_rows = similar_by_topic.get(topic, [])
             result[topic] = [
                 CannibalizationMatch(
-                    inventory_id=str(model.id),
-                    url=model.url,
-                    title=model.title or "",
-                    similarity=sim,
-                    word_count=model.word_count or 0,
-                    content_preview=model.content_preview or "",
-                    content_type_detected=model.content_type_detected or "",
+                    inventory_id=str(row["inventory_id"]),
+                    url=row["url"],
+                    title=row["title"],
+                    similarity=float(row["similarity"]),
+                    word_count=int(row["word_count"] or 0),
+                    content_preview=row["content_preview"],
+                    content_type_detected=row["content_type_detected"],
                 )
-                for model, sim in similar
+                for row in similar_rows
             ]
 
         return result
@@ -576,15 +668,26 @@ class ContentInventoryService:
         *,
         threshold: float = 0.78,
         limit: int = 3,
+        parent_span: Any | None = None,
+        trace_name: str = "content-inventory/find-existing-coverage",
+        trace_metadata: dict[str, Any] | None = None,
     ) -> list[ExistingCoverageResult]:
         """Find existing content that covers a given query/topic.
 
         Used by Gap Analysis S2 to decide "optimize" vs "create".
         Used by Content Engine to inject existing content context into briefs.
         """
-        from core.shared_tools.async_embedding_client import async_embed_texts
-
-        embeddings = await async_embed_texts([query_text])
+        embeddings = await self._embed_texts(
+            [query_text],
+            trace_parent=parent_span,
+            trace_name=trace_name,
+            trace_metadata={
+                "company_id": str(company_id),
+                "threshold": threshold,
+                "limit": limit,
+                **(trace_metadata or {}),
+            },
+        )
         if not embeddings or not embeddings[0]:
             return []
 

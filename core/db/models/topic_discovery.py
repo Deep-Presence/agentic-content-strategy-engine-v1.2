@@ -33,7 +33,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
-from core.db.base import Base, UUIDPKMixin
+from core.db.base import Base, TimestampMixin, UUIDPKMixin
 from core.db.enums import (
     AudienceSegmentType,
     BuyerStage,
@@ -276,6 +276,67 @@ class TopicAssignmentModel(UUIDPKMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class TopicAssignmentCannibalizationModel(UUIDPKMixin, TimestampMixin, Base):
+    """Durable cannibalization assessment for a topic assignment."""
+
+    __tablename__ = "topic_assignment_cannibalization"
+    __table_args__ = (
+        UniqueConstraint(
+            "assignment_id",
+            name="uq_topic_assignment_cannibalization_assignment",
+        ),
+        Index(
+            "ix_td_assignment_cannibalization_discovery",
+            "discovery_id",
+        ),
+        Index(
+            "ix_td_assignment_cannibalization_company_level",
+            "company_id",
+            "risk_level",
+        ),
+    )
+
+    assignment_id: Mapped[_uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("topic_assignments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    discovery_id: Mapped[_uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("topic_discoveries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    company_id: Mapped[_uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    top_match_inventory_id: Mapped[_uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("content_inventory.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    max_similarity: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0",
+    )
+    risk_score: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0",
+    )
+    risk_level: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="none", server_default="none",
+    )
+    recommended_action: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="safe_to_create_new",
+        server_default="safe_to_create_new",
+    )
+    reasons_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    matches_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    signals_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 # ── Source Results ──────────────────────────────────────────────────────

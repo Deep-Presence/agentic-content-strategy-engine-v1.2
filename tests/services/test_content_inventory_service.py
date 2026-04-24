@@ -25,6 +25,7 @@ def _make_repo() -> AsyncMock:
     repo.bulk_upsert_from_crawl = AsyncMock(return_value=5)
     repo.update_embeddings_batch = AsyncMock(return_value=3)
     repo.find_similar = AsyncMock(return_value=[])
+    repo.find_similar_batch = AsyncMock(return_value={})
     repo.get_pages_missing_embeddings = AsyncMock(return_value=[])
     repo.get_by_company = AsyncMock(return_value=([], 0))
     repo.get_stats = AsyncMock(return_value={"total_pages": 0})
@@ -485,7 +486,12 @@ class TestCheckCannibalization:
     async def test_batch_returns_dict(self, mock_embed):
         mock_embed.return_value = [[0.1] * 1536, [0.2] * 1536]
         repo = _make_repo()
-        repo.find_similar = AsyncMock(return_value=[])
+        repo.find_similar_batch = AsyncMock(
+            return_value={
+                "Topic A": [],
+                "Topic B": [],
+            }
+        )
         svc = _make_service(repo)
 
         result = await svc.check_cannibalization_batch(
@@ -495,6 +501,7 @@ class TestCheckCannibalization:
         assert "Topic A" in result
         assert "Topic B" in result
         assert mock_embed.await_count == 1  # single batch call
+        repo.find_similar_batch.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_batch_empty_topics(self):

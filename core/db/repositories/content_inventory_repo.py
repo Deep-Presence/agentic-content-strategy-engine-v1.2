@@ -5,7 +5,7 @@ import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -315,6 +315,90 @@ class ContentInventoryRepository(SQLAlchemyRepository[ContentInventoryModel]):
 
         result = await self._session.execute(stmt)
         return [(row[0], float(row[1])) for row in result.all()]
+
+    async def find_similar_batch(
+        self,
+        company_id: _uuid.UUID,
+        query_embeddings_by_key: dict[str, list[float]],
+        *,
+        threshold: float = 0.80,
+        limit: int = 5,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Find top-k similar inventory pages for many query embeddings at once."""
+        if not query_embeddings_by_key:
+            return {}
+
+        values_sql: list[str] = []
+        params: dict[str, Any] = {
+            "company_id": company_id,
+            "threshold": threshold,
+            "limit": limit,
+        }
+        ordered_keys = list(query_embeddings_by_key)
+        for idx, query_key in enumerate(ordered_keys):
+            values_sql.append(
+                f"(:query_key_{idx}, CAST(:embedding_{idx} AS vector))"
+            )
+            params[f"query_key_{idx}"] = query_key
+            params[f"embedding_{idx}"] = str(query_embeddings_by_key[query_key])
+
+        stmt = text(f"""
+            WITH query_embeddings(query_key, embedding) AS (
+                VALUES {", ".join(values_sql)}
+            ),
+            ranked AS (
+                SELECT
+                    qe.query_key AS query_key,
+                    ci.id AS inventory_id,
+                    ci.url AS url,
+                    ci.title AS title,
+                    ci.word_count AS word_count,
+                    ci.content_preview AS content_preview,
+                    ci.content_type_detected AS content_type_detected,
+                    (1 - (ci.embedding <=> qe.embedding)) AS similarity,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY qe.query_key
+                        ORDER BY ci.embedding <=> qe.embedding ASC
+                    ) AS similarity_rank
+                FROM query_embeddings qe
+                JOIN content_inventory ci
+                  ON ci.company_id = :company_id
+                 AND ci.embedding IS NOT NULL
+                WHERE (1 - (ci.embedding <=> qe.embedding)) >= :threshold
+            )
+            SELECT
+                query_key,
+                inventory_id,
+                url,
+                title,
+                word_count,
+                content_preview,
+                content_type_detected,
+                similarity
+            FROM ranked
+            WHERE similarity_rank <= :limit
+            ORDER BY query_key, similarity_rank
+        """)
+
+        result = await self._session.execute(stmt, params)
+        rows = result.all()
+        matches_by_key: dict[str, list[dict[str, Any]]] = {
+            query_key: []
+            for query_key in ordered_keys
+        }
+        for row in rows:
+            matches_by_key[row.query_key].append(
+                {
+                    "inventory_id": row.inventory_id,
+                    "url": row.url,
+                    "title": row.title or "",
+                    "similarity": float(row.similarity),
+                    "word_count": int(row.word_count or 0),
+                    "content_preview": row.content_preview or "",
+                    "content_type_detected": row.content_type_detected or "",
+                }
+            )
+        return matches_by_key
 
     async def find_similar_to_page(
         self,

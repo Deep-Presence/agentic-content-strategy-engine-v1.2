@@ -1,7 +1,7 @@
 {
   "current_sprint": "td-entry-parallel-execution",
   "last_updated": "2026-04-11",
-  "test_count": 2107,
+  "test_count": 2121,
   "completed_sprints_summary": {
     "total_tasks_completed": 48,
     "sprints": [
@@ -1791,6 +1791,83 @@
         "tests/topic_discovery/test_expansion_td.py"
       ],
       "codex_review": "Implemented phase 2 of the planner cannibalization roadmap by making page prompt scope fanout-aware and feeding overlap evidence into Topic Discovery scoring. `ContentInventoryPromptRepository` now exposes root prompt scope for a page, includes fanout child prompts in prompt-text coverage, computes deterministic query overlap signals from that scope, and rolls citation metrics/timelines up on `COALESCE(parent_prompt_id, prompt_id)` instead of direct prompt IDs only. Pipeline B now fetches recent fanout-aware citation metrics plus page query-overlap signals for matched inventory pages and passes them into `core/topic_discovery/cannibalization_service.py`, which now scores query overlap and citation overlap alongside semantic/lexical/intent/format signals. Validation: `venv/bin/pytest tests/unit/test_content_inventory_prompt_repo.py tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py -q` (43 passed)."
+    },
+    {
+      "id": "T-topic-discovery-cannibalization-phase3-durable-persistence",
+      "task": "Planner cannibalization service roadmap phase 3 durable persistence and recalculation orchestration",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 4,
+      "files_modified": [
+        "core/db/models/topic_discovery.py",
+        "core/db/repositories/topic_discovery_repo.py",
+        "core/db/migrations/versions/0041_topic_assignment_cannibalization.py",
+        "core/topic_discovery/cannibalization_service.py",
+        "core/topic_discovery/pipeline.py",
+        "core/topic_discovery/persistence.py",
+        "core/topic_discovery/db_ops.py",
+        "core/topic_discovery/repository.py",
+        "core/services/content_inventory_service.py",
+        "tests/topic_discovery/test_cannibalization_persistence.py",
+        "tests/topic_discovery/test_cannibalization_service.py",
+        "tests/topic_discovery/test_expansion_td.py",
+        "tests/topic_discovery/test_td_persistence.py",
+        "tests/topic_discovery/test_db_ops_additive.py",
+        "tests/services/test_content_inventory_service.py"
+      ],
+      "codex_review": "Implemented the next cannibalization phase as a durable backend subsystem instead of assignment-metadata-only state. Added `topic_assignment_cannibalization` with a dedicated repository, plus new orchestration in `core/topic_discovery/cannibalization_service.py` that can either persist already-computed expansion snapshots or fully recalculate assignment risk from persisted Topic Discovery rows using the phase 2 fanout-aware query/citation evidence. Full matrix persistence now triggers a post-commit recomputation path, while incremental subdomain writes persist durable snapshot rows immediately after DB commit. Assignment metadata is still mirrored for planner compatibility, but the new table is the durable source of truth. As part of this phase, `ContentInventoryService` now wraps its embedding-based cannibalization/coverage calls in OpenRouter-only traced spans with standard metadata and structlog logging so the new recalculation path carries model and trace context cleanly. Validation: `venv/bin/pytest tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py tests/topic_discovery/test_td_persistence.py tests/topic_discovery/test_db_ops_additive.py tests/topic_discovery/test_cannibalization_persistence.py tests/services/test_content_inventory_service.py -q` (135 passed) and `venv/bin/python -m py_compile core/topic_discovery/cannibalization_service.py core/topic_discovery/pipeline.py core/topic_discovery/persistence.py core/topic_discovery/db_ops.py core/services/content_inventory_service.py core/db/models/topic_discovery.py core/db/repositories/topic_discovery_repo.py`."
+    },
+    {
+      "id": "T-topic-discovery-cannibalization-scale-batched-overlap",
+      "task": "Planner cannibalization scalable architecture phase 1 batched overlap evidence",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 2,
+      "files_modified": [
+        "core/db/repositories/content_inventory_prompt_repo.py",
+        "core/topic_discovery/pipeline.py",
+        "core/topic_discovery/cannibalization_service.py",
+        "tests/unit/test_content_inventory_prompt_repo.py",
+        "tests/topic_discovery/test_cannibalization_persistence.py"
+      ],
+      "codex_review": "Refactored the cannibalization roadmap toward scale by removing the worst `assignments × matches` prompt-scope query pattern. `ContentInventoryPromptRepository` now supports batched page prompt-scope loading, and overlap scoring is split into an in-memory helper so both Pipeline B and durable cannibalization recalculation can load prompt scope once per matched inventory page and reuse it across all assignments. This preserves the phase 2 scoring behavior while replacing repeated `get_page_query_overlap_signals()` DB lookups with one batched scope load plus local token-overlap computation. Validation: `venv/bin/pytest tests/unit/test_content_inventory_prompt_repo.py tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py tests/topic_discovery/test_td_persistence.py tests/topic_discovery/test_db_ops_additive.py tests/topic_discovery/test_cannibalization_persistence.py tests/services/test_content_inventory_service.py -q` (140 passed)."
+    },
+    {
+      "id": "T-topic-discovery-cannibalization-scale-bulk-similarity",
+      "task": "Planner cannibalization scalable architecture phase 2 bulk similarity retrieval",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 2,
+      "files_modified": [
+        "core/db/repositories/content_inventory_repo.py",
+        "core/services/content_inventory_service.py",
+        "tests/services/test_content_inventory_service.py",
+        "tests/db/test_content_inventory_repo.py"
+      ],
+      "codex_review": "Implemented the next scaling cut by replacing per-assignment `find_similar()` queries in the cannibalization batch path with a single batched pgvector query. `ContentInventoryRepository.find_similar_batch()` now uses one raw PostgreSQL query over a `VALUES` list of query embeddings and returns top-k matches per query key using `ROW_NUMBER() OVER (PARTITION BY query_key ...)`. `ContentInventoryService.check_cannibalization_batch()` now embeds all topics once and resolves similarities through that batched repo method instead of looping over `find_similar()`. This reduces the live and durable cannibalization batch path from `1 embedding call + N similarity queries` to `1 embedding call + 1 similarity query` for the assignment set. Validation: `venv/bin/pytest tests/services/test_content_inventory_service.py tests/topic_discovery/test_cannibalization_persistence.py tests/topic_discovery/test_expansion_td.py -q` (59 passed) and `venv/bin/pytest tests/unit/test_content_inventory_prompt_repo.py tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py tests/topic_discovery/test_td_persistence.py tests/topic_discovery/test_db_ops_additive.py tests/topic_discovery/test_cannibalization_persistence.py tests/services/test_content_inventory_service.py -q` (140 passed). DB integration coverage for `tests/db/test_content_inventory_repo.py` remains additive but was skipped locally because `TEST_DATABASE_URL` was not set."
+    },
+    {
+      "id": "T-topic-discovery-cannibalization-scale-delta-async-triggers",
+      "task": "Planner cannibalization scalable architecture phase 3 delta-scoped recomputation and async trigger orchestration",
+      "sprint": "td-entry-parallel-execution",
+      "status": "done",
+      "completed_at": "2026-04-11",
+      "tests_added": 4,
+      "files_modified": [
+        "api/tasks/models.py",
+        "api/tasks/runner.py",
+        "core/config/settings.py",
+        "core/db/repositories/content_inventory_prompt_repo.py",
+        "core/db/repositories/topic_discovery_repo.py",
+        "core/topic_discovery/cannibalization_service.py",
+        "tests/api/test_cms_sync_prompt_chain.py",
+        "tests/api/test_td_cannibalization_runner.py",
+        "tests/topic_discovery/test_cannibalization_persistence.py"
+      ],
+      "codex_review": "Refactored cannibalization orchestration around delta-scoped async recomputation instead of full synchronous rescans on evidence changes. `recalculate_assignment_cannibalization_records()` now accepts explicit assignment IDs, Topic Discovery repos expose planner-open delta candidate selection plus durable top-match lookups by changed inventory page, and `resolve_impacted_assignment_scope_for_inventory_changes()` resolves a narrow recompute slice from the latest discovery. Added a durable `td_cannibalization` background task in `api/tasks/runner.py`, then wired CMS auto-prompt completion and Daily Tracker fanout completion to enqueue that task with changed inventory IDs. The new runner resolves impacted assignments at execution time and recomputes only that assignment slice. Validation: `venv/bin/pytest tests/topic_discovery/test_cannibalization_service.py tests/topic_discovery/test_expansion_td.py tests/topic_discovery/test_td_persistence.py tests/topic_discovery/test_db_ops_additive.py tests/topic_discovery/test_cannibalization_persistence.py tests/services/test_content_inventory_service.py tests/api/test_cms_sync_prompt_chain.py tests/api/test_td_cannibalization_runner.py -q` (145 passed) and `venv/bin/python -m py_compile api/tasks/runner.py core/topic_discovery/cannibalization_service.py core/db/repositories/topic_discovery_repo.py core/db/repositories/content_inventory_prompt_repo.py api/tasks/models.py`."
     }
   ],
   "pending": [
